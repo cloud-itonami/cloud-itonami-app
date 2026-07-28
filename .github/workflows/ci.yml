@@ -37,6 +37,6 @@ jobs:
           go-version: "1.24"
           cache: false
       - name: Install gitleaks
-        run: go install github.com/gitleaks/gitleaks/v8@v8.28.0
+        run: go install github.com/zricethezav/gitleaks/v8@v8.28.0
       - name: Scan Git history
         run: gitleaks git --redact --no-banner
