@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+event="$(jq -c .)"
+action="$(printf '%s' "$event" | jq -r '.action // empty')"
+value="$(printf '%s' "$event" | jq -r '.value // empty')"
+
+case "$action" in
+  local/chat)
+    jq -cn --arg prompt "$value" '{prompt:$prompt,session:"desktop",agent:"local"}' |
+      curl -fsS -H 'Content-Type: application/json' --data-binary @- \
+        http://127.0.0.1:1338/api/chat
+    ;;
+  local/clear-session)
+    curl -fsS -H 'Content-Type: application/json' \
+      --data '{"session":"desktop"}' http://127.0.0.1:1338/api/session/clear
+    ;;
+  *)
+    printf '{"error":"unknown action"}\n' >&2
+    exit 2
+    ;;
+esac

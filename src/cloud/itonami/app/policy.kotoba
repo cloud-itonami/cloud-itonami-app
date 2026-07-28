@@ -1,0 +1,13 @@
+(ns cloud.itonami.app.policy)
+
+;; Return a provider tier. 0 denies egress, 1 selects a local provider,
+;; and 2 selects an explicitly enabled cloud provider.
+(defn select-provider-tier [local-ready cloud-requested cloud-enabled]
+  (if (pos? local-ready)
+    1
+    (if (and (pos? cloud-requested) (pos? cloud-enabled))
+      2
+      0)))
+
+(defn main []
+  (select-provider-tier 1 0 0))

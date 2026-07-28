@@ -1,0 +1,40 @@
+{:brand {:name "Cloud Itonami"
+         :short-name "Itonami"}
+ :server {:host "127.0.0.1" :port 1338
+          :public-origin "http://localhost:1338"
+          :webauthn-rp-id "localhost"}
+ :identity {:account-domain "cloud-itonami.app"
+            :organization-domain-suffix "cloud-itonami.app"
+            :organization-domain-overrides {}
+            ;; Enable only when the deployment publishes a DID document for
+            ;; every generated organization domain.
+            :publish-did-web? false}
+ :routing {:default-provider "ollama"
+           :default-model "gemma4:e2b"
+           :cloud-enabled? false}
+ :providers
+ [{:id "ollama"
+   :name "Ollama"
+   :kind :ollama
+   :base-url "http://127.0.0.1:11434"
+   :local? true
+   :enabled? true}
+  {:id "lm-studio"
+   :name "LM Studio"
+   :kind :openai-compatible
+   :base-url "http://127.0.0.1:1234/v1"
+   :local? true
+   :enabled? false}
+  {:id "openai"
+   :name "OpenAI"
+   :kind :openai-compatible
+   :base-url "https://api.openai.com/v1"
+   :api-key-env "OPENAI_API_KEY"
+   :local? false
+   :enabled? false}]
+ :privacy {:bind-loopback-only? true
+           :allow-cloud-without-review? false}
+ :cloud-relay {:base-url nil
+               :access-token-env "CLOUD_ITONAMI_RELAY_ACCESS_TOKEN"}
+ :memory {:max-session-messages 40
+          :max-context-messages 20}}

@@ -1,0 +1,10 @@
+/data/
+/target/
+/.cpcache/
+/.clj-kondo/
+/.DS_Store
+*.log
+*.pid
+.env
+.env.*
+!.env.example

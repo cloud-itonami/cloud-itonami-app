@@ -1,0 +1,57 @@
+{:paths ["src" "resources"]
+ :deps
+ {org.clojure/clojure {:mvn/version "1.12.5"}
+  org.clojure/data.json {:mvn/version "2.5.1"}
+  com.fasterxml.jackson.dataformat/jackson-dataformat-cbor
+  {:mvn/version "2.22.1"}
+  com.yubico/webauthn-server-core {:mvn/version "2.9.0"}
+
+  io.github.kotoba-lang/shell
+  {:git/url "https://github.com/kotoba-lang/shell.git"
+   :git/sha "b2118bafb83f74a1d3c67e91314f67be87125df2"}
+  io.github.kotoba-lang/kotoba
+  {:git/url "https://github.com/kotoba-lang/kotoba.git"
+   :git/tag "v0.6.29"
+   :git/sha "42ae4941089a5be3d06e46d440680589e781f19f"}
+  io.github.kotoba-lang/calendar
+  {:git/url "https://github.com/kotoba-lang/calendar.git"
+   :git/sha "2d9b9fc5efe80ea42afaa30bbdf8915fe4d9540f"}
+  io.github.kotoba-lang/mail
+  {:git/url "https://github.com/kotoba-lang/mail.git"
+   :git/sha "2a00bd8d63842dd2d1cf38d35bfb66ae377e98dc"}
+  io.github.kotoba-lang/drive
+  {:git/url "https://github.com/kotoba-lang/drive.git"
+   :git/sha "90eac2854b86b78f6feffe2b6ce016b705baff6c"}
+  io.github.kotoba-lang/identity
+  {:git/url "https://github.com/kotoba-lang/identity.git"
+   :git/sha "5cf94e38c816ced6857ef62de344f6adea9fc050"}
+  io.github.kotoba-lang/oauth
+  {:git/url "https://github.com/kotoba-lang/oauth.git"
+   :git/sha "e47999a48cbc79e831c0690bac6681bda0b52785"}
+  io.github.kotoba-lang/com-github
+  {:git/url "https://github.com/kotoba-lang/com-github.git"
+   :git/sha "5beea7514b4791f6aae33cb0b75d49f0ec53437c"}
+  io.github.kotoba-lang/jp-go-digital-design-system
+  {:git/url "https://github.com/kotoba-lang/jp-go-digital-design-system.git"
+   :git/sha "277e8c38648a3030014637d11fcbefc4f5535ae7"}}
+
+ :aliases
+ {:server {:main-opts ["-m" "cloud.itonami.app.server"]}
+  :test {:extra-paths ["test"]
+         :main-opts ["-m" "cloud.itonami.app.test-runner"]}
+  :lint {:replace-deps {clj-kondo/clj-kondo {:mvn/version "2024.11.14"}}
+         :main-opts ["-m" "clj-kondo.main" "--lint" "src" "test"
+                     "--fail-level" "error"]}
+  ;; West/sibling workspace development only. Release and CI never use this.
+  :dev
+  {:override-deps
+   {io.github.kotoba-lang/shell {:local/root "../../kotoba-lang/shell"}
+    io.github.kotoba-lang/kotoba {:local/root "../../kotoba-lang/kotoba"}
+    io.github.kotoba-lang/calendar {:local/root "../../kotoba-lang/calendar"}
+    io.github.kotoba-lang/mail {:local/root "../../kotoba-lang/mail"}
+    io.github.kotoba-lang/drive {:local/root "../../kotoba-lang/drive"}
+    io.github.kotoba-lang/identity {:local/root "../../kotoba-lang/identity"}
+    io.github.kotoba-lang/oauth {:local/root "../../kotoba-lang/oauth"}
+    io.github.kotoba-lang/com-github {:local/root "../../kotoba-lang/com-github"}
+    io.github.kotoba-lang/jp-go-digital-design-system
+    {:local/root "../../kotoba-lang/jp-go-digital-design-system"}}}}}

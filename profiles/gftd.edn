@@ -1,0 +1,14 @@
+{:brand {:name "gftd"
+         :short-name "gftd"}
+ :identity
+ {:account-domain "gftd.ai"
+  :organization-domain-suffix "gftd.ai"
+  ;; The corporate tenant uses its apex domain; managed user organizations
+  ;; remain available as {organization-id}.gftd.ai.
+  :organization-domain-overrides {"gftd" "gftd.ai"}
+  ;; Set true in the private production override only after the matching
+  ;; did.json documents are live and continuously monitored.
+  :publish-did-web? false}
+ :cloud-relay
+ {:base-url "https://relay.gftd.ai"
+  :access-token-env "GFTD_CLOUD_ACCESS_TOKEN"}}

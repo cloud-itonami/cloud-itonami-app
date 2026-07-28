@@ -1,0 +1,1378 @@
+(ns cloud.itonami.app.web
+  "DADS-backed WebKit workspace hosted by kotoba-lang/shell."
+  (:require [clojure.java.io :as io]
+            [jp-go-dds.core :as dds]
+            [jp-go-dds.page :as page]))
+
+(def app-css
+  "
+  body{background:var(--color-neutral-solid-gray-50)}
+  button{font:inherit}
+  .local-app{max-width:100%;padding:0}
+  .workspace{display:grid;grid-template-columns:17rem minmax(0,1fr);min-height:100vh}
+  .sidebar{position:sticky;top:0;height:100vh;box-sizing:border-box;padding:1.5rem 1rem;
+    background:var(--color-neutral-white);border-right:1px solid var(--color-neutral-solid-gray-200);
+    display:flex;flex-direction:column;gap:1.5rem}
+  .brand{padding:.25rem .75rem}
+  .brand__eyebrow{margin:0 0 .25rem;color:var(--color-key-900);font-size:.75rem;
+    font-weight:700;letter-spacing:.08em}
+  .brand__name{margin:0;font-size:1.25rem;font-weight:700;line-height:1.5}
+  .brand__mark{display:none}
+  .brand__note{margin:.25rem 0 0;color:var(--color-neutral-solid-gray-600);
+    font-size:.8125rem;line-height:1.6}
+  .local-nav{display:flex;flex-direction:column;gap:.25rem}
+  .local-nav__item{width:100%;border:0;border-radius:.5rem;background:transparent;
+    color:var(--color-neutral-solid-gray-800);display:flex;align-items:center;gap:.75rem;
+    min-height:3rem;padding:.625rem .75rem;text-align:left;cursor:pointer}
+  .local-nav__item:hover{background:var(--color-neutral-solid-gray-50)}
+  .local-nav__item:disabled{cursor:not-allowed;opacity:.42;background:transparent}
+  .local-nav__item:focus-visible{outline:4px solid var(--color-focus-yellow);outline-offset:1px}
+  .local-nav__item[aria-current='page']{background:var(--color-key-50);
+    color:var(--color-key-900);font-weight:700;border-left:4px solid var(--color-key-900);
+    padding-left:.5rem}
+  .nav-icon{width:1.5rem;text-align:center;font-size:1.1rem}
+  .nav-badge{margin-left:auto;min-width:1.5rem;padding:.1rem .4rem;border-radius:999px;
+    background:var(--color-neutral-solid-gray-100);font-size:.75rem;text-align:center}
+  .sidebar__status{margin-top:auto;padding:.75rem;border-radius:.5rem;
+    background:var(--color-neutral-solid-gray-50);font-size:.8125rem;line-height:1.6}
+  .sidebar__status strong{display:block;color:var(--color-success-700)}
+  .main{min-width:0}
+  .topbar{min-height:5rem;padding:1rem clamp(1rem,4vw,3rem);background:var(--color-neutral-white);
+    border-bottom:1px solid var(--color-neutral-solid-gray-200);display:flex;
+    align-items:center;justify-content:space-between;gap:1rem;box-sizing:border-box}
+  .topbar__title{margin:0;font-size:1.25rem;line-height:1.5}
+  .topbar__meta{margin:0;color:var(--color-neutral-solid-gray-600);font-size:.875rem}
+  .view{padding:clamp(1rem,4vw,3rem);max-width:78rem}
+  [hidden]{display:none!important}
+  .view[hidden]{display:none}
+  .view-header{display:flex;justify-content:space-between;align-items:flex-start;
+    gap:1rem;margin-bottom:1.5rem}
+  .view-header__copy{max-width:45rem}
+  .view-lead{margin:.5rem 0 0;color:var(--color-neutral-solid-gray-600);line-height:1.7}
+  .local-grid{display:grid;grid-template-columns:minmax(0,1.55fr) minmax(18rem,.85fr);
+    gap:1.5rem;align-items:start}
+  .local-card{background:var(--color-neutral-white);border:1px solid var(--color-neutral-solid-gray-200);
+    border-radius:.75rem;padding:1.5rem}
+  .local-card+.local-card{margin-top:1rem}
+  .local-meta{display:grid;grid-template-columns:auto 1fr;gap:.625rem 1rem;
+    margin:0;font-size:.9375rem;line-height:1.7}
+  .local-meta dt{font-weight:700}.local-meta dd{margin:0}
+  .local-response{min-height:10rem;padding:1rem;border-radius:.5rem;
+    background:var(--color-neutral-solid-gray-50);border:1px solid var(--color-neutral-solid-gray-200);
+    white-space:pre-wrap;line-height:1.7}
+  .local-status{margin:0;color:var(--color-neutral-solid-gray-600);font-size:.9375rem;line-height:1.7}
+  .local-actions{justify-content:flex-end}
+  .chat-view{max-width:none;padding:0}
+  .chat-shell{position:relative;display:flex;flex-direction:column;
+    height:calc(100vh - 5rem);min-height:32rem;background:var(--color-neutral-white)}
+  .chat-header{display:flex;align-items:center;justify-content:space-between;gap:1rem;
+    min-height:3.75rem;padding:.625rem clamp(1rem,3vw,2rem);
+    border-bottom:1px solid var(--color-neutral-solid-gray-100)}
+  .chat-agent{display:flex;align-items:center;gap:.75rem;min-width:0}
+  .chat-agent__avatar,.message-avatar{display:grid;place-items:center;flex:0 0 auto;
+    width:2rem;height:2rem;border-radius:.625rem;background:var(--color-key-900);
+    color:var(--color-neutral-white);font-size:.8125rem;font-weight:700}
+  .chat-agent__name{margin:0;font-weight:700;line-height:1.4}
+  .chat-agent__state{margin:0;color:var(--color-neutral-solid-gray-600);
+    font-size:.75rem;line-height:1.4}
+  .chat-header__actions{display:flex;align-items:center;gap:.5rem}
+  .model-pill,.tool-button{min-height:2.25rem;border:1px solid var(--color-neutral-solid-gray-300);
+    border-radius:999px;background:var(--color-neutral-white);padding:.35rem .75rem;
+    color:var(--color-neutral-solid-gray-800);font-size:.8125rem}
+  select.model-pill{max-width:15rem;cursor:pointer}
+  .tool-button{cursor:pointer}.tool-button:hover{background:var(--color-neutral-solid-gray-50)}
+  .tool-button:focus-visible,.suggestion-card:focus-visible,.message-action:focus-visible,
+  .composer-button:focus-visible{outline:4px solid var(--color-focus-yellow);outline-offset:1px}
+  .chat-scroll{flex:1;overflow-y:auto;overscroll-behavior:contain;scroll-behavior:smooth}
+  .chat-thread{width:min(100%,52rem);box-sizing:border-box;margin:0 auto;
+    padding:2rem 1.5rem 11rem}
+  .chat-empty{min-height:calc(100vh - 18rem);display:grid;place-content:center;
+    padding:2rem 0;text-align:center}
+  .chat-empty[hidden]{display:none}
+  .chat-empty__mark{display:grid;place-items:center;width:3rem;height:3rem;margin:0 auto 1rem;
+    border-radius:1rem;background:var(--color-key-50);color:var(--color-key-900);
+    font-size:1.25rem;font-weight:700}
+  .chat-empty h1{margin:0;font-size:2rem;line-height:1.45}
+  .chat-empty>p{margin:.5rem auto 1.5rem;max-width:34rem;
+    color:var(--color-neutral-solid-gray-600);line-height:1.7}
+  .suggestion-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));
+    gap:.75rem;width:min(100%,40rem)}
+  .suggestion-card{border:1px solid var(--color-neutral-solid-gray-200);
+    border-radius:.75rem;background:var(--color-neutral-white);padding:1rem;
+    text-align:left;cursor:pointer;color:var(--color-neutral-solid-gray-800);line-height:1.55}
+  .suggestion-card:hover{border-color:var(--color-key-600);background:var(--color-key-50)}
+  .suggestion-card strong{display:block;margin-bottom:.15rem}
+  .suggestion-card span{color:var(--color-neutral-solid-gray-600);font-size:.8125rem}
+  .message-row{display:grid;grid-template-columns:2rem minmax(0,1fr);gap:.75rem;
+    margin:0 0 1.75rem;scroll-margin-top:1rem}
+  .message-row--user{display:flex;justify-content:flex-end}
+  .message-row--user .message-body{max-width:min(85%,40rem);padding:.75rem 1rem;
+    border-radius:1rem 1rem .25rem 1rem;background:var(--color-neutral-solid-gray-100)}
+  .message-body{min-width:0}
+  .message-author{margin:0 0 .35rem;font-size:.8125rem;font-weight:700}
+  .message-content{margin:0;color:var(--color-neutral-solid-gray-900);
+    white-space:pre-wrap;overflow-wrap:anywhere;line-height:1.8}
+  .message-actions{display:flex;gap:.25rem;margin-top:.5rem;min-height:2rem}
+  .message-action{border:0;border-radius:.375rem;background:transparent;padding:.3rem .5rem;
+    color:var(--color-neutral-solid-gray-600);font-size:.75rem;cursor:pointer}
+  .message-action:hover{background:var(--color-neutral-solid-gray-100);
+    color:var(--color-neutral-solid-gray-900)}
+  .typing{display:flex;gap:.3rem;padding:.55rem 0}
+  .typing span{width:.45rem;height:.45rem;border-radius:50%;
+    background:var(--color-neutral-solid-gray-400);animation:typing 1.2s infinite}
+  .typing span:nth-child(2){animation-delay:.15s}.typing span:nth-child(3){animation-delay:.3s}
+  @keyframes typing{0%,60%,100%{transform:translateY(0);opacity:.45}30%{transform:translateY(-.3rem);opacity:1}}
+  .composer-dock{position:absolute;z-index:2;left:0;right:0;bottom:0;
+    padding:2.5rem 1rem 1rem;background:linear-gradient(transparent 0%,var(--color-neutral-white) 32%)}
+  .composer{width:min(100%,52rem);box-sizing:border-box;margin:0 auto;padding:.625rem;
+    border:1px solid var(--color-neutral-solid-gray-300);border-radius:1.25rem;
+    background:var(--color-neutral-white);box-shadow:0 .5rem 2rem rgba(0,0,0,.1)}
+  .composer:focus-within{border-color:var(--color-key-600);
+    box-shadow:0 0 0 2px var(--color-key-50),0 .5rem 2rem rgba(0,0,0,.1)}
+  .composer textarea{display:block;width:100%;max-height:12rem;min-height:3rem;box-sizing:border-box;
+    border:0;outline:0;resize:none;padding:.65rem .75rem;background:transparent;
+    color:var(--color-neutral-solid-gray-900);font:inherit;line-height:1.65}
+  .composer-toolbar{display:flex;align-items:center;justify-content:space-between;gap:.75rem}
+  .composer-context{display:flex;align-items:center;gap:.4rem;min-width:0}
+  .composer-context .model-pill{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .composer-button{display:grid;place-items:center;width:2.5rem;height:2.5rem;border:0;
+    border-radius:50%;background:var(--color-key-900);color:var(--color-neutral-white);
+    cursor:pointer;font-size:1.1rem;font-weight:700}
+  .composer-button:disabled{background:var(--color-neutral-solid-gray-300);cursor:not-allowed}
+  .composer-button--stop{background:var(--color-neutral-solid-gray-900)}
+  .composer-button[hidden]{display:none}
+  .composer-note{margin:.45rem 0 0;text-align:center;color:var(--color-neutral-solid-gray-500);
+    font-size:.6875rem;line-height:1.4}
+  .visually-hidden{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
+    overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
+  .source-note{display:flex;gap:.5rem;align-items:center;margin:.75rem 0 0;
+    color:var(--color-neutral-solid-gray-600);font-size:.8125rem}
+  .source-dot{width:.5rem;height:.5rem;border-radius:50%;background:var(--color-success-600)}
+  .data-list{list-style:none;margin:0;padding:0;border-top:1px solid var(--color-neutral-solid-gray-200)}
+  .data-list__item{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:1rem;
+    padding:1rem 0;border-bottom:1px solid var(--color-neutral-solid-gray-200)}
+  .data-list__title{margin:0;font-weight:700;line-height:1.6;overflow-wrap:anywhere}
+  .data-list__meta{margin:.25rem 0 0;color:var(--color-neutral-solid-gray-600);
+    font-size:.875rem;line-height:1.6}
+  .data-list__side{color:var(--color-neutral-solid-gray-600);font-size:.8125rem;white-space:nowrap}
+  .state-chip{display:inline-flex;align-items:center;padding:.125rem .5rem;border-radius:999px;
+    background:var(--color-neutral-solid-gray-100);font-size:.75rem}
+  .state-chip--warn{background:var(--color-warning-yellow-200);color:var(--color-neutral-black)}
+  .empty-state{padding:2rem;text-align:center;border:1px dashed var(--color-neutral-solid-gray-300);
+    border-radius:.5rem;color:var(--color-neutral-solid-gray-600);line-height:1.7}
+  .view-switcher{display:flex;gap:.25rem;padding:.25rem;border-radius:.625rem;
+    background:var(--color-neutral-solid-gray-100);width:fit-content;margin-bottom:1rem}
+  .view-switcher button{border:0;border-radius:.375rem;padding:.5rem .875rem;background:transparent;cursor:pointer}
+  .view-switcher button[aria-pressed='true']{background:var(--color-neutral-white);
+    color:var(--color-key-900);font-weight:700;box-shadow:0 1px 3px rgba(0,0,0,.12)}
+  .integration-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:1rem}
+  .integration-card{padding:1rem;border-radius:.5rem;background:var(--color-neutral-solid-gray-50)}
+  .integration-card h3{margin:0;font-size:1rem}.integration-card p{margin:.35rem 0 0;
+    color:var(--color-neutral-solid-gray-600);font-size:.875rem;line-height:1.6}
+  .calendar-list .data-list__item{grid-template-columns:7rem minmax(0,1fr)}
+  .calendar-time{color:var(--color-key-900);font-weight:700;font-size:.875rem;line-height:1.5}
+  .workspace-toolbar{display:flex;align-items:center;justify-content:space-between;gap:.75rem;
+    margin:1rem 0}
+  .workspace-search{width:min(100%,24rem);min-height:2.75rem;box-sizing:border-box;
+    border:1px solid var(--color-neutral-solid-gray-300);border-radius:.5rem;
+    padding:.625rem .75rem;background:var(--color-neutral-white);font:inherit}
+  .workspace-search:focus{outline:4px solid var(--color-focus-yellow);outline-offset:1px;
+    border-color:var(--color-key-600)}
+  .record-browser{display:grid;grid-template-columns:minmax(17rem,.8fr) minmax(20rem,1.2fr);
+    min-height:30rem;border:1px solid var(--color-neutral-solid-gray-200);border-radius:.75rem;
+    overflow:hidden;background:var(--color-neutral-white)}
+  .record-list{min-width:0;border-right:1px solid var(--color-neutral-solid-gray-200);
+    background:var(--color-neutral-solid-gray-50)}
+  .record-list__items{list-style:none;margin:0;padding:0;max-height:38rem;overflow:auto}
+  .record-button{display:block;width:100%;border:0;border-bottom:1px solid var(--color-neutral-solid-gray-200);
+    background:transparent;padding:1rem;text-align:left;cursor:pointer;color:inherit}
+  .record-button:hover{background:var(--color-neutral-white)}
+  .record-button[aria-pressed='true']{background:var(--color-key-50);
+    box-shadow:inset 4px 0 0 var(--color-key-900)}
+  .record-button:focus-visible,.date-button:focus-visible{outline:4px solid var(--color-focus-yellow);
+    outline-offset:-4px}
+  .record-button__top{display:flex;justify-content:space-between;gap:.75rem;align-items:baseline}
+  .record-button__title{display:block;font-weight:700;overflow:hidden;text-overflow:ellipsis;
+    white-space:nowrap}
+  .record-button__time{flex:none;color:var(--color-neutral-solid-gray-600);font-size:.75rem}
+  .record-button__meta,.record-button__snippet{display:block;margin-top:.25rem;
+    color:var(--color-neutral-solid-gray-600);font-size:.8125rem;line-height:1.5;
+    overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .record-detail{min-width:0;padding:clamp(1.25rem,3vw,2.25rem)}
+  .record-detail__eyebrow{margin:0 0 .5rem;color:var(--color-key-900);
+    font-size:.8125rem;font-weight:700}
+  .record-detail h2{margin:0;font-size:1.5rem;line-height:1.5;overflow-wrap:anywhere}
+  .record-detail__body{margin:1.5rem 0 0;white-space:pre-wrap;overflow-wrap:anywhere;line-height:1.8}
+  .record-detail__meta{margin-top:1.5rem;padding-top:1rem;
+    border-top:1px solid var(--color-neutral-solid-gray-200)}
+  .date-rail{display:flex;gap:.5rem;overflow-x:auto;padding:.25rem 0 1rem}
+  .date-button{flex:0 0 5.5rem;border:1px solid var(--color-neutral-solid-gray-200);
+    border-radius:.625rem;background:var(--color-neutral-white);padding:.625rem .5rem;
+    text-align:center;cursor:pointer}
+  .date-button[aria-pressed='true']{border-color:var(--color-key-900);
+    background:var(--color-key-50);color:var(--color-key-900);font-weight:700}
+  .date-button span{display:block;font-size:.75rem}.date-button strong{font-size:1.25rem}
+  .result-count{color:var(--color-neutral-solid-gray-600);font-size:.8125rem;white-space:nowrap}
+  .settings-grid{display:grid;grid-template-columns:minmax(0,1.25fr) minmax(18rem,.75fr);
+    gap:1.5rem;align-items:start}
+  .settings-stack{display:grid;gap:1rem}
+  .identity-summary{display:flex;align-items:center;justify-content:space-between;gap:1rem;
+    padding:1.25rem;border:1px solid var(--color-neutral-solid-gray-200);
+    border-radius:.75rem;background:var(--color-neutral-white)}
+  .identity-summary__avatar{display:grid;place-items:center;flex:none;width:3rem;height:3rem;
+    border-radius:1rem;background:var(--color-key-50);color:var(--color-key-900);
+    font-size:1rem;font-weight:700}
+  .identity-summary__copy{min-width:0;flex:1}.identity-summary__copy p{margin:.15rem 0}
+  .identity-summary__name{font-weight:700}.identity-summary__meta{
+    color:var(--color-neutral-solid-gray-600);font-size:.875rem}
+  .connector-list{display:grid;gap:.75rem;margin-top:1rem}
+  .connector-card{display:grid;grid-template-columns:2.75rem minmax(0,1fr) auto;
+    gap:1rem;align-items:center;padding:1rem;border:1px solid var(--color-neutral-solid-gray-200);
+    border-radius:.625rem}
+  .connector-logo{display:grid;place-items:center;width:2.75rem;height:2.75rem;
+    border-radius:.75rem;background:var(--color-neutral-solid-gray-100);font-weight:700}
+  .connector-card h3{margin:0;font-size:1rem}.connector-card p{margin:.25rem 0 0;
+    color:var(--color-neutral-solid-gray-600);font-size:.8125rem;line-height:1.55}
+  .connector-card .tool-button{white-space:nowrap}
+  .connector-card .tool-button:disabled{opacity:.55;cursor:not-allowed}
+  .settings-form{display:grid;gap:1rem}.form-grid{display:grid;
+    grid-template-columns:repeat(2,minmax(0,1fr));gap:1rem}
+  .field{display:grid;gap:.375rem}.field label{font-weight:700;font-size:.875rem}
+  .field input,.field select{min-height:2.75rem;box-sizing:border-box;width:100%;
+    border:1px solid var(--color-neutral-solid-gray-300);border-radius:.5rem;
+    padding:.625rem .75rem;background:var(--color-neutral-white);font:inherit}
+  .field input:focus,.field select:focus{outline:4px solid var(--color-focus-yellow);
+    outline-offset:1px;border-color:var(--color-key-600)}
+  .form-help{margin:0;color:var(--color-neutral-solid-gray-600);
+    font-size:.8125rem;line-height:1.6}
+  .primary-action{min-height:2.75rem;border:0;border-radius:.5rem;
+    background:var(--color-key-900);color:var(--color-neutral-white);
+    padding:.625rem 1rem;font-weight:700;cursor:pointer}
+  .primary-action:disabled{background:var(--color-neutral-solid-gray-300);cursor:not-allowed}
+  .security-callout{padding:1rem;border-left:4px solid var(--color-key-600);
+    background:var(--color-key-50);font-size:.875rem;line-height:1.7}
+  .settings-notice{margin-bottom:1rem;padding:.75rem 1rem;border-radius:.5rem;
+    background:var(--color-success-50);color:var(--color-success-700)}
+  .settings-notice--error{background:var(--color-error-50);color:var(--color-error-700)}
+  .member-list{list-style:none;margin:1rem 0 0;padding:0}
+  .member-list li{display:flex;justify-content:space-between;gap:1rem;padding:.75rem 0;
+    border-top:1px solid var(--color-neutral-solid-gray-200)}
+  .member-list strong,.member-list span{display:block}.member-list span{
+    color:var(--color-neutral-solid-gray-600);font-size:.8125rem}
+  .skeleton{height:4.5rem;margin:.5rem 0;border-radius:.5rem;
+    background:linear-gradient(90deg,var(--color-neutral-solid-gray-50),var(--color-neutral-solid-gray-100),var(--color-neutral-solid-gray-50));
+    background-size:200% 100%;animation:pulse 1.4s infinite}
+  @keyframes pulse{to{background-position:-200% 0}}
+  @media(max-width:64rem){.local-grid,.settings-grid{grid-template-columns:1fr}}
+  @media(max-width:56rem){
+    .workspace{grid-template-columns:4.75rem minmax(0,1fr)}
+    .sidebar{position:sticky;top:0;height:100dvh;padding:.75rem .5rem;overflow:hidden;
+      border-right:1px solid var(--color-neutral-solid-gray-200);border-bottom:0;gap:1rem}
+    .brand{padding:.25rem 0;text-align:center}
+    .brand__eyebrow,.brand__name,.brand__note,.sidebar__status{display:none}
+    .brand__mark{display:block;margin:0;color:var(--color-key-900);font-size:1.125rem;
+      font-weight:700;line-height:2.5rem}
+    .local-nav{width:100%;flex-direction:column;overflow:visible}
+    .local-nav__item{width:100%;min-width:0;justify-content:center;padding:.625rem .25rem}
+    .local-nav__item[aria-current='page']{border-left:0;border-bottom:4px solid var(--color-key-900);
+      padding:.625rem .25rem .375rem}
+    .nav-label,.nav-badge{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
+      overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
+    .nav-icon{font-size:1.25rem}
+    .topbar{min-height:auto;padding:.75rem 1rem}.topbar__meta{display:none}
+    .view{padding:1rem}.view-header{display:block}.view-header .dads-button{margin-top:1rem}
+    .chat-view{padding:0}.chat-shell{height:calc(100dvh - 3.75rem)}
+    .chat-header{padding:.5rem .75rem}.chat-header .model-pill{display:none}
+    .chat-thread{padding:1.25rem 1rem 10.5rem}
+    .chat-empty{min-height:calc(100dvh - 15rem)}.chat-empty h1{font-size:1.625rem}
+    .suggestion-grid{grid-template-columns:1fr}.suggestion-card:nth-child(n+3){display:none}
+    .composer-dock{padding:2rem .5rem .5rem}.composer{border-radius:1rem}
+    .message-row--user .message-body{max-width:92%}
+    .integration-grid{grid-template-columns:1fr}.calendar-list .data-list__item{grid-template-columns:1fr}
+    .record-browser{grid-template-columns:1fr}.record-list{border-right:0;
+      border-bottom:1px solid var(--color-neutral-solid-gray-200)}
+    .record-list__items{max-height:19rem}.record-detail{min-height:16rem}
+    .workspace-toolbar{align-items:stretch}.workspace-search{width:100%}
+    .form-grid{grid-template-columns:1fr}.connector-card{grid-template-columns:2.75rem 1fr}
+    .connector-card .tool-button{grid-column:1/-1;width:100%}
+    .local-actions{justify-content:stretch}.local-actions .dads-button{width:100%}
+  }
+  ")
+
+(def interaction-js
+  "
+  document.addEventListener('DOMContentLoaded', () => {
+    const $ = (selector, root = document) => root.querySelector(selector);
+    const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
+    const make = (tag, className, text) => {
+      const node = document.createElement(tag);
+      if (className) node.className = className;
+      if (text !== undefined && text !== null) node.textContent = text;
+      return node;
+    };
+    const initialParams = new URLSearchParams(location.search);
+    const requestedView = location.hash.slice(1) || 'chat';
+    let appUnlocked = false;
+    let appBootstrapped = false;
+    const formatDate = (value, timeOnly = false) => {
+      if (!value) return '日時不明';
+      const date = new Date(value);
+      if (Number.isNaN(date.valueOf())) return value;
+      return new Intl.DateTimeFormat('ja-JP', timeOnly
+        ? {hour:'2-digit', minute:'2-digit'}
+        : {month:'numeric', day:'numeric', weekday:'short', hour:'2-digit', minute:'2-digit'}
+      ).format(date);
+    };
+    const showView = (name) => {
+      if (!appUnlocked && name !== 'settings') name = 'settings';
+      $$('.local-nav__item').forEach((item) => item.setAttribute(
+        'aria-current', item.dataset.view === name ? 'page' : 'false'));
+      $$('.view').forEach((panel) => { panel.hidden = panel.dataset.viewPanel !== name; });
+      const active = $(`.local-nav__item[data-view='${name}']`);
+      $('#current-view').textContent = active?.dataset.title || 'Chat';
+      history.replaceState(null, '', `#${name}`);
+      const brand = document.querySelector('.workspace')?.dataset.brand || 'Cloud Itonami';
+      document.title = `${active?.dataset.title || 'Chat'} | ${brand}`;
+    };
+    $$('.local-nav__item').forEach((item) =>
+      item.addEventListener('click', () => showView(item.dataset.view)));
+    showView('settings');
+
+    const form = $('#chat-form');
+    const prompt = $('#prompt');
+    const send = $('#send-button');
+    const stop = $('#stop-button');
+    const status = $('#request-status');
+    const thread = $('#chat-thread');
+    const empty = $('#chat-empty');
+    const scroll = $('#chat-scroll');
+    const chatShell = $('#chat-shell');
+    const modelSelect = $('#model-select');
+    let sessionId = localStorage.getItem('cloud-itonami-session') || 'desktop';
+    let currentController = null;
+    let lastPrompt = '';
+    let generating = false;
+    const announce = (message) => {
+      status.textContent = message;
+      $('#chat-agent-state').textContent = message;
+    };
+    const scrollToEnd = () => requestAnimationFrame(() => {
+      scroll.scrollTop = scroll.scrollHeight;
+    });
+    const resizePrompt = () => {
+      prompt.style.height = 'auto';
+      prompt.style.height = `${Math.min(prompt.scrollHeight, 192)}px`;
+      send.disabled = !prompt.value.trim() || generating;
+    };
+    const setGenerating = (value) => {
+      generating = value;
+      send.hidden = value;
+      stop.hidden = !value;
+      prompt.disabled = value;
+      if (!value) { prompt.disabled = false; resizePrompt(); }
+    };
+    const addAction = (container, label, handler) => {
+      const button = make('button', 'message-action', label);
+      button.type = 'button';
+      button.addEventListener('click', handler);
+      container.append(button);
+    };
+    const addMessage = (role, content, options = {}) => {
+      empty.hidden = true;
+      const row = make('article', `message-row message-row--${role}`);
+      row.dataset.role = role;
+      const body = make('div', 'message-body');
+      const text = make('div', 'message-content', content);
+      const actions = make('div', 'message-actions');
+      if (role === 'assistant') {
+        row.append(make('div', 'message-avatar', 'ai'));
+        body.append(make('p', 'message-author', options.author || 'Local'), text, actions);
+        row.append(body);
+      } else {
+        body.append(text);
+        row.append(body);
+      }
+      thread.append(row);
+      if (content && role === 'assistant') {
+        addAction(actions, 'コピー', async () => {
+          await navigator.clipboard.writeText(text.textContent);
+          announce('応答をコピーしました。');
+        });
+      }
+      scrollToEnd();
+      return {row, body, text, actions};
+    };
+    const addAssistantActions = (message, promptValue) => {
+      addAction(message.actions, 'コピー', async () => {
+        await navigator.clipboard.writeText(message.text.textContent);
+        announce('応答をコピーしました。');
+      });
+      if (promptValue) addAction(message.actions, 'もう一度', () => {
+        prompt.value = promptValue;
+        resizePrompt();
+        form.requestSubmit();
+      });
+    };
+    const loadSession = async () => {
+      try {
+        const request = await fetch(`/api/session?session=${encodeURIComponent(sessionId)}`);
+        const data = await request.json();
+        thread.querySelectorAll('.message-row').forEach((node) => node.remove());
+        data.messages.forEach((message) => {
+          if (message.role === 'user') lastPrompt = message.content;
+          const rendered = addMessage(message.role, message.content,
+            {author: message.role === 'assistant' ? 'Local' : 'あなた'});
+          if (message.role === 'assistant' && lastPrompt) {
+            addAction(rendered.actions, 'もう一度', () => {
+              prompt.value = lastPrompt;
+              resizePrompt();
+              form.requestSubmit();
+            });
+          }
+        });
+        empty.hidden = data.messages.length > 0;
+        announce(data.messages.length ? '会話を復元しました。' : 'ローカルモデルの準備ができています。');
+      } catch (error) {
+        announce(`履歴を読み込めませんでした: ${error.message}`);
+      }
+    };
+    const parseStream = async (response, assistant, promptValue) => {
+      if (!response.ok || !response.body) throw new Error('応答ストリームを開始できませんでした。');
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+      let received = false;
+      while (true) {
+        const {value, done} = await reader.read();
+        buffer += decoder.decode(value || new Uint8Array(), {stream: !done});
+        const lines = buffer.split('\\n');
+        buffer = lines.pop() || '';
+        for (const line of lines) {
+          if (!line.trim()) continue;
+          const event = JSON.parse(line);
+          if (event.type === 'delta') {
+            if (!received) { assistant.text.replaceChildren(); received = true; }
+            assistant.text.textContent += event.content;
+            announce('応答を生成しています…');
+            scrollToEnd();
+          } else if (event.type === 'done') {
+            addAssistantActions(assistant, promptValue);
+            announce(`${event.provider} / ${event.model} から応答しました。`);
+          } else if (event.type === 'error') {
+            throw new Error(event.message);
+          }
+        }
+        if (done) break;
+      }
+      if (!received) throw new Error('モデルから空の応答が返されました。');
+    };
+    form.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const value = prompt.value.trim();
+      if (!value || generating) {
+        if (!value) announce('メッセージを入力してください。');
+        return;
+      }
+      lastPrompt = value;
+      addMessage('user', value);
+      prompt.value = '';
+      resizePrompt();
+      const assistant = addMessage('assistant', '');
+      const typing = make('div', 'typing');
+      typing.setAttribute('aria-label', '応答を生成中');
+      typing.append(make('span'), make('span'), make('span'));
+      assistant.text.append(typing);
+      currentController = new AbortController();
+      setGenerating(true);
+      announce('モデルに接続しています…');
+      try {
+        const request = await fetch('/api/chat/stream', {
+          method:'POST', headers:{'Content-Type':'application/json'},
+          signal:currentController.signal,
+          body:JSON.stringify({prompt:value, session:sessionId, agent:'local',
+            model:modelSelect.value})
+        });
+        await parseStream(request, assistant, value);
+      } catch (error) {
+        assistant.text.replaceChildren();
+        assistant.text.textContent = error.name === 'AbortError'
+          ? '生成を停止しました。'
+          : `応答を生成できませんでした: ${error.message}`;
+        addAction(assistant.actions, '再試行', () => {
+          prompt.value = value; resizePrompt(); form.requestSubmit();
+        });
+        announce(error.name === 'AbortError' ? '生成を停止しました。' : '応答でエラーが発生しました。');
+      } finally {
+        currentController = null;
+        setGenerating(false);
+        prompt.focus();
+      }
+    });
+    stop.addEventListener('click', () => currentController?.abort());
+    prompt.addEventListener('input', resizePrompt);
+    prompt.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) {
+        event.preventDefault(); form.requestSubmit();
+      }
+    });
+    document.addEventListener('keydown', (event) => {
+      if (event.key === 'Escape' && generating) currentController?.abort();
+    });
+    $$('.suggestion-card').forEach((button) => button.addEventListener('click', () => {
+      prompt.value = button.dataset.prompt; resizePrompt(); prompt.focus();
+    }));
+    $('#new-chat-button').addEventListener('click', () => {
+      currentController?.abort();
+      sessionId = `chat-${crypto.randomUUID()}`;
+      localStorage.setItem('cloud-itonami-session', sessionId);
+      chatShell.dataset.session = sessionId;
+      thread.querySelectorAll('.message-row').forEach((node) => node.remove());
+      empty.hidden = false;
+      prompt.value = ''; resizePrompt(); prompt.focus();
+      announce('新しいチャットを開始しました。');
+    });
+    modelSelect.addEventListener('change', () => {
+      $('#active-model-label').textContent = `${modelSelect.dataset.provider} / ${modelSelect.value}`;
+      announce(`${modelSelect.value} を選択しました。`);
+    });
+    fetch('/v1/models').then((request) => request.json()).then((data) => {
+      const selected = modelSelect.value;
+      const models = data.data || [];
+      if (models.length) {
+        modelSelect.replaceChildren();
+        models.forEach((model) => {
+          const option = make('option', null, model.id);
+          option.value = model.id;
+          option.selected = model.id === selected;
+          modelSelect.append(option);
+        });
+      }
+    }).catch(() => {});
+    chatShell.dataset.session = sessionId;
+    resizePrompt();
+
+    const listItem = (title, meta, side, warn = false) => {
+      const item = make('li', 'data-list__item');
+      const copy = make('div');
+      copy.append(make('p', 'data-list__title', title), make('p', 'data-list__meta', meta));
+      const chip = make('span', `state-chip${warn ? ' state-chip--warn' : ''}`, side);
+      item.append(copy, chip);
+      return item;
+    };
+    const bytes = (value) => {
+      if (!Number.isFinite(value)) return 'サイズ不明';
+      if (value < 1024) return `${value} B`;
+      if (value < 1048576) return `${(value / 1024).toFixed(1)} KB`;
+      return `${(value / 1048576).toFixed(1)} MB`;
+    };
+    const setDetail = (target, eyebrow, title, body, metadata) => {
+      target.replaceChildren();
+      target.append(make('p', 'record-detail__eyebrow', eyebrow),
+        make('h2', null, title), make('p', 'record-detail__body', body));
+      const meta = make('dl', 'local-meta record-detail__meta');
+      metadata.forEach(([label, value]) => {
+        meta.append(make('dt', null, label), make('dd', null, value || '—'));
+      });
+      target.append(meta);
+    };
+    const recordButton = (item, selected, onSelect, fields) => {
+      const row = make('li');
+      const button = make('button', 'record-button');
+      button.type = 'button';
+      button.setAttribute('aria-pressed', selected ? 'true' : 'false');
+      const top = make('span', 'record-button__top');
+      top.append(make('span', 'record-button__title', fields.title),
+        make('span', 'record-button__time', fields.time));
+      button.append(top, make('span', 'record-button__meta', fields.meta));
+      if (fields.snippet) button.append(make('span', 'record-button__snippet', fields.snippet));
+      button.addEventListener('click', () => onSelect(item));
+      row.append(button);
+      return row;
+    };
+    let inboxData = {items:[]};
+    let selectedInbox = null;
+    const renderInbox = (data) => {
+      inboxData = data;
+      const query = ($('#inbox-search').value || '').trim().toLocaleLowerCase('ja');
+      const items = data.items.filter((item) =>
+        [item.subject, item.from, item['from-email'], item.snippet]
+          .some((value) => String(value || '').toLocaleLowerCase('ja').includes(query)));
+      if (!items.some((item) => item.id === selectedInbox?.id)) selectedInbox = items[0] || null;
+      const list = $('#inbox-list'); list.replaceChildren();
+      const select = (item) => { selectedInbox = item; renderInbox(inboxData); };
+      items.forEach((item) => list.append(recordButton(item, item.id === selectedInbox?.id, select, {
+        title:item.subject, time:item['received-at'] || '日時不明',
+        meta:item.from || item['from-email'], snippet:item.snippet || '本文プレビューなし'})));
+      if (!items.length) list.append(make('li', 'empty-state', '条件に一致するメールはありません。'));
+      if (selectedInbox) setDetail($('#inbox-detail'), selectedInbox.from,
+        selectedInbox.subject, selectedInbox.snippet || '本文は安全なプレビューを作成できませんでした。',
+        [['差出人', selectedInbox['from-email']], ['受信', selectedInbox['received-at']],
+         ['保管状態', selectedInbox['available?'] ? '本文あり' : '暗号化・封印済み'],
+         ['サイズ', bytes(selectedInbox['size-bytes'])]]);
+      else $('#inbox-detail').replaceChildren(make('div', 'empty-state', 'メールを選択してください。'));
+      $('#inbox-visible-count').textContent = `${items.length} 件を表示`;
+      $('#inbox-count').textContent = data.count;
+      $('#inbox-source').textContent = `${data.source} · ${data.count} 件`;
+    };
+    let driveData = {items:[]};
+    let selectedDrive = null;
+    const renderDrive = (data) => {
+      driveData = data;
+      const query = ($('#drive-search').value || '').trim().toLocaleLowerCase('ja');
+      const items = data.items.filter((item) =>
+        [item.name, item.folder, item['media-type']]
+          .some((value) => String(value || '').toLocaleLowerCase('ja').includes(query)));
+      if (!items.some((item) => item.id === selectedDrive?.id)) selectedDrive = items[0] || null;
+      const list = $('#drive-list'); list.replaceChildren();
+      const select = (item) => { selectedDrive = item; renderDrive(driveData); };
+      items.forEach((item) => list.append(recordButton(item, item.id === selectedDrive?.id, select, {
+        title:item.name, time:bytes(item['size-bytes']), meta:item.folder,
+        snippet:item['media-type']})));
+      if (!items.length) list.append(make('li', 'empty-state', '条件に一致するファイルはありません。'));
+      if (selectedDrive) setDetail($('#drive-detail'), selectedDrive.folder,
+        selectedDrive.name, 'OneDrive アーカイブに保存されているファイルです。',
+        [['種類', selectedDrive['media-type']], ['サイズ', bytes(selectedDrive['size-bytes'])],
+         ['保管状態', selectedDrive['available?'] ? '利用可能' : 'アーカイブ参照'],
+         ['相対位置', selectedDrive.id]]);
+      else $('#drive-detail').replaceChildren(make('div', 'empty-state', 'ファイルを選択してください。'));
+      $('#drive-visible-count').textContent = `${items.length} 件を表示`;
+      $('#drive-count').textContent = data.count || data.items.length;
+      $('#drive-source').textContent = data.source;
+    };
+    const renderProjects = (data) => {
+      const list = $('#project-list'); list.replaceChildren();
+      data.items.forEach((item) => list.append(listItem(
+        item.title, `${item.graph || data.scope} · #${item.number}`,
+        item['closed?'] ? 'Closed' : 'Open')));
+      if (!data.items.length) {
+        const empty = make('li', 'empty-state');
+        empty.append(make('strong', null, data.message || 'Project はありません。'),
+          make('p', 'data-list__meta', '接続後は Table・Board・Roadmap を同じデータから切り替えます。'));
+        list.append(empty);
+      }
+      $('#projects-count').textContent = data.items.length;
+      $('#projects-source').textContent = `${data.source} · ${data.scope}`;
+      $('#projects-state').textContent = data.status === 'connected' ? '接続済み' : '権限確認が必要';
+      $('#projects-state').className = `state-chip${data.status === 'connected' ? '' : ' state-chip--warn'}`;
+    };
+    let calendarData = {items:[], days:[]};
+    let selectedDay = null;
+    let selectedEvent = null;
+    const renderCalendar = (data) => {
+      calendarData = data;
+      const days = data.days || [];
+      if (!days.some((day) => day.date === selectedDay)) selectedDay = days[0]?.date || null;
+      const rail = $('#calendar-days'); rail.replaceChildren();
+      days.forEach((day) => {
+        const date = new Date(`${day.date}T00:00:00`);
+        const button = make('button', 'date-button');
+        button.type = 'button';
+        button.setAttribute('aria-pressed', day.date === selectedDay ? 'true' : 'false');
+        button.append(make('span', null, new Intl.DateTimeFormat('ja-JP', {weekday:'short'}).format(date)),
+          make('strong', null, String(date.getDate())),
+          make('span', null, `${day.items.length} 件`));
+        button.addEventListener('click', () => {
+          selectedDay = day.date; selectedEvent = null; renderCalendar(calendarData);
+        });
+        rail.append(button);
+      });
+      const activeDay = days.find((day) => day.date === selectedDay);
+      const items = activeDay?.items || [];
+      if (!items.some((item) => item.id === selectedEvent?.id)) selectedEvent = items[0] || null;
+      const list = $('#calendar-list'); list.replaceChildren();
+      data.items.forEach((item) => {
+        if (!items.some((candidate) => candidate.id === item.id)) return;
+        list.append(recordButton(item, item.id === selectedEvent?.id,
+          (event) => { selectedEvent = event; renderCalendar(calendarData); }, {
+            title:item.title,
+            time:item['all-day?'] ? '終日' : formatDate(item.start, true),
+            meta:item.calendar || 'Calendar',
+            snippet:item['all-day?'] ? '終日の予定' : `${formatDate(item.end, true)} まで`
+          }));
+      });
+      if (!items.length) list.append(make('li', 'empty-state', data.message || 'この日の予定はありません。'));
+      if (selectedEvent) setDetail($('#calendar-detail'), selectedEvent.calendar || 'Calendar',
+        selectedEvent.title, selectedEvent['all-day?'] ? '終日の予定です。' : '時間を確保した予定です。',
+        [['開始', selectedEvent['all-day?'] ? '終日' : formatDate(selectedEvent.start)],
+         ['終了', selectedEvent['all-day?'] ? '終日' : formatDate(selectedEvent.end)],
+         ['カレンダー', selectedEvent.calendar || 'Calendar']]);
+      else $('#calendar-detail').replaceChildren(make('div', 'empty-state', 'この日の予定はありません。'));
+      $('#scheduler-count').textContent = data.items.length;
+      $('#calendar-source').textContent = `${data.source} · ${data.status}`;
+    };
+    const loadWorkspace = async (name, renderer) => {
+      try {
+        const request = await fetch(`/api/workspace/${name}`);
+        const data = await request.json();
+        if (!request.ok) throw new Error(data?.error?.message || `${name} を読み込めませんでした。`);
+        renderer(data);
+        return true;
+      } catch (error) {
+        $(`#${name === 'scheduler' ? 'calendar' : name}-list`)?.replaceChildren(
+          make('li', 'empty-state', error.message));
+        return false;
+      }
+    };
+    const bootstrapApp = () => {
+      if (appBootstrapped) return;
+      appBootstrapped = true;
+      loadSession();
+      Promise.all([
+        loadWorkspace('inbox', renderInbox),
+        loadWorkspace('projects', renderProjects),
+        loadWorkspace('drive', renderDrive),
+        loadWorkspace('scheduler', renderCalendar)
+      ]).then((results) => {
+        const connected = results.filter(Boolean).length;
+        $('#workspace-status').textContent = `${connected} / ${results.length} サービス接続`;
+      });
+    };
+    $('#inbox-search').addEventListener('input', () => renderInbox(inboxData));
+    $('#drive-search').addEventListener('input', () => renderDrive(driveData));
+    let identityState = null;
+    const connectorMarks = {github:'GH', google:'G', microsoft:'M'};
+    const identityHeaders = () => ({
+      'Content-Type':'application/json',
+      'X-CLOUD-ITONAMI-CSRF':identityState?.csrf || ''
+    });
+    const b64urlToBytes = (value) => {
+      const base64 = value.replace(/-/g, '+').replace(/_/g, '/')
+        .padEnd(Math.ceil(value.length / 4) * 4, '=');
+      return Uint8Array.from(atob(base64), (character) => character.charCodeAt(0));
+    };
+    const bytesToB64url = (value) => {
+      if (value === null || value === undefined) return null;
+      const bytes = new Uint8Array(value);
+      let binary = '';
+      bytes.forEach((byte) => { binary += String.fromCharCode(byte); });
+      return btoa(binary).replace(/\\+/g, '-').replace(/\\//g, '_').replace(/=+$/g, '');
+    };
+    const creationOptions = (payload) => {
+      const options = payload.options;
+      options.publicKey.challenge = b64urlToBytes(options.publicKey.challenge);
+      options.publicKey.user.id = b64urlToBytes(options.publicKey.user.id);
+      (options.publicKey.excludeCredentials || []).forEach((item) => {
+        item.id = b64urlToBytes(item.id);
+      });
+      return options;
+    };
+    const assertionOptions = (payload) => {
+      const options = payload.options;
+      options.publicKey.challenge = b64urlToBytes(options.publicKey.challenge);
+      (options.publicKey.allowCredentials || []).forEach((item) => {
+        item.id = b64urlToBytes(item.id);
+      });
+      return options;
+    };
+    const credentialJSON = (credential) => {
+      const response = credential.response;
+      const result = {
+        id:credential.id, rawId:bytesToB64url(credential.rawId),
+        type:credential.type,
+        authenticatorAttachment:credential.authenticatorAttachment || null,
+        clientExtensionResults:credential.getClientExtensionResults(),
+        response:{clientDataJSON:bytesToB64url(response.clientDataJSON)}
+      };
+      if (response.attestationObject) {
+        result.response.attestationObject = bytesToB64url(response.attestationObject);
+        result.response.transports = response.getTransports ? response.getTransports() : [];
+      } else {
+        result.response.authenticatorData = bytesToB64url(response.authenticatorData);
+        result.response.signature = bytesToB64url(response.signature);
+        result.response.userHandle = bytesToB64url(response.userHandle);
+      }
+      return result;
+    };
+    const postJSON = async (path, body={}, authenticated=false) => {
+      const request = await fetch(path, {
+        method:'POST',
+        headers:authenticated ? identityHeaders() : {'Content-Type':'application/json'},
+        body:JSON.stringify(body)
+      });
+      const data = await request.json();
+      if (!request.ok) throw new Error(data?.error?.message || '認証要求を完了できませんでした。');
+      return data;
+    };
+    const requireWebAuthn = () => {
+      if (!window.PublicKeyCredential || !navigator.credentials) {
+        throw new Error('このブラウザは Passkey / WebAuthn に対応していません。');
+      }
+    };
+    const registerCurrentPasskey = async () => {
+      requireWebAuthn();
+      const started = await postJSON('/api/passkeys/register/start', {}, true);
+      const credential = await navigator.credentials.create(creationOptions(started));
+      await postJSON('/api/passkeys/register/finish', {
+        'transaction-id':started['transaction-id'],
+        credential:credentialJSON(credential)
+      }, true);
+      await loadIdentity();
+      $('#identity-status').textContent = 'Passkey を登録しました。';
+    };
+    const renderMembers = (organization) => {
+      const list = $('#member-list'); list.replaceChildren();
+      (organization?.users || []).forEach((user) => {
+        const row = make('li');
+        const copy = make('div');
+        copy.append(make('strong', null, user['display-name']),
+          make('span', null, user.email));
+        row.append(copy, make('span', 'state-chip', user.role));
+        list.append(row);
+      });
+    };
+    const renderConnectors = (data) => {
+      const list = $('#connector-list'); list.replaceChildren();
+      const connections = new Map((data.connections || [])
+        .map((connection) => [connection.provider, connection]));
+      (data.providers || []).forEach((provider) => {
+        const connection = connections.get(provider.id);
+        const card = make('article', 'connector-card');
+        card.append(make('div', 'connector-logo', connectorMarks[provider.id] || '•'));
+        const copy = make('div');
+        copy.append(make('h3', null, provider.name));
+        const description = connection
+          ? `${connection['display-name'] || connection.email || '接続済み'} · ${connection.scopes?.length || 0} 権限`
+          : provider['configured?']
+            ? `${provider.scopes.length} 個の読み取り権限を確認して接続`
+            : 'OAuth クライアント設定が必要です';
+        copy.append(make('p', null, description));
+        const button = make('button', 'tool-button',
+          connection ? '再接続' : provider['configured?'] ? '接続する' : '未設定');
+        button.type = 'button';
+        button.disabled = !provider['configured?'];
+        button.addEventListener('click', async () => {
+          button.disabled = true; button.textContent = '接続を準備中…';
+          try {
+            const request = await fetch(`/api/connections/${provider.id}/start`, {
+              method:'POST', headers:identityHeaders(), body:'{}'
+            });
+            const result = await request.json();
+            if (!request.ok) throw new Error(result?.error?.message || '接続を開始できませんでした。');
+            location.assign(result.url);
+          } catch (error) {
+            button.disabled = false; button.textContent = '接続する';
+            $('#identity-status').textContent = error.message;
+          }
+        });
+        card.append(copy, button); list.append(card);
+      });
+    };
+    const renderIdentity = (data) => {
+      identityState = data;
+      const passkeyReady = Boolean(
+        data['authenticated?'] && data.user?.['passkey-enrolled?']);
+      appUnlocked = passkeyReady;
+      $$('.local-nav__item').forEach((item) => {
+        item.disabled = !passkeyReady && item.dataset.view !== 'settings';
+        item.setAttribute('aria-disabled', String(item.disabled));
+      });
+      document.body.dataset.identityGate = passkeyReady ? 'ready' : 'required';
+      $('#passkey-gate-notice').hidden = passkeyReady;
+      if (!passkeyReady) {
+        showView('settings');
+        $('#current-view').textContent = 'Passkey 登録';
+        $('#workspace-status').textContent = 'Passkey 登録が必要です';
+      } else {
+        bootstrapApp();
+        showView(requestedView);
+      }
+      const onboarding = $('#identity-onboarding');
+      const workspace = $('#identity-workspace');
+      onboarding.hidden = data['registered?'];
+      workspace.hidden = !data['authenticated?'];
+      $('#registered-auth').hidden = !(data['registered?'] && !data['authenticated?']);
+      if (data['registered?'] && !data['authenticated?']) {
+        onboarding.hidden = false;
+        const pendingPasskey = data['passkey-required?'];
+        $('#registration-title').textContent = pendingPasskey
+          ? 'Passkey 登録を再開'
+          : 'Passkey でサインイン';
+        $('#registration-lead').textContent = pendingPasskey
+          ? '仮登録は完了しています。Passkey を作成するとアプリを利用できます。'
+          : '登録済みの Passkey で本人確認するとアプリを開けます。';
+        $('#passkey-signin').textContent = pendingPasskey
+          ? 'Passkey 登録を再開'
+          : 'Passkey でサインイン';
+        $('#registration-form').hidden = true;
+      }
+      if (!data['authenticated?']) return;
+      $('#identity-avatar').textContent =
+        (data.user['display-name'] || 'U').slice(0, 2);
+      $('#identity-name').textContent = data.user['display-name'] || 'Passkey user';
+      $('#identity-email').textContent =
+        data.user['account-id'] ? data.user.email : 'Organization ID 未設定';
+      $('#identity-did').textContent = data.user.did || 'Passkey 登録後に発行';
+      $('#passkey-state').textContent = data.user['passkey-enrolled?']
+        ? 'Passkey 登録済み'
+        : '必須: 続行するには Passkey を登録してください。';
+      $('#passkey-register').textContent = data.user['passkey-enrolled?']
+        ? '別の Passkey を追加' : 'Passkey を登録';
+      const organizationReady = Boolean(data.organization?.['profile-complete?']);
+      $('#organization-name').textContent =
+        organizationReady ? data.organization.name : 'Organization ID 未設定';
+      $('#organization-domain').textContent = organizationReady
+        ? `${data.organization.domain} · ${data.organization.role}`
+        : 'Passkey 登録後に設定できます';
+      $('#organization-did').textContent =
+        data.organization?.did || 'Organization DID は ID 設定後に発行';
+      $('#organization-form').hidden = organizationReady;
+      $('#member-card').hidden = !organizationReady;
+      renderMembers(data.organization);
+      renderConnectors(data);
+      loadCloudAlias(data);
+    };
+    const loadCloudAlias = async (identity) => {
+      const state = $('#cloud-alias-state');
+      const button = $('#cloud-alias-reserve');
+      if (!state || !identity?.['authenticated?']) return;
+      if (!identity.user?.['account-id']) {
+        state.textContent = 'Organization ID を設定すると公開メールアドレスを予約できます。';
+        button.disabled = true;
+        return;
+      }
+      try {
+        const request = await fetch('/api/cloud/alias');
+        const data = await request.json();
+        if (!request.ok) throw new Error(data?.error?.message || 'クラウド状態を確認できません。');
+        if (!data['configured?']) {
+          state.textContent = 'Private Relay provider はまだ設定されていません。';
+          button.disabled = true;
+          return;
+        }
+        const alias = data.alias;
+        state.textContent = data.found
+          ? `${alias.address} · ${alias.status}`
+          : `${identity.user.email} はグローバル未予約です。`;
+        button.disabled = data.found && alias.status === 'active';
+      } catch (error) {
+        state.textContent = error.message;
+        button.disabled = true;
+      }
+    };
+    const loadIdentity = async () => {
+      try {
+        const request = await fetch('/api/identity');
+        const data = await request.json();
+        if (!request.ok) throw new Error('アカウント情報を読み込めませんでした。');
+        renderIdentity(data);
+      } catch (error) {
+        $('#identity-status').textContent = error.message;
+      }
+    };
+    $('#registration-form').addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const button = $('#registration-submit');
+      button.disabled = true; button.textContent = '登録中…';
+      try {
+        const request = await fetch('/api/identity/register', {
+          method:'POST', headers:{'Content-Type':'application/json'},
+          body:JSON.stringify({})
+        });
+        const data = await request.json();
+        if (!request.ok) throw new Error(data?.error?.message || '登録できませんでした。');
+        renderIdentity(data);
+        $('#identity-status').textContent = 'Passkey を登録します。';
+        try { await registerCurrentPasskey(); }
+        catch (passkeyError) {
+          $('#identity-status').textContent =
+            `アカウントは登録済みです。Passkey 登録: ${passkeyError.message}`;
+        }
+      } catch (error) {
+        $('#identity-status').textContent = error.message;
+        button.disabled = false; button.textContent = 'Passkey で登録';
+      }
+    });
+    $('#organization-form').addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const button = $('#organization-submit');
+      const fields = Object.fromEntries(new FormData(event.currentTarget));
+      button.disabled = true; button.textContent = '設定中…';
+      try {
+        const data = await postJSON('/api/identity/organization', fields, true);
+        renderIdentity(data);
+        $('#identity-status').textContent =
+          `${data.organization.domain} と ${data.user.email} を設定しました。`;
+      } catch (error) {
+        $('#identity-status').textContent = error.message;
+        button.disabled = false; button.textContent = 'Organization ID を設定';
+      }
+    });
+    $('#member-form').addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const memberForm = event.currentTarget;
+      const fields = new FormData(memberForm);
+      try {
+        const request = await fetch('/api/identity/users', {
+          method:'POST', headers:identityHeaders(),
+          body:JSON.stringify(Object.fromEntries(fields))
+        });
+        const data = await request.json();
+        if (!request.ok) throw new Error(data?.error?.message || 'ユーザーを追加できませんでした。');
+        memberForm.reset(); renderIdentity(data.identity);
+        const invitation = data.invitation;
+        const result = $('#enrollment-result');
+        result.hidden = false;
+        result.textContent =
+          `${invitation.email} の enrollment code: ${invitation['enrollment-code']}（24時間・1回限り）`;
+        $('#identity-status').textContent = '組織ユーザーと enrollment code を発行しました。';
+      } catch (error) {
+        $('#identity-status').textContent = error.message;
+      }
+    });
+    $('#passkey-register').addEventListener('click', async () => {
+      const button = $('#passkey-register');
+      button.disabled = true;
+      try { await registerCurrentPasskey(); }
+      catch (error) { $('#identity-status').textContent = error.message; }
+      finally { button.disabled = false; }
+    });
+    $('#cloud-alias-reserve').addEventListener('click', async () => {
+      const button = $('#cloud-alias-reserve');
+      const destination = $('#cloud-alias-destination').value.trim();
+      button.disabled = true;
+      try {
+        const request = await fetch('/api/cloud/alias', {
+          method:'POST',
+          headers:identityHeaders(),
+          body:JSON.stringify({destination})
+        });
+        const data = await request.json();
+        if (!request.ok) throw new Error(data?.error?.message || 'グローバル予約に失敗しました。');
+        $('#cloud-alias-state').textContent =
+          `${data.address} を予約しました。転送先の確認メールを送信しました。`;
+      } catch (error) {
+        $('#cloud-alias-state').textContent = error.message;
+        button.disabled = false;
+      }
+    });
+    $('#passkey-signin').addEventListener('click', async () => {
+      const button = $('#passkey-signin'); button.disabled = true;
+      try {
+        if (identityState?.['passkey-required?']) {
+          const resumed = await postJSON('/api/passkeys/onboarding/resume');
+          renderIdentity(resumed);
+          await registerCurrentPasskey();
+          $('#identity-status').textContent = 'Passkey を登録してアプリを開きました。';
+          return;
+        }
+        requireWebAuthn();
+        const started = await postJSON('/api/passkeys/authenticate/start');
+        const credential = await navigator.credentials.get(assertionOptions(started));
+        const data = await postJSON('/api/passkeys/authenticate/finish', {
+          'transaction-id':started['transaction-id'],
+          credential:credentialJSON(credential)
+        });
+        renderIdentity(data);
+        $('#identity-status').textContent = 'Passkey でサインインしました。';
+      } catch (error) {
+        $('#identity-status').textContent = error.message;
+      } finally { button.disabled = false; }
+    });
+    $('#enrollment-form').addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const button = $('#enrollment-submit'); button.disabled = true;
+      try {
+        requireWebAuthn();
+        const fields = Object.fromEntries(new FormData(event.currentTarget));
+        const started = await postJSON('/api/passkeys/enroll/start', fields);
+        const credential = await navigator.credentials.create(creationOptions(started));
+        const data = await postJSON('/api/passkeys/enroll/finish', {
+          'transaction-id':started['transaction-id'],
+          credential:credentialJSON(credential)
+        });
+        renderIdentity(data);
+        $('#identity-status').textContent = 'Passkey を登録してサインインしました。';
+      } catch (error) {
+        $('#identity-status').textContent = error.message;
+      } finally { button.disabled = false; }
+    });
+    if (initialParams.get('connection')) {
+      const notice = $('#connection-notice');
+      const connected = initialParams.get('connection') === 'connected';
+      notice.hidden = false;
+      notice.className = `settings-notice${connected ? '' : ' settings-notice--error'}`;
+      notice.textContent = connected
+        ? `${initialParams.get('provider')} を接続しました。`
+        : `${initialParams.get('provider')} の接続を完了できませんでした。`;
+    }
+    loadIdentity();
+    $$('.view-switcher button').forEach((button) => button.addEventListener('click', () => {
+      $$('.view-switcher button').forEach((item) =>
+        item.setAttribute('aria-pressed', item === button ? 'true' : 'false'));
+    }));
+  });
+  ")
+
+(defn- nav-item [view title icon badge-id]
+  [:button {:class "local-nav__item" :type "button" :data-view view
+            :data-title title :aria-label title
+            :aria-current (if (= view "chat") "page" "false")}
+   [:span {:class "nav-icon" :aria-hidden "true"} icon]
+   [:span {:class "nav-label"} title]
+   (when badge-id [:span {:class "nav-badge" :id badge-id} "—"])])
+
+(defn- view-header [title lead]
+  [:header {:class "view-header"}
+   [:div {:class "view-header__copy"}
+    (dds/heading 1 title {:size "36"})
+    [:p {:class "view-lead"} lead]]])
+
+(defn page-html [configuration]
+  (let [cloud? (get-in configuration [:routing :cloud-enabled?])
+        provider (get-in configuration [:routing :default-provider])
+        model (get-in configuration [:routing :default-model])
+        brand (get-in configuration [:brand :name] "Cloud Itonami")
+        css (slurp (io/resource "jp_go_dds/dds.css"))]
+    (page/->page
+     {:title (str "Chat | " brand)
+      :description "ローカル優先のAIワークスペース"
+      :css css :app-css app-css :head [[:script interaction-js]]}
+     [:div {:class "workspace" :data-brand brand}
+      [:aside {:class "sidebar" :aria-label "メインメニュー"}
+       [:div {:class "brand"}
+        [:p {:class "brand__eyebrow"} "LOCAL-FIRST"]
+        [:p {:class "brand__name"} brand]
+        [:p {:class "brand__mark" :role "img" :aria-label brand} "ai"]
+        [:p {:class "brand__note"} "Kotoba でつながる、手元の仕事場"]]
+       [:nav {:class "local-nav"}
+        (nav-item "chat" "Chat" "✦" nil)
+        (nav-item "inbox" "Inbox" "□" "inbox-count")
+        (nav-item "projects" "Projects" "▦" "projects-count")
+        (nav-item "drive" "Drive" "◇" "drive-count")
+        (nav-item "scheduler" "Scheduler" "○" "scheduler-count")
+        (nav-item "settings" "Settings" "⚙" nil)]
+       [:div {:class "sidebar__status"}
+        [:strong "● ローカルモード"]
+        [:span {:id "workspace-status"} "既存サービスを確認中…"]]]
+      [:div {:class "main"}
+       [:header {:class "topbar"}
+        [:h2 {:class "topbar__title" :id "current-view"} "Chat"]
+        [:p {:class "topbar__meta"} "データは許可された接続先からのみ読み込みます"]]
+       [:main {:id "main-content"}
+        [:section {:class "view chat-view" :data-view-panel "chat"}
+         [:div {:class "chat-shell" :id "chat-shell"}
+          [:header {:class "chat-header"}
+           [:div {:class "chat-agent"}
+            [:div {:class "chat-agent__avatar" :aria-hidden "true"} "ai"]
+            [:div
+             [:p {:class "chat-agent__name"} "Local"]
+             [:p {:class "chat-agent__state" :id "chat-agent-state"}
+              "ローカルモデルを準備中…"]]]
+           [:div {:class "chat-header__actions"}
+            [:span {:class "model-pill" :id "active-model-label"} (str provider " / " model)]
+            [:button {:class "tool-button" :type "button" :id "new-chat-button"}
+             "＋ 新しいチャット"]]]
+          [:div {:class "chat-scroll" :id "chat-scroll"}
+           [:div {:class "chat-thread" :id "chat-thread"
+                  :role "log" :aria-live "polite" :aria-relevant "additions"}
+            [:div {:class "chat-empty" :id "chat-empty"}
+             [:div {:class "chat-empty__mark" :aria-hidden "true"} "ai"]
+             [:h1 "今日は何を進めますか？"]
+             [:p (if cloud?
+                   "必要に応じて許可済みクラウドモデルを使えます。送信前の接続先を確認してください。"
+                   "この会話はローカルモデルで処理され、端末の外へ送信されません。")]
+             [:div {:class "suggestion-grid"}
+              [:button {:class "suggestion-card" :type "button"
+                        :data-prompt "今日の予定と優先タスクを整理して"}
+               [:strong "今日を整理する"] [:span "予定と優先順位をまとめる"]]
+              [:button {:class "suggestion-card" :type "button"
+                        :data-prompt "このプロジェクトの次の実装ステップを提案して"}
+               [:strong "実装を進める"] [:span "次のステップを具体化する"]]
+              [:button {:class "suggestion-card" :type "button"
+                        :data-prompt "考えを整理したいので、論点を質問して"}
+               [:strong "考えを深める"] [:span "対話しながら論点を見つける"]]
+              [:button {:class "suggestion-card" :type "button"
+                        :data-prompt "次の文章を簡潔で自然な日本語に直して"}
+               [:strong "文章を整える"] [:span "伝わりやすい表現に書き換える"]]]]]]
+          [:div {:class "composer-dock"}
+           [:form {:class "composer" :id "chat-form"}
+            [:label {:class "visually-hidden" :for "prompt"} "メッセージ"]
+            [:textarea {:id "prompt" :name "prompt" :rows 1
+                        :placeholder (str brand " にメッセージ")
+                        :autocomplete "off" :aria-describedby "composer-note request-status"}]
+            [:div {:class "composer-toolbar"}
+             [:div {:class "composer-context"}
+              [:select {:class "model-pill" :id "model-select" :aria-label "モデル"
+                        :data-provider provider}
+               [:option {:value model} model]]
+              [:span {:class "state-chip"} (if cloud? "接続先を確認" "Local only")]]
+             [:div
+              [:button {:class "composer-button" :id "send-button" :type "submit"
+                        :aria-label "送信" :title "送信（Enter）"} "↑"]
+              [:button {:class "composer-button composer-button--stop"
+                        :id "stop-button" :type "button" :hidden true
+                        :aria-label "生成を停止" :title "生成を停止（Esc）"} "■"]]]
+            [:p {:class "composer-note" :id "composer-note"}
+             "Enterで送信 · Shift+Enterで改行 · AIの回答は確認してください"]]
+           [:p {:class "visually-hidden" :id "request-status"
+                :role "status" :aria-live "polite"}
+            "ローカルモデルを準備中です。"]]]]
+        [:section {:class "view" :data-view-panel "inbox" :hidden true}
+         (view-header "Inbox" "kotoba-lang/mail のメールボックスモデルで、受信履歴を安全に検索・確認します。")
+         [:p {:class "source-note"} [:span {:class "source-dot"}]
+          [:span {:id "inbox-source"} "m365-archive を読み込み中…"]]
+         [:div {:class "workspace-toolbar"}
+          [:label {:class "visually-hidden" :for "inbox-search"} "メールを検索"]
+          [:input {:class "workspace-search" :id "inbox-search" :type "search"
+                   :placeholder "差出人、件名、本文を検索" :autocomplete "off"}]
+          [:span {:class "result-count" :id "inbox-visible-count"} "読み込み中…"]]
+         [:div {:class "record-browser"}
+          [:div {:class "record-list"}
+           [:ul {:class "record-list__items" :id "inbox-list"}
+            [:li {:class "skeleton"}]]]
+          [:article {:class "record-detail" :id "inbox-detail" :aria-live "polite"}
+           [:div {:class "empty-state"} "メールを読み込んでいます。"]]]]
+        [:section {:class "view" :data-view-panel "projects" :hidden true}
+         (view-header "Projects" "GitHub Projects と同じデータを、Table・Board・Roadmap の視点で整理します。")
+         [:div {:class "local-card"}
+          [:div {:class "view-header" :style "margin-bottom:1rem"}
+           [:div
+            (dds/heading 2 "kotoba-lang / kotoba" {:size "24"})
+            [:p {:class "source-note"} [:span {:class "source-dot"}]
+             [:span {:id "projects-source"} "com-github を確認中…"]]]
+           [:span {:class "state-chip" :id "projects-state"} "確認中"]]
+          [:div {:class "view-switcher" :aria-label "Project 表示"}
+           [:button {:type "button" :aria-pressed "true"} "Table"]
+           [:button {:type "button" :aria-pressed "false"} "Board"]
+           [:button {:type "button" :aria-pressed "false"} "Roadmap"]]
+          [:ul {:class "data-list" :id "project-list"} [:li {:class "skeleton"}]]]]
+        [:section {:class "view" :data-view-panel "drive" :hidden true}
+         (view-header "Drive" "kotoba-lang/drive のファイルモデルで、OneDrive アーカイブを検索・確認します。")
+         [:p {:class "source-note"} [:span {:class "source-dot"}]
+          [:span {:id "drive-source"} "m365-archive を読み込み中…"]]
+         [:div {:class "workspace-toolbar"}
+          [:label {:class "visually-hidden" :for "drive-search"} "ファイルを検索"]
+          [:input {:class "workspace-search" :id "drive-search" :type "search"
+                   :placeholder "ファイル名、フォルダー、種類を検索" :autocomplete "off"}]
+          [:span {:class "result-count" :id "drive-visible-count"} "読み込み中…"]]
+         [:div {:class "record-browser"}
+          [:div {:class "record-list"}
+           [:ul {:class "record-list__items" :id "drive-list"} [:li {:class "skeleton"}]]]
+          [:article {:class "record-detail" :id "drive-detail" :aria-live "polite"}
+           [:div {:class "empty-state"} "ファイルを読み込んでいます。"]]]]
+        [:section {:class "view" :data-view-panel "scheduler" :hidden true}
+         (view-header "Scheduler" "kotoba-lang/calendar と EventKit で、この先7日間を日ごとに整理します。")
+         [:p {:class "source-note"} [:span {:class "source-dot"}]
+          [:span {:id "calendar-source"} "EventKit を読み込み中…"]]
+         [:div {:class "date-rail" :id "calendar-days" :aria-label "日付を選択"}]
+         [:div {:class "record-browser"}
+          [:div {:class "record-list"}
+           [:ul {:class "record-list__items" :id "calendar-list"}
+            [:li {:class "skeleton"}]]]
+          [:article {:class "record-detail" :id "calendar-detail" :aria-live "polite"}
+           [:div {:class "empty-state"} "予定を読み込んでいます。"]]]]
+        [:section {:class "view" :data-view-panel "settings" :hidden true}
+         (view-header "Settings" "Cloud Itonami の組織・ユーザーと、外部サービスへの委任接続を管理します。")
+         [:p {:class "visually-hidden" :id "identity-status"
+              :role "status" :aria-live "polite"} "アカウント情報を確認中です。"]
+         [:div {:class "settings-notice" :id "connection-notice" :hidden true}]
+         [:div {:class "security-callout" :id "passkey-gate-notice"
+                :role "status" :aria-live "polite"}
+          [:strong "Passkey 登録が必須です。"]
+          " 登録が完了するまで、この端末ではワークスペースとチャットを利用できません。"]
+         [:div {:class "local-card" :id "identity-onboarding"}
+         (dds/heading 2 "Passkey で利用登録" {:size "24"
+                                             :id "registration-title"})
+          [:p {:class "view-lead" :id "registration-lead"}
+           "入力は不要です。Passkey だけで User を作成し、Organization ID やプロフィールは後から設定できます。"]
+          [:form {:class "settings-form" :id "registration-form"}
+           [:p {:class "form-help"}
+            "Passkey の P-256 公開鍵から User DID（did:key）を生成します。秘密鍵は端末から出ません。"]
+           [:button {:class "primary-action" :id "registration-submit"
+                     :type "submit"} "Passkey で登録"]]
+          [:div {:class "settings-stack" :id "registered-auth" :hidden true}
+           [:button {:class "primary-action" :id "passkey-signin" :type "button"}
+            "Passkey でサインイン"]
+           [:form {:class "settings-form" :id "enrollment-form"}
+            (dds/heading 3 "招待された User" {:size "20"})
+            [:div {:class "field"}
+             [:label {:for "enrollment-account"} "アカウントID"]
+             [:input {:id "enrollment-account" :name "account-id"
+                      :required true :autocomplete "username"}]]
+            [:div {:class "field"}
+             [:label {:for "enrollment-code"} "Enrollment code"]
+             [:input {:id "enrollment-code" :name "enrollment-code"
+                      :required true :autocomplete "one-time-code"}]]
+            [:button {:class "tool-button" :id "enrollment-submit" :type "submit"}
+             "Passkey を登録して参加"]]]]
+         [:div {:class "settings-stack" :id "identity-workspace" :hidden true}
+          [:div {:class "identity-summary"}
+           [:div {:class "identity-summary__avatar" :id "identity-avatar"
+                  :aria-hidden "true"} "U"]
+           [:div {:class "identity-summary__copy"}
+            [:p {:class "identity-summary__name" :id "identity-name"} "User"]
+            [:p {:class "identity-summary__meta" :id "identity-email"} "—"]
+            [:p {:class "identity-summary__meta" :id "identity-did"} "—"]]
+           [:span {:class "state-chip"} "端末認証済み"]]
+          [:div {:class "settings-grid"}
+           [:div {:class "settings-stack"}
+            [:div {:class "local-card"}
+             (dds/heading 2 "Passkey" {:size "24"})
+             [:p {:class "view-lead" :id "passkey-state"} "Passkey 状態を確認中…"]
+             [:button {:class "primary-action" :id "passkey-register"
+                       :type "button"} "Passkey を登録"]]
+            [:div {:class "local-card"}
+             (dds/heading 2 "Private Email Relay" {:size "24"})
+             [:p {:class "view-lead" :id "cloud-alias-state"}
+              "グローバル予約状態を確認中…"]
+             [:div {:class "field"}
+              [:label {:for "cloud-alias-destination"} "実メール転送先"]
+              [:input {:id "cloud-alias-destination" :type "email"
+                       :autocomplete "email"
+                       :placeholder "private@example.jp"}]]
+             [:p {:class "form-help"}
+              "公開アドレスへの受信を転送し、返信時も実メールアドレスを相手に開示しません。"]
+             [:button {:class "primary-action" :id "cloud-alias-reserve"
+                       :type "button"} "グローバル予約して確認メールを送信"]]
+            [:div {:class "local-card"}
+             (dds/heading 2 "サービス接続" {:size "24"})
+             [:p {:class "view-lead"}
+              "読み取り権限を用途別に確認し、owner の操作で接続します。接続先の token は macOS Keychain に保存されます。"]
+             [:div {:class "connector-list" :id "connector-list"}
+              [:div {:class "skeleton"}]]]
+            [:div {:class "security-callout"}
+             [:strong "認証境界"]
+             " Passkey は challenge・origin・RP ID・署名・user verification・counter をサーバーで検証します。OAuth は state を一度だけ使用し、PKCE S256 と10分の期限を適用します。"]]
+           [:aside {:class "settings-stack"}
+            [:div {:class "local-card"}
+             (dds/heading 2 "Organization" {:size "20"})
+             [:p {:class "identity-summary__name" :id "organization-name"} "—"]
+             [:p {:class "identity-summary__meta" :id "organization-domain"} "—"]
+             [:p {:class "identity-summary__meta" :id "organization-did"} "—"]
+             [:form {:class "settings-form" :id "organization-form"}
+              [:div {:class "field"}
+               [:label {:for "organization-id"} "Organization ID"]
+               [:input {:id "organization-id" :name "organization-id"
+                        :required true :autocomplete "off"
+                        :pattern "[a-z0-9][a-z0-9._-]{1,30}[a-z0-9]"
+                        :placeholder "my-organization"}]
+               [:span {:class "form-help"}
+                "設定後は変更できません。管理ドメインと owner の公開アドレスを発行します。"]]
+              [:button {:class "primary-action" :id "organization-submit"
+                        :type "submit"} "Organization ID を設定"]]
+             [:ul {:class "member-list" :id "member-list"}]]
+            [:div {:class "local-card" :id "member-card"}
+             (dds/heading 2 "User を追加" {:size "20"})
+             [:form {:class "settings-form" :id "member-form"}
+              [:div {:class "field"}
+               [:label {:for "member-name"} "表示名"]
+               [:input {:id "member-name" :name "display-name" :required true
+                        :autocomplete "off"}]]
+              [:div {:class "field"}
+               [:label {:for "member-account-id"} "アカウントID"]
+               [:input {:id "member-account-id" :name "account-id"
+                        :required true :autocomplete "off"
+                        :pattern "[a-z0-9][a-z0-9._-]{1,30}[a-z0-9]"}]
+               [:span {:class "form-help"} "管理ドメインのアドレスを発行"]]
+              [:div {:class "field"}
+               [:label {:for "member-email"} "連絡先メール（任意）"]
+               [:input {:id "member-email" :name "contact-email" :type "email"
+                        :autocomplete "off"}]]
+              [:div {:class "field"}
+               [:label {:for "member-role"} "ロール"]
+               [:select {:id "member-role" :name "role"}
+                [:option {:value "member"} "Member"]
+                [:option {:value "admin"} "Admin"]]]
+              [:button {:class "primary-action" :type "submit"} "User を登録"]]
+             [:p {:class "security-callout" :id "enrollment-result"
+                  :hidden true :aria-live "polite"}]]]]]]]]])))

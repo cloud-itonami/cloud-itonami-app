@@ -1,0 +1,9 @@
+Cloud Itonami
+Copyright 2026 Cloud Itonami contributors
+
+This product includes components from the kotoba-lang organization and
+Digital Agency Design System-derived resources. See deps.edn for immutable
+source revisions and each dependency repository for its notices and license.
+
+The profiles/gftd.edn file is an example distribution profile. It contains no
+credentials and does not grant rights to operate the gftd.ai domain.
