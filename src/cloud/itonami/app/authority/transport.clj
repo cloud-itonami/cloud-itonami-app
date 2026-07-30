@@ -17,20 +17,26 @@
   authority that cannot be reached is not the same as one that said no, and the
   ledger should be able to tell them apart.
 
-  What an actor is expected to answer with:
+  What an actor answers with -- THREE states, not two:
 
-    {\"ok\": true,  \"record\": {...}}      the governor cleared it
-    {\"ok\": false, \"refusal\": {...}}     the governor refused it
+    {\"status\": \"committed\", \"record\": {...}}    the governor cleared it
+    {\"status\": \"held\",      \"refusal\": {...}}   the governor refused it
+    {\"status\": \"pending\",   \"reference\": \"…\"}  accepted, awaiting the
+                                                   actor's OWN operator
 
-  A governor refusal arriving over this transport is NOT an error. It is the
-  second gate doing its job: the human consented and the licensed operator's
-  governor still said no. `commit!` records it and both statuses are terminal.
+  The third state is why the earlier boolean contract was wrong. A governor
+  refusal is NOT an error -- it is the second gate doing its job, the human
+  consented and the licensed operator said no. But \"the human consented and the
+  operator has not decided yet\" is neither success nor refusal, and a boolean
+  forced it to be filed as one of them. With today's fleet it is also the ONLY
+  answer a well-formed proposal gets: every op a consent surface can send is
+  absent from every phase's :auto set, permanently.
 
-  NOTE on reachability, stated plainly: no actor in this fleet exposes an HTTP
-  surface yet -- they are libraries with demo mains. So with today's fleet every
-  configured endpoint will refuse with :transport-failed, and every unconfigured
-  one with :endpoint-not-configured. This namespace is the seam that makes the
-  app side complete and testable; it does not make the fleet reachable. See
+  NOTE on reachability: `cloud-itonami/cloud-itonami-esim` now serves
+  `POST /commit` (`clojure -M:serve`, loopback), so the eSIM authority is
+  reachable once an endpoint is configured. `cloud-itonami-card-issuing` and
+  `denwaban` still have no HTTP surface, so those two remain
+  :endpoint-not-configured / :transport-failed until they get one. See
   ADR-2607300300's remaining gaps."
   (:require [clojure.data.json :as json])
   (:import [java.net URI]
@@ -87,16 +93,26 @@
         (nil? payload)
         (refusal :transport-failed {:detail "actor の応答が JSON として読めません"})
 
+        ;; Accepted, and the actor's own operator has still to decide. Checked
+        ;; before the others because it is neither of them.
+        (= "pending" (:status payload))
+        {:authority/ok? false
+         :authority/pending? true
+         :authority/reference (:reference payload)
+         :authority/refusal nil}
+
+        (= "committed" (:status payload))
+        {:authority/ok? true :authority/record (:record payload)}
+
         ;; The actor's governor refused. Not an error -- the second gate working.
-        (false? (:ok payload))
+        (= "held" (:status payload))
         {:authority/ok? false
          :authority/refusal (or (:refusal payload) {:rule :governor-refused})}
 
-        (true? (:ok payload))
-        {:authority/ok? true :authority/record (:record payload)}
-
         :else
-        (refusal :transport-failed {:detail "actor の応答に ok が含まれません"})))
+        (refusal :transport-failed
+                 {:detail (str "actor の応答 status が committed|held|pending の"
+                               "いずれでもありません: " (pr-str (:status payload)))})))
     (catch Exception e
       (refusal :transport-failed {:detail (.getMessage e)}))))
 
