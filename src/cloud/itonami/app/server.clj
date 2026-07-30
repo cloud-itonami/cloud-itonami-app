@@ -847,6 +847,15 @@
                        (documents/grant! id (:principal request) (:role request)
                                          (:user-id session)))))
 
+            ;; Inside the documents, not only across their names. Separate
+            ;; from the Drive listing because it reads every readable
+            ;; document's bytes and the listing must not.
+            (and (= method "GET") (= path "/api/workspace/drive/search"))
+            (let [session (require-app-session! exchange)]
+              (send! exchange 200
+                     (documents/search (:q (query-params exchange))
+                                       (:user-id session))))
+
             ;; Binary out. Not `send!` — a PPTX is a zip, and a CSV that has
             ;; been through a JSON string is a CSV with quotes in it.
             (and (= method "GET")
