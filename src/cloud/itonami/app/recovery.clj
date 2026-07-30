@@ -74,11 +74,13 @@
     (let [process (-> (ProcessBuilder. ^java.util.List arguments)
                       (.redirectErrorStream true)
                       .start)
-          output (future (slurp (.getInputStream process)))
           completed? (.waitFor process 5 TimeUnit/SECONDS)]
       (when-not completed? (.destroyForcibly process))
       {:exit (when completed? (.exitValue process))
-       :out (when completed? (str/trim (deref output 500 "")))})
+       :out (when completed?
+              (str/trim
+               (String. (.readAllBytes (.getInputStream process))
+                        StandardCharsets/UTF_8)))})
     (catch Exception _ nil)))
 
 (defn- keychain-get []
