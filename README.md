@@ -208,7 +208,7 @@ rather than reporting `missing` for a place nobody said to look.
 The pane reports whether a face resolves, not what it says: no canvas items, no
 leverage band, no maturity score. Proving the join comes before building the
 analysis views on it. See
-[ADR-0007](docs/adr/0007-business-is-the-join-of-five-planes.md).
+[ADR-0008](docs/adr/0008-business-is-the-join-of-five-planes.md).
 
 ## Funding accounts and payment settlement
 

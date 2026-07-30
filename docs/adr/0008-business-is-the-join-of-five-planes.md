@@ -1,4 +1,4 @@
-# ADR-0007: A business is the join of five planes, and nothing else in the app was
+# ADR-0008: A business is the join of five planes, and nothing else in the app was
 
 Status: accepted (2026-07-30)
 
