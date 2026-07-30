@@ -61,6 +61,7 @@
             [forms.model :as forms]
             [forms.validate :as forms-validate]
             [forms.wire :as forms-wire]
+            [docs.markdown :as docs-md]
             [sheets.csv :as sheets-csv]
             [sheets.xlsx :as sheets-xlsx]
             [sheets.model :as sheets]
@@ -205,7 +206,8 @@
                     "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                     :extension "xlsx"}
             "edn" {:media-type "application/edn" :extension "edn"}}
-   :docs {"edn" {:media-type "application/edn" :extension "edn"}}
+   :docs {"md" {:media-type "text/markdown; charset=utf-8" :extension "md"}
+          "edn" {:media-type "application/edn" :extension "edn"}}
    :forms {"edn" {:media-type "application/edn" :extension "edn"}}
    :slides {"pptx" {:media-type
                     "application/vnd.openxmlformats-officedocument.presentationml.presentation"
@@ -217,6 +219,7 @@
   {"csv" :sheets
    "xlsx" :sheets
    "pptx" :slides
+   "md" :docs
    "edn" nil})
 
 (def ^:private resource-kinds
@@ -735,6 +738,29 @@
     (stored-kind-mismatch! id (:drive/resource-kind item) kind)
     payload))
 
+(defn export-warnings
+  "What each export format will drop from this resource, before it drops it.
+
+  Keyed by format, so the pane can put the warning next to the button that
+  causes it rather than in a place nobody reads. Only Markdown answers
+  anything today: EDN is the stored bytes and loses nothing, and the office
+  formats lose plenty but neither `slides.pptx` nor `sheets.xlsx` can yet say
+  what — those are the same function waiting to be written, not a claim that
+  they are lossless.
+
+  Entries are `docs.markdown/unexpressed`'s shape, which is
+  `docs.validate/problems`'s shape, so the pane renders them with the code it
+  already has."
+  [kind resource]
+  (when (= :docs kind)
+    (let [entries (docs-md/unexpressed resource)]
+      (when (seq entries)
+        {"md" (mapv (fn [e] {:severity (some-> (:docs/severity e) name)
+                             :code (str (:docs/code e))
+                             :id (:docs/id e)
+                             :message (:docs/msg e)})
+                    entries)}))))
+
 (defn content
   "The stored resource of one document, read back through the ACL.
 
@@ -761,6 +787,8 @@
                                  :role (ws/effective-role workspace id actor)})
           :resource-kind (some-> (:drive/resource-kind item) str)
           :resource resource
+          :export-warnings (export-warnings (get resource-kinds (:drive/resource-kind item))
+                                            resource)
           :payload (transit/write-json resource)})
        (refuse! result)))))
 
@@ -1774,6 +1802,7 @@
      (let [resource (:resource (content id actor object-store))
            text (case format
                   "edn" (pr-str (stored-envelope (get kinds kind) resource))
+                  "md" (docs-md/write resource)
                   "csv" (let [tab-id (or tab (first (sort (keys (:sheets/tabs resource)))))]
                           (or (sheets-csv/workbook->csv resource tab-id)
                               (throw (ex-info (str "タブ " (pr-str tab-id) " はありません。")
@@ -1845,6 +1874,7 @@
          [kind imported]
          (case format
            "csv" [:sheets nil]
+           "md" [:docs (docs-md/read @text)]
            "xlsx" [:sheets (sheets-xlsx/workbook-from-bytes bytes)]
            "pptx" [:slides (slides-office/deck-from-office-bytes bytes)]
            "edn" (let [envelope (edn/read-string @text)

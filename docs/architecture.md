@@ -233,6 +233,45 @@ What is still not read is anything about appearance — fonts, fills, widths,
 merges — because nothing in the sheets model can hold them. There is still
 no docx.
 
+### A document can leave
+
+`docs` could only be exported as EDN, which is the same as not being able to
+leave: the format is exact and nothing else reads it. `docs.markdown` writes
+one as Markdown and reads one back, so a memo written here can go into a
+mail, a repository, or anything that opens text.
+
+**What it cannot carry is named before it is dropped, not after.**
+`docs.markdown/unexpressed` answers what *this* document will lose — block
+ids, comments, suggestions, a style Markdown has no syntax for, a table cell
+that is not text, a Drive reference — shaped like `docs.validate/problems`,
+so the pane renders it with the code it already has. `content` carries it as
+`:export-warnings`, keyed by format, so the warning can sit next to the
+button that causes it.
+
+That warning is shown in two pieces for a reason. The static line — Markdown
+does not keep ids, comments, or every style — is true of every document, so
+it costs nothing and is there before anything is opened. The document's own
+list needs its bytes, and the detail pane is rebuilt on every keystroke in
+the search box, so fetching it per render would be a request per keystroke.
+It appears once the document is loaded.
+
+Two asymmetries in the conversion are deliberate. `write` spells a bold run
+as `**`; `read` does not turn `**` back into a run, because the asterisks in
+a pasted document may be asterisks and a wrong range puts the bold in the
+wrong place — a round trip loses styling rather than inventing it. And a
+table cell holding `120` comes back holding `"120"`, because reading it as a
+number would be the guess `sheets.csv` refuses.
+
+Unlike pptx and xlsx there is nothing to refuse on the way in: every byte
+sequence is valid Markdown. What `require-office-package!` does for those,
+the parser does here by never throwing — junk becomes the nearest blocks and
+the validator is what reports the document, because a parser that threw
+would turn a bad paste into a 500.
+
+`forms` is now the one surface with no format but EDN, and neither
+`slides.pptx` nor `sheets.xlsx` can yet say what *they* drop — those are the
+same function waiting to be written, not a claim that they are lossless.
+
 ### Two editors, one document
 
 A save carries the `:etag` of the version it was made from — the object
