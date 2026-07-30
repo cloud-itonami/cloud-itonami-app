@@ -2168,6 +2168,14 @@
       if (item['writable?']) row.append(rename);
       row.append(open);
       if (item['writable?']) row.append(save);
+      // Offered to anyone who can see the document, including a viewer of
+      // one shared read-only — which is the case the operation exists for.
+      const copy = make('button', 'tool-button', 'コピーを作成');
+      copy.type = 'button';
+      copy.addEventListener('click', () => driveAction(
+        `/api/workspace/drive/documents/${encodeURIComponent(item.id)}/copy`,
+        {folder:driveFolder}, `${item.name} のコピーを作成しました。`));
+      row.append(copy);
       if (item.role === 'owner') {
         // Owner only, because moving into a shared folder shares what was
         // moved — an editor who could move could widen the access the owner

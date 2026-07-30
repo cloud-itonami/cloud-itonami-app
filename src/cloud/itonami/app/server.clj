@@ -1012,6 +1012,21 @@
                          {:error {:type "drive/not-found"
                                   :message "そのフォルダはありません。"}})))
 
+            ;; Readable, not writable: a viewer may copy, and that is the
+            ;; point of the operation.
+            (and (= method "POST")
+                 (id-from-path path #"/api/workspace/drive/documents/([^/]+)/copy"))
+            (let [session (require-app-session! exchange)
+                  request (read-json exchange)]
+              (require-origin! exchange config)
+              (require-csrf! exchange session)
+              (send! exchange 200
+                     (documents/copy!
+                      (id-from-path path #"/api/workspace/drive/documents/([^/]+)/copy")
+                      (:user-id session)
+                      (documents/store-instance)
+                      {:title (:title request) :folder (:folder request)})))
+
             (and (= method "POST")
                  (id-from-path path #"/api/workspace/drive/documents/([^/]+)/move"))
             (let [session (require-app-session! exchange)

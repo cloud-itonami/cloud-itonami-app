@@ -434,6 +434,44 @@ so the quoting is `sheets.csv`'s one implementation of it — an answer
 containing a comma or a newline is ordinary, and a second escaping routine is
 a second place to get it wrong.
 
+### Make a copy
+
+The operation a reader of a shared document actually needs. Until now the
+only way to get an editable version of something shared read-only was to
+export it and import it back — two steps, through bytes, losing the kind if
+the surface had no office format. `copy!` takes `readable!` and not
+`writable!`: a viewer may copy, and that is the point rather than an
+oversight.
+
+**Four things are deliberately left behind, and each would be a bug if it
+came along.** The *grants*, because copying a document shared with five
+people must not share the copy with them — it falls out of `create!` giving
+the creator `:owner` and nobody anything, and is asserted anyway, since
+getting it wrong is a silent access leak rather than a visible fault. The
+*comments and responses*, because they are about the document somebody said
+them about. The *history*, because a copy is not a fork of the past. And the
+*quota*, which is the copier's: unlike editing a shared document, where the
+bytes stay in the owner's Drive, these bytes are new and in the copier's.
+
+**A copy has one version, and so does an import.** Both used to create a
+seeded document and write over it, so every copied or imported document had
+a first version that was an empty one nobody ever had — offered by the
+history pane and restorable. `create!` now takes a `resource-fn` and
+produces the document with its contents.
+
+That change moved validation with it. `write-resource!` refuses a document
+the surface rejects; `create!` did not, because it only ever produced a seed
+and validating one would have been checking this file against itself. With
+contents arriving at creation, leaving the check out let a broken `.edn`
+import succeed — silent in the direction that looks like success, which is
+how it was found. `create!` now runs the same check, and a refused import
+leaves nothing behind at all rather than a seeded document.
+
+The kinds table gained `:id-key`. `import!` read
+`(if (= kind :slides) :slides/id :docs/id)`, so an EDN-imported form gained a
+stray `:docs/id` and kept the original's `:forms/id` — a document that
+internally still said it was the one it came from.
+
 ### Two editors, one document
 
 A save carries the `:etag` of the version it was made from — the object

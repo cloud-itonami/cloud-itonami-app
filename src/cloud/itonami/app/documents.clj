@@ -109,6 +109,7 @@
             :label "スプレッドシート"
             :default-title "無題のスプレッドシート"
             :title-key :sheets/title
+           :id-key :sheets/id
             :seed (fn [id title]
                     (-> (sheets/workbook id {:sheets/title title})
                         ;; A workbook with no tabs has nowhere to put a cell,
@@ -134,6 +135,7 @@
           :label "ドキュメント"
           :default-title "無題のドキュメント"
           :title-key :docs/title
+           :id-key :docs/id
           :seed (fn [id title]
                   (-> (docs/document id {:docs/title title})
                       (docs/add-block (docs/heading "title" 1 title))))
@@ -157,6 +159,7 @@
            :label "フォーム"
            :default-title "無題のフォーム"
            :title-key :forms/title
+           :id-key :forms/id
            ;; No seed field: an empty form is valid, and a placeholder
            ;; question is one the author has to notice and delete.
            :seed (fn [id title] (forms/form id {:forms/title title}))
@@ -171,6 +174,7 @@
             :label "スライド"
             :default-title "無題のスライド"
             :title-key :slides/title
+           :id-key :slides/id
             :seed (fn [id title]
                     (-> (slides/deck id {:slides/title title})
                         (slides/add-slide
@@ -962,70 +966,6 @@
                               (map #(folder-view ws % actor)))))
                       vec))})))
 
-(defn create!
-  "Create a document of `kind` in `actor`'s Drive and return its item view.
-
-  The order is `drive.object`'s: the item exists in the model, then the
-  bytes are written, then the version is recorded — so a store failure
-  leaves nothing behind claiming bytes that are not there. State is only
-  persisted once `write-item` has said yes.
-
-  The read-then-write is inside a lock rather than inside `store/transact!`
-  because the write is IO: `transact!` is a `swap!`, and a `swap!` that
-  retries would put the object twice under two references, the second of
-  which nothing would ever reference again."
-  ([kind title actor] (create! kind title actor (store-instance) {}))
-  ([kind title actor object-store] (create! kind title actor object-store {}))
-  ([kind title actor object-store {:keys [folder]}]
-   (let [spec (get kinds kind)]
-     (when-not spec
-       (throw (ex-info "作成できるのはスプレッドシート・ドキュメント・フォームだけです。"
-                       {:type :drive/unknown-kind :kind kind
-                        :known (vec (keys kinds))})))
-     (when (str/blank? (str actor))
-       (throw (ex-info "作成者を特定できません。" {:type :identity/unauthenticated})))
-     (locking write-lock
-       (let [{:keys [workspace owner parent]}
-             (locate-folder! (store/snapshot) actor folder)
-             id (store/new-id "doc")
-             title (or (not-empty (str/trim (str title))) (:default-title spec))
-             created-at (store/now)
-             envelope (stored-envelope spec ((:seed spec) id title))
-             staged (ws/create-file workspace id parent
-                                    {:drive/title title
-                                     :drive/media-type stored-media-type
-                                     :drive/resource-kind (:resource-kind spec)
-                                     :drive/created-at created-at}
-                                    actor)
-             ;; A document belongs to the Drive it is in. `ws/create-file`
-             ;; makes the creator the owner, which is right in your own
-             ;; Drive and wrong in somebody else's: alice would be unable to
-             ;; trash, purge or re-share something sitting in her own
-             ;; folder, all of which are owner-only. So the Drive's owner
-             ;; owns it and the creator is recorded as an editor — enough to
-             ;; go on working on what they just made.
-             staged (cond-> staged
-                      (not= owner actor)
-                      (assoc-in [:drive.workspace/items id :drive/permissions]
-                                {owner :owner actor :editor}))
-             written (object/write-item staged object-store id actor
-                                        (envelope-bytes envelope)
-                                        {:object-ref (object-ref)
-                                         :created-at created-at})]
-         (if (:ok? written)
-           ;; Persisted under the *folder owner*, because that is whose
-           ;; workspace was rewritten. Writing it back under the creator
-           ;; would put a copy in their Drive and leave the folder owner's
-           ;; unchanged — the document would appear to exist twice and be
-           ;; the same document neither time.
-           (do (store/transact! assoc-in (workspace-path owner) (:workspace written))
-               {:schema schema
-                :ok? true
-                :item (item-view (ws/item (:workspace written) id)
-                                 {:owner owner :own? (= owner actor)
-                                  :role (ws/effective-role (:workspace written) id actor)})})
-           (refuse! written)))))))
-
 (defn- stored-kind-mismatch!
   "Refuse bytes whose discriminant disagrees with the item that points at them.
 
@@ -1179,6 +1119,89 @@
 
 (defn errors-in [spec resource]
   (:errors (problems-in spec resource)))
+
+(defn create!
+  "Create a document of `kind` in `actor`'s Drive and return its item view.
+
+  The order is `drive.object`'s: the item exists in the model, then the
+  bytes are written, then the version is recorded — so a store failure
+  leaves nothing behind claiming bytes that are not there. State is only
+  persisted once `write-item` has said yes.
+
+  The read-then-write is inside a lock rather than inside `store/transact!`
+  because the write is IO: `transact!` is a `swap!`, and a `swap!` that
+  retries would put the object twice under two references, the second of
+  which nothing would ever reference again."
+  ([kind title actor] (create! kind title actor (store-instance) {}))
+  ([kind title actor object-store] (create! kind title actor object-store {}))
+  ([kind title actor object-store {:keys [folder resource-fn]}]
+   (let [spec (get kinds kind)]
+     (when-not spec
+       (throw (ex-info "作成できるのはスプレッドシート・ドキュメント・フォームだけです。"
+                       {:type :drive/unknown-kind :kind kind
+                        :known (vec (keys kinds))})))
+     (when (str/blank? (str actor))
+       (throw (ex-info "作成者を特定できません。" {:type :identity/unauthenticated})))
+     (locking write-lock
+       (let [{:keys [workspace owner parent]}
+             (locate-folder! (store/snapshot) actor folder)
+             id (store/new-id "doc")
+             title (or (not-empty (str/trim (str title))) (:default-title spec))
+             created-at (store/now)
+             ;; `resource-fn` rather than a resource, because the id is
+             ;; minted here and the contents have to carry it. Copying and
+             ;; importing both used to create a seeded document and then
+             ;; write over it, which left every one of them with a first
+             ;; version that was an empty document nobody ever made —
+             ;; offered by the history pane and restorable.
+             resource ((or resource-fn (:seed spec)) id title)
+             ;; The same check `write-resource!` makes, because this is now
+             ;; the same act. Before `resource-fn` existed, creating always
+             ;; produced a seed and validating one would have been checking
+             ;; this file against itself; now a copy or an import arrives
+             ;; here whole, and a document that cannot be saved must not be
+             ;; creatable either. Leaving it out let a broken .edn import
+             ;; succeed — silent in the direction that looks like success.
+             errors (:errors (problems-in spec resource))
+             _ (when (seq errors)
+                 (throw (ex-info (str "作成できません: " (:message (first errors)))
+                                 {:type :drive/invalid-document :problems errors})))
+             envelope (stored-envelope spec resource)
+             staged (ws/create-file workspace id parent
+                                    {:drive/title title
+                                     :drive/media-type stored-media-type
+                                     :drive/resource-kind (:resource-kind spec)
+                                     :drive/created-at created-at}
+                                    actor)
+             ;; A document belongs to the Drive it is in. `ws/create-file`
+             ;; makes the creator the owner, which is right in your own
+             ;; Drive and wrong in somebody else's: alice would be unable to
+             ;; trash, purge or re-share something sitting in her own
+             ;; folder, all of which are owner-only. So the Drive's owner
+             ;; owns it and the creator is recorded as an editor — enough to
+             ;; go on working on what they just made.
+             staged (cond-> staged
+                      (not= owner actor)
+                      (assoc-in [:drive.workspace/items id :drive/permissions]
+                                {owner :owner actor :editor}))
+             written (object/write-item staged object-store id actor
+                                        (envelope-bytes envelope)
+                                        {:object-ref (object-ref)
+                                         :created-at created-at})]
+         (if (:ok? written)
+           ;; Persisted under the *folder owner*, because that is whose
+           ;; workspace was rewritten. Writing it back under the creator
+           ;; would put a copy in their Drive and leave the folder owner's
+           ;; unchanged — the document would appear to exist twice and be
+           ;; the same document neither time.
+           (do (store/transact! assoc-in (workspace-path owner) (:workspace written))
+               {:schema schema
+                :ok? true
+                :item (item-view (ws/item (:workspace written) id)
+                                 {:owner owner :own? (= owner actor)
+                                  :role (ws/effective-role (:workspace written) id actor)})})
+           (refuse! written)))))))
+
 
 (defn- writable!
   "The workspace, item and spec for a write, or the refusal that stops it.
@@ -2150,6 +2173,58 @@
                 (sheets/tab "回答" {:sheets/title "回答"})
                 (vec rows)))))
 
+(defn copy!
+  "A new document with this one's contents, in `actor`'s Drive.
+
+  What every Drive calls *make a copy*, and the one operation a reader of a
+  shared document actually needs: until now the only way to get an editable
+  version of something shared read-only was to export it and import it back,
+  which is two steps, goes through bytes, and loses the kind on the way if
+  the surface has no office format.
+
+  So `readable!` and not `writable!` — a viewer may copy, and that is the
+  point rather than an oversight.
+
+  **Four things are deliberately left behind, and each would be a bug if it
+  came along.**
+
+  *The grants.* Copying a document shared with five people must not share
+  the copy with them. It is a new document created by `create!`, which gives
+  the creator `:owner` and nobody anything, so this falls out — and is
+  asserted anyway, because getting it wrong is a silent access leak rather
+  than a visible fault.
+
+  *The comments and the responses.* They are about the document somebody
+  said them about. A copy carrying its original's comment threads would put
+  words in a conversation that did not happen.
+
+  *The history.* The copy has one version, which is this one. A copy is not
+  a fork of the past; the original still has all of it.
+
+  *The quota.* Charged to whoever made the copy, unlike editing a shared
+  document — which is charged to the owner, because the bytes stay in their
+  Drive. Here the bytes are new and they are in the copier's Drive."
+  ([id actor] (copy! id actor (store-instance) {}))
+  ([id actor object-store] (copy! id actor object-store {}))
+  ([id actor object-store {:keys [title folder]}]
+   (let [{:keys [item]} (readable! actor id)
+         kind (get resource-kinds (:drive/resource-kind item))
+         source (:resource (content id actor object-store))
+         ;; Google's convention, and a name that says what it is: two
+         ;; documents called 議事録 in one listing is a choice nobody made.
+         name (or (not-empty (str/trim (str title)))
+                  (str (:drive/title item) " のコピー"))
+         spec (get kinds kind)]
+     (create! kind name actor object-store
+              {:folder folder
+               ;; One version, which is this one. The document arrives with
+               ;; its contents rather than being seeded empty and written
+               ;; over — see `create!`.
+               :resource-fn (fn [copy-id copy-title]
+                              (assoc source
+                                     (:title-key spec) copy-title
+                                     (:id-key spec) copy-id))}))))
+
 (defn export
   "One document in `format`, as bytes plus what to call them.
 
@@ -2313,32 +2388,43 @@
          _ (when (and (= "pptx" format) (nil? imported))
              (throw (ex-info (str (str/upper-case format) " として読めませんでした。")
                              {:type :drive/unsupported-format :format format})))
-         created (create! kind (or (not-empty (str/trim (str title)))
-                                   (str "取り込み " (store/now)))
-                          actor object-store)
-         doc-id (:id (:item created))
-         seeded (:resource (content doc-id actor object-store))
-         resource (cond
-                    (= "csv" format)
-                    (sheets-csv/import-csv seeded "imported" @text)
+         spec (get kinds kind)]
+     ;; One version, which is the file. This used to create a seeded
+     ;; document and write over it, so every imported document had a first
+     ;; version that was an empty one nobody ever had — offered by the
+     ;; history pane and restorable.
+     (create! kind (or (not-empty (str/trim (str title)))
+                       (str "取り込み " (store/now)))
+              actor object-store
+              {:resource-fn
+               (fn [doc-id doc-title]
+                 (cond
+                   ;; CSV is the one format that builds *onto* a seed
+                   ;; rather than replacing it: it is one tab's cells and
+                   ;; not a workbook.
+                   (= "csv" format)
+                   (sheets-csv/import-csv ((:seed spec) doc-id doc-title)
+                                          "imported" @text)
 
-                    ;; A workbook arrives whole, tabs and all, so it
-                    ;; replaces the seeded one rather than being added
-                    ;; beside it — importing a five-tab file should not
-                    ;; leave an empty "sheet1" in front of them.
-                    (= "xlsx" format)
-                    (assoc imported :sheets/id doc-id
-                           :sheets/title (:name (:item created)))
+                   ;; A workbook arrives whole, tabs and all, so it
+                   ;; replaces the seeded one rather than being added
+                   ;; beside it — importing a five-tab file should not
+                   ;; leave an empty "sheet1" in front of them.
+                   (= "xlsx" format)
+                   (assoc imported :sheets/id doc-id :sheets/title doc-title)
 
-                    :else
-                    ;; Keep the ids the Drive just minted and the title the
-                    ;; caller asked for; take everything else from the file.
-                    (assoc imported
-                           (:title-key (get kinds kind)) (:name (:item created))
-                           (if (= kind :slides) :slides/id :docs/id) doc-id))
-         target (writable! actor doc-id)]
-     (write-resource! target doc-id actor object-store resource
-                      (:drive/object-ref (:item target))))))
+                   :else
+                   ;; Keep the ids the Drive just minted and the title the
+                   ;; caller asked for; take everything else from the file.
+                   (assoc imported
+                          (:title-key spec) doc-title
+                          ;; From the kinds table rather than from a guess.
+                          ;; This read `(if (= kind :slides) :slides/id
+                          ;; :docs/id)`, so an EDN-imported form gained a
+                          ;; stray `:docs/id` and kept the original's
+                          ;; `:forms/id` — a document that internally still
+                          ;; said it was the one it came from.
+                          (:id-key spec) doc-id)))}))))
 
 ;; ── searching inside documents ──────────────────────────────────────────────
 ;;
