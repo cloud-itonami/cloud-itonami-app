@@ -128,6 +128,21 @@
         (is (re-find (re-pattern (str ">" view "<")) html)))
       (is (re-find #"data-view-panel=\"scheduler\"" html)))))
 
+(deftest app-css-only-references-design-system-tokens-that-exist
+  ;; An undefined custom property makes the whole declaration invalid at
+  ;; computed-value time, so it does not fall back to the cascade — it silently
+  ;; resolves to the initial value. That turned state chips transparent and
+  ;; every :focus-visible outline into outline-style:none, with nothing failing.
+  (let [dds (slurp (io/resource "jp_go_dds/dds.css"))
+        defined (into (set (map second (re-seq #"(--[a-z0-9-]+)\s*:" dds)))
+                      (map second (re-seq #"(--[a-z0-9-]+)\s*:" web/app-css)))
+        referenced (set (map second (re-seq #"var\((--[a-z0-9-]+)\)" web/app-css)))
+        missing (set/difference referenced defined)]
+    (is (seq referenced))
+    (is (empty? missing)
+        (str "app-css references design tokens that jp-go-dds does not define: "
+             (pr-str (sort missing))))))
+
 (deftest every-scripted-element-exists-and-every-nav-item-has-a-panel
   (with-redefs [store/snapshot (constantly (store/initial-state))]
     (let [html (web/page-html config)
