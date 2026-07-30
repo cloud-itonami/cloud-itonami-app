@@ -38,7 +38,8 @@
   `denwaban` still have no HTTP surface, so those two remain
   :endpoint-not-configured / :transport-failed until they get one. See
   ADR-2607300300's remaining gaps."
-  (:require [clojure.data.json :as json])
+  (:require [clojure.data.json :as json]
+            [clojure.string :as str])
   (:import [java.net URI]
            [java.net.http HttpClient HttpClient$Redirect HttpRequest
             HttpRequest$BodyPublishers HttpResponse$BodyHandlers]
@@ -65,17 +66,56 @@
    :authority/refusal (cond-> {:rule rule}
                         detail (assoc :detail detail))})
 
+(defn- url
+  "Join the configured base to a path.
+
+  `:endpoint` is a BASE url (e.g. http://127.0.0.1:1339), not a full commit url.
+  It changed meaning here: step 8 treated it as the commit url outright, which
+  left nowhere to put the status read. Nothing depended on the old reading --
+  defaults.edn ships nil -- so this is a rename of a still-unused knob rather than
+  a migration."
+  [endpoint path]
+  (str (str/replace (str endpoint) #"/+$" "") path))
+
+(defn- decode
+  "Read a JSON body, or nil."
+  [^String body]
+  (try (json/read-str body :key-fn keyword) (catch Exception _ nil)))
+
+(defn- interpret
+  "Map an actor's three-state answer onto a spine outcome. One function, so the
+  commit path and the refresh path cannot read the same wire word differently."
+  [payload]
+  (condp = (:status payload)
+    "pending"   {:authority/ok? false
+                 :authority/pending? true
+                 :authority/reference (:reference payload)
+                 :authority/refusal nil}
+    "committed" {:authority/ok? true :authority/record (:record payload)}
+    "held"      {:authority/ok? false
+                 :authority/refusal (or (:refusal payload) {:rule :governor-refused})}
+    ;; "unknown" is the actor saying it has no record of this reference -- after a
+    ;; restart, every older reference is unknown. That is not a refusal by a
+    ;; governor and must not be recorded as one.
+    "unknown"   {:authority/ok? false
+                 :authority/unknown? true
+                 :authority/refusal {:rule :reference-unknown
+                                     :detail (:detail payload)}}
+    (refusal :transport-failed
+             {:detail (str "actor の応答 status が committed|held|pending|unknown の"
+                           "いずれでもありません: " (pr-str (:status payload)))})))
+
 (defn- post-proposal!
-  "POST the proposal to the actor. Returns the actor's own answer, or a
-  :transport-failed refusal. Never throws -- a transport problem is an outcome to
-  record, not an exception to leak into a route."
+  "POST the proposal to the actor's commit route. Returns the actor's own answer,
+  or a :transport-failed refusal. Never throws -- a transport problem is an
+  outcome to record, not an exception to leak into a route."
   [endpoint proposal]
   (try
     (let [body {:proposal (select-keys proposal
                                        [:id :authority :op :value :digest
                                         :status :approved-at
                                         :passkey-credential-id])}
-          request (-> (HttpRequest/newBuilder (URI/create endpoint))
+          request (-> (HttpRequest/newBuilder (URI/create (url endpoint "/commit")))
                       (.timeout (Duration/ofSeconds 20))
                       (.header "Accept" "application/json")
                       (.header "Content-Type" "application/json")
@@ -84,35 +124,35 @@
                       (.build))
           response (.send client request (HttpResponse$BodyHandlers/ofString))
           status (.statusCode response)
-          payload (try (json/read-str (.body response) :key-fn keyword)
-                       (catch Exception _ nil))]
+          payload (decode (.body response))]
       (cond
-        (not (<= 200 status 299))
-        (refusal :transport-failed {:status status})
+        (not (<= 200 status 299)) (refusal :transport-failed {:status status})
+        (nil? payload) (refusal :transport-failed
+                                {:detail "actor の応答が JSON として読めません"})
+        :else (interpret payload)))
+    (catch Exception e
+      (refusal :transport-failed {:detail (.getMessage e)}))))
 
-        (nil? payload)
-        (refusal :transport-failed {:detail "actor の応答が JSON として読めません"})
-
-        ;; Accepted, and the actor's own operator has still to decide. Checked
-        ;; before the others because it is neither of them.
-        (= "pending" (:status payload))
-        {:authority/ok? false
-         :authority/pending? true
-         :authority/reference (:reference payload)
-         :authority/refusal nil}
-
-        (= "committed" (:status payload))
-        {:authority/ok? true :authority/record (:record payload)}
-
-        ;; The actor's governor refused. Not an error -- the second gate working.
-        (= "held" (:status payload))
-        {:authority/ok? false
-         :authority/refusal (or (:refusal payload) {:rule :governor-refused})}
-
-        :else
-        (refusal :transport-failed
-                 {:detail (str "actor の応答 status が committed|held|pending の"
-                               "いずれでもありません: " (pr-str (:status payload)))})))
+(defn- get-status!
+  "Ask the actor what became of a reference. Read-only: this hits the consent
+  surface, which cannot decide -- learning the outcome and causing it are
+  different authorities and different listeners."
+  [endpoint reference]
+  (try
+    (let [request (-> (HttpRequest/newBuilder
+                       (URI/create (url endpoint (str "/proposals/" reference))))
+                      (.timeout (Duration/ofSeconds 20))
+                      (.header "Accept" "application/json")
+                      (.GET)
+                      (.build))
+          response (.send client request (HttpResponse$BodyHandlers/ofString))
+          status (.statusCode response)
+          payload (decode (.body response))]
+      (cond
+        (not (<= 200 status 299)) (refusal :transport-failed {:status status})
+        (nil? payload) (refusal :transport-failed
+                                {:detail "actor の応答が JSON として読めません"})
+        :else (interpret payload)))
     (catch Exception e
       (refusal :transport-failed {:detail (.getMessage e)}))))
 
@@ -137,3 +177,25 @@
 
         :else
         (post-proposal! endpoint proposal)))))
+
+(defn status-fn
+  "The read used to refresh a pending proposal, closed over its authority key.
+  Same disabled / unconfigured refusals as `commit-fn`, for the same reason."
+  [authority-key]
+  (fn [configuration reference]
+    (let [{:keys [endpoint]} (settings configuration authority-key)]
+      (cond
+        (not (enabled? configuration authority-key))
+        (refusal :authority-disabled
+                 {:detail (str (name authority-key) " authority は無効です")})
+
+        (or (nil? endpoint) (and (string? endpoint) (empty? endpoint)))
+        (refusal :endpoint-not-configured
+                 {:detail (str (name authority-key) " authority に endpoint がありません")})
+
+        (or (nil? reference) (and (string? reference) (empty? reference)))
+        (refusal :reference-missing
+                 {:detail "pending proposal に reference がありません"})
+
+        :else
+        (get-status! endpoint reference)))))

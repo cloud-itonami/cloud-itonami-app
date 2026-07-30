@@ -463,6 +463,20 @@
               (require-csrf! exchange session)
               (send! exchange 200 (authority-api/reject! config session a id)))
 
+            ;; Refresh asks the authority what became of a PENDING proposal.
+            ;; Read-only against the authority: it hits the actor's consent
+            ;; surface, which cannot decide -- the decision lives on a listener
+            ;; this app has no route to, which is the point.
+            (and (= method "POST")
+                 (authority+id-from-path
+                  path #"/api/authority/([^/]+)/proposals/([^/]+)/refresh"))
+            (let [session (require-app-session! exchange)
+                  [a id] (authority+id-from-path
+                          path #"/api/authority/([^/]+)/proposals/([^/]+)/refresh")]
+              (require-origin! exchange config)
+              (require-csrf! exchange session)
+              (send! exchange 200 (authority-api/refresh! config session a id)))
+
             ;; Commit is a separate call from finish-approval! on purpose: the
             ;; hand-off to the actor can refuse (governor, transport), and that
             ;; refusal is an outcome to record and show, not a failure of the

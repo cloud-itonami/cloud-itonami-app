@@ -62,8 +62,15 @@
  ;; could affect a real card, a real line or a real phone call, so switching one
  ;; on is a deployment decision and not a default.
  ;;
- ;; `:endpoint nil` means there is nowhere to hand a proposal to, so an enabled
- ;; authority with no endpoint still cannot commit. Every actor behind these is
+ ;; `:endpoint` is a BASE url (e.g. "http://127.0.0.1:1339"), from which the
+ ;; transport derives `/commit` and `/proposals/<reference>`. nil means there is
+ ;; nowhere to hand a proposal to, so an enabled authority with no endpoint still
+ ;; cannot commit.
+ ;;
+ ;; Only the actor's CONSENT surface belongs here. The operator surface -- where a
+ ;; pending proposal is actually decided -- is a different listener on purpose, and
+ ;; this app must not be given its address: holding both would mean holding both
+ ;; gates. Every actor behind these is
  ;; propose-only today (see the ADR's ceiling section): a committed proposal
  ;; records a governed proposal, NOT an issued card, a downloaded profile or an
  ;; answered call. A UI that reads :committed as "done" is lying.

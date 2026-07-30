@@ -32,6 +32,7 @@
   (:require [clojure.string :as str]
             [cloud.itonami.app.authority :as authority]
             [cloud.itonami.app.authority.posture :as posture]
+            [cloud.itonami.app.authority.transport :as transport]
             [cloud.itonami.app.funding :as funding]))
 
 (def authority-key :payment)
@@ -195,16 +196,27 @@
        "|due=" due-date
        "|memo=" memo))
 
-(defn domain
-  "The authority domain map. `commit-fn` hands off to the settlement authority,
-  which is propose-only like every other actor in this fleet -- so a committed
-  proposal records a governed settlement record, NOT a completed transfer."
-  [commit-fn]
+(defn domain-with
+  "The authority domain map with both hand-offs injected explicitly. `commit-fn`
+  hands off to the settlement authority, which is propose-only like every other
+  actor in this fleet -- so a committed proposal records a governed settlement
+  record, NOT a completed transfer. `status-fn` asks what became of a pending one.
+
+  `:authority/status` became part of the spine's contract when refresh! landed: an
+  authority that can answer \"pending\" and cannot be asked what became of it
+  leaves proposals nothing can move."
+  [commit-fn status-fn]
   {:authority/key authority-key
+   :authority/status status-fn
    :authority/context-type #(get ops %)
    :authority/pre-check pre-check
    :authority/material material
    :authority/commit! commit-fn})
+
+(defn domain
+  "The domain wired to this authority's configured transport."
+  [commit-fn]
+  (domain-with commit-fn (transport/status-fn authority-key)))
 
 (defn review!
   [commit-fn configuration session request]

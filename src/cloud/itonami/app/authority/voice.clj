@@ -24,6 +24,7 @@
   its `run-session` raises at the G7 outward gate, so committing a proposal here
   cannot answer a real call. See ADR-2607300300's ceiling section."
   (:require [cloud.itonami.app.authority :as authority]
+            [cloud.itonami.app.authority.transport :as transport]
             [kotoba.phone :as phone]))
 
 (def authority-key :voice)
@@ -80,16 +81,24 @@
        "|slot=" slot
        "|booking-owner=" booking-owner))
 
-(defn domain
-  "The authority domain map. `commit-fn` hands off to denwaban, which is R0 --
-  `run-session` raises at its G7 outward gate, so a committed proposal here
-  records an intent and cannot answer a real call."
-  [commit-fn]
+(defn domain-with
+  "The authority domain map with both hand-offs injected explicitly: `commit-fn`
+  carries a consented proposal to the actor (denwaban), and `status-fn` asks
+  what became of a pending one. Both are injected rather than hardcoded -- this
+  app holds no transport of its own, and every op the actor would run is
+  propose-only, so a committed proposal here records a governed proposal."
+  [commit-fn status-fn]
   {:authority/key authority-key
+   :authority/status status-fn
    :authority/context-type #(get ops %)
    :authority/pre-check pre-check
    :authority/material material
    :authority/commit! commit-fn})
+
+(defn domain
+  "The domain wired to this authority's configured transport."
+  [commit-fn]
+  (domain-with commit-fn (transport/status-fn authority-key)))
 
 (defn review!
   [commit-fn configuration session request]
