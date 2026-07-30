@@ -103,7 +103,10 @@
             :read sheets-wire/read-workbook-envelope
             :rehydrate sheets-wire/rehydrate-workbook
             :problems sheets-validate/problems
-            :severity :sheets/severity :code :sheets/code :message :sheets/msg}
+            :severity :sheets/severity :code :sheets/code :message :sheets/msg
+            ;; A workbook has no closed vocabulary an editor has to offer —
+            ;; a cell holds whatever it holds.
+            :vocabulary nil}
    :docs {:resource-kind :docs/document
           :label "ドキュメント"
           :default-title "無題のドキュメント"
@@ -115,7 +118,10 @@
           :read docs-wire/read-document-envelope
           :rehydrate docs-wire/rehydrate-document
           :problems docs-validate/problems
-          :severity :docs/severity :code :docs/code :message :docs/msg}
+          :severity :docs/severity :code :docs/code :message :docs/msg
+          ;; From `docs.model` rather than restated: the editor offers the
+          ;; kinds the validator will accept, and there is one list of them.
+          :vocabulary docs/block-kinds}
    :forms {:resource-kind :forms/form
            :label "フォーム"
            :default-title "無題のフォーム"
@@ -127,7 +133,8 @@
            :read forms-wire/read-form-envelope
            :rehydrate forms-wire/rehydrate-form
            :problems forms-validate/form-problems
-           :severity :forms/severity :code :forms/code :message :forms/msg}})
+           :severity :forms/severity :code :forms/code :message :forms/msg
+           :vocabulary forms/field-types}})
 
 (def ^:private resource-kinds
   (into {} (map (juxt (comp :resource-kind val) key)) kinds))
@@ -381,7 +388,10 @@
            :quota (quota-view state actor)
            :kinds (mapv (fn [[k spec]]
                           {:kind (name k) :label (:label spec)
-                           :resource-kind (str (:resource-kind spec))})
+                           :resource-kind (str (:resource-kind spec))
+                           ;; So the editor offers exactly what the validator
+                           ;; accepts, from the one place that defines it.
+                           :vocabulary (some->> (:vocabulary spec) (mapv name) sort vec)})
                         kinds)
            :source (str (:source archive) " · 作成済み " (count created) " 件"))))
 

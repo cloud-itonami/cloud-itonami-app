@@ -134,6 +134,19 @@
 (defn- identity-context [exchange]
   (identity/public-state (cookie-value exchange identity/cookie-name)))
 
+(defn share-candidates
+  "Who this actor could share a document with: the other members of their
+  active organization.
+
+  A convenience for the picker, not a permission boundary — `documents/grant!`
+  takes any principal string, and a name that is not in this list is still a
+  name it will accept. The list exists so the common case is a click rather
+  than a user id typed from memory, and typing one is still allowed."
+  [exchange actor]
+  (->> (get-in (identity-context exchange) [:organization :users])
+       (remove #(= actor (:id %)))
+       (mapv #(select-keys % [:id :display-name :email]))))
+
 (defn- active-organization-slug [exchange]
   (get-in (identity-context exchange) [:organization :organization-id]))
 
@@ -621,13 +634,19 @@
                       (id-from-path path #"/api/workspace/drive/documents/([^/]+)/purge")
                       (:user-id session))))
 
+            ;; The candidates come from identity rather than from documents:
+            ;; who exists is the directory's question, and `documents` stays
+            ;; able to grant to any principal string without knowing where
+            ;; the name came from.
             (and (= method "GET")
                  (id-from-path path #"/api/workspace/drive/documents/([^/]+)/sharing"))
             (let [session (require-app-session! exchange)]
               (send! exchange 200
-                     (documents/sharing
-                      (id-from-path path #"/api/workspace/drive/documents/([^/]+)/sharing")
-                      (:user-id session))))
+                     (assoc (documents/sharing
+                             (id-from-path path
+                                           #"/api/workspace/drive/documents/([^/]+)/sharing")
+                             (:user-id session))
+                            :candidates (share-candidates exchange (:user-id session)))))
 
             (and (= method "POST")
                  (id-from-path path #"/api/workspace/drive/documents/([^/]+)/sharing"))

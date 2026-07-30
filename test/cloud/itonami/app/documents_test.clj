@@ -11,7 +11,8 @@
             [cloud.itonami.app.store :as store]
             [drive.object :as object]
             [drive.store.memory :as memory]
-            [drive.workspace :as ws]))
+            [drive.workspace :as ws]
+            [sheets.wire :as sheets-wire]))
 
 (def alice "user-alice")
 (def bob "user-bob")
@@ -428,6 +429,119 @@
                            alice object-store)
         (is (= [(:id first-doc) (:id second-doc)]
                (mapv :id (documents/documents @state alice))))))))
+
+;; ── the shapes the structured editors produce ───────────────────────────────
+;;
+;; The editors are JavaScript and cannot be run here. What can be pinned is
+;; the contract between them and this namespace: the exact payload shape each
+;; one writes has to be one `update!` accepts and the surface's validator
+;; recognises. A drift in either direction shows up here rather than in a
+;; save that silently produces a document nothing can read.
+
+(deftest a-field-added-the-way-the-forms-editor-adds-one-saves
+  (with-state
+    (fn [_ object-store]
+      (let [{:keys [item]} (documents/create! :forms "問い合わせ" alice object-store)
+            payload (:payload (documents/content (:id item) alice object-store))
+            ;; Exactly what `formsEditor`'s 質問を追加 pushes.
+            added (assoc payload "forms/fields"
+                         [{"forms/id" "q1"
+                           "forms/label" "新しい質問"
+                           "forms/field-type" "text"
+                           "forms/required?" false}])
+            saved (documents/update! (:id item) added alice object-store)
+            back (:payload (documents/content (:id item) alice object-store))]
+        (is (:ok? saved))
+        (is (empty? (:warnings saved)))
+        (is (= [{"forms/id" "q1" "forms/label" "新しい質問"
+                 "forms/field-type" "text" "forms/required?" false}]
+               (get back "forms/fields")))))))
+
+(deftest every-field-type-the-editor-offers-is-one-the-validator-accepts
+  ;; The select is filled from `:vocabulary`, which is `forms.model/field-types`
+  ;; itself — this is the assertion that going through the wire and back does
+  ;; not break any of them.
+  (with-state
+    (fn [_ object-store]
+      (let [{:keys [item]} (documents/create! :forms "全種類" alice object-store)
+            payload (:payload (documents/content (:id item) alice object-store))
+            offered (->> (documents/drive-view {:items []} alice)
+                         :kinds
+                         (some #(when (= "forms" (:kind %)) (:vocabulary %))))
+            fields (map-indexed (fn [index type]
+                                  {"forms/id" (str "q" index)
+                                   "forms/label" type
+                                   "forms/field-type" type
+                                   "forms/required?" false})
+                                offered)]
+        (is (= 7 (count offered)))
+        (is (:ok? (documents/update! (:id item) (assoc payload "forms/fields" (vec fields))
+                                     alice object-store)))))))
+
+(deftest a-block-added-the-way-the-docs-editor-adds-one-saves
+  (with-state
+    (fn [_ object-store]
+      (let [{:keys [item]} (documents/create! :docs "設計" alice object-store)
+            payload (:payload (documents/content (:id item) alice object-store))
+            added (update payload "docs/blocks" conj
+                          {"docs/id" "b2" "docs/kind" "paragraph" "docs/text" ""})
+            saved (documents/update! (:id item) added alice object-store)]
+        (is (:ok? saved))
+        (is (= ["heading" "paragraph"]
+               (mapv #(get % "docs/kind")
+                     (get (:payload (documents/content (:id item) alice object-store))
+                          "docs/blocks"))))))))
+
+(deftest every-block-kind-the-editor-offers-is-one-the-validator-accepts
+  (with-state
+    (fn [_ object-store]
+      (let [{:keys [item]} (documents/create! :docs "全種類" alice object-store)
+            payload (:payload (documents/content (:id item) alice object-store))
+            offered (->> (documents/drive-view {:items []} alice)
+                         :kinds
+                         (some #(when (= "docs" (:kind %)) (:vocabulary %))))
+            blocks (map-indexed (fn [index kind]
+                                  {"docs/id" (str "b" index) "docs/kind" kind})
+                                offered)]
+        (is (= 9 (count offered)))
+        (is (:ok? (documents/update! (:id item) (assoc payload "docs/blocks" (vec blocks))
+                                     alice object-store)))))))
+
+(deftest the-cell-key-the-sheets-editor-writes-is-the-one-the-wire-parses
+  ;; `cellKey(row, col)` in the page builds "[1 1]" by hand, because it is
+  ;; JavaScript and cannot call `sheets.wire/cell-address-string`. This is
+  ;; where that duplication is held to account.
+  (with-state
+    (fn [_ object-store]
+      (let [{:keys [item]} (documents/create! :sheets "計画" alice object-store)
+            payload (:payload (documents/content (:id item) alice object-store))
+            ;; A value, and a formula written with the leading = stripped —
+            ;; which is what the cell input does before it stores one.
+            edited (assoc-in payload ["sheets/tabs" "sheet1" "sheets/cells"]
+                             {"[1 1]" {"sheets/value" "売上"}
+                              "[2 1]" {"sheets/formula" "SUM(B1:B9)"}
+                              "[12 340]" {"sheets/value" "遠い"}})
+            saved (documents/update! (:id item) edited alice object-store)
+            back (:payload (documents/content (:id item) alice object-store))]
+        (is (:ok? saved))
+        (is (= edited back) "the address survives the round trip unchanged")
+        ;; And it is a real address on the other side, not a string that
+        ;; happens to look like one.
+        (is (= [1 1] (sheets-wire/cell-address "[1 1]")))
+        (is (= "[12 340]" (sheets-wire/cell-address-string [12 340])))))))
+
+(deftest a-cell-at-row-zero-is-refused-rather-than-stored
+  ;; The grid starts at 1, so this is not reachable by clicking — it is the
+  ;; assertion that the validator, not the UI, is what enforces it.
+  (with-state
+    (fn [_ object-store]
+      (let [{:keys [item]} (documents/create! :sheets "計画" alice object-store)
+            payload (:payload (documents/content (:id item) alice object-store))
+            broken (assoc-in payload ["sheets/tabs" "sheet1" "sheets/cells"]
+                             {"[0 1]" {"sheets/value" "x"}})]
+        (is (= :drive/invalid-document
+               (try (documents/update! (:id item) broken alice object-store)
+                    (catch clojure.lang.ExceptionInfo e (:type (ex-data e))))))))))
 
 ;; ── sharing ─────────────────────────────────────────────────────────────────
 
