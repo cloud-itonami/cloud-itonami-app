@@ -232,6 +232,7 @@
   accepted the proposal and is holding it for its operator."
   []
   {:authority/key :fixture
+   :authority/status (fn [_config _ref] {:authority/pending? true})
    :authority/context-type (fn [_] :fixture/op)
    :authority/pre-check (fn [_ _ _] {:x 1})
    :authority/material (fn [v] (str "fixture/" (:x v)))
@@ -357,3 +358,121 @@
           (is (= :authority-pending (:status out)))
           (is (= "commit-p1-abc" (:authority-reference out)))
           (is (not (authority/terminal? out))))))))
+
+;; ---------------------------------------------------------------------------
+;; refreshing a pending proposal
+;; ---------------------------------------------------------------------------
+
+(defn- pending-proposal!
+  "A proposal parked in :authority-pending with a reference, the state a refresh
+  acts on."
+  [reference]
+  (let [d (pending-domain)
+        p (authority/review! d {} session {:op :x})]
+    (store/transact! update-in [:authority :proposals (:id p)]
+                     merge {:status :authority-pending
+                            :authority-reference reference})
+    (:id p)))
+
+(defn- domain-answering [outcome]
+  (assoc (pending-domain) :authority/status (fn [_config _ref] outcome)))
+
+(deftest a-still-pending-authority-leaves-the-proposal-alone
+  (reset-proposals!)
+  (let [id (pending-proposal! "commit-p1-abc")
+        d (domain-answering {:authority/pending? true})
+        out (authority/refresh! d {} session id)]
+    (is (= :authority-pending (:status out)))
+    (is (nil? (:resolved-at out)) "nothing was resolved, so nothing is dated")))
+
+(deftest an-operator-approval-resolves-the-proposal
+  (reset-proposals!)
+  (let [id (pending-proposal! "commit-p1-abc")
+        d (domain-answering {:authority/ok? true :authority/record {:did :it}})
+        out (authority/refresh! d {} session id)]
+    (is (= :committed (:status out)))
+    (is (= {:did :it} (:authority-record out)))
+    (is (string? (:resolved-at out)))
+    (is (authority/terminal? out))))
+
+(deftest an-operator-rejection-resolves-it-as-refused
+  (reset-proposals!)
+  (let [id (pending-proposal! "commit-p1-abc")
+        d (domain-answering {:authority/ok? false
+                             :authority/refusal {:rule :approver-rejected}})
+        out (authority/refresh! d {} session id)]
+    (is (= :authority-refused (:status out)))
+    (is (= {:rule :approver-rejected} (:authority-refusal out)))
+    (is (authority/terminal? out))))
+
+(deftest an-unknown-reference-stays-pending-and-is-marked
+  (testing "the actor forgot the reference -- nobody refused it, so recording a
+            governor refusal would put a decision on the ledger no one made"
+    (reset-proposals!)
+    (let [id (pending-proposal! "commit-p1-abc")
+          d (domain-answering {:authority/ok? false
+                               :authority/unknown? true
+                               :authority/refusal {:rule :reference-unknown}})
+          out (authority/refresh! d {} session id)]
+      (is (= :authority-pending (:status out)) "it must NOT become refused")
+      (is (string? (:authority-unknown-since out))
+          "but that we asked and it did not know is itself recorded")
+      (is (not (authority/terminal? out))))))
+
+(deftest only-a-pending-proposal-can-be-refreshed
+  (reset-proposals!)
+  (let [d (pending-domain)
+        p (authority/review! d {} session {:op :x})]
+    (is (= :authority/proposal-not-found
+           (refuses #(authority/refresh! d {} session (:id p))))
+        "an awaiting-passkey proposal has no reference to ask about")
+    (store/transact! assoc-in [:authority :proposals (:id p) :status] :committed)
+    (is (= :authority/proposal-not-found
+           (refuses #(authority/refresh! d {} session (:id p))))
+        "and a resolved one is done")))
+
+(deftest refresh-refuses-a-disabled-authority
+  (reset-proposals!)
+  (let [id (pending-proposal! "commit-p1-abc")]
+    (is (= :authority/disabled (refuses #(api/refresh! all-off session :esim id))))))
+
+(deftest the-status-read-goes-to-the-consent-surface-not-the-operator-one
+  (testing "the transport derives /proposals/<ref> from the configured base, and
+            the operator listener's address is deliberately not configurable here"
+    (let [answered (atom nil)
+          server (HttpServer/create (InetSocketAddress. "127.0.0.1" 0) 0)]
+      (.createContext
+       server "/"
+       (reify HttpHandler
+         (handle [_ ex]
+           (reset! answered {:method (.getRequestMethod ex)
+                             :path (.getPath (.getRequestURI ex))})
+           (let [b (.getBytes (json/write-str {:status "pending" :reference "r1"})
+                              StandardCharsets/UTF_8)]
+             (.set (.getResponseHeaders ex) "Content-Type" "application/json")
+             (.sendResponseHeaders ex 200 (alength b))
+             (with-open [o (.getResponseBody ex)] (.write o b))
+             (.close ex)))))
+      (.setExecutor server nil)
+      (.start server)
+      (try
+        (let [base (str "http://127.0.0.1:" (.getPort (.getAddress server)))
+              cfg (-> (on :esim) (assoc-in [:authorities :esim :endpoint] base))
+              out ((transport/status-fn :esim) cfg "r1")]
+          (is (true? (:authority/pending? out)))
+          (is (= "GET" (:method @answered)) "a status read must not mutate")
+          (is (= "/proposals/r1" (:path @answered))))
+        (finally (.stop server 0))))))
+
+(deftest an-unreachable-authority-cannot-resolve-a-pending-proposal
+  (let [cfg (-> (on :esim)
+                (assoc-in [:authorities :esim :endpoint] "http://127.0.0.1:1"))
+        out ((transport/status-fn :esim) cfg "r1")]
+    (is (= :transport-failed (get-in out [:authority/refusal :rule])))
+    (is (not (:authority/unknown? out))
+        "unreachable is not the same as the authority not knowing"))
+  (testing "and a pending proposal with no reference is refused rather than asked about"
+    (let [cfg (-> (on :esim)
+                  (assoc-in [:authorities :esim :endpoint] "http://127.0.0.1:1"))]
+      (is (= :reference-missing
+             (get-in ((transport/status-fn :esim) cfg nil) [:authority/refusal :rule]))))))

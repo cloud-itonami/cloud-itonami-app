@@ -22,6 +22,7 @@
   transfer is fraudulent, whether a jurisdiction permits this. Those need
   judgement or law and belong to the actor's Governor."
   (:require [cloud.itonami.app.authority :as authority]
+            [cloud.itonami.app.authority.transport :as transport]
             [kotoba.esim :as esim]
             [kotoba.esim.lifecycle :as lifecycle]))
 
@@ -103,18 +104,24 @@
        "|from-subject=" from-subject
        "|to-subject=" to-subject))
 
-(defn domain
-  "The authority domain map. `commit-fn` is the hand-off to the governed actor
-  (`cloud-itonami/cloud-itonami-esim`), injected rather than hardcoded: this app
-  holds no transport to it, and every op it would call is propose-only, so a
-  committed proposal here records a governed proposal -- never a downloaded
-  profile or a completed number transfer."
-  [commit-fn]
+(defn domain-with
+  "The authority domain map with both hand-offs injected explicitly: `commit-fn`
+  carries a consented proposal to the actor (`cloud-itonami/cloud-itonami-esim`), and `status-fn` asks
+  what became of a pending one. Both are injected rather than hardcoded -- this
+  app holds no transport of its own, and every op the actor would run is
+  propose-only, so a committed proposal here records a governed proposal."
+  [commit-fn status-fn]
   {:authority/key authority-key
+   :authority/status status-fn
    :authority/context-type #(get ops %)
    :authority/pre-check pre-check
    :authority/material material
    :authority/commit! commit-fn})
+
+(defn domain
+  "The domain wired to this authority's configured transport."
+  [commit-fn]
+  (domain-with commit-fn (transport/status-fn authority-key)))
 
 (defn review!
   "Pre-check and record a proposal awaiting consent."

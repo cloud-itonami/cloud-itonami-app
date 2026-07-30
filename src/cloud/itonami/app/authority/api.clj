@@ -136,6 +136,17 @@
   (require-enabled! configuration authority-key)
   (authority/reject! session proposal-id))
 
+(defn refresh!
+  "Ask the authority what became of a pending proposal and advance it if decided.
+
+  Read-only against the authority: this hits its consent surface, which cannot
+  decide. Learning an outcome and causing one are different authorities -- for the
+  eSIM actor they are literally different listeners, so this app has no route to
+  the decision even if it wanted one."
+  [configuration session authority-key proposal-id]
+  (require-enabled! configuration authority-key)
+  (authority/refresh! (domain-for authority-key) configuration session proposal-id))
+
 (defn commit!
   "Hand the consented proposal to its authority and record the outcome.
 
