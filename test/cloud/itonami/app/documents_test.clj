@@ -4177,3 +4177,24 @@
             out (documents/printable (:id item) alice object-store)]
         (is (str/includes? (:html out) "&lt;script&gt;"))
         (is (not (str/includes? (:html out) "<script>")))))))
+
+(deftest an-import-lands-where-the-person-is-standing
+  ;; `create!` and `upload!` both take a folder and `import!` did not, so a
+  ;; spreadsheet read in from inside a folder appeared at the root while the
+  ;; PDF dropped beside it appeared here — one gesture, two places, and
+  ;; nothing in the app said why.
+  (with-state
+    (fn [_state object-store]
+      (let [work (:item (documents/create-folder! "仕事" alice))
+            csv "Quarter,Revenue\r\nQ1,1200"
+            {:keys [item]} (documents/import! "csv" "四半期" (.getBytes csv "UTF-8")
+                                              alice object-store {:folder (:id work)})]
+        ;; `:parent-id`, not `:folder` — `:folder` says which Drive an item
+        ;; is in ("マイドライブ" or "共有アイテム"), which is a different
+        ;; question and answers the same for every folder in it.
+        (is (= (:id work) (:parent-id item)))
+        (is (= ["My Drive" "仕事" "四半期"] (:path (documents/move! (:id item) (:id work) alice))))
+        ;; The old arities still mean what they meant: the root.
+        (let [loose (:item (documents/import! "csv" "無所属"
+                                              (.getBytes csv "UTF-8") alice object-store))]
+          (is (= "root" (:parent-id loose)) "which is the root, named"))))))

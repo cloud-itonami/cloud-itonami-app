@@ -280,6 +280,11 @@
   .drive-folder--chip{border-radius:999px;padding:.25rem .75rem}
   .drive-create__status{margin:0;color:var(--color-neutral-solid-gray-600);
     font-size:.8125rem;line-height:1.5}
+  /* Empty until a file that could be read is chosen, and it collapses when
+     it is: a gap the width of a gesture nobody is making reads as something
+     missing. */
+  .drive-import-choice{display:flex;gap:.5rem;flex-wrap:wrap}
+  .drive-import-choice:empty{display:none}
   .drive-trash{margin-top:1.5rem;border:1px solid var(--color-neutral-solid-gray-200);
     border-radius:.75rem;background:var(--color-neutral-white);padding:1rem 1.25rem}
   .drive-trash__head{display:flex;align-items:center;flex-wrap:wrap;gap:.75rem}
@@ -1074,12 +1079,80 @@
       const upload = $('#drive-upload');
       if (upload && !upload.dataset.wired) {
         upload.dataset.wired = 'true';
-        upload.addEventListener('change', uploadFile);
+        upload.addEventListener('change', chooseWhatAFileBecomes);
       }
       const add = make('button', 'tool-button', 'フォルダを作成');
       add.type = 'button';
       add.addEventListener('click', createFolder);
       nav.append(add);
+    };
+    // What a chosen file can become, when it is one of the six this Drive
+    // can read. A .xlsx dropped here used to land as bytes with a download
+    // button beside it: the import route existed, the conversion existed,
+    // six formats deep, and nothing in the app ever called it — so the one
+    // thing a person most wants from a spreadsheet file was unreachable.
+    //
+    // It asks rather than deciding. Both answers are real — an .xlsx kept
+    // as a file is an attachment you sent someone, an .xlsx read in is a
+    // workbook you are going to edit — and an extension cannot tell which
+    // one this is.
+    const importable = {xlsx:'表計算', csv:'表計算', docx:'文書',
+                        md:'文書', pptx:'スライド', edn:'資源'};
+    const extensionOf = (name) => String(name || '').split('.').pop().toLowerCase();
+    const clearImportChoice = () => {
+      const choice = $('#drive-import-choice');
+      if (choice) choice.replaceChildren();
+    };
+    const chooseWhatAFileBecomes = () => {
+      clearImportChoice();
+      const file = $('#drive-upload')?.files?.[0];
+      if (!file) return;
+      const format = extensionOf(file.name);
+      const kind = importable[format];
+      // Nothing this Drive can read: there is no question to ask.
+      if (!kind) { uploadFile(); return; }
+      const status = $('#drive-create-status');
+      status.textContent = `${file.name} は${kind}として読み込めます。`;
+      const choice = $('#drive-import-choice');
+      if (!choice) { uploadFile(); return; }
+      const asDocument = make('button', 'tool-button', `${kind}として読み込む`);
+      asDocument.type = 'button';
+      asDocument.addEventListener('click', () => importFile(format));
+      const asFile = make('button', 'tool-button', 'ファイルのまま保存');
+      asFile.type = 'button';
+      asFile.addEventListener('click', () => uploadFile());
+      choice.append(asDocument, asFile);
+      asDocument.focus();
+    };
+    const importFile = async (format) => {
+      const input = $('#drive-upload');
+      const file = input?.files?.[0];
+      if (!file) return;
+      const status = $('#drive-create-status');
+      status.textContent = `${file.name} を読み込んでいます…`;
+      try {
+        // The name without its extension: the extension said what the bytes
+        // were, and a workbook called 売上.xlsx is a workbook called 売上.
+        const query = new URLSearchParams(
+          {format, title:file.name.replace(/\\.[^.]*$/, '')});
+        // The folder the person is standing in, exactly as upload sends it.
+        // The route ignored it until now, so an import landed at the root
+        // while the file beside it landed here — one gesture, two places.
+        if (driveFolder) query.set('folder', driveFolder);
+        const response = await fetch(`/api/workspace/drive/import?${query}`, {
+          method:'POST',
+          headers:{...identityHeaders(), 'Content-Type':'application/octet-stream'},
+          body:await file.arrayBuffer()});
+        const data = await response.json();
+        if (!response.ok) throw new Error(data?.error?.message || '読み込めませんでした。');
+        status.textContent = `${data.item.name} を読み込みました。`;
+        input.value = '';
+        clearImportChoice();
+        await loadFolders();
+        await loadWorkspace('drive', renderDrive);
+      } catch (error) {
+        status.textContent = error.message;
+      }
     };
     const uploadFile = async () => {
       const input = $('#drive-upload');
@@ -1105,6 +1178,7 @@
         if (!response.ok) throw new Error(data?.error?.message || 'アップロードできませんでした。');
         status.textContent = `${data.item.name} をアップロードしました。`;
         input.value = '';
+        clearImportChoice();
         await loadFolders();
         await loadWorkspace('drive', renderDrive);
       } catch (error) {
@@ -6841,9 +6915,13 @@
          [:nav {:class "drive-folders" :id "drive-folders" :aria-label "フォルダ"}]
          [:div {:class "drive-folders"}
           [:label {:class "visually-hidden" :for "drive-upload"} "ファイルをアップロード"]
-          ;; Any bytes: a PDF, an image, a zip. Not an import — an import
-          ;; becomes one of the four surfaces and this stays a file.
+          ;; Any bytes: a PDF, an image, a zip. When the bytes are one of the
+          ;; six formats this Drive can read, the choice below offers the
+          ;; other reading of the same gesture — the file as a document you
+          ;; can edit rather than an attachment you can download.
           [:input {:class "workspace-search" :id "drive-upload" :type "file"}]
+          [:div {:class "drive-import-choice" :id "drive-import-choice"
+                 :role "group" :aria-label "読み込む形式"}]
           [:label {:class "visually-hidden" :for "drive-folder-name"} "新しいフォルダの名前"]
           ;; An inline field rather than window.prompt, for the same reason
           ;; renaming uses one: a modal blocks the page to collect a single
