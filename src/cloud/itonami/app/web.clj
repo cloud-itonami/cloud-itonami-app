@@ -1525,13 +1525,42 @@
       });
 
       const versions = make('div', 'detail-actions__row');
-      for (let n = 1; n <= (item.versions || 0); n += 1) {
-        // Labelled with who wrote it. On a shared document the version
-        // number alone does not tell you whose change you are about to open.
+      const bytesDelta = (n) => (n > 0 ? `+${bytes(n)}` : (n < 0 ? `-${bytes(-n)}` : '±0'));
+      for (let n = (item.versions || 0); n >= 1; n -= 1) {
+        // Newest first, labelled with who wrote it and what it cost. On a
+        // shared document the version number alone does not tell you whose
+        // change you are about to open.
         const wrote = (item.history || [])[n - 1];
-        const version = make('button', 'tool-button',
-          wrote?.author ? `版 ${n}・${wrote.author}` : `版 ${n}`);
+        const current = n === (item.versions || 0);
+        const label = [`版 ${n}`, wrote?.author,
+                       wrote ? bytesDelta(wrote['delta-bytes'] ?? 0) : null,
+                       current ? '（現在）' : null].filter(Boolean).join('・');
+        const version = make('button', 'tool-button', label);
         version.type = 'button';
+        if (!current && item['writable?']) {
+          const restore = make('button', 'tool-button', `版 ${n} に戻す`);
+          restore.type = 'button';
+          restore.addEventListener('click', async () => {
+            restore.disabled = true; status.textContent = `版 ${n} に戻しています…`;
+            try {
+              const out = await postJSON(
+                `/api/workspace/drive/documents/${encodeURIComponent(item.id)}`
+                  + `/versions/${n}/restore`,
+                {etag:item.etag}, true);
+              // A new version on top, not a rewrite — so the count goes up.
+              driveEditor = closedEditor(item.id);
+              selectedDrive = out.item;
+              await loadWorkspace('drive', renderDrive);
+              $('#drive-create-status').textContent =
+                `版 ${out['restored-from']} の内容を版 ${out.item.versions} として保存しました。`;
+            } catch (error) {
+              status.textContent = error.message;
+            } finally {
+              restore.disabled = false;
+            }
+          });
+          versions.append(restore);
+        }
         version.addEventListener('click', async () => {
           status.textContent = `版 ${n} を読み込んでいます…`;
           try {

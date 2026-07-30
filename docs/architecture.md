@@ -68,6 +68,31 @@ nothing. `documents/purge!` is the one call that does, it refuses anything not
 already in the trash, and the Drive shows the trash and the quota together
 because otherwise a Drive that fills up cannot say why.
 
+### Going back to an earlier version
+
+Every save has been a new version since the beginning; nothing could put one
+back. The pane could open version 3 and leave you to save it yourself, which
+is a restore only if you know that is what you are doing.
+
+A restore is **a new version whose contents equal an old one**, not a
+rewrite. The history is append-only, so restoring version 2 of four leaves
+five — and the author recorded is whoever restored it, not whoever wrote it
+the first time. They made this version; the earlier one is still there
+saying who made that.
+
+It goes through `write-resource!` like any other save, so the validator sees
+it. A surface's rules can have tightened since, and silently reinstating
+something the model would now refuse is how a document becomes unopenable by
+the thing that owns it.
+
+It carries an etag for the same reason a save does. Putting an old version
+back on top of a change you have not seen is the lost update wearing a
+different hat.
+
+`documents/history` is the addressable form: newest first, each entry
+knowing its own index and its size delta, which is what makes a column of
+identical timestamps readable.
+
 ### Searching inside documents
 
 The Drive could filter a list of names. What a cell says, what a paragraph
