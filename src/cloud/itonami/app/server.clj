@@ -2,6 +2,7 @@
   (:require [clojure.data.json :as json]
             [clojure.string :as str]
             [cloud.itonami.app.config :as config]
+            [cloud.itonami.app.executor :as executor]
             [cloud.itonami.app.identity :as identity]
             [cloud.itonami.app.organism-gateway :as organism-gateway]
             [cloud.itonami.app.relay :as relay]
@@ -13,8 +14,7 @@
   (:import [com.sun.net.httpserver HttpExchange HttpHandler HttpServer]
            [java.io OutputStreamWriter]
            [java.net InetSocketAddress URLDecoder]
-           [java.nio.charset StandardCharsets]
-           [java.util.concurrent Executors]))
+           [java.nio.charset StandardCharsets]))
 
 (defonce server (atom nil))
 
@@ -569,7 +569,7 @@
          port (get-in configuration [:server :port])
          instance (HttpServer/create (InetSocketAddress. host (int port)) 0)]
      (.createContext instance "/" (handler configuration))
-     (.setExecutor instance (Executors/newVirtualThreadPerTaskExecutor))
+     (.setExecutor instance (executor/task-executor))
      (.start instance)
      (reset! server instance)
      {:host host :port port})))
