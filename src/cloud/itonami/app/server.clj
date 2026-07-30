@@ -2,6 +2,7 @@
   (:require [clojure.data.json :as json]
             [clojure.string :as str]
             [cloud.itonami.app.authority.api :as authority-api]
+            [cloud.itonami.app.business :as business]
             [cloud.itonami.app.config :as config]
             [cloud.itonami.app.contracts :as contracts]
             [cloud.itonami.app.credential :as credential]
@@ -543,6 +544,39 @@
                        (operator/register-endpoint!
                         repo (cond-> {:endpoint endpoint :by by}
                                (seq health-path) (assoc :health-path health-path))))))
+
+            ;; ---- 事業 (business) — the entity the analysis planes join on ----
+            ;;
+            ;; Every route here takes the session: a business belongs to an
+            ;; organization, like a funding account, and the portfolio reads what
+            ;; that organization has bound. The reads are NOT public the way the
+            ;; fleet directory is — the directory is public OSS, while which
+            ;; blueprint some organization decided is one of its businesses is
+            ;; that organization's own record.
+            ;;
+            ;; The portfolio touches no analysis plane in write mode. It reads
+            ;; the BMC base datoms and repo taxonomy out of the configured
+            ;; workspace checkout and reports each face's state; with no checkout
+            ;; configured every plane-backed face is :unresolvable and says so.
+
+            (and (= method "GET") (= path "/api/business"))
+            (let [session (require-app-session! exchange)]
+              (send! exchange 200 (business/portfolio config session)))
+
+            (and (= method "POST") (= path "/api/business"))
+            (let [session (require-app-session! exchange)]
+              (require-origin! exchange config)
+              (require-csrf! exchange session)
+              (send! exchange 200 (business/create! session (read-json exchange))))
+
+            (and (= method "POST")
+                 (re-matches #"/api/business/([^/]+)/bind" path))
+            (let [session (require-app-session! exchange)
+                  id (second (re-matches #"/api/business/([^/]+)/bind" path))]
+              (require-origin! exchange config)
+              (require-csrf! exchange session)
+              (send! exchange 200
+                     (business/bind! session id (read-json exchange))))
 
             ;; ---- funding accounts (what the payment authority stands on) ----
             ;; These are reads and writes of the organization's own record, not
@@ -1580,6 +1614,15 @@
                      :authority/credential-not-accepted 403
                      :authority/domain-invalid 500
                      :authority/material-invalid 500
+
+                     ;; ---- 事業 (business) ----
+                     :business/slug-missing 400
+                     :business/slug-invalid 400
+                     ;; The slug is the name this business is referred to by in
+                     ;; prose and commits, so a collision is a conflict with an
+                     ;; existing record rather than a malformed request.
+                     :business/slug-taken 409
+                     :business/not-found 404
 
                      ;; ---- funding accounts ----
                      :funding/institution-missing 400

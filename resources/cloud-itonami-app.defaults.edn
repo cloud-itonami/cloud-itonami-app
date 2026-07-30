@@ -53,6 +53,19 @@
  ;; `session-token`) — never stored here.
  :mcp {:session-token-env "CLOUD_ITONAMI_MCP_SESSION"}
 
+ ;; 事業 (ADR-2607309600). A Business holds one key from each analysis plane —
+ ;; BMC canvas, XMILE model, adopted blueprints, repo paths, LEI — so that the
+ ;; three planes that cannot currently join to each other meet on one entity.
+ ;;
+ ;; :workspace-root is a checkout of the com-junkawasaki/root superproject, which
+ ;; is where those planes actually live (90-docs/, manifest/). nil is the shipped
+ ;; default because this app is released on its own and cannot assume a west
+ ;; checkout beside it — the same reason `fleet` ships its catalog as a resource.
+ ;; Unset does NOT mean 'nothing found': every plane-backed face reports
+ ;; :unresolvable and names this setting, because a face that read 'missing' when
+ ;; nobody said where to look would be a measurement of nothing.
+ :business {:workspace-root nil}
+
  ;; Governed outward authorities (ADR-2607300300). Each rides the
  ;; `cloud.itonami.app.authority` spine: deterministic pre-check -> Passkey
  ;; consent -> hand-off to an actor that has its own Governor and ledger.

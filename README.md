@@ -175,6 +175,41 @@ organization directory, redacted activity projection, and human intent and
 approval surface. See
 [ADR-0002](docs/adr/0002-external-artificial-organism-workers.md).
 
+## 事業 (business) — the Portfolio pane
+
+A business is the entity that joins the planes this workspace already describes
+separately and could not compare: the BMC/Lean canvas (`:canvas/product`), a
+system-dynamics model (XMILE), the blueprints an operator declared they run
+(`:adoption/repo`), repositories (`:repo/path`) and a legal entity
+(`:company/lei`). Their grains disagree — in the BMC plane `cloud-itonami` is one
+of twelve products, while in this app it is a directory of 1,213 actors — so one
+entity holds one key from each.
+
+```bash
+POST /api/business            {"slug":"cloud-itonami-5820","name":"ISIC 5820 事業"}
+POST /api/business/{id}/bind  {"canvas":"cloud-itonami","adoptions":["cloud-itonami-isic-5820"]}
+GET  /api/business
+```
+
+A business is Tenant-scoped, like a funding account. It is created and bound by
+hand: which repository or canvas belongs to which business is a judgement, and
+deriving it from a name prefix would invent the binding the entity exists to
+record. A session with no Organization ID gets `409 organization-required` — it is
+logged in, so `401` would send it to fix something that is not broken.
+
+**A face nobody can resolve is not an empty face.** Each of the five reports
+`unbound` (no key), `unresolvable` (a key, but no workspace checkout to resolve it
+against), `missing` (resolvable, not found), `unreadable` (found, would not parse)
+or `resolved`. `:business :workspace-root` is **nil by default** — this app ships
+on its own and cannot assume a west checkout of the superproject beside it — so
+out of the box every plane-backed face is `unresolvable` and names the setting,
+rather than reporting `missing` for a place nobody said to look.
+
+The pane reports whether a face resolves, not what it says: no canvas items, no
+leverage band, no maturity score. Proving the join comes before building the
+analysis views on it. See
+[ADR-0008](docs/adr/0008-business-is-the-join-of-five-planes.md).
+
 ## Funding accounts and payment settlement
 
 An Organization may link the bank accounts it pays from, and record what they
