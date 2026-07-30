@@ -306,6 +306,12 @@
   /* A column, not a row: `align-self:center` on .surface-note is for the
      flex rows it usually sits in, and left alone here every line would be
      centred against the widest one. */
+  /* Bounded rather than natural size: an uploaded photograph is often
+     several thousand pixels wide, and a detail pane that grows to fit one
+     pushes everything else off the screen. */
+  .file-preview{margin:.5rem 0;max-width:100%}
+  .file-preview__image{display:block;max-width:100%;max-height:24rem;
+    width:auto;height:auto;border-radius:.5rem}
   .export-notes{display:flex;flex-direction:column;gap:.25rem;margin-top:.25rem}
   .export-notes .surface-note{align-self:flex-start}
   .export-notes__list{margin:0;padding-left:1.25rem;display:flex;
@@ -1947,6 +1953,18 @@
       // A file is bytes, not a document: there is nothing for the editors to
       // open, so the pane offers the one thing that makes sense for it.
       if (item['file?']) {
+        // Shown, not only offered — but only for the handful of types the
+        // server will serve inline. The client does not decide from the
+        // media type: `previewable?` is the report of one allowlist.
+        if (item['previewable?']) {
+          const figure = make('div', 'file-preview');
+          const image = make('img', 'file-preview__image');
+          image.src = `/api/workspace/drive/documents/${encodeURIComponent(item.id)}/preview`;
+          image.alt = item.name;
+          image.loading = 'lazy';
+          figure.append(image);
+          actions.append(figure);
+        }
         const download = make('a', 'tool-button', 'ダウンロード');
         download.href = `/api/workspace/drive/documents/${encodeURIComponent(item.id)}/download`;
         download.setAttribute('download', '');

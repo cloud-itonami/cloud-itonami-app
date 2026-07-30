@@ -1423,6 +1423,36 @@
                                         (documents/store-instance)
                                         {:folder (:folder params)})))
 
+            ;; Inline, and only for the few types that cannot carry script.
+            ;; A separate route rather than a flag on the download, so the
+            ;; safe path cannot be reached for a .html by adding a query
+            ;; parameter — `documents/file-bytes` decides, and this refuses
+            ;; anything it did not mark inline.
+            (and (= method "GET")
+                 (id-from-path path #"/api/workspace/drive/documents/([^/]+)/preview"))
+            (let [session (require-app-session! exchange)
+                  out (documents/file-bytes
+                       (id-from-path path
+                                     #"/api/workspace/drive/documents/([^/]+)/preview")
+                       (:user-id session))]
+              (if-not (:inline? out)
+                (send! exchange 415
+                       {:error {:type "drive/not-previewable"
+                                :message "この形式はプレビューできません。"}})
+                (do (doto (.getResponseHeaders exchange)
+                      (.set "Content-Type" (:media-type out))
+                      (.set "Cache-Control" "no-store")
+                      (.set "X-Content-Type-Options" "nosniff")
+                      ;; Belt as well as braces: even if a type slipped
+                      ;; through the allowlist, nothing in this response may
+                      ;; load or run anything.
+                      (.set "Content-Security-Policy"
+                            "default-src 'none'; style-src 'unsafe-inline'; sandbox")
+                      (.set "Content-Disposition" "inline"))
+                    (.sendResponseHeaders exchange 200 (alength ^bytes (:bytes out)))
+                    (with-open [o (.getResponseBody exchange)]
+                      (.write o ^bytes (:bytes out))))))
+
             ;; Served as an attachment with a fixed octet-stream type,
             ;; whatever the file claims to be. Bytes uploaded by one person
             ;; and served from this origin to another are stored XSS if the
@@ -1858,6 +1888,7 @@
                      ;; the wrong kind of thing.
                      :drive/not-a-document 409
                      :drive/not-a-file 409
+                     :drive/not-previewable 415
                      ;; Restoring what is already current is a request that
                      ;; conflicts with the state, not a malformed one.
                      :drive/already-current 409

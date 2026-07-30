@@ -487,6 +487,40 @@
   [item]
   (reduce + 0 (keep :drive.version/size-bytes (:drive/versions item))))
 
+(def previewable-media-types
+  "Media types an uploaded file may be served **inline** as.
+
+  Raster images only, and the omissions are the point.
+
+  The hazard with serving user bytes from this origin is that the browser
+  may be persuaded to treat them as a document with script in it — a
+  `text/html` upload opened from the Drive would run with this app's
+  session. Raster image formats cannot carry script: there is no execution
+  context in a PNG. With `X-Content-Type-Options: nosniff` the browser is
+  also forbidden from deciding the bytes are something else, so a `.png` full
+  of HTML stays a broken image.
+
+  **SVG is deliberately absent.** It is an image everywhere except in the way
+  that matters: it is XML, it may contain `<script>`, and browsers execute it
+  when it is a document rather than an `<img>` source. Allowing it here
+  because it is \"an image\" is exactly the mistake this list exists to not
+  make.
+
+  Everything not in this set is served as an attachment — see
+  `upload-media-type`."
+  #{"image/png" "image/jpeg" "image/gif" "image/webp" "image/avif"})
+
+(defn previewable?
+  "Whether this item's *declared* type is one this app will serve inline.
+
+  The declared type is what the uploader said. It is trusted only to select
+  from this closed set — a claim of `image/png` gets a response labelled
+  `image/png`, and if the bytes are not a PNG the browser shows a broken
+  image rather than running anything, because `nosniff` stops it looking for
+  a second opinion."
+  [item]
+  (contains? previewable-media-types (str (:drive/media-type item))))
+
 (defn item-view
   "One created document, in the shape the Drive list already renders.
 
@@ -520,6 +554,10 @@
       ;; asks before it offers an editor, rather than opening one on bytes
       ;; that are not a document and failing at the first read.
       :file? (nil? kind)
+      ;; Whether the pane may show it rather than only offer it. Answered
+      ;; here so the client does not decide from the media type itself —
+      ;; the allowlist is one place and this is a report of it.
+      :previewable? (and (nil? kind) (previewable? item))
       :created-at (:drive/created-at item)
       ;; What a save has to echo back. The object reference of the current
       ;; version, which `write-item` guarantees is unique per version, so it
@@ -2380,7 +2418,13 @@
          {:schema schema :ok? true :id id
           :filename (:drive/title item)
           :declared-media-type (:drive/media-type item)
-          :media-type upload-media-type
+          ;; What the response says. The declared type only when it is one of
+          ;; the few that cannot carry script; octet-stream for everything
+          ;; else, including anything unrecognised.
+          :media-type (if (previewable? item)
+                        (:drive/media-type item)
+                        upload-media-type)
+          :inline? (previewable? item)
           :object-ref (:drive/object-ref item)
           :bytes (:bytes result)}
          (refuse! result))))))
@@ -2704,8 +2748,17 @@
                     :let [in-title? (str/includes? (str/lower-case (str (:name candidate)))
                                                    needle)
                           ;; Read once per document, and only when the title
-                          ;; did not already answer.
-                          hit (when-not in-title?
+                          ;; did not already answer — and only for something
+                          ;; that has text to read. An uploaded file has no
+                          ;; surface and no extractor, so there is nothing to
+                          ;; search inside it; it is skipped by asking rather
+                          ;; than by `content` throwing and the catch below
+                          ;; swallowing it. That catch is for a document whose
+                          ;; bytes are gone, which is exceptional; a Drive
+                          ;; full of PDFs is not, and control flow through an
+                          ;; exception stops being noticed the moment it
+                          ;; becomes routine.
+                          hit (when (and (not in-title?) (not (:file? candidate)))
                                 (let [resource (try
                                                  (:resource (content (:id candidate) actor
                                                                      object-store))

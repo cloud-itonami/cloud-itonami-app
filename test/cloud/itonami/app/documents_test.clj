@@ -3104,3 +3104,65 @@
                (seq (:bytes (documents/file-bytes (:id item) bob object-store)))))
         (documents/trash! (:id item) alice)
         (is (empty? (documents/documents @state alice)))))))
+
+(deftest an-image-may-be-shown-and-a-document-may-not
+  ;; Raster image formats cannot carry script — there is no execution
+  ;; context in a PNG — so serving one inline from this origin is safe in a
+  ;; way that serving anything else is not.
+  (with-state
+    (fn [_ object-store]
+      (let [png (:item (documents/upload! "写真.png" "image/png"
+                                          (.getBytes "not really a png" "UTF-8")
+                                          alice object-store))
+            pdf (:item (documents/upload! "見積.pdf" "application/pdf"
+                                          (pdf-bytes "q") alice object-store))]
+        (is (:previewable? png))
+        (is (not (:previewable? pdf)))
+        ;; The response is labelled with the declared type only for the ones
+        ;; on the list; everything else is octet-stream.
+        (is (= "image/png" (:media-type (documents/file-bytes (:id png) alice
+                                                              object-store))))
+        (is (:inline? (documents/file-bytes (:id png) alice object-store)))
+        (is (= "application/octet-stream"
+               (:media-type (documents/file-bytes (:id pdf) alice object-store))))
+        (is (not (:inline? (documents/file-bytes (:id pdf) alice object-store))))))))
+
+(deftest svg-is-not-an-image-for-this-purpose
+  ;; It is an image everywhere except in the way that matters: it is XML, it
+  ;; may contain <script>, and a browser runs that when the SVG is a
+  ;; document rather than an <img> source. Allowing it because it is "an
+  ;; image" is the mistake the allowlist exists to not make.
+  (with-state
+    (fn [_ object-store]
+      (doseq [claimed ["image/svg+xml" "text/html" "application/xhtml+xml"
+                       "text/xml" "image/svg" "IMAGE/PNG " ""]]
+        (let [{:keys [item]} (documents/upload! "x" claimed
+                                                (.getBytes "<svg/>" "UTF-8")
+                                                alice object-store)]
+          (is (not (:previewable? item)) (pr-str claimed))
+          (is (= "application/octet-stream"
+                 (:media-type (documents/file-bytes (:id item) alice object-store)))
+              (pr-str claimed)))))))
+
+(deftest a-document-is-never-previewable
+  ;; It has a resource kind, so it is not a file at all — and the pane must
+  ;; not put an <img> on a spreadsheet.
+  (with-state
+    (fn [_ object-store]
+      (let [{:keys [item]} (documents/create! :sheets "売上" alice object-store)]
+        (is (not (:previewable? item)))
+        (is (not (:file? item)))))))
+
+(deftest a-file-a-viewer-may-read-is-one-they-may-preview
+  ;; The preview goes through `file-bytes`, so it goes through the same ACL
+  ;; as the download rather than being a second way in.
+  (with-state
+    (fn [_ object-store]
+      (let [{:keys [item]} (documents/upload! "写真.png" "image/png"
+                                              (.getBytes "png" "UTF-8")
+                                              alice object-store)]
+        (is (= :drive/not-found
+               (:type (try (documents/file-bytes (:id item) bob object-store)
+                           (catch clojure.lang.ExceptionInfo e (ex-data e))))))
+        (documents/grant! (:id item) bob "viewer" alice)
+        (is (:inline? (documents/file-bytes (:id item) bob object-store)))))))
