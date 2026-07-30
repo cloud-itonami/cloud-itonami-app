@@ -864,6 +864,122 @@
                  (try (documents/content (:id item) bob object-store)
                       (catch clojure.lang.ExceptionInfo e (:type (ex-data e)))))))))))
 
+;; ── references between documents ────────────────────────────────────────────
+
+(defn- memo-referencing
+  "A docs document with one ref block pointing at `target`."
+  [kind target object-store]
+  (let [{:keys [item]} (documents/create! :docs "設計メモ" alice object-store)
+        payload (:payload (documents/content (:id item) alice object-store))]
+    (documents/update! (:id item)
+                       (update payload "docs/blocks" conj
+                               {"docs/id" "ref1" "docs/kind" kind "docs/target" target})
+                       alice object-store)
+    item))
+
+(deftest a-reference-resolves-to-the-document-it-names
+  (with-state
+    (fn [_ object-store]
+      (let [book (:item (documents/create! :sheets "売上" alice object-store))
+            memo (memo-referencing "table-ref" (:id book) object-store)
+            {:keys [references]} (documents/references (:id memo) alice object-store)]
+        (is (= [{:block "ref1" :kind "table-ref" :target (:id book) :resolved? true
+                 :name "売上" :label "スプレッドシート"
+                 :resource-kind ":sheets/workbook" :expected? true}]
+               references))))))
+
+(deftest a-reference-to-nothing-is-a-warning-and-not-a-refusal
+  (with-state
+    (fn [_ object-store]
+      (let [{:keys [item]} (documents/create! :docs "設計メモ" alice object-store)
+            payload (:payload (documents/content (:id item) alice object-store))
+            saved (documents/update! (:id item)
+                                     (update payload "docs/blocks" conj
+                                             {"docs/id" "ref1" "docs/kind" "deck-ref"
+                                              "docs/target" "doc-nonexistent"})
+                                     alice object-store)]
+        ;; A document being written may name something about to be shared;
+        ;; refusing the save would make writing it impossible.
+        (is (:ok? saved))
+        (is (= [":reference/dangling"] (mapv :code (:warnings saved))))
+        (is (false? (:resolved? (first (:references
+                                        (documents/references (:id item) alice object-store))))))))))
+
+(deftest pointing-a-table-ref-at-a-deck-is-reported-not-refused
+  (with-state
+    (fn [_ object-store]
+      (let [deck (:item (documents/create! :slides "四半期" alice object-store))
+            memo (memo-referencing "table-ref" (:id deck) object-store)
+            {:keys [references]} (documents/references (:id memo) alice object-store)
+            payload (:payload (documents/content (:id memo) alice object-store))
+            again (documents/update! (:id memo) payload alice object-store)]
+        ;; `docs.model` names the kinds and does not say a :table-ref must be
+        ;; a workbook, so this is advisory.
+        (is (true? (:resolved? (first references))))
+        (is (false? (:expected? (first references))))
+        (is (:ok? again))
+        (is (= [":reference/unexpected-kind"] (mapv :code (:warnings again))))))))
+
+(deftest a-file-ref-may-point-at-anything
+  (with-state
+    (fn [_ object-store]
+      (let [form (:item (documents/create! :forms "問い合わせ" alice object-store))
+            memo (memo-referencing "file-ref" (:id form) object-store)
+            payload (:payload (documents/content (:id memo) alice object-store))]
+        (is (true? (:expected? (first (:references
+                                       (documents/references (:id memo) alice object-store))))))
+        (is (empty? (:warnings (documents/update! (:id memo) payload alice object-store))))))))
+
+(deftest backlinks-say-which-documents-depend-on-this-one
+  (with-state
+    (fn [_ object-store]
+      (let [book (:item (documents/create! :sheets "売上" alice object-store))
+            memo (memo-referencing "table-ref" (:id book) object-store)
+            {:keys [referenced-by]} (documents/referenced-by (:id book) alice object-store)]
+        (is (= [{:id (:id memo) :name "設計メモ" :label "ドキュメント"
+                 :block "ref1" :kind "table-ref"}]
+               referenced-by))
+        ;; And the memo itself has none pointing at it.
+        (is (empty? (:referenced-by (documents/referenced-by (:id memo) alice object-store))))))))
+
+(deftest a-reference-obeys-the-same-permission-answer-as-everything-else
+  (with-state
+    (fn [_ object-store]
+      (let [book (:item (documents/create! :sheets "売上" alice object-store))
+            memo (memo-referencing "table-ref" (:id book) object-store)]
+        ;; bob is shown the memo but not the workbook it names, so the
+        ;; reference reads as unresolved — the same answer as a target that
+        ;; does not exist, which is what keeps it from leaking that one does.
+        (documents/grant! (:id memo) bob "viewer" alice)
+        (let [{:keys [references]} (documents/references (:id memo) bob object-store)]
+          (is (= 1 (count references)))
+          (is (false? (:resolved? (first references))))
+          (is (nil? (:name (first references)))))
+        ;; Once he may read it too, the same reference resolves.
+        (documents/grant! (:id book) bob "viewer" alice)
+        (is (true? (:resolved? (first (:references
+                                       (documents/references (:id memo) bob object-store))))))))))
+
+(deftest backlinks-only-count-documents-the-asker-can-see
+  (with-state
+    (fn [_ object-store]
+      (let [book (:item (documents/create! :sheets "売上" alice object-store))
+            _ (memo-referencing "table-ref" (:id book) object-store)]
+        (documents/grant! (:id book) bob "viewer" alice)
+        ;; bob may read the workbook and not the memo, so he is not told the
+        ;; memo exists by way of its backlink.
+        (is (empty? (:referenced-by (documents/referenced-by (:id book) bob object-store))))
+        (is (= 1 (count (:referenced-by (documents/referenced-by (:id book) alice
+                                                                 object-store)))))))))
+
+(deftest only-a-document-carries-references
+  (with-state
+    (fn [_ object-store]
+      (let [book (:item (documents/create! :sheets "売上" alice object-store))]
+        ;; A workbook has no block that names another document, and a deck's
+        ;; links live on a slides workspace rather than in the deck.
+        (is (empty? (:references (documents/references (:id book) alice object-store))))))))
+
 ;; ── comments ────────────────────────────────────────────────────────────────
 
 (deftest a-commenter-may-comment-and-still-not-write
