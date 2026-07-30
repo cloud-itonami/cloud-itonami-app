@@ -3978,9 +3978,9 @@
       (let [{:keys [item]} (documents/create! :docs "設計" alice object-store)]
         (is (nil? (:charts (documents/content (:id item) alice object-store))))))))
 
-(deftest a-chart-is-still-reported-as-not-reaching-excel
-  ;; Drawing one here does not put one in the .xlsx, and the warning has to
-  ;; keep saying so.
+(deftest a-chart-reaches-excel
+  ;; It did not when the drawing landed, and the warning said so. Now it
+  ;; does, and the warning is only about a chart with nowhere to sit.
   (with-state
     (fn [_ object-store]
       (let [{:keys [item]} (documents/create! :sheets "売上" alice object-store)
@@ -3988,6 +3988,27 @@
             _ (save! (:id item)
                      (assoc wb :sheets/charts
                             [{:sheets/id "c1" :sheets/data-range "A1:B3"}])
+                     alice object-store)
+            warnings (:export-warnings (documents/content (:id item) alice
+                                                          object-store))]
+        (is (not (contains? (set (map :code (get warnings "xlsx")))
+                            ":xlsx/charts-dropped")))
+        ;; And the parts are really in the file.
+        (let [entries (sheets-xlsx/xlsx-entries
+                       (:bytes (documents/export (:id item) "xlsx" alice object-store)))]
+          (is (some #(str/starts-with? % "xl/charts/") (keys entries)))
+          (is (some #(str/starts-with? % "xl/drawings/") (keys entries)))
+          (is (str/includes? (get entries "xl/worksheets/sheet1.xml") "<drawing")))))))
+
+(deftest a-chart-with-nowhere-to-sit-is-still-reported
+  (with-state
+    (fn [_ object-store]
+      (let [{:keys [item]} (documents/create! :sheets "売上" alice object-store)
+            wb (:resource (documents/content (:id item) alice object-store))
+            _ (save! (:id item)
+                     (assoc wb :sheets/charts
+                            [{:sheets/id "c1" :sheets/tab "無い表"
+                              :sheets/data-range "A1:B3"}])
                      alice object-store)
             warnings (:export-warnings (documents/content (:id item) alice
                                                           object-store))]
