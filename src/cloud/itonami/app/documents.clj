@@ -1363,54 +1363,133 @@
       :else {:owner owner :item item
              :role (ws/effective-role workspace id actor)})))
 
+(defn- thread-root
+  "The comment a reply belongs to, or the comment itself.
+
+  One level. A reply to a reply is still a reply to the thread, because a
+  conversation about one anchor is one conversation — and a tree would let
+  somebody resolve half of it."
+  [existing comment-id]
+  (let [by-id (into {} (map (juxt :id identity)) existing)
+        c (get by-id comment-id)]
+    (get by-id (or (:parent-id c) comment-id))))
+
 (defn comments
-  "Every comment on this document, oldest first.
+  "Every comment on this document as threads, oldest first.
 
   Visible to anyone who may read the document, including a viewer: being
   shown a document and not what has been said about it is a strange half of
-  a thing to be shown."
+  a thing to be shown.
+
+  Replies are nested under the comment they answer rather than returned
+  flat, because a flat list with parent ids is a tree the caller has to
+  build, and every caller would build it slightly differently."
   [id actor]
   (readable! actor id)
-  {:schema schema
-   :ok? true
-   :id id
-   :comments (mapv #(dissoc % :owner) (get-in (store/snapshot) (comments-path id) []))})
+  (let [existing (get-in (store/snapshot) (comments-path id) [])
+        public (mapv #(dissoc % :owner) existing)
+        replies (group-by :parent-id (filter :parent-id public))]
+    {:schema schema
+     :ok? true
+     :id id
+     :comments (mapv (fn [root]
+                       (assoc root :replies (vec (get replies (:id root) []))))
+                     (remove :parent-id public))
+     ;; The count that matters when deciding whether to look: an unresolved
+     ;; thread is one somebody is still waiting on.
+     :unresolved (clojure.core/count
+                  (remove #(or (:parent-id %) (:resolved-at %)) public))}))
 
 (defn comment!
-  "Leave a comment.
+  "Leave a comment, or a reply to one.
 
   `anchor` is free text and optional — a block id for a document, a cell
   address for a workbook, nothing at all for a remark about the whole thing.
   Deliberately not interpreted here: the moment this parsed one it would owe
-  every surface a different parser, and the surfaces are where that knowledge
-  lives."
-  [id text anchor actor]
+  every surface a different parser, and the surfaces are where that
+  knowledge lives.
+
+  A reply takes its anchor from the comment it answers, because a reply that
+  could point somewhere else would not be a reply. Replying to a reply
+  attaches to the same thread rather than nesting further — see
+  `thread-root`."
+  ([id text anchor actor] (comment! id text anchor actor nil))
+  ([id text anchor actor parent-id]
+   (locking write-lock
+     (let [{:keys [owner role]} (readable! actor id)
+           text (not-empty (str/trim (str text)))
+           existing (get-in (store/snapshot) (comments-path id) [])
+           parent (when parent-id (thread-root existing parent-id))]
+       (cond
+         (not (contains? comment-roles role))
+         (refuse! {:reason :not-permitted :item-id id :principal actor})
+         (nil? text)
+         (throw (ex-info "コメントを入力してください。"
+                         {:type :drive/invalid-comment :field :text}))
+         (and parent-id (nil? parent))
+         (throw (ex-info "返信先のコメントが見つかりません。"
+                         {:type :drive/not-found :comment-id parent-id}))
+         (and parent (:resolved-at parent))
+         ;; Reopening is an act somebody takes on purpose, not something a
+         ;; reply does on their behalf.
+         (throw (ex-info "解決済みのコメントには返信できません。先に未解決へ戻してください。"
+                         {:type :drive/comment-resolved :comment-id (:id parent)}))
+         :else
+         (let [record (cond-> {:id (store/new-id "cmt")
+                               :document-id id
+                               :owner owner
+                               :author actor
+                               :text text
+                               :anchor (if parent
+                                         (:anchor parent)
+                                         (not-empty (str/trim (str anchor))))
+                               :created-at (store/now)}
+                        parent (assoc :parent-id (:id parent)))]
+           (store/transact! update-in (comments-path id) (fnil conj []) record)
+           {:schema schema :ok? true :comment (dissoc record :owner)}))))))
+
+(defn resolve-comment!
+  "Mark a thread resolved, or put it back.
+
+  Anyone who may comment may resolve. Unlike deleting, this takes nothing
+  away and `resolved?` false undoes it — the reason deleting is narrower is
+  that it is not reversible, and that reason does not apply here.
+
+  Resolution belongs to the thread. Resolving a reply resolves the comment
+  it answers, because half a resolved conversation is not a state anybody
+  can act on."
+  [id comment-id resolved? actor]
   (locking write-lock
-    (let [{:keys [owner role]} (readable! actor id)
-          text (not-empty (str/trim (str text)))]
+    (let [{:keys [role]} (readable! actor id)
+          existing (get-in (store/snapshot) (comments-path id) [])
+          root (thread-root existing comment-id)]
       (cond
+        (nil? root)
+        (throw (ex-info "コメントが見つかりません。"
+                        {:type :drive/not-found :comment-id comment-id}))
         (not (contains? comment-roles role))
         (refuse! {:reason :not-permitted :item-id id :principal actor})
-        (nil? text)
-        (throw (ex-info "コメントを入力してください。"
-                        {:type :drive/invalid-comment :field :text}))
         :else
-        (let [record {:id (store/new-id "cmt")
-                      :document-id id
-                      :owner owner
-                      :author actor
-                      :text text
-                      :anchor (not-empty (str/trim (str anchor)))
-                      :created-at (store/now)}]
-          (store/transact! update-in (comments-path id) (fnil conj []) record)
-          {:schema schema :ok? true :comment (dissoc record :owner)})))))
+        (let [updated (mapv (fn [c]
+                              (if (= (:id c) (:id root))
+                                (if resolved?
+                                  (assoc c :resolved-at (store/now) :resolved-by actor)
+                                  (dissoc c :resolved-at :resolved-by))
+                                c))
+                            existing)]
+          (store/transact! assoc-in (comments-path id) updated)
+          (comments id actor))))))
 
 (defn delete-comment!
-  "Remove one.
+  "Remove a comment, and its replies if it is the start of a thread.
 
   Its author or the document's owner. An editor may rewrite the document and
   still not delete what somebody said about it — those are different things
-  and only one of them is the content."
+  and only one of them is the content.
+
+  Deleting the root takes the replies with it. A reply to nothing is not
+  something a reader can make sense of, and leaving one behind so that the
+  deletion looks smaller is not honesty."
   [id comment-id actor]
   (locking write-lock
     (let [{:keys [role]} (readable! actor id)
@@ -1423,9 +1502,12 @@
         (not (or (= actor (:author target)) (= :owner role)))
         (refuse! {:reason :not-permitted :item-id id :principal actor})
         :else
-        (do (store/transact! assoc-in (comments-path id)
-                             (vec (remove #(= comment-id (:id %)) existing)))
-            {:schema schema :ok? true :id comment-id})))))
+        (let [gone (into #{comment-id}
+                         (when-not (:parent-id target)
+                           (map :id (filter #(= comment-id (:parent-id %)) existing))))]
+          (store/transact! assoc-in (comments-path id)
+                           (vec (remove #(contains? gone (:id %)) existing)))
+          {:schema schema :ok? true :id comment-id :deleted (clojure.core/count gone)})))))
 
 ;; ── references between documents ────────────────────────────────────────────
 ;;

@@ -284,6 +284,21 @@ Anyone who may read a document sees its comments; anyone above `:viewer` may
 leave one; its author or the document's owner may delete it. An editor may
 rewrite the document and still not delete what somebody said about it.
 
+**Threads are one level deep.** A reply to a reply joins the same thread,
+because a conversation about one anchor is one conversation — and a tree
+would let somebody resolve half of it. A reply takes its anchor from the
+comment it answers: one that could point elsewhere would not be a reply.
+
+**Resolution belongs to the thread**, and anyone who may comment may resolve.
+That is wider than deleting on purpose: resolving takes nothing away and is
+undone by unresolving, which is the reason deleting is narrower and does not
+apply here. Replying to a resolved thread is refused — reopening is an act
+somebody takes on purpose, not something a reply does on their behalf.
+
+Deleting the start of a thread takes its replies with it. A reply to nothing
+is not something a reader can make sense of, and leaving one behind so the
+deletion looks smaller is not honesty.
+
 ### Answering a form
 
 A form is the one surface with a second thing to do to it. Editing changes

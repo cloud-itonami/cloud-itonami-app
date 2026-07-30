@@ -213,6 +213,11 @@
   .sharing__title{margin:0;font-size:1rem}
   .sharing__list{list-style:none;margin:0;padding:0;display:grid;gap:.5rem}
   .sharing__entry{display:flex;align-items:center;flex-wrap:wrap;gap:.5rem}
+  .sharing__entry--reply{padding-left:1.25rem;
+    border-left:2px solid var(--color-neutral-solid-gray-200)}
+  .sharing__thread{display:grid;gap:.5rem;padding:.5rem 0;
+    border-top:1px solid var(--color-neutral-solid-gray-200)}
+  .sharing__thread.is-resolved{opacity:.6}
   .sharing__who{color:var(--color-neutral-solid-gray-600);font-size:.8125rem}
   .sharing__token{flex:1 1 16rem;min-width:0;min-height:2.25rem;padding:.35rem .75rem;
     border-radius:.5rem;font-size:.75rem}
@@ -1500,7 +1505,8 @@
     const commentRoles = ['owner', 'editor', 'commenter'];
     const commentPanel = (item) => {
       const panel = make('div', 'sharing');
-      panel.append(make('h3', 'sharing__title', 'コメント'));
+      const heading = make('h3', 'sharing__title', 'コメント');
+      panel.append(heading);
       const list = make('ul', 'sharing__list');
       const status = make('p', 'drive-create__status', '');
       const form = make('div', 'detail-actions__row');
@@ -1515,6 +1521,23 @@
       const add = make('button', 'tool-button', '投稿');
       add.type = 'button';
 
+      // One entry, root or reply. The rules it shows are the server's — the
+      // author or the owner may delete, anyone who may comment may resolve —
+      // rather than buttons that fail for everyone else.
+      const entryRow = (entry, {root} = {}) => {
+        const row = make('li', root ? 'sharing__entry sharing__entry--reply' : 'sharing__entry');
+        row.append(make('span', 'sharing__who',
+          `${entry.author}${entry.anchor ? ` · ${entry.anchor}` : ''} · ${entry['created-at']}`));
+        row.append(make('span', 'surface-note', entry.text));
+        if (entry.author === currentUserId() || item.role === 'owner') {
+          const remove = make('button', 'tool-button', root ? '削除' : '削除（返信ごと）');
+          remove.type = 'button';
+          remove.addEventListener('click', () => submit(
+            `/comments/${encodeURIComponent(entry.id)}/delete`, {}, 'コメントを削除しました。'));
+          row.append(remove);
+        }
+        return row;
+      };
       const render = (entries) => {
         list.replaceChildren();
         if (!entries.length) {
@@ -1522,20 +1545,42 @@
           return;
         }
         entries.forEach((entry) => {
-          const row = make('li', 'sharing__entry');
-          row.append(make('span', 'sharing__who',
-            `${entry.author}${entry.anchor ? ` · ${entry.anchor}` : ''} · ${entry['created-at']}`));
-          row.append(make('span', 'surface-note', entry.text));
-          // Its author or the document's owner — the same rule the server
-          // applies, rather than a button that always fails for everyone else.
-          if (entry.author === currentUserId() || item.role === 'owner') {
-            const remove = make('button', 'tool-button', '削除');
-            remove.type = 'button';
-            remove.addEventListener('click', () => submit(
-              `/comments/${encodeURIComponent(entry.id)}/delete`, {}, 'コメントを削除しました。'));
-            row.append(remove);
+          const thread = make('li', entry['resolved-at'] ? 'sharing__thread is-resolved'
+                                                         : 'sharing__thread');
+          const head = make('ul', 'sharing__list');
+          head.append(entryRow(entry));
+          if (entry['resolved-at']) {
+            head.append(make('li', 'surface-note',
+              `${entry['resolved-by']} が解決済みにしました（${entry['resolved-at']}）`));
           }
-          list.append(row);
+          (entry.replies || []).forEach((reply) => head.append(entryRow(reply, {root:entry})));
+          thread.append(head);
+          if (commentRoles.includes(item.role)) {
+            const actions = make('div', 'detail-actions__row');
+            const toggle = make('button', 'tool-button',
+              entry['resolved-at'] ? '未解決に戻す' : '解決済みにする');
+            toggle.type = 'button';
+            toggle.addEventListener('click', () => submit(
+              `/comments/${encodeURIComponent(entry.id)}/resolve`,
+              {'resolved?': !entry['resolved-at']},
+              entry['resolved-at'] ? '未解決に戻しました。' : '解決済みにしました。'));
+            actions.append(toggle);
+            if (!entry['resolved-at']) {
+              // Replying to a resolved thread is refused by the server;
+              // reopening is an act somebody takes on purpose.
+              const replyText = make('input', 'workspace-search surface-input--wide');
+              replyText.type = 'text';
+              replyText.placeholder = '返信';
+              replyText.setAttribute('aria-label', `${entry.text} への返信`);
+              const send = make('button', 'tool-button', '返信');
+              send.type = 'button';
+              send.addEventListener('click', () => submit(
+                '/comments', {text:replyText.value, 'parent-id':entry.id}, '返信しました。'));
+              actions.append(replyText, send);
+            }
+            thread.append(actions);
+          }
+          list.append(thread);
         });
       };
       const reload = async () => {
@@ -1543,7 +1588,12 @@
           const request = await fetch(
             `/api/workspace/drive/documents/${encodeURIComponent(item.id)}/comments`);
           const data = await request.json();
-          if (request.ok) render(data.comments || []);
+          if (!request.ok) return;
+          render(data.comments || []);
+          // The count worth seeing before opening the panel: an unresolved
+          // thread is one somebody is still waiting on.
+          heading.textContent = data.unresolved
+            ? `コメント（未解決 ${data.unresolved}）` : 'コメント';
         } catch (error) { /* the panel simply stays empty */ }
       };
       const submit = async (suffix, body, done) => {
