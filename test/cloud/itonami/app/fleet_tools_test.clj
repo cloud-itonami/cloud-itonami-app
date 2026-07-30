@@ -16,8 +16,16 @@
       (is (= 5 (count (:actors r))))))
 
   (testing "string arguments are coerced to the keywords the catalog uses"
-    (let [r (fleet/search-tool {:execution "resident"})]
-      (is (= 8 (:matched r)))
+    ;; Compared against the same query made with a keyword rather than a
+    ;; literal count: what is under test is that "resident" reaches the catalog
+    ;; as :resident, and a hardcoded population size fails whenever the fleet
+    ;; grows for reasons this test does not care about (it did, at 8 -> 9).
+    ;; A coercion that silently produced nothing would still be caught — the
+    ;; keyword query is non-empty.
+    (let [r (fleet/search-tool {:execution "resident"})
+          direct (fleet/by-execution :resident)]
+      (is (pos? (count direct)))
+      (is (= (count direct) (:matched r)))
       (is (every? #(= :resident (:execution %)) (:actors r)))))
 
   (testing "callable filters to actors that declare an address"

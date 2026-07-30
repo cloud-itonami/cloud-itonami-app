@@ -97,7 +97,16 @@
     ;; Kept even though every id currently resolves to one actor: west could
     ;; register two repositories declaring the same id, and returning the first
     ;; match would be a wrong answer shaped like a right one.
-    (is (= 1 (count (fleet/find-by-id "cloud-itonami-isic-7500")))))
+    ;;
+    ;; The id is read out of the catalog rather than written here. This asserted
+    ;; on the literal "cloud-itonami-isic-7500" until that repository's
+    ;; blueprint renamed its id to cloud-itonami-isic-750 — the zero-padding
+    ;; half of the collision this deftest is named for — and the test then
+    ;; failed for a reason that had nothing to do with what it checks.
+    (let [id (->> (fleet/actors) (map :id) frequencies
+                  (some (fn [[id n]] (when (= 1 n) id))))]
+      (is (some? id) "the catalog has at least one unambiguous id")
+      (is (= 1 (count (fleet/find-by-id id))))))
 
   (testing "repo is unique, which is why lookup keys on it"
     (let [repos (map :repo (fleet/actors))]
@@ -195,11 +204,15 @@
   (testing "resident actors are present, by reference"
     ;; They were absent while the catalog only read blueprint.edn from
     ;; orgs/cloud-itonami. They are here now because west pins them and the
-    ;; authority classifies them — six loop- orchestrators and two person-
+    ;; authority classifies them — seven loop- orchestrators and two person-
     ;; organisms — carrying a repo, a remote and a revision and nothing read
     ;; out of the repository.
+    ;;
+    ;; The count is an explicit tripwire, not incidental: this file has watched
+    ;; a population vanish twice. It moved 8 -> 9 when loop-yakuwari joined
+    ;; west, which is what a tripwire doing its job looks like.
     (let [r (fleet/by-execution :resident)]
-      (is (= 8 (count r)))
+      (is (= 9 (count r)))
       (is (every? :reference-only r))
       (is (every? #(re-matches #"[0-9a-f]{40}" (fleet/revision %)) r))
       (is (= #{:continuous-orchestrator :artificial-organism-actor}
