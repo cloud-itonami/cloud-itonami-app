@@ -2417,23 +2417,79 @@
         ;; everything.
         (is (:ok? (documents/move! (:id q1) nil alice)))))))
 
-(deftest creating-happens-in-your-own-drive
-  ;; Not a permission answer — a limitation, and worth a test that says which.
-  ;; `create!` writes into the creator's workspace, so a folder from somebody
-  ;; else's Drive is not there to create in, even one shared with you.
-  ;; Creating into it would mean writing into the owner's workspace and
-  ;; against the owner's quota, which is what *saving* a shared document
-  ;; already does and what creating one does not do yet.
+(deftest an-editor-of-a-shared-folder-may-create-in-it
+  ;; This was the gap named in the last change: creating looked only in the
+  ;; creator's own Drive, so a folder shared with you was not somewhere you
+  ;; could put anything.
+  (with-state
+    (fn [state object-store]
+      (let [work (:item (documents/create-folder! "仕事" alice))]
+        (documents/grant! (:id work) bob "editor" alice)
+        (let [{:keys [item]} (documents/create! :docs "議事録" bob object-store
+                                                {:folder (:id work)})]
+          ;; It is in alice's Drive, because that is the Drive the folder is
+          ;; in — and one document, not two.
+          (is (= alice (:owner item)))
+          (is (false? (:own? item)))
+          (is (= [(:id item)] (mapv :id (documents/documents @state alice))))
+          (is (= [(:id item)] (mapv :id (documents/documents @state bob))))
+          ;; alice owns what is in her Drive: trash, purge and re-sharing
+          ;; are all owner-only, and a document she could not remove from
+          ;; her own folder would be one she is stuck with.
+          (is (= "owner" (:role (first (documents/documents @state alice)))))
+          ;; bob keeps what he needs to go on working on it.
+          (is (= "editor" (:role (first (documents/documents @state bob)))))
+          (is (:writable? (first (documents/documents @state bob))))
+          (is (some? (save! (:id item)
+                            (assoc (:resource (documents/content (:id item) bob
+                                                                 object-store))
+                                   :docs/title "改訂")
+                            bob object-store))))))))
+
+(deftest what-an-editor-creates-is-charged-to-the-drive-it-is-in
+  ;; The cost, stated rather than discovered: someone you gave write access
+  ;; to can consume your quota. That was already true of *saving* a shared
+  ;; document — every version is charged to the owner — so this widens who
+  ;; can start one rather than introducing the hazard.
+  (with-state
+    (fn [state object-store]
+      (let [work (:item (documents/create-folder! "仕事" alice))]
+        (documents/grant! (:id work) bob "editor" alice)
+        (let [before (:used-bytes (documents/quota-view @state alice))]
+          (documents/create! :docs "議事録" bob object-store {:folder (:id work)})
+          (is (> (:used-bytes (documents/quota-view (store/snapshot) alice)) before))
+          (is (zero? (:used-bytes (documents/quota-view (store/snapshot) bob)))))))))
+
+(deftest a-viewer-of-a-shared-folder-may-not-create-in-it
   (with-state
     (fn [_ object-store]
-      (let [work (:item (documents/create-folder! "仕事" alice))
-            attempt (fn [] (try (documents/create! :docs "侵入" bob object-store
-                                                   {:folder (:id work)})
-                                (catch clojure.lang.ExceptionInfo e (ex-data e))))]
-        (is (= :drive/not-found (:type (attempt))))
-        (documents/grant! (:id work) bob "editor" alice)
-        (is (= :drive/not-found (:type (attempt)))
-            "even as an editor of it — this is the gap, not the rule")))))
+      (let [work (:item (documents/create-folder! "仕事" alice))]
+        (documents/grant! (:id work) bob "viewer" alice)
+        (is (= :drive/not-permitted
+               (:type (try (documents/create! :docs "侵入" bob object-store
+                                              {:folder (:id work)})
+                           (catch clojure.lang.ExceptionInfo e (ex-data e))))))
+        ;; And a folder nobody shared with them is not even visible as a
+        ;; place — told it is not there rather than that they may not.
+        (let [private (:item (documents/create-folder! "私用" alice))]
+          (is (= :drive/not-found
+                 (:type (try (documents/create! :docs "侵入" bob object-store
+                                                {:folder (:id private)})
+                             (catch clojure.lang.ExceptionInfo e (ex-data e)))))))))))
+
+(deftest a-move-may-not-leave-the-drive-it-is-in
+  ;; `ws/move` rewrites one tree. A destination in another Drive would leave
+  ;; a parent id pointing at an item that tree does not contain — a
+  ;; breadcrumb walking up out of the workspace and a listing that never
+  ;; shows it again. Creating may cross; moving may not.
+  (with-state
+    (fn [_ object-store]
+      (let [theirs (:item (documents/create-folder! "相手" bob))
+            _ (documents/grant! (:id theirs) alice "editor" bob)
+            mine (:item (documents/create! :docs "自分の" alice object-store))]
+        (is (= :drive/not-found
+               (:type (try (documents/move! (:id mine) (:id theirs) alice)
+                           (catch clojure.lang.ExceptionInfo e (ex-data e))))))))))
 
 (deftest a-folder-you-may-only-read-is-not-one-you-may-create-in
   ;; The permission rule itself, asked where it can be: inside one Drive.
@@ -2573,3 +2629,53 @@
         (documents/trash! (:id a) alice)
         (is (= ["My Drive" "My Drive / 開発" "My Drive / 開発 / Q1"]
                (mapv :name (:all (documents/folders (store/snapshot) alice nil)))))))))
+
+(deftest a-shared-folder-is-somewhere-you-can-go
+  ;; The capability to create in a shared folder is only worth having if
+  ;; something can reach it. Listed at the top level, because a folder from
+  ;; another Drive is not inside anything in this one.
+  (with-state
+    (fn [_ object-store]
+      (let [work (:item (documents/create-folder! "仕事" alice))
+            q1 (:item (documents/create-folder! "Q1" alice (:id work)))]
+        (documents/grant! (:id work) bob "editor" alice)
+        (let [top (documents/folders (store/snapshot) bob nil)]
+          (is (= ["仕事"] (mapv :name (:shared top))))
+          (is (= [] (:folders top)) "bob has no folders of his own")
+          ;; A subfolder of a shared folder is not a second entry at the top
+          ;; — it is reached by opening the one above it.
+          (is (= ["Q1"] (mapv :name (:folders (documents/folders (store/snapshot)
+                                                                 bob (:id work))))))
+          ;; And the breadcrumb reads through the other Drive rather than
+          ;; stopping at its edge.
+          (is (= ["My Drive" "仕事" "Q1"]
+                 (mapv :name (:path (documents/folders (store/snapshot) bob (:id q1)))))))
+        ;; The move picker offers it too, own folders first.
+        (documents/create-folder! "自分の" bob)
+        (is (= ["My Drive" "My Drive / 自分の" "My Drive / 仕事" "My Drive / 仕事 / Q1"]
+               (mapv :name (:all (documents/folders (store/snapshot) bob nil)))))
+        (is (= [true true false false]
+               (mapv :own? (:all (documents/folders (store/snapshot) bob nil)))))))))
+
+(deftest a-folder-nobody-shared-is-not-listed
+  (with-state
+    (fn [_ _]
+      (documents/create-folder! "私用" alice)
+      (let [top (documents/folders (store/snapshot) bob nil)]
+        (is (empty? (:shared top)))
+        (is (= ["My Drive"] (mapv :name (:all top))) "only bob's own root")))))
+
+(deftest a-listing-says-whose-drive-you-are-standing-in
+  ;; Creating here puts the document in somebody else's Drive and against
+  ;; their quota. That is the one consequence of this feature a person
+  ;; should not discover afterwards, so the response carries it.
+  (with-state
+    (fn [_ _]
+      (let [work (:item (documents/create-folder! "仕事" alice))]
+        (documents/grant! (:id work) bob "editor" alice)
+        (let [own (documents/folders (store/snapshot) bob nil)
+              theirs (documents/folders (store/snapshot) bob (:id work))]
+          (is (= bob (:owner own)) "your own root is yours")
+          (is (= bob (:you own)))
+          (is (= alice (:owner theirs)))
+          (is (= bob (:you theirs))))))))

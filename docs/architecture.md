@@ -297,12 +297,25 @@ a folder that is still in the trash.
 at the root, so it was right by accident. In a folder it would have left a
 listing pointing at an item that is gone.
 
-**Creating happens in your own Drive.** `create!` writes into the creator's
-workspace, so a folder shared from someone else's is not there to create in —
-even as an editor of it. That is a gap rather than a rule, and the test says
-which: creating into it would mean writing into the owner's workspace and
-against the owner's quota, which is what *saving* a shared document already
-does and what creating one does not do yet.
+**An editor of a shared folder may create in it, and what they create
+belongs to that Drive.** `ws/create-file` makes the creator the owner, which
+is right in your own Drive and wrong in somebody else's: trash, purge and
+re-sharing are owner-only, so a document bob owned inside alice's folder
+would be one alice cannot remove from her own Drive. The Drive's owner owns
+it; the creator is recorded as an editor, which is what they need to go on
+working on what they just made.
+
+The cost is stated rather than discovered: someone you gave write access to
+can consume your quota. That was already true of *saving* a shared document —
+every version is charged to the owner — so this widens who can start one
+rather than introducing the hazard.
+
+**Creating may cross Drives; moving may not.** `ws/move` rewrites one tree,
+so a destination in another workspace would leave a parent id pointing at an
+item that tree does not contain — a breadcrumb walking up out of the
+workspace and a listing that never shows it again. `locate-folder!` resolves
+across Drives for `create!`; `folder-parent!` stays inside one for `move!`,
+and the two exist separately for that reason.
 
 `move` refuses a folder into itself or its own descendant — a drag lands
 where it lands, so an interface will ask, and the result would be a subtree
@@ -346,6 +359,16 @@ reach.
 The move picker offers every folder by path — `My Drive / 営業 / Q1` — because
 two folders called Q1 are an ordinary thing to have and a picker showing both
 as `Q1` asks an unanswerable question.
+
+**The listing sorts by timestamp *and* id.** `cursor-of` builds a cursor from
+both, so paging compares on a total order; a sort that stopped at the
+timestamps left documents written in the same millisecond in whatever order
+they came out of a hash map, and the two orders disagreeing means
+`after-cursor` skips one document and repeats another. This surfaced as a
+flaky test rather than a bug report — five documents created in a loop shared
+a timestamp and one run in some number interleaved them. Anything that can
+page in a different order between two requests can lose a row between two
+pages.
 
 ### Responses are a table, and the table is not the document
 

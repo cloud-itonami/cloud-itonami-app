@@ -562,10 +562,25 @@
                   ;; entry straight to `item-view`.
                   :trashed? (ws/trashed? workspace (:drive/id item))})))))
 
-(defn- newest-first [entries]
+(defn- newest-first
+  "Entries as item views, most recently written first.
+
+  The id is part of the sort key, and it is not decoration. `cursor-of`
+  builds a cursor from `updated-at` *and* the id, so paging compares on a
+  total order; a sort that stopped at the timestamps would leave documents
+  written in the same millisecond in whatever order they came out of a hash
+  map. The two orders would then disagree, and `after-cursor` — which drops
+  everything up to the cursor — would skip one document and repeat another.
+
+  Found as a flaky test rather than as a bug report: five documents created
+  in a loop shared a timestamp, and one run in some number came out
+  interleaved. Anything that can page in a different order between two
+  requests can lose a row between two pages."
+  [entries]
   (->> entries
        (sort-by (juxt #(or (:drive.version/created-at (latest-version (:item %))) "")
-                      #(:drive/created-at (:item %))))
+                      #(:drive/created-at (:item %))
+                      #(:drive/id (:item %))))
        reverse
        (mapv (fn [entry] (item-view (:item entry) entry)))))
 
@@ -737,14 +752,58 @@
   ;; stays inside its alphabet on purpose.
   (str "obj-" (UUID/randomUUID)))
 
-(defn- folder-parent!
-  "The folder id a new item should go in, checked.
+(defn- locate-folder!
+  "Which Drive a new item belongs in, and where in it.
 
-  Nil means the root, which is where everything went before folders and is
-  what a caller that does not care should get. A folder that is not a folder,
-  is not there, or is not this principal's to write into is refused here
-  rather than by `ws/create-file`, whose message is about a parent and not
-  about a Drive."
+  `folder-parent!` looks in one workspace, which is right for `move!` —
+  `ws/move` rewrites one tree and a destination in another Drive would leave
+  a parent id pointing outside it. Creating is different: a folder shared
+  with you is somewhere you may put things, and that folder lives in the
+  granter's Drive.
+
+  **What is created there belongs to that Drive.** The workspace is this
+  application's ownership boundary: the bytes are in it, the quota is its
+  owner's, and trash, purge and re-sharing are all owner-only. A document
+  created in alice's folder that bob owned would be a document alice cannot
+  remove from her own Drive. So the Drive's owner owns it and the creator is
+  recorded as an editor, which is what they need to go on working on it.
+
+  The cost is real and is the same one an editor already has: someone you
+  gave write access to can consume your quota. That was already true of
+  saving a shared document — every version is charged to the owner — so this
+  widens who can start one rather than introducing the hazard."
+  [state actor folder]
+  (if (str/blank? (str folder))
+    (let [own (workspace-for state actor)]
+      {:workspace own :owner actor :parent (:drive.workspace/root-id own)})
+    (let [{:keys [workspace owner]} (locate state actor folder)
+          item (when workspace (ws/item workspace folder))]
+      (cond
+        (nil? item)
+        (throw (ex-info "そのフォルダはありません。"
+                        {:type :drive/not-found :folder folder}))
+        (not= :folder (:drive/kind item))
+        (throw (ex-info "フォルダではありません。"
+                        {:type :drive/not-a-folder :folder folder}))
+        (ws/trashed? workspace folder)
+        (throw (ex-info "ゴミ箱の中のフォルダには作成できません。"
+                        {:type :drive/item-is-trashed :folder folder}))
+        (not (ws/can-write? workspace folder actor))
+        (refuse! {:reason :not-permitted :item-id folder :principal actor})
+        :else {:workspace workspace :owner owner :parent folder}))))
+
+(defn- folder-parent!
+  "A destination folder inside `workspace`, checked.
+
+  Nil means that workspace's root. Used by `move!`, which must stay inside
+  one Drive: `ws/move` rewrites one tree, so a destination in another would
+  leave a parent id pointing at an item that tree does not contain — a
+  breadcrumb that walks up out of the workspace and a listing that never
+  shows it again. Creating uses `locate-folder!` instead, which may cross.
+
+  A folder that is not a folder, is not there, or is not this principal's to
+  write into is refused here rather than by `ws/create-file`, whose message
+  is about a parent and not about a Drive."
   [workspace folder actor]
   (let [root (:drive.workspace/root-id workspace)]
     (if (str/blank? (str folder))
@@ -829,10 +888,22 @@
   kind of thing with a different view, and because `documents` is ordered by
   last write, which a folder does not have."
   [state actor folder]
-  (let [workspace (workspace-for state actor)
-        here (or (not-empty (str folder)) (:drive.workspace/root-id workspace))]
+  (let [own (workspace-for state actor)
+        ;; Resolved rather than assumed to be here. A folder shared from
+        ;; another Drive is somewhere this principal can now create, so it
+        ;; has to be somewhere they can navigate into — otherwise the
+        ;; capability exists and nothing can reach it.
+        located (when (not-empty (str folder)) (locate state actor folder))
+        workspace (or (:workspace located) own)
+        here (or (not-empty (str folder)) (:drive.workspace/root-id own))]
     (when (ws/item workspace here)
       {:folder here
+       ;; Whose Drive this is, and who is asking — so the pane can say that
+       ;; what you create here lands in somebody else's Drive, which is the
+       ;; one consequence of this feature a person should not discover
+       ;; afterwards.
+       :owner (or (:owner located) actor)
+       :you actor
        :path (mapv (fn [item] {:id (:drive/id item) :name (:drive/title item)})
                    (ws/path workspace here))
        :folders (->> (ws/children workspace here actor)
@@ -843,17 +914,47 @@
        ;; in. Named by path rather than by title, because two folders called
        ;; Q1 are an ordinary thing to have and a picker showing both as "Q1"
        ;; would be asking an unanswerable question.
-       :all (->> (vals (:drive.workspace/items workspace))
-                 (filter #(and (= :folder (:drive/kind %))
-                               (not (ws/trashed? workspace (:drive/id %)))
-                               (ws/can-write? workspace (:drive/id %) actor)))
-                 (mapv (fn [item]
-                         {:id (:drive/id item)
-                          :name (str/join " / "
-                                          (map :drive/title
-                                               (ws/path workspace (:drive/id item))))}))
-                 (sort-by :name)
-                 vec)})))
+       ;; The asker's own Drive is merged in rather than taken from the
+       ;; store: `workspace-for` creates one on demand, so somebody who has
+       ;; never created anything has no entry there — and the picker would
+       ;; offer them nowhere at all, including their own root, while `:path`
+       ;; above happily said "My Drive".
+       :all (->> (assoc (all-workspaces state) actor own)
+                 (mapcat
+                  (fn [[owner ws]]
+                    (->> (vals (:drive.workspace/items ws))
+                         (filter #(and (= :folder (:drive/kind %))
+                                       (not (ws/trashed? ws (:drive/id %)))
+                                       (ws/can-write? ws (:drive/id %) actor)))
+                         (map (fn [item]
+                                {:id (:drive/id item)
+                                 :owner owner
+                                 :own? (= owner actor)
+                                 :name (str/join " / "
+                                                 (map :drive/title
+                                                      (ws/path ws (:drive/id item))))})))))
+                 (sort-by (juxt (complement :own?) :name))
+                 vec)
+       ;; Folders from other Drives, at the top level only: they are not
+       ;; inside anything here, so there is no folder they could appear
+       ;; under. Shown beside your own the way shared documents are shown
+       ;; beside yours in the list.
+       :shared (when (str/blank? (str folder))
+                 (->> (all-workspaces state)
+                      (remove #(= (first %) actor))
+                      (mapcat
+                       (fn [[_ ws]]
+                         (->> (vals (:drive.workspace/items ws))
+                              (filter #(and (= :folder (:drive/kind %))
+                                            (not (ws/trashed? ws (:drive/id %)))
+                                            ;; Shared *to this principal*
+                                            ;; rather than inherited from a
+                                            ;; folder already listed — a
+                                            ;; subfolder of a shared folder
+                                            ;; is reached by opening it.
+                                            (get (:drive/permissions %) actor)))
+                              (map #(folder-view ws % actor)))))
+                      vec))})))
 
 (defn create!
   "Create a document of `kind` in `actor`'s Drive and return its item view.
@@ -878,28 +979,45 @@
      (when (str/blank? (str actor))
        (throw (ex-info "作成者を特定できません。" {:type :identity/unauthenticated})))
      (locking write-lock
-       (let [workspace (workspace-for (store/snapshot) actor)
+       (let [{:keys [workspace owner parent]}
+             (locate-folder! (store/snapshot) actor folder)
              id (store/new-id "doc")
              title (or (not-empty (str/trim (str title))) (:default-title spec))
              created-at (store/now)
              envelope (stored-envelope spec ((:seed spec) id title))
-             parent (folder-parent! workspace folder actor)
              staged (ws/create-file workspace id parent
                                     {:drive/title title
                                      :drive/media-type stored-media-type
                                      :drive/resource-kind (:resource-kind spec)
                                      :drive/created-at created-at}
                                     actor)
+             ;; A document belongs to the Drive it is in. `ws/create-file`
+             ;; makes the creator the owner, which is right in your own
+             ;; Drive and wrong in somebody else's: alice would be unable to
+             ;; trash, purge or re-share something sitting in her own
+             ;; folder, all of which are owner-only. So the Drive's owner
+             ;; owns it and the creator is recorded as an editor — enough to
+             ;; go on working on what they just made.
+             staged (cond-> staged
+                      (not= owner actor)
+                      (assoc-in [:drive.workspace/items id :drive/permissions]
+                                {owner :owner actor :editor}))
              written (object/write-item staged object-store id actor
                                         (envelope-bytes envelope)
                                         {:object-ref (object-ref)
                                          :created-at created-at})]
          (if (:ok? written)
-           (do (store/transact! assoc-in (workspace-path actor) (:workspace written))
+           ;; Persisted under the *folder owner*, because that is whose
+           ;; workspace was rewritten. Writing it back under the creator
+           ;; would put a copy in their Drive and leave the folder owner's
+           ;; unchanged — the document would appear to exist twice and be
+           ;; the same document neither time.
+           (do (store/transact! assoc-in (workspace-path owner) (:workspace written))
                {:schema schema
                 :ok? true
                 :item (item-view (ws/item (:workspace written) id)
-                                 {:owner actor :own? true :role :owner})})
+                                 {:owner owner :own? (= owner actor)
+                                  :role (ws/effective-role (:workspace written) id actor)})})
            (refuse! written)))))))
 
 (defn- stored-kind-mismatch!
