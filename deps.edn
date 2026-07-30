@@ -26,7 +26,7 @@
   ;; main (landed as untracked WIP) and cannot load there.
   io.github.kotoba-lang/drive
   {:git/url "https://github.com/kotoba-lang/drive.git"
-   :git/sha "31df8f6ac6013bc1844dc812c6cabc7c0b41e739"}
+   :git/sha "54d7aeface7135b572c9cccfc03ef7a31a7344be"}
 
   ;; The three document surfaces the Drive can create. Each is a portable
   ;; model plus an office-envelope wire namespace, and nothing in any of them

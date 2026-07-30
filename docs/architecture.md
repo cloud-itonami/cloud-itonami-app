@@ -93,6 +93,30 @@ different hat.
 knowing its own index and its size delta, which is what makes a column of
 identical timestamps readable.
 
+**A version index is a position, not an identity.** It is where the version
+sits in `:drive/versions`, so pruning renumbers what is left — what was
+version 3 becomes version 1. Everything that takes an index re-reads first,
+so this is a property to know rather than a hazard to work around.
+
+### Forgetting part of a history
+
+`add-version` adds to the quota and nothing subtracts. Trashing frees
+nothing and `documents/purge!` frees everything, so until
+`drive.object/prune-versions` the only way to reclaim what a heavily-edited
+document's past cost was to delete the document.
+
+`documents/prune!` keeps the newest N and returns the rest to the quota.
+Owner only and irreversible, like purge, and for the same reason: an editor
+may change a document and still not destroy the record of how it got that
+way. `keep-count` below 1 is refused by `drive` itself — the newest version
+is the document.
+
+**Nothing prunes on its own.** It would be easy to trim on every save and
+never mention it, and that would mean the Drive quietly deleting history
+somebody may be relying on, at a moment they did not choose, to solve a
+problem they had not noticed. A Drive that fills up and says so is the
+better of the two.
+
 ### Searching inside documents
 
 The Drive could filter a list of names. What a cell says, what a paragraph

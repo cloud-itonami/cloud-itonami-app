@@ -296,6 +296,7 @@
             :quota-exceeded "Drive の容量が上限に達しています。"
             ;; Expired, revoked, and never-existed are one answer on purpose.
             :no-such-link "この共有リンクは無効です。"
+            :keep-count-too-low "最新の版は残す必要があります。"
             "ドキュメントを操作できませんでした。")
           (assoc refusal
                  :type (case reason
@@ -306,6 +307,7 @@
                          :object-missing-from-store :drive/object-missing
                          :quota-exceeded :drive/quota-exceeded
                          :no-such-link :drive/not-found
+                         :keep-count-too-low :drive/invalid-document
                          :drive/refused)))))
 
 ;; ── bytes ───────────────────────────────────────────────────────────────────
@@ -1839,3 +1841,55 @@
        (assoc (write-resource! target id actor object-store (:resource older)
                                expected-etag)
               :restored-from index)))))
+
+(def default-keep-versions
+  "How many versions a prune keeps when the caller does not say.
+
+  Ten, which is a number rather than a principle. It is enough that the
+  history is still a history and small enough that a document edited all
+  afternoon stops costing an afternoon's worth of storage. Nothing prunes on
+  its own — see `prune!`."
+  10)
+
+(defn prune!
+  "Forget all but the newest `keep-count` versions of `id`, and take the
+  quota back.
+
+  ## Nothing does this automatically, on purpose
+
+  `add-version` adds and nothing subtracts, so an edited document's cost only
+  goes up, and until `drive.object/prune-versions` the only way down was to
+  delete the document. It would be easy to prune on every save and never
+  mention it. That would also mean the Drive quietly deleting history
+  somebody may be relying on, at a moment they did not choose, to solve a
+  problem they had not noticed. So it is a thing the owner does.
+
+  ## Owner only
+
+  Irreversible, like `purge!`, and for the same reason: an editor may change
+  a document and still not destroy the record of how it got that way."
+  ([id actor] (prune! id actor default-keep-versions (store-instance)))
+  ([id actor keep-count] (prune! id actor keep-count (store-instance)))
+  ([id actor keep-count object-store]
+   (locking write-lock
+     (let [{:keys [workspace owner]} (locate (store/snapshot) actor id)
+           item (when workspace (ws/item workspace id))]
+       (cond
+         (nil? item) (refuse! {:reason :no-such-item :item-id id})
+         (not= :owner (ws/effective-role workspace id actor))
+         (refuse! {:reason :not-permitted :item-id id :principal actor})
+         :else
+         (let [pruned (object/prune-versions workspace object-store id actor
+                                             (long keep-count))]
+           (if (:ok? pruned)
+             (do (store/transact! assoc-in (workspace-path owner) (:workspace pruned))
+                 {:schema schema
+                  :ok? true
+                  :id id
+                  :deleted (:deleted pruned)
+                  :kept (:kept pruned)
+                  :freed-bytes (:freed-bytes pruned)
+                  :item (item-view (ws/item (:workspace pruned) id)
+                                   {:owner owner :own? (= owner actor) :role :owner})
+                  :quota (quota-view (store/snapshot) owner)})
+             (refuse! pruned))))))))

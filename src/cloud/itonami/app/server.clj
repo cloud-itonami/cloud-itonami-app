@@ -795,6 +795,20 @@
                       ;; `documents/update!`.
                       (get request "etag"))))
 
+            ;; Nothing prunes on its own, so this is a thing the owner asks
+            ;; for — see `documents/prune!` for why not automatically.
+            (and (= method "POST")
+                 (id-from-path path #"/api/workspace/drive/documents/([^/]+)/prune"))
+            (let [session (require-app-session! exchange)
+                  request (read-json exchange)]
+              (require-origin! exchange config)
+              (require-csrf! exchange session)
+              (send! exchange 200
+                     (documents/prune!
+                      (id-from-path path #"/api/workspace/drive/documents/([^/]+)/prune")
+                      (:user-id session)
+                      (or (:keep request) documents/default-keep-versions))))
+
             (and (= method "GET")
                  (id-from-path path #"/api/workspace/drive/documents/([^/]+)/history"))
             (let [session (require-app-session! exchange)]
