@@ -92,6 +92,20 @@
   io.github.kotoba-lang/identity
   {:git/url "https://github.com/kotoba-lang/identity.git"
    :git/sha "5cf94e38c816ced6857ef62de344f6adea9fc050"}
+
+  ;; The contract surface. This app stores nothing about a contract itself —
+  ;; kagi owns the vault (E2E on disk and in kotobase.net, ADR-2607170500) and
+  ;; `kagi.vault-read` is a read-only, non-prompting seam into it; kagitaba
+  ;; owns the item shape a contract lives in; kaiyaku owns the disclosed
+  ;; cancellation procedures and the 縁 ledger. Taking the catalog as a
+  ;; dependency rather than a copy is the point: a vendored copy of a
+  ;; cancellation procedure goes stale without saying so.
+  io.github.kotoba-lang/kagi
+  {:git/url "https://github.com/kotoba-lang/kagi.git"
+   :git/sha "eac4c03fcd6265a180785ab9f99cc28465d7bc9c"}
+  io.github.etzhayyim/kaiyaku
+  {:git/url "https://github.com/etzhayyim/com-etzhayyim-kaiyaku.git"
+   :git/sha "8acf059df14901854065c9773df0cd9dc53790c6"}
   ;; The MCP protocol kernel (manifest model + pure JSON-RPC dispatcher) behind
   ;; `cloud.itonami.app.mcp`. Zero runtime deps of its own, so this adds the
   ;; protocol and nothing else; the tools it serves are already in `fleet`.
