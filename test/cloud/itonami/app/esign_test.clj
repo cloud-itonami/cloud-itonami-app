@@ -17,6 +17,7 @@
             [cloud.itonami.app.esign :as esign]
             [cloud.itonami.app.esign.assertion :as assertion]
             [cloud.itonami.app.esign.commitment :as commitment]
+            [cloud.itonami.app.esign.vault :as vault]
             [cloud.itonami.app.store :as store]
             [drive.store.memory :as memory])
   (:import [com.fasterxml.jackson.databind ObjectMapper]
@@ -311,10 +312,18 @@
       (is (= (:esign/object-ref envelope)
              (:etag (:item (documents/content (:id document) alice object-store))))))
 
-    (testing "an exhaustive outline was captured and digested"
-      (is (seq (:esign/presentation envelope)))
-      (is (= (commitment/digest-of-string (:esign/presentation envelope))
-             (:esign/presentation-digest envelope))))
+    (testing "an exhaustive outline was captured, SEALED, and digested as plaintext"
+      ;; The digest is over the plaintext — what the signer saw and what the
+      ;; commitment binds. A digest of the ciphertext would move with the nonce.
+      (let [outline (vault/open (:esign/id envelope) (:esign/presentation-sealed envelope))]
+        (is (seq outline))
+        (is (= (commitment/digest-of-string outline)
+               (:esign/presentation-digest envelope))))
+      (testing "and the stored form is ciphertext, not the outline"
+        (is (nil? (:esign/presentation envelope)))
+        (is (= "AES-256-GCM" (:vault/algorithm (:esign/presentation-sealed envelope))))
+        (is (not (str/includes? (pr-str (:esign/presentation-sealed envelope))
+                                "業務委託契約")))))
 
     (testing "editing the document afterwards does not change what was frozen"
       (let [before (:esign/document-digest envelope)]
@@ -401,11 +410,12 @@
 (deftest evidence-record-carries-no-document-content
   (let [{:keys [evidence envelope]} (signed-envelope! {})
         text (pr-str evidence)]
-    (testing "the outline is in the envelope but not in the evidence"
-      (is (seq (:esign/presentation envelope)))
+    (testing "the outline is reachable from the envelope but not in the evidence"
+      (is (seq (vault/open (:esign/id envelope) (:esign/presentation-sealed envelope))))
       (is (not (str/includes? text "業務委託契約"))
           "a document title is content and does not belong in evidence")
-      (is (not (str/includes? text (:esign/presentation envelope)))))
+      (is (not (str/includes? text (vault/open (:esign/id envelope)
+                                               (:esign/presentation-sealed envelope))))))
     (testing "what is there is digests, DIDs and signed credentials"
       (is (= (:esign/document-digest envelope)
              (get-in evidence ["document" "digest"])))
@@ -512,22 +522,27 @@
     (store/transact! assoc-in [:esign :envelopes (:esign/id envelope)] envelope)
     (let [forgotten (esign/forget-content! (:esign/id envelope))
           evidence (esign/evidence forgotten)]
-      (testing "the outline is gone and its absence is stated"
-        (is (nil? (:esign/presentation forgotten)))
-        (is (true? (:esign/content-forgotten? forgotten))))
+      (testing "the KEY is gone, so every copy of the ciphertext is unreadable"
+        (is (true? (:esign/content-forgotten? forgotten)))
+        (is (nil? (:esign/presentation-sealed forgotten)))
+        (testing "and the ciphertext that WAS written to disk no longer opens"
+          ;; The point of shredding rather than dissoc: this is the record as it
+          ;; existed before, and it is now undecryptable.
+          (is (nil? (vault/open (:esign/id envelope)
+                                (:esign/presentation-sealed envelope))))))
       (testing "the signature still verifies against the digests"
         (is (= :total-passed (:esign/status (esign/verify-evidence evidence)))))
       (testing "a view says content-forgotten rather than showing an empty document"
         (let [view (esign/envelope-view forgotten {:principal alice})]
           (is (true? (:content-forgotten? view)))
-          (is (not (contains? view :presentation))))))))
+          (is (nil? (:presentation view))))))))
 
 (deftest envelope-view-does-not-leak-to-non-participants
   (let [{:keys [envelope auth]} (signed-envelope! {})]
     (store/transact! assoc-in [:esign :envelopes (:esign/id envelope)] envelope)
     (testing "a participant sees the outline"
-      (let [view (esign/envelope!(store/snapshot) (:esign/id envelope)
-                                 {:principal alice :did (:did auth)})]
+      (let [view (esign/envelope! (store/snapshot) (:esign/id envelope)
+                                  {:principal alice :did (:did auth)})]
         (is (:participant? view))
         (is (seq (:presentation view)))))
     (testing "somebody else is refused rather than shown a redacted envelope"

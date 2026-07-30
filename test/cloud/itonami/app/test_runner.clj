@@ -28,6 +28,7 @@
             [cloud.itonami.app.did-test]
             [cloud.itonami.app.documents-test]
             [cloud.itonami.app.esign-test]
+            [cloud.itonami.app.esign-retention-test]
             [cloud.itonami.app.filecoin-test]
             [cloud.itonami.app.fleet-test]
             [cloud.itonami.app.operator-test]
@@ -63,6 +64,7 @@
     cloud.itonami.app.did-test
     cloud.itonami.app.documents-test
     cloud.itonami.app.esign-test
+    cloud.itonami.app.esign-retention-test
     cloud.itonami.app.filecoin-test
     cloud.itonami.app.fleet-test
     cloud.itonami.app.operator-test
