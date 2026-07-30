@@ -635,6 +635,30 @@ them. `documents` also sorts by id as well as timestamp, because two
 processes do not share the atom that makes `now` monotonic — the clock is
 the answer within one process and the tiebreaker is the answer across them.
 
+### Tables and lists without the JSON editor
+
+A document with a table could not be edited without dropping to the JSON
+pane. That pane is a working escape hatch and a wall for anybody who has not
+been told about it, and a table is not an exotic thing to put in a memo.
+
+The model allows ragged rows, and the editor does not force them even: the
+grid is drawn to the widest row, a shorter row has empty boxes at the end,
+and typing in one fills that row out. A row nobody touches stays short —
+what is stored is what was entered. The **writers** pad on the way out,
+because a ragged `w:tr` draws with a torn edge in Word and a short row ends
+a Markdown table early.
+
+What the tests cover is the path the editor actually uses: the projected
+payload, string-keyed, through `update!`. A table is a vector of vectors and
+a list a vector of strings, which is exactly where a projection loses shape
+if it is going to. An empty list and an empty table — what the editor
+produces the moment somebody adds one — save and come out of both writers
+without a broken file.
+
+Slides still send `rect`, `image` and components to the JSON pane. Position,
+fill and image data are a canvas's job, and half of one would leave a reader
+wondering which half.
+
 ### Proposing a change you may not make
 
 `docs.model` had `:docs/suggestions` from the start — `add-suggestion`, a

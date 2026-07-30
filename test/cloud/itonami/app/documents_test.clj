@@ -3672,3 +3672,73 @@
                        (catch clojure.lang.ExceptionInfo e (ex-data e)))]
         (is (= :drive/invalid-document (:type error)))
         (is (= ":named-range/invalid" (:code (first (:problems error)))))))))
+
+;; ── tables and lists without the JSON editor ────────────────────────────────
+
+(deftest a-table-and-a-list-survive-the-way-the-editor-saves
+  ;; The editor writes into the projected payload. A table is a vector of
+  ;; vectors and a list is a vector of strings, which is where a projection
+  ;; loses shape if it is going to — so this goes through `update!` with the
+  ;; string-keyed payload rather than the EDN resource.
+  (with-state
+    (fn [_ object-store]
+      (let [{:keys [item]} (documents/create! :docs "議事録" alice object-store)
+            before (documents/content (:id item) alice object-store)
+            payload (assoc (:payload before) "docs/blocks"
+                           [{"docs/id" "t" "docs/kind" "table"
+                             "docs/rows" [["項目" "状態"] ["設計" "完了"]]}
+                            {"docs/id" "l" "docs/kind" "list"
+                             "docs/ordered?" true
+                             "docs/items" ["予算の確認" "次回日程"]}])
+            _ (documents/update! (:id item) payload alice
+                                 (:etag (:item before)) object-store)
+            back (:resource (documents/content (:id item) alice object-store))]
+        (is (= [:table :list] (mapv :docs/kind (:docs/blocks back))))
+        (is (= [["項目" "状態"] ["設計" "完了"]]
+               (:docs/rows (first (:docs/blocks back)))))
+        (is (= ["予算の確認" "次回日程"] (:docs/items (second (:docs/blocks back)))))
+        (is (true? (:docs/ordered? (second (:docs/blocks back)))))))))
+
+(deftest a-ragged-table-is-stored-ragged-and-written-square
+  ;; The model allows rows of different lengths and the editor does not
+  ;; force them even; what is stored stays what was entered. The writers pad
+  ;; on the way out, because a ragged row draws with a torn edge in Word and
+  ;; ends a Markdown table early.
+  (with-state
+    (fn [_ object-store]
+      (let [{:keys [item]} (documents/create! :docs "表" alice object-store)
+            before (documents/content (:id item) alice object-store)
+            payload (assoc (:payload before) "docs/blocks"
+                           [{"docs/id" "t" "docs/kind" "table"
+                             "docs/rows" [["あ" "い" "う"] ["え"]]}])
+            _ (documents/update! (:id item) payload alice
+                                 (:etag (:item before)) object-store)
+            back (:resource (documents/content (:id item) alice object-store))]
+        (is (= [["あ" "い" "う"] ["え"]] (:docs/rows (first (:docs/blocks back))))
+            "stored as entered")
+        (let [md (String. ^bytes (:bytes (documents/export (:id item) "md" alice
+                                                           object-store))
+                          "UTF-8")]
+          (is (str/includes? md "| え |  |  |") "padded on the way out"))
+        (let [entries (docs-docx/docx-entries
+                       (:bytes (documents/export (:id item) "docx" alice object-store)))]
+          ;; Three cells in each row, including the short one.
+          (is (= 6 (count (re-seq #"<w:tc>" (get entries "word/document.xml"))))))))))
+
+(deftest an-empty-list-and-an-empty-table-are-not-an-error
+  ;; What the editor produces the moment somebody adds one and has not typed
+  ;; anything into it yet.
+  (with-state
+    (fn [_ object-store]
+      (let [{:keys [item]} (documents/create! :docs "空" alice object-store)
+            before (documents/content (:id item) alice object-store)
+            payload (assoc (:payload before) "docs/blocks"
+                           [{"docs/id" "l" "docs/kind" "list" "docs/items" []}
+                            {"docs/id" "t" "docs/kind" "table" "docs/rows" []}])
+            saved (documents/update! (:id item) payload alice
+                                     (:etag (:item before)) object-store)]
+        (is (:ok? saved))
+        ;; And they come out of both writers without producing a broken file.
+        (is (pos? (count (:bytes (documents/export (:id item) "md" alice object-store)))))
+        (is (pos? (count (:bytes (documents/export (:id item) "docx" alice
+                                                   object-store)))))))))
