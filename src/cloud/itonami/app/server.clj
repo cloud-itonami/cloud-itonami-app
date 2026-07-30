@@ -131,6 +131,10 @@
    :messages (mapv #(select-keys % [:id :role :content :at])
                    (store/session-messages session-id))})
 
+(defn- public-sessions []
+  {:schema "cloud.itonami.app.sessions.v1"
+   :items (store/session-summaries)})
+
 (defn- identity-context [exchange]
   (identity/public-state (cookie-value exchange identity/cookie-name)))
 
@@ -516,6 +520,11 @@
               (send! exchange 200
                      (public-session (or (:session (query-params exchange))
                                          "desktop"))))
+
+            (and (= method "GET") (= path "/api/sessions"))
+            (do
+              (require-app-session! exchange)
+              (send! exchange 200 (public-sessions)))
 
             (and (= method "GET") (= path "/api/workspace"))
             (do

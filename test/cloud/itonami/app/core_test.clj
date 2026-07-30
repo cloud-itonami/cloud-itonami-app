@@ -120,6 +120,25 @@
       (finally
         (reset! store/state previous)))))
 
+(deftest session-summaries-are-recent-first-and-content-bounded
+  (let [state {:sessions
+               {"older" {:updated-at "2026-07-29T10:00:00Z"
+                         :messages [{:role "user" :content "  最初の   相談  "}
+                                    {:role "assistant" :content "回答"}]}
+                "newer" {:updated-at "2026-07-30T10:00:00Z"
+                         :messages [{:role "user"
+                                     :content (apply str (repeat 60 "長"))}
+                                    {:role "assistant" :content "最新の回答"}]}}
+               :runner-sessions {"newer" {"codex-cli" {:id "thread-1"}}}}
+        summaries (store/session-summaries state)]
+    (is (= ["newer" "older"] (mapv :id summaries)))
+    (is (= ["codex-cli"] (:providers (first summaries))))
+    (is (= 2 (:message-count (first summaries))))
+    (is (= "最新の回答" (:preview (first summaries))))
+    (is (= "最初の 相談" (:title (second summaries))))
+    (is (= 48 (count (:title (first summaries)))))
+    (is (str/ends-with? (:title (first summaries)) "…"))))
+
 (deftest streaming-chat-emits-deltas-and-persists-complete-message
   (let [temporary (java.nio.file.Files/createTempDirectory
                    "cloud-itonami-app-stream-test"
@@ -256,6 +275,9 @@
       (is (re-find #"id=\"chat-thread\"" html))
       (is (re-find #"id=\"stop-button\"" html))
       (is (re-find #"id=\"new-chat-button\"" html))
+      (is (re-find #"id=\"session-list\"" html))
+      (is (re-find #"id=\"session-count\"" html))
+      (is (re-find #"会話履歴" html))
       (is (re-find #"id=\"model-select\"" html))
       (is (re-find #"option.dataset.provider = model.provider" html))
       (is (re-find #"provider:modelSelect.selectedOptions" html))

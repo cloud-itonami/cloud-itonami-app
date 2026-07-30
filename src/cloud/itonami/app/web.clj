@@ -83,7 +83,36 @@
   .tool-button{cursor:pointer}.tool-button:hover{background:var(--color-neutral-solid-gray-50)}
   .tool-button:focus-visible,.suggestion-card:focus-visible,.message-action:focus-visible,
   .composer-button:focus-visible{outline:4px solid var(--color-primitive-yellow-300);outline-offset:1px}
-  .chat-scroll{flex:1;overflow-y:auto;overscroll-behavior:contain;scroll-behavior:smooth}
+  .chat-body{display:grid;grid-template-columns:17rem minmax(0,1fr);flex:1;min-height:0}
+  .chat-history{min-width:0;overflow-y:auto;padding:1rem .75rem;
+    border-right:1px solid var(--color-neutral-solid-gray-200);
+    background:var(--color-neutral-solid-gray-50)}
+  .chat-history__header{display:flex;align-items:center;justify-content:space-between;
+    gap:.5rem;padding:.25rem .5rem .75rem}
+  .chat-history__title{margin:0;font-size:.875rem;font-weight:700}
+  .chat-history__count{display:grid;place-items:center;min-width:1.5rem;height:1.5rem;
+    border-radius:999px;background:var(--color-neutral-solid-gray-200);
+    color:var(--color-neutral-solid-gray-700);font-size:.75rem}
+  .chat-history__list{display:grid;gap:.375rem;margin:0;padding:0;list-style:none}
+  .chat-session{display:block;width:100%;box-sizing:border-box;border:1px solid transparent;
+    border-radius:.625rem;background:transparent;padding:.75rem;text-align:left;cursor:pointer}
+  .chat-session:hover{background:var(--color-neutral-white);
+    border-color:var(--color-neutral-solid-gray-200)}
+  .chat-session[aria-current='true']{background:var(--color-neutral-white);
+    border-color:var(--color-key-600);box-shadow:inset 3px 0 0 var(--color-key-900)}
+  .chat-session:focus-visible{outline:4px solid var(--color-primitive-yellow-300);
+    outline-offset:1px}
+  .chat-session__title,.chat-session__preview{display:block;overflow:hidden;
+    text-overflow:ellipsis;white-space:nowrap}
+  .chat-session__title{color:var(--color-neutral-solid-gray-900);
+    font-size:.8125rem;font-weight:700}
+  .chat-session__preview{margin-top:.25rem;color:var(--color-neutral-solid-gray-600);
+    font-size:.75rem}
+  .chat-session__meta{display:flex;justify-content:space-between;gap:.5rem;margin-top:.45rem;
+    color:var(--color-neutral-solid-gray-500);font-size:.6875rem}
+  .chat-conversation{position:relative;display:flex;flex-direction:column;min-width:0;min-height:0}
+  .chat-scroll{flex:1;min-height:0;overflow-y:auto;overscroll-behavior:contain;
+    scroll-behavior:smooth}
   .chat-thread{width:min(100%,52rem);box-sizing:border-box;margin:0 auto;
     padding:2rem 1.5rem 11rem}
   .chat-empty{min-height:calc(100vh - 18rem);display:grid;place-content:center;
@@ -341,6 +370,14 @@
     .view{padding:1rem}.view-header{display:block}.view-header .dads-button{margin-top:1rem}
     .chat-view{padding:0}.chat-shell{height:calc(100dvh - 3.75rem)}
     .chat-header{padding:.5rem .75rem}.chat-header .model-pill{display:none}
+    .chat-body{grid-template-columns:minmax(0,1fr);grid-template-rows:auto minmax(0,1fr)}
+    .chat-history{overflow-x:auto;overflow-y:hidden;padding:.5rem .75rem;
+      border-right:0;border-bottom:1px solid var(--color-neutral-solid-gray-200)}
+    .chat-history__header{padding:0 0 .4rem}
+    .chat-history__list{display:flex;width:max-content;max-width:none}
+    .chat-session{width:13rem;padding:.55rem .75rem}
+    .chat-session__preview{display:none}
+    .chat-session[aria-current='true']{box-shadow:inset 0 -3px 0 var(--color-key-900)}
     .chat-thread{padding:1.25rem 1rem 10.5rem}
     .chat-empty{min-height:calc(100dvh - 15rem)}.chat-empty h1{font-size:1.625rem}
     .suggestion-grid{grid-template-columns:1fr}.suggestion-card:nth-child(n+3){display:none}
@@ -417,8 +454,11 @@
     const empty = $('#chat-empty');
     const scroll = $('#chat-scroll');
     const chatShell = $('#chat-shell');
+    const sessionList = $('#session-list');
+    const sessionCount = $('#session-count');
     const modelSelect = $('#model-select');
     let sessionId = localStorage.getItem('cloud-itonami-session') || 'desktop';
+    chatShell.dataset.session = sessionId;
     let currentController = null;
     let lastPrompt = '';
     let generating = false;
@@ -484,10 +524,59 @@
         form.requestSubmit();
       });
     };
+    const renderSessions = (items) => {
+      const sessions = [...items];
+      if (!sessions.some((item) => item.id === sessionId)) {
+        sessions.unshift({id:sessionId, title:'新しい会話',
+          preview:'まだメッセージはありません', 'message-count':0,
+          providers:[], 'updated-at':null});
+      }
+      sessionCount.textContent = String(sessions.length);
+      sessionList.replaceChildren();
+      sessions.forEach((item) => {
+        const button = make('button', 'chat-session');
+        button.type = 'button';
+        button.setAttribute('aria-current', item.id === sessionId ? 'true' : 'false');
+        const provider = (item.providers || []).join(', ');
+        const meta = make('span', 'chat-session__meta');
+        meta.append(
+          make('span', null, item['updated-at'] ? formatDate(item['updated-at']) : 'いま'),
+          make('span', null,
+            `${item['message-count'] || 0}件${provider ? ` · ${provider}` : ''}`));
+        button.append(
+          make('span', 'chat-session__title', item.title || '新しい会話'),
+          make('span', 'chat-session__preview', item.preview || ''),
+          meta);
+        button.addEventListener('click', async () => {
+          if (generating || item.id === sessionId) return;
+          sessionId = item.id;
+          localStorage.setItem('cloud-itonami-session', sessionId);
+          chatShell.dataset.session = sessionId;
+          renderSessions(sessions);
+          await loadSession();
+          prompt.focus();
+        });
+        const entry = document.createElement('li');
+        entry.append(button);
+        sessionList.append(entry);
+      });
+    };
+    const loadSessions = async () => {
+      try {
+        const request = await fetch('/api/sessions');
+        const data = await request.json();
+        if (!request.ok) throw new Error(data?.error?.message || '会話一覧を取得できませんでした。');
+        renderSessions(data.items || []);
+      } catch (error) {
+        renderSessions([]);
+        announce(`会話一覧を読み込めませんでした: ${error.message}`);
+      }
+    };
     const loadSession = async () => {
       try {
         const request = await fetch(`/api/session?session=${encodeURIComponent(sessionId)}`);
         const data = await request.json();
+        if (!request.ok) throw new Error(data?.error?.message || '会話を取得できませんでした。');
         thread.querySelectorAll('.message-row').forEach((node) => node.remove());
         data.messages.forEach((message) => {
           if (message.role === 'user') lastPrompt = message.content;
@@ -577,6 +666,7 @@
       } finally {
         currentController = null;
         setGenerating(false);
+        loadSessions();
         prompt.focus();
       }
     });
@@ -601,6 +691,7 @@
       thread.querySelectorAll('.message-row').forEach((node) => node.remove());
       empty.hidden = false;
       prompt.value = ''; resizePrompt(); prompt.focus();
+      loadSessions();
       announce('新しいチャットを開始しました。');
     });
     modelSelect.addEventListener('change', () => {
@@ -1460,6 +1551,7 @@
       if (appBootstrapped) return;
       appBootstrapped = true;
       loadSession();
+      loadSessions();
       loadWorkspace('worker', renderWorker);
       loadOrganisms().catch((error) => {
         $('#organism-list').replaceChildren(make('li', 'empty-state', error.message));
@@ -2229,7 +2321,15 @@
             [:span {:class "model-pill" :id "active-model-label"} (str provider " / " model)]
             [:button {:class "tool-button" :type "button" :id "new-chat-button"}
              "＋ 新しいチャット"]]]
-          [:div {:class "chat-scroll" :id "chat-scroll"}
+          [:div {:class "chat-body"}
+           [:aside {:class "chat-history" :aria-label "会話履歴"}
+            [:div {:class "chat-history__header"}
+             [:h2 {:class "chat-history__title"} "会話履歴"]
+             [:span {:class "chat-history__count" :id "session-count"
+                     :aria-label "会話数"} "0"]]
+            [:ul {:class "chat-history__list" :id "session-list"}]]
+           [:div {:class "chat-conversation"}
+            [:div {:class "chat-scroll" :id "chat-scroll"}
            [:div {:class "chat-thread" :id "chat-thread"
                   :role "log" :aria-live "polite" :aria-relevant "additions"}
             [:div {:class "chat-empty" :id "chat-empty"}
@@ -2274,7 +2374,7 @@
              "Enterで送信 · Shift+Enterで改行 · AIの回答は確認してください"]]
            [:p {:class "visually-hidden" :id "request-status"
                 :role "status" :aria-live "polite"}
-            "ローカルモデルを準備中です。"]]]]
+            "ローカルモデルを準備中です。"]]]]]]
         [:section {:class "view" :data-view-panel "worker" :hidden true}
          (view-header "Worker"
                       "時間のかかる指示をキューに積み、チャットを離れても手元のモデルが順番に処理します。")

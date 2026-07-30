@@ -1,6 +1,7 @@
 (ns cloud.itonami.app.store
   (:require [clojure.edn :as edn]
             [clojure.java.io :as io]
+            [clojure.string :as str]
             [cloud.itonami.app.config :as config]
             [cloud.itonami.app.installation :as installation]
             [cloud.itonami.app.recovery :as recovery]
@@ -77,6 +78,34 @@
 
 (defn session-messages [session-id]
   (get-in @state [:sessions session-id :messages] []))
+
+(defn- summary-text [value limit fallback]
+  (let [text (some-> value str (str/replace #"\s+" " ") str/trim)
+        text (if (str/blank? text) fallback text)]
+    (if (> (count text) limit)
+      (str (subs text 0 (max 0 (dec limit))) "…")
+      text)))
+
+(defn session-summaries
+  ([]
+   (session-summaries @state))
+  ([value]
+   (->> (:sessions value)
+        (map (fn [[session-id session]]
+               (let [messages (:messages session)
+                     first-user (some #(when (= "user" (:role %)) %) messages)
+                     latest (last messages)]
+                 {:id session-id
+                  :title (summary-text (:content first-user) 48 "新しい会話")
+                  :preview (summary-text (:content latest) 80 "まだメッセージはありません")
+                  :updated-at (:updated-at session)
+                  :message-count (count messages)
+                  :providers (->> (keys (get-in value [:runner-sessions session-id]))
+                                  (map name)
+                                  sort
+                                  vec)})))
+        (sort-by (juxt :updated-at :id) #(compare %2 %1))
+        vec)))
 
 (defn runner-session [session-id provider-id]
   (get-in @state [:runner-sessions session-id provider-id]))
