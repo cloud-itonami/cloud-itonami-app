@@ -16,7 +16,9 @@
             [cloud.itonami.app.filecoin-test]
             [cloud.itonami.app.fleet-test]
             [cloud.itonami.app.fleet-tools-test]
+            [cloud.itonami.app.installation-test]
             [cloud.itonami.app.openai-compat-test]
+            [cloud.itonami.app.recovery :as recovery]
             [cloud.itonami.app.storj-test]
             [cloud.itonami.app.worker-http-test]))
 
@@ -29,6 +31,7 @@
     cloud.itonami.app.filecoin-test
     cloud.itonami.app.fleet-test
     cloud.itonami.app.fleet-tools-test
+    cloud.itonami.app.installation-test
     cloud.itonami.app.openai-compat-test
     cloud.itonami.app.storj-test
     cloud.itonami.app.worker-http-test])
@@ -60,5 +63,6 @@
     (doseq [n missing] (println "  " n))
     (println "Add them to cloud.itonami.app.test-runner, or they do not run.")
     (System/exit 1))
-  (let [{:keys [fail error]} (apply test/run-tests namespaces)]
-    (System/exit (if (zero? (+ fail error)) 0 1))))
+  (binding [recovery/*backup-enabled?* false]
+    (let [{:keys [fail error]} (apply test/run-tests namespaces)]
+      (System/exit (if (zero? (+ fail error)) 0 1)))))

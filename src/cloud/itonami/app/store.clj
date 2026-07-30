@@ -2,6 +2,8 @@
   (:require [clojure.edn :as edn]
             [clojure.java.io :as io]
             [cloud.itonami.app.config :as config]
+            [cloud.itonami.app.installation :as installation]
+            [cloud.itonami.app.recovery :as recovery]
             [kotoba.kgraph :as kgraph])
   (:import [java.nio.file Files StandardCopyOption]
            [java.time Instant]
@@ -11,6 +13,9 @@
 
 (defn initial-state []
   {:schema schema
+   :installation {:id (str "installation-" (UUID/randomUUID))
+                  :created-at (str (Instant/now))
+                  :storage-schema "cloud.itonami.app.installation-storage.v1"}
    :agents [{:id "local" :name "Local" :system-prompt
              "You are a private, local-first assistant. Be concise and useful."}]
    :sessions {}
@@ -25,10 +30,31 @@
 (defn state-file []
   (io/file (config/data-dir) "state.edn"))
 
+(defn- write-state-file! [value backup?]
+  (let [file (state-file)
+        temporary (io/file (.getParentFile file) "state.edn.tmp")]
+    (.mkdirs (.getParentFile file))
+    (installation/restrict-directory! (.getParentFile file))
+    (when (and backup? (.isFile file))
+      (recovery/backup! (.getParentFile file)
+                        (Files/readAllBytes (.toPath file))))
+    (spit temporary (pr-str value))
+    (installation/restrict-file! temporary)
+    (Files/move (.toPath temporary) (.toPath file)
+                (into-array StandardCopyOption
+                            [StandardCopyOption/REPLACE_EXISTING
+                             StandardCopyOption/ATOMIC_MOVE]))
+    (installation/restrict-file! file))
+  value)
+
 (defn- load-state []
   (let [file (state-file)]
     (if (.isFile file)
-      (merge (initial-state) (edn/read-string (slurp file)))
+      (let [loaded (edn/read-string (slurp file))
+            value (merge (initial-state) loaded)]
+        (when-not (:installation loaded)
+          (write-state-file! value false))
+        value)
       (initial-state))))
 
 (defonce state (atom (load-state)))
@@ -36,15 +62,7 @@
 (defn snapshot [] @state)
 
 (defn- persist! [value]
-  (let [file (state-file)
-        temporary (io/file (.getParentFile file) "state.edn.tmp")]
-    (.mkdirs (.getParentFile file))
-    (spit temporary (pr-str value))
-    (Files/move (.toPath temporary) (.toPath file)
-                (into-array StandardCopyOption
-                            [StandardCopyOption/REPLACE_EXISTING
-                             StandardCopyOption/ATOMIC_MOVE])))
-  value)
+  (write-state-file! value true))
 
 (defn transact! [f & args]
   (locking state

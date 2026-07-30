@@ -2,11 +2,11 @@
   (:require [clojure.edn :as edn]
             [clojure.java.io :as io]
             [clojure.string :as str]
+            [cloud.itonami.app.installation :as installation]
             [cloud.itonami.app.policy :as policy]))
 
 (defn data-dir []
-  (.getCanonicalFile
-   (io/file (or (System/getenv "CLOUD_ITONAMI_DATA_DIR") "data"))))
+  (installation/ensure-data-dir!))
 
 (defn- deep-merge
   ([a b]

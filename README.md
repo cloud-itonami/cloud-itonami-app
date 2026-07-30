@@ -164,9 +164,19 @@ distribution license gate.
 
 ## Data and secrets
 
-Runtime state is stored below `data/` and is ignored by Git. OAuth tokens use
-macOS Keychain; only references and non-secret metadata enter the local state.
-Provider and relay credentials are read from environment variables.
+Runtime state is stored outside the repository in the host's stable per-user
+application-data directory. On macOS this is
+`~/Library/Application Support/Cloud Itonami/`. `CLOUD_ITONAMI_DATA_DIR`
+remains an explicit override for tests and managed deployments. On first use,
+a valid legacy `./data` tree is copied into the stable directory without
+deleting or modifying the source.
+
+Every installation has a durable installation ID. Before `state.edn` is
+replaced, the previous version is sealed as an AES-256-GCM recovery snapshot;
+the device recovery key is kept in macOS Keychain, never in the repository or
+EDN state. OAuth tokens likewise use macOS Keychain; only references and
+non-secret metadata enter the local state. Provider and relay credentials are
+read from environment variables.
 
 See [`.env.example`](.env.example), [the architecture](docs/architecture.md),
 and [the tenant model](docs/tenant-model.md).

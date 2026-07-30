@@ -96,7 +96,9 @@
 
  :aliases
  {:server {:main-opts ["-m" "cloud.itonami.app.server"]}
-  :test {:extra-paths ["test"]
+ :test {:extra-paths ["test"]
+         :jvm-opts ["-Dcloud.itonami.data-dir=target/test-data"
+                    "-Dcloud.itonami.legacy-data-dir=target/no-legacy-data"]
          :main-opts ["-m" "cloud.itonami.app.test-runner"]}
   :lint {:replace-deps {clj-kondo/clj-kondo {:mvn/version "2024.11.14"}}
          :main-opts ["-m" "clj-kondo.main" "--lint" "src" "test"

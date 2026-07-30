@@ -227,7 +227,15 @@ until its own timeout. Output is capped at 16,000 characters per run and marked
 
 ## Persistence
 
-`data/state.edn` is the durable local state. Each message is represented both
+The OS installation directory's `state.edn` is the durable local state
+(`~/Library/Application Support/Cloud Itonami/state.edn` on macOS). A
+repository-local `data/` tree is a legacy source only: first launch copies a
+valid tree non-destructively and never merges over an existing installation.
+Each installation has a stable UUID. Before replacement, the previous state
+is written as an AES-256-GCM recovery snapshot whose key remains in macOS
+Keychain.
+
+Each message is represented both
 as ordered session data and three EAV datoms:
 
 ```clojure
