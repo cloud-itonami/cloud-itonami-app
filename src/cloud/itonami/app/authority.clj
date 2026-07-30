@@ -52,24 +52,10 @@
 (def schema "cloud.itonami.app.authority.v1")
 
 (def statuses
-  "A proposal's lifecycle in this app.
-
-  Terminal: :committed, :authority-refused, :rejected. `:awaiting-passkey` is the
-  only state consent may be started from, and `:approved` the only one a commit
-  may be attempted from.
-
-  `:authority-pending` is deliberately NOT terminal. It means the authority
-  accepted the proposal and is holding it for its OWN operator -- the subject
-  consented and the licensed operator has not yet decided. Two states could not
-  say that: calling it :committed would claim something happened, and calling it
-  :authority-refused would claim someone said no.
-
-  Nothing in this app can advance a pending proposal yet -- there is no callback
-  or poll to learn the operator's eventual decision. That gap is real and is
-  recorded in ADR-2607300300 rather than papered over by marking pending
-  terminal, which would be a lie about what is known."
-  #{:awaiting-passkey :approved :committed :authority-pending
-    :authority-refused :rejected})
+  "A proposal's lifecycle in this app. Terminal: :committed, :authority-refused,
+  :rejected. `:awaiting-passkey` is the only state consent may be started from,
+  and `:approved` the only one a commit may be attempted from."
+  #{:awaiting-passkey :approved :committed :authority-refused :rejected})
 
 ;; ---------------------------------------------------------------------------
 ;; Domain contract
@@ -82,8 +68,7 @@
 ;;    :authority/context-type (fn [op] kw)          ; typed Passkey context
 ;;    :authority/pre-check    (fn [config session request] proposal-value)
 ;;    :authority/material     (fn [proposal-value] "stable string")
-;;    :authority/commit!      (fn [config session proposal] result)
-;;    :authority/status       (fn [config reference] result)}
+;;    :authority/commit!      (fn [config session proposal] result)}
 ;;
 ;; :authority/pre-check MUST be deterministic: no model, no network, no clock
 ;; beyond the store's own recorded state. It either returns the proposal value or
@@ -101,17 +86,13 @@
     f))
 
 (defn valid-domain?
-  "True when `domain` supplies everything the spine needs.
-
-  `:authority/status` is required too: an authority that can produce a pending
-  outcome and cannot be asked what became of it leaves proposals that nothing can
-  move, which is the gap this contract now forbids by construction."
+  "True when `domain` supplies everything the spine needs."
   [domain]
   (and (map? domain)
        (keyword? (:authority/key domain))
        (every? #(fn? (get domain %))
                [:authority/context-type :authority/pre-check
-                :authority/material :authority/commit! :authority/status])))
+                :authority/material :authority/commit!])))
 
 ;; ---------------------------------------------------------------------------
 ;; Content digest
@@ -309,63 +290,14 @@
   [domain configuration session proposal-id]
   (let [p (owned-proposal! session proposal-id :approved)
         outcome ((require-fn domain :authority/commit!) configuration session p)
-        status (cond
-                 ;; Checked FIRST: a pending outcome carries neither ok? true nor
-                 ;; a refusal, and testing ok? first would file it as refused.
-                 (true? (:authority/pending? outcome)) :authority-pending
-                 (true? (:authority/ok? outcome)) :committed
-                 :else :authority-refused)
+        ok? (true? (:authority/ok? outcome))
         final (assoc p
-                     :status status
+                     :status (if ok? :committed :authority-refused)
                      :committed-at (store/now)
                      :authority-record (:authority/record outcome)
-                     :authority-refusal (:authority/refusal outcome)
-                     :authority-reference (:authority/reference outcome))]
+                     :authority-refusal (:authority/refusal outcome))]
     (store/transact! assoc-in (proposal-path proposal-id) final)
     (dissoc final :user-id :organization-id)))
-
-(defn refresh!
-  "Ask the authority what became of a pending proposal, and advance it if the
-  authority's operator has decided.
-
-  Only a proposal in `:authority-pending` can be refreshed, and the outcome is
-  applied with the same three-way mapping `commit!` uses -- so a refresh cannot
-  reach a state a commit could not.
-
-  Two answers deliberately leave the proposal PENDING rather than resolving it:
-
-    still pending      the operator has not decided; nothing to record yet
-    reference unknown  the actor has no record of it (its checkpointer is in
-                       memory, so a restart loses every older reference)
-
-  The unknown case is the interesting one. It is tempting to mark such a proposal
-  refused and be done with it, but nobody refused it -- the actor forgot. Recording
-  that as a governor refusal would put a decision on the ledger that no one made.
-  It stays pending, and `:authority-unknown-since` records that we asked and the
-  authority did not know, which is what actually happened."
-  [domain configuration session proposal-id]
-  (let [p (owned-proposal! session proposal-id :authority-pending)
-        status-fn (require-fn domain :authority/status)
-        outcome (status-fn configuration (:authority-reference p))]
-    (cond
-      (true? (:authority/pending? outcome))
-      (dissoc p :user-id :organization-id)
-
-      (true? (:authority/unknown? outcome))
-      (let [marked (assoc p :authority-unknown-since (store/now))]
-        (store/transact! assoc-in (proposal-path proposal-id) marked)
-        (dissoc marked :user-id :organization-id))
-
-      :else
-      (let [final (assoc p
-                         :status (if (true? (:authority/ok? outcome))
-                                   :committed
-                                   :authority-refused)
-                         :resolved-at (store/now)
-                         :authority-record (:authority/record outcome)
-                         :authority-refusal (:authority/refusal outcome))]
-        (store/transact! assoc-in (proposal-path proposal-id) final)
-        (dissoc final :user-id :organization-id)))))
 
 ;; ---------------------------------------------------------------------------
 ;; Read models
@@ -388,14 +320,6 @@
   (= :awaiting-passkey (:status p)))
 
 (defn terminal?
-  "True when nothing further will happen to this proposal.
-
-  :authority-pending is NOT terminal -- the authority's operator has still to
-  decide, and reporting it as finished would misstate what is known."
+  "True when nothing further will happen to this proposal."
   [p]
   (contains? #{:committed :authority-refused :rejected} (:status p)))
-
-(defn pending-with-authority?
-  "True when the authority accepted this proposal and holds it for its operator."
-  [p]
-  (= :authority-pending (:status p)))

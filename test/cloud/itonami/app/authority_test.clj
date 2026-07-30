@@ -17,10 +17,6 @@
 (defn- fixture-domain
   [& {:keys [commit-ok? refusal] :or {commit-ok? true}}]
   {:authority/key :fixture
-   ;; Required since the spine gained refresh!: an authority that can answer
-   ;; "pending" and cannot be asked what became of it leaves proposals nothing can
-   ;; move. The fixture answers "still pending" unless a test says otherwise.
-   :authority/status (fn [_config _ref] {:authority/pending? true})
    :authority/context-type (fn [op] (keyword "fixture" (name (or op :unknown))))
    :authority/pre-check
    (fn [_config _session {:keys [amount]}]
@@ -45,7 +41,7 @@
 (deftest a-domain-must-supply-the-whole-contract
   (is (authority/valid-domain? (fixture-domain)))
   (doseq [k [:authority/key :authority/context-type :authority/pre-check
-             :authority/material :authority/commit! :authority/status]]
+             :authority/material :authority/commit!]]
     (is (not (authority/valid-domain? (dissoc (fixture-domain) k)))
         (str "a domain missing " k " must be rejected")))
   (testing "and review! refuses an invalid domain rather than half-running"
