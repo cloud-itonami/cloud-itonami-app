@@ -54,6 +54,13 @@
   io.github.kotoba-lang/org-w3-vc-data-integrity
   {:git/url "https://github.com/kotoba-lang/org-w3-vc-data-integrity.git"
    :git/sha "2874c2ebd1255b7a66d16bd6647a6194021328ba"}
+  ;; OID4VP, Verifier side only. The Wallet side needs a holder key that can sign
+  ;; over a Verifier-supplied nonce, and a Passkey cannot -- it signs its own
+  ;; authenticatorData || clientDataHash. So this app can ASK for presentations
+  ;; and check the envelope that comes back; it cannot produce one.
+  io.github.kotoba-lang/org-openid-oid4vp
+  {:git/url "https://github.com/kotoba-lang/org-openid-oid4vp.git"
+   :git/sha "707c9fefc3eb0c8184844da1d08da6fc830566ed"}
   io.github.kotoba-lang/org-w3-vc-bitstring-status-list
   {:git/url "https://github.com/kotoba-lang/org-w3-vc-bitstring-status-list.git"
    :git/sha "2184a7877a1ac72dcc5b431eb2cbfad7c3240940"}

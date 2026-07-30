@@ -8,6 +8,7 @@
             [cloud.itonami.app.contracts :as contracts]
             [cloud.itonami.app.credential :as credential]
             [cloud.itonami.app.credential-trust :as credential-trust]
+            [cloud.itonami.app.presentation-request :as presentation-request]
             [cloud.itonami.app.credential-assurance :as credential-assurance]
             [cloud.itonami.app.documents :as documents]
             [cloud.itonami.app.esign :as esign]
@@ -507,6 +508,44 @@
                     presented (or (get body "credential") body)]
                 (send! exchange 200
                        (credential-trust/verify-external config presented))))
+
+            ;; Ask a wallet for a presentation (OID4VP 1.0, Verifier side).
+            ;; Returns the Authorization Request; the caller renders it as a QR
+            ;; code or a link. This app cannot BE a wallet -- a Passkey cannot
+            ;; produce a key-binding proof over a nonce we chose -- so only the
+            ;; asking half exists.
+            (and (= method "POST") (= path "/api/presentations/requests"))
+            (let [session (require-app-session! exchange)]
+              (require-origin! exchange config)
+              (require-csrf! exchange session)
+              (send! exchange 200
+                     (assoc (presentation-request/create!
+                             {:response-uri (str (origin config)
+                                                 "/api/presentations/responses")
+                              :actor (:user-id session)})
+                            :schema presentation-request/schema)))
+
+            (and (= method "GET") (= path "/api/presentations/requests"))
+            (let [_ (require-app-session! exchange)]
+              (send! exchange 200
+                     {:schema presentation-request/schema
+                      :pending (presentation-request/pending (store/snapshot))}))
+
+            ;; Where the wallet posts back (response_mode=direct_post).
+            ;;
+            ;; NO session and NO CSRF, necessarily: the caller is a wallet acting
+            ;; for the holder, not a browser carrying our cookie, so a session gate
+            ;; here would make the endpoint unusable. What authorises the request
+            ;; instead is `state` -- a 256-bit value this app minted, stored, and
+            ;; will accept exactly once. That is the whole reason §5.3 makes it
+            ;; REQUIRED when there is no key binding.
+            ;;
+            ;; read-json-raw: a vp_token is a document whose keys are part of what
+            ;; was signed.
+            (and (= method "POST") (= path "/api/presentations/responses"))
+            (let [body (read-json-raw exchange)]
+              (send! exchange 200
+                     (presentation-request/validate-response body)))
 
             ;; Which external issuers this deployment believes. Read-only, and
             ;; worth exposing: an operator who cannot see that the list is empty
