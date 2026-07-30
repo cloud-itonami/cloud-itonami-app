@@ -701,6 +701,16 @@ amounts with a heading on top sums to the amounts.
 Errors are values and propagate. A cell that refers to itself, directly or
 round a loop, is `#CIRCULAR!` rather than a stack overflow.
 
+**`IF` chooses before it computes**, which the first version did not.
+Evaluating both branches makes `IF(A1=0,"未入力",100/A1)` come to `#DIV/0!` —
+the error the guard exists to avoid — and a guarded division is the single
+most common thing IF is used for. `AND`/`OR` are deliberately not lazy,
+because Excel's are not either.
+
+Beyond arithmetic: `COUNTIF` and `SUMIF` (with the optional third range, so
+one column can be tested and another totalled), the text functions, and
+`AND`/`OR`/`NOT`. Anything else is `#NAME?` rather than a crash.
+
 The grid shows the value and shows the formula while the cursor is in the
 cell, which is what every spreadsheet does and the only way to see a formula
 you are about to change. The preview shows the value with the formula in the

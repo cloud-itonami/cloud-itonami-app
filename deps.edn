@@ -87,7 +87,7 @@
   ;; which is the same arrangement as the object stores above.
   io.github.kotoba-lang/sheets
   {:git/url "https://github.com/kotoba-lang/sheets.git"
-   :git/sha "d4493f04812eb08d93219e93479a9698f8a39856"}
+   :git/sha "98cea72f68e57868c98ffe39fb6ec2d63cff01bc"}
   io.github.kotoba-lang/docs
   {:git/url "https://github.com/kotoba-lang/docs.git"
    :git/sha "0ebb24147e272b43d84dbf542474845a1a09054d"}

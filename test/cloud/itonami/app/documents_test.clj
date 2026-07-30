@@ -3505,3 +3505,24 @@
     (fn [_ object-store]
       (let [{:keys [item]} (documents/create! :docs "設計" alice object-store)]
         (is (nil? (:computed (documents/content (:id item) alice object-store))))))))
+
+(deftest a-guarded-division-does-not-become-the-error-it-guards
+  ;; IF is the standard way to avoid #DIV/0!, and evaluating both branches
+  ;; made the guard produce the error it exists to avoid. Pinned here as
+  ;; well as in the library, because this is the path a person's spreadsheet
+  ;; actually takes.
+  (with-state
+    (fn [_ object-store]
+      (let [{:keys [item]} (documents/create! :sheets "売上" alice object-store)
+            wb (:resource (documents/content (:id item) alice object-store))
+            tab-id (first (keys (:sheets/tabs wb)))
+            _ (save! (:id item)
+                     (assoc-in wb [:sheets/tabs tab-id :sheets/cells]
+                               {[1 1] {:sheets/value "0"}
+                                [1 2] {:sheets/value "1200"}
+                                [2 1] {:sheets/formula "IF(A1=0,\"未入力\",100/A1)"}
+                                [2 2] {:sheets/formula "SUMIF(A1:A1,\">-1\",B1:B1)"}})
+                     alice object-store)
+            computed (:computed (documents/content (:id item) alice object-store))]
+        (is (= "未入力" (get-in computed [tab-id "[2 1]"])))
+        (is (= "1200" (get-in computed [tab-id "[2 2]"])))))))
