@@ -19,6 +19,7 @@
             [forms.wire :as forms-wire]
             [sheets.model :as sheets-model]
             [sheets.wire :as sheets-wire]
+            [docs.docx :as docs-docx]
             [sheets.xlsx :as sheets-xlsx]))
 
 (def alice "user-alice")
@@ -1503,7 +1504,7 @@
         (is (= :drive/unsupported-format (:type error)))
         ;; What a document *can* be, named in the refusal — a surface with
         ;; no writer for csv still has two of its own.
-        (is (= ["edn" "md"] (:available error)))))))
+        (is (= ["docx" "edn" "md"] (:available error)))))))
 
 (deftest an-unknown-import-format-is-refused
   (with-state
@@ -1688,7 +1689,7 @@
             error (try (documents/export (:id item) "xlsx" alice object-store)
                        (catch clojure.lang.ExceptionInfo e (ex-data e)))]
         (is (= :drive/unsupported-format (:type error)))
-        (is (= ["edn" "md"] (:available error))))
+        (is (= ["docx" "edn" "md"] (:available error))))
       ;; And a workbook is offered exactly the three it has writers for.
       (let [{:keys [item]} (documents/create! :sheets "売上" alice object-store)]
         (is (= ["csv" "edn" "xlsx"]
@@ -2679,3 +2680,72 @@
           (is (= bob (:you own)))
           (is (= alice (:owner theirs)))
           (is (= bob (:you theirs))))))))
+
+(deftest a-document-leaves-as-docx
+  (with-state
+    (fn [_ object-store]
+      (let [{:keys [item]} (documents/create! :docs "議事録" alice object-store)
+            doc (:resource (documents/content (:id item) alice object-store))
+            _ (save! (:id item)
+                     (assoc doc :docs/blocks
+                            [{:docs/id "h" :docs/kind :heading :docs/level 1
+                              :docs/text "議事録"}
+                             {:docs/id "p" :docs/kind :paragraph :docs/text "出席者は3名。"}
+                             {:docs/id "l" :docs/kind :list :docs/ordered? true
+                              :docs/items ["予算の確認" "次回日程"]}
+                             {:docs/id "t" :docs/kind :table
+                              :docs/rows [["項目" "状態"] ["設計" "完了"]]}])
+                     alice object-store)
+            out (documents/export (:id item) "docx" alice object-store)
+            entries (docs-docx/docx-entries (:bytes out))]
+        (is (= "議事録.docx" (:filename out)))
+        (is (str/starts-with? (:media-type out)
+                              "application/vnd.openxmlformats-officedocument."))
+        ;; A real package, not a file with the right name.
+        (is (contains? entries "word/document.xml"))
+        (is (contains? entries "word/styles.xml"))
+        (is (contains? entries "word/numbering.xml"))
+        ;; Structure, not appearance — the whole reason for the format.
+        (is (str/includes? (get entries "word/document.xml") "w:pStyle w:val=\"Heading1\""))
+        (is (str/includes? (get entries "word/document.xml") "<w:numPr>"))
+        (is (str/includes? (get entries "word/document.xml") "<w:tbl>"))))))
+
+(deftest a-docx-comes-back-in
+  (with-state
+    (fn [_ object-store]
+      (let [{:keys [item]} (documents/create! :docs "元" alice object-store)
+            doc (:resource (documents/content (:id item) alice object-store))
+            _ (save! (:id item)
+                     (assoc doc :docs/blocks
+                            [{:docs/id "h" :docs/kind :heading :docs/level 1
+                              :docs/text "週報"}
+                             {:docs/id "p" :docs/kind :paragraph :docs/text "今週の進捗。"}
+                             {:docs/id "q" :docs/kind :quote :docs/text "来週締切。"}])
+                     alice object-store)
+            bytes (:bytes (documents/export (:id item) "docx" alice object-store))
+            imported (:item (documents/import! "docx" "取り込み" bytes alice object-store))
+            back (:resource (documents/content (:id imported) alice object-store))]
+        (is (= ":docs/document" (:resource-kind imported)))
+        (is (= [:heading :paragraph :quote] (mapv :docs/kind (:docs/blocks back))))
+        (is (= "週報" (:docs/text (first (:docs/blocks back)))))
+        (is (= "来週締切。" (:docs/text (last (:docs/blocks back)))))))))
+
+(deftest bytes-that-are-not-a-docx-are-refused
+  ;; `docs.docx/read` answers an empty document for anything it cannot
+  ;; parse, which is right for a reader and wrong for an import: an empty
+  ;; document is indistinguishable from a working import of an empty file.
+  ;; The package is what can be asked.
+  (with-state
+    (fn [state object-store]
+      (doseq [junk [(.getBytes "x" "UTF-8")
+                    ;; A real zip, with nothing Word would recognise in it.
+                    (let [out (java.io.ByteArrayOutputStream.)]
+                      (with-open [zip (java.util.zip.ZipOutputStream. out)]
+                        (.putNextEntry zip (java.util.zip.ZipEntry. "hello.txt"))
+                        (.write zip (.getBytes "hi" "UTF-8"))
+                        (.closeEntry zip))
+                      (.toByteArray out))]]
+        (is (= :drive/unsupported-format
+               (:type (try (documents/import! "docx" "壊れ" junk alice object-store)
+                           (catch clojure.lang.ExceptionInfo e (ex-data e)))))))
+      (is (empty? (documents/documents @state alice)) "and nothing was created"))))
