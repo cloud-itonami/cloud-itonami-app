@@ -14,9 +14,27 @@
 (defn- unsigned-byte [value]
   (bit-and (int value) 0xff))
 
-(defn- cose-value [^Map cose key]
+(defn- cose-value
+  "One COSE_Key label's value, whatever type the CBOR mapper made of the key.
+
+  The string lookup is the one that actually works, and it is not a fallback.
+  Jackson's `ObjectMapper.readValue(bytes, Map.class)` applies JSON semantics,
+  where object keys are always strings, so it deserialises CBOR INTEGER map keys
+  to `\"1\"` / `\"-1\"` / `\"-2\"`. COSE_Key labels are integers (1 = kty,
+  3 = alg, -1 = crv, -2 = x, -3 = y), so every numeric lookup misses.
+
+  Measured 2026-07-30: without the string case, `cose-value` returned nil for
+  every label, `(long kty)` threw a NullPointerException, and the catch-all in
+  `did-key-from-cose` reported `:did/invalid-public-key` -- for every credential,
+  always. Passkey registration in this app had never once completed, and there
+  was no test over this function to say so.
+
+  The numeric lookups are kept rather than replaced: they cost nothing and they
+  are what a CBOR mapper configured to preserve integer keys would need."
+  [^Map cose key]
   (or (.get cose (int key))
-      (.get cose (long key))))
+      (.get cose (long key))
+      (.get cose (str key))))
 
 (defn- base58btc [bytes]
   (let [leading-zeroes (count (take-while zero? (map unsigned-byte bytes)))
