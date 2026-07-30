@@ -3,6 +3,7 @@
             [clojure.string :as str]
             [cloud.itonami.app.authority.api :as authority-api]
             [cloud.itonami.app.config :as config]
+            [cloud.itonami.app.contracts :as contracts]
             [cloud.itonami.app.credential-assurance :as credential-assurance]
             [cloud.itonami.app.documents :as documents]
             [cloud.itonami.app.executor :as executor]
@@ -456,6 +457,16 @@
             ;; token, exactly as the other write surfaces do. `authority-api`
             ;; refuses a disabled authority, and computes the cross-domain posture
             ;; server-side rather than accepting one from the client.
+
+            ;; What is being paid for, and what it costs to stop. Behind a
+            ;; session because opening this decrypts vault items — the reveal
+            ;; is governed and lands in kagi's ledger, so an unauthenticated
+            ;; request must not be able to trigger one. The response carries no
+            ;; credential: `kagi.vault-read` redacts sensitive field values
+            ;; before this app ever sees them.
+            (and (= method "GET") (= path "/api/contracts"))
+            (let [_session (require-app-session! exchange)]
+              (send! exchange 200 (contracts/report)))
 
             (and (= method "GET") (= path "/api/authority"))
             (let [session (require-app-session! exchange)]

@@ -1876,6 +1876,172 @@
         $('#storage-source').textContent = 'Filecoin に接続できません。';
         return false;
       });
+    // Contracts. Every field arrives as {status, value} rather than a bare
+    // value, because a contract nobody has priced and a contract that costs
+    // nothing must not render the same way.
+    const fieldValue = (f) => (f && f.status === 'recorded') ? f.value : null;
+    const fieldText = (f, missing = '未記録') => {
+      if (!f) return missing;
+      if (f.status === 'recorded') return String(f.value);
+      if (f.status === 'unparseable') return '読めない値';
+      return missing;
+    };
+    // Minor-unit exponent comes from ICU, not from an assumed 2: JPY has none,
+    // and dividing a yen amount by 100 would understate every Japanese
+    // subscription by two orders of magnitude.
+    const minorFormat = (minor, currency) => {
+      try {
+        const fmt = new Intl.NumberFormat('ja-JP', {style:'currency', currency});
+        const exp = fmt.resolvedOptions().maximumFractionDigits;
+        return fmt.format(minor / Math.pow(10, exp));
+      } catch (_) {
+        return `${minor} ${currency}（最小単位）`;
+      }
+    };
+    const money = (amount) => {
+      const minor = fieldValue(amount && amount.minor);
+      const currency = fieldValue(amount && amount.currency);
+      if (minor === null || currency === null) return '金額は未記録';
+      return minorFormat(minor, currency);
+    };
+    let contractsData = null;
+    let selectedContract = null;
+    // T1 公式 API > T2 ToS 許可済み browser > T3 self-submit — kaiyaku が選んだ
+    // 安全側からの順序をそのまま表示する。app が tier を上げることはない。
+    const tierLabel = (tier) => ({T1:'公式 API', T2:'ブラウザ操作（ToS 許可済み）',
+                                  T3:'自分で申請'})[tier] || tier;
+    const contractDetail = (c) => {
+      const root = make('div');
+      root.append(make('h3', null, c.title));
+      const rows = make('dl', 'detail-grid');
+      const row = (label, value, warn = false) => {
+        rows.append(make('dt', null, label),
+                    make('dd', warn ? 'state-chip state-chip--warn' : null, value));
+      };
+      row('プラン', fieldText(c.plan));
+      row('状態', fieldText(c.status));
+      row('金額', `${money(c.amount)} / ${fieldText(c.cycle, '周期未記録')}`);
+      row('年額', c['annualized-minor'].status === 'recorded'
+            ? minorFormat(c['annualized-minor'].value, fieldValue(c.amount.currency))
+            : '計算できません（金額か周期が未記録）');
+      const days = c['days-to-charge'];
+      row('次回課金', c['next-charge'].status === 'recorded'
+            ? `${c['next-charge'].value}（あと ${days.value} 日）`
+            : '未記録');
+      const deadline = c.notice && c.notice.deadline;
+      const toDeadline = c.notice && c.notice['days-to-deadline'];
+      if (deadline && deadline.status === 'recorded') {
+        const late = toDeadline.status === 'recorded' && toDeadline.value < 0;
+        row('予告期限', late
+              ? `${deadline.value}（${Math.abs(toDeadline.value)} 日過ぎています）`
+              : `${deadline.value}（あと ${toDeadline.value} 日）`, late);
+      } else {
+        row('予告期限', '予告日数が未記録のため計算できません');
+      }
+      root.append(rows);
+      if (c.procedure) {
+        const p = make('section', 'local-card');
+        p.append(make('h4', null, `解約手順 · ${tierLabel(c.procedure.tier)}`));
+        const steps = make('ol', 'data-list');
+        (c.procedure.steps || []).forEach((s) => steps.append(make('li', null, s)));
+        p.append(steps);
+        if (c.procedure['notice-days'] || c.procedure['penalty-jpy']) {
+          p.append(make('p', 'data-list__meta',
+            `予告 ${c.procedure['notice-days']} 日 · 違約金 ${c.procedure['penalty-jpy']} 円（開示された解約コスト。回避しません）`));
+        }
+        // G6: the catalog holds a disclosed shape, not a live assertion. Saying
+        // so on the screen is the difference between a hint and a promise.
+        if (c.procedure['operator-verified'] === false) {
+          p.append(make('p', 'data-list__meta',
+            '※ この手順は未検証です。実行する前に提供元の記載を確認してください。'));
+        }
+        if (c.procedure.source) {
+          const a = make('a', null, c.procedure.source);
+          a.href = c.procedure.source; a.rel = 'noreferrer'; a.target = '_blank';
+          p.append(a);
+        }
+        root.append(p);
+      } else {
+        root.append(make('p', 'data-list__meta',
+          'この契約の解約手順はカタログにありません。手順を推測して表示することはしません。'));
+      }
+      if (c.problems && c.problems.length) {
+        const warn = make('div', 'security-callout');
+        warn.append(make('strong', null, '読めない項目があります。'),
+          make('p', null, c.problems.map((p) => p.field).join(', ')));
+        root.append(warn);
+      }
+      return root;
+    };
+    const renderContracts = (data) => {
+      contractsData = data;
+      const list = $('#contracts-list'); list.replaceChildren();
+      const totals = $('#contracts-totals'); totals.replaceChildren();
+      const badge = $('#contracts-count');
+      // A locked or absent vault is not an empty one. Writing 0 in the badge
+      // would answer a question the app cannot answer yet.
+      if (!data.contracts) {
+        badge.textContent = '—';
+        $('#contracts-source').textContent = data.note || 'vault を読めません';
+        const empty = make('li', 'empty-state');
+        empty.append(make('strong', null,
+            data.vault.status === 'locked' ? 'vault がロックされています'
+                                           : 'この端末に vault がありません'),
+          make('p', 'data-list__meta',
+            data.vault.status === 'locked'
+              ? 'unlock するまで契約は読めません。0 件という意味ではありません。'
+              : `kagi init で作成するか、別の端末から kagi pull で復元してください（${data.vault.home}）。`));
+        list.append(empty);
+        $('#contracts-detail').replaceChildren(
+          make('div', 'empty-state', '契約を読むには vault を開いてください。'));
+        return;
+      }
+      badge.textContent = data.contracts.length;
+      $('#contracts-source').textContent =
+        `${data.vault.home} · ${data['as-of']} 時点`;
+      const t = data.totals || {};
+      const monthly = t['monthly-minor'] || {};
+      const currencies = Object.keys(monthly);
+      const card = make('div');
+      card.append(make('h4', null, '毎月の合計'));
+      if (currencies.length) {
+        // Per currency, never summed into one number: adding JPY to USD needs
+        // today's rate, and then the total depends on the day you looked.
+        currencies.forEach((cur) => card.append(
+          make('p', 'data-list__title', minorFormat(monthly[cur], cur))));
+      } else {
+        card.append(make('p', 'data-list__meta', '金額の分かる契約がありません。'));
+      }
+      if (t.unpriced) {
+        card.append(make('p', 'data-list__meta',
+          `${t.unpriced} 件は金額が未記録のため合計に含まれていません。`));
+      }
+      totals.append(card);
+      data.contracts.forEach((c) => {
+        const item = listItem(c.title,
+          `${money(c.amount)} / ${fieldText(c.cycle, '周期未記録')}`,
+          fieldText(c.status, '状態未記録'),
+          (c.problems && c.problems.length) > 0);
+        item.addEventListener('click', () => {
+          selectedContract = c['item-id'];
+          $('#contracts-detail').replaceChildren(contractDetail(c));
+        });
+        list.append(item);
+      });
+      if (!data.contracts.length) {
+        list.append(make('li', 'empty-state', 'vault に契約 item がありません。'));
+      } else if (selectedContract) {
+        const found = data.contracts.find((c) => c['item-id'] === selectedContract);
+        if (found) $('#contracts-detail').replaceChildren(contractDetail(found));
+      }
+    };
+    const loadContracts = () => fetch('/api/contracts')
+      .then((r) => r.ok ? r.json() : null)
+      .then((d) => { if (d) renderContracts(d); return Boolean(d); })
+      .catch(() => {
+        $('#contracts-source').textContent = '契約を読み込めません。';
+        return false;
+      });
     const renderProjects = (data) => {
       const list = $('#project-list'); list.replaceChildren();
       data.items.forEach((item) => list.append(listItem(
@@ -2184,7 +2350,12 @@
         loadWorkspace('inbox', renderInbox),
         loadWorkspace('projects', renderProjects),
         loadWorkspace('drive', renderDrive),
-        loadWorkspace('scheduler', renderCalendar)
+        loadWorkspace('scheduler', renderCalendar),
+        // Inside bootstrapApp, unlike loadFilecoin: this endpoint decrypts vault
+        // items behind a session, and every reveal writes a line into kagi's
+        // audit ledger. Loading it before a Passkey exists would put unattributed
+        // reveals in the ledger of a user who has not logged in yet.
+        loadContracts()
       ]).then((results) => {
         const connected = results.filter(Boolean).length;
         $('#workspace-status').textContent = `${connected} / ${results.length} サービス接続`;
@@ -2918,6 +3089,7 @@
         (nav-item "drive" "Drive" "◇" "drive-count")
         (nav-item "scheduler" "Scheduler" "○" "scheduler-count")
         (nav-item "storage" "Storage" "◈" "storage-count")
+        (nav-item "contracts" "Contracts" "◫" "contracts-count")
         (nav-item "settings" "Settings" "⚙" nil)]
        [:div {:class "sidebar__status"}
         [:strong "● ローカルモード"]
@@ -3161,6 +3333,25 @@
             [:li {:class "skeleton"}]]]
           [:article {:class "record-detail" :id "storage-detail" :aria-live "polite"}
            [:div {:class "empty-state"} "Filecoin の状態を読み込んでいます。"]]]]
+        [:section {:class "view" :data-view-panel "contracts" :hidden true}
+         (view-header "Contracts"
+                      (str "契約している継続課金を、kagi の vault から復号して読みます。"
+                           "保管は端末とクラウドの両方で暗号文のままで、"
+                           "次回課金日も予告期限もこの画面の中で計算されます。"))
+         [:p {:class "source-note"} [:span {:class "source-dot"}]
+          [:span {:id "contracts-source"} "vault を確認中…"]]
+         [:div {:class "security-callout" :id "contracts-e2e-notice"}
+          [:strong "この一覧はサーバ側では検索できません。"]
+          " 契約は end-to-end で封緘されているため、集計も期限の判定も"
+          "端末で unlock したあとにしか行えません。"
+          "解約の実行はこの画面からは行いません — 表示するのは開示された手順だけです。"]
+         [:div {:class "local-card" :id "contracts-totals"}]
+         [:div {:class "record-browser"}
+          [:div {:class "record-list"}
+           [:ul {:class "record-list__items" :id "contracts-list"}
+            [:li {:class "skeleton"}]]]
+          [:article {:class "record-detail" :id "contracts-detail" :aria-live "polite"}
+           [:div {:class "empty-state"} "契約を選ぶと、解約手順と予告期限を表示します。"]]]]
         [:section {:class "view" :data-view-panel "settings" :hidden true}
          (view-header "Settings" "Cloud Itonami の組織・ユーザーと、外部サービスへの委任接続を管理します。")
          [:p {:class "visually-hidden" :id "identity-status"

@@ -349,6 +349,43 @@ has a role on.
   be the only one in the app and would serve nobody who could not already
   reach the port.
 
+## Contracts
+
+`GET /api/contracts` answers what is being paid for and what it costs to stop.
+The app owns none of it. `kagi` owns the vault, which is end-to-end encrypted on
+disk and in `kotobase.net` alike (ADR-2607170500); `kagitaba` owns the item shape
+a contract lives in — a `Contract` section beside the login on the same item, so
+the two cannot drift apart; `kaiyaku` owns the disclosed cancellation procedures
+and the 縁 ledger they belong to. This app decrypts, joins, and renders.
+
+`kagi.vault-read` is a read-only, non-prompting seam. It never writes the vault,
+never asks a TTY for a passphrase (a server has none), and runs every reveal
+through the same `kagi.operation` graph the CLI uses, so the AccessGovernor and
+its audit ledger stay in the path. Enumeration reads metadata only, so the
+contract screen decrypts membership items rather than the whole vault, and
+sensitive field values are redacted before this app ever sees them — a
+credential has no route into the response.
+
+Three consequences are stated on the screen rather than left to be discovered:
+
+- **The list cannot be queried server-side.** End-to-end encryption means the
+  totals and the notice deadlines are computable only here, after an unlock on
+  this device. Leaking amounts or dates in clear to make them queryable would
+  undo the reason for the vault, so it is not done.
+- **A locked vault is not an empty one.** `report` returns `nil` contracts, not
+  `[]`, and the badge shows `—` rather than `0`. The three states — absent,
+  locked, open — reach the UI intact.
+- **Nothing here cancels anything.** The tier `kaiyaku` selects (T1 official API
+  > T2 ToS-permitted browser > T3 self-submit) is displayed, and the disclosed
+  notice period and penalty are displayed *because* they are the cost of leaving
+  — never to be planned around. Every catalog entry stays
+  `:operator-verified false` and says so on screen.
+
+Money is per currency and never converted: JPY and USD are summed separately,
+because adding them needs today's rate and would make "what am I paying" depend
+on the day it was asked. A contract whose amount nobody recorded is counted as
+`:unpriced`, not as zero.
+
 ## Artificial-organism workers
 
 An organization can include an independently running artificial organism
