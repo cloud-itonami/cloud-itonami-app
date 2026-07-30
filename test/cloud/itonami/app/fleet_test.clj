@@ -8,12 +8,20 @@
     (let [{:keys [actors company-records]} (fleet/counts)]
       (is (= actors (count (fleet/actors))))
       (is (pos? actors))
-      ;; 1,183 actors + 155 company records = the 1,338 repositories carrying a
-      ;; blueprint.edn. Asserting the sum rather than either number keeps this
-      ;; from failing every time an actor is added, while still catching a
-      ;; generator that silently drops a population — which it did twice:
-      ;; first the :company/* records, then the vector-wrapped isic ones.
-      (is (= 1338 (+ actors company-records))))))
+      ;; The catalog now has two sources, so the invariant is stated over the
+      ;; blueprint-derived half only: entries read from a blueprint.edn, plus
+      ;; the :company/* records skipped as non-actors, must account for every
+      ;; repository in orgs/cloud-itonami that carries that file — 1,338.
+      ;; Asserting the sum rather than either number keeps this from failing
+      ;; whenever an actor is added, while still catching a generator that
+      ;; silently drops a population, which it did twice: first the :company/*
+      ;; records, then the vector-wrapped isic ones.
+      (is (= 1338 (+ (count (remove :reference-only (fleet/actors)))
+                     company-records)))
+      ;; The rest arrive by reference from west and are additive, never a
+      ;; substitute for a blueprint that failed to parse.
+      (is (= actors (+ (count (remove :reference-only (fleet/actors)))
+                       (count (fleet/reference-only))))))))
 
 (deftest callable-is-the-line-between-directory-and-service
   (testing "callable? tracks the presence of an address, nothing else"
@@ -119,20 +127,59 @@
       (is (= :unknown (get-in (fleet/probe-health! 250) ["unreachable" :health]))))))
 
 (deftest execution-model-separates-on-demand-from-resident
-  (testing "isic actors are on-demand, and that is most of the fleet"
-    ;; 452 of them. They answer an API or MCP request and stop; making that
-    ;; many processes resident would pay continuously for idle.
-    (let [od (fleet/by-execution :on-demand)]
-      (is (< 400 (count od)))
-      (is (every? #(= :sector-agent (:role %)) od))
-      (is (every? #(clojure.string/starts-with? (:repo %) "cloud-itonami-isic-") od))))
+  (testing "isic sector agents are on-demand, and are most of that class"
+    ;; They answer an API or MCP request and stop; making that many processes
+    ;; resident would pay continuously for idle.
+    (let [od (fleet/by-execution :on-demand)
+          sector (filter #(= :sector-agent (:role %)) od)]
+      (is (< 400 (count sector)))
+      (is (every? #(clojure.string/starts-with? (:repo %) "cloud-itonami-isic-") sector))))
 
-  (testing "no resident actors are in this catalog, and the reason is scope"
-    ;; person-* and loop-* are resident, but they live outside cloud-itonami
-    ;; and carry no blueprint.edn, so the generator cannot see them. Asserting
-    ;; zero here records that boundary — if resident actors ever appear, the
-    ;; missing-endpoint semantics in this namespace start mattering.
-    (is (empty? (fleet/by-execution :resident))))
+  (testing "on-demand is broader than the sector agents"
+    ;; It also covers the GitHub action adapter and the skill package, which
+    ;; the authority classifies as on-demand for the same reason: they run when
+    ;; something asks, and hold no loop. An earlier version of this test
+    ;; asserted every on-demand actor was a :sector-agent, which was only true
+    ;; while the catalog could not see beyond orgs/cloud-itonami.
+    (is (= #{:sector-agent :github-action-adapter :agent-instruction-package}
+           (set (map :role (fleet/by-execution :on-demand))))))
+
+  (testing "resident actors are present, by reference"
+    ;; They were absent while the catalog only read blueprint.edn from
+    ;; orgs/cloud-itonami. They are here now because west pins them and the
+    ;; authority classifies them — six loop- orchestrators and two person-
+    ;; organisms — carrying a repo, a remote and a revision and nothing read
+    ;; out of the repository.
+    (let [r (fleet/by-execution :resident)]
+      (is (= 8 (count r)))
+      (is (every? :reference-only r))
+      (is (every? #(re-matches #"[0-9a-f]{40}" (fleet/revision %)) r))
+      (is (= #{:continuous-orchestrator :artificial-organism-actor}
+             (set (map :role r))))))
+
+  (testing "a reference carries a pin and no content"
+    ;; The point of by-reference inclusion: the catalog must not become a
+    ;; mirror. If a field from inside one of those repositories ever appears
+    ;; here, this fails.
+    (let [allowed #{:repo :repo-name :remote :revision :path :role :execution
+                    :reference-only :id :authority-library}]
+      (doseq [e (fleet/reference-only)]
+        (is (empty? (remove allowed (keys e)))
+            (str (:repo e) " leaked a field beyond its pin")))))
+
+  (testing "person actors pin the organism model rather than vendoring it"
+    ;; ao is "model only, no CLI, no runner, no storage, no clock", so an actor
+    ;; supplies both and holds a hash to the model.
+    (doseq [p (filter #(= :artificial-organism-actor (:role %)) (fleet/actors))]
+      (let [lib (:authority-library p)]
+        (is (= "ao" (:repo-name lib)))
+        (is (re-matches #"[0-9a-f]{40}" (:revision lib))))))
+
+  (testing "resident actors are not probed, and not because they are down"
+    ;; A loop- orchestrator runs on a schedule and has no HTTP surface. Its
+    ;; liveness is whether it recorded evidence recently, which this catalog
+    ;; does not carry — so it is not probeable, not unhealthy.
+    (is (every? (complement fleet/probeable?) (fleet/by-execution :resident))))
 
   (testing "unclassified is reported, not defaulted"
     ;; marketplace, assoc, municipality and others match no prefix rule yet.
