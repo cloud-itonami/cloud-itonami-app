@@ -32,12 +32,56 @@
     ;; commitment-ledger, isic-6492 and partners ship a wrangler.jsonc but are
     ;; not deployed. Giving them an endpoint is the specific mistake this
     ;; guards: a URL that looks usable and answers nothing.
-    (doseq [id ["cloud-itonami-commitment-ledger"
-                "cloud-itonami-isic-6492"
-                "cloud-itonami-partners"]]
-      (when-some [a (fleet/actor id)]
-        (is (not (fleet/callable? a))
-            (str id " is not deployed and must not declare an endpoint"))))))
+    ;; Corrected 2026-07-30. These three were recorded as "not deployed" from a
+    ;; `wrangler deployments list` check — a Workers-only command run against
+    ;; Cloudflare PAGES projects. They are live on *.pages.dev, and two of them
+    ;; now carry an address. cloud-itonami-partners still does not, for a
+    ;; different reason: it has no blueprint.edn at all, so it is not in the
+    ;; catalog to address.
+    (doseq [repo ["cloud-itonami-isic-6492" "cloud-itonami-commitment-ledger"]]
+      (let [a (fleet/actor repo)]
+        (is (some? a) (str repo " should be in the catalog"))
+        (is (fleet/callable? a) (str repo " is deployed on Pages and has an address"))
+        (is (= :pages-dev (:endpoint-kind a)))))
+    (is (nil? (fleet/actor "cloud-itonami-partners"))
+        "deployed but has no blueprint.edn, so it cannot be catalogued")))
+
+(deftest ids-collide-and-the-catalog-says-so
+  (testing "id is not unique, and lookup does not pretend otherwise"
+    ;; Three actors were duplicated into a second repository — a -component, a
+    ;; -codex, and an ISIC code written both zero-padded and not — and each copy
+    ;; kept the original's id. The first catalog shipped 1,183 entries under
+    ;; 1,180 ids and a lookup by id silently returned whichever sorted first.
+    (let [dups (fleet/duplicate-ids)]
+      (is (= 3 (count dups)))
+      (is (= (- (count (fleet/actors)) (count dups))
+             (count (distinct (map :id (fleet/actors))))))
+      (doseq [id dups]
+        (is (< 1 (count (fleet/find-by-id id)))
+            (str id " should return every claimant, not one")))))
+
+  (testing "repo is unique, which is why lookup keys on it"
+    (let [repos (map :repo (fleet/actors))]
+      (is (every? some? repos))
+      (is (= (count repos) (count (distinct repos)))))))
+
+(deftest probeable-is-narrower-than-callable
+  (testing "an actor with no health path is not probed"
+    ;; The Pages actors answer /health with 200 and their SPA index. Probing an
+    ;; assumed path would read that HTML as a healthy API — the exact false
+    ;; positive :health-path exists to prevent.
+    (let [pages (filter #(= :pages-dev (:endpoint-kind %)) (fleet/callable))]
+      (is (seq pages))
+      (is (every? (complement fleet/probeable?) pages))
+      (is (every? #(= :not-probeable (:health %))
+                  (vals (select-keys (fleet/probe-health! 250)
+                                     (map :repo pages)))))))
+
+  (testing "the Workers declare a path and are probed"
+    (let [w (filter #(= :workers-dev (:endpoint-kind %)) (fleet/callable))]
+      (is (seq w))
+      (is (every? fleet/probeable? w))
+      (is (every? #(= "/health" (:health-path %)) w)))))
 
 (deftest search-filters
   (testing "criteria are ANDed and omitted criteria do not constrain"
@@ -67,6 +111,8 @@
     ;; .invalid is reserved by RFC 2606 and never resolves, so this exercises
     ;; the failure path without touching the network. Reporting it as :down
     ;; would present a DNS failure as a broken actor.
-    (with-redefs [fleet/callable (fn [] [{:id "unreachable"
-                                          :endpoint "https://actor.invalid"}])]
+    (with-redefs [fleet/callable (fn [] [{:repo "unreachable"
+                                          :id "unreachable"
+                                          :endpoint "https://actor.invalid"
+                                          :health-path "/health"}])]
       (is (= :unknown (get-in (fleet/probe-health! 250) ["unreachable" :health]))))))
