@@ -986,28 +986,43 @@
     (stored-kind-mismatch! id (:drive/resource-kind item) kind)
     payload))
 
+(def ^:private format-losses
+  "Which formats can say what they will drop, and how to ask.
+
+  A table rather than a `cond`, so adding a writer that gains the function
+  is one line here — and so the formats that *cannot* answer are visible as
+  absences rather than as an unstated assumption. EDN is not here because it
+  is the stored bytes and loses nothing; CSV, PPTX and the office readers
+  are not here because nobody has written the function for them, which is a
+  gap and not a claim that they are lossless."
+  {[:docs "md"] docs-md/unexpressed
+   [:docs "docx"] docs-docx/unexpressed
+   [:sheets "xlsx"] sheets-xlsx/unexpressed})
+
 (defn export-warnings
   "What each export format will drop from this resource, before it drops it.
 
   Keyed by format, so the pane can put the warning next to the button that
-  causes it rather than in a place nobody reads. Only Markdown answers
-  anything today: EDN is the stored bytes and loses nothing, and the office
-  formats lose plenty but neither `slides.pptx` nor `sheets.xlsx` can yet say
-  what — those are the same function waiting to be written, not a claim that
-  they are lossless.
+  causes it rather than in a place nobody reads.
 
-  Entries are `docs.markdown/unexpressed`'s shape, which is
-  `docs.validate/problems`'s shape, so the pane renders them with the code it
+  Every surface writes its own answer in its own namespaced shape —
+  `:docs/severity` here, `:sheets/severity` there — because each belongs
+  beside the writer that does the dropping. Flattened to one shape here,
+  which is the app's, so the pane renders all of them with the code it
   already has."
   [kind resource]
-  (when (= :docs kind)
-    (let [entries (docs-md/unexpressed resource)]
-      (when (seq entries)
-        {"md" (mapv (fn [e] {:severity (some-> (:docs/severity e) name)
-                             :code (str (:docs/code e))
-                             :id (:docs/id e)
-                             :message (:docs/msg e)})
-                    entries)}))))
+  (let [flatten-entry (fn [e]
+                        (let [get* (fn [n] (some (fn [[k v]] (when (= n (name k)) v)) e))]
+                          {:severity (some-> (get* "severity") name)
+                           :code (str (get* "code"))
+                           :id (get* "id")
+                           :message (get* "msg")}))
+        answered (keep (fn [[[k format] ask]]
+                         (when (= k kind)
+                           (let [entries (ask resource)]
+                             (when (seq entries) [format (mapv flatten-entry entries)]))))
+                       format-losses)]
+    (when (seq answered) (into {} answered))))
 
 (defn content
   "The stored resource of one document, read back through the ACL.
