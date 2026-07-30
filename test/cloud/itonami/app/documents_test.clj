@@ -1347,6 +1347,112 @@
         (is (= "新題" (:name (:item (documents/rename! (:id item) "新題" alice
                                                        object-store)))))))))
 
+(deftest a-reply-joins-the-thread-it-answers
+  (with-state
+    (fn [_ object-store]
+      (let [{:keys [item]} (documents/create! :docs "設計" alice object-store)
+            _ (documents/grant! (:id item) bob "commenter" alice)
+            root (:comment (documents/comment! (:id item) "ここは要検討" "title" alice))
+            reply (:comment (documents/comment! (:id item) "同意します" nil bob (:id root)))
+            {:keys [comments unresolved]} (documents/comments (:id item) alice)]
+        (is (= 1 (count comments)) "one thread, not two entries")
+        (is (= [(:id reply)] (mapv :id (:replies (first comments)))))
+        ;; A reply that could point somewhere else would not be a reply.
+        (is (= "title" (:anchor reply)))
+        (is (= 1 unresolved))))))
+
+(deftest a-reply-to-a-reply-stays-in-the-same-thread
+  (with-state
+    (fn [_ object-store]
+      (let [{:keys [item]} (documents/create! :docs "設計" alice object-store)
+            root (:comment (documents/comment! (:id item) "一つめ" nil alice))
+            reply (:comment (documents/comment! (:id item) "二つめ" nil alice (:id root)))
+            deeper (:comment (documents/comment! (:id item) "三つめ" nil alice (:id reply)))
+            {:keys [comments]} (documents/comments (:id item) alice)]
+        ;; One level: a conversation about one anchor is one conversation,
+        ;; and a tree would let somebody resolve half of it.
+        (is (= (:id root) (:parent-id deeper)))
+        (is (= 1 (count comments)))
+        (is (= 2 (count (:replies (first comments)))))))))
+
+(deftest resolving-belongs-to-the-thread
+  (with-state
+    (fn [_ object-store]
+      (let [{:keys [item]} (documents/create! :docs "設計" alice object-store)
+            _ (documents/grant! (:id item) bob "commenter" alice)
+            root (:comment (documents/comment! (:id item) "ここは要検討" nil alice))
+            reply (:comment (documents/comment! (:id item) "直しました" nil bob (:id root)))]
+        ;; Resolving the reply resolves the comment it answers: half a
+        ;; resolved conversation is not a state anybody can act on.
+        (let [{:keys [comments unresolved]}
+              (documents/resolve-comment! (:id item) (:id reply) true bob)]
+          (is (zero? unresolved))
+          (is (string? (:resolved-at (first comments))))
+          (is (= bob (:resolved-by (first comments)))))
+        (let [{:keys [comments unresolved]}
+              (documents/resolve-comment! (:id item) (:id root) false alice)]
+          (is (= 1 unresolved))
+          (is (nil? (:resolved-at (first comments))))
+          (is (nil? (:resolved-by (first comments)))))))))
+
+(deftest anyone-who-may-comment-may-resolve
+  (with-state
+    (fn [_ object-store]
+      (let [{:keys [item]} (documents/create! :docs "設計" alice object-store)
+            root (:comment (documents/comment! (:id item) "ここは要検討" nil alice))]
+        (documents/grant! (:id item) bob "viewer" alice)
+        ;; A viewer is shown the conversation and does not get a say in it.
+        (is (= :drive/not-permitted
+               (try (documents/resolve-comment! (:id item) (:id root) true bob)
+                    (catch clojure.lang.ExceptionInfo e (:type (ex-data e))))))
+        (documents/grant! (:id item) bob "commenter" alice)
+        ;; Reversible, which is why this is wider than deleting.
+        (is (zero? (:unresolved (documents/resolve-comment! (:id item) (:id root) true bob))))))))
+
+(deftest a-resolved-thread-is-reopened-on-purpose-not-by-replying
+  (with-state
+    (fn [_ object-store]
+      (let [{:keys [item]} (documents/create! :docs "設計" alice object-store)
+            root (:comment (documents/comment! (:id item) "ここは要検討" nil alice))]
+        (documents/resolve-comment! (:id item) (:id root) true alice)
+        (is (= :drive/comment-resolved
+               (try (documents/comment! (:id item) "やっぱり" nil alice (:id root))
+                    (catch clojure.lang.ExceptionInfo e (:type (ex-data e))))))
+        (documents/resolve-comment! (:id item) (:id root) false alice)
+        (is (:ok? (documents/comment! (:id item) "やっぱり" nil alice (:id root))))))))
+
+(deftest deleting-a-root-takes-its-replies
+  (with-state
+    (fn [_ object-store]
+      (let [{:keys [item]} (documents/create! :docs "設計" alice object-store)
+            _ (documents/grant! (:id item) bob "commenter" alice)
+            root (:comment (documents/comment! (:id item) "一つめ" nil alice))
+            _ (documents/comment! (:id item) "返信" nil bob (:id root))
+            out (documents/delete-comment! (:id item) (:id root) alice)]
+        ;; A reply to nothing is not something a reader can make sense of.
+        (is (= 2 (:deleted out)))
+        (is (empty? (:comments (documents/comments (:id item) alice))))))))
+
+(deftest deleting-a-reply-leaves-the-thread
+  (with-state
+    (fn [_ object-store]
+      (let [{:keys [item]} (documents/create! :docs "設計" alice object-store)
+            root (:comment (documents/comment! (:id item) "一つめ" nil alice))
+            reply (:comment (documents/comment! (:id item) "返信" nil alice (:id root)))
+            out (documents/delete-comment! (:id item) (:id reply) alice)
+            {:keys [comments]} (documents/comments (:id item) alice)]
+        (is (= 1 (:deleted out)))
+        (is (= 1 (count comments)))
+        (is (empty? (:replies (first comments))))))))
+
+(deftest replying-to-a-comment-that-is-not-there
+  (with-state
+    (fn [_ object-store]
+      (let [{:keys [item]} (documents/create! :docs "設計" alice object-store)]
+        (is (= :drive/not-found
+               (try (documents/comment! (:id item) "返信" nil alice "cmt-nonexistent")
+                    (catch clojure.lang.ExceptionInfo e (:type (ex-data e))))))))))
+
 ;; ── references between documents ────────────────────────────────────────────
 
 (defn- memo-referencing

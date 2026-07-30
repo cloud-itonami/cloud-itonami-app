@@ -968,7 +968,25 @@
               (send! exchange 200
                      (documents/comment!
                       (id-from-path path #"/api/workspace/drive/documents/([^/]+)/comments")
-                      (:text request) (:anchor request) (:user-id session))))
+                      (:text request) (:anchor request) (:user-id session)
+                      ;; Present means a reply; `documents/comment!` decides
+                      ;; which thread it lands in.
+                      (:parent-id request))))
+
+            (and (= method "POST")
+                 (re-matches #"/api/workspace/drive/documents/([^/]+)/comments/([^/]+)/resolve"
+                             path))
+            (let [session (require-app-session! exchange)
+                  request (read-json exchange)
+                  [_ id comment-id]
+                  (re-matches #"/api/workspace/drive/documents/([^/]+)/comments/([^/]+)/resolve"
+                              path)]
+              (require-origin! exchange config)
+              (require-csrf! exchange session)
+              (send! exchange 200
+                     (documents/resolve-comment! id comment-id
+                                                 (not= false (:resolved? request))
+                                                 (:user-id session))))
 
             (and (= method "POST")
                  (re-matches #"/api/workspace/drive/documents/([^/]+)/comments/([^/]+)/delete"
@@ -1297,6 +1315,9 @@
                      ;; Restoring what is already current is a request that
                      ;; conflicts with the state, not a malformed one.
                      :drive/already-current 409
+                     ;; Replying to a resolved thread: reopening is an act
+                     ;; somebody takes on purpose.
+                     :drive/comment-resolved 409
                      :drive/invalid-share 400
                      :drive/invalid-submission 422
                      :drive/invalid-comment 400
