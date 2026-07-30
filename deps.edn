@@ -115,7 +115,7 @@
    :git/sha "c75e0288203a02616abb924bd475bd2b51feebad"}
   io.github.kotoba-lang/docs
   {:git/url "https://github.com/kotoba-lang/docs.git"
-   :git/sha "0ebb24147e272b43d84dbf542474845a1a09054d"}
+   :git/sha "14317029457f6d661967c83e4653d773a5c0f34d"}
   io.github.kotoba-lang/forms
   {:git/url "https://github.com/kotoba-lang/forms.git"
    :git/sha "d016884f7ae88115ad349a169de2674eb25983c7"}

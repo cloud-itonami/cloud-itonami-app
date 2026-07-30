@@ -2772,6 +2772,16 @@
       // through JavaScript to hand it back to the browser is work that only
       // adds a place to get it wrong.
       const exports = make('div', 'detail-actions__row');
+      // A page the browser prints. Not a PDF export — a PDF of a Japanese
+      // document needs a CJK font embedded, and the browser already has
+      // one, so the reader's own print dialog is the better export.
+      if (!item['file?']) {
+        const print = make('a', 'tool-button', '印刷用ページ');
+        print.href = `/api/workspace/drive/documents/${encodeURIComponent(item.id)}/print`;
+        print.target = '_blank';
+        print.rel = 'noopener';
+        exports.append(print);
+      }
       // Some formats write something other than the document — a form's CSV
       // is its responses — and those are the owner's. Offering the button to
       // a viewer would be offering one that refuses.

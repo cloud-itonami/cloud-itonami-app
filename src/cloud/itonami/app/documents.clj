@@ -63,6 +63,7 @@
             [forms.validate :as forms-validate]
             [forms.wire :as forms-wire]
             [docs.docx :as docs-docx]
+            [docs.html :as docs-html]
             [docs.markdown :as docs-md]
             [forms.responses :as forms-responses]
             [sheets.chart :as sheets-chart]
@@ -2698,8 +2699,86 @@
                                      (:title-key spec) copy-title
                                      (:id-key spec) copy-id))}))))
 
-(defn export
-  "One document in `format`, as bytes plus what to call them.
+(defn printable
+  "One document as a standalone HTML page the browser can print.
+
+  **This is not a PDF writer, and the difference is the point.** A PDF of a
+  Japanese document needs a CJK font embedded in it, which is why this Drive
+  has no PDF export; the browser already has one. So the page is the answer,
+  and the reader's own *print to PDF* is the export — with their fonts,
+  their paper size and their margins, all of which a writer here would have
+  to guess.
+
+  Every surface, because every surface is worth printing: a document as its
+  blocks, a workbook as a table of what its formulas come to, a deck as one
+  drawn slide per page, and a form as its questions. A file is not
+  printable — it is bytes, and the browser can already open the ones it
+  knows."
+  ([id actor] (printable id actor (store-instance)))
+  ([id actor object-store]
+   (let [{:keys [item]} (readable! actor id)
+         kind (get resource-kinds (:drive/resource-kind item))
+         _ (when-not kind
+             (throw (ex-info "これはドキュメントではありません。ダウンロードしてください。"
+                             {:type :drive/not-a-document :item-id id})))
+         resource (:resource (content id actor object-store))
+         esc docs-html/esc
+         body
+         (case kind
+           :docs (docs-html/body resource)
+           :sheets
+           (let [values (sheets-formula/workbook-values resource)]
+             (apply str
+                    (for [[tab-id tab] (sort-by key (:sheets/tabs resource))
+                          :let [[rows cols] (sheets-csv/tab-bounds tab)]]
+                      (str "<section class=\"sheet\"><h2>"
+                           (esc (or (:sheets/title tab) tab-id)) "</h2>"
+                           (if (zero? rows)
+                             "<p>空のタブです。</p>"
+                             (str "<table>"
+                                  (apply str
+                                         (for [row (range 1 (inc rows))]
+                                           (str "<tr>"
+                                                (apply str
+                                                       (for [col (range 1 (inc cols))]
+                                                         ;; What the cell
+                                                         ;; comes to, not
+                                                         ;; its formula: a
+                                                         ;; printed sheet
+                                                         ;; showing
+                                                         ;; =SUM(B2:B9) is
+                                                         ;; a printout of a
+                                                         ;; spreadsheet
+                                                         ;; rather than of
+                                                         ;; its numbers.
+                                                         (str "<td>"
+                                                              (esc (get-in values
+                                                                           [tab-id [row col]]
+                                                                           ""))
+                                                              "</td>")))
+                                                "</tr>")))
+                                  "</table>"))
+                           "</section>"))))
+           :slides
+           (apply str
+                  (for [{:keys [svg]} (slides-svg/deck resource)]
+                    ;; One slide per page, and the SVG unescaped because
+                    ;; this process just built it from this deck.
+                    (str "<section class=\"slide\">" svg "</section>")))
+           :forms
+           (str "<h1>" (esc (:forms/title resource)) "</h1>"
+                (apply str
+                       (for [field (:forms/fields resource)]
+                         (str "<section class=\"question\"><p>"
+                              (esc (or (:forms/label field) (:forms/id field)))
+                              (when (:forms/required? field) " <em>（必須）</em>")
+                              "</p><p class=\"answer-line\"></p></section>"))))
+           "")]
+     {:schema schema :ok? true :id id
+      :title (:drive/title item)
+      :html body})))
+
+(defn export  "One document in `format`, as bytes plus what to call them.
 
   Returns `{:media-type :filename :bytes}` where `:bytes` is a JVM byte
   array, because that is what an HTTP response wants and what
