@@ -22,6 +22,7 @@
   "What defaults.edn ships: every authority off, no endpoints."
   {:authorities {:esim {:enabled? false :endpoint nil}
                  :card {:enabled? false :endpoint nil}
+                 :payment {:enabled? false :endpoint nil}
                  :voice {:enabled? false :endpoint nil}}})
 
 (defn- on
@@ -170,7 +171,7 @@
 (deftest the-overview-shows-a-disabled-authority-instead-of-refusing
   (reset-proposals!)
   (let [o (api/overview all-off session)]
-    (is (= #{:esim :card :voice} (set (keys (:authorities o)))))
+    (is (= #{:esim :card :payment :voice} (set (keys (:authorities o)))))
     (doseq [[k v] (:authorities o)]
       (is (false? (:enabled? v)) (str k))
       (is (false? (:endpoint-configured? v)) (str k))

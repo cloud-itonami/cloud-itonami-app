@@ -11,6 +11,7 @@
             [cloud.itonami.app.authority :as authority]
             [cloud.itonami.app.authority.card :as card-adapter]
             [cloud.itonami.app.authority.esim :as esim-adapter]
+            [cloud.itonami.app.authority.payment :as payment-adapter]
             [cloud.itonami.app.authority.voice :as voice-adapter]
             [cloud.itonami.app.store :as store]
             [kotoba.card.lifecycle :as card-lc]
@@ -51,9 +52,10 @@
 ;; every adapter shares the spine's contract
 ;; ---------------------------------------------------------------------------
 
-(deftest all-three-are-valid-domains
+(deftest every-adapter-is-a-valid-domain
   (doseq [[label d] [[:esim (esim-adapter/domain ok-commit)]
                      [:card (card-adapter/domain ok-commit)]
+                     [:payment (payment-adapter/domain ok-commit)]
                      [:voice (voice-adapter/domain ok-commit)]]]
     (is (authority/valid-domain? d) (str label " must satisfy the spine's contract"))))
 
@@ -64,15 +66,17 @@
          (refuses #(card-adapter/pre-check {} session {:op :card/nuke}))))
   (is (= :voice/op-unsupported
          (refuses #(voice-adapter/pre-check {} session {:op :call/nuke}))))
+  (is (= :payment/op-unsupported
+         (refuses #(payment-adapter/pre-check {} session {:op :payment/nuke}))))
   (testing "and every declared op maps to a distinct context type, so one
             domain's consent cannot be replayed as another op"
     (doseq [[label ops] [[:esim esim-adapter/ops] [:card card-adapter/ops]
-                         [:voice voice-adapter/ops]]]
+                         [:payment payment-adapter/ops] [:voice voice-adapter/ops]]]
       (is (= (count ops) (count (set (vals ops))))
           (str label " context types must be distinct"))))
   (testing "and no context type is shared ACROSS adapters"
     (let [all (concat (vals esim-adapter/ops) (vals card-adapter/ops)
-                      (vals voice-adapter/ops))]
+                      (vals payment-adapter/ops) (vals voice-adapter/ops))]
       (is (= (count all) (count (set all)))))))
 
 ;; ---------------------------------------------------------------------------

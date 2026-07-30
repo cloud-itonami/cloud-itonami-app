@@ -170,6 +170,56 @@ organization directory, redacted activity projection, and human intent and
 approval surface. See
 [ADR-0002](docs/adr/0002-external-artificial-organism-workers.md).
 
+## Funding accounts and payment settlement
+
+An Organization may link the bank accounts it pays from, and record what they
+held. Both are Tenant-scoped: a company account outlives whichever member linked
+it.
+
+```bash
+# link an account (the number is fingerprinted, never stored)
+POST /api/funding/accounts
+     {"institution":"PayPay銀行","account-type":"current",
+      "holder":"JK株式会社","number":"1234567","currency":"JPY"}
+
+# record what the bank said, and WHEN it said it
+POST /api/funding/accounts/{id}/balance
+     {"amount-minor":120000,"currency":"JPY",
+      "as-of":"2026-07-30T09:00:00Z","source":"owner-attested"}
+
+GET  /api/funding
+```
+
+There is **no bank connector**. A balance is recorded because a human read it,
+and `as-of` is the instant the *bank* stated — not the instant it was typed in.
+Amounts are integers in the currency's minor unit (JPY has exponent 0, so
+`38500` is ¥38,500). A balance older than `:balance-max-age-seconds` (24h by
+default) is `:stale` and refuses; one that was never recorded is
+`:never-recorded` and also refuses. **An unknown balance is never rendered as
+¥0** — that would state a fact nobody established.
+
+Settling a payable rides the same spine as the other authorities:
+
+```bash
+POST /api/authority/payment/review                        # deterministic pre-check
+POST /api/authority/payment/proposals/{id}/approve/start  # Passkey
+POST /api/authority/payment/proposals/{id}/approve/finish
+POST /api/authority/payment/proposals/{id}/commit
+```
+
+The pre-check refuses **before a human is asked** when the recorded balance does
+not cover the amount (`402`), when it is unknown or stale (`409`), when the
+reference is already settled by anyone in the Organization (`409`), or when an
+eSIM ownership transfer for the same subject currently holds spend (`423`). The
+balance, its freshness, the funding account and the settlement history are all
+computed server-side and overwrite anything the client sends — otherwise the
+funds gate would be a suggestion.
+
+A committed proposal is a **governed settlement record, not a transfer.** This
+app holds no banking credential and moves no money; a human makes the transfer
+in their bank. `:payment` ships disabled, like every other authority. See
+[ADR-0005](docs/adr/0005-payment-settlement-authority.md).
+
 ## Distribution profiles
 
 Set a named profile or an EDN file path:

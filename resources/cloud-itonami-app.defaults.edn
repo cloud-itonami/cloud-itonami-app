@@ -74,6 +74,19 @@
          ;; This is only expressible because all three authorities' proposals
          ;; share one partition; see cloud.itonami.app.authority.posture.
          :sim-swap-window-seconds 604800}
+  ;; Settlement records for money the organization owes. The deterministic gate
+  ;; is the funds check: a payment whose recorded balance does not cover it is
+  ;; refused BEFORE a human is asked. A committed proposal is a governed
+  ;; settlement RECORD -- this app holds no banking credential and moves no
+  ;; money; a human makes the transfer in their bank.
+  :payment {:enabled? false
+            :endpoint nil  ; cloud-itonami/cloud-itonami-settlement
+            ;; How old a recorded balance may be and still answer 'will this
+            ;; clear?'. 24h: a company current account moves on business-day
+            ;; timescales. Beyond this the pre-check refuses with
+            ;; :payment/balance-unknown rather than trusting a stale figure --
+            ;; an absent balance is not an unlimited one.
+            :balance-max-age-seconds 86400}
   :voice {:enabled? false
           :endpoint nil   ; cloud-itonami/denwaban (R0: run-session raises at G7)
           ;; nil = no allowlist configured, so the pre-check does not apply one.
