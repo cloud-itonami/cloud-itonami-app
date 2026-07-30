@@ -747,7 +747,8 @@
            ['全版の合計', bytes(selectedDrive['held-bytes'])],
            ['版数', String(selectedDrive.versions ?? 1)],
            ['作成', selectedDrive['created-at'] || '—'],
-           ['最終更新', selectedDrive['updated-at'] || '—']]);
+           ['最終更新', selectedDrive['updated-at'] || '—'],
+           ['最終更新者', selectedDrive['updated-by'] || '—']]);
         $('#drive-detail').append(documentActions(selectedDrive));
       } else if (selectedDrive) {
         setDetail($('#drive-detail'), selectedDrive.folder,
@@ -1152,7 +1153,11 @@
 
       const versions = make('div', 'detail-actions__row');
       for (let n = 1; n <= (item.versions || 0); n += 1) {
-        const version = make('button', 'tool-button', `版 ${n}`);
+        // Labelled with who wrote it. On a shared document the version
+        // number alone does not tell you whose change you are about to open.
+        const wrote = (item.history || [])[n - 1];
+        const version = make('button', 'tool-button',
+          wrote?.author ? `版 ${n}・${wrote.author}` : `版 ${n}`);
         version.type = 'button';
         version.addEventListener('click', async () => {
           status.textContent = `版 ${n} を読み込んでいます…`;

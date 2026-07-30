@@ -292,7 +292,15 @@
       :label (get-in kinds [(get resource-kinds kind) :label])
       :created-at (:drive/created-at item)
       :updated-at (:drive.version/created-at newest)
+      ;; Who last wrote it, which is only a question worth asking because a
+      ;; document can now have more than one writer.
+      :updated-by (:drive.version/author newest)
       :versions (count (:drive/versions item))
+      :history (mapv (fn [version]
+                       {:author (:drive.version/author version)
+                        :created-at (:drive.version/created-at version)
+                        :size-bytes (:drive.version/size-bytes version)})
+                     (:drive/versions item))
       :size-bytes (or (:drive.version/size-bytes newest) 0)
       :held-bytes (held-bytes item)
       :trashed? (boolean (:drive/trashed? item))
@@ -650,6 +658,7 @@
                                    :role (ws/effective-role workspace id actor)})
             :index index
             :created-at (:drive.version/created-at version)
+            :author (:drive.version/author version)
             :resource-kind (some-> (:drive/resource-kind item) str)
             :payload (if-let [read-envelope (get-in kinds [kind :read])]
                        (read-envelope body)
