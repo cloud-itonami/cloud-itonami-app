@@ -7,13 +7,32 @@
             [cloud.itonami.app.config :as config-loader]
             [cloud.itonami.app.did :as did]
             [cloud.itonami.app.identity :as local-identity]
+            [cloud.itonami.app.organism-gateway :as organism-gateway]
+            [cloud.itonami.app.organism-worker :as organism-worker]
             [cloud.itonami.app.policy :as policy]
             [cloud.itonami.app.service :as service]
             [cloud.itonami.app.store :as store]
             [cloud.itonami.app.provider :as provider]
+            [cloud.itonami.app.server]
             [cloud.itonami.app.web :as web]
             [cloud.itonami.app.worker :as worker]
             [cloud.itonami.app.workspace :as workspace]))
+
+(def tamaki-worker-assignment
+  {:ao.worker/id "ao:etzhayyim:tamaki"
+   :ao.worker/kind :artificial-organism
+   :ao.worker/organization "etzhayyim"
+   :ao.worker/subject "did:key:tamaki"
+   :ao.worker/repository "rad:tamaki"
+   :ao.worker/runtime :external-supervisor
+   :ao.worker/status :active
+   :ao.worker/capabilities #{:activity/read :intent/submit}
+   :ao.worker/authority {:memory :organism-local
+                         :lifecycle :organism-local
+                         :source :repository-local
+                         :issue :radicle-first}
+   :ao.worker/incarnation {:id "Tamaki Hikari"
+                           :expires-at 2000}})
 
 (def config
   {:routing {:default-provider "ollama" :default-model "test-model"
@@ -34,6 +53,49 @@
                    (assoc-in [:routing :cloud-enabled?] true)
                    (assoc-in [:privacy :allow-cloud-without-review?] true))
                "cloud")))))
+
+(deftest artificial-organism-worker-keeps-identity-and-authority-external
+  (let [assignment (organism-worker/assignment tamaki-worker-assignment)
+        public (organism-worker/public-assignment
+                (assoc assignment :credential "must-not-project"
+                       :private-memory "must-not-project"))]
+    (is (= organism-worker/schema (:ao.worker/schema assignment)))
+    (is (= :external-supervisor (:ao.worker/runtime assignment)))
+    (is (= :organism-local (get-in assignment [:ao.worker/authority :memory])))
+    (is (not (contains? public :credential)))
+    (is (not (contains? public :private-memory)))
+    (is (thrown? clojure.lang.ExceptionInfo
+                 (organism-worker/assignment
+                  (assoc-in tamaki-worker-assignment
+                            [:ao.worker/authority :memory]
+                            :cloud-itonami-app))))))
+
+(deftest organism-intents-are-admitted-not-executed
+  (let [intent {:intent/id "intent-1"
+                :intent/organization "etzhayyim"
+                :intent/worker "ao:etzhayyim:tamaki"
+                :intent/capability :intent/submit
+                :intent/issued-by "did:key:human"
+                :intent/expires-at 2000
+                :intent/payload-hash "sha256:abc"}
+        admitted (organism-worker/intent-decision
+                  tamaki-worker-assignment intent 1000)]
+    (is (= :admitted (:intent/status admitted)))
+    (is (= :not-executed (:intent/effect-status admitted)))
+    (is (= :organization-boundary
+           (:intent/reason
+            (organism-worker/intent-decision
+             tamaki-worker-assignment
+             (assoc intent :intent/organization "other") 1000))))
+    (is (= :capability-not-granted
+           (:intent/reason
+            (organism-worker/intent-decision
+             tamaki-worker-assignment
+             (assoc intent :intent/capability :repository/merge) 1000))))
+    (is (= :intent-expired
+           (:intent/reason
+            (organism-worker/intent-decision
+             tamaki-worker-assignment intent 2000))))))
 
 (deftest chat-persists-kgraph-backed-memory
   (let [temporary (java.nio.file.Files/createTempDirectory
@@ -326,6 +388,167 @@
             (is (true? (worker/await-idle! 10000))))
           (is (= ["job-3" "job-2"]
                  (mapv :title (:items (worker/snapshot bounded))))))))))
+
+(deftest one-user-can-belong-to-and-switch-between-organizations
+  (let [temporary (java.nio.file.Files/createTempDirectory
+                   "cloud-itonami-multi-org-test"
+                   (make-array java.nio.file.attribute.FileAttribute 0))
+        previous @store/state
+        now (store/now)]
+    (try
+      (reset! store/state
+              (assoc (store/initial-state)
+                     :identity
+                     {:organizations
+                      {"org-personal" {:id "org-personal"
+                                       :organization-id "personal"
+                                       :name "Personal" :status :active}}
+                      :users {"user-1" {:id "user-1"
+                                        :display-name "Owner"
+                                        :passkey-enrolled? true}}
+                      :memberships
+                      {"membership-personal"
+                       {:id "membership-personal"
+                        :organization-id "org-personal"
+                        :user-id "user-1" :role :owner :created-at now}}}))
+      (with-redefs [config-loader/data-dir (fn [] (.toFile temporary))]
+        (let [{:keys [token]} (local-identity/issue-session! "user-1")
+              session (local-identity/session token)]
+          (local-identity/create-organization!
+           session {:organization-id "etzhayyim"
+                    :organization-name "Etzhayyim"})
+          (let [before (local-identity/public-state token)
+                etzhayyim (some #(when (= "etzhayyim" (:organization-id %)) %)
+                                (:organizations before))]
+            (is (= 2 (count (:organizations before))))
+            (is (= 1 (count (filter :active? (:organizations before)))))
+            (local-identity/switch-organization!
+             (local-identity/session token)
+             {:organization-id (:id etzhayyim)})
+            (let [after (local-identity/public-state token)]
+              (is (= "etzhayyim"
+                     (get-in after [:organization :organization-id])))
+              (is (= (:id etzhayyim) (:active-organization-id after)))
+              (is (= #{"personal" "etzhayyim"}
+                     (set (map :organization-id (:organizations after)))))))))
+      (finally
+        (reset! store/state previous)))))
+
+(deftest existing-user-accepts-an-organization-bound-invitation
+  (let [temporary (java.nio.file.Files/createTempDirectory
+                   "cloud-itonami-org-invitation-test"
+                   (make-array java.nio.file.attribute.FileAttribute 0))
+        previous @store/state
+        now (store/now)]
+    (try
+      (reset!
+       store/state
+       (assoc
+        (store/initial-state)
+        :identity
+        {:organizations
+         {"org-etzhayyim" {:id "org-etzhayyim"
+                            :organization-id "etzhayyim"
+                            :name "Etzhayyim" :status :active}
+          "org-personal" {:id "org-personal"
+                           :organization-id "personal"
+                           :name "Personal" :status :active}}
+         :users
+         {"user-owner" {:id "user-owner" :account-id "owner"
+                         :email "owner@cloud-itonami.app"
+                         :display-name "Owner" :passkey-enrolled? true}
+          "user-member" {:id "user-member" :account-id "member"
+                          :email "member@cloud-itonami.app"
+                          :display-name "Member" :passkey-enrolled? true}}
+         :memberships
+         {"membership-owner"
+          {:id "membership-owner" :organization-id "org-etzhayyim"
+           :user-id "user-owner" :role :owner :created-at now}
+          "membership-personal"
+          {:id "membership-personal" :organization-id "org-personal"
+           :user-id "user-member" :role :owner :created-at now}}}))
+      (with-redefs [config-loader/data-dir (fn [] (.toFile temporary))]
+        (let [owner-token (:token
+                           (local-identity/issue-session! "user-owner"))
+              member-token (:token
+                            (local-identity/issue-session! "user-member"))
+              invitation
+              (local-identity/add-user!
+               (local-identity/session owner-token)
+               {:display-name "Member" :account-id "member" :role "member"})
+              code (:invitation-code invitation)]
+          (is (= :organization-invitation (:kind invitation)))
+          (is (string? code))
+          (is (not (str/includes? (pr-str (store/snapshot)) code)))
+          (is (= 1
+                 (count (:organizations
+                         (local-identity/public-state member-token)))))
+          (is (= 1
+                 (count (:organization-invitations
+                         (local-identity/public-state member-token)))))
+          (is (thrown-with-msg?
+               clojure.lang.ExceptionInfo #"別のUser"
+               (local-identity/accept-organization-invitation!
+                (local-identity/session owner-token)
+                {:invitation-code code})))
+          (local-identity/accept-organization-invitation!
+           (local-identity/session member-token)
+           {:invitation-code code})
+          (let [accepted (local-identity/public-state member-token)]
+            (is (= "etzhayyim"
+                   (get-in accepted [:organization :organization-id])))
+            (is (= 2 (count (:organizations accepted))))
+            (is (empty? (:organization-invitations accepted))))
+          (is (thrown-with-msg?
+               clojure.lang.ExceptionInfo #"無効"
+               (local-identity/accept-organization-invitation!
+                (local-identity/session member-token)
+                {:invitation-code code})))))
+      (finally
+        (reset! store/state previous)))))
+
+(deftest tamaki-activity-is-cursor-based-and-redacted
+  (let [temporary (java.nio.file.Files/createTempDirectory
+                   "cloud-itonami-organism-test"
+                   (make-array java.nio.file.attribute.FileAttribute 0))
+        root (.toFile temporary)
+        organisms (io/file root "organisms")
+        state-dir (io/file root ".tamaki")
+        events (io/file state-dir "events.edn")
+        event (fn [id at kind]
+                #:tamaki.event
+                {:version 1 :id id :run (str "run-" id) :parent "actor::test"
+                 :kind kind :at at
+                 :data {:run #:agent.run{:id (str "run-" id)
+                                         :actor :test/actor
+                                         :runner "codex"
+                                         :model "gpt"
+                                         :goal "private prompt"}}})]
+    (.mkdirs organisms)
+    (.mkdirs state-dir)
+    (spit (io/file organisms "cloud-itonami-worker.edn")
+          (pr-str tamaki-worker-assignment))
+    (spit events (str (pr-str (event "1" 1000 :run/started)) "\n"
+                      (pr-str (event "2" 2000 :run/succeeded)) "\n"))
+    (with-redefs [organism-gateway/tamaki-root (constantly root)]
+      (is (= 1 (count (:items (organism-gateway/directory "etzhayyim")))))
+      (is (empty? (:items (organism-gateway/directory "other"))))
+      (let [first-page (organism-gateway/activity nil 10)
+            cursor (:cursor first-page)
+            projected (first (:items first-page))]
+        (is (= 2 (count (:items first-page))))
+        (is (= "codex" (get-in projected [:activity/data :agent
+                                          :agent.run/runner])))
+        (is (not (contains? (get-in projected [:activity/data :agent])
+                            :agent.run/goal)))
+        (spit events (str (pr-str (event "3" 3000 :result/evaluated)) "\n")
+              :append true)
+        (let [next-page (organism-gateway/activity cursor 10)]
+          (is (= 1 (count (:items next-page))))
+          (is (= "3" (:activity/id (first (:items next-page)))))))
+      (is (= "ao:etzhayyim:tamaki"
+             (get-in (organism-gateway/snapshot "ao:etzhayyim:tamaki")
+                     [:worker :ao.worker/id]))))))
 
 (deftest local-identity-registers-organization-owner-and-members-safely
   (let [temporary (java.nio.file.Files/createTempDirectory

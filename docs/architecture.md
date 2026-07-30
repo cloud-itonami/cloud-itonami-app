@@ -42,6 +42,33 @@ The combined read is cached for 60 seconds. It is intentionally separate from
 model context: viewing a calendar or mailbox does not send its data to an AI
 provider. Mutation adapters require a later capability and approval design.
 
+## Artificial-organism workers
+
+An organization can include an independently running artificial organism
+through an `OrganismWorker` assignment. This is distinct from the ephemeral
+background model runs in `cloud.itonami.app.worker`. Cloud Itonami projects the
+organism's redacted activity and sends expiring typed intents, but does not own
+its supervisor, memory, incarnation, or repository authority.
+
+For Etzhayyim, the Tamaki repository AO runs under its existing local or
+Murakumo supervisor and appears as an Etzhayyim worker. UI or network loss
+therefore interrupts observation, not organism lifecycle. See
+[ADR-0002](adr/0002-external-artificial-organism-workers.md).
+
+The local management API exposes the active organization boundary:
+
+- `POST /api/identity/organizations/accept` — accept a User-bound,
+  one-time Organization invitation and select its Membership;
+- `GET /api/organism-workers` — assigned AO directory;
+- `GET /api/organism-workers/:id/snapshot` — safe current projection;
+- `GET /api/organism-workers/:id/activity?cursor=…` — bounded cursor page.
+
+The activity adapter seeks directly to the append-only event byte cursor. An
+initial request starts near the tail, and no request folds the complete Tamaki
+history. Prompt, command, goal, private body, credential, and arbitrary event
+data are excluded; only allow-listed lifecycle and runner metadata cross the
+workplace boundary.
+
 ## Runtime boundaries
 
 The desktop process cannot call arbitrary remote URLs. It emits typed action

@@ -81,7 +81,20 @@ Identity concepts remain separate:
 - Organization ID: human-readable, immutable slug
 - Domain: managed or independently verified DNS name
 - Membership: User-to-Tenant role
+- OrganismWorker: independently supervised AO assigned to a Tenant
 - Relay address: optional provider-managed mail alias
+
+Users may belong to multiple Organizations. The sidebar selector changes the
+active membership for the current session; all workspace and OrganismWorker
+reads remain scoped to that one active Organization.
+Existing Users join another Organization only after Passkey authentication
+and explicit acceptance of a one-time, expiring, User-bound invitation.
+
+An OrganismWorker is not a background WorkerRun. It retains its own identity,
+memory, lifecycle, and repository authority while Cloud Itonami provides the
+organization directory, redacted activity projection, and human intent and
+approval surface. See
+[ADR-0002](docs/adr/0002-external-artificial-organism-workers.md).
 
 ## Distribution profiles
 
