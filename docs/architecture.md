@@ -711,6 +711,22 @@ Beyond arithmetic: `COUNTIF` and `SUMIF` (with the optional third range, so
 one column can be tested and another totalled), the text functions, and
 `AND`/`OR`/`NOT`. Anything else is `#NAME?` rather than a crash.
 
+**Named ranges resolve**, so `=SUM(売上)` works — and `sheets.xlsx` writes
+them now, which is one of the three losses `unexpressed` used to report
+turned into a non-loss. Only a name pointing at a tab the workbook does not
+have is still dropped, because writing that reference produces a file that
+opens with a broken name in it.
+
+The evaluation goes through `workbook-values` rather than `values` per tab:
+a name belongs to the workbook and a tab does not know which workbook it is
+in, so tab-by-tab evaluation makes every `=SUM(売上)` a `#NAME?`. The tab a
+name points at is matched by its **title**, which is what a `definedName`
+references and what somebody defining a range writes — matching the map key
+resolved names only in a workbook whose tabs happen to be keyed by their
+titles, which is not the workbook this Drive creates. That was found by a
+test here rather than in the library, whose own fixture used a tab where the
+id and the title were the same string.
+
 The grid shows the value and shows the formula while the cursor is in the
 cell, which is what every spreadsheet does and the only way to see a formula
 you are about to change. The preview shows the value with the formula in the

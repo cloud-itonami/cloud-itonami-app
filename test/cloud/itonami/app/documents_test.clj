@@ -3526,3 +3526,35 @@
             computed (:computed (documents/content (:id item) alice object-store))]
         (is (= "未入力" (get-in computed [tab-id "[2 1]"])))
         (is (= "1200" (get-in computed [tab-id "[2 2]"])))))))
+
+(deftest a-named-range-works-through-the-drive
+  ;; Evaluating tab by tab would make =SUM(売上) a #NAME? on every sheet that
+  ;; uses one, because a name belongs to the workbook and a tab does not
+  ;; know which workbook it is in.
+  (with-state
+    (fn [_ object-store]
+      (let [{:keys [item]} (documents/create! :sheets "売上" alice object-store)
+            wb (:resource (documents/content (:id item) alice object-store))
+            tab-id (first (keys (:sheets/tabs wb)))
+            title (get-in wb [:sheets/tabs tab-id :sheets/title])
+            _ (save! (:id item)
+                     (-> wb
+                         (assoc-in [:sheets/tabs tab-id :sheets/cells]
+                                   {[1 1] {:sheets/value "1200"}
+                                    [2 1] {:sheets/value "1300"}
+                                    [3 1] {:sheets/formula "SUM(売上)"}})
+                         (assoc :sheets/named-ranges
+                                {"売上" {:sheets/id "売上" :sheets/tab title
+                                         :sheets/range "A1:A2"}}))
+                     alice object-store)
+            back (documents/content (:id item) alice object-store)]
+        (is (= "2500" (get-in back [:computed tab-id "[3 1]"])))
+        ;; And the export writes the name rather than dropping it, so it is
+        ;; no longer reported as a loss.
+        (is (nil? (get (:export-warnings back) "xlsx")))
+        (let [xlsx (String. ^bytes (:bytes (documents/export (:id item) "xlsx" alice
+                                                             object-store))
+                            "UTF-8")]
+          ;; The bytes are a zip, so this only checks it did not throw; the
+          ;; XML itself is asserted in sheets.
+          (is (pos? (count xlsx))))))))
