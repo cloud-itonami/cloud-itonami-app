@@ -425,7 +425,12 @@
               (identity/require-passkey! session)
               (send! exchange 200
                      (assoc (credential/issue-membership!
-                             (identity/membership-credential-context session))
+                             ;; The session's user is the actor in the audit
+                             ;; event. The credential's own issuer is the
+                             ;; organization, so without this the ledger could
+                             ;; not say who pressed the button.
+                             (assoc (identity/membership-credential-context session)
+                                    :actor (:user-id session)))
                             :schema credential/schema)))
 
             ;; The register of what has been issued. Records only — this app does
@@ -452,7 +457,8 @@
                 (throw (ex-info "Credential の失効には owner または admin 権限が必要です。"
                                 {:type :identity/forbidden})))
               (send! exchange 200
-                     (assoc (credential/revoke! (Long/parseLong index))
+                     (assoc (credential/revoke! (Long/parseLong index)
+                                                (:user-id session))
                             :schema credential/schema)))
 
             ;; Verify a credential someone presents. Session-gated deliberately:

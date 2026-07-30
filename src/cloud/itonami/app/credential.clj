@@ -242,14 +242,30 @@
 
   The index is allocated from durable state before signing, so a credential that
   exists is always revocable. Allocating afterwards would leave a window in which
-  an issued credential had no index to flip."
-  [{:keys [organization-domain] :as opts}]
+  an issued credential had no index to flip.
+
+  `:actor` is the user id doing the issuing, recorded in the audit event. It is
+  optional only because a CLI or a test has no session; a request path should
+  always pass one, since \"who asserted this about whom\" is the first thing an
+  auditor asks and the credential itself does not carry the answer — its issuer is
+  the organization, not the person who pressed the button."
+  [{:keys [organization-domain actor] :as opts}]
   (let [index (allocate-status-index!)
         credential (sign (membership-credential (assoc opts :status-index index))
                          organization-domain)]
     (store/transact!
      (fn [current]
-       (assoc-in current [:credentials :issued index]
+       (-> current
+           (update :events conj
+                   {:type :credential/issued
+                    :at (get credential "validFrom")
+                    :status-index index
+                    :actor actor
+                    :subject (get-in credential ["credentialSubject" "id"])
+                    :role (get-in credential ["credentialSubject" "role"])
+                    :issuer (get credential "issuer")
+                    :verification-method (get-in credential ["proof" "verificationMethod"])})
+           (assoc-in [:credentials :issued index]
                  ;; The record, not the credential. This app keeps only what it
                  ;; needs to revoke it and to tell an operator what exists; the
                  ;; holder keeps the signed document, which is the point of it
@@ -257,20 +273,41 @@
                  {:subject (get-in credential ["credentialSubject" "id"])
                   :role (get-in credential ["credentialSubject" "role"])
                   :issuer (get credential "issuer")
-                  :issued-at (get credential "validFrom")})))
+                  :issued-at (get credential "validFrom")
+                  :issued-by actor}))))
     {:credential credential :status-index index}))
 
 (defn revoke!
-  "Flip the revocation bit for `status-index`.
+  "Flip the revocation bit for `status-index`, recording who did it.
 
-  Idempotent: revoking twice is the same state, and a caller retrying a request
-  should not get an error for a credential that is already revoked."
-  [status-index]
-  (store/transact!
-   (fn [current]
-     (update-in current [:credentials :revoked]
-                (fn [s] (conj (set (or s #{})) (long status-index))))))
-  {:status-index (long status-index) :revoked? true})
+  Idempotent in EFFECT: revoking twice leaves the same state, and a caller
+  retrying a request should not get an error for a credential that is already
+  revoked. Not idempotent in the LEDGER — two attempts happened, so two events
+  are recorded, the second carrying `:already-revoked? true`. Collapsing them
+  would lose the fact that somebody tried again, which is the sort of thing an
+  auditor is looking for.
+
+  `:actor` is the user id withdrawing the credential. Revocation stops another
+  person's credential being honoured anywhere it is presented, so an unattributed
+  revocation is a hole in exactly the record that matters most."
+  ([status-index] (revoke! status-index nil))
+  ([status-index actor]
+   (let [index (long status-index)
+         already? (contains? (revoked-indices (store/snapshot)) index)]
+     (store/transact!
+      (fn [current]
+        (-> current
+            (update-in [:credentials :revoked]
+                       (fn [s] (conj (set (or s #{})) index)))
+            (update :events conj
+                    (cond-> {:type :credential/revoked
+                             :at (now-timestamp)
+                             :status-index index
+                             :actor actor
+                             :subject (get-in current [:credentials :issued index :subject])}
+                      already? (assoc :already-revoked? true))))))
+     (cond-> {:status-index index :revoked? true}
+       already? (assoc :already-revoked? true)))))
 
 ;; ── verifying ────────────────────────────────────────────────────────────────
 
