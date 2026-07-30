@@ -19,7 +19,14 @@
   Health is measured, never assumed, and an unreachable probe is `:unknown`
   rather than `false` — the same discipline `account-services` applies to
   usage meters, and for the same reason: a failed measurement is not a
-  measurement of failure."
+  measurement of failure. The probe path is declared by the actor, never
+  guessed: the Workers answer /health with JSON, while the Pages actors answer
+  /health with 200 and their SPA index, so an assumed path would read HTML as
+  a healthy API.
+
+  `:id` is not unique. Three repositories declare an id another already owns,
+  so lookup is by `:repo` — the directory, which is unique — and `find-by-id`
+  returns every match rather than picking one."
   (:require [clojure.edn :as edn]
             [clojure.java.io :as io]
             [clojure.string :as str]))
@@ -53,9 +60,35 @@
   [actor]
   (some? (:endpoint actor)))
 
+(defn probeable?
+  "True when the actor names a health path. A callable actor need not be
+  probeable: the Pages actors serve a real API under /api/* and have no health
+  endpoint at all, so there is nothing honest to probe."
+  [actor]
+  (and (callable? actor) (some? (:health-path actor))))
+
 (defn callable [] (filterv callable? (actors)))
 
-(defn actor [id] (first (filter #(= id (:id %)) (actors))))
+(defn actor
+  "Look up by repository directory, which is unique. Prefer this over
+  find-by-id: :id collides for three actors and cannot resolve them."
+  [repo]
+  (first (filter #(= repo (:repo %)) (actors))))
+
+(defn find-by-id
+  "Every actor declaring this id — usually one, occasionally two. Returns a
+  vector rather than a single record because returning the first match would
+  make a collision look like a clean answer."
+  [id]
+  (filterv #(= id (:id %)) (actors)))
+
+(defn duplicate-ids
+  "Ids claimed by more than one repository. Non-empty today: three actors were
+  duplicated into a second repo (a -component, a -codex, and an isic code
+  written both zero-padded and not), and each copy kept the original's id.
+  Which copy is canonical is not something this catalog can decide."
+  []
+  (:duplicate-ids @catalog))
 
 (defn counts
   "Directory shape at a glance. `:company-records` are the 155 repositories
@@ -114,15 +147,15 @@
 ;; ── health ───────────────────────────────────────────────────────────
 
 (defn- probe*
-  "GET {endpoint}/health. Returns :up, :down or :unknown.
+  "GET {endpoint}{health-path}. Returns :up, :down or :unknown.
 
   :down means the actor answered and said it was unwell. :unknown means we
   could not find out — timeout, DNS, TLS. Collapsing those two would report a
   network problem as a broken actor."
-  [endpoint timeout-ms]
+  [endpoint health-path timeout-ms]
   (try
     (let [c (doto ^java.net.HttpURLConnection
-                  (.openConnection (java.net.URL. (str endpoint "/health")))
+                  (.openConnection (java.net.URL. (str endpoint health-path)))
               (.setRequestMethod "GET")
               (.setConnectTimeout timeout-ms)
               (.setReadTimeout timeout-ms))
@@ -133,15 +166,22 @@
     (catch java.net.URISyntaxException _ :unknown)))
 
 (defn probe-health!
-  "Probe every callable actor. Returns {id {:endpoint ... :health ...}}.
+  "Probe every callable actor. Returns {repo {:endpoint ... :health ...}}.
+
+  Keyed by repo, not id, because id collides. An actor that declares no health
+  path reports :not-probeable — it is reachable, it just offers nothing to ask.
+  Calling that :up would be a guess and calling it :down would be a smear.
 
   Not called on load: the directory is useful offline, and 1,183 records should
-  not wait on seven network round-trips to be listed."
+  not wait on network round-trips to be listed."
   ([] (probe-health! 3000))
   ([timeout-ms]
    (into {}
          (map (fn [a]
-                [(:id a) {:endpoint (:endpoint a)
-                          :endpoint-kind (:endpoint-kind a)
-                          :health (probe* (:endpoint a) timeout-ms)}]))
+                [(:repo a)
+                 {:endpoint (:endpoint a)
+                  :endpoint-kind (:endpoint-kind a)
+                  :health (if (probeable? a)
+                            (probe* (:endpoint a) (:health-path a) timeout-ms)
+                            :not-probeable)}]))
          (callable))))
