@@ -717,6 +717,22 @@
         (is (pos? (:used-bytes (documents/quota-view @state alice))))
         (is (zero? (:used-bytes (documents/quota-view @state bob))))))))
 
+(deftest the-history-says-which-writer-made-each-version
+  (with-state
+    (fn [state object-store]
+      (let [{:keys [item]} (documents/create! :docs "共同設計" alice object-store)
+            _ (documents/grant! (:id item) bob "editor" alice)
+            payload (:payload (documents/content (:id item) bob object-store))
+            saved (documents/update! (:id item) (assoc payload "docs/title" "bob の編集")
+                                     bob object-store)]
+        ;; The gap sharing created: before this, two principals could write
+        ;; one document and the history could not say which of them did.
+        (is (= [alice bob] (mapv :author (:history (:item saved)))))
+        (is (= bob (:updated-by (:item saved))))
+        (is (= [alice bob] (mapv :author (:history (first (documents/documents @state alice))))))
+        (is (= alice (:author (documents/version-content (:id item) 1 alice object-store))))
+        (is (= bob (:author (documents/version-content (:id item) 2 alice object-store))))))))
+
 (deftest a-viewer-may-read-and-not-write
   (with-state
     (fn [state object-store]

@@ -116,6 +116,11 @@ can act on is a button that does nothing. `documents/locate` is what closes
 that: own Drive first, then a scan of the others for an item this principal
 has a role on.
 
+- **A version says who wrote it.** `:drive.version/author` is the principal
+  `drive.object/write-item` checked against the ACL, not a value this app
+  passes in — an author the caller names is a history the caller can write.
+  Before sharing this was redundant; with two possible writers a history that
+  cannot distinguish them is a history of nothing.
 - **The owner's Drive is where the bytes stay.** An editor saving a shared
   document writes into the owner's workspace and is charged against the
   owner's quota. Writing it back under the editor would fork it into a second
