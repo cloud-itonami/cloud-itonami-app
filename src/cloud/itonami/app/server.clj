@@ -24,6 +24,17 @@
   (let [body (slurp (.getRequestBody exchange))]
     (if (str/blank? body) {} (json/read-str body :key-fn keyword))))
 
+(defn- read-json-raw
+  "The request body with its keys left alone.
+
+  `read-json` keywordizes every key at every depth, which is right for the
+  fixed-shape requests around it and destroys a document payload: a Sheets
+  tab is keyed by its id and a cell by `\"[1 1]\"`, and turning those into
+  `:plan` and `:[1 1]` loses the only thing that made them addressable."
+  [^HttpExchange exchange]
+  (let [body (slurp (.getRequestBody exchange))]
+    (if (str/blank? body) {} (json/read-str body))))
+
 (defn- send!
   ([exchange status body] (send! exchange status body {}))
   ([^HttpExchange exchange status body headers]
@@ -215,6 +226,74 @@
                          :usage (:usage response)}))
         (catch Exception error
           (write-event! {:type "error" :message (.getMessage error)}))))))
+
+(defn- send-openai-stream!
+  "Serve `POST /v1/chat/completions` with `stream: true` as OpenAI SSE.
+
+  The response headers are written on the first frame rather than up front,
+  and that is the whole reason this is not a few lines. Once `200` and
+  `text/event-stream` are on the wire the status can no longer change, so a
+  failure that happens before the provider has produced anything — a denied
+  provider, a refused local model — could only be reported inside a successful
+  stream, where a client reads it as an empty answer rather than an error.
+  Deferring the headers leaves those failures on an untouched exchange, where
+  the handler's own `ex-data` mapping still turns them into a real status.
+
+  After the first delta that is no longer available, so an error there is
+  reported as an `error` frame instead. That is a worse contract than a status
+  code and it is the honest one: the alternative is closing a 200 stream on a
+  truncated answer, which reads as success."
+  [^HttpExchange exchange config chat include-usage?]
+  (let [response-id (store/new-id "chatcmpl")
+        envelope (service/stream-envelope
+                  response-id (service/chosen-model config chat))
+        writer (volatile! nil)
+        open-writer!
+        (fn []
+          (or @writer
+              (do
+                (doto (.getResponseHeaders exchange)
+                  (.set "Content-Type" "text/event-stream; charset=utf-8")
+                  (.set "Cache-Control" "no-store")
+                  (.set "X-Content-Type-Options" "nosniff"))
+                (.sendResponseHeaders exchange 200 0)
+                (vreset! writer (OutputStreamWriter. (.getResponseBody exchange)
+                                                     StandardCharsets/UTF_8)))))
+        frame!
+        (fn [payload]
+          (let [^java.io.Writer out (open-writer!)]
+            (.write out "data: ")
+            (.write out (if (string? payload) payload (json/write-str payload)))
+            (.write out "\n\n")
+            (.flush out)))
+        open-stream!
+        (fn []
+          (when-not @writer
+            (frame! (service/openai-chunk envelope {:role "assistant"} nil))))]
+    (try
+      (let [result (service/run-chat-stream!
+                    config (assoc chat :response-id response-id)
+                    (fn [delta]
+                      (open-stream!)
+                      (frame! (service/openai-chunk
+                               envelope {:content delta} nil))))]
+        ;; A completion that streamed no delta at all — an empty answer — still
+        ;; owes the client a well-formed stream rather than a bare `[DONE]`.
+        (open-stream!)
+        (frame! (service/openai-chunk envelope {} "stop"))
+        (when include-usage?
+          (frame! (service/openai-usage-chunk envelope (:usage result))))
+        (frame! "[DONE]"))
+      (catch Exception error
+        (if @writer
+          (do (frame! {:error {:type (name (or (:type (ex-data error))
+                                               :provider/error))
+                               :message (.getMessage error)}})
+              (frame! "[DONE]"))
+          (throw error)))
+      (finally
+        (when-let [^java.io.Writer out @writer]
+          (.close out))))))
 
 (defn- public-state [config]
   (let [state (store/snapshot)]
@@ -484,6 +563,70 @@
                       (id-from-path path #"/api/workspace/drive/documents/([^/]+)")
                       (:user-id session))))
 
+            ;; The payload only, never a whole envelope: the resource kind is
+            ;; rebuilt from what the item already records, so an edit cannot
+            ;; rewrite its own discriminant.
+            (and (= method "POST")
+                 (id-from-path path #"/api/workspace/drive/documents/([^/]+)/versions"))
+            (let [session (require-app-session! exchange)
+                  request (read-json-raw exchange)]
+              (require-origin! exchange config)
+              (require-csrf! exchange session)
+              (send! exchange 200
+                     (documents/update!
+                      (id-from-path path #"/api/workspace/drive/documents/([^/]+)/versions")
+                      (get request "payload")
+                      (:user-id session))))
+
+            (and (= method "POST")
+                 (id-from-path path #"/api/workspace/drive/documents/([^/]+)/rename"))
+            (let [session (require-app-session! exchange)
+                  request (read-json exchange)]
+              (require-origin! exchange config)
+              (require-csrf! exchange session)
+              (send! exchange 200
+                     (documents/rename!
+                      (id-from-path path #"/api/workspace/drive/documents/([^/]+)/rename")
+                      (:title request)
+                      (:user-id session))))
+
+            (and (= method "GET")
+                 (re-matches #"/api/workspace/drive/documents/([^/]+)/versions/(\d+)" path))
+            (let [session (require-app-session! exchange)
+                  [_ id index]
+                  (re-matches #"/api/workspace/drive/documents/([^/]+)/versions/(\d+)" path)]
+              (send! exchange 200
+                     (documents/version-content id (parse-long index)
+                                                (:user-id session))))
+
+            (and (= method "POST")
+                 (id-from-path path #"/api/workspace/drive/documents/([^/]+)/restore"))
+            (let [session (require-app-session! exchange)]
+              (require-origin! exchange config)
+              (require-csrf! exchange session)
+              (send! exchange 200
+                     (documents/restore!
+                      (id-from-path path #"/api/workspace/drive/documents/([^/]+)/restore")
+                      (:user-id session))))
+
+            ;; Irreversible, and only reachable for something already in the
+            ;; trash — `documents/purge!` refuses anything else.
+            (and (= method "POST")
+                 (id-from-path path #"/api/workspace/drive/documents/([^/]+)/purge"))
+            (let [session (require-app-session! exchange)]
+              (require-origin! exchange config)
+              (require-csrf! exchange session)
+              (send! exchange 200
+                     (documents/purge!
+                      (id-from-path path #"/api/workspace/drive/documents/([^/]+)/purge")
+                      (:user-id session))))
+
+            (and (= method "POST") (= path "/api/workspace/drive/trash/empty"))
+            (let [session (require-app-session! exchange)]
+              (require-origin! exchange config)
+              (require-csrf! exchange session)
+              (send! exchange 200 (documents/empty-trash! (:user-id session))))
+
             (and (= method "POST")
                  (id-from-path path #"/api/workspace/drive/documents/([^/]+)/trash"))
             (let [session (require-app-session! exchange)]
@@ -640,15 +783,19 @@
 
             (and (= method "POST") (= path "/v1/chat/completions"))
             (let [request (read-json exchange)
-                  response (service/run-chat!
-                            config
-                            {:messages (:messages request)
-                             :model (:model request)
-                             :provider-id (:provider request)
-                             :session-id (or (:session_id request) "openai")
-                             :agent-id (:agent_id request)
-                             :temperature (:temperature request)})]
-              (send! exchange 200 (service/openai-response response)))
+                  chat {:messages (:messages request)
+                        :model (:model request)
+                        :provider-id (:provider request)
+                        :session-id (or (:session_id request) "openai")
+                        :agent-id (:agent_id request)
+                        :temperature (:temperature request)}]
+              (if (:stream request)
+                (send-openai-stream!
+                 exchange config chat
+                 (boolean (get-in request [:stream_options :include_usage])))
+                (send! exchange 200
+                       (service/openai-response
+                        (service/run-chat! config chat)))))
 
             (and (= method "POST") (= path "/api/chat"))
             (let [_session (require-app-session! exchange)
@@ -717,6 +864,12 @@
                      :worker/not-found 404
                      :worker/not-cancellable 409
                      :drive/unknown-kind 400
+                     ;; The request was understood and the document it carries
+                     ;; is not one the model accepts — which is 422, not 400.
+                     :drive/invalid-document 422
+                     ;; Purging something that is not in the trash yet is a
+                     ;; conflict with its current state, not a bad request.
+                     :drive/not-trashed 409
                      :drive/not-found 404
                      :drive/not-permitted 403
                      :drive/no-content 409

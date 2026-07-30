@@ -176,13 +176,29 @@
   .drive-create{display:flex;flex-wrap:wrap;gap:.5rem}
   .drive-create__status{margin:0;color:var(--color-neutral-solid-gray-600);
     font-size:.8125rem;line-height:1.5}
-  .detail-actions{display:flex;flex-direction:column;align-items:flex-start;gap:.75rem;
+  .drive-trash{margin-top:1.5rem;border:1px solid var(--color-neutral-solid-gray-200);
+    border-radius:.75rem;background:var(--color-neutral-white);padding:1rem 1.25rem}
+  .drive-trash__head{display:flex;align-items:center;flex-wrap:wrap;gap:.75rem}
+  .drive-trash__head h2{margin:0}
+  .drive-trash__list{list-style:none;margin:.75rem 0 0;padding:0;display:grid;gap:.5rem}
+  .trash-row{display:flex;align-items:center;flex-wrap:wrap;gap:.5rem .75rem;
+    border-top:1px solid var(--color-neutral-solid-gray-200);padding-top:.5rem}
+  .trash-row__name{flex:1 1 12rem;min-width:0;overflow:hidden;text-overflow:ellipsis;
+    white-space:nowrap}
+  .trash-row__size{color:var(--color-neutral-solid-gray-600);font-size:.8125rem}
+  .detail-actions{display:flex;flex-direction:column;align-items:stretch;gap:.75rem;
     margin-top:1.25rem}
-  .document-preview{max-height:18rem;width:100%;box-sizing:border-box;overflow:auto;margin:0;
+  .detail-actions__row{display:flex;flex-wrap:wrap;align-items:center;gap:.5rem}
+  .document-title{flex:1 1 12rem;min-width:0;min-height:2.25rem;padding:.35rem .75rem;
+    border-radius:.5rem;font-size:.875rem}
+  .document-preview{height:18rem;width:100%;box-sizing:border-box;overflow:auto;margin:0;
     border:1px solid var(--color-neutral-solid-gray-200);border-radius:.5rem;
     background:var(--color-neutral-solid-gray-50);padding:.75rem;
     color:var(--color-neutral-solid-gray-800);font-size:.75rem;line-height:1.6;
-    white-space:pre-wrap;word-break:break-all}
+    font-family:ui-monospace,SFMono-Regular,Menlo,monospace;
+    white-space:pre;resize:vertical}
+  .document-preview:focus{outline:4px solid var(--color-primitive-yellow-300);outline-offset:1px;
+    border-color:var(--color-key-600)}
   .workspace-toolbar{display:flex;align-items:center;justify-content:space-between;gap:.75rem;
     margin:1rem 0}
   .workspace-search{width:min(100%,24rem);min-height:2.75rem;box-sizing:border-box;
@@ -690,12 +706,16 @@
       if (!items.length) list.append(make('li', 'empty-state', '条件に一致するファイルはありません。'));
       if (selectedDrive && selectedDrive.origin === 'workspace') {
         setDetail($('#drive-detail'), selectedDrive.label,
-          selectedDrive.name, 'この Drive で作成した Kotoba ドキュメントです。',
+          selectedDrive.name, selectedDrive['trashed?']
+            ? 'ゴミ箱にあります。復元するまで編集できません。'
+            : 'この Drive で作成した Kotoba ドキュメントです。',
           [['種類', selectedDrive['resource-kind']],
            ['形式', selectedDrive['media-type']],
            ['サイズ', bytes(selectedDrive['size-bytes'])],
+           ['全版の合計', bytes(selectedDrive['held-bytes'])],
            ['版数', String(selectedDrive.versions ?? 1)],
-           ['作成', selectedDrive['created-at'] || '—']]);
+           ['作成', selectedDrive['created-at'] || '—'],
+           ['最終更新', selectedDrive['updated-at'] || '—']]);
         $('#drive-detail').append(documentActions(selectedDrive));
       } else if (selectedDrive) {
         setDetail($('#drive-detail'), selectedDrive.folder,
@@ -707,9 +727,53 @@
         $('#drive-detail').replaceChildren(make('div', 'empty-state', 'ファイルを選択してください。'));
       }
       renderDriveCreateBar(data.kinds || []);
+      renderDriveTrash(data.trash || []);
+      const quota = data.quota;
+      $('#drive-quota').textContent = quota
+        ? `${bytes(quota['used-bytes'])} / ${bytes(quota['quota-bytes'])} を使用`
+        : '';
       $('#drive-visible-count').textContent = `${items.length} 件を表示`;
       $('#drive-count').textContent = data.count || data.items.length;
       $('#drive-source').textContent = data.source;
+    };
+    // Trashing is only honest if untrashing exists, and the quota only comes
+    // back when something is purged — so the trash is on the page rather than
+    // behind a route nobody visits.
+    const renderDriveTrash = (trash) => {
+      const section = $('#drive-trash'); if (!section) return;
+      section.hidden = !trash.length;
+      const list = $('#drive-trash-list'); list.replaceChildren();
+      $('#drive-trash-count').textContent = `${trash.length} 件`;
+      trash.forEach((item) => {
+        const row = make('li', 'trash-row');
+        row.append(make('span', 'trash-row__name', `${item.name}（${item.label}）`),
+          make('span', 'trash-row__size', bytes(item['held-bytes'])));
+        const restore = make('button', 'tool-button', '復元');
+        restore.type = 'button';
+        restore.addEventListener('click', () => driveAction(
+          `/api/workspace/drive/documents/${encodeURIComponent(item.id)}/restore`, {},
+          `${item.name} を復元しました。`));
+        const purge = make('button', 'tool-button', '完全に削除');
+        purge.type = 'button';
+        purge.addEventListener('click', () => driveAction(
+          `/api/workspace/drive/documents/${encodeURIComponent(item.id)}/purge`, {},
+          `${item.name} を削除しました。`));
+        row.append(restore, purge);
+        list.append(row);
+      });
+    };
+    const driveAction = async (path, body, done) => {
+      const status = $('#drive-create-status');
+      status.textContent = '実行しています…';
+      try {
+        const result = await postJSON(path, body, true);
+        status.textContent = result['freed-bytes']
+          ? `${done}（${bytes(result['freed-bytes'])} を回収）`
+          : done;
+        await loadWorkspace('drive', renderDrive);
+      } catch (error) {
+        status.textContent = error.message;
+      }
     };
     // The create bar is rendered from the server's `kinds`, not from a list
     // written out here: the three surfaces are a closed table in
@@ -740,29 +804,155 @@
         status.textContent = error.message;
       }
     };
+    // The detail pane is rebuilt on every render — a keystroke in the search
+    // box is enough — so an open editor's text cannot live in the element.
+    // It lived there until this was measured: typing in search while editing
+    // destroyed the edit with no warning and no way back.
+    let driveEditor = {id:null, open:false, value:''};
+    // The editor is the payload itself. Three real editors are three
+    // applications — app-sheets, app-docs and app-forms exist and are not
+    // this app. What is offered here is the thing the API can actually
+    // promise: the stored resource, editable, refused by the surface's own
+    // validator if it stops being one.
     const documentActions = (item) => {
       const actions = make('div', 'detail-actions');
-      const show = make('button', 'tool-button', '内容を表示');
-      show.type = 'button';
-      const preview = make('pre', 'document-preview', '');
-      preview.hidden = true;
-      show.addEventListener('click', async () => {
-        show.disabled = true;
+      const row = make('div', 'detail-actions__row');
+      const status = make('p', 'drive-create__status', '');
+      if (driveEditor.id !== item.id) driveEditor = {id:item.id, open:false, value:''};
+
+      if (item['trashed?']) {
+        const restore = make('button', 'tool-button', '復元');
+        restore.type = 'button';
+        restore.addEventListener('click', () => driveAction(
+          `/api/workspace/drive/documents/${encodeURIComponent(item.id)}/restore`, {},
+          `${item.name} を復元しました。`));
+        row.append(restore);
+        actions.append(row, status);
+        return actions;
+      }
+
+      const open = make('button', 'tool-button', driveEditor.open ? '再読み込み' : '編集');
+      open.type = 'button';
+      const save = make('button', 'tool-button', '保存');
+      save.type = 'button';
+      save.hidden = !driveEditor.open;
+      const rename = make('button', 'tool-button', '名前を変更');
+      rename.type = 'button';
+      const trash = make('button', 'tool-button', 'ゴミ箱へ');
+      trash.type = 'button';
+      // An inline field rather than window.prompt: a modal dialog blocks the
+      // page, and this one would be blocking it to collect a single string
+      // the detail pane already has room for.
+      const titleField = make('input', 'workspace-search document-title');
+      titleField.type = 'text';
+      titleField.value = item.name;
+      titleField.setAttribute('aria-label', '名前');
+      const editor = make('textarea', 'document-preview');
+      editor.hidden = !driveEditor.open;
+      editor.value = driveEditor.value;
+      editor.spellcheck = false;
+      editor.setAttribute('aria-label', `${item.name} の内容`);
+      // Every keystroke, so the text survives the next render rather than
+      // only the next save.
+      editor.addEventListener('input', () => { driveEditor.value = editor.value; });
+
+      const versions = make('div', 'detail-actions__row');
+      for (let n = 1; n <= (item.versions || 0); n += 1) {
+        const version = make('button', 'tool-button', `版 ${n}`);
+        version.type = 'button';
+        version.addEventListener('click', async () => {
+          status.textContent = `版 ${n} を読み込んでいます…`;
+          try {
+            const request = await fetch(
+              `/api/workspace/drive/documents/${encodeURIComponent(item.id)}/versions/${n}`);
+            const data = await request.json();
+            if (!request.ok) throw new Error(data?.error?.message || '版を取得できませんでした。');
+            driveEditor = {id:item.id, open:true, value:JSON.stringify(data.payload, null, 2)};
+            editor.value = driveEditor.value;
+            editor.hidden = false; save.hidden = false;
+            // Loaded into the editor rather than restored behind the user's
+            // back: saving it is what makes it current, and that is a new
+            // version like any other.
+            status.textContent = `版 ${n}（${data['created-at'] || '日時不明'}）を表示中。`
+              + '保存すると新しい版になります。';
+          } catch (error) {
+            status.textContent = error.message;
+          }
+        });
+        versions.append(version);
+      }
+
+      const load = async () => {
+        const request = await fetch(
+          `/api/workspace/drive/documents/${encodeURIComponent(item.id)}`);
+        const data = await request.json();
+        if (!request.ok) throw new Error(data?.error?.message || '内容を取得できませんでした。');
+        return data.payload;
+      };
+      open.addEventListener('click', async () => {
+        open.disabled = true; status.textContent = '読み込んでいます…';
         try {
-          const request = await fetch(
-            `/api/workspace/drive/documents/${encodeURIComponent(item.id)}`);
-          const data = await request.json();
-          if (!request.ok) throw new Error(data?.error?.message || '内容を取得できませんでした。');
-          preview.textContent = JSON.stringify(data.payload, null, 2);
-          preview.hidden = false;
+          driveEditor = {id:item.id, open:true, value:JSON.stringify(await load(), null, 2)};
+          editor.value = driveEditor.value;
+          editor.hidden = false; save.hidden = false;
+          status.textContent = '';
         } catch (error) {
-          preview.textContent = error.message;
-          preview.hidden = false;
+          status.textContent = error.message;
         } finally {
-          show.disabled = false;
+          open.disabled = false;
         }
       });
-      actions.append(show, preview);
+      save.addEventListener('click', async () => {
+        let payload;
+        try {
+          payload = JSON.parse(editor.value);
+        } catch (error) {
+          // Refused here rather than sent: a body that is not JSON is not a
+          // document the server can say anything useful about.
+          status.textContent = `JSON として読めません: ${error.message}`;
+          return;
+        }
+        save.disabled = true; status.textContent = '保存しています…';
+        try {
+          const saved = await postJSON(
+            `/api/workspace/drive/documents/${encodeURIComponent(item.id)}/versions`,
+            {payload}, true);
+          const warnings = (saved.warnings || []).map((w) => w.message).join(' / ');
+          // The save went through and the surface still had something to say.
+          driveEditor = {id:item.id, open:false, value:''};
+          selectedDrive = saved.item;
+          await loadWorkspace('drive', renderDrive);
+          $('#drive-create-status').textContent = warnings
+            ? `保存しました（版 ${saved.item.versions}）。注意: ${warnings}`
+            : `保存しました（版 ${saved.item.versions}）。`;
+        } catch (error) {
+          status.textContent = error.message;
+        } finally {
+          save.disabled = false;
+        }
+      });
+      rename.addEventListener('click', async () => {
+        rename.disabled = true; status.textContent = '名前を変更しています…';
+        try {
+          const renamed = await postJSON(
+            `/api/workspace/drive/documents/${encodeURIComponent(item.id)}/rename`,
+            {title:titleField.value}, true);
+          status.textContent = '';
+          selectedDrive = renamed.item;
+          await loadWorkspace('drive', renderDrive);
+        } catch (error) {
+          status.textContent = error.message;
+        } finally {
+          rename.disabled = false;
+        }
+      });
+      trash.addEventListener('click', () => {
+        driveEditor = {id:null, open:false, value:''};
+        driveAction(`/api/workspace/drive/documents/${encodeURIComponent(item.id)}/trash`, {},
+          `${item.name} をゴミ箱へ移動しました。`);
+      });
+      row.append(titleField, rename, open, save, trash);
+      actions.append(row, status, editor, versions);
       return actions;
     };
     const renderFilecoin = (data) => {
@@ -1132,6 +1322,8 @@
     };
     $('#inbox-search').addEventListener('input', () => renderInbox(inboxData));
     $('#drive-search').addEventListener('input', () => renderDrive(driveData));
+    $('#drive-trash-empty').addEventListener('click', () => driveAction(
+      '/api/workspace/drive/trash/empty', {}, 'ゴミ箱を空にしました。'));
     let identityState = null;
     const connectorMarks = {github:'GH', google:'G', microsoft:'M'};
     const identityHeaders = () => ({
@@ -1998,6 +2190,7 @@
          [:div {:class "drive-create-bar"}
           [:div {:class "drive-create" :id "drive-create"
                  :role "group" :aria-label "新しいドキュメントを作成"}]
+          [:span {:class "result-count" :id "drive-quota"}]
           [:p {:class "drive-create__status" :id "drive-create-status" :aria-live "polite"}]]
          [:div {:class "workspace-toolbar"}
           [:label {:class "visually-hidden" :for "drive-search"} "ファイルを検索"]
@@ -2008,7 +2201,16 @@
           [:div {:class "record-list"}
            [:ul {:class "record-list__items" :id "drive-list"} [:li {:class "skeleton"}]]]
           [:article {:class "record-detail" :id "drive-detail" :aria-live "polite"}
-           [:div {:class "empty-state"} "ファイルを読み込んでいます。"]]]]
+           [:div {:class "empty-state"} "ファイルを読み込んでいます。"]]]
+         [:section {:class "drive-trash" :id "drive-trash" :hidden true}
+          [:div {:class "drive-trash__head"}
+           (dds/heading 2 "ゴミ箱" {:size "20"})
+           [:span {:class "result-count" :id "drive-trash-count"}]
+           [:button {:class "tool-button" :type "button" :id "drive-trash-empty"}
+            "ゴミ箱を空にする"]]
+          [:p {:class "drive-create__status"}
+           "ゴミ箱にあるものも容量を使っています。完全に削除すると容量が戻ります。"]
+          [:ul {:class "drive-trash__list" :id "drive-trash-list"}]]]
         [:section {:class "view" :data-view-panel "scheduler" :hidden true}
          (view-header "Scheduler" "kotoba-lang/calendar と EventKit で、この先7日間を日ごとに整理します。")
          [:p {:class "source-note"} [:span {:class "source-dot"}]

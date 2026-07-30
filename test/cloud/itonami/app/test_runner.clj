@@ -9,21 +9,27 @@
             [clojure.string :as str]
             [clojure.test :as test]
             [cloud.itonami.app.authority-test]
+            [cloud.itonami.app.authority.adapters-test]
+            [cloud.itonami.app.authority.posture-test]
             [cloud.itonami.app.core-test]
             [cloud.itonami.app.documents-test]
             [cloud.itonami.app.filecoin-test]
             [cloud.itonami.app.fleet-test]
             [cloud.itonami.app.fleet-tools-test]
+            [cloud.itonami.app.openai-compat-test]
             [cloud.itonami.app.storj-test]
             [cloud.itonami.app.worker-http-test]))
 
 (def ^:private namespaces
   '[cloud.itonami.app.authority-test
+    cloud.itonami.app.authority.adapters-test
+    cloud.itonami.app.authority.posture-test
     cloud.itonami.app.core-test
     cloud.itonami.app.documents-test
     cloud.itonami.app.filecoin-test
     cloud.itonami.app.fleet-test
     cloud.itonami.app.fleet-tools-test
+    cloud.itonami.app.openai-compat-test
     cloud.itonami.app.storj-test
     cloud.itonami.app.worker-http-test])
 

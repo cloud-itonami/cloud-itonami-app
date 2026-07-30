@@ -32,7 +32,7 @@ projects, or events.
 | Inbox | `m365-archive` and `net-kotobase/mail-worker` | Lists archive metadata; sealed reception remains recipient-key controlled |
 | Projects | `kotoba-lang/com-github` | Reads GitHub Projects v2; shows `permission-required` without `read:project` |
 | Drive (archive) | `m365-archive` OneDrive snapshot | Lists file state without silently materializing git-annex objects |
-| Drive (documents) | `kotoba-lang/drive` workspace + an object store | Creates Sheets / Docs / Forms as office envelopes; per-user ACL, quota and versions |
+| Drive (documents) | `kotoba-lang/drive` workspace + an object store | Creates and edits Sheets / Docs / Forms as office envelopes; per-user ACL, quota, versions and a reversible trash; a save the surface's own validator rejects is refused |
 | Scheduler | `kotoba-lang/shell` EventKit + `kotoba-lang/calendar` | Reads seven days under the explicit `calendar/read` capability |
 
 `GET /api/workspace/worker` is served next to these but is not one of them: it
@@ -45,11 +45,28 @@ it was created reads as a failed create. It is intentionally separate from
 model context: viewing a calendar or mailbox does not send its data to an AI
 provider.
 
-Creating a document is the one mutation here, and it does not write to any of
-the external authorities above: it writes to a `drive.workspace` held in the
-app's own state and to an object store the app owns. Mutation adapters that
-write back to OneDrive, GitHub Projects or EventKit still require a later
-capability and approval design.
+Creating and editing a document is the one mutation here, and it does not
+write to any of the external authorities above: it writes to a
+`drive.workspace` held in the app's own state and to an object store the app
+owns. Mutation adapters that write back to OneDrive, GitHub Projects or
+EventKit still require a later capability and approval design.
+
+A save is validated by the surface that owns the schema — `sheets.validate`,
+`docs.validate`, `forms.validate` — after the payload has been rehydrated out
+of its plain-JSON projection. The order is not an implementation detail: those
+validators read namespaced keys, find none on a projected payload, and report
+no problems, so validating before rehydrating would accept anything at all.
+Warnings do not block; a `docs` document with no title is a draft, not a
+rejected save. They are returned on the save response rather than dropped — a
+warning that is computed and then discarded is the same as not having run the
+validator.
+
+Every save is a new version under a new object reference, and every version is
+counted against the quota: `drive.workspace/add-version` adds and nothing
+subtracts. `drive.workspace/trash` only sets a flag, so trashing frees
+nothing. `documents/purge!` is the one call that does, it refuses anything not
+already in the trash, and the Drive shows the trash and the quota together
+because otherwise a Drive that fills up cannot say why.
 
 ## Artificial-organism workers
 
@@ -127,9 +144,25 @@ The public compatibility slice is:
 - `POST /v1/chat/completions`
 
 Management endpoints live under `/api` and are not part of the OpenAI
-compatibility claim. The current completion endpoint is non-streaming.
-Function-call deltas, Responses API, Anthropic compatibility, and MCP are
-future profiles and will receive separate compatibility tests.
+compatibility claim. Function-call deltas, Responses API, embeddings, Anthropic
+compatibility, and MCP are future profiles and will receive separate
+compatibility tests.
+
+`POST /v1/chat/completions` honours `stream: true` as Server-Sent Events in the
+`chat.completion.chunk` format: a role chunk, one chunk per provider delta, a
+`finish_reason: "stop"` chunk, the usage chunk when
+`stream_options.include_usage` asked for it, then `data: [DONE]`. Every chunk
+repeats the completion id, which is the same id the store records for the turn.
+
+The response headers are written on the first frame rather than when the
+request arrives. Once `200` and `text/event-stream` are sent the status can no
+longer change, so a provider refusal or a refused local model would have to be
+reported inside a successful stream — where a client reads it as an empty
+answer. Deferring means those failures reach the same `ex-data` status mapping
+as a non-streaming request: a denied cloud provider is a `403`, under
+`stream: true` as much as without it. After the first delta that is no longer
+possible and the failure is an `error` frame instead, with no `stop` chunk
+claiming the answer finished.
 
 The first-party chat UI uses `POST /api/chat/stream`, a chunked NDJSON
 management endpoint. Provider deltas are forwarded as they arrive; only a
@@ -203,4 +236,6 @@ relevance queries. Writes replace the state file atomically.
 3. Add MCP server/client profiles.
 4. Add memory distillation and relevance retrieval over kgraph.
 5. Add schedules/watchers after tool isolation is available.
-6. Add streaming and function-call compatibility suites.
+6. Add a function-call compatibility suite. (Streaming has one:
+   `test/cloud/itonami/app/openai_compat_test.clj` reads the SSE frames over
+   real HTTP, in both modes.)
