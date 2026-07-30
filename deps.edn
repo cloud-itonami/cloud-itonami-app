@@ -58,6 +58,20 @@
   ;; over a Verifier-supplied nonce, and a Passkey cannot -- it signs its own
   ;; authenticatorData || clientDataHash. So this app can ASK for presentations
   ;; and check the envelope that comes back; it cannot produce one.
+  ;; SD-JWT VC (draft-ietf-oauth-sd-jwt-vc), for membership credentials whose
+  ;; SUBJECT can be withheld. The W3C VC + Data Integrity path in
+  ;; `credential` discloses everything in the credential to whoever sees it; this
+  ;; one lets a holder prove "someone at this organization is an auditor" without
+  ;; revealing which did:key they are, which is unlinkability across verifiers.
+  io.github.kotoba-lang/org-ietf-sd-jwt-vc
+  {:git/url "https://github.com/kotoba-lang/org-ietf-sd-jwt-vc.git"
+   :git/sha "9d85bfb0473a50a7d31eab39c12dbd0b1ed1bd51"}
+  io.github.kotoba-lang/org-ietf-sd-jwt
+  {:git/url "https://github.com/kotoba-lang/org-ietf-sd-jwt.git"
+   :git/sha "8e575ed7d26c03793e89792d8ba36286f5e6d2b3"}
+  io.github.kotoba-lang/org-ietf-jws
+  {:git/url "https://github.com/kotoba-lang/org-ietf-jws.git"
+   :git/sha "6931dd3125ff1d933d895ba3478002da831c1196"}
   io.github.kotoba-lang/org-openid-oid4vp
   {:git/url "https://github.com/kotoba-lang/org-openid-oid4vp.git"
    :git/sha "707c9fefc3eb0c8184844da1d08da6fc830566ed"}
