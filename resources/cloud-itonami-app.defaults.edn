@@ -98,6 +98,25 @@
   ;; money; a human makes the transfer in their bank.
   :payment {:enabled? false
             :endpoint nil  ; cloud-itonami/cloud-itonami-settlement
+            ;; What kind of authenticator may approve a settlement.
+            ;;
+            ;; The decision (2026-07-30) was a Secure Enclave key requiring
+            ;; Touch ID, so that an agent cannot approve on the owner's behalf.
+            ;; A Passkey assertion alone does not establish that: a browser's
+            ;; virtual authenticator verifies identically and signs with no
+            ;; human present. cloud.itonami.app.credential-assurance grades the
+            ;; difference from evidence captured at enrolment.
+            ;;
+            ;; :platform-claimed is the shipped floor because it is the
+            ;; strongest one KNOWN to be reachable. :platform-attested needs the
+            ;; browser to disclose a real AAGUID under direct attestation, and
+            ;; whether it does is measurable on the machine rather than
+            ;; guessable here. Register once, read
+            ;; GET /api/passkeys/assurance, then raise this with evidence --
+            ;; a floor the hardware cannot clear would enrol fine and then
+            ;; refuse every payment, which reads as a bug.
+            :credential-policy {:min-assurance :platform-claimed
+                                :require-user-verification? true}
             ;; How old a recorded balance may be and still answer 'will this
             ;; clear?'. 24h: a company current account moves on business-day
             ;; timescales. Beyond this the pre-check refuses with

@@ -125,7 +125,7 @@
 (defn finish-approval!
   [configuration session authority-key proposal-id transaction-id credential]
   (require-enabled! configuration authority-key)
-  (authority/finish-approval! (domain-for authority-key) session
+  (authority/finish-approval! (domain-for authority-key) configuration session
                               proposal-id transaction-id credential))
 
 (defn reject!

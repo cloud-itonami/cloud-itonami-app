@@ -43,7 +43,8 @@
   section), so a committed proposal here means a governed proposal was recorded --
   NOT that a card was issued, a profile downloaded, or a call answered. Callers
   and UI must not present it as more than that."
-  (:require [cloud.itonami.app.passkey :as passkey]
+  (:require [cloud.itonami.app.credential-assurance :as assurance]
+            [cloud.itonami.app.passkey :as passkey]
             [cloud.itonami.app.store :as store])
   (:import [java.nio.charset StandardCharsets]
            [java.security MessageDigest]
@@ -233,14 +234,42 @@
     (nil? (:digest context))
     (conj {:authority/issue :context/digest-absent})))
 
+(defn credential-policy-issues
+  "Why the credential that produced this assertion may not authorize for this
+  authority. Empty when it may.
+
+  This is a THIRD gate, and it answers a question the other two do not.
+  `approval-match-issues` asks 'is this assertion for this proposal?'. The
+  authority's Governor asks 'is this admissible?'. Neither asks **what kind of
+  authenticator signed it** -- and for a decision made specifically so that an
+  agent cannot approve on a human's behalf, that is the question that matters.
+
+  A Passkey assertion is equally valid whether it came from a Secure Enclave
+  requiring Touch ID or from a browser's virtual authenticator signing
+  programmatically with no human present. Both verify. Only one of them means
+  a person agreed. `cloud.itonami.app.credential-assurance` grades the
+  difference from what was recorded at enrolment, and this is where that grade
+  is enforced.
+
+  Looked up from the STORE by credential id rather than taken from the
+  assertion result, for the same reason the posture is computed server-side:
+  the enrolment-time evidence is ours, and re-deriving it from the response
+  would let the response describe itself."
+  [configuration authority-key credential-id]
+  (let [record (get-in (store/snapshot) [:identity :passkeys credential-id])]
+    (if-not record
+      [{:passkey/issue :credential/not-found}]
+      (assurance/policy-issues record
+                               (assurance/policy-for configuration authority-key)))))
+
 (defn finish-approval!
   "Complete the assertion and mark the proposal approved.
 
   Verifies, all of them: the session, the assertion's own user, the proposal's
-  owner, the context type, the authority, the proposal id, AND the digest -- see
-  `approval-match-issues`, which is where those comparisons live so they can be
-  tested directly."
-  [domain session proposal-id transaction-id credential]
+  owner, the context type, the authority, the proposal id, the digest -- see
+  `approval-match-issues` -- AND that the credential which signed it is one this
+  authority accepts, see `credential-policy-issues`."
+  [domain configuration session proposal-id transaction-id credential]
   (let [result  (passkey/finish-authorization! transaction-id credential)
         context (:authorization-context result)
         p       (owned-proposal! session proposal-id :awaiting-passkey)
@@ -257,10 +286,28 @@
       (throw (ex-info "Passkey approval does not match this proposal"
                       {:type :authority/approval-mismatch
                        :issues (mapv :authority/issue issues)})))
+    ;; After the match, before the approval is recorded: an assertion that is
+    ;; genuinely for this proposal but came from an authenticator this authority
+    ;; does not accept is a REFUSAL, not an approval.
+    (let [credential-issues (credential-policy-issues
+                             configuration (:authority/key domain)
+                             (:credential-id result))]
+      (when (seq credential-issues)
+        (throw (ex-info "この authenticator ではこの authority を承認できません"
+                        {:type :authority/credential-not-accepted
+                         :issues credential-issues}))))
     (let [approved (assoc p
                           :status :approved
                           :approved-at (store/now)
-                          :passkey-credential-id (:credential-id result))]
+                          :passkey-credential-id (:credential-id result)
+                          ;; Recorded on the proposal so a reader can see what
+                          ;; kind of authenticator approved it, without having
+                          ;; to go and re-grade the credential later.
+                          :passkey-assurance
+                          (:passkey/assurance
+                           (assurance/assurance
+                            (get-in (store/snapshot)
+                                    [:identity :passkeys (:credential-id result)]))))]
       (store/transact! assoc-in (proposal-path proposal-id) approved)
       (dissoc approved :user-id :organization-id))))
 
