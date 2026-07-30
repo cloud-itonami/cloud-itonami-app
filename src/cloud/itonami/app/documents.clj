@@ -61,7 +61,10 @@
             [forms.wire :as forms-wire]
             [sheets.model :as sheets]
             [sheets.validate :as sheets-validate]
-            [sheets.wire :as sheets-wire])
+            [sheets.wire :as sheets-wire]
+            [slides.model :as slides]
+            [slides.validate :as slides-validate]
+            [slides.wire :as slides-wire])
   (:import [java.nio.charset StandardCharsets]
            [java.util UUID]))
 
@@ -134,7 +137,30 @@
            :rehydrate forms-wire/rehydrate-form
            :problems forms-validate/form-problems
            :severity :forms/severity :code :forms/code :message :forms/msg
-           :vocabulary forms/field-types}})
+           :vocabulary forms/field-types}
+   :slides {:resource-kind :slides/deck
+            :label "スライド"
+            :default-title "無題のスライド"
+            :title-key :slides/title
+            :seed (fn [id title]
+                    (-> (slides/deck id {:slides/title title})
+                        (slides/add-slide
+                         (-> (slides/slide "slide1" {:slides/title title})
+                             (slides/add-shape (slides/text-box "title" title))))))
+            :envelope slides-wire/deck-envelope
+            :read slides-wire/read-deck-envelope
+            :rehydrate slides-wire/rehydrate-deck
+            ;; `slides.validate/problems` takes a workspace, not a deck: it
+            ;; looks for items whose kind is `:slides/deck` and it also runs
+            ;; `route-problems`, which asks whether four Pages hosts are
+            ;; configured — a question about the slides site, not about this
+            ;; document. So the deck is wrapped in a workspace of its own and
+            ;; only the deck checks are asked for.
+            :problems (fn [deck]
+                        (slides-validate/deck-problems
+                         (slides/add-item (slides/workspace "cloud-itonami") deck)))
+            :severity :slides/severity :code :slides/code :message :slides/msg
+            :vocabulary slides-validate/shape-kinds}})
 
 (def ^:private resource-kinds
   (into {} (map (juxt (comp :resource-kind val) key)) kinds))

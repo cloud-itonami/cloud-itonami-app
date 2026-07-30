@@ -1043,7 +1043,70 @@
       root.append(grid);
       return root;
     };
-    const surfaceEditors = {forms:formsEditor, docs:docsEditor, sheets:sheetsEditor};
+    const slidesEditor = (payload, vocabulary, changed) => {
+      const root = make('div', 'surface-editor');
+      root.append(field('タイトル', textInput(payload['slides/title'],
+        (value) => { payload['slides/title'] = value; changed(false); })));
+      const list = make('div', 'surface-list');
+      (payload['slides/slides'] || []).forEach((slide, index) => {
+        const card = make('div', 'surface-row');
+        card.append(
+          field('ID', textInput(slide['slides/id'],
+            (value) => { slide['slides/id'] = value; changed(false); })),
+          field('見出し', textInput(slide['slides/title'],
+            (value) => { slide['slides/title'] = value; changed(false); },
+            'surface-input--wide')));
+        (slide['slides/shapes'] || []).forEach((shape) => {
+          if (shape['slides/shape'] === 'text') {
+            card.append(field(`テキスト（${shape['slides/id']}）`,
+              textInput(shape['slides/text'],
+                (value) => { shape['slides/text'] = value; changed(false); },
+                'surface-input--wide')));
+          } else {
+            // A rect, an image, a component. Position, fill and image data
+            // are a canvas's job, not this pane's, and half-editing a shape
+            // is worse than handing it over.
+            card.append(make('span', 'surface-note',
+              `${shape['slides/shape'] || '?'}（${shape['slides/id']}）は JSON で編集してください。`));
+          }
+        });
+        const addText = make('button', 'tool-button', 'テキストを追加');
+        addText.type = 'button';
+        addText.addEventListener('click', () => {
+          slide['slides/shapes'] = slide['slides/shapes'] || [];
+          // The shape `slides.model/text-box` produces, defaults included —
+          // a text box without a box is one the renderer has to guess at.
+          slide['slides/shapes'].push({
+            'slides/id': `t${slide['slides/shapes'].length + 1}`,
+            'slides/shape': 'text', 'slides/text': '',
+            'slides/x': 0.8, 'slides/y': 0.8, 'slides/w': 8.4, 'slides/h': 1.0,
+            'slides/font-size': 28
+          });
+          changed(true);
+        });
+        card.append(addText, removeButton(() => {
+          payload['slides/slides'].splice(index, 1); changed(true);
+        }));
+        list.append(card);
+      });
+      if (!(payload['slides/slides'] || []).length) {
+        list.append(make('p', 'empty-state', 'まだスライドがありません。'));
+      }
+      const add = make('button', 'tool-button', 'スライドを追加');
+      add.type = 'button';
+      add.addEventListener('click', () => {
+        payload['slides/slides'] = payload['slides/slides'] || [];
+        const n = payload['slides/slides'].length + 1;
+        payload['slides/slides'].push({
+          'slides/id': `slide${n}`, 'slides/title': `スライド ${n}`, 'slides/shapes': []
+        });
+        changed(true);
+      });
+      root.append(list, add);
+      return root;
+    };
+    const surfaceEditors = {forms:formsEditor, docs:docsEditor, sheets:sheetsEditor,
+                            slides:slidesEditor};
     // The detail pane is rebuilt on every render — a keystroke in the search
     // box is enough — so an open editor's text cannot live in the element.
     // It lived there until this was measured: typing in search while editing
@@ -2789,7 +2852,7 @@
         [:section {:class "view" :data-view-panel "drive" :hidden true}
          (view-header "Drive"
                       (str "kotoba-lang/drive のファイルモデルで、OneDrive アーカイブを"
-                           "検索・確認し、Sheets / Docs / Forms を作成します。"))
+                           "検索・確認し、Sheets / Docs / Forms / Slides を作成します。"))
          [:p {:class "source-note"} [:span {:class "source-dot"}]
           [:span {:id "drive-source"} "m365-archive を読み込み中…"]]
          [:div {:class "drive-create-bar"}
