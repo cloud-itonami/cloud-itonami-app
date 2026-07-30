@@ -32,7 +32,7 @@ projects, or events.
 | Inbox | `m365-archive` and `net-kotobase/mail-worker` | Lists archive metadata; sealed reception remains recipient-key controlled |
 | Projects | `kotoba-lang/com-github` | Reads GitHub Projects v2; shows `permission-required` without `read:project` |
 | Drive (archive) | `m365-archive` OneDrive snapshot | Lists file state without silently materializing git-annex objects |
-| Drive (documents) | `kotoba-lang/drive` workspace + an object store | Creates and edits Sheets / Docs / Forms as office envelopes; per-user ACL, quota, versions and a reversible trash; a save the surface's own validator rejects is refused |
+| Drive (documents) | `kotoba-lang/drive` workspace + an object store | Creates and edits Sheets / Docs / Forms / Slides as office envelopes; per-user ACL, quota, versions and a reversible trash; a save the surface's own validator rejects is refused |
 | Scheduler | `kotoba-lang/shell` EventKit + `kotoba-lang/calendar` | Reads seven days under the explicit `calendar/read` capability |
 
 `GET /api/workspace/worker` is served next to these but is not one of them: it
@@ -78,9 +78,17 @@ endpoint accepts, so a save does not care which produced it and neither is a
 parallel format that can drift.
 
 The vocabularies those fields offer (`forms.model/field-types`,
-`docs.model/block-kinds`) travel from the libraries through
-`documents/kinds` to the page, so the editor offers exactly what the
-validator accepts. Two things it cannot reach — a `docs` table or list, a
+`docs.model/block-kinds`, `slides.validate/shape-kinds`) travel from the
+libraries through `documents/kinds` to the page, so the editor offers
+exactly what the validator accepts.
+
+Slides is the one surface whose validator does not take the resource.
+`slides.validate/problems` takes a *workspace* — it looks for items whose
+kind is `:slides/deck` — and it also runs `route-problems`, which reports an
+error for each of four Pages hosts it cannot find. That is a question about
+the slides website, not about this document, and asking it here would refuse
+every save. So the deck is wrapped in a workspace of its own and only
+`deck-problems` is asked. Two things it cannot reach — a `docs` table or list, a
 workbook with no tabs — say so and hand over to the JSON view rather than
 editing part of a structure and leaving the rest.
 

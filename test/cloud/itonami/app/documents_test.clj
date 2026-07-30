@@ -134,8 +134,11 @@
 (deftest an-unknown-kind-is-refused-before-anything-is-written
   (with-state
     (fn [state object-store]
+      ;; Something the table does not have. `:slides` was the example until
+      ;; it became a surface, which is the shape this assertion is guarding:
+      ;; the check is the table, not a list written out here.
       (is (= :drive/unknown-kind
-             (try (documents/create! :slides "デッキ" alice object-store)
+             (try (documents/create! :podcast "第1回" alice object-store)
                   (catch clojure.lang.ExceptionInfo error (:type (ex-data error))))))
       (is (empty? (documents/documents @state alice))))))
 
@@ -676,6 +679,73 @@
                (try (documents/submit! (:id item) {"name" "Mallory"} bob object-store)
                     (catch clojure.lang.ExceptionInfo e (:type (ex-data e))))))))))
 
+;; ── slides ──────────────────────────────────────────────────────────────────
+
+(deftest a-deck-is-a-fourth-surface-like-the-others
+  (with-state
+    (fn [state object-store]
+      (let [{:keys [ok? item]} (documents/create! :slides "四半期報告" alice object-store)]
+        (is ok?)
+        (is (= ":slides/deck" (:resource-kind item)))
+        (is (= "application/json" (:media-type item)))
+        (let [{:keys [payload resource-kind]} (documents/content (:id item) alice object-store)]
+          (is (= ":slides/deck" resource-kind))
+          (is (= "四半期報告" (get payload "slides/title")))
+          ;; Seeded with one slide carrying a title text box, because a deck
+          ;; with no slides has nowhere to put a shape.
+          (is (= ["slide1"] (mapv #(get % "slides/id") (get payload "slides/slides"))))
+          (is (= ["text"] (mapv #(get % "slides/shape")
+                                (get-in payload ["slides/slides" 0 "slides/shapes"])))))
+        ;; And it rides the same everything: trash, sharing, comments,
+        ;; versions all take it without knowing what a deck is.
+        (documents/grant! (:id item) bob "editor" alice)
+        (is (:ok? (documents/comment! (:id item) "表紙を直す" "slide1" bob)))
+        (is (= 1 (count (documents/documents @state bob))))))))
+
+(deftest a-slide-added-the-way-the-editor-adds-one-saves
+  (with-state
+    (fn [_ object-store]
+      (let [{:keys [item]} (documents/create! :slides "四半期報告" alice object-store)
+            payload (:payload (documents/content (:id item) alice object-store))
+            ;; Exactly what `slidesEditor`'s スライドを追加 and テキストを追加 push.
+            added (update payload "slides/slides" conj
+                          {"slides/id" "slide2" "slides/title" "スライド 2"
+                           "slides/shapes"
+                           [{"slides/id" "t1" "slides/shape" "text" "slides/text" "売上"
+                             "slides/x" 0.8 "slides/y" 0.8 "slides/w" 8.4 "slides/h" 1.0
+                             "slides/font-size" 28}]})
+            saved (documents/update! (:id item) added alice object-store)
+            back (:payload (documents/content (:id item) alice object-store))]
+        (is (:ok? saved))
+        (is (empty? (:warnings saved)))
+        (is (= ["slide1" "slide2"] (mapv #(get % "slides/id") (get back "slides/slides"))))
+        (is (= "売上" (get-in back ["slides/slides" 1 "slides/shapes" 0 "slides/text"])))))))
+
+(deftest a-deck-whose-slides-are-not-a-list-is-refused
+  (with-state
+    (fn [_ object-store]
+      (let [{:keys [item]} (documents/create! :slides "四半期報告" alice object-store)
+            payload (:payload (documents/content (:id item) alice object-store))
+            error (try (documents/update! (:id item) (assoc payload "slides/slides" "nope")
+                                          alice object-store)
+                       (catch clojure.lang.ExceptionInfo e (ex-data e)))]
+        ;; A 422 with the surface's own code, not a 500 out of the converter
+        ;; — which is what this was before the rehydrators learned to hand
+        ;; malformed input on rather than throw at it.
+        (is (= :drive/invalid-document (:type error)))
+        (is (= [":deck/slides-not-sequential"] (mapv :code (:problems error))))))))
+
+(deftest the-deck-validator-is-not-asked-about-the-slides-website
+  ;; `slides.validate/problems` also runs `route-problems`, which reports an
+  ;; error for each of four Pages hosts it cannot find. That is a question
+  ;; about the slides site and not about this document; asking it here would
+  ;; refuse every save.
+  (with-state
+    (fn [_ object-store]
+      (let [{:keys [item]} (documents/create! :slides "四半期報告" alice object-store)
+            payload (:payload (documents/content (:id item) alice object-store))]
+        (is (:ok? (documents/update! (:id item) payload alice object-store)))))))
+
 ;; ── sharing ─────────────────────────────────────────────────────────────────
 
 (deftest a-grant-makes-the-document-appear-in-the-grantees-list
@@ -971,7 +1041,7 @@
         (is (= ["計画" "a.txt" "b.txt"] (mapv :name (:items view))))
         (is (= ["workspace" "archive" "archive"] (mapv :origin (:items view))))
         (is (str/includes? (:source view) "作成済み 1 件"))
-        (is (= #{"sheets" "docs" "forms"} (set (map :kind (:kinds view)))))))))
+        (is (= #{"sheets" "docs" "forms" "slides"} (set (map :kind (:kinds view)))))))))
 
 (deftest the-create-bar-is-driven-by-the-servers-own-table
   ;; The UI renders one button per entry of `:kinds`, so a surface added to
