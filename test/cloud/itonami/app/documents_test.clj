@@ -1455,9 +1455,11 @@
             back (:resource (documents/content (:id item) alice object-store))]
         (is (= ":sheets/workbook" (:resource-kind item)))
         (is (= "取り込み売上" (:name item)))
-        ;; Through create! and then a save, so it has two versions and the
-        ;; validator saw it.
-        (is (= 2 (:versions item)))
+        ;; One version, which is the file. It used to be two: create!
+        ;; seeded an empty workbook and the import wrote over it, so every
+        ;; imported document had a first version that was an empty one
+        ;; nobody ever had — offered by the history pane and restorable.
+        (is (= 1 (:versions item)))
         (is (= {:sheets/value "1,300"}
                (get-in back [:sheets/tabs "imported" :sheets/cells [3 2]])))
         (is (= 1 (count (documents/documents @state alice))))))))
@@ -1529,9 +1531,11 @@
                (try (documents/import! format "壊れ" bytes alice object-store)
                     (catch clojure.lang.ExceptionInfo e (:type (ex-data e)))))
             format))
-      ;; And nothing was left behind by the create! that got as far as
-      ;; running before the refusal.
-      (is (<= (count (documents/documents @state alice)) 2)))))
+      ;; And nothing was left behind at all. This used to allow up to two,
+      ;; because `create!` ran before the refusal and left a seeded document
+      ;; behind; the contents now arrive with the creation, so a refusal
+      ;; happens before there is anything to leave.
+      (is (zero? (count (documents/documents @state alice)))))))
 
 (deftest an-imported-file-goes-through-the-validator-like-anything-else
   (with-state
@@ -2749,3 +2753,173 @@
                (:type (try (documents/import! "docx" "壊れ" junk alice object-store)
                            (catch clojure.lang.ExceptionInfo e (ex-data e)))))))
       (is (empty? (documents/documents @state alice)) "and nothing was created"))))
+
+;; ── make a copy ─────────────────────────────────────────────────────────────
+
+(deftest a-copy-is-a-new-document-with-the-same-contents
+  (with-state
+    (fn [state object-store]
+      (let [{:keys [item]} (documents/create! :docs "設計" alice object-store)
+            doc (:resource (documents/content (:id item) alice object-store))
+            _ (save! (:id item)
+                     (assoc doc :docs/blocks
+                            [{:docs/id "p" :docs/kind :paragraph :docs/text "本文"}])
+                     alice object-store)
+            copy (:item (documents/copy! (:id item) alice object-store))
+            back (:resource (documents/content (:id copy) alice object-store))]
+        (is (= "設計 のコピー" (:name copy)))
+        (is (= ":docs/document" (:resource-kind copy)))
+        (is (not= (:id item) (:id copy)))
+        (is (= [{:docs/id "p" :docs/kind :paragraph :docs/text "本文"}]
+               (:docs/blocks back)))
+        ;; The resource knows its own new id and title, rather than still
+        ;; saying it is the document it came from.
+        (is (= (:id copy) (:docs/id back)))
+        (is (= "設計 のコピー" (:docs/title back)))
+        (is (= 2 (count (documents/documents @state alice))))))))
+
+(deftest a-reader-of-a-shared-document-can-take-their-own-copy
+  ;; The reason this operation exists. Until now the only way to get an
+  ;; editable version of something shared read-only was export then import —
+  ;; two steps, through bytes, losing the kind if the surface has no office
+  ;; format.
+  (with-state
+    (fn [state object-store]
+      (let [{:keys [item]} (documents/create! :sheets "売上" alice object-store)]
+        (documents/grant! (:id item) bob "viewer" alice)
+        (let [copy (:item (documents/copy! (:id item) bob object-store))]
+          (is (= bob (:owner copy)) "in bob's Drive")
+          (is (:own? copy))
+          (is (= "owner" (:role copy)))
+          (is (:writable? copy) "and editable, which the original was not")
+          ;; alice's Drive is unchanged; the copy is not in it.
+          (is (= [(:id item)] (mapv :id (documents/documents @state alice))))
+          (is (= #{(:id item) (:id copy)}
+                 (set (mapv :id (documents/documents @state bob))))))))))
+
+(deftest a-copy-is-not-shared
+  ;; Copying a document shared with five people must not share the copy with
+  ;; them. It falls out of `create!` giving the creator :owner and nobody
+  ;; anything — asserted anyway, because getting it wrong is a silent access
+  ;; leak rather than a visible fault.
+  (with-state
+    (fn [state object-store]
+      (let [{:keys [item]} (documents/create! :docs "設計" alice object-store)]
+        (documents/grant! (:id item) bob "editor" alice)
+        (let [copy (:item (documents/copy! (:id item) alice object-store))]
+          (is (= [] (:grants (documents/sharing (:id copy) alice))))
+          ;; bob sees the original and not the copy.
+          (is (= [(:id item)] (mapv :id (documents/documents @state bob))))
+          (is (= :drive/not-found
+                 (:type (try (documents/content (:id copy) bob object-store)
+                             (catch clojure.lang.ExceptionInfo e (ex-data e)))))))))))
+
+(deftest a-copy-carries-no-comments-and-no-responses
+  ;; They are about the document somebody said them about. A copy with its
+  ;; original's threads would put words into a conversation that did not
+  ;; happen.
+  (with-state
+    (fn [_ object-store]
+      (let [{:keys [item]} (documents/create! :docs "設計" alice object-store)]
+        (documents/comment! (:id item) "ここを直して" {:block "p"} alice)
+        (let [copy (:item (documents/copy! (:id item) alice object-store))]
+          (is (= 1 (count (:comments (documents/comments (:id item) alice)))))
+          (is (= [] (:comments (documents/comments (:id copy) alice))))))
+      (let [form (:item (documents/create! :forms "問い合わせ" alice object-store))]
+        (documents/submit! (:id form) {} alice object-store)
+        (let [copy (:item (documents/copy! (:id form) alice object-store))]
+          (is (= 1 (count (:submissions (documents/submissions (:id form) alice)))))
+          (is (= [] (:submissions (documents/submissions (:id copy) alice)))))))))
+
+(deftest a-copy-starts-its-own-history
+  ;; A copy is not a fork of the past; the original still has all of it.
+  (with-state
+    (fn [_ object-store]
+      (let [{:keys [item]} (documents/create! :docs "設計" alice object-store)
+            doc (:resource (documents/content (:id item) alice object-store))]
+        (save! (:id item) (assoc doc :docs/title "設計 v2") alice object-store)
+        (save! (:id item) (assoc doc :docs/title "設計 v3") alice object-store)
+        (let [copy (:item (documents/copy! (:id item) alice object-store))]
+          (is (= 3 (count (:versions (documents/history (:id item) alice)))))
+          (is (= 1 (count (:versions (documents/history (:id copy) alice))))))))))
+
+(deftest a-copy-is-charged-to-whoever-made-it
+  ;; Unlike editing a shared document, which is charged to the owner because
+  ;; the bytes stay in their Drive. Here the bytes are new and in the
+  ;; copier's.
+  (with-state
+    (fn [state object-store]
+      (let [{:keys [item]} (documents/create! :docs "設計" alice object-store)
+            alice-before (:used-bytes (documents/quota-view @state alice))]
+        (documents/grant! (:id item) bob "viewer" alice)
+        (documents/copy! (:id item) bob object-store)
+        (is (= alice-before (:used-bytes (documents/quota-view (store/snapshot) alice))))
+        (is (pos? (:used-bytes (documents/quota-view (store/snapshot) bob))))))))
+
+(deftest a-copy-can-be-named-and-filed
+  (with-state
+    (fn [_ object-store]
+      (let [{:keys [item]} (documents/create! :docs "設計" alice object-store)
+            work (:item (documents/create-folder! "仕事" alice))
+            copy (:item (documents/copy! (:id item) alice object-store
+                                         {:title "設計 2026年版" :folder (:id work)}))]
+        (is (= "設計 2026年版" (:name copy)))
+        (is (= (:id work) (:parent-id copy)))))))
+
+(deftest every-surface-can-be-copied
+  (with-state
+    (fn [_ object-store]
+      (doseq [kind [:sheets :docs :forms :slides]]
+        (let [{:keys [item]} (documents/create! kind "元" alice object-store)
+              copy (:item (documents/copy! (:id item) alice object-store))
+              back (:resource (documents/content (:id copy) alice object-store))
+              spec (get documents/kinds kind)]
+          (is (= (:resource-kind item) (:resource-kind copy)) (str kind))
+          ;; Each surface's own id and title keys, from the kinds table
+          ;; rather than from a guess about which one this is.
+          (is (= (:id copy) (get back (:id-key spec))) (str kind))
+          (is (= "元 のコピー" (get back (:title-key spec))) (str kind)))))))
+
+(deftest a-document-you-cannot-read-cannot-be-copied
+  (with-state
+    (fn [_ object-store]
+      (let [{:keys [item]} (documents/create! :docs "私用" alice object-store)]
+        (is (= :drive/not-found
+               (:type (try (documents/copy! (:id item) bob object-store)
+                           (catch clojure.lang.ExceptionInfo e (ex-data e))))))))))
+
+(deftest a-created-document-is-validated-like-a-saved-one
+  ;; `create!` now takes the contents, which means it takes contents that
+  ;; can be wrong. Before `resource-fn` existed it only ever produced a seed
+  ;; and validating one would have been checking the file against itself; a
+  ;; copy or an import arrives whole. Leaving the check out let a broken
+  ;; .edn import succeed — silent in the direction that looks like success,
+  ;; which is how it was found.
+  (with-state
+    (fn [state object-store]
+      ;; The same fixture the import test uses — a deck whose slides are not
+      ;; a list — rather than one invented here, because a fabricated
+      ;; "invalid" document that the validator happens to accept makes this
+      ;; test pass for the wrong reason. It did, the first time.
+      (let [broken (pr-str {:kotoba.protocol/family :kotoba.protocol/office
+                            :kotoba.protocol/version 1
+                            :kotoba.resource/kind :slides/deck
+                            :kotoba.resource/payload {:slides/id "d"
+                                                      :slides/kind :slides/deck
+                                                      :slides/title "壊れ"
+                                                      :slides/slides "nope"}})]
+        (is (= :drive/invalid-document
+               (:type (try (documents/import! "edn" "壊れ" (.getBytes broken "UTF-8")
+                                              alice object-store)
+                           (catch clojure.lang.ExceptionInfo e (ex-data e))))))
+        (is (empty? (documents/documents @state alice))
+            "and nothing was created before the check"))))) 
+
+(deftest a-copy-has-one-version-not-two
+  (with-state
+    (fn [_ object-store]
+      (let [{:keys [item]} (documents/create! :docs "設計" alice object-store)
+            copy (:item (documents/copy! (:id item) alice object-store))]
+        (is (= 1 (:versions copy)))
+        ;; And that version is the contents, not an empty document.
+        (is (= 1 (count (:versions (documents/history (:id copy) alice)))))))))
