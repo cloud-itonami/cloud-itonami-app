@@ -1,5 +1,6 @@
 (ns cloud.itonami.app.credential-test
   (:require [clojure.string :as str]
+            [clojure.walk]
             [clojure.test :refer [deftest is testing use-fixtures]]
             [cloud.itonami.app.credential :as credential]
             [cloud.itonami.app.did :as app-did]
@@ -548,3 +549,38 @@
             "the key is always present, so a reader cannot mistake absence for
              an actor that was not recorded")
         (is (every? #(nil? (:actor %)) events))))))
+
+(deftest a-keyword-keyed-credential-still-has-its-revocation-checked
+  ;; The regression test for a real bug, found by the HTTP suite and reproduced
+  ;; here so it does not need a server to catch.
+  ;;
+  ;; `verify` read `credentialStatus` off its raw argument while
+  ;; `di/verify-credential` normalized internally. A keyword-keyed document --
+  ;; which is exactly what `server/read-json` produces, since it keywordizes every
+  ;; key at every depth -- therefore passed the SIGNATURE check and silently
+  ;; skipped the REVOCATION check. A revoked credential verified as valid.
+  ;;
+  ;; The signature succeeding is what made it invisible: nothing errored, and the
+  ;; only wrong field was the one that decides whether to honour the thing.
+  (let [{:keys [credential status-index]}
+        (credential/issue-membership! {:organization-did org-did
+                                       :organization-domain org-domain
+                                       :subject-did subject-did
+                                       :role :member})
+        ;; the same document as it arrives from a keywordizing JSON reader
+        keywordized (clojure.walk/keywordize-keys credential)]
+    (testing "both key styles verify before revocation"
+      (is (:valid? (credential/verify credential)))
+      (is (:valid? (credential/verify keywordized))))
+
+    (credential/revoke! status-index)
+
+    (testing "and BOTH must see the revocation afterwards"
+      (let [string-keyed (credential/verify credential)
+            keyword-keyed (credential/verify keywordized)]
+        (is (false? (:valid? string-keyed)))
+        (is (false? (:valid? keyword-keyed))
+            "this is the assertion that was false before the fix")
+        (is (true? (:revoked? keyword-keyed)))
+        (is (= (:valid? string-keyed) (:valid? keyword-keyed))
+            "the key style must not change the answer")))))

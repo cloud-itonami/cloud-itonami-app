@@ -355,10 +355,19 @@
   credential gets honoured."
   ([credential] (verify credential (store/snapshot)))
   ([credential snapshot]
-   (let [result (di/verify-credential credential {:resolve-key local-resolver})]
+   ;; Normalize ONCE, and read everything from the normalized form.
+   ;;
+   ;; This used to read `credentialStatus` off the raw argument while
+   ;; `di/verify-credential` normalized internally, which meant a keyword-keyed
+   ;; document -- exactly what `server/read-json` produces, since it keywordizes
+   ;; every key at every depth -- passed the SIGNATURE check and silently skipped
+   ;; the REVOCATION check. A revoked credential verified as valid over HTTP. The
+   ;; signature succeeding is what made it invisible.
+   (let [doc (di/stringify credential)
+         result (di/verify-credential doc {:resolve-key local-resolver})]
      (if-not (:verified result)
        {:verified false :valid? false :reason (:reason result)}
-       (let [entry (get credential "credentialStatus")
+       (let [entry (get doc "credentialStatus")
              status (when entry
                       (sl/check-status
                        entry
@@ -372,8 +381,8 @@
          (cond-> {:verified true
                   :revoked? revoked?
                   :valid? (not revoked?)
-                  :subject (get-in credential ["credentialSubject" "id"])
-                  :role (get-in credential ["credentialSubject" "role"])
+                  :subject (get-in doc ["credentialSubject" "id"])
+                  :role (get-in doc ["credentialSubject" "role"])
                   :verification-method (:verification-method result)}
            status (assoc :status-index (:index status))))))))
 
