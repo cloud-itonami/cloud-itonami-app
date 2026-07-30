@@ -312,6 +312,9 @@
   .file-preview{margin:.5rem 0;max-width:100%}
   .file-preview__image{display:block;max-width:100%;max-height:24rem;
     width:auto;height:auto;border-radius:.5rem}
+  .chart-card{margin:.5rem 0}
+  .chart-card__figure{max-width:100%;overflow-x:auto}
+  .chart-card__figure svg{display:block;max-width:100%;height:auto}
   .export-notes{display:flex;flex-direction:column;gap:.25rem;margin-top:.25rem}
   .export-notes .surface-note{align-self:flex-start}
   .export-notes__list{margin:0;padding-left:1.25rem;display:flex;
@@ -1739,6 +1742,62 @@
       namePanel.append(make('p', 'surface-note',
         '名前は現在のタブに付きます。数式では SUM(名前) のように使えます。'));
       root.append(namePanel);
+
+      // Charts. Drawn on the server by `sheets.chart`, so what is shown
+      // here is the same SVG anything else rendering this workbook gets —
+      // and a chart is only worth defining if you can see it.
+      const charts = payload['sheets/charts'] || [];
+      const chartPanel = make('div', 'surface-editor');
+      chartPanel.append(make('h3', 'sharing__title', 'グラフ'));
+      const drawn = driveEditor.charts?.[current] || [];
+      charts.forEach((chart, index) => {
+        const box = make('div', 'chart-card');
+        const head = make('div', 'detail-actions__row');
+        head.append(make('span', 'sharing__who',
+          `${chart['sheets/title'] || chart['sheets/id'] || ''}`));
+        head.append(field('範囲', textInput(chart['sheets/data-range'],
+          (value) => { chart['sheets/data-range'] = value; changed(true); })));
+        head.append(field('種類', selectInput(chart['sheets/chart-type'] || 'bar',
+          ['bar', 'line', 'pie'],
+          (value) => { chart['sheets/chart-type'] = value; changed(true); })));
+        head.append(removeButton(() => {
+          payload['sheets/charts'].splice(index, 1); changed(true);
+        }));
+        box.append(head);
+        const svg = drawn.find((d) => d.id === chart['sheets/id'])?.svg;
+        if (svg) {
+          const figure = make('div', 'chart-card__figure');
+          // The server built this string from the workbook; it is not user
+          // markup arriving from anywhere else.
+          figure.innerHTML = svg;
+          box.append(figure);
+        } else {
+          // Said rather than drawn blank: axes around no data read as
+          // there being none, which is the wrong answer for a wrong range.
+          box.append(make('p', 'surface-note',
+            'この範囲に数値がないので描けません。保存すると再描画します。'));
+        }
+        chartPanel.append(box);
+      });
+      if (!charts.length) chartPanel.append(make('p', 'empty-state', 'まだありません。'));
+      const addChart = make('button', 'tool-button', 'グラフを追加');
+      addChart.type = 'button';
+      addChart.addEventListener('click', () => {
+        payload['sheets/charts'] = payload['sheets/charts'] || [];
+        let n = payload['sheets/charts'].length + 1;
+        const ids = new Set(payload['sheets/charts'].map((c) => c['sheets/id']));
+        while (ids.has(`chart${n}`)) n += 1;
+        payload['sheets/charts'].push({'sheets/id':`chart${n}`,
+                                       'sheets/title':`グラフ${n}`,
+                                       'sheets/tab':tab['sheets/title'] || current,
+                                       'sheets/chart-type':'bar',
+                                       'sheets/data-range':'A1:B3'});
+        changed(true);
+      });
+      chartPanel.append(addChart);
+      chartPanel.append(make('p', 'surface-note',
+        'グラフは保存すると描き直されます。.xlsx には書き出されません。'));
+      root.append(chartPanel);
       return root;
     };
     const slidesEditor = (payload, vocabulary, changed) => {
@@ -2202,6 +2261,7 @@
     const closedEditor = (id) => ({id, open:false, mode:'preview',
                                    payload:null, text:'', tab:null, slide:0,
                                    etag:null, warnings:null, computed:null, cell:null,
+                                   charts:null,
                                    loading:false, failed:false});
     let driveEditor = closedEditor(null);
     // Three views of one document: the surface as it is, the fields of it, and
@@ -2363,7 +2423,8 @@
                                         // closedEditor, so a stale grid
                                         // cannot outlive the payload it
                                         // belongs to.
-                                        computed:fresh.computed});
+                                        computed:fresh.computed,
+                                        charts:fresh.charts});
 
       const versions = make('div', 'detail-actions__row');
       const bytesDelta = (n) => (n > 0 ? `+${bytes(n)}` : (n < 0 ? `-${bytes(-n)}` : '±0'));
@@ -2465,7 +2526,8 @@
         if (!request.ok) throw new Error(data?.error?.message || '内容を取得できませんでした。');
         return {payload:data.payload, etag:data.item?.etag,
                 warnings:data['export-warnings'] || null,
-                computed:data.computed || null};
+                computed:data.computed || null,
+                charts:data.charts || null};
       };
       open.addEventListener('click', async () => {
         open.disabled = true; status.textContent = '読み込んでいます…';

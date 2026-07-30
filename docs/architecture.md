@@ -369,7 +369,26 @@ it, because nothing pointed at the font.
 
 What is left of a style — a colour, a border, a font family — is reported
 **by key** rather than as "the style is dropped", so the report says what is
-actually lost. Charts are still dropped whole.
+actually lost. Charts are still dropped whole — but they are no longer invisible.
+
+### A chart you can see
+
+`add-chart` was in the model from the start and nothing could draw one, so
+`unexpressed` reporting charts as dropped was the whole of their existence.
+`sheets.chart` draws SVG, and the Drive carries it beside the resource as
+`:charts` — the same reason `:computed` sits there rather than in the
+payload: the payload is what a save sends back, and a picture in it would
+return as part of the document.
+
+It plots what a formula comes to. A chart over a column of `=SUM(…)` should
+plot the totals, and reading `:sheets/value` would plot nothing, because a
+formula cell has none.
+
+A chart whose range holds no numbers is **listed and not drawn**, and the
+pane says why. Empty axes read as *there is no data here*, which is the
+wrong answer when the range is simply wrong.
+
+Drawing one does not put one in the `.xlsx`, and the warning still says so.
 
 **And there is a way to set one.** The style bar acts on the cell the cursor
 is in, which is what a spreadsheet does; there is no multi-cell selection
