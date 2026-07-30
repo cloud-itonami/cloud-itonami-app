@@ -1,0 +1,23 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "itonami-cloud-webhooks",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-07-29",
+  "workers_dev": false,
+  "preview_urls": false,
+  "observability": {
+    "enabled": true
+  },
+  "routes": [
+    {
+      "pattern": "hooks.itonami.cloud",
+      "custom_domain": true
+    }
+  ],
+  "kv_namespaces": [
+    {
+      "binding": "EVENTS",
+      "id": "25993d415adf475d8633ed53726f37d9"
+    }
+  ]
+}
