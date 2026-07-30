@@ -79,6 +79,7 @@
   .model-pill,.tool-button{min-height:2.25rem;border:1px solid var(--color-neutral-solid-gray-300);
     border-radius:999px;background:var(--color-neutral-white);padding:.35rem .75rem;
     color:var(--color-neutral-solid-gray-800);font-size:.8125rem}
+  #session-workspace{max-width:20rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   select.model-pill{max-width:15rem;cursor:pointer}
   .tool-button{cursor:pointer}.tool-button:hover{background:var(--color-neutral-solid-gray-50)}
   .tool-button:focus-visible,.suggestion-card:focus-visible,.message-action:focus-visible,
@@ -474,6 +475,7 @@
     const sessionList = $('#session-list');
     const sessionCount = $('#session-count');
     const modelSelect = $('#model-select');
+    const sessionWorkspace = $('#session-workspace');
     const executionMode = $('#execution-mode');
     const guardrailSelect = $('#guardrail-select');
     const effortSelect = $('#effort-select');
@@ -548,6 +550,13 @@
       const type = event?.['event/type'] || 'agent/event';
       const data = event?.['event/data'] || {};
       if (type === 'phase/started') return `phase · ${data.phase}`;
+      if (type === 'cycle/started') {
+        return `cycle ${data.cycle}/${data['max-cycles']}`;
+      }
+      if (type === 'cycle/completed') {
+        return data['continue?'] ? `cycle ${data.cycle} · continue`
+          : `cycle ${data.cycle} · complete`;
+      }
       if (type === 'model/started') return `${data.provider} · ${data.model}`;
       if (type === 'tool/started') return `tool · ${data.tool}`;
       if (type === 'tool/completed') return `tool ✓ · ${data.tool}`;
@@ -610,6 +619,20 @@
       target.append(chip);
       target.hidden = false;
     };
+    const renderSessionWorkspace = (workspace) => {
+      if (workspace) {
+        sessionWorkspace.hidden = false;
+        sessionWorkspace.textContent =
+          `${workspace.branch || 'worktree'} · `
+          + `${workspace['changed-files'] || 0} changes · `
+          + `${workspace.commits || 0} commits`;
+        sessionWorkspace.title = workspace.path || '';
+      } else {
+        sessionWorkspace.hidden = true;
+        sessionWorkspace.textContent = '';
+        sessionWorkspace.title = '';
+      }
+    };
     const renderSessions = (items) => {
       const sessions = [...items];
       if (!sessions.some((item) => item.id === sessionId)) {
@@ -624,11 +647,13 @@
         button.type = 'button';
         button.setAttribute('aria-current', item.id === sessionId ? 'true' : 'false');
         const provider = (item.providers || []).join(', ');
+        const workspace = item.workspace?.branch;
         const meta = make('span', 'chat-session__meta');
         meta.append(
           make('span', null, item['updated-at'] ? formatDate(item['updated-at']) : 'いま'),
           make('span', null,
-            `${item['message-count'] || 0}件${provider ? ` · ${provider}` : ''}`));
+            `${item['message-count'] || 0}件${provider ? ` · ${provider}` : ''}`
+              + `${workspace ? ` · ${workspace}` : ''}`));
         button.append(
           make('span', 'chat-session__title', item.title || '新しい会話'),
           make('span', 'chat-session__preview', item.preview || ''),
@@ -668,6 +693,7 @@
         (data['agent-events'] || []).slice(-24).forEach(
           (event) => appendAgentEvent(agentTimeline, event));
         agentTimeline.hidden = !(data['agent-events'] || []).length;
+        renderSessionWorkspace(data.workspace);
         data.messages.forEach((message) => {
           if (message.role === 'user') lastPrompt = message.content;
           const rendered = addMessage(message.role, message.content,
@@ -708,9 +734,11 @@
           } else if (event.type === 'done') {
             addAssistantActions(assistant, promptValue);
             const runStatus = event['agent-run']?.status;
+            const cycles = event['agent-run']?.cycles || 1;
+            renderSessionWorkspace(event['agent-run']?.workspace);
             announce(runStatus === 'needs-review'
-              ? `${event.provider} / ${event.model}: 成果物の確認が必要です。`
-              : `${event.provider} / ${event.model} が検証まで完了しました。`);
+              ? `${event.provider} / ${event.model}: ${cycles} cycles後も成果物の確認が必要です。`
+              : `${event.provider} / ${event.model} が${cycles} cyclesで検証まで完了しました。`);
           } else if (event.type === 'agent-event') {
             appendAgentEvent(assistant.progress, event.event);
             scrollToEnd();
@@ -792,6 +820,7 @@
       thread.querySelectorAll('.message-row').forEach((node) => node.remove());
       agentTimeline.replaceChildren();
       agentTimeline.hidden = true;
+      renderSessionWorkspace(null);
       empty.hidden = false;
       prompt.value = ''; resizePrompt(); prompt.focus();
       loadSessions();
@@ -2444,6 +2473,7 @@
              [:p {:class "chat-agent__state" :id "chat-agent-state"}
               "ローカルモデルを準備中…"]]]
            [:div {:class "chat-header__actions"}
+            [:span {:class "model-pill" :id "session-workspace" :hidden true}]
             [:span {:class "model-pill" :id "active-model-label"} (str provider " / " model)]
             [:button {:class "tool-button" :type "button" :id "new-chat-button"}
              "＋ 新しい loop"]]]

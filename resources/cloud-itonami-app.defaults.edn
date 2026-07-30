@@ -72,6 +72,9 @@
  :agent-runtime {:codex-transport :app-server
                  :isolate-writes? true
                  :approval-timeout-ms 120000
+                 :min-cycles 2
+                 :max-cycles 4
+                 :max-worktrees 15
                  :evaluation-version "result-v1"}
  ;; Background worker runs. Concurrency is deliberately small: these share the
  ;; local model with interactive chat.

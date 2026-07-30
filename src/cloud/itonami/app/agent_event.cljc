@@ -11,6 +11,7 @@
 
 (def event-types
   #{:run/started :run/completed :run/failed :run/blocked
+    :cycle/started :cycle/completed
     :phase/started :phase/completed
     :model/started :model/completed
     :tool/started :tool/completed :tool/failed
@@ -56,4 +57,6 @@
                            :check :passed? :reason :evidence-count
                            :duration-ms :usage :approval-id :kind :decision
                            :digest :workspace :isolation :score :grade
-                           :artifact-events :successful-tools :failed-tools])))
+                           :artifact-events :successful-tools :failed-tools
+                           :cycle :max-cycles :continue? :branch
+                           :changed-files :commits :reused?])))

@@ -1,5 +1,6 @@
 (ns cloud.itonami.app.service
-  (:require [cloud.itonami.app.agent-eval :as agent-eval]
+  (:require [clojure.string :as str]
+            [cloud.itonami.app.agent-eval :as agent-eval]
             [cloud.itonami.app.agent-loop :as agent-loop]
             [cloud.itonami.app.agent-workspace :as agent-workspace]
             [cloud.itonami.app.approval-broker :as approval-broker]
@@ -92,6 +93,26 @@
                                         :effort effort :cwd cwd})]
     (finish-chat! prepared result)))
 
+(defn- continuation-messages [provider-messages cycle max-cycles]
+  [(first provider-messages)
+   {:role "user"
+    :content
+    (str "Continue the same objective in agent loop cycle " cycle " of "
+         max-cycles ". Inspect the current worktree and git diff, verify the "
+         "actual result, fix remaining gaps, and leave concrete artifacts. "
+         "Do not merely repeat the previous report. Stop only when the "
+         "objective is verifiably complete or human authority is required.")}])
+
+(defn- combine-usage [usages]
+  (reduce
+   (fn [total usage]
+     (merge-with (fn [left right]
+                   (if (and (number? left) (number? right))
+                     (+ left right)
+                     right))
+                 total (or usage {})))
+   {} usages))
+
 (defn run-chat-stream!
   ([config request on-delta]
    (run-chat-stream! config request on-delta nil))
@@ -103,6 +124,8 @@
          provider-events (atom [])
          started-at (System/currentTimeMillis)
          workspace (atom nil)
+         runner-session (atom runner-session-id)
+         cycle-results (atom [])
          loop-context
          (agent-loop/start!
           {:session-id session-id
@@ -119,51 +142,111 @@
          (let [prepared
                (agent-workspace/prepare!
                 (or cwd (System/getProperty "user.dir"))
-                (:run-id loop-context))]
+                session-id (:run-id loop-context)
+                {:max-worktrees
+                 (get-in config [:agent-runtime :max-worktrees])})]
            (reset! workspace prepared)
            (agent-loop/provider-event!
             loop-context {:type :workspace/prepared
                           :workspace (:path prepared)
                           :isolation (:isolation prepared)
+                          :branch (:branch prepared)
+                          :changed-files (:changed-files prepared)
+                          :commits (:commits prepared)
+                          :reused? (:reused? prepared)
                           :status :active})))
        (when (= mode :agent)
          (agent-loop/phase! loop-context :execute))
-       (agent-loop/provider-event!
-        loop-context {:type :model/started :provider (:id selected)
-                      :model chosen-model :effort effort})
-       (let [provider-request
-             {:model chosen-model :messages provider-messages
-              :temperature temperature
-              :session-id session-id
-              :runner-session-id runner-session-id
-              :mode mode :guardrail guardrail :effort effort
-              :cwd (or (:path @workspace) cwd)
-              :transport (get-in config [:agent-runtime :codex-transport])
-              :approval-handler
-              (fn [{:keys [kind summary reason cwd params]}]
-                (approval-broker/request!
-                 {:run-id (:run-id loop-context) :session-id session-id
-                  :kind kind :summary summary :reason reason :cwd cwd
-                  :private-request params
-                  :timeout-ms (get-in config
-                                      [:agent-runtime :approval-timeout-ms])
-                  :on-event provider-event!}))}
-             result (if on-event
-                      (provider/chat-stream!
-                       selected provider-request on-delta provider-event!)
-                      (provider/chat-stream! selected provider-request on-delta))
-             _ (agent-loop/provider-event!
-                loop-context {:type :model/completed
-                              :provider (:id selected)
-                              :model chosen-model :usage (:usage result)})
-             verification (agent-loop/verify! loop-context result @provider-events)
+       (let [agent? (= mode :agent)
+             min-cycles (if agent?
+                          (max 1 (long (or (get-in config
+                                                  [:agent-runtime :min-cycles])
+                                           1)))
+                          1)
+             max-cycles (if agent?
+                          (max min-cycles
+                               (long (or (get-in config
+                                                 [:agent-runtime :max-cycles])
+                                         min-cycles)))
+                          1)
+             final-verification
+             (loop [cycle 1]
+               (agent-loop/provider-event!
+                loop-context {:type :cycle/started :cycle cycle
+                              :max-cycles max-cycles :status :running})
+               (agent-loop/provider-event!
+                loop-context {:type :model/started :provider (:id selected)
+                              :model chosen-model :effort effort :cycle cycle})
+               (when (> cycle 1)
+                 (when on-delta (on-delta "\n\n---\n\n")))
+               (let [cycle-messages
+                     (if (= cycle 1)
+                       provider-messages
+                       (continuation-messages provider-messages cycle
+                                              max-cycles))
+                     provider-request
+                     {:model chosen-model :messages cycle-messages
+                      :temperature temperature
+                      :session-id session-id
+                      :runner-session-id @runner-session
+                      :mode mode :guardrail guardrail :effort effort
+                      :cwd (or (:path @workspace) cwd)
+                      :transport (get-in config
+                                         [:agent-runtime :codex-transport])
+                      :approval-handler
+                      (fn [{:keys [kind summary reason cwd params]}]
+                        (approval-broker/request!
+                         {:run-id (:run-id loop-context)
+                          :session-id session-id :kind kind
+                          :summary summary :reason reason :cwd cwd
+                          :private-request params
+                          :timeout-ms
+                          (get-in config
+                                  [:agent-runtime :approval-timeout-ms])
+                          :on-event provider-event!}))}
+                     result
+                     (if on-event
+                       (provider/chat-stream!
+                        selected provider-request on-delta provider-event!)
+                       (provider/chat-stream!
+                        selected provider-request on-delta))
+                     _ (swap! cycle-results conj result)
+                     _ (when-let [id (:runner-session-id result)]
+                         (reset! runner-session id))
+                     _ (agent-loop/provider-event!
+                        loop-context
+                        {:type :model/completed :provider (:id selected)
+                         :model chosen-model :usage (:usage result)
+                         :cycle cycle})
+                     verification
+                     (agent-loop/verify! loop-context result @provider-events)
+                     continue?
+                     (and agent? (< cycle max-cycles)
+                          (or (< cycle min-cycles)
+                              (not (:passed? verification))))]
+                 (agent-loop/provider-event!
+                  loop-context {:type :cycle/completed :cycle cycle
+                                :max-cycles max-cycles
+                                :continue? (boolean continue?)
+                                :status (:status verification)})
+                 (if continue?
+                   (recur (inc cycle))
+                   verification)))
+             combined-result
+             (let [contents (map :content @cycle-results)]
+               (assoc (or (last @cycle-results) {})
+                      :content (str/join "\n\n---\n\n" contents)
+                      :usage (combine-usage (map :usage @cycle-results))
+                      :runner-session-id @runner-session
+                      :cycles (count @cycle-results)))
              _ (agent-loop/phase! loop-context :review)
              evaluation
              (agent-eval/record!
               (:run-id loop-context)
               (agent-eval/evaluate
-               {:verification verification :provider-events @provider-events
-                :result result
+               {:verification final-verification
+                :provider-events @provider-events
+                :result combined-result
                 :duration-ms (- (System/currentTimeMillis) started-at)}))
              _ (agent-loop/provider-event!
                 loop-context
@@ -175,17 +258,21 @@
             loop-context {:type :workspace/released
                           :workspace (:path @workspace)
                           :isolation (:isolation @workspace)
-                          :status :ready-for-review}))
-         (agent-loop/complete! loop-context verification result)
+                          :branch (:branch @workspace)
+                          :status :idle}))
+         (agent-loop/complete! loop-context final-verification combined-result)
          (finish-chat!
           prepared
-          (assoc result :agent-run
+          (assoc combined-result :agent-run
                  {:id (:run-id loop-context)
-                  :status (:status verification)
-                  :verification verification
+                  :status (:status final-verification)
+                  :cycles (:cycles combined-result)
+                  :verification final-verification
                   :evaluation evaluation
-                  :workspace (select-keys @workspace
-                                          [:path :repo-root :isolation])})))
+                  :workspace
+                  (some-> (agent-workspace/session-workspace session-id)
+                          (select-keys [:id :path :repo-root :isolation
+                                        :branch :changed-files :commits]))})))
        (catch Exception error
          (when @workspace
            (agent-workspace/release! (:run-id loop-context) :failed))

@@ -200,6 +200,54 @@
     (is (= {:tool :shell :exit-code 0} (:event/data public)))
     (is (not (re-find #"print-secret" (pr-str public))))))
 
+(deftest agent-supervisor-continues-until-minimum-cycles-and-evidence
+  (let [temporary (java.nio.file.Files/createTempDirectory
+                   "cloud-itonami-cycle-test"
+                   (make-array java.nio.file.attribute.FileAttribute 0))
+        previous @store/state
+        requests (atom [])
+        deltas (atom [])
+        cycle-config
+        (assoc config :agent-runtime
+               {:min-cycles 2 :max-cycles 4 :isolate-writes? false})]
+    (try
+      (reset! store/state (store/initial-state))
+      (with-redefs
+        [config-loader/data-dir (fn [] (.toFile temporary))
+         provider/chat-stream!
+         (fn [_ request on-delta on-event]
+           (let [cycle (inc (count @requests))]
+             (swap! requests conj request)
+             (on-delta (str "cycle-" cycle))
+             (on-event {:type :tool/completed :tool :shell :exit-code 0})
+             (when (= cycle 2)
+               (on-event {:type :artifact/changed
+                          :paths ["src/cycle.clj"]}))
+             {:content (str "cycle-" cycle)
+              :runner-session-id "provider-thread-1"
+              :usage {:total_tokens cycle}}))]
+        (let [response
+              (service/run-chat-stream!
+               cycle-config
+               {:messages [{:role "user" :content "finish objective"}]
+                :session-id "cycle-session" :mode :agent}
+               #(swap! deltas conj %)
+               (constantly nil))]
+          (is (= 2 (count @requests)))
+          (is (nil? (:runner-session-id (first @requests))))
+          (is (= "provider-thread-1"
+                 (:runner-session-id (second @requests))))
+          (is (= 2 (get-in response [:agent-run :cycles])))
+          (is (= :succeeded (get-in response [:agent-run :status])))
+          (is (= "cycle-1\n\n---\n\ncycle-2"
+                 (get-in response [:message :content])))
+          (is (= 3 (get-in response [:usage :total_tokens])))
+          (is (= 2 (count (filter #(= :cycle/completed
+                                      (:event/type %))
+                                  (store/agent-events "cycle-session")))))))
+      (finally
+        (reset! store/state previous)))))
+
 (deftest approval-broker-binds-a-decision-to-one-request-digest
   (let [temporary (java.nio.file.Files/createTempDirectory
                    "cloud-itonami-approval-test"
@@ -266,20 +314,30 @@
                       "commit" "-q" "-m" "initial"))))
       (reset! store/state (store/initial-state))
       (with-redefs [config-loader/data-dir (constantly data)]
-        (let [first-run (agent-workspace/prepare! (.getPath repo) "run-1")
+        (let [first-run (agent-workspace/prepare!
+                         (.getPath repo) "session-1" "run-1")
               conflict
               (try
-                (agent-workspace/prepare! (.getPath repo) "run-2")
+                (agent-workspace/prepare!
+                 (.getPath repo) "session-1" "run-2")
                 nil
                 (catch clojure.lang.ExceptionInfo error error))]
           (is (= :git-worktree (:isolation first-run)))
+          (is (str/starts-with? (:branch first-run) "agent/session-"))
           (is (.isFile (io/file (:path first-run) "README.md")))
           (is (= :agent-workspace/write-lease-conflict
                  (:type (ex-data conflict))))
+          (spit (io/file (:path first-run) "SESSION.txt") "persistent\n")
           (agent-workspace/release! "run-1" :ready-for-review)
-          (is (= :active
-                 (:status
-                  (agent-workspace/prepare! (.getPath repo) "run-2"))))))
+          (let [resumed (agent-workspace/prepare!
+                         (.getPath repo) "session-1" "run-2")
+                parallel (agent-workspace/prepare!
+                          (.getPath repo) "session-2" "run-3")]
+            (is (:reused? resumed))
+            (is (= (:path first-run) (:path resumed)))
+            (is (.isFile (io/file (:path resumed) "SESSION.txt")))
+            (is (= 1 (:changed-files resumed)))
+            (is (not= (:path resumed) (:path parallel))))))
       (finally
         (reset! store/state previous)))))
 

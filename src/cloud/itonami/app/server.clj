@@ -3,6 +3,7 @@
             [clojure.string :as str]
             [cloud.itonami.app.approval-broker :as approval-broker]
             [cloud.itonami.app.agent-event :as agent-event]
+            [cloud.itonami.app.agent-workspace :as agent-workspace]
             [cloud.itonami.app.config :as config]
             [cloud.itonami.app.documents :as documents]
             [cloud.itonami.app.executor :as executor]
@@ -134,11 +135,21 @@
                    (store/session-messages session-id))
    :agent-events (mapv agent-event/public-event
                        (store/agent-events session-id))
+   :workspace (some-> (agent-workspace/session-workspace session-id)
+                      (select-keys [:id :path :repo-root :isolation :branch
+                                    :status :changed-files :untracked-files
+                                    :commits :updated-at]))
    :pending-approvals (approval-broker/pending session-id)})
 
 (defn- public-sessions []
   {:schema "cloud.itonami.app.sessions.v1"
-   :items (store/session-summaries)})
+   :items
+   (mapv
+    (fn [session]
+      (assoc session :workspace
+             (some-> (agent-workspace/session-workspace-record (:id session))
+                     (select-keys [:id :branch :status :updated-at]))))
+    (store/session-summaries))})
 
 (defn- execution-option [value allowed fallback]
   (let [option (some-> value name keyword)]

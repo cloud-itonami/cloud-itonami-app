@@ -23,7 +23,7 @@
    :runner-sessions {}
    :agent-loops {:runs {} :events []}
    :agent-approvals {:requests {}}
-   :agent-workspaces {:runs {} :leases {}}
+   :agent-workspaces {:sessions {} :runs {} :leases {}}
    :agent-control {:runs {} :events []}
    ;; One `drive.workspace` per principal — the tree, the ACL, the quota and
    ;; the version history. The bytes those versions point at are not in here;

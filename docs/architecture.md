@@ -172,11 +172,15 @@ Codex now uses the app-server stdio thread/turn/item protocol for streamed
 interactive work; Claude uses stream-json. Both project into the same bounded
 events. A text-only Agent result is `needs-review`, not verified work.
 
-An Agent writer receives a detached Git worktree and an exclusive repository
-lease. Codex approval requests pause at the local approval broker and can be
-accepted or declined from the activity stream. Every run receives a result
-score derived from artifact, tool, failure, verification, duration, and usage
-facts. The remaining provider and evaluation gaps are tracked in
+An Agent chat receives a persistent Git worktree and `agent/session-*` branch.
+Turns in that session reuse its uncommitted changes and commits; their short
+lease prevents concurrent mutation of one checkout, while another session can
+write in its own worktree. Agent mode runs a bounded two-to-four-cycle
+supervisor over the same provider thread and worktree. Codex approval requests
+pause at the local approval broker and can be accepted or declined from the
+activity stream. Every run receives a result score derived from artifact, tool,
+failure, verification, duration, and usage facts. The remaining provider and
+evaluation gaps are tracked in
 [ADR-0004](adr/0004-provider-neutral-agent-runtime.md) and the runtime safety
 boundary is fixed by
 [ADR-0005](adr/0005-durable-agent-execution-boundary.md).

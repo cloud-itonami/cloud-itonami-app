@@ -99,15 +99,17 @@ connected.
 
 ### Isolation and concurrency
 
-The target write invariant is:
+The write invariant is:
 
 ```text
-one run = one coherent outcome = one worktree = one write lease
+one session = one worktree = one branch
+one session/provider pair = one resumable provider thread
+one active turn = one short write lease
 ```
 
-Parallel read-only discovery may share a repository. Parallel writers may not
-share a checkout or overlapping file lease. Integration is a separate reviewed
-phase.
+Parallel read-only discovery may share a repository. Parallel sessions write
+in separate worktrees; two turns may not concurrently write the same session
+worktree. Integration is a separate reviewed phase.
 
 ### Context and repeatability
 
@@ -141,7 +143,7 @@ security or increasing regression rate.
 | Native streams | Complete for interactive Codex and Claude | Codex app-server stdio; Claude stream-json | Long-lived pooled app-server and Claude MCP permission adapter |
 | Approval broker | Codex complete | Exact-request digest, expiry, local UI decision, fail-closed timeout | Claude permission-prompt MCP and passkey escalation for outward capabilities |
 | Evidence gates | Baseline complete | Agent success needs both artifact and successful tool evidence | Repository-declared test/lint/build/visual receipts |
-| Isolation | Core complete | One detached worktree and repository write lease per Agent run | Checkpoint/resume, integration lease, steering, retry and idempotency |
+| Isolation | Core complete | One persistent branch/worktree per session and one turn lease; clean idle cap | Snapshot restore, integration lease, steering, retry and idempotency |
 | Evaluation | Per-run complete | Deterministic result score and grade | Replay corpus, regression comparison, experiment promotion |
 
 Each stage must preserve the loopback-only server, local durable state,
