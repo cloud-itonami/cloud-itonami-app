@@ -40,8 +40,18 @@
   and has no HTTP surface by design, so its endpoint was never going to exist.
   Liveness for a resident actor is whether it recently recorded evidence — the
   taxonomy makes `:record-evidence` one of its obligations — and this catalog
-  does not carry that. It reports `:not-probeable` and says why, instead of
-  reusing a signal that does not apply.
+  **now carries that**, as `:evidence-at` / `:evidence-entries` /
+  `:evidence-outcome`, read from the actor's append-only `evidence/*.ledger.edn`
+  (2026-07-30). `evidence` and `evidence-age-days` below read it.
+  `probe-health!` still reports `:not-probeable` for these actors, because the
+  two answer different questions: nothing here is reachable over HTTP, and that
+  was never the right question to ask of a loop.
+
+  This is the one thing a by-reference entry carries out of a repository rather
+  than about it, and the widening is deliberate: liveness is otherwise
+  unobtainable. A pin date says when someone last committed, which diverges from
+  when the loop last ran exactly when the loop is healthy and nobody is editing
+  it.
 
   Some entries are `:reference-only`. They are in the catalog because west
   pins them and the authority classifies them, not because they carry a
@@ -134,6 +144,27 @@
   No file was read from them."
   []
   (filterv :reference-only (actors)))
+
+(defn evidence
+  "What a resident actor last recorded: {:at :entries :outcome}, or nil.
+
+  nil means the actor keeps no ledger — absent rather than zero, so a loop that
+  has never run cannot be read as one that ran and found nothing."
+  [actor]
+  (when-some [at (:evidence-at actor)]
+    {:at at
+     :entries (:evidence-entries actor)
+     :outcome (:evidence-outcome actor)}))
+
+(defn evidence-age-days
+  "Days since this actor last recorded evidence, or nil when it records none.
+  The liveness signal for a `:resident` actor — the only one that applies, since
+  none of them serve HTTP."
+  [actor]
+  (when-some [at (:evidence-at actor)]
+    (quot (- (System/currentTimeMillis)
+             (.toEpochMilli (java.time.Instant/parse at)))
+          86400000)))
 
 (defn revision
   "The west pin for this actor — the hash the workspace currently agrees on."

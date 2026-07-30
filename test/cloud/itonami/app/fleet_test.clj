@@ -212,7 +212,7 @@
     ;; a population vanish twice. It moved 8 -> 9 when loop-yakuwari joined
     ;; west, which is what a tripwire doing its job looks like.
     (let [r (fleet/by-execution :resident)]
-      (is (= 9 (count r)))
+      (is (= 10 (count r)))
       (is (every? :reference-only r))
       (is (every? #(re-matches #"[0-9a-f]{40}" (fleet/revision %)) r))
       (is (= #{:continuous-orchestrator :artificial-organism-actor}
@@ -222,11 +222,21 @@
     ;; The point of by-reference inclusion: the catalog must not become a
     ;; mirror. If a field from inside one of those repositories ever appears
     ;; here, this fails.
+    ;;
+    ;; The :evidence-* keys are the one deliberate exception (2026-07-30). They
+    ;; ARE read out of the repository — the last line of its
+    ;; evidence/*.ledger.edn — and they are allowed because liveness is
+    ;; otherwise unobtainable for a resident actor: nothing here serves HTTP, and
+    ;; a pin date says when someone last committed, which diverges from when the
+    ;; loop last ran exactly when the loop is healthy and nobody is editing it.
+    ;; This is a widening of the invariant, not an oversight in it.
     (let [allowed #{:repo :repo-name :remote :revision :path :role :execution
                     :reference-only :id :authority-library
                     ;; the pin's own commit date — metadata about the hash,
                     ;; still nothing read from inside the repository
-                    :revision-committed-at}]
+                    :revision-committed-at
+                    ;; liveness, read from the repository by explicit exception
+                    :evidence-at :evidence-entries :evidence-outcome}]
       (doseq [e (fleet/reference-only)]
         (is (empty? (remove allowed (keys e)))
             (str (:repo e) " leaked a field beyond its pin")))))
