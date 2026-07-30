@@ -1796,7 +1796,7 @@
       });
       chartPanel.append(addChart);
       chartPanel.append(make('p', 'surface-note',
-        'グラフは保存すると描き直されます。.xlsx には書き出されません。'));
+        'グラフは保存すると描き直され、.xlsx にも書き出されます。'));
       root.append(chartPanel);
       return root;
     };

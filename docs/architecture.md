@@ -369,7 +369,9 @@ it, because nothing pointed at the font.
 
 What is left of a style — a colour, a border, a font family — is reported
 **by key** rather than as "the style is dropped", so the report says what is
-actually lost. Charts are still dropped whole — but they are no longer invisible.
+actually lost. Charts reach Excel now too, so what `xlsx` still reports is one thing and a
+half: the parts of a style it has no element for, and a named range or chart
+pointing at a tab the workbook does not have.
 
 ### A chart you can see
 
@@ -388,7 +390,14 @@ A chart whose range holds no numbers is **listed and not drawn**, and the
 pane says why. Empty axes read as *there is no data here*, which is the
 wrong answer when the range is simply wrong.
 
-Drawing one does not put one in the `.xlsx`, and the warning still says so.
+And it reaches the `.xlsx`: a chart there is four parts and a chain of
+relationships — sheet → drawing → chart → cells — and a link missing anywhere
+gives a file that opens with no chart and no complaint. The series names its
+cells *and* caches what they hold, because the reference is what Excel
+recalculates from and the cache is what every other reader draws.
+
+Only a chart naming a tab the workbook does not have is still dropped: there
+is no sheet for its drawing to sit on.
 
 **And there is a way to set one.** The style bar acts on the cell the cursor
 is in, which is what a spreadsheet does; there is no multi-cell selection
