@@ -6,6 +6,18 @@
   {:mvn/version "2.22.1"}
   com.yubico/webauthn-server-core {:mvn/version "2.9.0"}
 
+  ;; System dynamics. Both are consumed, never reimplemented: xmile owns the
+  ;; OASIS XMILE 1.0 model + the Euler/RK4 simulator (ADR-2607072350 makes it the
+  ;; authoritative engine for this workspace), and dynamics owns the Meadows
+  ;; leverage-band vocabulary. A second simulator in this app is exactly what
+  ;; ADR-2607309600 decision 6 forbids.
+  io.github.kotoba-lang/org-oasis-open-xmile
+  {:git/url "https://github.com/kotoba-lang/org-oasis-open-xmile.git"
+   :git/sha "5abbd50784c26c8c65016f93bd06855d3a56d4d5"}
+  io.github.kotoba-lang/dynamics
+  {:git/url "https://github.com/kotoba-lang/dynamics.git"
+   :git/sha "439d8cec415ab2c49bd8915ce271ccdb69051f03"}
+
   io.github.kotoba-lang/shell
   {:git/url "https://github.com/kotoba-lang/shell.git"
    :git/sha "b2118bafb83f74a1d3c67e91314f67be87125df2"}
@@ -173,7 +185,10 @@
   ;; West/sibling workspace development only. Release and CI never use this.
   :dev
   {:override-deps
-   {io.github.kotoba-lang/shell {:local/root "../../kotoba-lang/shell"}
+   {io.github.kotoba-lang/org-oasis-open-xmile
+    {:local/root "../../kotoba-lang/org-oasis-open-xmile"}
+    io.github.kotoba-lang/dynamics {:local/root "../../kotoba-lang/dynamics"}
+    io.github.kotoba-lang/shell {:local/root "../../kotoba-lang/shell"}
     io.github.kotoba-lang/kotoba {:local/root "../../kotoba-lang/kotoba"}
     io.github.kotoba-lang/calendar {:local/root "../../kotoba-lang/calendar"}
     io.github.kotoba-lang/mail {:local/root "../../kotoba-lang/mail"}

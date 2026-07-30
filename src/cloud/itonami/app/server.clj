@@ -15,6 +15,7 @@
             [cloud.itonami.app.operator :as operator]
             [cloud.itonami.app.funding :as funding]
             [cloud.itonami.app.identity :as identity]
+            [cloud.itonami.app.loops :as loops]
             [cloud.itonami.app.organism-gateway :as organism-gateway]
             [cloud.itonami.app.relay :as relay]
             [cloud.itonami.app.service :as service]
@@ -614,6 +615,21 @@
               (require-origin! exchange config)
               (require-csrf! exchange session)
               (send! exchange 200 (canvas/withdraw! session proposal-id {:by by})))
+
+            ;; ---- 事業の loops（stock-flow 構造・シミュレーション・leverage）----
+            ;;
+            ;; Read-only, and there is no write path: the simulator is
+            ;; `xmile.execute/run` and the leverage ledger belongs to
+            ;; `loop-system-dynamics`. This app runs the one and reads the other.
+
+            (and (= method "GET")
+                 (re-matches #"/api/business/([^/]+)/loops" path))
+            (let [session (require-app-session! exchange)
+                  id (second (re-matches #"/api/business/([^/]+)/loops" path))]
+              (if-some [snapshot (loops/snapshot config session id)]
+                (send! exchange 200 snapshot)
+                (send! exchange 404 {:error {:type "not-found"
+                                             :message "該当する business がありません"}})))
 
             ;; ---- funding accounts (what the payment authority stands on) ----
             ;; These are reads and writes of the organization's own record, not

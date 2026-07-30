@@ -61,11 +61,12 @@
 (def face-order
   "Presentation order. Canvas first because a business with no canvas has no
   hypothesis, and everything after it is evidence about one."
-  [:canvas :model :adoptions :repos :lei])
+  [:canvas :model :leverage :adoptions :repos :lei])
 
 (def face-labels
   {:canvas "Canvas (BMC / Lean)"
    :model "Loops (system dynamics / XMILE)"
+   :leverage "Leverage (Meadows band ranking)"
    :adoptions "参与している blueprint"
    :repos "Repos"
    :lei "法人実体 (LEI)"})
@@ -75,6 +76,7 @@
   the UI so an unresolved face names the file it looked for."
   {:canvas "90-docs/adr/2607021500-portfolio-bmc-lean.datoms.edn"
    :model "(business が指定した XMILE モデルへの相対パス)"
+   :leverage "(business が指定した leverage ledger への相対パス)"
    :adoptions "(このアプリの store — workspace checkout を要しません)"
    :repos "manifest/repo-taxonomy.edn"
    :lei "orgs/cloud-itonami/cloud-itonami-lei-<lei>/blueprint.edn"})
@@ -244,19 +246,23 @@
        :detail (str n "/" (count keys*) " 件が解決")
        :items results})))
 
-(defn- model-file-face [key* ws]
+(defn- path-face
+  "A face bound to a path under the workspace root, resolved by existence."
+  [face key* ws]
   (cond
-    (nil? key*) {:face :model :label (face-labels :model) :source (face-sources :model)
+    (nil? key*) {:face face :label (face-labels face) :source (face-sources face)
                  :key nil :bound? false :state :unbound :detail "未紐付け"}
-    (not= :present (:state ws)) (unresolvable :model key* ws)
+    (not= :present (:state ws)) (unresolvable face key* ws)
     (.isFile (io/file (:file ws) key*))
-    {:face :model :label (face-labels :model) :source key*
+    {:face face :label (face-labels face) :source key*
      :key key* :bound? true :state :resolved
-     :detail (str "XMILE モデルを確認: " key*)}
+     :detail (str "ファイルを確認: " key*)}
     :else
-    {:face :model :label (face-labels :model) :source key*
+    {:face face :label (face-labels face) :source key*
      :key key* :bound? true :state :missing
      :detail (str key* " が workspace にありません")}))
+
+(defn- model-file-face [key* ws] (path-face :model key* ws))
 
 (defn- adoption-face [repos]
   (collection-face
@@ -278,6 +284,12 @@
   [b {:keys [canvas taxonomy]} ws]
   [(scalar-face :canvas (:business/canvas b) ws (force canvas) #(contains? %1 %2))
    (model-file-face (:business/model b) ws)
+   ;; Same shape as :model — a path under the workspace root, resolved by
+   ;; existence. A separate binding rather than a path guessed next to the model:
+   ;; a leverage ranking and a stock-flow model are different artifacts, and
+   ;; inferring one's location from the other's is the kind of guess `fleet`
+   ;; refuses when it will not invent an endpoint.
+   (path-face :leverage (:business/leverage b) ws)
    (adoption-face (vec (:business/adoptions b)))
    (collection-face :repos (vec (:business/repos b))
                     (fn [path]
@@ -426,6 +438,9 @@
                                          str/upper-case))
             (contains? bindings :model)
             (assoc :business/model (some-> (:model bindings) str str/trim not-empty))
+            (contains? bindings :leverage)
+            (assoc :business/leverage (some-> (:leverage bindings) str str/trim
+                                              not-empty))
             (contains? bindings :adoptions)
             (assoc :business/adoptions (normalize-list (:adoptions bindings)))
             (contains? bindings :repos)

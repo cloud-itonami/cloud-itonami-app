@@ -126,7 +126,7 @@
   (business/create! session {:slug "cloud-itonami-5820"})
   (let [row (first (:businesses (business/portfolio no-workspace session)))
         faces (:faces row)]
-    (is (= 5 (count faces)))
+    (is (= 6 (count faces)))
     (testing "nothing bound: every face is :unbound, and none of them is :missing"
       (is (= #{:unbound} (set (map :state faces))))
       (is (= 0 (:bound (:coverage row)))))))
