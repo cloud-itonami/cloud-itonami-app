@@ -153,7 +153,7 @@
   @keyframes typing{0%,60%,100%{transform:translateY(0);opacity:.45}30%{transform:translateY(-.3rem);opacity:1}}
   .composer-dock{position:absolute;z-index:2;left:0;right:0;bottom:0;
     padding:2.5rem 1rem 1rem;background:linear-gradient(transparent 0%,var(--color-neutral-white) 32%)}
-  .composer{width:min(100%,52rem);box-sizing:border-box;margin:0 auto;padding:.625rem;
+  .composer{width:min(100%,64rem);box-sizing:border-box;margin:0 auto;padding:.625rem;
     border:1px solid var(--color-neutral-solid-gray-300);border-radius:1.25rem;
     background:var(--color-neutral-white);box-shadow:0 .5rem 2rem rgba(0,0,0,.1)}
   .composer:focus-within{border-color:var(--color-key-600);
@@ -162,8 +162,9 @@
     border:0;outline:0;resize:none;padding:.65rem .75rem;background:transparent;
     color:var(--color-neutral-solid-gray-900);font:inherit;line-height:1.65}
   .composer-toolbar{display:flex;align-items:center;justify-content:space-between;gap:.75rem}
-  .composer-context{display:flex;align-items:center;gap:.4rem;min-width:0}
+  .composer-context{display:flex;flex-wrap:wrap;align-items:center;gap:.4rem;min-width:0}
   .composer-context .model-pill{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .execution-select{font-weight:700}
   .composer-button{display:grid;place-items:center;width:2.5rem;height:2.5rem;border:0;
     border-radius:50%;background:var(--color-key-900);color:var(--color-neutral-white);
     cursor:pointer;font-size:1.1rem;font-weight:700}
@@ -434,10 +435,10 @@
         'aria-current', item.dataset.view === name ? 'page' : 'false'));
       $$('.view').forEach((panel) => { panel.hidden = panel.dataset.viewPanel !== name; });
       const active = $(`.local-nav__item[data-view='${name}']`);
-      $('#current-view').textContent = active?.dataset.title || 'Chat';
+      $('#current-view').textContent = active?.dataset.title || 'Agent';
       history.replaceState(null, '', `#${name}`);
       const brand = document.querySelector('.workspace')?.dataset.brand || 'Cloud Itonami';
-      document.title = `${active?.dataset.title || 'Chat'} | ${brand}`;
+      document.title = `${active?.dataset.title || 'Agent'} | ${brand}`;
       currentView = name;
       onViewChange(name);
     };
@@ -457,6 +458,9 @@
     const sessionList = $('#session-list');
     const sessionCount = $('#session-count');
     const modelSelect = $('#model-select');
+    const executionMode = $('#execution-mode');
+    const guardrailSelect = $('#guardrail-select');
+    const effortSelect = $('#effort-select');
     let sessionId = localStorage.getItem('cloud-itonami-session') || 'desktop';
     chatShell.dataset.session = sessionId;
     let currentController = null;
@@ -651,7 +655,9 @@
           signal:currentController.signal,
           body:JSON.stringify({prompt:value, session:sessionId, agent:'local',
             model:modelSelect.value,
-            provider:modelSelect.selectedOptions[0]?.dataset.provider})
+            provider:modelSelect.selectedOptions[0]?.dataset.provider,
+            mode:executionMode.value, guardrail:guardrailSelect.value,
+            effort:effortSelect.value})
         });
         await parseStream(request, assistant, value);
       } catch (error) {
@@ -692,16 +698,37 @@
       empty.hidden = false;
       prompt.value = ''; resizePrompt(); prompt.focus();
       loadSessions();
-      announce('新しいチャットを開始しました。');
+      announce('新しい agent loop を開始しました。');
     });
+    const updateExecutionBoundary = () => {
+      const planning = executionMode.value === 'plan';
+      if (planning) {
+        guardrailSelect.value = 'plan';
+        guardrailSelect.disabled = true;
+      } else {
+        guardrailSelect.disabled = false;
+      }
+      $('#model-boundary').textContent =
+        planning || guardrailSelect.value === 'plan' ? 'read only' : 'workspace auto';
+      announce(planning
+        ? 'Plan mode: 読み取り専用で計画します。'
+        : `Agent mode: ${guardrailSelect.value} guardrail で実行します。`);
+    };
+    executionMode.addEventListener('change', () => {
+      if (executionMode.value === 'agent') guardrailSelect.value = 'auto';
+      updateExecutionBoundary();
+    });
+    guardrailSelect.addEventListener('change', updateExecutionBoundary);
     modelSelect.addEventListener('change', () => {
       const selectedOption = modelSelect.selectedOptions[0];
       const provider = selectedOption?.dataset.provider || 'unknown';
       modelSelect.dataset.provider = provider;
-      $('#active-model-label').textContent = `${provider} / ${modelSelect.value}`;
-      $('#model-boundary').textContent =
-        selectedOption?.dataset.kind === 'cli' ? 'CLI account' : 'Local model';
-      announce(`${modelSelect.value} を選択しました。`);
+      if (selectedOption?.dataset.effort) {
+        effortSelect.value = selectedOption.dataset.effort;
+      }
+      $('#active-model-label').textContent =
+        `${provider} / ${selectedOption?.textContent || modelSelect.value}`;
+      updateExecutionBoundary();
     });
     fetch('/v1/models').then((request) => request.json()).then((data) => {
       const selected = modelSelect.value;
@@ -709,10 +736,11 @@
       if (models.length) {
         modelSelect.replaceChildren();
         models.forEach((model) => {
-          const option = make('option', null, model.id);
+          const option = make('option', null, model.label || model.id);
           option.value = model.id;
           option.dataset.provider = model.provider;
           option.dataset.kind = model['provider_kind'] || 'local';
+          if (model.effort) option.dataset.effort = model.effort;
           option.selected = model.id === selected;
           modelSelect.append(option);
         });
@@ -721,11 +749,12 @@
         }
         modelSelect.dataset.provider =
           modelSelect.selectedOptions[0]?.dataset.provider || '';
+        if (modelSelect.selectedOptions[0]?.dataset.effort) {
+          effortSelect.value = modelSelect.selectedOptions[0].dataset.effort;
+        }
         $('#active-model-label').textContent =
-          `${modelSelect.dataset.provider} / ${modelSelect.value}`;
-        $('#model-boundary').textContent =
-          modelSelect.selectedOptions[0]?.dataset.kind === 'cli'
-            ? 'CLI account' : 'Local model';
+          `${modelSelect.dataset.provider} / ${modelSelect.selectedOptions[0]?.textContent}`;
+        updateExecutionBoundary();
         modelsReady = true;
         modelSelect.disabled = false;
         resizePrompt();
@@ -736,7 +765,7 @@
         inherited.value = '';
         workerModel.append(inherited);
         models.forEach((model) => {
-          const option = make('option', null, model.id);
+          const option = make('option', null, model.label || model.id);
           option.value = model.id;
           option.dataset.provider = model.provider;
           option.selected = model.id === workerSelected;
@@ -2276,7 +2305,7 @@
         brand (get-in configuration [:brand :name] "Cloud Itonami")
         css (slurp (io/resource "jp_go_dds/dds.css"))]
     (page/->page
-     {:title (str "Chat | " brand)
+     {:title (str "Agent | " brand)
       :description "ローカル優先のAIワークスペース"
       :css css :app-css app-css :head [[:script interaction-js]]}
      [:div {:class "workspace" :data-brand brand}
@@ -2291,7 +2320,7 @@
         [:select {:id "organization-switcher" :disabled true}
          [:option "確認中…"]]]
        [:nav {:class "local-nav"}
-        (nav-item "chat" "Chat" "✦" nil)
+        (nav-item "chat" "Agent" "✦" nil)
         (nav-item "worker" "Worker" "◐" "worker-count")
         (nav-item "organisms" "Organisms" "◎" "organism-count")
         (nav-item "inbox" "Inbox" "□" "inbox-count")
@@ -2305,7 +2334,7 @@
         [:span {:id "workspace-status"} "既存サービスを確認中…"]]]
       [:div {:class "main"}
        [:header {:class "topbar"}
-        [:h2 {:class "topbar__title" :id "current-view"} "Chat"]
+        [:h2 {:class "topbar__title" :id "current-view"} "Agent"]
         [:p {:class "topbar__meta"} "データは許可された接続先からのみ読み込みます"]]
        [:main {:id "main-content"}
         [:section {:class "view chat-view" :data-view-panel "chat"}
@@ -2314,13 +2343,13 @@
            [:div {:class "chat-agent"}
             [:div {:class "chat-agent__avatar" :aria-hidden "true"} "ai"]
             [:div
-             [:p {:class "chat-agent__name"} "Local"]
+             [:p {:class "chat-agent__name"} "Agent loop"]
              [:p {:class "chat-agent__state" :id "chat-agent-state"}
               "ローカルモデルを準備中…"]]]
            [:div {:class "chat-header__actions"}
             [:span {:class "model-pill" :id "active-model-label"} (str provider " / " model)]
             [:button {:class "tool-button" :type "button" :id "new-chat-button"}
-             "＋ 新しいチャット"]]]
+             "＋ 新しい loop"]]]
           [:div {:class "chat-body"}
            [:aside {:class "chat-history" :aria-label "会話履歴"}
             [:div {:class "chat-history__header"}
@@ -2334,14 +2363,14 @@
                   :role "log" :aria-live "polite" :aria-relevant "additions"}
             [:div {:class "chat-empty" :id "chat-empty"}
              [:div {:class "chat-empty__mark" :aria-hidden "true"} "ai"]
-             [:h1 "今日は何を進めますか？"]
+             [:h1 "何を達成しますか？"]
              [:p (if cloud?
-                   "必要に応じて許可済みクラウドモデルを使えます。送信前の接続先を確認してください。"
-                   "この会話はローカルモデルで処理され、端末の外へ送信されません。")]
+                   "Agentが計画・実行・検証をloopします。接続先とガードレールを確認してください。"
+                   "Agentがワークスペース内で計画・実行・検証をloopします。")]
              [:div {:class "suggestion-grid"}
               [:button {:class "suggestion-card" :type "button"
                         :data-prompt "今日の予定と優先タスクを整理して"}
-               [:strong "今日を整理する"] [:span "予定と優先順位をまとめる"]]
+               [:strong "今日を前進させる"] [:span "優先タスクを特定して実行する"]]
               [:button {:class "suggestion-card" :type "button"
                         :data-prompt "このプロジェクトの次の実装ステップを提案して"}
                [:strong "実装を進める"] [:span "次のステップを具体化する"]]
@@ -2355,15 +2384,31 @@
            [:form {:class "composer" :id "chat-form"}
             [:label {:class "visually-hidden" :for "prompt"} "メッセージ"]
             [:textarea {:id "prompt" :name "prompt" :rows 1
-                        :placeholder (str brand " にメッセージ")
+                        :placeholder (str brand " に達成したいことを指示")
                         :autocomplete "off" :aria-describedby "composer-note request-status"}]
             [:div {:class "composer-toolbar"}
              [:div {:class "composer-context"}
+              [:select {:class "model-pill execution-select" :id "execution-mode"
+                        :aria-label "実行モード"}
+               [:option {:value "agent" :selected true} "Agent"]
+               [:option {:value "plan"} "Plan"]]
+              [:select {:class "model-pill execution-select" :id "guardrail-select"
+                        :aria-label "ガードレール"}
+               [:option {:value "auto" :selected true} "Auto"]
+               [:option {:value "plan"} "Plan guardrail"]]
               [:select {:class "model-pill" :id "model-select" :aria-label "モデル"
                         :data-provider provider}
                [:option {:value model} model]]
+              [:select {:class "model-pill" :id "effort-select"
+                        :aria-label "推論強度"}
+               [:option {:value "low"} "low"]
+               [:option {:value "medium" :selected true} "medium"]
+               [:option {:value "high"} "high"]
+               [:option {:value "xhigh"} "xhigh"]
+               [:option {:value "max"} "max"]
+               [:option {:value "ultra"} "ultra"]]
               [:span {:class "state-chip" :id "model-boundary"}
-               (if cloud? "接続先を確認" "Local model")]]
+               (if cloud? "接続先を確認" "workspace only")]]
              [:div
               [:button {:class "composer-button" :id "send-button" :type "submit"
                         :aria-label "送信" :title "送信（Enter）"} "↑"]
@@ -2371,7 +2416,7 @@
                         :id "stop-button" :type "button" :hidden true
                         :aria-label "生成を停止" :title "生成を停止（Esc）"} "■"]]]
             [:p {:class "composer-note" :id "composer-note"}
-             "Enterで送信 · Shift+Enterで改行 · AIの回答は確認してください"]]
+             "Agent + Auto はワークスペース内で実装・検証 · Plan は読み取り専用"]]
            [:p {:class "visually-hidden" :id "request-status"
                 :role "status" :aria-live "polite"}
             "ローカルモデルを準備中です。"]]]]]]

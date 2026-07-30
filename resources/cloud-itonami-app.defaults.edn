@@ -9,8 +9,8 @@
             ;; Enable only when the deployment publishes a DID document for
             ;; every generated organization domain.
             :publish-did-web? false}
- :routing {:default-provider "ollama"
-           :default-model "gemma4:e2b"
+ :routing {:default-provider "codex-cli"
+           :default-model "codex:gpt-5.6-sol"
            :cloud-enabled? false}
  :providers
  [{:id "ollama"
@@ -23,14 +23,31 @@
    :name "Codex CLI"
    :kind :cli
    :runner :codex
-   :model "codex:default"
+   :model "codex:gpt-5.6-sol"
+   :models [{:id "codex:gpt-5.6-sol"
+             :label "GPT-5.6 Sol · medium"
+             :effort "medium"}
+            {:id "codex:gpt-5.6-terra"
+             :label "GPT-5.6 Terra · medium"
+             :effort "medium"}
+            {:id "codex:gpt-5.6-luna"
+             :label "GPT-5.6 Luna · medium"
+             :effort "medium"}
+            {:id "codex:gpt-5.5"
+             :label "GPT-5.5 · medium"
+             :effort "medium"}]
    :local? true
    :enabled? true}
   {:id "claude-cli"
    :name "Claude Code"
    :kind :cli
    :runner :claude
-   :model "claude:sonnet"
+   ;; `opus` is Claude Code's rolling alias; on this installation it is the
+   ;; Opus 5.6 family and avoids pinning an account-specific dated identifier.
+   :model "claude:opus"
+   :models [{:id "claude:opus" :label "Claude Opus 5.6" :effort "medium"}
+            {:id "claude:sonnet" :label "Claude Sonnet" :effort "medium"}
+            {:id "claude:haiku" :label "Claude Haiku" :effort "low"}]
    :local? true
    :enabled? true}
   {:id "lm-studio"

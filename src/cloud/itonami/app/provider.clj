@@ -57,7 +57,8 @@
     []))
 
 (defn chat
-  [provider {:keys [model messages temperature session-id runner-session-id]}]
+  [provider {:keys [model messages temperature session-id runner-session-id
+                    mode guardrail effort cwd]}]
   (case (:kind provider)
     :ollama
     (let [result (request-json
@@ -85,7 +86,9 @@
                      {:messages messages
                       :model model
                       :session-id session-id
-                      :runner-session-id runner-session-id})
+                      :runner-session-id runner-session-id
+                      :mode mode :guardrail guardrail
+                      :effort effort :cwd cwd})
 
     (throw (ex-info "unsupported provider kind" {:provider provider}))))
 
@@ -113,7 +116,8 @@
 
 (defn chat-stream!
   "Stream provider deltas to `on-delta` and return the complete result."
-  [provider {:keys [model messages temperature session-id runner-session-id]}
+  [provider {:keys [model messages temperature session-id runner-session-id
+                    mode guardrail effort cwd]}
    on-delta]
   (let [content (StringBuilder.)
         usage (volatile! nil)
@@ -169,7 +173,9 @@
                     {:messages messages
                      :model model
                      :session-id session-id
-                     :runner-session-id runner-session-id})]
+                     :runner-session-id runner-session-id
+                     :mode mode :guardrail guardrail
+                     :effort effort :cwd cwd})]
         (when-let [emitted (emit! on-delta (:content result))]
           (.append content emitted))
         (vreset! usage (:usage result))

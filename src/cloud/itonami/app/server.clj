@@ -135,6 +135,17 @@
   {:schema "cloud.itonami.app.sessions.v1"
    :items (store/session-summaries)})
 
+(defn- execution-option [value allowed fallback]
+  (let [option (some-> value name keyword)]
+    (if (contains? allowed option) option fallback)))
+
+(defn- execution-fields [request]
+  {:mode (execution-option (:mode request) #{:plan :agent} :agent)
+   :guardrail (execution-option (:guardrail request) #{:plan :auto} :auto)
+   :effort (name (execution-option (:effort request)
+                                   #{:low :medium :high :xhigh :max :ultra}
+                                   :medium))})
+
 (defn- identity-context [exchange]
   (identity/public-state (cookie-value exchange identity/cookie-name)))
 
@@ -832,12 +843,14 @@
 
             (and (= method "POST") (= path "/v1/chat/completions"))
             (let [request (read-json exchange)
-                  chat {:messages (:messages request)
-                        :model (:model request)
-                        :provider-id (:provider request)
-                        :session-id (or (:session_id request) "openai")
-                        :agent-id (:agent_id request)
-                        :temperature (:temperature request)}]
+                  chat (merge
+                        {:messages (:messages request)
+                         :model (:model request)
+                         :provider-id (:provider request)
+                         :session-id (or (:session_id request) "openai")
+                         :agent-id (:agent_id request)
+                         :temperature (:temperature request)}
+                        (execution-fields request))]
               (if (:stream request)
                 (send-openai-stream!
                  exchange config chat
@@ -856,11 +869,13 @@
                 (send! exchange 200
                        (service/run-chat!
                         config
-                        {:messages [{:role "user" :content prompt}]
-                         :model (:model request)
-                         :provider-id (:provider request)
-                         :session-id (or (:session request) "desktop")
-                         :agent-id (:agent request)}))))
+                        (merge
+                         {:messages [{:role "user" :content prompt}]
+                          :model (:model request)
+                          :provider-id (:provider request)
+                          :session-id (or (:session request) "desktop")
+                          :agent-id (:agent request)}
+                         (execution-fields request))))))
 
             (and (= method "POST") (= path "/api/chat/stream"))
             (let [_session (require-app-session! exchange)
@@ -871,11 +886,13 @@
                                              :message "prompt is required"}})
                 (send-chat-stream!
                  exchange config
-                 {:messages [{:role "user" :content prompt}]
-                  :model (:model request)
-                  :provider-id (:provider request)
-                  :session-id (or (:session request) "desktop")
-                  :agent-id (:agent request)})))
+                 (merge
+                  {:messages [{:role "user" :content prompt}]
+                   :model (:model request)
+                   :provider-id (:provider request)
+                   :session-id (or (:session request) "desktop")
+                   :agent-id (:agent request)}
+                  (execution-fields request)))))
 
             (and (= method "POST") (= path "/api/session/clear"))
             (let [_session (require-app-session! exchange)

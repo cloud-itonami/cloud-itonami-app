@@ -205,33 +205,47 @@
 (deftest cli-runner-builds-persistent-and-resumed-commands
   (let [codex {:runner :codex :binary "/usr/local/bin/codex"}
         claude {:runner :claude :binary "/usr/local/bin/claude"}
-        base {:mode :chat :prompt "hello" :cwd "/tmp/chat"
-              :model "codex:default" :access :read-only}
+        base {:mode :agent :guardrail :auto :persistent? true
+              :prompt "hello" :cwd "/tmp/chat"
+              :model "codex:gpt-5.6-sol" :effort "medium"
+              :access :workspace-write}
         codex-new (cli-runner/argv codex base)
         codex-resumed
         (cli-runner/argv
          codex (assoc base :runner-session-id "thread-1"))
-        codex-agent (cli-runner/argv codex (assoc base :mode :agent))
+        codex-one-shot (cli-runner/argv codex (assoc base :persistent? false))
+        codex-plan (cli-runner/argv codex (assoc base :mode :plan
+                                                :guardrail :plan))
         claude-new
         (cli-runner/argv
-         claude (assoc base :model "claude:sonnet"
+         claude (assoc base :model "claude:opus"
                        :new-session-id "00000000-0000-0000-0000-000000000001"))
         claude-resumed
         (cli-runner/argv
-         claude (assoc base :model "claude:sonnet"
+         claude (assoc base :model "claude:opus"
                        :runner-session-id
                        "00000000-0000-0000-0000-000000000001"))
-        claude-agent
-        (cli-runner/argv claude (assoc base :mode :agent
-                                      :model "claude:sonnet"))]
+        claude-one-shot
+        (cli-runner/argv claude (assoc base :persistent? false
+                                      :model "claude:opus"))
+        claude-plan
+        (cli-runner/argv claude (assoc base :mode :plan :guardrail :plan
+                                      :model "claude:opus"))]
     (is (not-any? #{"--ephemeral"} codex-new))
-    (is (some #{"--ephemeral"} codex-agent))
+    (is (some #{"--ephemeral"} codex-one-shot))
+    (is (some #{"sandbox_mode=\"workspace-write\""} codex-new))
+    (is (some #{"sandbox_mode=\"read-only\""} codex-plan))
+    (is (some #{"model_reasoning_effort=\"medium\""} codex-new))
     (is (= ["exec" "resume"] (subvec codex-resumed 1 3)))
     (is (= ["thread-1" "hello"] (subvec codex-resumed
                                         (- (count codex-resumed) 2))))
     (is (some #{"--session-id"} claude-new))
     (is (not-any? #{"--no-session-persistence"} claude-new))
-    (is (some #{"--no-session-persistence"} claude-agent))
+    (is (some #{"--no-session-persistence"} claude-one-shot))
+    (is (= "auto" (nth claude-new
+                       (inc (.indexOf claude-new "--permission-mode")))))
+    (is (= "plan" (nth claude-plan
+                       (inc (.indexOf claude-plan "--permission-mode")))))
     (is (some #{"--resume"} claude-resumed))
     (is (= "thread-1"
            (:runner-session-id
@@ -279,6 +293,11 @@
       (is (re-find #"id=\"session-count\"" html))
       (is (re-find #"会話履歴" html))
       (is (re-find #"id=\"model-select\"" html))
+      (is (re-find #"id=\"execution-mode\"" html))
+      (is (re-find #"id=\"guardrail-select\"" html))
+      (is (re-find #"id=\"effort-select\"" html))
+      (is (re-find #">Agent<" html))
+      (is (re-find #">Plan<" html))
       (is (re-find #"option.dataset.provider = model.provider" html))
       (is (re-find #"provider:modelSelect.selectedOptions" html))
       (is (re-find #"id=\"inbox-search\"" html))

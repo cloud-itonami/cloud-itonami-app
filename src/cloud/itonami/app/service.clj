@@ -29,7 +29,7 @@
 
 (defn- prepare-chat!
   [config {:keys [messages provider-id session-id agent-id temperature
-                  response-id]
+                  response-id mode guardrail effort cwd]
            :as request}]
   (let [selected (policy/select-provider config provider-id)
         _ (when-not selected
@@ -51,6 +51,7 @@
     {:selected selected :session-id session-id :max-messages max-messages
      :chosen-model chosen-model :provider-messages provider-messages
      :temperature temperature :response-id response-id
+     :mode mode :guardrail guardrail :effort effort :cwd cwd
      :runner-session-id (:id runner-session-id)}))
 
 (defn- finish-chat!
@@ -74,20 +75,22 @@
 (defn run-chat!
   [config request]
   (let [{:keys [selected chosen-model provider-messages temperature
-                session-id runner-session-id]
+                session-id runner-session-id mode guardrail effort cwd]
          :as prepared}
         (prepare-chat! config request)
         result (provider/chat selected {:model chosen-model
                                         :messages provider-messages
                                         :temperature temperature
                                         :session-id session-id
-                                        :runner-session-id runner-session-id})]
+                                        :runner-session-id runner-session-id
+                                        :mode mode :guardrail guardrail
+                                        :effort effort :cwd cwd})]
     (finish-chat! prepared result)))
 
 (defn run-chat-stream!
   [config request on-delta]
   (let [{:keys [selected chosen-model provider-messages temperature
-                session-id runner-session-id]
+                session-id runner-session-id mode guardrail effort cwd]
          :as prepared}
         (prepare-chat! config request)
         result (provider/chat-stream!
@@ -95,7 +98,8 @@
                 {:model chosen-model :messages provider-messages
                  :temperature temperature
                  :session-id session-id
-                 :runner-session-id runner-session-id}
+                 :runner-session-id runner-session-id
+                 :mode mode :guardrail guardrail :effort effort :cwd cwd}
                 on-delta)]
     (finish-chat! prepared result)))
 

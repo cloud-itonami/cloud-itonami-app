@@ -36,7 +36,7 @@
                       (when (not= 1 (count enabled)) "s")
                       " · " (count (:datoms state)) " memory datoms") [])
        (node-ops 3 :section {:class "liquid-glass__panel"} nil [30 31 32])
-       (node-ops 30 :h2 {} "Chat" [])
+       (node-ops 30 :h2 {} "Agent" [])
        (node-ops 31 :textarea {:id "prompt"
                                :placeholder "ローカル AI に依頼する…"} nil [])
        (node-ops 32 :button {:class "liquid-glass__button"
