@@ -268,9 +268,48 @@ the parser does here by never throwing — junk becomes the nearest blocks and
 the validator is what reports the document, because a parser that threw
 would turn a bad paste into a 500.
 
-`forms` is now the one surface with no format but EDN, and neither
-`slides.pptx` nor `sheets.xlsx` can yet say what *they* drop — those are the
-same function waiting to be written, not a claim that they are lossless.
+Neither `slides.pptx` nor `sheets.xlsx` can yet say what *they* drop —
+those are the same function waiting to be written, not a claim that they are
+lossless.
+
+### Responses are a table, and the table is not the document
+
+A form collects a map per response, keyed by field id. Nobody reads them
+that way. `forms.responses` turns them into the grid they are always read
+as, and the Drive offers it two ways: CSV, and a workbook created beside the
+form.
+
+**Columns come from the form, not from the answers.** Deriving them from the
+keys present in the responses loses a question nobody answered — the table
+stops matching the form — and gives two responses with different keys rows of
+different widths, so values slide sideways under headings belonging to other
+questions. A blank is information; a shifted column is a lie. Answers to a
+question since deleted are kept as trailing columns rather than dropped.
+
+**This is the first export that is not the document, and the permission is
+different.** Every other format writes what the document says, so
+`readable!` is the right question. A form's CSV is what people told you, and
+a viewer of a form is not entitled to it — nor is an editor, because editing
+the questions is not owning the answers. `export-formats` carries
+`:owner-only?` and `export` asks `owned!` when it is set; the kinds table
+carries `:owner-only-exports` so the pane does not render a button that
+refuses. Without that, a responses download would have inherited the
+document's permission, which is the quietest possible way to hand over
+everyone's answers.
+
+`responses-sheet!` is what Google Forms means by sending responses to a
+spreadsheet, with one difference said in the name, in the note on the screen,
+and in the docstring: **it is a snapshot.** Keeping it current would mean
+every submission writing a second document — a new version, charged to the
+owner's quota, on a document somebody may be editing. Asking twice makes two
+documents, because two days' answers are two things somebody may want and
+replacing the earlier one would destroy a document the owner never asked to
+lose.
+
+The CSV goes through a `sheets` workbook rather than joining strings,
+so the quoting is `sheets.csv`'s one implementation of it — an answer
+containing a comma or a newline is ordinary, and a second escaping routine is
+a second place to get it wrong.
 
 ### Two editors, one document
 

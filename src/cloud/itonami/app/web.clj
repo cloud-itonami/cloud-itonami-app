@@ -1471,8 +1471,17 @@
       // through JavaScript to hand it back to the browser is work that only
       // adds a place to get it wrong.
       const exports = make('div', 'detail-actions__row');
-      ((driveData.kinds || []).find((k) => k.kind === item.kind)?.exports || []).forEach((format) => {
-        const link = make('a', 'tool-button', `${format.toUpperCase()} で書き出す`);
+      // Some formats write something other than the document — a form's CSV
+      // is its responses — and those are the owner's. Offering the button to
+      // a viewer would be offering one that refuses.
+      const kindSpec = (driveData.kinds || []).find((k) => k.kind === item.kind);
+      const ownerOnly = kindSpec?.['owner-only-exports'] || [];
+      (kindSpec?.exports || [])
+        .filter((format) => item.role === 'owner' || !ownerOnly.includes(format))
+        .forEach((format) => {
+        const label = ownerOnly.includes(format)
+          ? `回答を ${format.toUpperCase()} で書き出す` : `${format.toUpperCase()} で書き出す`;
+        const link = make('a', 'tool-button', label);
         link.href = `/api/workspace/drive/documents/${encodeURIComponent(item.id)}`
           + `/export?format=${encodeURIComponent(format)}`;
         link.setAttribute('download', '');
@@ -1503,6 +1512,18 @@
                `この文書を ${format.toUpperCase()} で書き出すと失われるもの:`),
           list);
       });
+      if (item.kind === 'forms' && item.role === 'owner') {
+        const snapshot = make('button', 'tool-button', '回答をスプレッドシートに');
+        snapshot.type = 'button';
+        snapshot.addEventListener('click', () => driveAction(
+          `/api/workspace/drive/documents/${encodeURIComponent(item.id)}/responses-sheet`,
+          {}, `${item.name} の回答をスプレッドシートにしました。`));
+        exports.append(snapshot);
+        // Said on the screen rather than left to be discovered: it is the
+        // answers as of now, and asking again makes a second one.
+        exportNotes.append(make('p', 'surface-note',
+          'スプレッドシートは作成時点のスナップショットです（自動更新されません）。'));
+      }
       actions.append(exports, exportNotes, referencePanel(item), commentPanel(item));
       if (item.role === 'owner') actions.append(sharingPanel(item, status));
       return actions;

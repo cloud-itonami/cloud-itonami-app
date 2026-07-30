@@ -645,6 +645,124 @@
                        alice object-store)
     item))
 
+(deftest responses-leave-as-a-table-not-as-a-map-each
+  (with-state
+    (fn [_ object-store]
+      (let [item (contact-form object-store)]
+        (documents/grant! (:id item) bob "viewer" alice)
+        (documents/submit! (:id item) {"name" "田中" "email" "tanaka@example.com"}
+                           bob object-store)
+        (documents/submit! (:id item) {"name" "鈴木"} bob object-store)
+        (let [out (documents/export (:id item) "csv" alice object-store)
+              text (String. ^bytes (:bytes out) "UTF-8")
+              lines (str/split-lines text)]
+          (is (= "問い合わせ.csv" (:filename out)))
+          (is (= "text/csv; charset=utf-8" (:media-type out)))
+          ;; A column per question, in the form's order — including one the
+          ;; second respondent left blank. Derived from the answers' own keys
+          ;; that row would be one field wide and its name would land under
+          ;; the heading for the address.
+          (is (= "送信日時,回答者,お名前,メール" (first lines)))
+          (is (= 3 (count lines)))
+          (is (str/includes? (nth lines 1) "田中,tanaka@example.com"))
+          (is (str/ends-with? (nth lines 2) "鈴木,")))))))
+
+(deftest a-viewer-of-a-form-may-not-have-its-responses
+  ;; The one that would be quietest to get wrong. `readable!` answers whether
+  ;; this principal may have the *form*, and every other export writes the
+  ;; document — so a responses download inheriting the document's permission
+  ;; would hand every respondent's answers to anyone the form was shown to.
+  (with-state
+    (fn [_ object-store]
+      (let [item (contact-form object-store)]
+        (documents/grant! (:id item) bob "viewer" alice)
+        (documents/submit! (:id item) {"name" "田中" "email" "t@example.com"}
+                           bob object-store)
+        ;; bob may read the form, answer it, and export the questions…
+        (is (some? (documents/form-for-answering (:id item) bob object-store)))
+        (is (some? (documents/export (:id item) "edn" bob object-store)))
+        ;; …and not read back what anyone answered.
+        (is (= :drive/not-permitted
+               (:type (try (documents/export (:id item) "csv" bob object-store)
+                           (catch clojure.lang.ExceptionInfo e (ex-data e))))))
+        ;; Not even as an editor: editing the questions is not owning the
+        ;; answers.
+        (documents/grant! (:id item) bob "editor" alice)
+        (is (= :drive/not-permitted
+               (:type (try (documents/export (:id item) "csv" bob object-store)
+                           (catch clojure.lang.ExceptionInfo e (ex-data e))))))
+        (is (some? (documents/export (:id item) "csv" alice object-store)))))))
+
+(deftest responses-become-a-workbook-in-the-drive
+  (with-state
+    (fn [state object-store]
+      (let [item (contact-form object-store)]
+        (documents/submit! (:id item) {"name" "田中" "email" "t@example.com"}
+                           alice object-store)
+        (let [made (documents/responses-sheet! (:id item) alice object-store)
+              sheet-id (:id (:item made))
+              wb (:resource (documents/content sheet-id alice object-store))
+              tab (get-in wb [:sheets/tabs "回答"])]
+          (is (= ":sheets/workbook" (:resource-kind (:item made))))
+          (is (str/starts-with? (:name (:item made)) "問い合わせ の回答 "))
+          (is (= {:sheets/value "お名前"} (get-in tab [:sheets/cells [1 3]])))
+          (is (= {:sheets/value "田中"} (get-in tab [:sheets/cells [2 3]])))
+          ;; A new document, beside the form — two documents now, not one
+          ;; replaced.
+          (is (= 2 (count (documents/documents @state alice)))))
+        ;; And a second snapshot is a second document, because two days'
+        ;; answers are two things somebody may want and overwriting would
+        ;; destroy one the owner never asked to lose.
+        (documents/responses-sheet! (:id item) alice object-store)
+        (is (= 3 (count (documents/documents @state alice))))))))
+
+(deftest only-the-owner-may-snapshot-the-responses
+  (with-state
+    (fn [_ object-store]
+      (let [item (contact-form object-store)]
+        (documents/grant! (:id item) bob "editor" alice)
+        (documents/submit! (:id item) {"name" "田中"} bob object-store)
+        (is (= :drive/not-permitted
+               (:type (try (documents/responses-sheet! (:id item) bob object-store)
+                           (catch clojure.lang.ExceptionInfo e (ex-data e))))))))))
+
+(deftest the-pane-is-told-which-exports-refuse
+  ;; The role is per item and the format table is per kind, so the pane
+  ;; filters — this is what it filters on. Without it there is a button that
+  ;; 403s for every viewer of a form.
+  (with-state
+    (fn [_ _]
+      (let [kinds (:kinds (documents/drive-view {:items []} alice))
+            by-kind (into {} (map (juxt :kind identity)) kinds)]
+        (is (= ["csv"] (:owner-only-exports (get by-kind "forms"))))
+        (is (= ["csv" "edn"] (:exports (get by-kind "forms"))))
+        ;; A workbook's own csv is the document, so nothing is owner-only.
+        (is (= [] (:owner-only-exports (get by-kind "sheets"))))
+        (is (= [] (:owner-only-exports (get by-kind "docs"))))))))
+
+(deftest a-form-nobody-answered-exports-its-header
+  ;; An export that produced nothing would be indistinguishable from a failed
+  ;; one.
+  (with-state
+    (fn [_ object-store]
+      (let [item (contact-form object-store)
+            text (String. ^bytes (:bytes (documents/export (:id item) "csv" alice
+                                                           object-store))
+                          "UTF-8")]
+        (is (= ["送信日時,回答者,お名前,メール"] (str/split-lines text)))))))
+
+(deftest an-answer-containing-a-comma-stays-one-answer
+  ;; Through sheets.csv rather than a second escaping routine written here.
+  (with-state
+    (fn [_ object-store]
+      (let [item (contact-form object-store)]
+        (documents/submit! (:id item) {"name" "田中, 鈴木" "email" "a@example.com"}
+                           alice object-store)
+        (let [text (String. ^bytes (:bytes (documents/export (:id item) "csv" alice
+                                                             object-store))
+                            "UTF-8")]
+          (is (str/includes? text "\"田中, 鈴木\"")))))))
+
 (deftest a-form-can-be-answered-by-anyone-who-may-read-it
   (with-state
     (fn [state object-store]

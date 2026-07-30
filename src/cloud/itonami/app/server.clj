@@ -1083,6 +1083,19 @@
                       (get request "answers")
                       (:user-id session))))
 
+            ;; Owner only, and a mutation: it creates a document.
+            (and (= method "POST")
+                 (id-from-path path
+                               #"/api/workspace/drive/documents/([^/]+)/responses-sheet"))
+            (let [session (require-app-session! exchange)]
+              (require-origin! exchange config)
+              (require-csrf! exchange session)
+              (send! exchange 200
+                     (documents/responses-sheet!
+                      (id-from-path path
+                                    #"/api/workspace/drive/documents/([^/]+)/responses-sheet")
+                      (:user-id session))))
+
             ;; Owner only — the responses are theirs.
             (and (= method "GET")
                  (id-from-path path #"/api/workspace/drive/documents/([^/]+)/submissions"))
