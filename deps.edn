@@ -68,6 +68,12 @@
   io.github.kotoba-lang/io-storj
   {:git/url "https://github.com/kotoba-lang/io-storj.git"
    :git/sha "daa038ba72fd515452d0f4091298568755a39ec9"}
+  ;; the other end: running a node rather than using a bucket. See
+  ;; cloud.itonami.app.storj-node for the two gates before it can join the
+  ;; public network — neither of them is code.
+  io.github.kotoba-lang/io-storj-node
+  {:git/url "https://github.com/kotoba-lang/io-storj-node.git"
+   :git/sha "c8c6d86b4725171b818dd17584a514eacfce22e7"}
   io.github.kotoba-lang/identity
   {:git/url "https://github.com/kotoba-lang/identity.git"
    :git/sha "5cf94e38c816ced6857ef62de344f6adea9fc050"}
