@@ -199,6 +199,13 @@
   .surface-check{width:1.25rem;height:1.25rem;margin:.5rem 0}
   .surface-note{color:var(--color-neutral-solid-gray-600);font-size:.8125rem;
     align-self:center}
+  /* A column, not a row: `align-self:center` on .surface-note is for the
+     flex rows it usually sits in, and left alone here every line would be
+     centred against the widest one. */
+  .export-notes{display:flex;flex-direction:column;gap:.25rem;margin-top:.25rem}
+  .export-notes .surface-note{align-self:flex-start}
+  .export-notes__list{margin:0;padding-left:1.25rem;display:flex;
+    flex-direction:column;gap:.125rem}
   .surface-grid{border-collapse:collapse;display:block;overflow-x:auto;max-width:100%}
   .surface-grid th{color:var(--color-neutral-solid-gray-600);font-size:.75rem;
     font-weight:400;padding:.25rem}
@@ -1156,7 +1163,8 @@
     // save that does not carry the current one, so this is not bookkeeping —
     // it is the thing that stops one editor's save deleting another's.
     const closedEditor = (id) => ({id, open:false, mode:'structured',
-                                   payload:null, text:'', tab:null, etag:null});
+                                   payload:null, text:'', tab:null, etag:null,
+                                   warnings:null});
     let driveEditor = closedEditor(null);
     // Two ways to edit one document: the fields for the surface it is, and
     // the JSON underneath for everything the fields do not reach. Whichever
@@ -1332,7 +1340,11 @@
             // of what is there, not a rewrite of history.
             driveEditor = {id:item.id, open:true, mode:driveEditor.mode,
                            payload:data.payload, text:'', tab:null,
-                           etag:data.item?.etag};
+                           etag:data.item?.etag,
+                           // Cleared, not carried over: the warnings on
+                           // screen were about the current version, and an
+                           // old version loaded into the editor is not it.
+                           warnings:data['export-warnings'] || null};
             syncText();
             save.hidden = false;
             renderPane();
@@ -1353,7 +1365,8 @@
           `/api/workspace/drive/documents/${encodeURIComponent(item.id)}`);
         const data = await request.json();
         if (!request.ok) throw new Error(data?.error?.message || '内容を取得できませんでした。');
-        return {payload:data.payload, etag:data.item?.etag};
+        return {payload:data.payload, etag:data.item?.etag,
+                warnings:data['export-warnings'] || null};
       };
       open.addEventListener('click', async () => {
         open.disabled = true; status.textContent = '読み込んでいます…';
@@ -1361,7 +1374,7 @@
           const fresh = await load();
           driveEditor = {id:item.id, open:true, mode:driveEditor.mode,
                          payload:fresh.payload, text:'', tab:null,
-                         etag:fresh.etag};
+                         etag:fresh.etag, warnings:fresh.warnings};
           syncText();
           save.hidden = false;
           renderPane();
@@ -1410,7 +1423,7 @@
               const fresh = await load();
               driveEditor = {id:item.id, open:true, mode:driveEditor.mode,
                              payload:fresh.payload, text:'', tab:null,
-                             etag:fresh.etag};
+                             etag:fresh.etag, warnings:fresh.warnings};
               syncText(); renderPane();
               status.textContent = '最新の版を読み込みました。';
             });
@@ -1465,7 +1478,32 @@
         link.setAttribute('download', '');
         exports.append(link);
       });
-      actions.append(exports, referencePanel(item), commentPanel(item));
+      // What a format cannot carry, said twice and for different reasons.
+      // The static line is about Markdown and is true of every document, so
+      // it costs nothing and is there before anything is opened. The list
+      // below it is about *this* document and needs its bytes, which arrive
+      // only when it is loaded — and the detail pane rebuilds on every
+      // keystroke in the search box, so fetching them per render would be a
+      // request per keystroke.
+      const exportNotes = make('div', 'export-notes');
+      if ((driveData.kinds || []).find((k) => k.kind === item.kind)
+            ?.exports?.includes('md')) {
+        exportNotes.append(make('p', 'surface-note',
+          'Markdown はブロック ID・コメント・提案・一部の書式を保持しません。'));
+      }
+      const specific = driveEditor.id === item.id ? driveEditor.warnings : null;
+      Object.entries(specific || {}).forEach(([format, entries]) => {
+        const list = make('ul', 'export-notes__list');
+        entries.forEach((entry) => {
+          list.append(make('li', 'surface-note',
+            `${entry.message}${entry.id ? `（${entry.id}）` : ''}`));
+        });
+        exportNotes.append(
+          make('p', 'surface-note',
+               `この文書を ${format.toUpperCase()} で書き出すと失われるもの:`),
+          list);
+      });
+      actions.append(exports, exportNotes, referencePanel(item), commentPanel(item));
       if (item.role === 'owner') actions.append(sharingPanel(item, status));
       return actions;
     };

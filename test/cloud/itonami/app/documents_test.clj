@@ -1383,7 +1383,9 @@
             error (try (documents/export (:id item) "csv" alice object-store)
                        (catch clojure.lang.ExceptionInfo e (ex-data e)))]
         (is (= :drive/unsupported-format (:type error)))
-        (is (= ["edn"] (:available error)))))))
+        ;; What a document *can* be, named in the refusal — a surface with
+        ;; no writer for csv still has two of its own.
+        (is (= ["edn" "md"] (:available error)))))))
 
 (deftest an-unknown-import-format-is-refused
   (with-state
@@ -1473,6 +1475,94 @@
             (is (contains? (set entries) "[Content_Types].xml"))
             (is (contains? (set entries) "xl/worksheets/sheet1.xml"))))))))
 
+(deftest a-document-leaves-as-markdown
+  (with-state
+    (fn [_ object-store]
+      (let [{:keys [item]} (documents/create! :docs "議事録" alice object-store)
+            doc (:resource (documents/content (:id item) alice object-store))
+            saved (save! (:id item)
+                         (assoc doc :docs/blocks
+                                [{:docs/id "h" :docs/kind :heading :docs/level 1
+                                  :docs/text "議事録"}
+                                 {:docs/id "p" :docs/kind :paragraph
+                                  :docs/text "出席者は3名。"}
+                                 {:docs/id "l" :docs/kind :list :docs/ordered? false
+                                  :docs/items ["予算の確認" "次回日程"]}])
+                         alice object-store)
+            out (documents/export (:id item) "md" alice object-store)
+            text (String. ^bytes (:bytes out) "UTF-8")]
+        (is (some? saved))
+        (is (= "議事録.md" (:filename out)))
+        (is (= "text/markdown; charset=utf-8" (:media-type out)))
+        (is (str/includes? text "# 議事録"))
+        (is (str/includes? text "出席者は3名。"))
+        (is (str/includes? text "- 予算の確認"))
+        ;; The title is not written twice: the document opens with its own
+        ;; h1, so `write` does not add another.
+        (is (= 1 (count (filter #(= "# 議事録" %) (str/split-lines text)))))))))
+
+(deftest markdown-comes-back-in
+  (with-state
+    (fn [_ object-store]
+      (let [text (str "# 週報\n\n"
+                      "今週の進捗です。\n\n"
+                      "- 設計レビュー\n- 実装\n\n"
+                      "| 項目 | 状態 |\n| --- | --- |\n| 設計 | 完了 |\n")
+            {:keys [item]} (documents/import! "md" "週報" (.getBytes text "UTF-8")
+                                              alice object-store)
+            back (:resource (documents/content (:id item) alice object-store))]
+        (is (= ":docs/document" (:resource-kind item)))
+        ;; The title the caller asked for wins over the file's own h1, the
+        ;; same as every other import — and the h1 stays in the body.
+        (is (= "週報" (:docs/title back)))
+        (is (= [:heading :paragraph :list :table]
+               (mapv :docs/kind (:docs/blocks back))))
+        (is (= ["設計レビュー" "実装"] (:docs/items (nth (:docs/blocks back) 2))))
+        (is (= [["項目" "状態"] ["設計" "完了"]]
+               (:docs/rows (nth (:docs/blocks back) 3))))))))
+
+(deftest markdown-that-is-not-markdown-is-still-a-document
+  ;; Every byte sequence is valid Markdown — there is no such thing as a
+  ;; malformed one — so unlike pptx and xlsx there is nothing to refuse.
+  ;; What matters is that junk becomes a document the validator accepts
+  ;; rather than an exception, because a parser that threw would turn a bad
+  ;; paste into a 500.
+  (with-state
+    (fn [_ object-store]
+      (doseq [junk ["\u0000\u0001\u0002" "|||" "###" (apply str (repeat 500 "*"))]]
+        (let [{:keys [item]} (documents/import! "md" "貼り付け"
+                                                (.getBytes ^String junk "UTF-8")
+                                                alice object-store)
+              back (:resource (documents/content (:id item) alice object-store))]
+          (is (= ":docs/document" (:resource-kind item)) (pr-str junk))
+          (is (vector? (:docs/blocks back)) (pr-str junk)))))))
+
+(deftest what-markdown-will-drop-is-said-before-it-drops-it
+  (with-state
+    (fn [_ object-store]
+      (let [{:keys [item]} (documents/create! :docs "設計" alice object-store)
+            doc (:resource (documents/content (:id item) alice object-store))
+            _ (save! (:id item)
+                     (assoc doc :docs/blocks
+                            [{:docs/id "p" :docs/kind :paragraph :docs/text "赤い字"
+                              :docs/text-runs
+                              [{:docs/from 0 :docs/to 2 :docs/style {:color "red"}}]}])
+                     alice object-store)
+            warnings (:export-warnings (documents/content (:id item) alice object-store))]
+        ;; Keyed by format, so the pane puts the warning next to the button
+        ;; that causes it.
+        (is (= ["md"] (keys warnings)))
+        (is (= ":markdown/style-dropped" (:code (first (get warnings "md")))))
+        (is (= "info" (:severity (first (get warnings "md")))))
+        (is (= "p" (:id (first (get warnings "md"))))))
+      ;; A document with nothing to lose says nothing rather than saying
+      ;; "no warnings" — an empty map would be a thing to render.
+      (let [{:keys [item]} (documents/create! :docs "普通" alice object-store)]
+        (is (nil? (:export-warnings (documents/content (:id item) alice object-store)))))
+      ;; And a surface that is not docs is not asked.
+      (let [{:keys [item]} (documents/create! :sheets "売上" alice object-store)]
+        (is (nil? (:export-warnings (documents/content (:id item) alice object-store))))))))
+
 (deftest only-a-workbook-is-offered-xlsx
   (with-state
     (fn [_ object-store]
@@ -1480,7 +1570,7 @@
             error (try (documents/export (:id item) "xlsx" alice object-store)
                        (catch clojure.lang.ExceptionInfo e (ex-data e)))]
         (is (= :drive/unsupported-format (:type error)))
-        (is (= ["edn"] (:available error))))
+        (is (= ["edn" "md"] (:available error))))
       ;; And a workbook is offered exactly the three it has writers for.
       (let [{:keys [item]} (documents/create! :sheets "売上" alice object-store)]
         (is (= ["csv" "edn" "xlsx"]
