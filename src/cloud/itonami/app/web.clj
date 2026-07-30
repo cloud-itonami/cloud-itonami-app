@@ -1618,6 +1618,12 @@
       });
       document.body.dataset.identityGate = passkeyReady ? 'ready' : 'required';
       $('#passkey-gate-notice').hidden = passkeyReady;
+      const lastPasskeyFailure = data['passkey-last-failure'];
+      if (!passkeyReady && lastPasskeyFailure) {
+        const diagnostic = lastPasskeyFailure['transaction-id'] || 'unknown';
+        setPasskeyStatus(
+          `直前のPasskey登録はサーバー検証に失敗しました。再試行してください（診断ID: ${diagnostic}）。`);
+      }
       if (!passkeyReady) {
         // a public view the user actually asked for stays put
         showView(publicViews.has(requestedView) ? requestedView : 'settings');
@@ -2449,7 +2455,8 @@
             [:p {:class "identity-summary__name" :id "identity-name"} "User"]
             [:p {:class "identity-summary__meta" :id "identity-email"} "—"]
             [:p {:class "identity-summary__meta" :id "identity-did"} "—"]]
-           [:span {:class "state-chip"} "端末認証済み"]]
+           [:span {:class "state-chip" :id "identity-session-state"}
+            "仮セッション"]]
           [:div {:class "settings-grid"}
            [:div {:class "settings-stack"}
             [:div {:class "local-card"}

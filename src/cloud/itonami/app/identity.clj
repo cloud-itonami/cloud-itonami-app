@@ -293,6 +293,14 @@
   (let [state (identity-state (store/snapshot))
         session (session-by-token token)
         user (get-in state [:users (:user-id session)])
+        passkey-failure
+        (when session
+          (->> (:events (store/snapshot))
+               reverse
+               (some #(when (and (= :passkey/registration-failed (:type %))
+                                 (= (:user-id session) (:user-id %)))
+                        (select-keys % [:at :transaction-id
+                                        :failure-type :failure-class])))))
         membership (get-in state [:memberships (:membership-id session)])
         organization (get-in state [:organizations (:organization-id session)])
         organizations (when session
@@ -306,6 +314,8 @@
                              (empty? (:passkeys state)))
      :authenticated? (boolean session)
      :csrf (:csrf session)
+     :passkey-last-failure
+     (when-not (:passkey-enrolled? user) passkey-failure)
      :user (when session (select-keys user [:id :did :account-id :email
                                             :contact-email :display-name :status
                                             :passkey-enrolled?]))

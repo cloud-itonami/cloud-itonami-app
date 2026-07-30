@@ -666,7 +666,20 @@
               x (byte-array (range 32))
               y-even (byte-array (repeat 32 2))
               y-odd (byte-array (concat (repeat 31 2) [3]))
-              even-did (did/did-key-from-p256 x y-even)]
+              even-did (did/did-key-from-p256 x y-even)
+              cose (doto (java.util.HashMap.)
+                     (.put (int 1) (int 2))
+                     (.put (int 3) (int -7))
+                     (.put (int -1) (int 1))
+                     (.put (int -2) x)
+                     (.put (int -3) y-even))
+              mapper
+              (com.fasterxml.jackson.databind.ObjectMapper.
+               (com.fasterxml.jackson.dataformat.cbor.CBORFactory.))
+              encoded-cose
+              (.encodeToString
+               (.withoutPadding (java.util.Base64/getUrlEncoder))
+               (.writeValueAsBytes mapper cose))]
           (is (:registered? public))
           (is (:authenticated? public))
           (is (true? (:passkey-required? public)))
@@ -675,6 +688,7 @@
           (is (false? (get-in public [:organization :profile-complete?])))
           (is (str/starts-with? even-did "did:key:z"))
           (is (= even-did (did/did-key-from-p256 x y-even)))
+          (is (= even-did (did/did-key-from-cose encoded-cose)))
           (is (not= even-did (did/did-key-from-p256 x y-odd)))
           (is (thrown-with-msg?
                clojure.lang.ExceptionInfo #"Passkey"
@@ -837,6 +851,14 @@
           (is (true?
                (get-in (store/snapshot)
                        [:identity :webauthn-transactions transaction-id :used?])))
+          (is (= :failed
+                 (get-in (store/snapshot)
+                         [:identity :webauthn-transactions transaction-id
+                          :status])))
+          (is (= :passkey/registration-failed
+                 (:type (last (:events (store/snapshot))))))
+          (is (nil?
+               (get (last (:events (store/snapshot))) :credential)))
           (is (thrown-with-msg?
                clojure.lang.ExceptionInfo #"使用済み"
                (local-identity/finish-passkey-registration!

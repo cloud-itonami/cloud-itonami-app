@@ -16,7 +16,12 @@
 
 (defn- cose-value [^Map cose key]
   (or (.get cose (int key))
-      (.get cose (long key))))
+      (.get cose (long key))
+      ;; Jackson's generic CBOR `Map` decoder represents integer map keys as
+      ;; strings. WebAuthn COSE keys are the signed integers 1, -1, -2 and -3,
+      ;; so ignoring this representation made every real browser credential
+      ;; fail after otherwise successful server verification.
+      (.get cose (str key))))
 
 (defn- base58btc [bytes]
   (let [leading-zeroes (count (take-while zero? (map unsigned-byte bytes)))

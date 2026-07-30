@@ -105,11 +105,60 @@
                                   (Instant/now))))
       (throw (ex-info "Passkey 要求が無効、期限切れ、または使用済みです。"
                       {:type :passkey/invalid-transaction})))
-    ;; Consume before verification so a captured response cannot be replayed.
-    (store/transact! assoc-in
-                     [:identity :webauthn-transactions transaction-id :used?]
-                     true)
+    ;; Claim before verification so a captured response cannot be replayed. Keep
+    ;; the explicit status because `used?` alone made a failed verification look
+    ;; indistinguishable from a completed ceremony during incident diagnosis.
+    (store/transact!
+     update-in [:identity :webauthn-transactions transaction-id]
+     merge {:used? true :status :verifying :verification-started-at (store/now)})
     transaction))
+
+(defn- safe-failure-type [error]
+  (or (:type (ex-data error))
+      (condp instance? error
+        java.lang.IllegalArgumentException :passkey/invalid-response
+        java.io.IOException :passkey/invalid-response-json
+        :passkey/registration-verification-failed)))
+
+(defn- record-registration-failure!
+  "Persist only operational metadata. Credential JSON, challenges, authenticator
+  data and exception messages are deliberately excluded from the state/event."
+  [transaction-id user-id error]
+  (let [now (store/now)
+        failure-type (safe-failure-type error)
+        exception-class (.getName (class error))]
+    (store/transact!
+     (fn [state]
+       (-> state
+           (update-in [:identity :webauthn-transactions transaction-id]
+                      merge
+                      {:status :failed
+                       :failed-at now
+                       :failure-type failure-type
+                       :failure-class exception-class})
+           (update :events conj
+                   {:type :passkey/registration-failed
+                    :at now
+                    :user-id user-id
+                    :transaction-id transaction-id
+                    :failure-type failure-type
+                    :failure-class exception-class}))))
+    (binding [*out* *err*]
+      (println "passkey registration failed"
+               (pr-str {:transaction-id transaction-id
+                        :user-id user-id
+                        :failure-type failure-type
+                        :failure-class exception-class})))
+    (if (instance? clojure.lang.ExceptionInfo error)
+      (throw error)
+      (throw
+       (ex-info
+        (str "Passkey のサーバー検証に失敗しました。再試行してください"
+             "（診断ID: " transaction-id "）。")
+        {:type :passkey/verification-failed
+         :reason failure-type
+         :diagnostic-id transaction-id}
+        error)))))
 
 (defn start-registration!
   [{:keys [id email display-name user-handle]} rp-id origin]
@@ -150,48 +199,54 @@
           (when-not (= expected-user-id (:user-id transaction))
             (throw (ex-info "Passkey 登録対象が一致しません。"
                             {:type :passkey/invalid-transaction})))
-          (active-transaction! transaction-id :registration))
-        request (PublicKeyCredentialCreationOptions/fromJson request-json)
-        response (PublicKeyCredential/parseRegistrationResponseJson
-                  (json/write-str credential-response))
-        result (.finishRegistration
-                (relying-party rp-id origin)
-                (-> (FinishRegistrationOptions/builder)
-                    (.request request)
-                    (.response response)
-                    .build))
-        user (get-in (identity-state) [:users user-id])
-        credential-id (.getBase64Url (.getId (.getKeyId result)))
-        public-key-cose (.getBase64Url (.getPublicKeyCose result))
-        user-did (did/did-key-from-cose public-key-cose)
-        now (store/now)]
-    (when-not (.isUserVerified result)
-      (throw (ex-info "Authenticator がユーザー確認を完了していません。"
-                      {:type :passkey/user-verification-required})))
-    (store/transact!
-     (fn [state]
-       (-> state
-           (assoc-in [:identity :passkeys credential-id]
-                     {:id credential-id :credential-id credential-id
-                      :user-id user-id :user-handle (:user-handle user)
-                      :public-key-cose public-key-cose
-                      :did user-did
-                      :signature-count (.getSignatureCount result)
-                      :backup-eligible? (.isBackupEligible result)
-                      :backed-up? (.isBackedUp result)
-                      :created-at now :last-used-at nil})
-           (assoc-in [:identity :users user-id :did] user-did)
-           (assoc-in [:identity :users user-id :subject]
-                     (identity/subject user-did :person
-                                       {:did user-did
-                                        :labels #{:local :passkey}}))
-           (assoc-in [:identity :users user-id :passkey-enrolled?] true)
-           (assoc-in [:identity :users user-id :status] :active)
-           (update :events conj {:type :passkey/registered :at now
-                                 :user-id user-id
-                                 :credential-id credential-id}))))
-    {:user-id user-id :credential-id credential-id
-     :did user-did :verified? true}))
+          (active-transaction! transaction-id :registration))]
+    (try
+      (let [request (PublicKeyCredentialCreationOptions/fromJson request-json)
+            response (PublicKeyCredential/parseRegistrationResponseJson
+                      (json/write-str credential-response))
+            result (.finishRegistration
+                    (relying-party rp-id origin)
+                    (-> (FinishRegistrationOptions/builder)
+                        (.request request)
+                        (.response response)
+                        .build))
+            user (get-in (identity-state) [:users user-id])
+            credential-id (.getBase64Url (.getId (.getKeyId result)))
+            public-key-cose (.getBase64Url (.getPublicKeyCose result))
+            user-did (did/did-key-from-cose public-key-cose)
+            now (store/now)]
+        (when-not (.isUserVerified result)
+          (throw (ex-info "Authenticator がユーザー確認を完了していません。"
+                          {:type :passkey/user-verification-required})))
+        (store/transact!
+         (fn [state]
+           (-> state
+               (assoc-in [:identity :passkeys credential-id]
+                         {:id credential-id :credential-id credential-id
+                          :user-id user-id :user-handle (:user-handle user)
+                          :public-key-cose public-key-cose
+                          :did user-did
+                          :signature-count (.getSignatureCount result)
+                          :backup-eligible? (.isBackupEligible result)
+                          :backed-up? (.isBackedUp result)
+                          :created-at now :last-used-at nil})
+               (assoc-in [:identity :users user-id :did] user-did)
+               (assoc-in [:identity :users user-id :subject]
+                         (identity/subject user-did :person
+                                           {:did user-did
+                                            :labels #{:local :passkey}}))
+               (assoc-in [:identity :users user-id :passkey-enrolled?] true)
+               (assoc-in [:identity :users user-id :status] :active)
+               (update-in [:identity :webauthn-transactions transaction-id]
+                          merge {:status :succeeded :completed-at now})
+               (update :events conj {:type :passkey/registered :at now
+                                     :user-id user-id
+                                     :credential-id credential-id}))))
+        {:user-id user-id :credential-id credential-id
+         :did user-did :verified? true})
+      (catch Exception error
+        (record-registration-failure!
+         transaction-id user-id error)))))
 
 (defn- start-assertion!
   "Begin a user-verifying assertion. `kind` distinguishes a plain sign-in
