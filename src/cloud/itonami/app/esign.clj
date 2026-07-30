@@ -47,20 +47,31 @@
     signature in ten years must not require this app's identity store to still
     exist.
 
-  ## Time is app-attested and this record says so
+  ## Time is one of three things, and the record says which
 
-  `:signature/time-attestation` is `:app-attested`. There is no RFC 3161
-  timestamp token, because there is no ASN.1/CMS implementation in this
-  workspace to build one with and an accredited TSA speaks nothing else.
+  `timeAttestation` is `:app-attested`, `:tsa-attested` or `:accredited`, and
+  the three are different legal objects:
 
-  This matters legally rather than cosmetically, so the record states it in a
-  field rather than in a comment: in Japan an accredited timestamp
-  (総務大臣認定) is one of the three ways to satisfy the tamper-evidence
-  requirement for retained electronic transaction data (電子帳簿保存法), and
-  this is not one. `verify-evidence` reports `:qualified-timestamp? false` and
-  never returns a status that could be read as \"legally timestamped\". A
-  blockchain anchor would not change that answer either — it proves \"no later
-  than\", which is not what the regulation names.
+  | value | what it is |
+  |---|---|
+  | `:app-attested` | this server's word. No TSA configured. |
+  | `:tsa-attested` | a verified RFC 3161 token from a TSA nobody vouched for |
+  | `:accredited` | a token whose signer is in this deployment's accredited set |
+
+  Only the third is what 電子帳簿保存法 names as a tamper-evidence measure for
+  retained transaction data (総務大臣認定タイムスタンプ). Collapsing them into
+  \"timestamped\" is how a self-issued token reads as an accredited one, which
+  `org-ietf-rfc3161` refuses to allow by keeping `:verified` and `:trusted`
+  apart — and this preserves that distinction rather than flattening it at the
+  app layer.
+
+  A blockchain anchor is none of the three: it proves \"no later than\", which
+  is not what the regulation names.
+
+  Signing with no TSA configured is **not refused**. It records `:app-attested`
+  and the UI says so, because an operator who has not chosen a TSA should still
+  be able to sign internally. What is refused is silence: `timestamp!` never
+  returns a token it could not verify.
 
   ## Content and evidence are separated on purpose
 
@@ -69,6 +80,15 @@
   only**: no document bytes, no outline text, no names, no email addresses. So
   `forget-content!` can satisfy an erasure request while the evidence still
   proves that a document with digest X was signed by `did:key:…`.
+
+  The outline is stored **encrypted** under a per-envelope key, and
+  `forget-content!` destroys the key rather than the map entry — see
+  `cloud.itonami.app.esign.vault` for why removing an entry from a persisted
+  EDN file is redaction from the live view and not a deletion. The three fields
+  電子帳簿保存法 requires be retained and searchable live in
+  `cloud.itonami.app.esign.retention`, in the clear, and deliberately SURVIVE
+  the shredding: the document a signer read and the transaction record the law
+  keeps are different objects.
 
   This is a structural decision and it had to be made before any byte reached a
   content-addressed store. Writing signed content to Filecoin or IPFS first and
@@ -81,8 +101,13 @@
             [cloud.itonami.app.documents :as documents]
             [cloud.itonami.app.esign.assertion :as assertion]
             [cloud.itonami.app.esign.commitment :as commitment]
+            [cloud.itonami.app.esign.retention :as retention]
+            [cloud.itonami.app.esign.timestamp :as timestamp]
+            [cloud.itonami.app.esign.vault :as vault]
             [cloud.itonami.app.passkey :as passkey]
-            [cloud.itonami.app.store :as store])
+            [cloud.itonami.app.store :as store]
+            [cloud.itonami.app.config :as config]
+            [asn1.core :as asn1])
   (:import [java.security SecureRandom]
            [java.util Base64]))
 
@@ -189,6 +214,9 @@
                                        (or object-store (documents/store-instance)))
         outline (commitment/outline (:resource source))
         signers (mapv #(signer-entry state %) (distinct signer-dids))
+        ;; Before the envelope map, because the id is the AAD the outline is
+        ;; sealed under — a ciphertext moved to another envelope's record must
+        ;; fail to authenticate rather than decrypt into it.
         id (store/new-id "env")
         now (store/now)
         envelope {:esign/id id
@@ -198,8 +226,12 @@
                   :esign/document-digest (commitment/digest-of (:bytes source))
                   :esign/media-type (:media-type source)
                   :esign/resource-kind (:resource-kind source)
-                  ;; Document content. Erasable — see `forget-content!`.
-                  :esign/presentation outline
+                  ;; Document content, encrypted under a key `forget-content!`
+                  ;; destroys. The digest is over the PLAINTEXT, because that is
+                  ;; what the signer saw and what the commitment binds — a
+                  ;; digest of the ciphertext would change with the nonce and
+                  ;; mean nothing to a verifier.
+                  :esign/presentation-sealed (vault/seal! id outline)
                   :esign/presentation-digest (commitment/digest-of-string outline)
                   :esign/purpose purpose
                   :esign/intent (or (not-empty (str/trim (str intent)))
@@ -332,7 +364,7 @@
            :commitment-digest (commitment/commitment-digest commitment-map)
            ;; Shown so the signer's client can display exactly what the
            ;; challenge was computed over, and so a reviewer can recompute it.
-           :presentation (:esign/presentation envelope))))
+           :presentation (vault/open envelope-id (:esign/presentation-sealed envelope)))))
 
 (defn signature-entry
   "One signature, in the shape it is exchanged in.
@@ -350,7 +382,7 @@
   beyond the DID: no name, no email, no user id. That omission is what makes an
   evidence record survivable under an erasure request."
   [{:keys [commitment-map response passkey-credential verification signed-at
-           role-credential status-list]}]
+           role-credential status-list stamp]}]
   (let [graded (assurance/assurance passkey-credential)]
     {"signerDid" (get commitment-map "signerDid")
      "credentialId" (:credential-id passkey-credential)
@@ -369,9 +401,16 @@
      "commitment" commitment-map
      "commitmentDigest" (commitment/commitment-digest commitment-map)
      "signedAt" signed-at
-     ;; Not an RFC 3161 token and not an accredited timestamp. Named as what it
-     ;; is so that no reader has to infer it. See the namespace docstring.
-     "timeAttestation" "app-attested"
+     ;; One of app-attested / tsa-attested / accredited. See the namespace
+     ;; docstring: they are different legal objects and the field keeps them
+     ;; apart so no reader has to infer which one this is.
+     "timeAttestation" (name (or (:timestamp/attestation stamp) :app-attested))
+     "timestamp" (when stamp
+                   {"tokenDer" (asn1/hex (:timestamp/token-der stamp))
+                    "genTime" (:timestamp/gen-time stamp)
+                    "tsa" (:timestamp/tsa stamp)
+                    "serialNumber" (:timestamp/serial-number stamp)
+                    "policy" (:timestamp/policy stamp)})
      "roleCredential" role-credential
      ;; The list as it stood NOW. A later revocation must not unmake this.
      "statusListCredential" status-list}))
@@ -427,6 +466,12 @@
                      {:reason (:reason verification)
                       :detail (:detail verification)}))
         now (store/now)
+        ;; Over the commitment digest — the same 32 bytes the authenticator
+        ;; signed. Timestamping the signature bytes instead would attest to the
+        ;; signature's existence without binding it to what was signed, and the
+        ;; TSA would learn nothing either way: a digest is all that leaves.
+        stamp (timestamp/timestamp!
+               (commitment/sha256 (commitment/canonical-bytes recomputed)))
         status-list (credential/sign
                      (credential/status-list-credential (store/snapshot) nil))
         entry (signature-entry {:commitment-map recomputed
@@ -435,7 +480,8 @@
                                 :verification verification
                                 :signed-at now
                                 :role-credential role-credential
-                                :status-list status-list})
+                                :status-list status-list
+                                :stamp stamp})
         result (volatile! nil)]
     (store/transact!
      (fn [current]
@@ -503,6 +549,27 @@
 
 ;; ── reading ──────────────────────────────────────────────────────────────────
 
+(def ^:private attestation-strength
+  {"app-attested" 0 "tsa-attested" 1 "accredited" 2})
+
+(defn weakest-attestation
+  "The weakest `timeAttestation` among the envelope's signatures.
+
+  The WEAKEST, not the strongest and not the most recent. An envelope with three
+  signatures of which one is `app-attested` is an envelope whose tamper-evidence
+  measure does not cover one signature — and a regulator reads the envelope, not
+  the best signature in it. Reporting the strongest would let one accredited
+  token launder two that are not.
+
+  An envelope with no signatures yet is `\"app-attested\"`, which is the honest
+  floor rather than an absence a caller has to interpret."
+  [envelope]
+  (or (->> (:esign/signatures envelope)
+           (map #(get % "timeAttestation" "app-attested"))
+           (sort-by #(get attestation-strength % 0))
+           first)
+      "app-attested"))
+
 (defn- participant? [envelope principal did]
   (or (= principal (:esign/created-by envelope))
       (boolean (some #(= did (:signer/did %)) (:esign/signers envelope)))))
@@ -544,12 +611,14 @@
              :signature-count (count (:esign/signatures envelope))
              ;; Stated on every read, not only in the evidence record: a UI that
              ;; showed "signed" without this would be implying more than the
-             ;; signature establishes.
-             :qualified-timestamp? false
-             :time-attestation "app-attested"
+             ;; signature establishes. `:accredited` is the ONLY value that means
+             ;; 電子帳簿保存法's tamper-evidence measure is met by a timestamp.
+             :qualified-timestamp? (= "accredited" (weakest-attestation envelope))
+             :time-attestation (weakest-attestation envelope)
              :participant? participant?}
-      (and participant? (:esign/presentation envelope))
-      (assoc :presentation (:esign/presentation envelope)))))
+      participant?
+      (assoc :presentation (vault/open (:esign/id envelope)
+                                       (:esign/presentation-sealed envelope))))))
 
 (defn envelopes
   "Every envelope this principal created or is asked to sign, newest first."
@@ -584,8 +653,14 @@
   String keys throughout — see `signature-entry` on why an interchange object
   does not use Clojure keywords.
 
-  `\"timestamps\"` is an empty vector rather than an absent key. Absent would
-  read as \"not applicable\"; empty says there are none, which is the fact."
+  `\"timestamps\"` collects every RFC 3161 token the signatures carry. It is an
+  empty vector rather than an absent key when there are none — absent would read
+  as \"not applicable\"; empty says there are none, which is the fact.
+
+  `\"qualifiedTimestamp\"` is true only when EVERY signature carries an
+  `:accredited` token. One signature without one is one signature the tamper-
+  evidence measure does not cover, and an envelope is the unit a regulator
+  reads."
   [envelope]
   {"schema" evidence-schema
    "envelopeId" (:esign/id envelope)
@@ -600,8 +675,47 @@
     "mediaType" (:esign/media-type envelope)}
    "requiredSigners" (mapv :signer/did (:esign/signers envelope))
    "signatures" (vec (:esign/signatures envelope))
-   "timestamps" []
-   "qualifiedTimestamp" false})
+   "timestamps" (into [] (keep #(get % "timestamp")) (:esign/signatures envelope))
+   "qualifiedTimestamp" (= "accredited" (weakest-attestation envelope))})
+
+(defn record-retention!
+  "Record the three fields 電子帳簿保存法 requires be searchable.
+
+  Separate from `create!` and not part of it, because most envelopes are not
+  transactions: an internal consent or a set of minutes has no 取引金額. Making
+  it a required step of every signature would push operators into inventing
+  values for the fields the law is about."
+  [envelope-id entry-input]
+  (let [envelope (envelope-of (store/snapshot) envelope-id)]
+    (when-not envelope
+      (refuse! "envelope が見つかりません。" :esign/not-found {:envelope-id envelope-id}))
+    (let [entry (assoc (retention/entry
+                        (assoc entry-input
+                               :envelope-id envelope-id
+                               :document-digest (:esign/document-digest envelope)))
+                       :retention/recorded-at (store/now))]
+      (store/transact! assoc-in [:esign :retention envelope-id] entry)
+      entry)))
+
+(defn retention-entry [state envelope-id]
+  (get-in state [:esign :retention envelope-id]))
+
+(defn compliance
+  "What is still missing for 電子帳簿保存法 on this envelope.
+
+  Returns the gaps, never a pass. The 真実性 limb can be satisfied by an
+  operator's 事務処理規程, which this process cannot observe — so it is an input
+  and the answer says which limb rests on it."
+  [state envelope-id {:keys [procedure-documented?]}]
+  (let [envelope (envelope-of state envelope-id)]
+    {:schema "cloud.itonami.app.esign.compliance.v1"
+     :envelope-id envelope-id
+     :time-attestation (weakest-attestation envelope)
+     :retention (retention-entry state envelope-id)
+     :gaps (retention/compliance-gaps
+            {:retention-entry (retention-entry state envelope-id)
+             :timestamp-attestation (keyword (weakest-attestation envelope))
+             :procedure-documented? procedure-documented?})}))
 
 (defn forget-content!
   "Destroy the outline, keep the evidence.
@@ -612,16 +726,29 @@
   obligation over the second is therefore compatible with a deletion request
   over the first, which is only true because they were never stored together.
 
+  **It destroys a KEY, not a map entry.** `cloud.itonami.app.esign.vault`
+  explains why: `store/transact!` persists by writing a new `state.edn` over the
+  old, so removing an entry leaves every prior copy — old files, backups,
+  unoverwritten disk blocks — intact. Destroying the per-envelope key makes all
+  of them undecryptable at once. The ciphertext still exists everywhere it did;
+  it is unreadable. That is a stronger claim than removal and a weaker one than
+  physical destruction, and it is the one available when copies cannot be
+  recalled.
+
   What it does NOT do is remove the document from the Drive — that is
-  `documents/purge!` and a different decision. Nor does it make the digest
-  reversible; it never was."
+  `documents/purge!` and a different decision. Nor does it touch the retention
+  index: 電子帳簿保存法 requires 取引年月日・取引金額・取引先 be kept and
+  searchable, and those are a different object from the document a signer read.
+  `cloud.itonami.app.esign.retention` says so and makes the operator state the
+  basis. Nor does it make the digest reversible; it never was."
   [envelope-id]
   (let [result (volatile! nil)]
+    (vault/forget! envelope-id)
     (store/transact!
      (fn [current]
        (if-let [envelope (envelope-of current envelope-id)]
          (let [updated (-> envelope
-                           (dissoc :esign/presentation)
+                           (dissoc :esign/presentation-sealed)
                            (assoc :esign/content-forgotten? true
                                   :esign/content-forgotten-at (store/now)))]
            (vreset! result updated)
@@ -700,6 +827,52 @@
             (when-not (:verified result)
               (add! :total-failed (:reason result) (:detail result)))))
 
+        ;; The stored `timeAttestation` is this app's word, and an evidence
+        ;; record exists so a reader does not have to take this app's word. So
+        ;; the token is re-verified against the commitment digest it should
+        ;; cover, and a stored claim that does not survive that is downgraded
+        ;; rather than reported.
+        (let [stamp (get signature "timestamp")
+              claimed (get signature "timeAttestation" "app-attested")]
+          (cond
+            (and (not= "app-attested" claimed) (nil? stamp))
+            (add! :total-failed :timestamp-claimed-but-absent
+                  (str "timeAttestation は " claimed " ですが token がありません"))
+
+            stamp
+            (let [checked (try (timestamp/verify-stored
+                                (config/load-config)
+                                {:timestamp/token-der (asn1/unhex (get stamp "tokenDer"))}
+                                (commitment/challenge-bytes commitment-map))
+                               (catch Exception e
+                                 {:verified false :reason (or (:type (ex-data e)) :exception)}))]
+              (cond
+                (not (:verified checked))
+                (add! :total-failed :timestamp-invalid
+                      (str "記録された timestamp が commitment を検証しません: "
+                           (:reason checked)))
+
+                ;; Verified but the TSA is not one this deployment accredits.
+                ;; Real evidence of time, and not what 電子帳簿保存法 names.
+                (and (= "accredited" claimed) (not (true? (:trusted checked))))
+                (add! :indeterminate :timestamp-not-accredited-here
+                      "この deployment の設定では、この TSA は認定事業者として登録されていません。")
+
+                (not= (:gen-time checked) (get stamp "genTime"))
+                (add! :total-failed :timestamp-time-altered
+                      "記録された genTime が token の中身と一致しません")))
+
+            ;; NO reason is added when there is simply no timestamp. Time is a
+            ;; separate question from signature validity — the same
+            ;; :verified/:trusted separation `org-ietf-rfc3161` keeps and this
+            ;; nearly folded away. An internally-signed agreement with no TSA
+            ;; configured has a perfectly valid signature, and marking every one
+            ;; of them :indeterminate would make the field say nothing while
+            ;; hiding the signatures that really are indeterminate. The time
+            ;; qualification is reported at the top level instead, in
+            ;; :esign/time-attestation and :esign/time-note.
+            :else nil))
+
         (when-not (assurance/at-least? (keyword (get signature "assurance"))
                                        evidence-assurance-floor)
           (add! :indeterminate :assurance-below-floor
@@ -767,7 +940,12 @@
                        signatures)
          signed (set (map #(get % "signerDid") signatures))
          missing (remove signed (get evidence-record "requiredSigners"))
-         statuses (set (map :status checked))]
+         statuses (set (map :status checked))
+         attestation (or (->> signatures
+                              (map #(get % "timeAttestation" "app-attested"))
+                              (sort-by #(get attestation-strength % 0))
+                              first)
+                         "app-attested")]
      {:schema "cloud.itonami.app.esign.verification.v1"
       :esign/envelope-id envelope-id
       :esign/status (cond
@@ -780,10 +958,21 @@
       :esign/missing-signers (vec missing)
       ;; Reported on every verification, at the top level, because it is the
       ;; single most likely thing for a reader to assume the wrong way round.
-      :esign/qualified-timestamp? false
-      :esign/time-attestation :app-attested
+      ;; The WEAKEST attestation across the signatures — one signature without a
+      ;; qualified timestamp is one the measure does not cover, and an envelope
+      ;; is the unit a regulator reads.
+      :esign/qualified-timestamp? (= "accredited" attestation)
+      :esign/time-attestation (keyword attestation)
       :esign/time-note
-      (str "署名時刻はこの app が記録したものであり、RFC 3161 の時刻認証局による"
-           "タイムスタンプではありません。電子帳簿保存法が認める認定タイムスタンプ"
-           "には該当しません。")
+      (case attestation
+        "accredited"
+        (str "署名時刻は認定 TSA の RFC 3161 タイムスタンプによります。"
+             "電子帳簿保存法の真実性確保措置のうちタイムスタンプの要件を満たし得ます。")
+        "tsa-attested"
+        (str "RFC 3161 タイムスタンプは検証できましたが、この TSA はこの deployment が"
+             "認定事業者として設定したものではありません。電子帳簿保存法が求める"
+             "認定タイムスタンプに該当するとは限りません。")
+        (str "署名時刻はこの app が記録したものであり、RFC 3161 の時刻認証局による"
+             "タイムスタンプではありません。電子帳簿保存法が認める認定タイムスタンプ"
+             "には該当しません。"))
       :esign/rp-id-checked? (boolean rp-id-hash)})))

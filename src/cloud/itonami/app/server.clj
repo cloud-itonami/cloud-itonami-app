@@ -11,6 +11,7 @@
             [cloud.itonami.app.credential-assurance :as credential-assurance]
             [cloud.itonami.app.documents :as documents]
             [cloud.itonami.app.esign :as esign]
+            [cloud.itonami.app.esign.retention :as esign-retention]
             [cloud.itonami.app.executor :as executor]
             [cloud.itonami.app.filecoin :as filecoin]
             [cloud.itonami.app.fleet :as fleet]
@@ -1245,6 +1246,57 @@
               (send! exchange 200
                      (esign/envelope-view (esign/forget-content! id)
                                           (esign-who session))))
+
+            ;; The three fields 電子帳簿保存法 requires be retained and
+            ;; searchable. A separate step from signing because most envelopes
+            ;; are not transactions — making it part of every signature would
+            ;; push operators into inventing a 取引金額 for a consent form.
+            (and (= method "POST")
+                 (id-from-path path #"/api/esign/envelopes/([^/]+)/retention"))
+            (let [session (require-app-session! exchange)
+                  id (id-from-path path #"/api/esign/envelopes/([^/]+)/retention")
+                  request (read-json exchange)]
+              (require-origin! exchange config)
+              (require-csrf! exchange session)
+              (esign/envelope! (store/snapshot) id (esign-who session))
+              (send! exchange 200
+                     (esign/record-retention!
+                      id {:transaction-date (:transaction-date request)
+                          :amount-minor (:amount-minor request)
+                          :currency (:currency request)
+                          :counterparty (:counterparty request)
+                          :basis (:basis request)
+                          :note (:note request)})))
+
+            ;; 検索要件: date range, amount range, counterparty, combinable.
+            (and (= method "GET") (= path "/api/esign/retention"))
+            (let [session (require-app-session! exchange)
+                  q (query-params exchange)]
+              (require-app-session! exchange)
+              (send! exchange 200
+                     {:schema esign-retention/schema
+                      :entries (esign-retention/search
+                                (store/snapshot)
+                                {:date-from (get q "date-from")
+                                 :date-to (get q "date-to")
+                                 :amount-min (some-> (get q "amount-min") parse-long)
+                                 :amount-max (some-> (get q "amount-max") parse-long)
+                                 :currency (get q "currency")
+                                 :counterparty (get q "counterparty")})
+                      :user (:user-id session)}))
+
+            ;; What is still missing for 電子帳簿保存法 on one envelope. Gaps,
+            ;; never a tick — see `retention/compliance-gaps`.
+            (and (= method "GET")
+                 (id-from-path path #"/api/esign/envelopes/([^/]+)/compliance"))
+            (let [session (require-app-session! exchange)
+                  id (id-from-path path #"/api/esign/envelopes/([^/]+)/compliance")]
+              (esign/envelope! (store/snapshot) id (esign-who session))
+              (send! exchange 200
+                     (esign/compliance
+                      (store/snapshot) id
+                      {:procedure-documented?
+                       (boolean (get-in config [:esign :procedure-documented?]))})))
 
             ;; Verifying a record this app may not have issued. Behind the
             ;; session like everything else: the verification itself is pure and

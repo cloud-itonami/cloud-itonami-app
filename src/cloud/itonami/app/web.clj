@@ -3106,6 +3106,26 @@
     const esignStatusText = {
       'awaiting-signatures':'署名待ち', completed:'署名完了', declined:'辞退'
     };
+    const esignTimeText = {
+      accredited:{
+        strong:'署名時刻は認定 TSA のタイムスタンプによって証明されています。',
+        rest:' RFC 3161 の時刻認証局による時刻認証を受けており、電子帳簿保存法の真実性確保措置のうち'
+             +'タイムスタンプの要件を満たし得ます（認定事業者の設定はこの deployment の管理者が行います）。'},
+      'tsa-attested':{
+        strong:'RFC 3161 タイムスタンプは検証できましたが、認定事業者としては設定されていません。',
+        rest:' 時刻の証拠としては有効ですが、電子帳簿保存法が求める認定タイムスタンプに該当するとは限りません。'},
+      'app-attested':{
+        strong:'署名時刻はこのアプリが記録したもので、認定タイムスタンプではありません。',
+        rest:' 認定タイムスタンプ（総務大臣認定の TSA による RFC 3161）を設定していない間は、'
+             +'電子帳簿保存法が求める真実性の確保措置としては、この時刻だけでは足りません。'
+             +'署名そのもの（誰が・何に同意したか）は、この画面を離れても検証できます。'}
+    };
+    const renderEsignTimeNotice = (attestation) => {
+      const text = esignTimeText[attestation] || esignTimeText['app-attested'];
+      const box = $('#esign-time-notice');
+      if (!box) return;
+      box.replaceChildren(make('strong', null, text.strong), document.createTextNode(text.rest));
+    };
     const esignAssuranceText = {
       'hardware-attested':'ハードウェア（attestation 検証済み）',
       'platform-attested':'ハードウェア（AAGUID 一致）',
@@ -3207,6 +3227,13 @@
         (e) => e.status === 'awaiting-signatures').length;
       $('#esign-source').textContent =
         `${data.envelopes.length} 件 · 署名待ち ${waiting} 件`;
+      // The WEAKEST attestation across every envelope shown. One envelope
+      // without a qualified timestamp is one the measure does not cover, and the
+      // banner is read as a statement about the screen.
+      const order = {'app-attested':0, 'tsa-attested':1, accredited:2};
+      renderEsignTimeNotice(
+        data.envelopes.map((e) => e['time-attestation'] || 'app-attested')
+          .sort((a, b) => (order[a] || 0) - (order[b] || 0))[0] || 'app-attested');
       data.envelopes.forEach((envelope) => {
         const item = listItem(envelope['document-title'] || envelope['document-id'],
           `${esignStatusText[envelope.status] || envelope.status} · ${envelope['created-at']}`,
@@ -6235,9 +6262,13 @@
          ;; showed "署名済み" without this would be implying more than the
          ;; signature establishes, and the person reading it is the one who has
          ;; to know.
+         ;; Filled in per envelope by renderEsign — the three attestations are
+         ;; different legal objects and a fixed sentence would be wrong for two
+         ;; of them. Defaults to the weakest, which is the honest floor before
+         ;; anything is loaded.
          [:div {:class "security-callout" :id "esign-time-notice"}
           [:strong "署名時刻はこのアプリが記録したもので、認定タイムスタンプではありません。"]
-          " RFC 3161 の時刻認証局（総務大臣認定事業者）による時刻認証は未実装のため、"
+          " 認定タイムスタンプ（総務大臣認定の TSA による RFC 3161）を設定していない間は、"
           "電子帳簿保存法が求める真実性の確保措置としては、この時刻だけでは足りません。"
           "署名そのもの（誰が・何に同意したか）は、この画面を離れても検証できます。"]
          [:div {:class "record-browser"}
