@@ -320,6 +320,10 @@
   .surface-grid th{color:var(--color-neutral-solid-gray-600);font-size:.75rem;
     font-weight:400;padding:.25rem}
   .surface-grid td{padding:1px}
+  /* A computed cell reads as a result rather than as something typed. The
+     value is right-aligned the way a number is in every spreadsheet. */
+  .surface-cell--computed{text-align:right;
+    background:var(--color-neutral-solid-gray-50, transparent)}
   .surface-cell{width:8rem;min-height:2rem;box-sizing:border-box;padding:.25rem .5rem;
     border:1px solid var(--color-neutral-solid-gray-200);border-radius:.25rem;
     background:var(--color-neutral-white);font:inherit;font-size:.8125rem}
@@ -1448,12 +1452,26 @@
         for (let col = 1; col <= maxCol; col += 1) {
           const td = make('td');
           const cell = cells[cellKey(row, col)] || {};
-          const shown = cell['sheets/formula'] !== undefined
-            ? `=${cell['sheets/formula']}` : (cell['sheets/value'] ?? '');
+          // A formula shows what it comes to, and shows itself when the
+          // cell is being edited — which is what every spreadsheet does and
+          // the only way to see a formula you are about to change.
+          const formula = cell['sheets/formula'];
+          const computed = driveEditor.computed?.[current]?.[`[${row} ${col}]`];
+          const shown = formula !== undefined
+            ? (computed ?? `=${formula}`) : (cell['sheets/value'] ?? '');
           const input = make('input', 'surface-cell');
           input.type = 'text';
           input.value = shown;
           input.setAttribute('aria-label', `${row}行${col}列`);
+          if (formula !== undefined) {
+            input.classList.add('surface-cell--computed');
+            input.title = `=${formula}`;
+            // The formula while the cursor is in it, the value otherwise.
+            input.addEventListener('focus', () => { input.value = `=${formula}`; });
+            input.addEventListener('blur', () => {
+              if (input.value === `=${formula}`) input.value = shown;
+            });
+          }
           input.addEventListener('change', () => {
             tab['sheets/cells'] = tab['sheets/cells'] || {};
             const key = cellKey(row, col);
@@ -1796,17 +1814,22 @@
           const cell = cells[cellKey(row, col)] || {};
           const formula = cell['sheets/formula'];
           const value = cell['sheets/value'];
-          const shown = formula !== undefined ? `=${formula}` : (value ?? '');
-          // Nothing is computed here. `sheets` has no evaluator on this path,
-          // and showing a made-up result would be worse than showing the
-          // formula that produces the real one.
-          const numeric = formula === undefined && shown !== ''
-            && Number.isFinite(Number(shown));
+          // What the formula comes to, from `sheets.formula` on the server.
+          // This used to show the formula's text because there was no
+          // evaluator; there is one now, and a spreadsheet that shows you
+          // =SUM(B2:B9) instead of the total is a picture of a spreadsheet.
+          // The formula is still there, in the cell's title.
+          const computed = driveEditor.computed?.[current]?.[`[${row} ${col}]`];
+          const shown = formula !== undefined
+            ? (computed ?? `=${formula}`) : (value ?? '');
+          // A computed number is a number, and reads right-aligned like one.
+          const numeric = shown !== '' && Number.isFinite(Number(shown));
           const td = make('td', [formula !== undefined ? 'sheet-cell--formula' : null,
                                  numeric ? 'sheet-cell--num' : null,
                                  row === 1 ? 'sheet-cell--head' : null]
                                 .filter(Boolean).join(' ') || null,
                           String(shown));
+          if (formula !== undefined) td.title = `=${formula}`;
           tr.append(td);
         }
         table.append(tr);
@@ -1925,7 +1948,7 @@
     // in the search box, and a fetch per keystroke is what the guard prevents.
     const closedEditor = (id) => ({id, open:false, mode:'preview',
                                    payload:null, text:'', tab:null, slide:0,
-                                   etag:null, warnings:null,
+                                   etag:null, warnings:null, computed:null,
                                    loading:false, failed:false});
     let driveEditor = closedEditor(null);
     // Three views of one document: the surface as it is, the fields of it, and
@@ -2081,7 +2104,13 @@
                                         mode:driveEditor.mode, tab:driveEditor.tab,
                                         slide:driveEditor.slide,
                                         payload:fresh.payload, etag:fresh.etag,
-                                        warnings:fresh.warnings});
+                                        warnings:fresh.warnings,
+                                        // What the formulas come to, as of
+                                        // the version just read. Cleared by
+                                        // closedEditor, so a stale grid
+                                        // cannot outlive the payload it
+                                        // belongs to.
+                                        computed:fresh.computed});
 
       const versions = make('div', 'detail-actions__row');
       const bytesDelta = (n) => (n > 0 ? `+${bytes(n)}` : (n < 0 ? `-${bytes(-n)}` : '±0'));
@@ -2182,7 +2211,8 @@
         const data = await request.json();
         if (!request.ok) throw new Error(data?.error?.message || '内容を取得できませんでした。');
         return {payload:data.payload, etag:data.item?.etag,
-                warnings:data['export-warnings'] || null};
+                warnings:data['export-warnings'] || null,
+                computed:data.computed || null};
       };
       open.addEventListener('click', async () => {
         open.disabled = true; status.textContent = '読み込んでいます…';

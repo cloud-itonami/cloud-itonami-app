@@ -674,6 +674,38 @@ Only `:docs`, and only a block's text. Proposing a new block, a deletion or
 a reordering is a larger surface, and offering half of it would leave a
 reviewer wondering which half.
 
+### A spreadsheet that computes
+
+A workbook could hold `=SUM(B2:B9)` and never compute one. `sheets.xlsx`
+writes `<f>` with no cached value on purpose — Excel recalculates on open —
+but inside this Drive the cell showed the formula's text for ever, in both
+the editable grid and the read-only preview. A spreadsheet that shows you
+`=SUM(B2:B9)` instead of the total is a picture of a spreadsheet.
+
+`sheets.formula` evaluates, and the result travels beside the resource as
+`:computed` rather than inside it. The payload is what a save sends back: a
+computed value in there would return as something somebody typed, and the
+formula that produced it would be gone.
+
+Nothing is written back for the same reason — a stored result is a second
+copy of something derived, stale the moment an input changes and afterwards
+indistinguishable from a typed value.
+
+**Cells hold text and that is not undone.** Evaluation parses text to a
+number where a number is required and says so when it cannot. That is
+Excel's rule and the reason for it: `=A1+1` over text is `#VALUE!` while
+`=SUM(A1:A9)` ignores the text in the range, because arithmetic asks for a
+number and an aggregate asks for the numbers there are — so a column of
+amounts with a heading on top sums to the amounts.
+
+Errors are values and propagate. A cell that refers to itself, directly or
+round a loop, is `#CIRCULAR!` rather than a stack overflow.
+
+The grid shows the value and shows the formula while the cursor is in the
+cell, which is what every spreadsheet does and the only way to see a formula
+you are about to change. The preview shows the value with the formula in the
+cell's title.
+
 ### Two editors, one document
 
 A save carries the `:etag` of the version it was made from — the object
