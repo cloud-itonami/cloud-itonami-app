@@ -82,7 +82,7 @@
   ;; public network — neither of them is code.
   io.github.kotoba-lang/io-storj-node
   {:git/url "https://github.com/kotoba-lang/io-storj-node.git"
-   :git/sha "c8c6d86b4725171b818dd17584a514eacfce22e7"}
+   :git/sha "a9c81cc4a8704f87f059a1972fcf1ac49f9e10b1"}
   io.github.kotoba-lang/identity
   {:git/url "https://github.com/kotoba-lang/identity.git"
    :git/sha "5cf94e38c816ced6857ef62de344f6adea9fc050"}

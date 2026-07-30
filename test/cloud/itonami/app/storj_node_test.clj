@@ -36,10 +36,28 @@
       (is (true? (:configured? s)))
       (is (false? (:listening? s)))
       (is (some #(str/includes? % "difficulty 36") (:notes s)))
-      (is (some #(str/includes? % "satellite public key") (:notes s)))
+      (testing "and that no check-in has happened, so nothing can be admitted"
+        (is (false? (:satellite-key-known? s)))
+        (is (some #(str/includes? % "no check-in yet") (:notes s))))
       (testing "and an unreadable identity is reported, not thrown"
         (is (map? (:node-id s)))
         (is (:error (:node-id s)))))))
+
+(deftest the-satellite-key-is-learned-rather-than-configured
+  ;; it is not in `config` and there is no env var for it: the satellite
+  ;; presents its chain on the check-in handshake, and `check-in!` dials with
+  ;; :expected-node-id so a chain that is not the satellite we meant is
+  ;; refused before anything is remembered
+  (is (not-any? #(str/includes? (str/lower-case (name %)) "key")
+                (keys (or (with-redefs [node/config
+                                        (constantly {:identity-dir "d" :satellite "s"
+                                                     :satellite-id "aa" :address "a"})]
+                            (node/config))
+                          {}))))
+  (testing "and until one is learned, status says so rather than looking ready"
+    (with-redefs [node/config (constantly {:identity-dir "/nope" :satellite "s:1"
+                                           :satellite-id "aa" :address "a:1" :port 1})]
+      (is (false? (:satellite-key-known? (node/status)))))))
 
 ;; ── the store ───────────────────────────────────────────────────────────────
 

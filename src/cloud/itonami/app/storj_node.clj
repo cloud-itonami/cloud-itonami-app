@@ -194,27 +194,46 @@
 (defn- clock []
   (reify p/IClock (-now-seconds [_] (quot (System/currentTimeMillis) 1000))))
 
+;; The satellite's signing key, learned at check-in.
+;;
+;; `orders/admit` needs it to check the signature on an order limit, and
+;; without it every transfer is refused. It is not configuration: the
+;; satellite presents its certificate chain on the check-in handshake, the
+;; chain is verified against the node id we were told to expect, and the key
+;; is the leaf's — the same key `SigneeFromPeerIdentity` uses to verify an
+;; order limit. So a node that has checked in has already been handed it, and
+;; asking an operator to paste it in would be asking for something the
+;; protocol just delivered.
+;;
+;; The node id is what makes that safe. `check-in!` dials with
+;; `:expected-node-id`, so a chain that does not derive to the satellite we
+;; meant to reach is refused before this is set.
+;;
+;; (`defonce` takes no docstring, which is why this is a comment.)
+(defonce ^:private satellite-key (atom nil))
+
 (defn context
   "Everything the protocol layers need, from one config.
 
-  `:verifier` is the real one. There is no `satellite-key` here and that is
-  the honest state: `orders/admit` needs the satellite's public key to check
-  the signature on an order limit, and nothing in this app fetches it yet — so
-  admission refuses every transfer with `:no-verifier-configured` until one is
-  supplied. A node that accepted them instead would be storing pieces on
-  nobody's authority."
+  Built per connection rather than once, so a node that checks in after it
+  started listening does not serve a whole connection with the key it had at
+  boot. Until check-in has happened `:satellite-key` is nil and `admit`
+  refuses every transfer — a node that accepted them instead would be storing
+  pieces on nobody's authority."
   [{:keys [identity-dir satellite-id]}]
   (let [id  (load-identity identity-dir)
         sat (unhex satellite-id)]
-    {:node-id     (node-id identity-dir)
-     :verifier    v/verifier
-     :clock       (clock)
-     :signer      hk/key-material
-     :private-key (:private-key id)
-     :blobs       (file-blobs)
-     :paths       (fn ([pid] (piece/blob-path sat pid))
-                    ([pid version] (piece/blob-path sat pid version)))
-     :identity    id}))
+    {:node-id       (node-id identity-dir)
+     :verifier      v/verifier
+     :satellite-key @satellite-key
+     :algorithm     :ecdsa-sha256
+     :clock         (clock)
+     :signer        hk/key-material
+     :private-key   (:private-key id)
+     :blobs         (file-blobs)
+     :paths         (fn ([pid] (piece/blob-path sat pid))
+                      ([pid version] (piece/blob-path sat pid version)))
+     :identity      id}))
 
 (defn check-in!
   "Introduce this node to its satellite. Returns the response as data.
@@ -229,6 +248,10 @@
                          :identity identity
                          :verify-opts {:expected-node-id (unhex satellite-id)}
                          :preamble htls/drpc-mux-header})
+        ;; the chain has been admitted and its node id matched the one we
+        ;; dialled, so this is the satellite's own signing key rather than
+        ;; whoever answered the port
+        _ (when-let [k (:signing-key (:peer c))] (reset! satellite-key k))
         r (rpc/call (:socket c)
                     {:rpc contact/rpc
                      :request (contact/check-in-request
@@ -264,16 +287,17 @@
   node is not configured — which is the ordinary state for this app."
   []
   (when-let [cfg (config)]
-    (let [ctx (context cfg)
+    (let [boot (context cfg)
           l (htls/listen
              {:port (:port cfg)
-              :identity (:identity ctx)
+              :identity (:identity boot)
               :verify-opts {}
               ;; a real peer arrives through Storj's port multiplexer
               :expect-preamble htls/drpc-mux-header
               :on-connection
               (fn [{:keys [socket]}]
-                (let [{:keys [handle on-message]} (handler ctx)]
+                ;; fresh, so a check-in that happened after boot is visible
+                (let [{:keys [handle on-message]} (handler (context cfg))]
                   (rpc/serve-connection socket handle on-message)))
               :on-refused (fn [_] nil)})]
       (reset! listener l)
@@ -297,8 +321,10 @@
      :port        (:port cfg)
      :listening?  (some? @listener)
      ;; the two gates, reported rather than discovered
-     :notes ["a public satellite requires difficulty 36 and an authorized identity"
-             "order limits are refused until a satellite public key is configured"]}
+     :satellite-key-known? (some? @satellite-key)
+     :notes (cond-> ["a public satellite requires difficulty 36 and an authorized identity"]
+              (nil? @satellite-key)
+              (conj "no check-in yet, so order limits are refused"))}
     {:configured? false
      :needs ["STORJ_NODE_IDENTITY_DIR" "STORJ_NODE_SATELLITE"
              "STORJ_NODE_SATELLITE_ID" "STORJ_NODE_ADDRESS"]}))
