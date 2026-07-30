@@ -76,4 +76,3 @@ it does not replace the organism's local-first memory.
 - Existing in-process WorkerRuns remain useful but must not be presented as
   artificial organisms.
 - Remote deployment transports bounded capabilities; it never expands them.
-

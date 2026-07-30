@@ -11,10 +11,11 @@
   `state.edn` once per token; the durable store keeps a bounded completion
   event per run instead. Runs therefore do not survive a restart."
   (:require [clojure.string :as str]
+            [cloud.itonami.app.executor :as executor]
             [cloud.itonami.app.service :as service]
             [cloud.itonami.app.store :as store])
   (:import [java.time Instant]
-           [java.util.concurrent ExecutorService Executors Semaphore]))
+           [java.util.concurrent ExecutorService Semaphore]))
 
 (def schema "cloud.itonami.app.worker.v1")
 (def default-max-concurrency 2)
@@ -28,7 +29,7 @@
 (defonce ^:private cancelled (atom #{}))
 (defonce ^:private permits (atom nil))
 (defonce ^:private executor
-  (delay (Executors/newVirtualThreadPerTaskExecutor)))
+  (delay (executor/task-executor)))
 
 (defn- now [] (str (Instant/now)))
 

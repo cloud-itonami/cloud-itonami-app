@@ -140,7 +140,8 @@
 (defn- identity-state [state]
   (merge {:organizations {} :users {} :memberships {}
           :connections {} :oauth-transactions {} :sessions {}
-          :passkeys {} :enrollments {} :webauthn-transactions {}}
+          :passkeys {} :enrollments {} :organization-invitations {}
+          :webauthn-transactions {}}
          (:identity state)))
 
 (defn- normalize-id [value]
@@ -198,6 +199,38 @@
 (defn- public-connection [connection]
   (select-keys connection [:id :provider :status :display-name :email
                            :provider-subject :scopes :connected-at :last-error]))
+
+(defn- public-organization [state membership]
+  (let [organization (get-in state [:organizations
+                                    (:organization-id membership)])]
+    (assoc (select-keys organization [:id :organization-id :did :name :domain
+                                      :contact-domain :status])
+           :profile-complete? (boolean (:organization-id organization))
+           :role (:role membership)
+           :active? false)))
+
+(defn- memberships-for-user [state user-id]
+  (->> (:memberships state)
+       vals
+       (filter #(= user-id (:user-id %)))
+       (sort-by (juxt :created-at :id))
+       vec))
+
+(defn- public-organization-invitations [state user-id]
+  (->> (:organization-invitations state)
+       vals
+       (filter #(and (= user-id (:user-id %))
+                     (= :pending (:status %))))
+       (sort-by (juxt :created-at :id))
+       (mapv
+        (fn [invitation]
+          (let [organization
+                (get-in state [:organizations (:organization-id invitation)])]
+            (assoc
+             (select-keys invitation [:id :role :status :created-at :expires-at])
+             :organization
+             (select-keys organization
+                          [:id :organization-id :name :domain :did])))))))
 
 (defn- derive-user-did [state user]
   (some (fn [credential]
@@ -261,7 +294,12 @@
         session (session-by-token token)
         user (get-in state [:users (:user-id session)])
         membership (get-in state [:memberships (:membership-id session)])
-        organization (get-in state [:organizations (:organization-id session)])]
+        organization (get-in state [:organizations (:organization-id session)])
+        organizations (when session
+                        (mapv #(assoc (public-organization state %)
+                                     :active?
+                                     (= (:id %) (:membership-id session)))
+                              (memberships-for-user state (:user-id session))))]
     {:schema "cloud.itonami.app.identity.v1"
      :registered? (boolean (seq (:users state)))
      :passkey-required? (and (boolean (seq (:users state)))
@@ -271,6 +309,10 @@
      :user (when session (select-keys user [:id :did :account-id :email
                                             :contact-email :display-name :status
                                             :passkey-enrolled?]))
+     :active-organization-id (:id organization)
+     :organizations organizations
+     :organization-invitations
+     (when session (public-organization-invitations state (:user-id session)))
      :organization (when session
                      (assoc (select-keys organization [:id :organization-id
                                                        :did :name :domain
@@ -308,6 +350,100 @@
                 :connected? (= :connected (:status connection))
                 :scopes (:scopes config)}))
            provider-catalog)}))
+
+(declare require-passkey!)
+
+(defn create-organization!
+  "Create another organization and make the current user its owner.
+  The caller's existing memberships remain intact."
+  [session {:keys [organization-id organization-name]}]
+  (require-passkey! session)
+  (let [state (identity-state (store/snapshot))
+        user-id (:user-id session)
+        organization-slug (normalize-id organization-id)]
+    (when-not (valid-account-id? organization-slug)
+      (throw (ex-info "有効な Organization ID を入力してください。"
+                      {:type :identity/invalid-registration})))
+    (when (some #(= organization-slug (:organization-id %))
+                (vals (:organizations state)))
+      (throw (ex-info "この Organization ID は既に使用されています。"
+                      {:type :identity/already-registered})))
+    (let [organization-record-id (str "org-" (UUID/randomUUID))
+          membership-id (str "membership-" (UUID/randomUUID))
+          domain (organization-domain organization-slug)
+          organization-did (organization-did organization-slug)
+          now (store/now)]
+      (store/transact!
+       (fn [current]
+         (-> current
+             (assoc-in
+              [:identity :organizations organization-record-id]
+              {:id organization-record-id
+               :organization-id organization-slug
+               :did organization-did
+               :name (or (some-> organization-name str str/trim not-empty)
+                         organization-slug)
+               :domain domain
+               :status :active
+               :subject
+               (identity/subject
+                (or organization-did organization-record-id)
+                :organization
+                {:did organization-did :labels #{:local :organization}})
+               :created-at now})
+             (assoc-in
+              [:identity :memberships membership-id]
+              {:id membership-id
+               :organization-id organization-record-id
+               :user-id user-id
+               :role :owner
+               :created-at now})
+             (update :events conj
+                     {:type :identity/organization-created
+                      :at now
+                      :organization-id organization-record-id
+                      :user-id user-id}))))
+      {:organization-id organization-record-id
+       :membership-id membership-id
+       :slug organization-slug
+       :domain domain
+       :did organization-did})))
+
+(defn switch-organization!
+  "Change only this session's active organization after membership proof."
+  [session {:keys [organization-id]}]
+  (require-passkey! session)
+  (let [state (identity-state (store/snapshot))
+        memberships (memberships-for-user state (:user-id session))
+        membership
+        (some (fn [candidate]
+                (let [organization
+                      (get-in state [:organizations
+                                     (:organization-id candidate)])]
+                  (when (or (= organization-id (:id organization))
+                            (= (normalize-id organization-id)
+                               (:organization-id organization)))
+                    candidate)))
+              memberships)]
+    (when-not membership
+      (throw (ex-info "この Organization への membership がありません。"
+                      {:type :identity/forbidden})))
+    (store/transact!
+     (fn [current]
+       (-> current
+           (update-in [:identity :sessions (:id session)]
+                      merge
+                      {:organization-id (:organization-id membership)
+                       :membership-id (:id membership)
+                       :updated-at (store/now)})
+           (update :events conj
+                   {:type :identity/organization-switched
+                    :at (store/now)
+                    :organization-id (:organization-id membership)
+                    :user-id (:user-id session)
+                    :session-id (:id session)}))))
+    {:organization-id (:organization-id membership)
+     :membership-id (:id membership)}))
 
 (defn register!
   "Create a provisional local owner. Profile fields are optional because the
@@ -412,9 +548,11 @@
         organization (get-in state [:organizations (:organization-id session)])
         account-id (normalize-id
                     (or account-id (some-> email (str/split #"@" 2) first)))
+        existing-user (some #(when (= account-id (:account-id %)) %)
+                            (vals (:users state)))
         canonical-address (when account-id (canonical-email account-id))
         contact-email (normalize-email (or contact-email email))
-        user-id (str "user-" (UUID/randomUUID))
+        user-id (or (:id existing-user) (str "user-" (UUID/randomUUID)))
         membership-id (str "membership-" (UUID/randomUUID))
         role (if (#{"admin" "member"} role) (keyword role) :member)
         model (directory/directory (:id organization) (account-domain))
@@ -423,6 +561,7 @@
         user-handle (random-token 32)
         enrollment-code (random-token 18)
         enrollment-id (str "enrollment-" (UUID/randomUUID))
+        invitation-id (str "organization-invitation-" (UUID/randomUUID))
         expires-at (str (.plusSeconds (Instant/now) enrollment-seconds))
         now (store/now)]
     (when-not (:organization-id organization)
@@ -432,32 +571,123 @@
                    (valid-account-id? account-id))
       (throw (ex-info "有効なアカウントIDと表示名が必要です。"
                       {:type :identity/invalid-registration})))
-    (when (some #(= account-id (:account-id %)) (vals (:users state)))
-      (throw (ex-info "同じアカウントIDは既に登録されています。"
-                      {:type :identity/invalid-registration})))
-    (directory/add-user model user-model)
-    (store/transact!
-     (fn [current]
-       (-> current
-           (assoc-in [:identity :users user-id]
-                     {:id user-id :account-id account-id :email canonical-address
-                      :contact-email contact-email
-                      :display-name (str/trim display-name)
-                      :user-handle user-handle :passkey-enrolled? false
-                      :status :invited :created-at now})
-           (assoc-in [:identity :memberships membership-id]
-                     {:id membership-id :organization-id (:id organization)
-                      :user-id user-id :role role :created-at now})
-           (assoc-in [:identity :enrollments enrollment-id]
-                     {:id enrollment-id :user-id user-id
-                      :organization-id (:id organization)
-                      :code-digest (digest enrollment-code)
-                      :created-at now :expires-at expires-at :used? false})
-           (update :events conj {:type :identity/user-added :at now
-                                 :organization-id (:id organization)
-                                 :user-id user-id}))))
-    {:id user-id :account-id account-id :email canonical-address
-     :enrollment-code enrollment-code :expires-at expires-at}))
+    (when (and existing-user
+               (some #(and (= user-id (:user-id %))
+                           (= (:id organization) (:organization-id %)))
+                     (vals (:memberships state))))
+      (throw (ex-info "このUserは既にOrganizationに所属しています。"
+                      {:type :identity/already-member})))
+    (if existing-user
+      (do
+        (store/transact!
+         (fn [current]
+           (-> current
+               (assoc-in
+                [:identity :organization-invitations invitation-id]
+                {:id invitation-id
+                 :organization-id (:id organization)
+                 :user-id user-id
+                 :role role
+                 :code-digest (digest enrollment-code)
+                 :status :pending
+                 :created-at now
+                 :expires-at expires-at})
+               (update :events conj
+                       {:type :identity/organization-invited
+                        :at now
+                        :organization-id (:id organization)
+                        :user-id user-id
+                        :invitation-id invitation-id}))))
+        {:id invitation-id :kind :organization-invitation
+         :account-id account-id :email (:email existing-user)
+         :invitation-code enrollment-code :expires-at expires-at})
+      (do
+        (directory/add-user model user-model)
+        (store/transact!
+         (fn [current]
+           (-> current
+               (assoc-in [:identity :users user-id]
+                         {:id user-id :account-id account-id
+                          :email canonical-address
+                          :contact-email contact-email
+                          :display-name (str/trim display-name)
+                          :user-handle user-handle
+                          :passkey-enrolled? false
+                          :status :invited :created-at now})
+               (assoc-in [:identity :memberships membership-id]
+                         {:id membership-id :organization-id (:id organization)
+                          :user-id user-id :role role :created-at now})
+               (assoc-in [:identity :enrollments enrollment-id]
+                         {:id enrollment-id :user-id user-id
+                          :organization-id (:id organization)
+                          :code-digest (digest enrollment-code)
+                          :created-at now :expires-at expires-at :used? false})
+               (update :events conj {:type :identity/user-added :at now
+                                     :organization-id (:id organization)
+                                     :user-id user-id}))))
+        {:id user-id :kind :user-enrollment :account-id account-id
+         :email canonical-address :enrollment-code enrollment-code
+         :expires-at expires-at}))))
+
+(defn accept-organization-invitation!
+  "Accept a membership invitation that is cryptographically bound to the
+  authenticated User. The accepted organization becomes active for this
+  session; no other session is changed."
+  [session {:keys [invitation-code]}]
+  (require-passkey! session)
+  (let [state (identity-state (store/snapshot))
+        code (some-> invitation-code str str/trim)
+        code-digest (when-not (str/blank? code) (digest code))
+        now-instant (Instant/now)
+        invitation
+        (some
+         (fn [candidate]
+           (when (and (= (:user-id session) (:user-id candidate))
+                      (= :pending (:status candidate))
+                      code-digest
+                      (MessageDigest/isEqual
+                       (.getBytes ^String code-digest StandardCharsets/UTF_8)
+                       (.getBytes ^String (:code-digest candidate)
+                                  StandardCharsets/UTF_8))
+                      (pos? (compare (Instant/parse (:expires-at candidate))
+                                     now-instant)))
+             candidate))
+         (vals (:organization-invitations state)))]
+    (when-not invitation
+      (throw (ex-info "招待コードが無効、期限切れ、または別のUser宛です。"
+                      {:type :identity/invalid-invitation})))
+    (when (some #(and (= (:user-id session) (:user-id %))
+                      (= (:organization-id invitation) (:organization-id %)))
+                (vals (:memberships state)))
+      (throw (ex-info "このUserは既にOrganizationに所属しています。"
+                      {:type :identity/already-member})))
+    (let [membership-id (str "membership-" (UUID/randomUUID))
+          now (store/now)]
+      (store/transact!
+       (fn [current]
+         (-> current
+             (assoc-in [:identity :memberships membership-id]
+                       {:id membership-id
+                        :organization-id (:organization-id invitation)
+                        :user-id (:user-id session)
+                        :role (:role invitation)
+                        :created-at now})
+             (update-in [:identity :organization-invitations (:id invitation)]
+                        merge {:status :accepted :accepted-at now})
+             (update-in [:identity :sessions (:id session)]
+                        merge {:organization-id (:organization-id invitation)
+                               :membership-id membership-id
+                               :updated-at now})
+             (update :events conj
+                     {:type :identity/organization-invitation-accepted
+                      :at now
+                      :organization-id (:organization-id invitation)
+                      :user-id (:user-id session)
+                      :membership-id membership-id
+                      :invitation-id (:id invitation)}))))
+      {:organization-id (:organization-id invitation)
+       :membership-id membership-id
+       :invitation-id (:id invitation)})))
 
 (defn start-passkey-registration!
   [session rp-id origin]
