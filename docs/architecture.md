@@ -137,6 +137,25 @@ scanned and sorted, because a grant is recorded on the item rather than
 anywhere central and there is no index to consult. When the scan itself needs
 bounding the fix is the same index that would fix search.
 
+**Searching twice does not read the bytes twice.** Extracted text is cached
+by object reference, and content addressing is what makes that provably
+safe: for an uploaded file the reference *is* the content, and for a document
+`write-item` mints a fresh reference per version and refuses to reuse one for
+different content. Either way the same reference cannot ever name different
+bytes, so there is no invalidation to get wrong — an edit is a new reference
+and therefore a new entry, and the old one is simply never asked for again.
+
+It is not the index. It does not bound the first search, or a Drive larger
+than the cache, and the scan still visits every readable document. What it
+removes is re-reading bytes that have not changed, which is what a second
+search does with all of them. Measured with a store that counts its reads:
+the first search reads them, the second reads none.
+
+The cache is bounded at 2000 entries and drops half of itself on overflow.
+Which half is arbitrary — a hash map has no insertion order and this does not
+carry one — so it is not an LRU and does not claim to be; the cost of being
+wrong about which half is one read.
+
 Only the created half is paged. The archive is eighty files that
 `workspace/drive-snapshot` has already capped, so a second cursor for a list
 that does not grow would be ceremony.
