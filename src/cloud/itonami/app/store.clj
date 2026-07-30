@@ -21,6 +21,8 @@
              "You are a private, local-first assistant. Be concise and useful."}]
    :sessions {}
    :runner-sessions {}
+   :agent-loops {:runs {} :events []}
+   :agent-control {:runs {} :events []}
    ;; One `drive.workspace` per principal — the tree, the ACL, the quota and
    ;; the version history. The bytes those versions point at are not in here;
    ;; they are in an object store. See `cloud.itonami.app.documents`.
@@ -116,6 +118,45 @@
                [:runner-sessions session-id provider-id]
                {:id runner-session-id :updated-at (now)}))
   runner-session-id)
+
+(defn record-agent-event! [event max-events]
+  (transact!
+   (fn [value]
+     (let [run-id (:run/id event)
+           event-type (:event/type event)
+           event-data (:event/data event)]
+       (-> value
+           (update-in [:agent-loops :events]
+                      #(vec (take-last max-events (conj (or % []) event))))
+           (assoc-in [:agent-loops :runs run-id]
+                     (merge (get-in value [:agent-loops :runs run-id])
+                            {:schema "cloud.itonami.app.agent-loop.v1"
+                             :id run-id
+                             :session-id (:session/id event)
+                             :status (or (:status event-data)
+                                         (if (= event-type :run/started)
+                                           :running
+                                           (get-in value
+                                                   [:agent-loops :runs run-id
+                                                    :status])))
+                             :phase (or (:phase event-data)
+                                        (get-in value
+                                                [:agent-loops :runs run-id
+                                                 :phase]))
+                             :updated-at (:event/at event)}))))))
+  event)
+
+(defn agent-events
+  ([session-id]
+   (agent-events session-id 100))
+  ([session-id limit]
+   (->> (get-in @state [:agent-loops :events] [])
+        (filter #(= session-id (:session/id %)))
+        (take-last limit)
+        vec)))
+
+(defn update-agent-control! [f & args]
+  (apply transact! update :agent-control f args))
 
 (defn append-message!
   [session-id {:keys [role content] :as message} max-messages]

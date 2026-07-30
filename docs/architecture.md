@@ -154,12 +154,25 @@ account, so they are not described as local inference.
 native window ── action event ──> fixed action adapter
       ▲                                  │
       │ kotoba:dom                       ▼
- pure app entry <── durable state <── loopback server
+pure app entry <── durable state <── loopback server
                                           │
                                    provider policy
                                 ┌────┼──────────┐
                              Ollama CLI account cloud gate
 ```
+
+### Provider-neutral agent loop
+
+Interactive Agent work is projected through `agent-event.v1` rather than
+making Codex or Claude wire payloads part of Cloud's state. The lifecycle
+authority is the host supervisor; final model text is a report, while tool,
+artifact, approval, and verification events are evidence.
+
+The initial adapter records coarse run/phase/evidence facts around the existing
+CLI subprocess. A text-only Agent result is `needs-review`, not verified work.
+Codex app-server, Claude stream-json, a shared approval broker, worktree leases,
+and replay evaluation land behind this same contract in the staged order
+defined by [ADR-0004](adr/0004-provider-neutral-agent-runtime.md).
 
 ### CLI conversation continuity
 

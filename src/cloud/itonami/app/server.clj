@@ -1,6 +1,7 @@
 (ns cloud.itonami.app.server
   (:require [clojure.data.json :as json]
             [clojure.string :as str]
+            [cloud.itonami.app.agent-event :as agent-event]
             [cloud.itonami.app.config :as config]
             [cloud.itonami.app.documents :as documents]
             [cloud.itonami.app.executor :as executor]
@@ -129,7 +130,9 @@
   {:schema "cloud.itonami.app.session.v1"
    :id session-id
    :messages (mapv #(select-keys % [:id :role :content :at])
-                   (store/session-messages session-id))})
+                   (store/session-messages session-id))
+   :agent-events (mapv agent-event/public-event
+                       (store/agent-events session-id))})
 
 (defn- public-sessions []
   {:schema "cloud.itonami.app.sessions.v1"
@@ -233,12 +236,14 @@
         (let [response
               (service/run-chat-stream!
                config request
-               #(write-event! {:type "delta" :content %}))]
+               #(write-event! {:type "delta" :content %})
+               #(write-event! {:type "agent-event" :event %}))]
           (write-event! {:type "done"
                          :provider (:provider response)
                          :model (:model response)
                          :message (:message response)
-                         :usage (:usage response)}))
+                         :usage (:usage response)
+                         :agent-run (:agent-run response)}))
         (catch Exception error
           (write-event! {:type "error" :message (.getMessage error)}))))))
 

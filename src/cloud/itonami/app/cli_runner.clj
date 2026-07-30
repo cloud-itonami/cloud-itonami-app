@@ -73,6 +73,20 @@
             (recur))))
       (.toString result))))
 
+(defn- bounded-read-lines [stream on-line]
+  (with-open [reader (BufferedReader. (InputStreamReader. stream))]
+    (let [result (StringBuilder.)]
+      (loop []
+        (when-let [line (.readLine reader)]
+          (when (< (.length result) max-output-chars)
+            (.append result
+                     (subs line 0 (min (count line)
+                                       (- max-output-chars (.length result)))))
+            (.append result "\n"))
+          (on-line line)
+          (recur)))
+      (.toString result))))
+
 (defn- stop-process! [^Process process]
   (doseq [descendant (reverse (vec (iterator-seq
                                     (.iterator (.descendants (.toHandle process))))))]
@@ -81,7 +95,7 @@
 
 (defn execute!
   "Run an argv vector without a shell, with bounded output and descendant kill."
-  [{:keys [argv cwd unset-env timeout-seconds]}]
+  [{:keys [argv cwd unset-env timeout-seconds on-stdout-line]}]
   (let [builder (ProcessBuilder. ^java.util.List (vec argv))
         _ (when cwd (.directory builder (io/file cwd)))
         environment (.environment builder)
@@ -91,7 +105,10 @@
         ;; piped stdin. ProcessBuilder creates a pipe by default, so leaving it
         ;; open makes the CLI wait forever for more prompt bytes.
         _ (.close (.getOutputStream process))
-        stdout (future (bounded-read (.getInputStream process)))
+        stdout (future
+                 (if on-stdout-line
+                   (bounded-read-lines (.getInputStream process) on-stdout-line)
+                   (bounded-read (.getInputStream process))))
         stderr (future (bounded-read (.getErrorStream process)))
         completed? (.waitFor process (long (or timeout-seconds
                                                default-timeout-seconds))
@@ -139,7 +156,9 @@
 (defn- codex-config-args [read-only effort]
   (cond-> ["-c" (str "sandbox_mode=\""
                      (if read-only "read-only" "workspace-write") "\"")
-           "-c" "ask_for_approval=\"never\""]
+           "-c" (str "ask_for_approval=\""
+                     (if read-only "never" "on-request") "\"")]
+    (not read-only) (into ["-c" "approvals_reviewer=\"auto_review\""])
     (seq effort) (into ["-c" (str "model_reasoning_effort=\"" effort "\"")])))
 
 (defn argv
@@ -166,7 +185,7 @@
         true (conj prompt)))
 
     (:claude :claude-zai)
-    (cond-> [binary "-p" "--output-format" "json"
+    (cond-> [binary "-p" "--output-format" "stream-json" "--verbose"
              "--permission-mode" (if read-only "plan" "auto")
              "--tools" (if read-only
                          "Read,Glob,Grep"
@@ -203,8 +222,19 @@
      :runner-session-id runner-session-id}))
 
 (defn- parse-claude [output fallback-session-id]
-  (let [result (json/read-str output :key-fn keyword)]
+  (let [values (keep #(try (json/read-str % :key-fn keyword)
+                            (catch Exception _ nil))
+                     (str/split-lines output))
+        result (or (last (filter #(= "result" (:type %)) values))
+                   (last values))
+        streamed-text
+        (->> values
+             (filter #(= "assistant" (:type %)))
+             (mapcat #(get-in % [:message :content]))
+             (keep #(when (= "text" (:type %)) (:text %)))
+             (apply str))]
     {:content (or (:result result)
+                  (not-empty streamed-text)
                   (throw (ex-info "Claude CLI から応答本文を取得できませんでした。"
                                   {:type :cli-agent/invalid-output})))
      :usage (cond-> (:usage result)
@@ -213,6 +243,50 @@
      :runner-session-id (or (:session_id result)
                             (:session-id result)
                             fallback-session-id)}))
+
+(defn- provider-line-event [runner line]
+  (when-let [value (try (json/read-str line :key-fn keyword)
+                        (catch Exception _ nil))]
+    (case runner
+      :codex
+      (let [item (:item value)
+            item-type (:type item)
+            completed? (= "item.completed" (:type value))
+            started? (= "item.started" (:type value))
+            tool (case item-type
+                   "command_execution" :shell
+                   "mcp_tool_call" :mcp
+                   "web_search" :web-search
+                   nil)]
+        (cond
+          (and tool started?)
+          {:type :tool/started :tool tool :item-type (keyword item-type)}
+
+          (and tool completed?)
+          {:type (if (and (contains? item :exit_code)
+                          (not (zero? (:exit_code item))))
+                   :tool/failed :tool/completed)
+           :tool tool :item-type (keyword item-type)
+           :exit-code (:exit_code item)}
+
+          (and completed? (= "file_change" item-type))
+          {:type :artifact/changed :item-type :file-change
+           :paths (vec (keep :path (:changes item)))}
+
+          :else nil))
+
+      (:claude :claude-zai)
+      (let [blocks (get-in value [:message :content])
+            tool-use (some #(when (= "tool_use" (:type %)) %) blocks)
+            tool-result (some #(when (= "tool_result" (:type %)) %) blocks)]
+        (cond
+          tool-use {:type :tool/started
+                    :tool (keyword (or (:name tool-use) "unknown"))
+                    :item-type :tool-use}
+          tool-result {:type (if (:is_error tool-result)
+                               :tool/failed :tool/completed)
+                       :tool :claude-tool :item-type :tool-result}
+          :else nil)))))
 
 (defn parse-result
   ([runner output] (parse-result runner output nil))
@@ -245,7 +319,7 @@
 
 (defn run-cli!
   [provider {:keys [mode messages prompt model cwd access guardrail effort
-                    persistent? timeout-seconds runner-session-id]}]
+                    persistent? timeout-seconds runner-session-id on-event]}]
   (let [resolved (ensure-profile! provider)
         mode (if (= mode :plan) :plan :agent)
         guardrail (if (= guardrail :plan) :plan :auto)
@@ -262,11 +336,19 @@
                                 :persistent? persistent?
                                 :runner-session-id runner-session-id
                                 :new-session-id new-session-id})
+        provider-events (atom [])
+        on-line (when on-event
+                  (fn [line]
+                    (when-let [event (provider-line-event (:runner resolved) line)]
+                      (swap! provider-events conj event)
+                      (on-event event))))
         result (execute! {:argv command :cwd cwd
                           :unset-env (:unset-env resolved)
-                          :timeout-seconds timeout-seconds})]
+                          :timeout-seconds timeout-seconds
+                          :on-stdout-line on-line})]
     (assoc (parse-result (:runner resolved) (:stdout result) new-session-id)
-           :runner (:runner resolved))))
+           :runner (:runner resolved)
+           :events @provider-events)))
 
 (defn chat [provider request]
   (run-cli! provider

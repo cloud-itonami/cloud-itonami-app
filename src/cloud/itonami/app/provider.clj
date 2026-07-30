@@ -92,6 +92,67 @@
 
     (throw (ex-info "unsupported provider kind" {:provider provider}))))
 
+(defn- tool-call [value]
+  (let [function (or (:function value) value)
+        arguments (:arguments function)
+        input (if (string? arguments)
+                (try (json/read-str arguments :key-fn keyword)
+                     (catch Exception _
+                       {:unparsed arguments}))
+                (or arguments {}))]
+    {:id (or (:id value) (str "tool-" (java.util.UUID/randomUUID)))
+     :name (:name function)
+     :input input}))
+
+(defn agent-turn
+  "One tool-capable model turn for the governed `agent-control` runtime.
+
+  CLI coding agents own their internal tool loop and use `cli-runner`; this
+  function is for local/OpenAI-compatible providers whose tool calls are
+  executed by Cloud Itonami's capability and HIL boundary."
+  [provider {:keys [model messages tools temperature]}]
+  (let [tool-specs
+        (mapv (fn [tool]
+                {:type "function"
+                 :function {:name (:name tool)
+                            :description (:description tool)
+                            :parameters (:parameters tool)}})
+              tools)
+        result
+        (case (:kind provider)
+          :ollama
+          (request-json :post (str (:base-url provider) "/api/chat")
+                        {:model model :messages messages :stream false
+                         :tools tool-specs
+                         :options {:temperature (or temperature 0.2)}})
+
+          :openai-compatible
+          (request-json
+           :post
+           (str (str/replace (:base-url provider) #"/$" "")
+                "/chat/completions")
+           {:model model :messages messages :tools tool-specs
+            :temperature (or temperature 0.2)}
+           (config/env-secret provider))
+
+          :cli
+          (throw (ex-info "CLI provider owns its internal tool loop."
+                          {:type :provider/cli-tool-loop-owned}))
+
+          (throw (ex-info "unsupported tool-capable provider"
+                          {:provider provider})))
+        message (if (= :ollama (:kind provider))
+                  (:message result)
+                  (get-in result [:choices 0 :message]))]
+    {:content (or (:content message) "")
+     :tool-calls (mapv tool-call (:tool_calls message))
+     :usage (if (= :ollama (:kind provider))
+              {:prompt_tokens (get result :prompt_eval_count 0)
+               :completion_tokens (get result :eval_count 0)
+               :total_tokens (+ (get result :prompt_eval_count 0)
+                                (get result :eval_count 0))}
+              (:usage result))}))
+
 (defn- streaming-response [url body api-key]
   (let [builder (-> (HttpRequest/newBuilder (URI/create url))
                     (.timeout (Duration/ofSeconds 120))
@@ -116,9 +177,11 @@
 
 (defn chat-stream!
   "Stream provider deltas to `on-delta` and return the complete result."
-  [provider {:keys [model messages temperature session-id runner-session-id
-                    mode guardrail effort cwd]}
-   on-delta]
+  ([provider request on-delta]
+   (chat-stream! provider request on-delta nil))
+  ([provider {:keys [model messages temperature session-id runner-session-id
+                     mode guardrail effort cwd]}
+    on-delta on-event]
   (let [content (StringBuilder.)
         usage (volatile! nil)
         cli-session (volatile! nil)]
@@ -175,7 +238,7 @@
                      :session-id session-id
                      :runner-session-id runner-session-id
                      :mode mode :guardrail guardrail
-                     :effort effort :cwd cwd})]
+                     :effort effort :cwd cwd :on-event on-event})]
         (when-let [emitted (emit! on-delta (:content result))]
           (.append content emitted))
         (vreset! usage (:usage result))
@@ -184,4 +247,4 @@
 
       (throw (ex-info "unsupported provider kind" {:provider provider})))
     (cond-> {:content (.toString content) :usage @usage}
-      @cli-session (assoc :runner-session-id @cli-session))))
+      @cli-session (assoc :runner-session-id @cli-session)))))

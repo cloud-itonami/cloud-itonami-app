@@ -1,5 +1,6 @@
 (ns cloud.itonami.app.service
-  (:require [cloud.itonami.app.policy :as policy]
+  (:require [cloud.itonami.app.agent-loop :as agent-loop]
+            [cloud.itonami.app.policy :as policy]
             [cloud.itonami.app.provider :as provider]
             [cloud.itonami.app.store :as store]))
 
@@ -68,7 +69,8 @@
                   :model chosen-model
                   :session-id session-id
                   :message assistant
-                  :usage (:usage result)}]
+                  :usage (:usage result)
+                  :agent-run (:agent-run result)}]
     (store/record-response! response)
     response))
 
@@ -88,20 +90,55 @@
     (finish-chat! prepared result)))
 
 (defn run-chat-stream!
-  [config request on-delta]
-  (let [{:keys [selected chosen-model provider-messages temperature
-                session-id runner-session-id mode guardrail effort cwd]
-         :as prepared}
-        (prepare-chat! config request)
-        result (provider/chat-stream!
-                selected
-                {:model chosen-model :messages provider-messages
-                 :temperature temperature
-                 :session-id session-id
-                 :runner-session-id runner-session-id
-                 :mode mode :guardrail guardrail :effort effort :cwd cwd}
-                on-delta)]
-    (finish-chat! prepared result)))
+  ([config request on-delta]
+   (run-chat-stream! config request on-delta nil))
+  ([config request on-delta on-event]
+   (let [{:keys [selected chosen-model provider-messages temperature
+                 session-id runner-session-id mode guardrail effort cwd]
+          :as prepared}
+         (prepare-chat! config request)
+         provider-events (atom [])
+         loop-context
+         (agent-loop/start!
+          {:session-id session-id
+           :objective (get-in request [:messages 0 :content])
+           :provider (:id selected) :model chosen-model :effort effort
+           :mode mode :guardrail guardrail :emit on-event})
+         provider-event!
+         (fn [event]
+           (swap! provider-events conj event)
+           (agent-loop/provider-event! loop-context event))]
+     (try
+       (when (= mode :agent)
+         (agent-loop/phase! loop-context :execute))
+       (agent-loop/provider-event!
+        loop-context {:type :model/started :provider (:id selected)
+                      :model chosen-model :effort effort})
+       (let [provider-request
+             {:model chosen-model :messages provider-messages
+              :temperature temperature
+              :session-id session-id
+              :runner-session-id runner-session-id
+              :mode mode :guardrail guardrail :effort effort :cwd cwd}
+             result (if on-event
+                      (provider/chat-stream!
+                       selected provider-request on-delta provider-event!)
+                      (provider/chat-stream! selected provider-request on-delta))
+             _ (agent-loop/provider-event!
+                loop-context {:type :model/completed
+                              :provider (:id selected)
+                              :model chosen-model :usage (:usage result)})
+             verification (agent-loop/verify! loop-context result @provider-events)
+             _ (agent-loop/complete! loop-context verification result)]
+         (finish-chat!
+          prepared
+          (assoc result :agent-run
+                 {:id (:run-id loop-context)
+                  :status (:status verification)
+                  :verification verification})))
+       (catch Exception error
+         (agent-loop/fail! loop-context error)
+         (throw error))))))
 
 (defn openai-response [response]
   {:id (:id response)

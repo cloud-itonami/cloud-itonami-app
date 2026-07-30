@@ -146,6 +146,17 @@
     color:var(--color-neutral-solid-gray-600);font-size:.75rem;cursor:pointer}
   .message-action:hover{background:var(--color-neutral-solid-gray-100);
     color:var(--color-neutral-solid-gray-900)}
+  .agent-timeline{display:flex;flex-wrap:wrap;gap:.375rem;margin:0 0 1rem 2.75rem}
+  .agent-timeline[hidden]{display:none}
+  .agent-progress{display:flex;flex-wrap:wrap;gap:.375rem;margin:.25rem 0 .625rem}
+  .agent-event{display:inline-flex;align-items:center;gap:.3rem;min-height:1.5rem;
+    box-sizing:border-box;border:1px solid var(--color-neutral-solid-gray-200);
+    border-radius:999px;background:var(--color-neutral-solid-gray-50);
+    padding:.15rem .55rem;color:var(--color-neutral-solid-gray-700);font-size:.6875rem}
+  .agent-event--success{border-color:var(--color-semantic-success-1);
+    background:var(--color-primitive-green-50);color:var(--color-semantic-success-2)}
+  .agent-event--attention{border-color:var(--color-primitive-yellow-300);
+    background:var(--color-key-50);color:var(--color-neutral-solid-gray-900)}
   .typing{display:flex;gap:.3rem;padding:.55rem 0}
   .typing span{width:.45rem;height:.45rem;border-radius:50%;
     background:var(--color-neutral-solid-gray-400);animation:typing 1.2s infinite}
@@ -384,6 +395,7 @@
     .suggestion-grid{grid-template-columns:1fr}.suggestion-card:nth-child(n+3){display:none}
     .composer-dock{padding:2rem .5rem .5rem}.composer{border-radius:1rem}
     .message-row--user .message-body{max-width:92%}
+    .agent-timeline{margin-left:0}
     .integration-grid{grid-template-columns:1fr}.calendar-list .data-list__item{grid-template-columns:1fr}
     .record-browser{grid-template-columns:1fr}.record-list{border-right:0;
       border-bottom:1px solid var(--color-neutral-solid-gray-200)}
@@ -453,6 +465,7 @@
     const status = $('#request-status');
     const thread = $('#chat-thread');
     const empty = $('#chat-empty');
+    const agentTimeline = $('#agent-timeline');
     const scroll = $('#chat-scroll');
     const chatShell = $('#chat-shell');
     const sessionList = $('#session-list');
@@ -528,6 +541,40 @@
         form.requestSubmit();
       });
     };
+    const agentEventLabel = (event) => {
+      const type = event?.['event/type'] || 'agent/event';
+      const data = event?.['event/data'] || {};
+      if (type === 'phase/started') return `phase · ${data.phase}`;
+      if (type === 'model/started') return `${data.provider} · ${data.model}`;
+      if (type === 'tool/started') return `tool · ${data.tool}`;
+      if (type === 'tool/completed') return `tool ✓ · ${data.tool}`;
+      if (type === 'tool/failed') return `tool ! · ${data.tool}`;
+      if (type === 'artifact/changed') {
+        return `artifact · ${(data.paths || []).length || 1}`;
+      }
+      if (type === 'verification/completed') {
+        return data['passed?'] ? 'verification ✓' : 'needs review';
+      }
+      if (type === 'run/completed') return `run · ${data.status}`;
+      if (type === 'run/failed') return 'run · failed';
+      return type.replace('/', ' · ');
+    };
+    const appendAgentEvent = (target, event) => {
+      const type = event?.['event/type'];
+      const data = event?.['event/data'] || {};
+      const success = type === 'tool/completed'
+        || (type === 'verification/completed' && data['passed?'])
+        || (type === 'run/completed' && data.status === 'succeeded');
+      const attention = type === 'tool/failed' || type === 'run/failed'
+        || (type === 'verification/completed' && !data['passed?'])
+        || (type === 'run/completed' && data.status === 'needs-review');
+      const chip = make('span',
+        `agent-event${success ? ' agent-event--success' : ''}${attention
+          ? ' agent-event--attention' : ''}`,
+        agentEventLabel(event));
+      target.append(chip);
+      target.hidden = false;
+    };
     const renderSessions = (items) => {
       const sessions = [...items];
       if (!sessions.some((item) => item.id === sessionId)) {
@@ -582,6 +629,10 @@
         const data = await request.json();
         if (!request.ok) throw new Error(data?.error?.message || '会話を取得できませんでした。');
         thread.querySelectorAll('.message-row').forEach((node) => node.remove());
+        agentTimeline.replaceChildren();
+        (data['agent-events'] || []).slice(-24).forEach(
+          (event) => appendAgentEvent(agentTimeline, event));
+        agentTimeline.hidden = !(data['agent-events'] || []).length;
         data.messages.forEach((message) => {
           if (message.role === 'user') lastPrompt = message.content;
           const rendered = addMessage(message.role, message.content,
@@ -621,7 +672,13 @@
             scrollToEnd();
           } else if (event.type === 'done') {
             addAssistantActions(assistant, promptValue);
-            announce(`${event.provider} / ${event.model} から応答しました。`);
+            const runStatus = event['agent-run']?.status;
+            announce(runStatus === 'needs-review'
+              ? `${event.provider} / ${event.model}: 成果物の確認が必要です。`
+              : `${event.provider} / ${event.model} が検証まで完了しました。`);
+          } else if (event.type === 'agent-event') {
+            appendAgentEvent(assistant.progress, event.event);
+            scrollToEnd();
           } else if (event.type === 'error') {
             throw new Error(event.message);
           }
@@ -642,6 +699,9 @@
       prompt.value = '';
       resizePrompt();
       const assistant = addMessage('assistant', '');
+      assistant.progress = make('div', 'agent-progress');
+      assistant.progress.hidden = true;
+      assistant.body.insertBefore(assistant.progress, assistant.text);
       const typing = make('div', 'typing');
       typing.setAttribute('aria-label', '応答を生成中');
       typing.append(make('span'), make('span'), make('span'));
@@ -695,6 +755,8 @@
       localStorage.setItem('cloud-itonami-session', sessionId);
       chatShell.dataset.session = sessionId;
       thread.querySelectorAll('.message-row').forEach((node) => node.remove());
+      agentTimeline.replaceChildren();
+      agentTimeline.hidden = true;
       empty.hidden = false;
       prompt.value = ''; resizePrompt(); prompt.focus();
       loadSessions();
@@ -2361,6 +2423,8 @@
             [:div {:class "chat-scroll" :id "chat-scroll"}
            [:div {:class "chat-thread" :id "chat-thread"
                   :role "log" :aria-live "polite" :aria-relevant "additions"}
+            [:div {:class "agent-timeline" :id "agent-timeline" :hidden true
+                   :aria-label "Agent loop activity"}]
             [:div {:class "chat-empty" :id "chat-empty"}
              [:div {:class "chat-empty__mark" :aria-hidden "true"} "ai"]
              [:h1 "何を達成しますか？"]

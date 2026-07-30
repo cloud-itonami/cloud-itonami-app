@@ -4,6 +4,7 @@
             [clojure.set :as set]
             [clojure.string :as str]
             [cloud.itonami.app.app :as app]
+            [cloud.itonami.app.agent-event :as agent-event]
             [cloud.itonami.app.cli-runner :as cli-runner]
             [cloud.itonami.app.config :as config-loader]
             [cloud.itonami.app.did :as did]
@@ -144,26 +145,47 @@
                    "cloud-itonami-app-stream-test"
                    (make-array java.nio.file.attribute.FileAttribute 0))
         previous @store/state
-        deltas (atom [])]
+        deltas (atom [])
+        events (atom [])]
     (try
       (reset! store/state (store/initial-state))
       (with-redefs [config-loader/data-dir (fn [] (.toFile temporary))
                     provider/chat-stream!
-                    (fn [_ _ on-delta]
+                    (fn [_ _ on-delta on-event]
+                      (on-event {:type :tool/started :tool :shell})
                       (on-delta "こん")
                       (on-delta "にちは")
+                      (on-event {:type :tool/completed :tool :shell
+                                 :exit-code 0})
                       {:content "こんにちは" :usage {:total_tokens 3}})]
         (let [response (service/run-chat-stream!
                         config
                         {:messages [{:role "user" :content "hello"}]
-                         :session-id "stream"}
-                        #(swap! deltas conj %))]
+                         :session-id "stream" :mode :agent}
+                        #(swap! deltas conj %)
+                        #(swap! events conj %))]
           (is (= ["こん" "にちは"] @deltas))
+          (is (some #(= :tool/completed (:event/type %)) @events))
+          (is (= :succeeded (get-in response [:agent-run :status])))
           (is (= "こんにちは" (get-in response [:message :content])))
+          (is (some #(= :verification/completed (:event/type %))
+                    (store/agent-events "stream")))
           (is (= ["hello" "こんにちは"]
                  (mapv :content (store/session-messages "stream"))))))
       (finally
         (reset! store/state previous)))))
+
+(deftest public-agent-events-drop-provider-payloads
+  (let [value
+        (agent-event/event
+         {:id "event-1" :run-id "run-1" :session-id "session-1"
+          :type :tool/completed :at "2026-07-30T00:00:00Z"
+          :data {:tool :shell :exit-code 0
+                 :command "print-secret" :provider-payload {:secret true}}})
+        public (agent-event/public-event value)]
+    (is (agent-event/valid-event? value))
+    (is (= {:tool :shell :exit-code 0} (:event/data public)))
+    (is (not (re-find #"print-secret" (pr-str public))))))
 
 (deftest cli-chat-session-is-recorded-and-resumed-per-provider
   (let [temporary (java.nio.file.Files/createTempDirectory
@@ -235,6 +257,9 @@
     (is (some #{"--ephemeral"} codex-one-shot))
     (is (some #{"sandbox_mode=\"workspace-write\""} codex-new))
     (is (some #{"sandbox_mode=\"read-only\""} codex-plan))
+    (is (some #{"ask_for_approval=\"on-request\""} codex-new))
+    (is (some #{"approvals_reviewer=\"auto_review\""} codex-new))
+    (is (some #{"ask_for_approval=\"never\""} codex-plan))
     (is (some #{"model_reasoning_effort=\"medium\""} codex-new))
     (is (= ["exec" "resume"] (subvec codex-resumed 1 3)))
     (is (= ["thread-1" "hello"] (subvec codex-resumed
