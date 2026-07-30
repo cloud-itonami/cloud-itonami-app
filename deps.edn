@@ -30,6 +30,23 @@
   io.github.kotoba-lang/org-chainagnostic-cacao
   {:git/url "https://github.com/kotoba-lang/org-chainagnostic-cacao.git"
    :git/sha "3aaab02fb993a1d0b716c8fc1aefe37e4e3ab850"}
+  ;; W3C Verifiable Credentials with real Data Integrity proofs
+  ;; (ADR-2607309400). org-w3-vc validates a credential's SHAPE and treats
+  ;; `proof` as an opaque pass-through, so it is deliberately absent here: it
+  ;; would add no signature. These four are what make a membership claim
+  ;; verifiable outside this process.
+  io.github.kotoba-lang/org-w3-vc-data-integrity
+  {:git/url "https://github.com/kotoba-lang/org-w3-vc-data-integrity.git"
+   :git/sha "539b1040bb11f4cd57c629ef4149964abbb7579d"}
+  io.github.kotoba-lang/org-w3-vc-bitstring-status-list
+  {:git/url "https://github.com/kotoba-lang/org-w3-vc-bitstring-status-list.git"
+   :git/sha "2184a7877a1ac72dcc5b431eb2cbfad7c3240940"}
+  io.github.kotoba-lang/org-ietf-jcs
+  {:git/url "https://github.com/kotoba-lang/org-ietf-jcs.git"
+   :git/sha "ee06e8d51d16265bd366a4fe284ffa1dd617c34e"}
+  io.github.kotoba-lang/org-w3-did
+  {:git/url "https://github.com/kotoba-lang/org-w3-did.git"
+   :git/sha "c61e6c95515cd6b66ef19550876d40b7356fc6a7"}
   io.github.kotoba-lang/drive
   {:git/url "https://github.com/kotoba-lang/drive.git"
    :git/sha "54d7aeface7135b572c9cccfc03ef7a31a7344be"}

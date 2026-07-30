@@ -15,9 +15,14 @@ by a fork of the application.
 This is an early public development release. The loopback server, local model
 adapters, chat UI, background worker runs, read-only workspace integrations,
 Passkey registration, User `did:key`, organization membership, OAuth/PKCE
-connections, and optional private email relay client are implemented. Production multi-tenant hosting,
-domain verification, DID document publication, and signed desktop packages
-remain separate deployment responsibilities.
+connections, W3C Verifiable Credentials for organization membership
+(`eddsa-jcs-2022` Data Integrity proofs with status-list revocation), the
+`did:web` document endpoint, and optional private email relay client are
+implemented. Production multi-tenant hosting, domain verification, holder-signed
+Verifiable Presentations, and signed desktop packages remain separate
+responsibilities — the presentation gap is structural, not unfinished work: a
+Passkey signs its own `authenticatorData || clientDataHash` and cannot produce a
+Data Integrity proof.
 
 ## Requirements
 

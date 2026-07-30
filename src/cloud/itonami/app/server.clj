@@ -4,6 +4,7 @@
             [cloud.itonami.app.authority.api :as authority-api]
             [cloud.itonami.app.config :as config]
             [cloud.itonami.app.contracts :as contracts]
+            [cloud.itonami.app.credential :as credential]
             [cloud.itonami.app.credential-assurance :as credential-assurance]
             [cloud.itonami.app.documents :as documents]
             [cloud.itonami.app.executor :as executor]
@@ -376,6 +377,36 @@
             (and (= method "GET") (= path "/health"))
             (send! exchange 200 {:ok true :service "cloud-itonami-app"
                                  :schema "cloud.itonami.app.health.v1"})
+
+            ;; Public by necessity, like /health. A DID document is the public
+            ;; half of a key pair plus the purposes it may be used for; a
+            ;; verifier who has to authenticate to fetch it cannot verify
+            ;; anything. Contains no private key material and no workspace state.
+            ;;
+            ;; Publication is still a DEPLOYMENT step: this serves the document,
+            ;; but `did:web:<domain>` resolves to `https://<domain>/.well-known/did.json`
+            ;; and nothing here makes DNS point at this process. Until it does,
+            ;; `credential/issuer-verification-method` names the `did:key`
+            ;; instead, so issued credentials stay verifiable either way.
+            (and (= method "GET") (= path "/.well-known/did.json"))
+            (let [domain (identity/organization-domain-for-did-web)]
+              (if (str/blank? (str domain))
+                (send! exchange 404
+                       {:error "この deployment は did:web を発行していません。"
+                        :schema credential/schema})
+                (send! exchange 200 (credential/did-web-document domain))))
+
+            ;; The status list a verifier fetches to learn whether a credential
+            ;; we issued has been revoked. Public for the same reason, and signed
+            ;; so that serving it from anywhere is safe: an unverified list of
+            ;; zeros would un-revoke everything, so the proof is the point.
+            (and (= method "GET") (= path credential/status-list-id-suffix))
+            (send! exchange 200
+                   (credential/sign
+                    (credential/status-list-credential
+                     (store/snapshot)
+                     (identity/organization-domain-for-did-web))
+                    (identity/organization-domain-for-did-web)))
 
             ;; Public like /health: every value returned is a read of public
             ;; chain state or a pure PieceCID computation. Nothing here touches
