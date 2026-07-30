@@ -5,6 +5,7 @@
   and the app state is a local atom rather than the process-wide one, so
   nothing here writes to the data dir."
   (:require [clojure.data.json :as json]
+            [clojure.edn :as edn]
             [clojure.string :as str]
             [clojure.test :refer [deftest is testing]]
             [cloud.itonami.app.documents :as documents]
@@ -45,7 +46,7 @@
             (is (= expected-resource (:resource-kind item)))
             ;; From the envelope rather than restated by the app: whatever
             ;; the wire says it produced is what the Drive records.
-            (is (= "application/json" (:media-type item)))
+            (is (= "application/edn" (:media-type item)))
             (is (= 1 (:versions item)))
             (is (pos? (:size-bytes item)))
             (is (= "workspace" (:origin item))))))
@@ -59,20 +60,80 @@
       (is (= "無題のフォーム"
              (get-in (documents/create! :forms nil alice object-store) [:item :name]))))))
 
-(deftest what-is-stored-is-the-office-envelope
+(deftest what-is-stored-is-edn
   (with-state
     (fn [state object-store]
       (let [{:keys [item]} (documents/create! :docs "設計メモ" alice object-store)
             workspace (documents/workspace-for @state alice)
             stored (object/read-item workspace object-store (:id item) alice)
-            envelope (json/read-str
+            text (String. (byte-array (map unchecked-byte (:bytes stored)))
+                          java.nio.charset.StandardCharsets/UTF_8)
+            envelope (edn/read-string text)]
+        ;; Self-describing on the way out, as it was as JSON: a reader
+        ;; holding only these bytes can tell which surface it has.
+        (is (= :kotoba.protocol/office (:kotoba.protocol/family envelope)))
+        (is (= :docs/document (:kotoba.resource/kind envelope)))
+        ;; And keywords are keywords. This is the whole point: nothing has to
+        ;; put them back, so no reader can put them back wrongly.
+        (is (= "設計メモ" (:docs/title (:kotoba.resource/payload envelope))))
+        (is (= :document (:docs/type (:kotoba.resource/payload envelope))))
+        (is (= [:heading] (mapv :docs/kind
+                                (:docs/blocks (:kotoba.resource/payload envelope)))))))))
+
+(deftest a-workbook-keeps-its-cell-addresses-at-rest
+  ;; The value JSON could not carry at all: a cell key is a vector, and the
+  ;; projection flattened it to the string "[1 1]" which `sheets.wire` then
+  ;; had to parse back.
+  (with-state
+    (fn [state object-store]
+      (let [{:keys [item]} (documents/create! :sheets "売上" alice object-store)
+            payload (:payload (documents/content (:id item) alice object-store))
+            _ (documents/update! (:id item)
+                                 (assoc-in payload ["sheets/tabs" "sheet1" "sheets/cells"]
+                                           {"[1 1]" {"sheets/value" "Q1"}})
+                                 alice object-store)
+            workspace (documents/workspace-for @state alice)
+            stored (object/read-item workspace object-store (:id item) alice)
+            envelope (edn/read-string
                       (String. (byte-array (map unchecked-byte (:bytes stored)))
                                java.nio.charset.StandardCharsets/UTF_8))]
-        ;; Self-describing on the way out: a reader holding only these bytes
-        ;; can tell which of the three surfaces it has.
-        (is (= "kotoba.protocol/office" (get envelope "kotoba.protocol/family")))
-        (is (= "docs/document" (get envelope "kotoba.resource/kind")))
-        (is (= "設計メモ" (get-in envelope ["kotoba.resource/payload" "docs/title"])))))))
+        (is (= {[1 1] {:sheets/value "Q1"}}
+               (get-in (:kotoba.resource/payload envelope)
+                       [:sheets/tabs "sheet1" :sheets/cells])))))))
+
+(deftest a-document-written-as-json-still-reads
+  ;; Migration is what the Drive does as it is used, not something anyone
+  ;; runs: an object written before this change is still JSON, and the save
+  ;; that rewrites it is what moves it.
+  (with-state
+    (fn [state object-store]
+      (let [{:keys [item]} (documents/create! :docs "旧" alice object-store)
+            workspace (documents/workspace-for @state alice)
+            ref (:drive/object-ref (ws/item workspace (:id item)))
+            legacy (json/write-str
+                    {"kotoba.protocol/family" "kotoba.protocol/office"
+                     "kotoba.protocol/version" 1
+                     "kotoba.resource/kind" "docs/document"
+                     "kotoba.resource/payload" {"docs/id" "d" "docs/type" "document"
+                                                "docs/title" "旧" "docs/blocks" []}})]
+        ;; Put the old shape back under the same reference.
+        (object/-put-object object-store ref
+                            (mapv #(bit-and (int %) 0xff)
+                                  (.getBytes ^String legacy
+                                             java.nio.charset.StandardCharsets/UTF_8)))
+        (let [current (documents/content (:id item) alice object-store)]
+          (is (= "旧" (get (:payload current) "docs/title")))
+          (is (= :document (:docs/type (:resource current)))
+              "rehydrated on read, exactly as it always was")
+          ;; And the save that follows writes EDN and corrects what the item
+          ;; claims to be.
+          (documents/update! (:id item) (:payload current) alice object-store)
+          (is (= "application/edn"
+                 (:media-type (first (documents/documents @state alice)))))
+          (is (= :edn (:format (documents/decode-stored
+                                (:bytes (object/read-item
+                                         (documents/workspace-for @state alice)
+                                         object-store (:id item) alice)))))))))))
 
 (deftest content-reads-back-through-the-surfaces-own-reader
   (with-state
@@ -687,7 +748,7 @@
       (let [{:keys [ok? item]} (documents/create! :slides "四半期報告" alice object-store)]
         (is ok?)
         (is (= ":slides/deck" (:resource-kind item)))
-        (is (= "application/json" (:media-type item)))
+        (is (= "application/edn" (:media-type item)))
         (let [{:keys [payload resource-kind]} (documents/content (:id item) alice object-store)]
           (is (= ":slides/deck" resource-kind))
           (is (= "四半期報告" (get payload "slides/title")))
