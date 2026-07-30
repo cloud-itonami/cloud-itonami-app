@@ -12,6 +12,7 @@
   than satisfied, because a real ceremony needs an authenticator and what is
   under test is the route layer behind that gate."
   (:require [clojure.data.json :as json]
+            [clojure.java.io :as io]
             [clojure.test :refer [deftest is testing]]
             [cloud.itonami.app.config :as config-loader]
             [cloud.itonami.app.identity :as local-identity]
@@ -64,10 +65,10 @@
                    "cloud-itonami-app-mailbox-http"
                    (make-array java.nio.file.attribute.FileAttribute 0))
         root (.toFile temporary)
-        inbox (clojure.java.io/file root "m365-archive/mail/受信トレイ")
+        inbox (io/file root "m365-archive/mail/受信トレイ")
         previous @store/state]
     (.mkdirs inbox)
-    (spit (clojure.java.io/file inbox message-id)
+    (spit (io/file inbox message-id)
           (str "From: Example Person <sender@example.com>\r\n"
                "Subject: 進捗の確認\r\nMessage-ID: <a@example.com>\r\n\r\n"
                "来週の進捗について確認します。"))
