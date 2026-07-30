@@ -288,6 +288,26 @@
             with-users
             (:organizations identity-state))))))))
 
+(defn organization-domain-for-did-web
+  "The domain whose `did:web` document this deployment should serve, or nil.
+
+  nil in two distinct cases that both mean \"do not serve one\": the profile has
+  `:publish-did-web? false`, or no Organization ID has been claimed yet. They are
+  collapsed on purpose — a DID document for an organization that does not exist
+  would name a key as belonging to nobody.
+
+  Returns the domain of the single configured organization. A deployment hosting
+  several organizations serves one document per domain and cannot use this; that
+  is production multi-tenant hosting, which `docs/tenant-model.md` already scopes
+  out of this application."
+  []
+  (when (:publish-did-web? @runtime-identity-profile)
+    (let [state (identity-state (store/snapshot))]
+      (some (fn [organization]
+              (when (:organization-id organization)
+                (:domain organization)))
+            (vals (:organizations state))))))
+
 (defn public-state [token]
   (migrate-did-links!)
   (let [state (identity-state (store/snapshot))

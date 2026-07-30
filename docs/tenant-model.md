@@ -66,6 +66,43 @@ must pass deployment-specific DNS/HTTPS verification.
 `did:web` remains absent until the deployment is configured to publish DID
 documents for managed domains. Configuration alone does not prove ownership.
 
+The application now *serves* that document: with `:publish-did-web? true` and an
+Organization ID claimed, `GET /.well-known/did.json` returns a DID document whose
+`assertionMethod` is the Ed25519 key credentials are signed with
+(`cloud.itonami.app.credential/did-web-document`). What is still a deployment
+responsibility is making `https://<domain>/.well-known/did.json` actually resolve
+to this process — serving a document and controlling the domain that names it are
+different things, and only the second proves ownership.
+
+Until the domain resolves, credentials are signed under the issuer's `did:key`
+rather than an unpublished `did:web`, so they stay verifiable by anyone instead of
+naming an address that answers nothing.
+
+## Organization membership as a credential
+
+Membership is a row in this server's state *and* a W3C Verifiable Credential the
+holder can carry elsewhere:
+
+```text
+issuer   = organization did:web (or the issuer did:key until it resolves)
+subject  = User did:key            (P-256, from the Passkey)
+proof    = DataIntegrityProof / eddsa-jcs-2022   (Ed25519, the app's issuer key)
+status   = BitstringStatusListEntry -> /credentials/status/1
+```
+
+The subject's key and the signing key are different curves on purpose: a subject
+is *named*, not a signer, so a P-256 Passkey DID is a perfectly good subject. The
+consequence is recorded rather than hidden — a **holder-signed Verifiable
+Presentation is not implemented**, because WebAuthn signs its own
+`authenticatorData || clientDataHash` and cannot produce a Data Integrity proof
+over a canonicalized document at all. See
+`cloud.itonami.app.credential` for the full reasoning.
+
+Revocation flips one bit in a signed status list, so a credential can be
+withdrawn before it expires. `verify` reports `:verified` and `:valid?`
+separately: a revoked credential is still correctly signed, and gating on
+`:verified` alone is how one gets honoured after withdrawal.
+
 ## gftd distribution
 
 The gftd profile is one distribution of the same application:
