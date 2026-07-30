@@ -511,6 +511,59 @@
                      body)})
        (refuse! result)))))
 
+(def reference-kinds
+  "Which block kinds are a reference, and what each is meant to point at.
+
+  The expectation is advisory: `docs.model` names the kinds and does not say
+  a `:table-ref` must be a workbook, so pointing one at a deck is reported
+  and not refused. What is refused is a save whose reference goes nowhere at
+  all — that is a warning too, because a draft may name something that is
+  about to be shared."
+  {:table-ref :sheets/workbook
+   :file-ref nil
+   :deck-ref :slides/deck})
+
+(defn- reference-blocks
+  "The reference blocks of a *rehydrated* document.
+
+  Rehydrated, because `:docs/kind` is a keyword there and a bare string on
+  the projection — the same reason validation cannot run on a payload."
+  [document]
+  (->> (:docs/blocks document)
+       (filter map?)
+       (filter #(contains? reference-kinds (:docs/kind %)))))
+
+(defn- resource-of
+  "The rehydrated resource behind an item, read through the ACL."
+  [id actor object-store]
+  (let [current (content id actor object-store)
+        rehydrate (get-in kinds [(keyword (:kind (:item current))) :rehydrate])]
+    (when rehydrate (rehydrate (:payload current)))))
+
+(defn- reference-warnings
+  "Dangling and mistyped references, as save-time warnings.
+
+  Warnings rather than errors, for the same reason `docs.validate` treats a
+  missing title as one: a document being written may name something that is
+  about to exist, and refusing the save would make writing it impossible."
+  [document actor]
+  (let [visible (into {} (map (juxt :id identity)) (documents (store/snapshot) actor))]
+    (vec
+     (for [block (reference-blocks document)
+           :let [target (:docs/target block)
+                 kind (:docs/kind block)
+                 hit (get visible target)
+                 expect (get reference-kinds kind)]
+           :when (or (nil? hit)
+                     (and expect (not= (str expect) (:resource-kind hit))))]
+       (if hit
+         {:code ":reference/unexpected-kind"
+          :message (str "「" (:docs/id block) "」の参照先は "
+                        (:label hit) " です（" (name kind) " が想定するものと異なります）。")}
+         {:code ":reference/dangling"
+          :message (str "「" (:docs/id block) "」の参照先 " (pr-str target)
+                        " は見つかりません。")})))))
+
 ;; ── editing ─────────────────────────────────────────────────────────────────
 
 (defn- spec-of-item [item]
@@ -573,7 +626,12 @@
   replaces an earlier version's bytes while the history saying otherwise is
   still sitting in `:drive/versions`."
   [{:keys [workspace item spec owner own?]} id actor object-store resource]
-  (let [{:keys [errors warnings]} (problems-in spec resource)]
+  (let [{:keys [errors warnings]} (problems-in spec resource)
+        ;; Reference checks are the app's, not a surface's: `docs.validate`
+        ;; sees a `:docs/target` string and has no way to know whether it
+        ;; names anything, because what it could name lives in a Drive it
+        ;; does not know about.
+        warnings (into (vec warnings) (reference-warnings resource actor))]
     (when (seq errors)
       (throw (ex-info (str "保存できません: " (:message (first errors)))
                       {:type :drive/invalid-document :problems errors})))
@@ -1205,3 +1263,81 @@
         (do (store/transact! assoc-in (comments-path id)
                              (vec (remove #(= comment-id (:id %)) existing)))
             {:schema schema :ok? true :id comment-id})))))
+
+;; ── references between documents ────────────────────────────────────────────
+;;
+;; `docs.model` has had `:table-ref`, `:file-ref` and `:deck-ref` blocks since
+;; before any of this, each carrying a `:docs/target` string, and nothing has
+;; ever resolved one. A document that can name a workbook but never reach it
+;; is four surfaces sharing a pane rather than four surfaces that know about
+;; each other.
+;;
+;; A target is a Drive item id. Not a URL and not a `slides:intro-deck`-style
+;; scheme — the seed document in `docs.model` uses one of those, and it is a
+;; placeholder rather than a format anything parses. An id is what `locate`
+;; already resolves, which means a reference obeys the same permission answer
+;; as everything else: you can follow a link to a document you may read, and
+;; a link to one you may not is indistinguishable from a link to nothing.
+
+(defn references
+  "What this document points at, and whether each target is reachable.
+
+  Only `docs` documents carry references today. A workbook has no block that
+  names another document, and a deck's links live on a `slides` workspace
+  rather than in the deck itself — the envelope carries one deck, so there is
+  nowhere in it for a link to sit."
+  ([id actor] (references id actor (store-instance)))
+  ([id actor object-store]
+   (let [{:keys [item]} (readable! actor id)
+         document (when (= :docs/document (:drive/resource-kind item))
+                    (resource-of id actor object-store))
+         visible (into {} (map (juxt :id identity)) (documents (store/snapshot) actor))]
+     {:schema schema
+      :ok? true
+      :id id
+      :references
+      (mapv (fn [block]
+              (let [target (:docs/target block)
+                    kind (:docs/kind block)
+                    hit (get visible target)]
+                (cond-> {:block (:docs/id block)
+                         :kind (name kind)
+                         :target target
+                         :resolved? (some? hit)}
+                  hit (assoc :name (:name hit)
+                             :label (:label hit)
+                             :resource-kind (:resource-kind hit)
+                             :expected? (let [expect (get reference-kinds kind)]
+                                          (or (nil? expect)
+                                              (= (str expect) (:resource-kind hit))))))))
+            (reference-blocks document))})))
+
+(defn referenced-by
+  "Which of the documents this principal can see point at `id`.
+
+  Backlinks, and the reason references are worth resolving at all: a workbook
+  that cannot say which memo depends on it is a workbook nobody dares
+  change."
+  ([id actor] (referenced-by id actor (store-instance)))
+  ([id actor object-store]
+   (readable! actor id)
+   (let [state (store/snapshot)]
+     {:schema schema
+      :ok? true
+      :id id
+      :referenced-by
+      (vec
+       (for [candidate (documents state actor)
+             :when (= ":docs/document" (:resource-kind candidate))
+             :let [document (try (resource-of (:id candidate) actor object-store)
+                                 ;; A document whose bytes are gone should not
+                                 ;; make the backlinks of a different one fail.
+                                 (catch clojure.lang.ExceptionInfo _ nil))]
+             block (reference-blocks document)
+             :when (= id (:docs/target block))]
+         {:id (:id candidate)
+          :name (:name candidate)
+          :label (:label candidate)
+          :block (:docs/id block)
+          :kind (name (:docs/kind block))}))})))
+

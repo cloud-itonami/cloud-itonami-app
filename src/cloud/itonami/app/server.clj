@@ -803,6 +803,19 @@
                        (documents/grant! id (:principal request) (:role request)
                                          (:user-id session)))))
 
+            ;; What this document points at, and what points at it. Both
+            ;; resolve through `locate`, so a reference to something the
+            ;; asker may not read is reported as unresolved rather than
+            ;; leaking that it exists.
+            (and (= method "GET")
+                 (id-from-path path #"/api/workspace/drive/documents/([^/]+)/references"))
+            (let [session (require-app-session! exchange)
+                  id (id-from-path path
+                                   #"/api/workspace/drive/documents/([^/]+)/references")]
+              (send! exchange 200
+                     (merge (documents/references id (:user-id session))
+                            (documents/referenced-by id (:user-id session)))))
+
             (and (= method "GET")
                  (id-from-path path #"/api/workspace/drive/documents/([^/]+)/comments"))
             (let [session (require-app-session! exchange)]

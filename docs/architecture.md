@@ -97,6 +97,36 @@ applications on their own origin. Reaching those would mean widening
 `connect-src 'self'` in the page CSP, which is a decision about what this app
 may talk to and not one to make as a side effect of adding an editor.
 
+### References between documents
+
+`docs.model` has had `:table-ref`, `:file-ref` and `:deck-ref` blocks all
+along, each carrying a `:docs/target` string, and nothing ever resolved one.
+Four surfaces sharing a pane is not the same as four surfaces that know about
+each other; this is the difference.
+
+A target is a Drive item id — not a URL and not the `slides:intro-deck`-style
+scheme the seed document in `docs.model` uses, which is a placeholder rather
+than a format anything parses. An id is what `documents/locate` already
+resolves, so **a reference obeys the same permission answer as everything
+else**: a link to a document you may read resolves, and a link to one you may
+not is indistinguishable from a link to nothing. Backlinks are filtered the
+same way, so an incoming reference never tells you a document exists that you
+were not shown.
+
+Dangling and mistyped references are save-time **warnings**, not errors. A
+document being written may name something that is about to be shared, and
+`docs.model` names the kinds without saying a `:table-ref` must be a
+workbook, so pointing one at a deck is reported and not refused.
+
+The check belongs to the app rather than to `docs.validate`: the validator
+sees a target string and has no way to know whether it names anything,
+because what it could name lives in a Drive it does not know about.
+
+Only `docs` documents carry references today. A workbook has no block that
+names another document, and a deck's links live on a `slides` *workspace*
+rather than in the deck — the envelope carries one deck, so there is nowhere
+in it for a link to sit.
+
 ### Comments
 
 `:commenter` was a grantable role backed by nothing — `can-write?` excludes

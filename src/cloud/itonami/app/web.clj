@@ -923,6 +923,11 @@
       root.append(list, add);
       return root;
     };
+    // The block kinds that name another document. Kept beside the editor
+    // because it is the editor that has to offer a picker for them; the
+    // server's `documents/reference-kinds` is what decides whether one
+    // resolves.
+    const refKinds = ['table-ref', 'file-ref', 'deck-ref'];
     const docsEditor = (payload, vocabulary, changed) => {
       const root = make('div', 'surface-editor');
       root.append(field('タイトル', textInput(payload['docs/title'],
@@ -940,15 +945,38 @@
             ['1', '2', '3', '4', '5', '6'],
             (value) => { block['docs/level'] = Number(value); changed(false); })));
         }
-        if ('docs/text' in block || block['docs/kind'] === 'heading'
+        if (refKinds.includes(block['docs/kind'])) {
+          // A reference names another document by its Drive id, so the field
+          // is a picker over the ones this principal can see rather than a
+          // box to type an id into. Free text stays: a draft may name
+          // something that is about to be shared, which the server reports
+          // as a warning rather than refusing.
+          const targets = (driveData.items || [])
+            .filter((candidate) => candidate.origin === 'workspace'
+                                   && candidate.id !== driveEditor.id);
+          const picker = selectInput(block['docs/target'],
+            [''].concat(targets.map((t) => t.id)),
+            (value) => { if (value) { block['docs/target'] = value; changed(true); } });
+          // Labelled by name, valued by id — nobody navigates by uuid.
+          Array.from(picker.options).forEach((option) => {
+            const hit = targets.find((t) => t.id === option.value);
+            option.textContent = hit ? `${hit.name}（${hit.label}）` : '選択してください';
+          });
+          row.append(field('参照先', picker));
+          const hit = targets.find((t) => t.id === block['docs/target']);
+          row.append(make('span', 'surface-note',
+            hit ? `→ ${hit.name}` : `→ ${block['docs/target'] || '未設定'}（解決できません）`));
+          row.append(field('ID を直接指定', textInput(block['docs/target'],
+            (value) => { block['docs/target'] = value; changed(false); })));
+        } else if ('docs/text' in block || block['docs/kind'] === 'heading'
             || block['docs/kind'] === 'paragraph' || block['docs/kind'] === 'quote'
             || block['docs/kind'] === 'code') {
           row.append(field('本文', textInput(block['docs/text'],
             (value) => { block['docs/text'] = value; changed(false); }, 'surface-input--wide')));
         } else {
-          // A table, a list, a ref. Editing those structurally is a bigger
-          // surface than this pane; saying so beats a field that silently
-          // edits only part of one.
+          // A table or a list. Editing those structurally is a bigger surface
+          // than this pane; saying so beats a field that silently edits only
+          // part of one.
           row.append(make('span', 'surface-note', 'この種類は JSON で編集してください。'));
         }
         row.append(removeButton(() => {
@@ -1334,9 +1362,71 @@
       actions.append(row, status, modes, pane, editor, versions);
       renderPane();
       if (item.kind === 'forms') actions.append(answerPanel(item));
-      actions.append(commentPanel(item));
+      actions.append(referencePanel(item), commentPanel(item));
       if (item.role === 'owner') actions.append(sharingPanel(item, status));
       return actions;
+    };
+    // Both directions. Outgoing is what this document names; incoming is
+    // which documents name it — and the second is the half that makes the
+    // first worth resolving, because a workbook that cannot say which memo
+    // depends on it is a workbook nobody dares change.
+    const referencePanel = (item) => {
+      const panel = make('div', 'sharing');
+      panel.hidden = true;
+      const out = make('ul', 'sharing__list');
+      const back = make('ul', 'sharing__list');
+      const jump = (id, name) => {
+        const button = make('button', 'tool-button', name || id);
+        button.type = 'button';
+        button.addEventListener('click', () => {
+          const hit = (driveData.items || []).find((candidate) => candidate.id === id);
+          if (!hit) return;
+          driveEditor = closedEditor(hit.id);
+          selectedDrive = hit;
+          renderDrive(driveData);
+        });
+        return button;
+      };
+      (async () => {
+        try {
+          const request = await fetch(
+            `/api/workspace/drive/documents/${encodeURIComponent(item.id)}/references`);
+          const data = await request.json();
+          if (!request.ok) return;
+          const refs = data.references || [];
+          const incoming = data['referenced-by'] || [];
+          if (!refs.length && !incoming.length) return;
+          panel.hidden = false;
+          panel.append(make('h3', 'sharing__title', '参照'));
+          refs.forEach((ref) => {
+            const row = make('li', 'sharing__entry');
+            row.append(make('span', 'sharing__who', `${ref.kind}（${ref.block}）→`));
+            if (ref['resolved?']) {
+              row.append(jump(ref.target, ref.name));
+              if (ref['expected?'] === false) {
+                row.append(make('span', 'surface-note',
+                  `${ref.label} は ${ref.kind} の想定と異なります`));
+              }
+            } else {
+              row.append(make('span', 'surface-note',
+                `${ref.target || '未設定'} は見つかりません`));
+            }
+            out.append(row);
+          });
+          if (refs.length) panel.append(out);
+          if (incoming.length) {
+            panel.append(make('h3', 'sharing__title', '参照元'));
+            incoming.forEach((from) => {
+              const row = make('li', 'sharing__entry');
+              row.append(jump(from.id, from.name),
+                make('span', 'sharing__who', `${from.kind}（${from.block}）`));
+              back.append(row);
+            });
+            panel.append(back);
+          }
+        } catch (error) { /* the panel simply stays hidden */ }
+      })();
+      return panel;
     };
     // Comments are shown to anyone who may read the document and written by
     // anyone above :viewer, which is what makes :commenter a role rather
