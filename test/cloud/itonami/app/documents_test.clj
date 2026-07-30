@@ -794,6 +794,96 @@
                  (try (documents/content (:id item) bob object-store)
                       (catch clojure.lang.ExceptionInfo e (:type (ex-data e)))))))))))
 
+;; ── comments ────────────────────────────────────────────────────────────────
+
+(deftest a-commenter-may-comment-and-still-not-write
+  (with-state
+    (fn [_ object-store]
+      (let [{:keys [item]} (documents/create! :docs "設計" alice object-store)
+            _ (documents/grant! (:id item) bob "commenter" alice)
+            payload (:payload (documents/content (:id item) bob object-store))]
+        ;; The role now means something. Before this it was indistinguishable
+        ;; from :viewer — grantable, and backed by nothing.
+        (is (:ok? (documents/comment! (:id item) "ここは要検討" "title" bob)))
+        (is (= :drive/not-permitted
+               (try (documents/update! (:id item) payload bob object-store)
+                    (catch clojure.lang.ExceptionInfo e (:type (ex-data e))))))
+        (let [{:keys [comments]} (documents/comments (:id item) alice)]
+          (is (= 1 (count comments)))
+          (is (= {:author bob :text "ここは要検討" :anchor "title"}
+                 (select-keys (first comments) [:author :text :anchor]))))))))
+
+(deftest a-viewer-may-read-comments-and-not-leave-one
+  (with-state
+    (fn [_ object-store]
+      (let [{:keys [item]} (documents/create! :docs "設計" alice object-store)]
+        (documents/comment! (:id item) "所有者のメモ" nil alice)
+        (documents/grant! (:id item) bob "viewer" alice)
+        ;; Shown the document and what has been said about it; not given a
+        ;; voice, because `drive.workspace` already draws that line.
+        (is (= 1 (count (:comments (documents/comments (:id item) bob)))))
+        (is (= :drive/not-permitted
+               (try (documents/comment! (:id item) "口を出したい" nil bob)
+                    (catch clojure.lang.ExceptionInfo e (:type (ex-data e))))))))))
+
+(deftest commenting-does-not-touch-the-document
+  (with-state
+    (fn [state object-store]
+      (let [{:keys [item]} (documents/create! :docs "設計" alice object-store)
+            before (:payload (documents/content (:id item) alice object-store))]
+        (documents/comment! (:id item) "一言" nil alice)
+        ;; No new version, nothing charged, and the stored bytes unchanged —
+        ;; which is the whole reason comments are not written into them.
+        (is (= 1 (:versions (first (documents/documents @state alice)))))
+        (is (= before (:payload (documents/content (:id item) alice object-store))))
+        (is (empty? (get before "docs/comments")))))))
+
+(deftest an-empty-comment-is-refused
+  (with-state
+    (fn [_ object-store]
+      (let [{:keys [item]} (documents/create! :docs "設計" alice object-store)]
+        (is (= :drive/invalid-comment
+               (try (documents/comment! (:id item) "   " nil alice)
+                    (catch clojure.lang.ExceptionInfo e (:type (ex-data e))))))
+        (is (empty? (:comments (documents/comments (:id item) alice))))))))
+
+(deftest a-comment-is-deleted-by-its-author-or-the-owner
+  (with-state
+    (fn [_ object-store]
+      (let [{:keys [item]} (documents/create! :docs "設計" alice object-store)
+            _ (documents/grant! (:id item) bob "editor" alice)
+            _ (documents/grant! (:id item) "user-carol" "commenter" alice)
+            from-carol (:comment (documents/comment! (:id item) "carol の指摘" nil "user-carol"))]
+        ;; An editor may rewrite the document and still not delete what
+        ;; somebody said about it.
+        (is (= :drive/not-permitted
+               (try (documents/delete-comment! (:id item) (:id from-carol) bob)
+                    (catch clojure.lang.ExceptionInfo e (:type (ex-data e))))))
+        (is (:ok? (documents/delete-comment! (:id item) (:id from-carol) "user-carol")))
+        (is (empty? (:comments (documents/comments (:id item) alice))))
+        ;; And the owner may, on someone else's.
+        (let [again (:comment (documents/comment! (:id item) "もう一度" nil "user-carol"))]
+          (is (:ok? (documents/delete-comment! (:id item) (:id again) alice))))))))
+
+(deftest comments-on-a-trashed-document-are-out-of-reach
+  (with-state
+    (fn [_ object-store]
+      (let [{:keys [item]} (documents/create! :docs "設計" alice object-store)]
+        (documents/comment! (:id item) "一言" nil alice)
+        (documents/trash! (:id item) alice)
+        (is (= :drive/not-found
+               (try (documents/comments (:id item) alice)
+                    (catch clojure.lang.ExceptionInfo e (:type (ex-data e))))))))))
+
+(deftest a-stranger-sees-no-comments
+  (with-state
+    (fn [_ object-store]
+      (let [{:keys [item]} (documents/create! :docs "私信" alice object-store)]
+        (documents/comment! (:id item) "内緒" nil alice)
+        (is (= :drive/not-found
+               (try (documents/comments (:id item) bob)
+                    (catch clojure.lang.ExceptionInfo e (:type (ex-data e))))))))))
+
 ;; ── share links ─────────────────────────────────────────────────────────────
 
 (deftest a-link-reads-without-a-role

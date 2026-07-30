@@ -1271,8 +1271,85 @@
       actions.append(row, status, modes, pane, editor, versions);
       renderPane();
       if (item.kind === 'forms') actions.append(answerPanel(item));
+      actions.append(commentPanel(item));
       if (item.role === 'owner') actions.append(sharingPanel(item, status));
       return actions;
+    };
+    // Comments are shown to anyone who may read the document and written by
+    // anyone above :viewer, which is what makes :commenter a role rather
+    // than a word. They are not part of the stored bytes — see the comments
+    // section in `cloud.itonami.app.documents` for why not.
+    const commentRoles = ['owner', 'editor', 'commenter'];
+    const commentPanel = (item) => {
+      const panel = make('div', 'sharing');
+      panel.append(make('h3', 'sharing__title', 'コメント'));
+      const list = make('ul', 'sharing__list');
+      const status = make('p', 'drive-create__status', '');
+      const form = make('div', 'detail-actions__row');
+      const text = make('input', 'workspace-search surface-input--wide');
+      text.type = 'text';
+      text.placeholder = 'コメント';
+      text.setAttribute('aria-label', 'コメント');
+      const anchor = make('input', 'workspace-search document-title');
+      anchor.type = 'text';
+      anchor.placeholder = '位置（任意）';
+      anchor.setAttribute('aria-label', 'コメントの位置（任意）');
+      const add = make('button', 'tool-button', '投稿');
+      add.type = 'button';
+
+      const render = (entries) => {
+        list.replaceChildren();
+        if (!entries.length) {
+          list.append(make('li', 'empty-state', 'まだコメントはありません。'));
+          return;
+        }
+        entries.forEach((entry) => {
+          const row = make('li', 'sharing__entry');
+          row.append(make('span', 'sharing__who',
+            `${entry.author}${entry.anchor ? ` · ${entry.anchor}` : ''} · ${entry['created-at']}`));
+          row.append(make('span', 'surface-note', entry.text));
+          // Its author or the document's owner — the same rule the server
+          // applies, rather than a button that always fails for everyone else.
+          if (entry.author === currentUserId() || item.role === 'owner') {
+            const remove = make('button', 'tool-button', '削除');
+            remove.type = 'button';
+            remove.addEventListener('click', () => submit(
+              `/comments/${encodeURIComponent(entry.id)}/delete`, {}, 'コメントを削除しました。'));
+            row.append(remove);
+          }
+          list.append(row);
+        });
+      };
+      const reload = async () => {
+        try {
+          const request = await fetch(
+            `/api/workspace/drive/documents/${encodeURIComponent(item.id)}/comments`);
+          const data = await request.json();
+          if (request.ok) render(data.comments || []);
+        } catch (error) { /* the panel simply stays empty */ }
+      };
+      const submit = async (suffix, body, done) => {
+        status.textContent = '送信しています…';
+        try {
+          await postJSON(
+            `/api/workspace/drive/documents/${encodeURIComponent(item.id)}${suffix}`,
+            body, true);
+          status.textContent = done;
+          text.value = ''; anchor.value = '';
+          await reload();
+        } catch (error) {
+          status.textContent = error.message;
+        }
+      };
+      add.addEventListener('click', () => submit(
+        '/comments', {text:text.value, anchor:anchor.value}, 'コメントしました。'));
+
+      form.append(text, anchor, add);
+      panel.append(list);
+      if (commentRoles.includes(item.role)) panel.append(form);
+      panel.append(status);
+      reload();
+      return panel;
     };
     // A form is the one surface with a second thing to do to it. Editing it
     // changes the questions; answering it does not, and the answers are not
@@ -1850,6 +1927,9 @@
     $('#drive-trash-empty').addEventListener('click', () => driveAction(
       '/api/workspace/drive/trash/empty', {}, 'ゴミ箱を空にしました。'));
     let identityState = null;
+    // The same value the server sees as the actor: a user record is stored
+    // under its own id, so `user.id` is `(:user-id session)`.
+    const currentUserId = () => identityState?.user?.id;
     const connectorMarks = {github:'GH', google:'G', microsoft:'M'};
     const identityHeaders = () => ({
       'Content-Type':'application/json',

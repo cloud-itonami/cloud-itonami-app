@@ -89,6 +89,30 @@ applications on their own origin. Reaching those would mean widening
 `connect-src 'self'` in the page CSP, which is a decision about what this app
 may talk to and not one to make as a side effect of adding an editor.
 
+### Comments
+
+`:commenter` was a grantable role backed by nothing — `can-write?` excludes
+it, so a commenter could read and do nothing else, which is `:viewer` with a
+longer name. Comments are what it means.
+
+They are kept beside the document rather than in `docs.model`'s
+`:docs/comments`, and the reason is a boundary rather than a convenience. A
+comment written into the resource is a write to the document, and
+`drive.workspace` says a commenter may not make one — correctly, since a
+commenter who could rewrite content would be an editor under a quieter name.
+The alternative is to perform that write as somebody who may, and since
+`:drive.version/author` now records who wrote each version, that would file a
+comment under the wrong name in the one record that says who changed what.
+
+The costs are real: a comment does not travel with the exported envelope, and
+`docs.validate`'s comment checks never see it. If comments must travel with
+the bytes, the fix is a constrained-write operation in `drive` that a
+commenter may reach — not a workaround here.
+
+Anyone who may read a document sees its comments; anyone above `:viewer` may
+leave one; its author or the document's owner may delete it. An editor may
+rewrite the document and still not delete what somebody said about it.
+
 ### Answering a form
 
 A form is the one surface with a second thing to do to it. Editing changes

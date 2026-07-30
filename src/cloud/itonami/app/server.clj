@@ -759,6 +759,37 @@
                        (documents/grant! id (:principal request) (:role request)
                                          (:user-id session)))))
 
+            (and (= method "GET")
+                 (id-from-path path #"/api/workspace/drive/documents/([^/]+)/comments"))
+            (let [session (require-app-session! exchange)]
+              (send! exchange 200
+                     (documents/comments
+                      (id-from-path path #"/api/workspace/drive/documents/([^/]+)/comments")
+                      (:user-id session))))
+
+            (and (= method "POST")
+                 (id-from-path path #"/api/workspace/drive/documents/([^/]+)/comments"))
+            (let [session (require-app-session! exchange)
+                  request (read-json exchange)]
+              (require-origin! exchange config)
+              (require-csrf! exchange session)
+              (send! exchange 200
+                     (documents/comment!
+                      (id-from-path path #"/api/workspace/drive/documents/([^/]+)/comments")
+                      (:text request) (:anchor request) (:user-id session))))
+
+            (and (= method "POST")
+                 (re-matches #"/api/workspace/drive/documents/([^/]+)/comments/([^/]+)/delete"
+                             path))
+            (let [session (require-app-session! exchange)
+                  [_ id comment-id]
+                  (re-matches #"/api/workspace/drive/documents/([^/]+)/comments/([^/]+)/delete"
+                              path)]
+              (require-origin! exchange config)
+              (require-csrf! exchange session)
+              (send! exchange 200
+                     (documents/delete-comment! id comment-id (:user-id session))))
+
             ;; The form as something to fill in. Readable by anyone who may
             ;; read the document, because a form shared read-only is a form
             ;; meant to be answered.
@@ -1069,6 +1100,7 @@
                      :drive/not-trashed 409
                      :drive/invalid-share 400
                      :drive/invalid-submission 422
+                     :drive/invalid-comment 400
                      :drive/not-found 404
                      :drive/not-permitted 403
                      :drive/no-content 409

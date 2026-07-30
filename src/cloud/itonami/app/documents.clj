@@ -1072,3 +1072,110 @@
      :id id
      :submissions (mapv #(dissoc % :owner)
                         (get-in (store/snapshot) (submissions-path id) []))}))
+
+;; ── comments ────────────────────────────────────────────────────────────────
+;;
+;; ## Beside the document, and why not inside it
+;;
+;; `docs.model` puts comments in `:docs/comments`, inside the resource. That
+;; is the natural place for them and it is not reachable from here, because a
+;; comment written there is a write to the document — and `drive.workspace`
+;; says a `:commenter` may not write one. `can-write?` is `#{:owner :editor}`
+;; and it is right to be: a commenter who could rewrite the content would be
+;; an editor under a quieter name.
+;;
+;; The alternative is to perform that write as somebody who may — the owner,
+;; or the app itself. That was merely distasteful before versions had
+;; authors. Now it would file a comment under the wrong name in the one
+;; record that says who changed what. A history that can be made to lie is
+;; worse than a comment that lives somewhere else.
+;;
+;; So comments are kept beside the document, keyed by its id, like form
+;; submissions and for the same reason: they are about the document rather
+;; than part of it. The costs are real and named — a comment does not travel
+;; with the exported envelope, and `docs.validate`'s comment checks never see
+;; it. If comments must travel with the bytes, the fix is a constrained-write
+;; operation in `drive` that a commenter may reach, not a louder version of
+;; this.
+
+(def comment-roles
+  "Who may leave one. Read is not enough — a viewer is someone shown the
+  document, and `drive.workspace` already draws that line."
+  #{:owner :editor :commenter})
+
+(defn- comments-path [id] [:drive :comments id])
+
+(defn- readable!
+  "The item and this principal's role on it, if they may read it at all."
+  [actor id]
+  (let [{:keys [workspace owner]} (locate (store/snapshot) actor id)
+        item (when workspace (ws/item workspace id))]
+    (cond
+      (nil? item) (refuse! {:reason :no-such-item :item-id id})
+      (:drive/trashed? item) (refuse! {:reason :item-is-trashed :item-id id})
+      :else {:owner owner :item item
+             :role (ws/effective-role workspace id actor)})))
+
+(defn comments
+  "Every comment on this document, oldest first.
+
+  Visible to anyone who may read the document, including a viewer: being
+  shown a document and not what has been said about it is a strange half of
+  a thing to be shown."
+  [id actor]
+  (readable! actor id)
+  {:schema schema
+   :ok? true
+   :id id
+   :comments (mapv #(dissoc % :owner) (get-in (store/snapshot) (comments-path id) []))})
+
+(defn comment!
+  "Leave a comment.
+
+  `anchor` is free text and optional — a block id for a document, a cell
+  address for a workbook, nothing at all for a remark about the whole thing.
+  Deliberately not interpreted here: the moment this parsed one it would owe
+  every surface a different parser, and the surfaces are where that knowledge
+  lives."
+  [id text anchor actor]
+  (locking write-lock
+    (let [{:keys [owner role]} (readable! actor id)
+          text (not-empty (str/trim (str text)))]
+      (cond
+        (not (contains? comment-roles role))
+        (refuse! {:reason :not-permitted :item-id id :principal actor})
+        (nil? text)
+        (throw (ex-info "コメントを入力してください。"
+                        {:type :drive/invalid-comment :field :text}))
+        :else
+        (let [record {:id (store/new-id "cmt")
+                      :document-id id
+                      :owner owner
+                      :author actor
+                      :text text
+                      :anchor (not-empty (str/trim (str anchor)))
+                      :created-at (store/now)}]
+          (store/transact! update-in (comments-path id) (fnil conj []) record)
+          {:schema schema :ok? true :comment (dissoc record :owner)})))))
+
+(defn delete-comment!
+  "Remove one.
+
+  Its author or the document's owner. An editor may rewrite the document and
+  still not delete what somebody said about it — those are different things
+  and only one of them is the content."
+  [id comment-id actor]
+  (locking write-lock
+    (let [{:keys [role]} (readable! actor id)
+          existing (get-in (store/snapshot) (comments-path id) [])
+          target (some #(when (= comment-id (:id %)) %) existing)]
+      (cond
+        (nil? target)
+        (throw (ex-info "コメントが見つかりません。"
+                        {:type :drive/not-found :comment-id comment-id}))
+        (not (or (= actor (:author target)) (= :owner role)))
+        (refuse! {:reason :not-permitted :item-id id :principal actor})
+        :else
+        (do (store/transact! assoc-in (comments-path id)
+                             (vec (remove #(= comment-id (:id %)) existing)))
+            {:schema schema :ok? true :id comment-id})))))
