@@ -312,6 +312,10 @@
   .file-preview{margin:.5rem 0;max-width:100%}
   .file-preview__image{display:block;max-width:100%;max-height:24rem;
     width:auto;height:auto;border-radius:.5rem}
+  /* Bounded like the chart: a slide is 10 inches wide and the pane is not. */
+  .slide-preview{margin:.5rem 0;max-width:min(100%,28rem);border-radius:.5rem;
+    border:1px solid var(--color-neutral-solid-gray-300, #d0d7de);overflow:hidden}
+  .slide-preview svg{display:block;width:100%;height:auto}
   .chart-card{margin:.5rem 0}
   .chart-card__figure{max-width:100%;overflow-x:auto}
   .chart-card__figure svg{display:block;max-width:100%;height:auto}
@@ -1817,20 +1821,81 @@
           field('スライド名', textInput(slide['slides/title'],
             (value) => { slide['slides/title'] = value; changed(false); },
             'surface-input--wide')));
+        // The slide, drawn by `slides.svg` on the server — the same picture
+        // anything else rendering this deck gets. Position and size are
+        // worth typing once you can see what they move, which is why the
+        // shape fields below exist now and did not before.
+        const drawn = (driveEditor.slides || [])[index];
+        if (drawn?.svg) {
+          const figure = make('div', 'slide-preview');
+          // Built on the server from this deck; not markup arriving from
+          // anywhere else.
+          figure.innerHTML = drawn.svg;
+          card.append(figure);
+        }
+        // Inches, the unit the model measures in, so a number here and the
+        // number in the picture are the same number.
+        const box = (shape) => {
+          const row = make('div', 'detail-actions__row');
+          [['x', '横'], ['y', '縦'], ['w', '幅'], ['h', '高さ']].forEach(([key, label]) => {
+            const input = make('input', 'workspace-search document-title');
+            input.type = 'number';
+            input.step = '0.1';
+            input.value = shape[`slides/${key}`] ?? '';
+            input.setAttribute('aria-label', `${shape['slides/id']} の${label}`);
+            input.addEventListener('change', () => {
+              const n = Number(input.value);
+              // A blank or unparseable box is left alone rather than
+              // written as NaN, which the renderer would fall back on and
+              // the exporter would write as a shape of no size.
+              if (input.value !== '' && Number.isFinite(n)) {
+                shape[`slides/${key}`] = n;
+                changed(true);
+              }
+            });
+            row.append(field(label, input));
+          });
+          return row;
+        };
         (slide['slides/shapes'] || []).forEach((shape) => {
-          if (shape['slides/shape'] === 'text') {
+          const kind = shape['slides/shape'];
+          if (kind === 'text') {
             card.append(field(`テキスト（${shape['slides/id']}）`,
               textInput(shape['slides/text'],
                 (value) => { shape['slides/text'] = value; changed(false); },
                 'surface-input--wide')));
+            card.append(box(shape));
+          } else if (kind === 'rect') {
+            card.append(make('span', 'surface-note', `図形（${shape['slides/id']}）`));
+            card.append(field('塗り', textInput(shape['slides/fill'],
+              (value) => { shape['slides/fill'] = value; changed(true); })));
+            card.append(box(shape));
+          } else if (kind === 'image') {
+            card.append(make('span', 'surface-note', `画像（${shape['slides/id']}）`));
+            card.append(box(shape));
           } else {
-            // A rect, an image, a component. Position, fill and image data
-            // are a canvas's job, not this pane's, and half-editing a shape
+            // A component or a kind the renderer does not know. Its
+            // position could be edited, and moving a shape nobody can see
             // is worse than handing it over.
             card.append(make('span', 'surface-note',
-              `${shape['slides/shape'] || '?'}（${shape['slides/id']}）は JSON で編集してください。`));
+              `${kind || '?'}（${shape['slides/id']}）は JSON で編集してください。`));
           }
         });
+        const addRect = make('button', 'tool-button', '図形を追加');
+        addRect.type = 'button';
+        addRect.addEventListener('click', () => {
+          slide['slides/shapes'] = slide['slides/shapes'] || [];
+          // What `slides.model/rect` produces, defaults included — a shape
+          // without a box is one the renderer has to guess at.
+          slide['slides/shapes'].push({
+            'slides/id': `r${slide['slides/shapes'].length + 1}`,
+            'slides/shape': 'rect',
+            'slides/x': 0.8, 'slides/y': 2.1, 'slides/w': 8.4, 'slides/h': 2.0,
+            'slides/fill': 'EAF0F8', 'slides/line': '496B9A'
+          });
+          changed(true);
+        });
+        card.append(addRect);
         const addText = make('button', 'tool-button', 'テキストを追加');
         addText.type = 'button';
         addText.addEventListener('click', () => {
@@ -2261,7 +2326,7 @@
     const closedEditor = (id) => ({id, open:false, mode:'preview',
                                    payload:null, text:'', tab:null, slide:0,
                                    etag:null, warnings:null, computed:null, cell:null,
-                                   charts:null,
+                                   charts:null, slides:null,
                                    loading:false, failed:false});
     let driveEditor = closedEditor(null);
     // Three views of one document: the surface as it is, the fields of it, and
@@ -2424,7 +2489,8 @@
                                         // cannot outlive the payload it
                                         // belongs to.
                                         computed:fresh.computed,
-                                        charts:fresh.charts});
+                                        charts:fresh.charts,
+                                        slides:fresh.slides});
 
       const versions = make('div', 'detail-actions__row');
       const bytesDelta = (n) => (n > 0 ? `+${bytes(n)}` : (n < 0 ? `-${bytes(-n)}` : '±0'));
@@ -2527,7 +2593,8 @@
         return {payload:data.payload, etag:data.item?.etag,
                 warnings:data['export-warnings'] || null,
                 computed:data.computed || null,
-                charts:data.charts || null};
+                charts:data.charts || null,
+                slides:data.slides || null};
       };
       open.addEventListener('click', async () => {
         open.disabled = true; status.textContent = '読み込んでいます…';

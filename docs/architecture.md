@@ -726,9 +726,26 @@ if it is going to. An empty list and an empty table — what the editor
 produces the moment somebody adds one — save and come out of both writers
 without a broken file.
 
-Slides still send `rect`, `image` and components to the JSON pane. Position,
-fill and image data are a canvas's job, and half of one would leave a reader
-wondering which half.
+### A slide you can see
+
+Slides sent `rect`, `image` and components to the JSON pane on the grounds
+that position and fill are a canvas's job. They are — and a canvas is a
+picture, which `slides.svg` now makes. Numbers for `x`, `y`, `w` and `h` are
+worth typing once you can see what they move, so the pane draws the slide
+and offers those fields beside it.
+
+Inches, the unit the model measures in, so a number in the field and a
+number in the picture are the same number. A blank or unparseable box is
+left alone rather than written as `NaN`, which the renderer would fall back
+on and the exporter would write as a shape of no size.
+
+The preview is drawn **with outlines**, which a slide does not have: the
+editor is moving boxes and their edges are what it is moving. `slides.svg`
+draws them only when asked, so a preview elsewhere does not get them.
+
+Components and any shape kind the renderer does not know still go to the
+JSON pane. Their position could be edited, and moving a shape nobody can see
+is worse than handing it over.
 
 ### Proposing a change you may not make
 

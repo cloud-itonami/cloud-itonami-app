@@ -75,6 +75,7 @@
             [slides.model :as slides]
             [slides.office :as slides-office]
             [slides.pptx :as slides-pptx]
+            [slides.svg :as slides-svg]
             [slides.validate :as slides-validate]
             [slides.wire :as slides-wire]
             ;; Only to project EDN onto the wire. What is at rest is EDN; what
@@ -1135,6 +1136,13 @@
           ;; Drawn on the server, beside the resource, for the same reason
           ;; the computed values are: the payload is what a save sends back,
           ;; and an SVG in there would return as part of the document.
+          ;; Every slide, drawn. Beside the resource for the same reason the
+          ;; charts and the computed values are: the payload is what a save
+          ;; sends back, and a picture in it would return as part of the
+          ;; deck. `:outline?` because the editor is moving boxes and their
+          ;; edges are what it is moving — wrong in a preview, right here.
+          :slides (when (= :slides/deck (:drive/resource-kind item))
+                    (slides-svg/deck resource {:outline? true}))
           :charts (when (= :sheets/workbook (:drive/resource-kind item))
                     (into {}
                           (map (fn [[tab-id _]]

@@ -16,6 +16,7 @@
             [drive.store.memory :as memory]
             [drive.workspace :as ws]
             [forms.model :as forms-model]
+            [slides.pptx :as slides-pptx]
             [forms.validate :as forms-validate]
             [forms.wire :as forms-wire]
             [sheets.model :as sheets-model]
@@ -4014,3 +4015,80 @@
                                                           object-store))]
         (is (contains? (set (map :code (get warnings "xlsx")))
                        ":xlsx/charts-dropped"))))))
+
+;; ── a slide you can see ─────────────────────────────────────────────────────
+
+(deftest a-deck-carries-its-slides-drawn
+  ;; Beside the resource, like the charts and the computed values: the
+  ;; payload is what a save sends back, and a picture in it would return as
+  ;; part of the deck.
+  (with-state
+    (fn [_ object-store]
+      (let [{:keys [item]} (documents/create! :slides "提案" alice object-store)
+            deck (:resource (documents/content (:id item) alice object-store))
+            _ (save! (:id item)
+                     (assoc deck :slides/slides
+                            [{:slides/id "s1" :slides/title "見出し"
+                              :slides/shapes
+                              [{:slides/id "t" :slides/shape :text :slides/text "本文"
+                                :slides/x 0.8 :slides/y 0.8 :slides/w 8.4 :slides/h 1.0
+                                :slides/font-size 28}
+                               {:slides/id "r" :slides/shape :rect
+                                :slides/x 0.8 :slides/y 2.1 :slides/w 8.4 :slides/h 2.0
+                                :slides/fill "FF0000"}]}])
+                     alice object-store)
+            back (documents/content (:id item) alice object-store)
+            [drawn] (:slides back)]
+        (is (= "s1" (:id drawn)))
+        (is (str/includes? (:svg drawn) "<svg"))
+        (is (str/includes? (:svg drawn) "本文"))
+        ;; The colour gets its hash — six bare hex digits name no colour in
+        ;; SVG and draw the shape black.
+        (is (str/includes? (:svg drawn) "fill=\"#FF0000\""))
+        ;; The editor is moving boxes, so their edges are drawn here.
+        (is (str/includes? (:svg drawn) "stroke-dasharray"))
+        ;; And the stored deck still holds shapes, not a picture.
+        (is (nil? (:svg (first (:slides/slides (:resource back))))))))))
+
+(deftest an-empty-deck-still-draws-a-slide
+  ;; Unlike an empty chart: an empty slide is a real thing to be looking at,
+  ;; and drawing the page is how you see it is empty rather than broken.
+  (with-state
+    (fn [_ object-store]
+      (let [{:keys [item]} (documents/create! :slides "提案" alice object-store)
+            drawn (:slides (documents/content (:id item) alice object-store))]
+        (is (seq drawn))
+        (is (every? #(str/includes? (:svg %) "<svg") drawn))))))
+
+(deftest only-a-deck-is-drawn
+  (with-state
+    (fn [_ object-store]
+      (let [{:keys [item]} (documents/create! :sheets "売上" alice object-store)]
+        (is (nil? (:slides (documents/content (:id item) alice object-store))))))))
+
+(deftest a-shape-moved-in-the-pane-is-a-shape-moved-in-the-file
+  ;; What the position fields write, through the projected payload and out
+  ;; to the .pptx — the path a person's deck takes.
+  (with-state
+    (fn [_ object-store]
+      (let [{:keys [item]} (documents/create! :slides "提案" alice object-store)
+            before (documents/content (:id item) alice object-store)
+            payload (assoc (:payload before) "slides/slides"
+                           [{"slides/id" "s1" "slides/title" "見出し"
+                             "slides/shapes"
+                             [{"slides/id" "r" "slides/shape" "rect"
+                               "slides/x" 2.5 "slides/y" 1.25
+                               "slides/w" 5.0 "slides/h" 1.5
+                               "slides/fill" "00FF00"}]}])
+            _ (documents/update! (:id item) payload alice
+                                 (:etag (:item before)) object-store)
+            back (documents/content (:id item) alice object-store)
+            shape (first (get-in (:resource back) [:slides/slides 0 :slides/shapes]))]
+        (is (= 2.5 (:slides/x shape)))
+        (is (= :rect (:slides/shape shape)) "rehydrated to a keyword")
+        (is (str/includes? (:svg (first (:slides back))) "x=\"2.5\""))
+        ;; And it reaches the .pptx.
+        (let [entries (into {} (slides-pptx/pptx-files (:resource back)))
+              slide (first (for [[k v] entries
+                                 :when (str/includes? k "slides/slide1")] v))]
+          (is (str/includes? slide "00FF00")))))))
