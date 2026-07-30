@@ -737,7 +737,11 @@
                      (documents/update!
                       (id-from-path path #"/api/workspace/drive/documents/([^/]+)/versions")
                       (get request "payload")
-                      (:user-id session))))
+                      (:user-id session)
+                      ;; The version this edit was made from. A save that
+                      ;; does not say is refused, not applied — see
+                      ;; `documents/update!`.
+                      (get request "etag"))))
 
             (and (= method "POST")
                  (id-from-path path #"/api/workspace/drive/documents/([^/]+)/rename"))
@@ -1169,6 +1173,9 @@
                      ;; Purging something that is not in the trash yet is a
                      ;; conflict with its current state, not a bad request.
                      :drive/not-trashed 409
+                     ;; The document moved under the editor. 409 is the whole
+                     ;; point: the client has to re-read before it can win.
+                     :drive/stale-version 409
                      :drive/invalid-share 400
                      :drive/invalid-submission 422
                      :drive/invalid-comment 400

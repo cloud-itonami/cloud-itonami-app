@@ -25,6 +25,17 @@
 ;; test that read the clock would be a test whose meaning changed at midnight.
 (def ^:private now-ms 1800000000000)
 
+(defn- save!
+  "`documents/update!` with the etag the document currently has.
+
+  The ordinary case: a caller that has just read the document. Tests about
+  the *stale* case call `documents/update!` directly with an etag of their
+  own, which is the only way to be about it."
+  [id payload actor object-store]
+  (documents/update! id payload actor
+                     (:etag (:item (documents/content id actor object-store)))
+                     object-store))
+
 (defn- with-state
   "Run `f` against a private app state and a private object store."
   [f]
@@ -88,7 +99,7 @@
     (fn [state object-store]
       (let [{:keys [item]} (documents/create! :sheets "売上" alice object-store)
             payload (:payload (documents/content (:id item) alice object-store))
-            _ (documents/update! (:id item)
+            _ (save! (:id item)
                                  (assoc-in payload ["sheets/tabs" "sheet1" "sheets/cells"]
                                            {"[1 1]" {"sheets/value" "Q1"}})
                                  alice object-store)
@@ -127,7 +138,7 @@
               "rehydrated on read, exactly as it always was")
           ;; And the save that follows writes EDN and corrects what the item
           ;; claims to be.
-          (documents/update! (:id item) (:payload current) alice object-store)
+          (save! (:id item) (:payload current) alice object-store)
           (is (= "application/edn"
                  (:media-type (first (documents/documents @state alice)))))
           (is (= :edn (:format (documents/decode-stored
@@ -213,7 +224,7 @@
             edited (assoc-in payload ["sheets/tabs" "sheet1" "sheets/cells"]
                              {"[1 1]" {"sheets/value" "Q1"}
                               "[1 2]" {"sheets/value" "Q2"}})
-            saved (documents/update! (:id item) edited alice object-store)
+            saved (save! (:id item) edited alice object-store)
             workspace (documents/workspace-for @state alice)
             versions (:drive/versions (ws/item workspace (:id item)))]
         (is (:ok? saved))
@@ -238,7 +249,7 @@
             ;; at 1 — and this is the assertion that the app asks it.
             broken (assoc-in payload ["sheets/tabs" "sheet1" "sheets/cells"]
                              {"[0 1]" {"sheets/value" "x"}})
-            error (try (documents/update! (:id item) broken alice object-store)
+            error (try (save! (:id item) broken alice object-store)
                        (catch clojure.lang.ExceptionInfo e (ex-data e)))]
         (is (= :drive/invalid-document (:type error)))
         (is (= [":cell/invalid"] (mapv :code (:problems error))))
@@ -257,7 +268,7 @@
             broken (assoc payload "forms/fields"
                           [{"forms/id" "name" "forms/field-type" "telepathy"
                             "forms/label" "name" "forms/required?" false}])
-            error (try (documents/update! (:id item) broken alice object-store)
+            error (try (save! (:id item) broken alice object-store)
                        (catch clojure.lang.ExceptionInfo e (ex-data e)))]
         (is (= :drive/invalid-document (:type error)))
         (is (= [":field/unknown-type"] (mapv :code (:problems error))))))))
@@ -270,7 +281,7 @@
       (let [{:keys [item]} (documents/create! :docs "下書き" alice object-store)
             payload (:payload (documents/content (:id item) alice object-store))
             untitled (assoc payload "docs/title" "")]
-        (is (:ok? (documents/update! (:id item) untitled alice object-store)))))))
+        (is (:ok? (save! (:id item) untitled alice object-store)))))))
 
 (deftest an-edit-cannot-change-what-kind-of-document-it-is
   (with-state
@@ -281,7 +292,7 @@
             ;; envelope is rebuilt from the item's recorded kind, so the
             ;; stray key is carried as data and the kind does not move.
             sneaky (assoc payload "kotoba.resource/kind" "sheets/workbook")
-            saved (documents/update! (:id item) sneaky alice object-store)]
+            saved (save! (:id item) sneaky alice object-store)]
         (is (= ":docs/document" (:resource-kind (:item saved))))
         (is (= ":docs/document"
                (:resource-kind (documents/content (:id item) alice object-store))))))))
@@ -315,7 +326,7 @@
         (swap! state assoc-in [:drive :workspaces bob]
                (get-in @state [:drive :workspaces alice]))
         (is (= :drive/not-permitted
-               (try (documents/update! (:id item) payload bob object-store)
+               (try (save! (:id item) payload bob object-store)
                     (catch clojure.lang.ExceptionInfo e (:type (ex-data e))))))
         (is (= :drive/not-permitted
                (try (documents/rename! (:id item) "改題" bob object-store)
@@ -328,7 +339,7 @@
             payload (:payload (documents/content (:id item) alice object-store))]
         (documents/trash! (:id item) alice)
         (is (= :drive/not-found
-               (try (documents/update! (:id item) payload alice object-store)
+               (try (save! (:id item) payload alice object-store)
                     (catch clojure.lang.ExceptionInfo e (:type (ex-data e))))))))))
 
 (deftest trashing-hides-it-and-refuses-its-bytes
@@ -350,7 +361,7 @@
   (with-state
     (fn [state object-store]
       (let [{:keys [item]} (documents/create! :sheets "旧計画" alice object-store)
-            _ (documents/update! (:id item)
+            _ (save! (:id item)
                                  (:payload (documents/content (:id item) alice object-store))
                                  alice object-store)
             held (:held-bytes (first (documents/documents @state alice)))
@@ -429,7 +440,7 @@
             first-payload (:payload (documents/content (:id item) alice object-store))
             edited (assoc-in first-payload ["sheets/tabs" "sheet1" "sheets/cells"]
                              {"[1 1]" {"sheets/value" "Q1"}})
-            _ (documents/update! (:id item) edited alice object-store)
+            _ (save! (:id item) edited alice object-store)
             v1 (documents/version-content (:id item) 1 alice object-store)
             v2 (documents/version-content (:id item) 2 alice object-store)]
         (is (= first-payload (:payload v1)) "the bytes the first version wrote")
@@ -470,7 +481,7 @@
     (fn [_ object-store]
       (let [{:keys [item]} (documents/create! :docs "下書き" alice object-store)
             payload (:payload (documents/content (:id item) alice object-store))
-            saved (documents/update! (:id item) (assoc payload "docs/title" "")
+            saved (save! (:id item) (assoc payload "docs/title" "")
                                      alice object-store)]
         (is (:ok? saved) "a missing title is a warning, and a draft still saves")
         (is (= [":document/missing-title"] (mapv :code (:warnings saved))))
@@ -481,7 +492,7 @@
     (fn [_ object-store]
       (let [{:keys [item]} (documents/create! :forms "問い合わせ" alice object-store)
             payload (:payload (documents/content (:id item) alice object-store))]
-        (is (empty? (:warnings (documents/update! (:id item) payload alice object-store))))))))
+        (is (empty? (:warnings (save! (:id item) payload alice object-store))))))))
 
 ;; ── listing order ───────────────────────────────────────────────────────────
 
@@ -495,7 +506,7 @@
         ;; Saving the older one moves it to the front. Ordering by creation
         ;; would leave it where it was, which is not where anyone looks for
         ;; the thing they just saved.
-        (documents/update! (:id first-doc)
+        (save! (:id first-doc)
                            (:payload (documents/content (:id first-doc) alice object-store))
                            alice object-store)
         (is (= [(:id first-doc) (:id second-doc)]
@@ -520,7 +531,7 @@
                            "forms/label" "新しい質問"
                            "forms/field-type" "text"
                            "forms/required?" false}])
-            saved (documents/update! (:id item) added alice object-store)
+            saved (save! (:id item) added alice object-store)
             back (:payload (documents/content (:id item) alice object-store))]
         (is (:ok? saved))
         (is (empty? (:warnings saved)))
@@ -546,7 +557,7 @@
                                    "forms/required?" false})
                                 offered)]
         (is (= 7 (count offered)))
-        (is (:ok? (documents/update! (:id item) (assoc payload "forms/fields" (vec fields))
+        (is (:ok? (save! (:id item) (assoc payload "forms/fields" (vec fields))
                                      alice object-store)))))))
 
 (deftest a-block-added-the-way-the-docs-editor-adds-one-saves
@@ -556,7 +567,7 @@
             payload (:payload (documents/content (:id item) alice object-store))
             added (update payload "docs/blocks" conj
                           {"docs/id" "b2" "docs/kind" "paragraph" "docs/text" ""})
-            saved (documents/update! (:id item) added alice object-store)]
+            saved (save! (:id item) added alice object-store)]
         (is (:ok? saved))
         (is (= ["heading" "paragraph"]
                (mapv #(get % "docs/kind")
@@ -575,7 +586,7 @@
                                   {"docs/id" (str "b" index) "docs/kind" kind})
                                 offered)]
         (is (= 9 (count offered)))
-        (is (:ok? (documents/update! (:id item) (assoc payload "docs/blocks" (vec blocks))
+        (is (:ok? (save! (:id item) (assoc payload "docs/blocks" (vec blocks))
                                      alice object-store)))))))
 
 (deftest the-cell-key-the-sheets-editor-writes-is-the-one-the-wire-parses
@@ -592,7 +603,7 @@
                              {"[1 1]" {"sheets/value" "売上"}
                               "[2 1]" {"sheets/formula" "SUM(B1:B9)"}
                               "[12 340]" {"sheets/value" "遠い"}})
-            saved (documents/update! (:id item) edited alice object-store)
+            saved (save! (:id item) edited alice object-store)
             back (:payload (documents/content (:id item) alice object-store))]
         (is (:ok? saved))
         (is (= edited back) "the address survives the round trip unchanged")
@@ -611,7 +622,7 @@
             broken (assoc-in payload ["sheets/tabs" "sheet1" "sheets/cells"]
                              {"[0 1]" {"sheets/value" "x"}})]
         (is (= :drive/invalid-document
-               (try (documents/update! (:id item) broken alice object-store)
+               (try (save! (:id item) broken alice object-store)
                     (catch clojure.lang.ExceptionInfo e (:type (ex-data e))))))))))
 
 ;; ── answering a form ────────────────────────────────────────────────────────
@@ -622,7 +633,7 @@
   [object-store]
   (let [{:keys [item]} (documents/create! :forms "問い合わせ" alice object-store)
         payload (:payload (documents/content (:id item) alice object-store))]
-    (documents/update! (:id item)
+    (save! (:id item)
                        (assoc payload "forms/fields"
                               [{"forms/id" "name" "forms/label" "お名前"
                                 "forms/field-type" "text" "forms/required?" true}
@@ -775,7 +786,7 @@
                            [{"slides/id" "t1" "slides/shape" "text" "slides/text" "売上"
                              "slides/x" 0.8 "slides/y" 0.8 "slides/w" 8.4 "slides/h" 1.0
                              "slides/font-size" 28}]})
-            saved (documents/update! (:id item) added alice object-store)
+            saved (save! (:id item) added alice object-store)
             back (:payload (documents/content (:id item) alice object-store))]
         (is (:ok? saved))
         (is (empty? (:warnings saved)))
@@ -787,7 +798,7 @@
     (fn [_ object-store]
       (let [{:keys [item]} (documents/create! :slides "四半期報告" alice object-store)
             payload (:payload (documents/content (:id item) alice object-store))
-            error (try (documents/update! (:id item) (assoc payload "slides/slides" "nope")
+            error (try (save! (:id item) (assoc payload "slides/slides" "nope")
                                           alice object-store)
                        (catch clojure.lang.ExceptionInfo e (ex-data e)))]
         ;; A 422 with the surface's own code, not a 500 out of the converter
@@ -805,7 +816,7 @@
     (fn [_ object-store]
       (let [{:keys [item]} (documents/create! :slides "四半期報告" alice object-store)
             payload (:payload (documents/content (:id item) alice object-store))]
-        (is (:ok? (documents/update! (:id item) payload alice object-store)))))))
+        (is (:ok? (save! (:id item) payload alice object-store)))))))
 
 ;; ── sharing ─────────────────────────────────────────────────────────────────
 
@@ -835,7 +846,7 @@
       (let [{:keys [item]} (documents/create! :docs "共同設計" alice object-store)
             _ (documents/grant! (:id item) bob "editor" alice)
             payload (:payload (documents/content (:id item) bob object-store))
-            saved (documents/update! (:id item) (assoc payload "docs/title" "bob の編集")
+            saved (save! (:id item) (assoc payload "docs/title" "bob の編集")
                                      bob object-store)]
         (is (:ok? saved))
         ;; One document, two versions, in alice's workspace — not a second
@@ -854,7 +865,7 @@
       (let [{:keys [item]} (documents/create! :docs "共同設計" alice object-store)
             _ (documents/grant! (:id item) bob "editor" alice)
             payload (:payload (documents/content (:id item) bob object-store))
-            saved (documents/update! (:id item) (assoc payload "docs/title" "bob の編集")
+            saved (save! (:id item) (assoc payload "docs/title" "bob の編集")
                                      bob object-store)]
         ;; The gap sharing created: before this, two principals could write
         ;; one document and the history could not say which of them did.
@@ -875,7 +886,7 @@
         (is (false? (:writable? shared)))
         (is (some? payload) "reading is what a viewer is for")
         (is (= :drive/not-permitted
-               (try (documents/update! (:id item) payload bob object-store)
+               (try (save! (:id item) payload bob object-store)
                     (catch clojure.lang.ExceptionInfo e (:type (ex-data e))))))))))
 
 (deftest only-the-owner-may-trash-purge-or-re-share
@@ -925,6 +936,82 @@
                  (try (documents/content (:id item) bob object-store)
                       (catch clojure.lang.ExceptionInfo e (:type (ex-data e)))))))))))
 
+;; ── two editors, one document ───────────────────────────────────────────────
+
+(deftest a-save-from-a-version-that-has-moved-is-refused
+  (with-state
+    (fn [state object-store]
+      (let [{:keys [item]} (documents/create! :docs "共同設計" alice object-store)
+            _ (documents/grant! (:id item) bob "editor" alice)
+            ;; Both open the same version.
+            a (documents/content (:id item) alice object-store)
+            b (documents/content (:id item) bob object-store)
+            _ (is (= (:etag (:item a)) (:etag (:item b))))
+            add (fn [payload who]
+                  (update payload "docs/blocks" conj
+                          {"docs/id" who "docs/kind" "paragraph" "docs/text" who}))]
+        (documents/update! (:id item) (add (:payload a) "alice") alice
+                           (:etag (:item a)) object-store)
+        (let [error (try (documents/update! (:id item) (add (:payload b) "bob") bob
+                                            (:etag (:item b)) object-store)
+                         (catch clojure.lang.ExceptionInfo e (ex-data e)))]
+          (is (= :drive/stale-version (:type error)))
+          (is (= alice (:updated-by error)) "and it says whose save it lost to")
+          (is (= 2 (:versions error))))
+        ;; Measured before this check existed: bob's save went through and
+        ;; alice's paragraph was simply gone, with the UI saying "saved".
+        (let [final (:payload (documents/content (:id item) alice object-store))]
+          (is (= ["title" "alice"] (mapv #(get % "docs/id") (get final "docs/blocks")))))
+        (is (= 2 (:versions (first (documents/documents @state alice)))))))))
+
+(deftest re-reading-is-what-lets-the-second-editor-win
+  (with-state
+    (fn [_ object-store]
+      (let [{:keys [item]} (documents/create! :docs "共同設計" alice object-store)
+            _ (documents/grant! (:id item) bob "editor" alice)
+            a (documents/content (:id item) alice object-store)]
+        (documents/update! (:id item)
+                           (update (:payload a) "docs/blocks" conj
+                                   {"docs/id" "alice" "docs/kind" "paragraph"
+                                    "docs/text" "alice"})
+                           alice (:etag (:item a)) object-store)
+        ;; bob reads again, and now his save carries the current version.
+        (let [b (documents/content (:id item) bob object-store)]
+          (is (:ok? (documents/update! (:id item)
+                                       (update (:payload b) "docs/blocks" conj
+                                               {"docs/id" "bob" "docs/kind" "paragraph"
+                                                "docs/text" "bob"})
+                                       bob (:etag (:item b)) object-store))))
+        (let [final (:payload (documents/content (:id item) alice object-store))]
+          (is (= ["title" "alice" "bob"]
+                 (mapv #(get % "docs/id") (get final "docs/blocks")))
+              "both survive, because the second edit was made from the first"))))))
+
+(deftest a-save-with-no-etag-is-refused-rather-than-treated-as-current
+  ;; A nil that meant "whatever is there now" would be the old behaviour
+  ;; under a new name.
+  (with-state
+    (fn [_ object-store]
+      (let [{:keys [item]} (documents/create! :sheets "計画" alice object-store)
+            payload (:payload (documents/content (:id item) alice object-store))]
+        (is (= :drive/stale-version
+               (try (documents/update! (:id item) payload alice nil object-store)
+                    (catch clojure.lang.ExceptionInfo e (:type (ex-data e))))))))))
+
+(deftest renaming-carries-no-etag-because-it-cannot-be-stale
+  (with-state
+    (fn [_ object-store]
+      (let [{:keys [item]} (documents/create! :docs "旧題" alice object-store)
+            stale (documents/content (:id item) alice object-store)]
+        ;; Somebody else moves the document on.
+        (documents/grant! (:id item) bob "editor" alice)
+        (documents/update! (:id item) (:payload stale) bob (:etag (:item stale))
+                           object-store)
+        ;; A rename still works: it reads the current resource itself, inside
+        ;; the lock, so it never carries a stale copy.
+        (is (= "新題" (:name (:item (documents/rename! (:id item) "新題" alice
+                                                       object-store)))))))))
+
 ;; ── references between documents ────────────────────────────────────────────
 
 (defn- memo-referencing
@@ -932,7 +1019,7 @@
   [kind target object-store]
   (let [{:keys [item]} (documents/create! :docs "設計メモ" alice object-store)
         payload (:payload (documents/content (:id item) alice object-store))]
-    (documents/update! (:id item)
+    (save! (:id item)
                        (update payload "docs/blocks" conj
                                {"docs/id" "ref1" "docs/kind" kind "docs/target" target})
                        alice object-store)
@@ -954,7 +1041,7 @@
     (fn [_ object-store]
       (let [{:keys [item]} (documents/create! :docs "設計メモ" alice object-store)
             payload (:payload (documents/content (:id item) alice object-store))
-            saved (documents/update! (:id item)
+            saved (save! (:id item)
                                      (update payload "docs/blocks" conj
                                              {"docs/id" "ref1" "docs/kind" "deck-ref"
                                               "docs/target" "doc-nonexistent"})
@@ -973,7 +1060,7 @@
             memo (memo-referencing "table-ref" (:id deck) object-store)
             {:keys [references]} (documents/references (:id memo) alice object-store)
             payload (:payload (documents/content (:id memo) alice object-store))
-            again (documents/update! (:id memo) payload alice object-store)]
+            again (save! (:id memo) payload alice object-store)]
         ;; `docs.model` names the kinds and does not say a :table-ref must be
         ;; a workbook, so this is advisory.
         (is (true? (:resolved? (first references))))
@@ -989,7 +1076,7 @@
             payload (:payload (documents/content (:id memo) alice object-store))]
         (is (true? (:expected? (first (:references
                                        (documents/references (:id memo) alice object-store))))))
-        (is (empty? (:warnings (documents/update! (:id memo) payload alice object-store))))))))
+        (is (empty? (:warnings (save! (:id memo) payload alice object-store))))))))
 
 (deftest backlinks-say-which-documents-depend-on-this-one
   (with-state
@@ -1053,7 +1140,7 @@
         ;; from :viewer — grantable, and backed by nothing.
         (is (:ok? (documents/comment! (:id item) "ここは要検討" "title" bob)))
         (is (= :drive/not-permitted
-               (try (documents/update! (:id item) payload bob object-store)
+               (try (save! (:id item) payload bob object-store)
                     (catch clojure.lang.ExceptionInfo e (:type (ex-data e))))))
         (let [{:keys [comments]} (documents/comments (:id item) alice)]
           (is (= 1 (count comments)))
