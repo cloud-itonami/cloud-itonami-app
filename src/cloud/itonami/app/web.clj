@@ -7333,6 +7333,20 @@
         target.textContent = JSON.stringify(data, null, 2);
       } catch (error) { target.textContent = error.message; }
     });
+    $('#bitcoin-consensus-sync').addEventListener('click', async (event) => {
+      const button = event.currentTarget;
+      const target = $('#bitcoin-consensus-state');
+      button.disabled = true;
+      target.textContent = '検証済み tip から bounded P2P 同期を開始しています…';
+      try {
+        const result = await postJSON('/api/bitcoin/consensus/sync', {}, true);
+        target.textContent = JSON.stringify(result, null, 2);
+      } catch (error) {
+        target.textContent = error.message;
+      } finally {
+        button.disabled = false;
+      }
+    });
     if (initialParams.get('connection')) {
       const notice = $('#connection-notice');
       const connected = initialParams.get('connection') === 'connected';
@@ -8141,7 +8155,12 @@
           (dds/heading 2 "Bitcoin consensus / vault" {:size "24"})
           [:div {:class "local-actions"}
            [:button {:class "tool-button" :id "bitcoin-consensus-refresh"
-                     :type "button"} "Consensus 状態を更新"]]
+                     :type "button"} "Consensus 状態を更新"]
+           [:button {:class "tool-button" :id "bitcoin-consensus-sync"
+                     :type "button"} "検証同期を実行"]]
+          [:p {:class "form-help"}
+           "owner / admin のみ実行できます。Peer は可用性入力であり、"
+           "header・block・Script・UTXO は端末内で検証されます。"]
           [:pre {:class "worker-output" :id "bitcoin-consensus-state"}
            "Bitcoin node を確認していません。"]]]
         [:section {:class "view" :data-view-panel "storage" :hidden true}

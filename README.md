@@ -365,6 +365,48 @@ alone would state the wrong fact.
 
 See [ADR-0008](docs/adr/0008-business-is-the-join-of-five-planes.md).
 
+## Embedded Bitcoin consensus synchronization
+
+Bitcoin Core remains the default production backend. An operator who has
+allocated enough disk can instead enable the embedded, watch-only validating
+client. It persists headers, UTXOs, undo journals, side branches, peer health,
+and fork-choice evidence; private keys, transaction relay, mining, and signing
+are outside this process.
+
+```clojure
+{:bitcoin
+ {:embedded-consensus
+  {:path "/absolute/path/mainnet-consensus.sqlite"
+   :network :mainnet
+   ;; Required only when creating a new database. A verified existing database
+   ;; reopens without replaying a configuration-supplied genesis body.
+   :genesis-hex "..."
+   :peer-sync
+   {:enabled? true
+    :dns-discovery? true
+    ;; Operator anchors are additional availability sources, not trust roots.
+    :peers [{:host "bitcoin.example.net" :port 8333}]
+    :interval-seconds 300
+    :maximum-peers 8
+    :required-successes 2
+    :max-header-batches 32
+    :max-blocks-per-cycle 32}}}}
+```
+
+`enabled?` starts an interruptible lifecycle supervisor. Each cycle resumes
+from the durable locator, compares a bounded health-scored peer set, validates
+and atomically commits headers, then downloads a bounded block segment and
+fully validates block, Script, UTXO, chainwork, and reorg transitions locally.
+DNS never supplies consensus. Peer selection/cooldown history is checksummed
+and persisted beside the chainstate by default.
+
+Owner/admin users can trigger the same exclusive cycle with
+`POST /api/bitcoin/consensus/sync`; concurrent attempts return `409`.
+`GET /api/bitcoin/consensus/status` includes supervisor, peer, header, block,
+snapshot, reorg-window, and failure evidence. Invalid enabled configuration
+fails before the HTTP listener binds. Full mainnet storage is never enabled by
+default or silently placed on the application disk.
+
 ## Funding accounts and payment settlement
 
 An Organization may link the bank accounts it pays from, and record what they

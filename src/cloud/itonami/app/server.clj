@@ -688,6 +688,17 @@
               config))
       true)
 
+    (and (= method "POST") (= path "/api/bitcoin/consensus/sync"))
+    (let [session (mutation-session! exchange config)
+          role (identity/membership-role session)]
+      (when-not (contains? #{:owner :admin} role)
+        (throw
+         (ex-info
+          "Bitcoin consensus 同期にはOrganizationのownerまたはadmin権限が必要です。"
+          {:type :bitcoin.node/sync-operator-required :role role})))
+      (send! exchange 200 (bitcoin-node/sync-consensus! config))
+      true)
+
     (and (= method "POST") (= path "/api/bitcoin/core/scan/abort"))
     (do
       (mutation-session! exchange config)
@@ -897,6 +908,7 @@
       :bitcoin.node/invalid-descriptor :bitcoin.node/invalid-range
       :bitcoin.node/invalid-scan :bitcoin.node/private-descriptor
       :bitcoin.node/unsolvable-descriptor :bitcoin.node/unsupported-descriptor
+      :bitcoin.node/sync-configuration :bitcoin.node/peer-set
       :bitcoin/invalid-descriptor :bitcoin/private-descriptor
       :schedule/invalid :watcher/invalid :watcher/invalid-event
       :agent/unknown-tool :agent/invalid-input :agent/invalid-decision
@@ -906,7 +918,8 @@
    (zipmap
     #{:mcp/disabled :mcp/actor-invalid :wallet/verification-failed
       :bitcoin/invalid-proof :bitcoin/core-method-denied
-      :bitcoin.node/method-denied :agent/disabled :agent/no-capability
+      :bitcoin.node/method-denied :bitcoin.node/sync-operator-required
+      :agent/disabled :agent/no-capability
       :agent/domain-denied :cli-agent/disabled :cli-agent/invalid-access}
     (repeat 403))
    (zipmap
@@ -920,6 +933,7 @@
     #{:wallet/already-bound :bitcoin/approval-mismatch
       :bitcoin.node/network-mismatch :bitcoin.node/genesis-mismatch
       :bitcoin.node/scan-busy :bitcoin.node/capability-unavailable
+      :bitcoin.node/sync-busy :bitcoin.node/peer-pool-cooldown
       :bitcoin/descriptor-not-ranged :agent/not-held
       :agent/tool-decision :agent/frontmost-changed
       :agent/settings-changed :cli-agent/workspace-changed}
@@ -927,13 +941,14 @@
    (zipmap
     #{:receipt-export/not-configured :wallet/sync-not-configured
       :bitcoin/explorer-not-configured :bitcoin/core-not-configured
-      :bitcoin.node/not-configured}
+      :bitcoin.node/not-configured :bitcoin.node/sync-not-configured}
     (repeat 501))
    (zipmap
     #{:receipt-export/invalid-signature :receipt-export/response-too-large
       :wallet/sync-failed :bitcoin/explorer-failed :bitcoin/core-failed
       :bitcoin.node/invalid-response :bitcoin.node/response-too-large
       :bitcoin.node/transport-failed :bitcoin.node/rpc-failed
+      :bitcoin.node/block-sync-failed :bitcoin.node/sync-failed
       :agent/host-error}
     (repeat 502))
    {:mcp/invalid-transport 406
@@ -3224,13 +3239,16 @@
          (.start instance)
          (reset! server instance)
          (scheduler/start! configuration)
+         (bitcoin-node/start-consensus-sync! configuration)
          {:host host :port (.getPort (.getAddress instance))})
        (catch Exception error
+         (bitcoin-node/stop-consensus-sync!)
          (scheduler/stop!)
          (mail-sync/stop!)
          (throw error))))))
 
 (defn stop! []
+  (bitcoin-node/stop-consensus-sync!)
   (scheduler/stop!)
   (mail-sync/stop!)
   (mcp-http/clear-sessions!)

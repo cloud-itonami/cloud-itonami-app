@@ -12,6 +12,7 @@
             [cloud.itonami.app.business-test]
             [cloud.itonami.app.agent-session-test]
             [cloud.itonami.app.business-http-test]
+            [cloud.itonami.app.bitcoin-consensus-sync-test]
             [cloud.itonami.app.canvas-test]
             [cloud.itonami.app.loops-test]
             [cloud.itonami.app.metrics-test]
@@ -66,6 +67,7 @@
     cloud.itonami.app.business-test
     cloud.itonami.app.agent-session-test
     cloud.itonami.app.business-http-test
+    cloud.itonami.app.bitcoin-consensus-sync-test
     cloud.itonami.app.canvas-test
     cloud.itonami.app.loops-test
     cloud.itonami.app.metrics-test

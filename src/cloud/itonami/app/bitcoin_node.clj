@@ -10,6 +10,7 @@
             [bitcoin.node.disk-utxo :as disk-utxo]
             [bitcoin.node.protocol :as node]
             [chain.observer.protocol :as chain-observer]
+            [cloud.itonami.app.bitcoin-consensus-sync :as consensus-sync]
             [cloud.itonami.app.store :as store]
             [clojure.string :as str])
   (:import [java.util UUID]))
@@ -36,6 +37,10 @@
 
 (defn- integrated-consensus? [configuration]
   (some? (get-in configuration [:bitcoin :embedded-consensus])))
+
+(defn- consensus-sync-options [configuration]
+  (consensus-sync/normalize-options
+   (get-in configuration [:bitcoin :embedded-consensus] {})))
 
 (defn- disk-configured? [configuration]
   (let [options (disk-configuration configuration)]
@@ -95,8 +100,11 @@
                        [:format :source-tip :target-tip :fork-height
                         :published-at])})
        (if (integrated-consensus? configuration)
-         (disk-consensus/consensus-status
-          (disk-backend configuration options))
+         (assoc
+          (disk-consensus/consensus-status
+           (disk-backend configuration options))
+          :sync (consensus-sync/status
+                 (consensus-sync-options configuration)))
          (disk-utxo/status (disk-backend configuration options)))))))
 
 (defn preflight!
@@ -105,6 +113,9 @@
   A corrupt or network-mismatched reindex pointer therefore prevents startup
   instead of surfacing only after the first consensus API request."
   [configuration]
+  ;; Validate supervisor bounds and durable peer-history requirements before
+  ;; the HTTP listener makes the deployment appear ready.
+  (consensus-sync-options configuration)
   (consensus-status configuration))
 
 (defn resolve-configuration!
@@ -120,6 +131,32 @@
               [:bitcoin :embedded-consensus]
               (effective-disk-options configuration))
     configuration))
+
+(defn sync-consensus!
+  "Run one exclusive, bounded headers-first P2P synchronization cycle."
+  [configuration]
+  (when-not (and (integrated-consensus? configuration)
+                 (disk-configured? configuration))
+    (throw (ex-info "Embedded Bitcoin consensus client is not configured."
+                    {:type :bitcoin.node/sync-not-configured})))
+  (consensus-sync/run-once!
+   (disk-backend configuration)
+   (consensus-sync-options configuration)))
+
+(defn start-consensus-sync!
+  "Start the configured background supervisor after server preflight."
+  [configuration]
+  (let [options (consensus-sync-options configuration)]
+    (if (and (:enabled? options)
+             (integrated-consensus? configuration)
+             (disk-configured? configuration))
+      (consensus-sync/start! (disk-backend configuration) options)
+      (do
+        (consensus-sync/stop!)
+        (consensus-sync/status options)))))
+
+(defn stop-consensus-sync! []
+  (consensus-sync/stop!))
 
 (defn rpc!
   "Compatibility boundary for application tests and API error mapping."

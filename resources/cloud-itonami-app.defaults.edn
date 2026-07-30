@@ -53,7 +53,23 @@
   :max-fee-ratio 0.1
   :embedded-consensus
   {:path nil :reindex-pointer nil :network :mainnet
-   :genesis-hex nil :busy-timeout-ms 5000}
+   :genesis-hex nil :busy-timeout-ms 5000
+   ;; Disabled until an operator explicitly allocates chainstate storage.
+   ;; When enabled, every downloaded header/block is still locally validated;
+   ;; DNS and operator peers are availability sources, never trust anchors.
+   :peer-sync
+   {:enabled? false
+    :dns-discovery? false
+    :peers []
+    :pool-path nil
+    :interval-seconds 300
+    :maximum-peers 8
+    :required-successes 1
+    :max-header-batches 32
+    :max-blocks-per-cycle 32
+    :discovery-timeout-ms 5000
+    :maximum-discovered-peers 64
+    :peer-timeout-ms 10000}}
   :core-rpc
   {:url nil :expected-chain "main"
    :expected-genesis-hash
