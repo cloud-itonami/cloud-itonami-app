@@ -735,8 +735,21 @@ Beyond arithmetic: `COUNTIF` and `SUMIF` (with the optional third range, so
 one column can be tested and another totalled), the text functions, and
 `AND`/`OR`/`NOT`. Anything else is `#NAME?` rather than a crash.
 
-**Named ranges resolve**, so `=SUM(売上)` works — and `sheets.xlsx` writes
-them now, which is one of the three losses `unexpressed` used to report
+**Named ranges resolve**, so `=SUM(売上)` works — and there is a panel to
+define one, which there was not when the resolution shipped. The only way in
+was the JSON editor: a working escape hatch, and not something a person
+finds. A name is attached to the current tab's *title*, because that is what
+a `definedName` references and what the evaluator matches on; its id would
+resolve nowhere.
+
+The panel does not validate. The surface does, and a range with no tab is
+refused with `:named-range/invalid` — which is what a hand-edited payload
+looks like, and better than storing a name that resolves nowhere. What the
+test covers is the round trip the panel actually uses: the projected
+payload, through JSON and back, where a nested map is most likely to be
+quietly lost.
+
+`sheets.xlsx` writes them, which is one of the three losses `unexpressed` used to report
 turned into a non-loss. Only a name pointing at a tab the workbook does not
 have is still dropped, because writing that reference produces a file that
 opens with a broken name in it.

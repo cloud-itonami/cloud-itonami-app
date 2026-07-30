@@ -1542,6 +1542,56 @@
         grid.append(tr);
       }
       root.append(grid);
+
+      // Named ranges. `=SUM(売上)` resolves and the .xlsx carries it, and
+      // until now the only way to define one was the JSON editor — which
+      // is a working escape hatch and not something a person finds.
+      const names = payload['sheets/named-ranges'] || {};
+      const namePanel = make('div', 'surface-editor');
+      namePanel.append(make('h3', 'sharing__title', '名前付き範囲'));
+      const nameList = make('ul', 'sharing__list');
+      Object.entries(names).forEach(([name, range]) => {
+        const row = make('li', 'sharing__entry');
+        row.append(make('span', 'sharing__who', name));
+        row.append(make('span', 'sharing__role',
+          `${range['sheets/tab']} · ${range['sheets/range']}`));
+        row.append(removeButton(() => {
+          delete payload['sheets/named-ranges'][name];
+          changed(true);
+        }));
+        nameList.append(row);
+      });
+      if (!Object.keys(names).length) {
+        nameList.append(make('li', 'empty-state', 'まだありません。'));
+      }
+      const nameRow = make('div', 'detail-actions__row');
+      const nameInput = make('input', 'workspace-search document-title');
+      nameInput.type = 'text';
+      nameInput.placeholder = '名前';
+      nameInput.setAttribute('aria-label', '名前付き範囲の名前');
+      const rangeInput = make('input', 'workspace-search document-title');
+      rangeInput.type = 'text';
+      rangeInput.placeholder = 'A1:A3';
+      rangeInput.setAttribute('aria-label', '範囲');
+      const addName = make('button', 'tool-button', '名前を付ける');
+      addName.type = 'button';
+      addName.addEventListener('click', () => {
+        const name = (nameInput.value || '').trim();
+        const range = (rangeInput.value || '').trim();
+        if (!name || !range) return;
+        payload['sheets/named-ranges'] = payload['sheets/named-ranges'] || {};
+        // The tab's *title*, because that is what a definedName references
+        // and what the evaluator matches on. Its id would resolve nowhere.
+        payload['sheets/named-ranges'][name] =
+          {'sheets/id':name, 'sheets/tab':tab['sheets/title'] || current,
+           'sheets/range':range};
+        changed(true);
+      });
+      nameRow.append(nameInput, rangeInput, addName);
+      namePanel.append(nameList, nameRow);
+      namePanel.append(make('p', 'surface-note',
+        '名前は現在のタブに付きます。数式では SUM(名前) のように使えます。'));
+      root.append(namePanel);
       return root;
     };
     const slidesEditor = (payload, vocabulary, changed) => {
