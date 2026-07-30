@@ -1697,3 +1697,63 @@
           :query (str/trim (str query))
           :count (count results)
           :results results})))))
+
+;; ── going back to an earlier version ────────────────────────────────────────
+
+(defn history
+  "The versions of `id`, newest first, with what each one cost.
+
+  `item-view` already carries the same list oldest-first as `:history`; this
+  is the addressable form — each entry knows its own index, which is what a
+  restore takes, and the size delta, which is what makes a list of identical
+  timestamps readable."
+  [id actor]
+  (let [{:keys [item]} (readable! actor id)
+        versions (vec (:drive/versions item))]
+    {:schema schema
+     :ok? true
+     :id id
+     :current (count versions)
+     :versions
+     (vec (reverse
+           (map-indexed
+            (fn [index version]
+              (let [previous (when (pos? index) (nth versions (dec index)))]
+                {:index (inc index)
+                 :author (:drive.version/author version)
+                 :created-at (:drive.version/created-at version)
+                 :size-bytes (:drive.version/size-bytes version)
+                 :delta-bytes (- (or (:drive.version/size-bytes version) 0)
+                                 (or (:drive.version/size-bytes previous) 0))
+                 :current? (= (inc index) (count versions))}))
+            versions)))}))
+
+(defn restore-version!
+  "Put the contents of version `index` back, as a new version.
+
+  Not a rewrite. The history is append-only and restoring is a new version
+  whose contents happen to equal an old one — which is why the author
+  recorded is whoever restored it and not whoever wrote it the first time.
+  They made this version; the earlier one is still there saying who made
+  that.
+
+  It goes through `write-resource!` like any other save, so the validator
+  sees it. That is not ceremony: a surface's rules can have tightened since,
+  and silently reinstating something the model would now refuse is how a
+  document becomes unopenable by the thing that owns it.
+
+  Takes an etag for the same reason a save does. Restoring on top of
+  somebody else's change, without seeing it, is the lost update wearing a
+  different hat."
+  ([id index actor expected-etag]
+   (restore-version! id index actor expected-etag (store-instance)))
+  ([id index actor expected-etag object-store]
+   (locking write-lock
+     (let [target (writable! actor id)
+           older (version-content id index actor object-store)]
+       (when (= index (count (:drive/versions (:item target))))
+         (throw (ex-info "その版がすでに最新です。"
+                         {:type :drive/already-current :item-id id :index index})))
+       (assoc (write-resource! target id actor object-store (:resource older)
+                               expected-etag)
+              :restored-from index)))))

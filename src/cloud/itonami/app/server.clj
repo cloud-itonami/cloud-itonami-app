@@ -795,6 +795,31 @@
                       ;; `documents/update!`.
                       (get request "etag"))))
 
+            (and (= method "GET")
+                 (id-from-path path #"/api/workspace/drive/documents/([^/]+)/history"))
+            (let [session (require-app-session! exchange)]
+              (send! exchange 200
+                     (documents/history
+                      (id-from-path path #"/api/workspace/drive/documents/([^/]+)/history")
+                      (:user-id session))))
+
+            ;; A restore is a save, so it carries an etag like one — putting
+            ;; an old version back on top of a change you have not seen is
+            ;; the lost update wearing a different hat.
+            (and (= method "POST")
+                 (re-matches #"/api/workspace/drive/documents/([^/]+)/versions/(\d+)/restore"
+                             path))
+            (let [session (require-app-session! exchange)
+                  request (read-json exchange)
+                  [_ id index]
+                  (re-matches #"/api/workspace/drive/documents/([^/]+)/versions/(\d+)/restore"
+                              path)]
+              (require-origin! exchange config)
+              (require-csrf! exchange session)
+              (send! exchange 200
+                     (documents/restore-version! id (parse-long index)
+                                                 (:user-id session) (:etag request))))
+
             (and (= method "POST")
                  (id-from-path path #"/api/workspace/drive/documents/([^/]+)/rename"))
             (let [session (require-app-session! exchange)
@@ -1269,6 +1294,9 @@
                      ;; point: the client has to re-read before it can win.
                      :drive/stale-version 409
                      :drive/unsupported-format 415
+                     ;; Restoring what is already current is a request that
+                     ;; conflicts with the state, not a malformed one.
+                     :drive/already-current 409
                      :drive/invalid-share 400
                      :drive/invalid-submission 422
                      :drive/invalid-comment 400

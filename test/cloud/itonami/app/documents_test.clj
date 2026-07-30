@@ -936,6 +936,112 @@
                  (try (documents/content (:id item) bob object-store)
                       (catch clojure.lang.ExceptionInfo e (:type (ex-data e)))))))))))
 
+;; ── going back to an earlier version ────────────────────────────────────────
+
+(defn- with-paragraph [item text actor object-store]
+  (let [payload (:payload (documents/content (:id item) actor object-store))]
+    (documents/update! (:id item)
+                       (update payload "docs/blocks" conj
+                               {"docs/id" text "docs/kind" "paragraph" "docs/text" text})
+                       actor
+                       (:etag (:item (documents/content (:id item) actor object-store)))
+                       object-store)))
+
+(deftest restoring-is-a-new-version-and-not-a-rewrite
+  (with-state
+    (fn [state object-store]
+      (let [{:keys [item]} (documents/create! :docs "設計" alice object-store)]
+        (with-paragraph item "ひとつめ" alice object-store)
+        (with-paragraph item "ふたつめ" alice object-store)
+        (let [etag (:etag (:item (documents/content (:id item) alice object-store)))
+              out (documents/restore-version! (:id item) 2 alice etag object-store)]
+          (is (= 2 (:restored-from out)))
+          ;; Four versions, not two: the history is append-only and a restore
+          ;; is a new version whose contents happen to equal an old one.
+          (is (= 4 (:versions (:item out))))
+          (is (= ["title" "ひとつめ"]
+                 (mapv #(get % "docs/id")
+                       (get (:payload (documents/content (:id item) alice object-store))
+                            "docs/blocks")))))
+        ;; And the earlier versions are still readable, saying what they said.
+        (is (= ["title" "ひとつめ" "ふたつめ"]
+               (mapv #(get % "docs/id")
+                     (get (:payload (documents/version-content (:id item) 3 alice
+                                                               object-store))
+                          "docs/blocks"))))))))
+
+(deftest a-restore-is-authored-by-whoever-restored-it
+  (with-state
+    (fn [state object-store]
+      (let [{:keys [item]} (documents/create! :docs "共同設計" alice object-store)]
+        (documents/grant! (:id item) bob "editor" alice)
+        (with-paragraph item "alice の段落" alice object-store)
+        (let [etag (:etag (:item (documents/content (:id item) bob object-store)))]
+          (documents/restore-version! (:id item) 1 bob etag object-store))
+        ;; They made this version. The earlier one is still there saying who
+        ;; made that.
+        (is (= [alice alice bob]
+               (mapv :author (:history (first (documents/documents @state alice))))))))))
+
+(deftest restoring-the-current-version-is-refused
+  (with-state
+    (fn [_ object-store]
+      (let [{:keys [item]} (documents/create! :sheets "計画" alice object-store)
+            etag (:etag (:item (documents/content (:id item) alice object-store)))]
+        (is (= :drive/already-current
+               (try (documents/restore-version! (:id item) 1 alice etag object-store)
+                    (catch clojure.lang.ExceptionInfo e (:type (ex-data e))))))))))
+
+(deftest a-restore-carries-an-etag-like-any-other-save
+  (with-state
+    (fn [_ object-store]
+      (let [{:keys [item]} (documents/create! :docs "共同設計" alice object-store)]
+        (documents/grant! (:id item) bob "editor" alice)
+        (with-paragraph item "ひとつめ" alice object-store)
+        (let [stale (:etag (:item (documents/content (:id item) bob object-store)))]
+          ;; Alice moves it on while bob was looking at the history.
+          (with-paragraph item "ふたつめ" alice object-store)
+          (is (= :drive/stale-version
+                 (try (documents/restore-version! (:id item) 1 bob stale object-store)
+                      (catch clojure.lang.ExceptionInfo e (:type (ex-data e)))))))))))
+
+(deftest a-viewer-cannot-restore
+  (with-state
+    (fn [_ object-store]
+      (let [{:keys [item]} (documents/create! :docs "設計" alice object-store)]
+        (with-paragraph item "ひとつめ" alice object-store)
+        (documents/grant! (:id item) bob "viewer" alice)
+        (let [etag (:etag (:item (documents/content (:id item) bob object-store)))]
+          (is (= :drive/not-permitted
+                 (try (documents/restore-version! (:id item) 1 bob etag object-store)
+                      (catch clojure.lang.ExceptionInfo e (:type (ex-data e)))))))))))
+
+(deftest the-history-is-addressable-and-says-what-each-version-cost
+  (with-state
+    (fn [_ object-store]
+      (let [{:keys [item]} (documents/create! :docs "設計" alice object-store)]
+        (with-paragraph item "ひとつめ" alice object-store)
+        (let [{:keys [current versions]} (documents/history (:id item) alice)]
+          (is (= 2 current))
+          ;; Newest first, each entry knowing its own index — which is what a
+          ;; restore takes.
+          (is (= [2 1] (mapv :index versions)))
+          (is (= [true false] (mapv :current? versions)))
+          (is (= [alice alice] (mapv :author versions)))
+          ;; The first version's delta is its whole size; the second's is
+          ;; what the paragraph added.
+          (is (pos? (:delta-bytes (second versions))))
+          (is (pos? (:delta-bytes (first versions))))
+          (is (= (:size-bytes (second versions)) (:delta-bytes (second versions)))))))))
+
+(deftest a-stranger-sees-no-history
+  (with-state
+    (fn [_ object-store]
+      (let [{:keys [item]} (documents/create! :docs "私信" alice object-store)]
+        (is (= :drive/not-found
+               (try (documents/history (:id item) bob)
+                    (catch clojure.lang.ExceptionInfo e (:type (ex-data e))))))))))
+
 ;; ── searching inside documents ──────────────────────────────────────────────
 
 (defn- with-cell [item value object-store]
