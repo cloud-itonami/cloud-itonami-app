@@ -43,6 +43,16 @@
  :worker {:max-concurrency 2
           :max-runs 50}
 
+ ;; The stdio MCP server. Fleet tools need no session; funding and settlement
+ ;; tools need a real one, and appear in the manifest only when this token
+ ;; resolves to a live session whose user has enrolled a Passkey. Absent token =
+ ;; no such tools, which is the shipped default.
+ ;;
+ ;; The token is an app session token. It is read from this environment variable,
+ ;; or from the login Keychain (service `cloud-itonami-app.mcp`, account
+ ;; `session-token`) — never stored here.
+ :mcp {:session-token-env "CLOUD_ITONAMI_MCP_SESSION"}
+
  ;; Governed outward authorities (ADR-2607300300). Each rides the
  ;; `cloud.itonami.app.authority` spine: deterministic pre-check -> Passkey
  ;; consent -> hand-off to an actor that has its own Governor and ledger.
