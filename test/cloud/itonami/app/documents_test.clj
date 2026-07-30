@@ -11,7 +11,6 @@
             [cloud.itonami.app.capability :as capability]
             [cloud.itonami.app.documents :as documents]
             [cloud.itonami.app.filecoin :as filecoin]
-            [drive.object]
             [cloud.itonami.app.store :as store]
             [drive.object :as object]
             [drive.store.memory :as memory]
@@ -1073,7 +1072,7 @@
 
 (deftest restoring-is-a-new-version-and-not-a-rewrite
   (with-state
-    (fn [state object-store]
+    (fn [_state object-store]
       (let [{:keys [item]} (documents/create! :docs "設計" alice object-store)]
         (with-paragraph item "ひとつめ" alice object-store)
         (with-paragraph item "ふたつめ" alice object-store)
@@ -1760,11 +1759,12 @@
         (is (= :drive/unsupported-format (:type error)))
         (is (= ["docx" "edn" "md"] (:available error))))
       ;; And a workbook is offered exactly the three it has writers for.
-      (let [{:keys [item]} (documents/create! :sheets "売上" alice object-store)]
-        (is (= ["csv" "edn" "xlsx"]
-               (->> (documents/drive-view {:items []} alice)
-                    :kinds
-                    (some #(when (= "sheets" (:kind %)) (:exports %))))))))))
+      ;; created for its effect -- drive-view must see a sheets item exist
+      (documents/create! :sheets "売上" alice object-store)
+      (is (= ["csv" "edn" "xlsx"]
+             (->> (documents/drive-view {:items []} alice)
+                  :kinds
+                  (some #(when (= "sheets" (:kind %)) (:exports %)))))))))
 
 ;; ── two editors, one document ───────────────────────────────────────────────
 
@@ -2705,7 +2705,7 @@
   ;; something can reach it. Listed at the top level, because a folder from
   ;; another Drive is not inside anything in this one.
   (with-state
-    (fn [_ object-store]
+    (fn [_ _object-store]
       (let [work (:item (documents/create-folder! "仕事" alice))
             q1 (:item (documents/create-folder! "Q1" alice (:id work)))]
         (documents/grant! (:id work) bob "editor" alice)

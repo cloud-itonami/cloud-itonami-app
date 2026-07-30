@@ -14,7 +14,8 @@
   and two of them replace `:identity` wholesale, so scoping each caller would
   have been a list to keep in step. Redirecting the directory once is the thing
   that cannot be forgotten."
-  (:require [clojure.string :as str]
+  (:require [clojure.java.io :as io]
+            [clojure.string :as str]
             [clojure.test :refer [deftest is testing]]
             [cloud.itonami.app.config :as config]
             [cloud.itonami.app.store :as store]))
@@ -36,7 +37,7 @@
             more specific signal and has to win"
     (is (= (str (config/data-dir))
            (str (.getCanonicalFile
-                 (clojure.java.io/file
+                 (io/file
                   (System/getProperty "cloud.itonami.data-dir")))))
         "when the property is set, it decides, whatever the environment says")))
 
