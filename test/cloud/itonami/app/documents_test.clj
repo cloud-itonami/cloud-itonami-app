@@ -3298,3 +3298,177 @@
         (reset! reads 0)
         (documents/search "本文にだけある語" alice store)
         (is (zero? @reads))))))
+
+;; ── suggestions ─────────────────────────────────────────────────────────────
+
+(defn- memo-with-paragraph [object-store text]
+  (let [{:keys [item]} (documents/create! :docs "設計" alice object-store)
+        doc (:resource (documents/content (:id item) alice object-store))]
+    (save! (:id item)
+           (assoc doc :docs/blocks
+                  [{:docs/id "p1" :docs/kind :paragraph :docs/text text}])
+           alice object-store)
+    item))
+
+(deftest a-commenter-can-propose-a-change-they-cannot-make
+  ;; The whole of suggestion mode. `drive.workspace` says a commenter may
+  ;; not write, and being able to say what should change without being able
+  ;; to change it is the point rather than a limitation.
+  (with-state
+    (fn [_ object-store]
+      (let [item (memo-with-paragraph object-store "元の本文")]
+        (documents/grant! (:id item) bob "commenter" alice)
+        ;; bob cannot save…
+        (is (thrown? clojure.lang.ExceptionInfo
+                     (save! (:id item) {:docs/id "x"} bob object-store)))
+        ;; …and can propose.
+        (let [{:keys [suggestion]} (documents/suggest! (:id item) "p1" "直した本文"
+                                                       bob object-store)]
+          (is (= bob (:author suggestion)))
+          (is (= "open" (:status suggestion)))
+          (is (= "元の本文" (:before suggestion)) "what it said when proposed"))
+        ;; The document is untouched until somebody accepts.
+        (is (= "元の本文"
+               (:docs/text (first (:docs/blocks
+                                   (:resource (documents/content (:id item) alice
+                                                                 object-store)))))))))))
+
+(deftest accepting-a-suggestion-is-a-new-version-authored-by-whoever-accepted
+  (with-state
+    (fn [_ object-store]
+      (let [item (memo-with-paragraph object-store "元の本文")]
+        (documents/grant! (:id item) bob "commenter" alice)
+        (let [sug (:suggestion (documents/suggest! (:id item) "p1" "直した本文" bob
+                                                   object-store))]
+          (documents/accept-suggestion! (:id item) (:id sug) alice object-store)
+          (let [back (documents/content (:id item) alice object-store)]
+            (is (= "直した本文" (:docs/text (first (:docs/blocks (:resource back))))))
+            ;; They made this version; the suggestion still says who
+            ;; proposed it — the same rule restoring a version follows.
+            (is (= alice (:updated-by (:item back))))
+            (is (= bob (:author (first (:suggestions
+                                        (documents/suggestions (:id item) alice
+                                                               object-store)))))))
+          (is (= "accepted"
+                 (:status (first (:suggestions (documents/suggestions
+                                                (:id item) alice object-store)))))))))))
+
+(deftest a-suggestion-about-a-sentence-that-has-changed-is-refused
+  ;; The lost update, arriving through a different door. bob proposes a
+  ;; change to a paragraph; alice rewrites that paragraph herself; applying
+  ;; bob's proposal now would discard her rewrite without anybody seeing it.
+  (with-state
+    (fn [_ object-store]
+      (let [item (memo-with-paragraph object-store "元の本文")]
+        (documents/grant! (:id item) bob "commenter" alice)
+        (let [sug (:suggestion (documents/suggest! (:id item) "p1" "bob の案" bob
+                                                   object-store))
+              doc (:resource (documents/content (:id item) alice object-store))]
+          (save! (:id item)
+                 (assoc doc :docs/blocks
+                        [{:docs/id "p1" :docs/kind :paragraph :docs/text "alice の書き直し"}])
+                 alice object-store)
+          ;; It is reported as stale before anybody tries.
+          (let [listed (first (:suggestions (documents/suggestions (:id item) alice
+                                                                   object-store)))]
+            (is (:stale? listed))
+            (is (= "alice の書き直し" (:current listed))))
+          (let [error (try (documents/accept-suggestion! (:id item) (:id sug) alice
+                                                         object-store)
+                           (catch clojure.lang.ExceptionInfo e (ex-data e)))]
+            (is (= :drive/suggestion-stale (:type error)))
+            (is (= "元の本文" (:was error)))
+            (is (= "alice の書き直し" (:now error))))
+          ;; And alice's text is still there.
+          (is (= "alice の書き直し"
+                 (:docs/text (first (:docs/blocks
+                                     (:resource (documents/content (:id item) alice
+                                                                   object-store))))))))))))
+
+(deftest a-settled-suggestion-cannot-be-settled-again
+  (with-state
+    (fn [_ object-store]
+      (let [item (memo-with-paragraph object-store "元の本文")
+            sug (:suggestion (documents/suggest! (:id item) "p1" "案" alice object-store))]
+        (documents/accept-suggestion! (:id item) (:id sug) alice object-store)
+        (is (= :drive/suggestion-settled
+               (:type (try (documents/accept-suggestion! (:id item) (:id sug) alice
+                                                         object-store)
+                           (catch clojure.lang.ExceptionInfo e (ex-data e))))))
+        (is (= :drive/suggestion-settled
+               (:type (try (documents/reject-suggestion! (:id item) (:id sug) alice)
+                           (catch clojure.lang.ExceptionInfo e (ex-data e))))))))))
+
+(deftest declining-and-withdrawing-are-the-same-operation
+  ;; A writer may decline anyone's; the person who made one may take it
+  ;; back. Refusing the second would leave a mistake on the page with no way
+  ;; to remove it.
+  (with-state
+    (fn [_ object-store]
+      (let [item (memo-with-paragraph object-store "元の本文")]
+        (documents/grant! (:id item) bob "commenter" alice)
+        (let [mine (:suggestion (documents/suggest! (:id item) "p1" "案1" bob
+                                                    object-store))]
+          (is (:ok? (documents/reject-suggestion! (:id item) (:id mine) bob))))
+        (let [theirs (:suggestion (documents/suggest! (:id item) "p1" "案2" bob
+                                                      object-store))]
+          (is (:ok? (documents/reject-suggestion! (:id item) (:id theirs) alice))))
+        ;; Nothing was written to the document by either.
+        (is (= "元の本文"
+               (:docs/text (first (:docs/blocks
+                                   (:resource (documents/content (:id item) alice
+                                                                 object-store)))))))))))
+
+(deftest only-a-writer-may-accept
+  (with-state
+    (fn [_ object-store]
+      (let [item (memo-with-paragraph object-store "元の本文")]
+        (documents/grant! (:id item) bob "commenter" alice)
+        (let [sug (:suggestion (documents/suggest! (:id item) "p1" "案" bob
+                                                   object-store))]
+          ;; A commenter accepting their own proposal would be writing.
+          (is (= :drive/not-permitted
+                 (:type (try (documents/accept-suggestion! (:id item) (:id sug) bob
+                                                           object-store)
+                             (catch clojure.lang.ExceptionInfo e (ex-data e)))))))))))
+
+(deftest a-stranger-may-not-propose
+  (with-state
+    (fn [_ object-store]
+      (let [item (memo-with-paragraph object-store "元の本文")]
+        (is (= :drive/not-found
+               (:type (try (documents/suggest! (:id item) "p1" "案" bob object-store)
+                           (catch clojure.lang.ExceptionInfo e (ex-data e))))))))))
+
+(deftest a-proposal-must-be-about-a-block-that-exists
+  (with-state
+    (fn [_ object-store]
+      (let [item (memo-with-paragraph object-store "元の本文")]
+        (is (= :drive/not-found
+               (:type (try (documents/suggest! (:id item) "nope" "案" alice object-store)
+                           (catch clojure.lang.ExceptionInfo e (ex-data e))))))
+        (is (= :drive/invalid-suggestion
+               (:type (try (documents/suggest! (:id item) "p1" "   " alice object-store)
+                           (catch clojure.lang.ExceptionInfo e (ex-data e))))))))))
+
+(deftest only-a-document-takes-suggestions
+  (with-state
+    (fn [_ object-store]
+      (let [{:keys [item]} (documents/create! :sheets "売上" alice object-store)]
+        (is (= :drive/not-a-document
+               (:type (try (documents/suggest! (:id item) "A1" "案" alice object-store)
+                           (catch clojure.lang.ExceptionInfo e (ex-data e))))))))))
+
+(deftest a-viewer-may-not-propose-either
+  ;; The line `comment-roles` already draws: a viewer is someone the
+  ;; document was shown to, and annotating it is more than being shown it.
+  ;; Not a new rule for suggestions — the same one.
+  (with-state
+    (fn [_ object-store]
+      (let [item (memo-with-paragraph object-store "元の本文")]
+        (documents/grant! (:id item) bob "viewer" alice)
+        (is (= :drive/not-permitted
+               (:type (try (documents/suggest! (:id item) "p1" "案" bob object-store)
+                           (catch clojure.lang.ExceptionInfo e (ex-data e))))))
+        ;; And they can still read it and what has been proposed for it.
+        (is (some? (documents/suggestions (:id item) bob object-store)))))))

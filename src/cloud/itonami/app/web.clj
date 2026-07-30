@@ -2414,6 +2414,9 @@
           'スプレッドシートは作成時点のスナップショットです（自動更新されません）。'));
       }
       actions.append(exports, exportNotes, referencePanel(item), commentPanel(item));
+      // Documents only — the server refuses a workbook or a deck, so a box
+      // that always failed would be worse than none.
+      if (item.kind === 'docs') actions.append(suggestionPanel(item));
       if (item.role === 'owner') actions.append(sharingPanel(item, status));
       return actions;
     };
@@ -2484,6 +2487,87 @@
     // than a word. They are not part of the stored bytes — see the comments
     // section in `cloud.itonami.app.documents` for why not.
     const commentRoles = ['owner', 'editor', 'commenter'];
+    // Proposals from someone who may say what should change and may not
+    // change it. Only for documents: the server refuses anything else, and
+    // offering a box that always fails is worse than not offering one.
+    const suggestionPanel = (item) => {
+      const panel = make('div', 'sharing');
+      panel.append(make('h3', 'sharing__title', '提案'));
+      const list = make('ul', 'sharing__list');
+      const status = make('p', 'drive-create__status', '');
+      const form = make('div', 'detail-actions__row');
+      const block = make('input', 'workspace-search document-title');
+      block.type = 'text';
+      block.placeholder = '段落 ID';
+      block.setAttribute('aria-label', '提案する段落の ID');
+      const text = make('input', 'workspace-search surface-input--wide');
+      text.type = 'text';
+      text.placeholder = '提案する本文';
+      text.setAttribute('aria-label', '提案する本文');
+      const add = make('button', 'tool-button', '提案する');
+      add.type = 'button';
+      const base = `/api/workspace/drive/documents/${encodeURIComponent(item.id)}`;
+      const reload = async () => {
+        try {
+          const response = await fetch(`${base}/suggestions`);
+          const data = await response.json();
+          if (!response.ok) return;
+          list.replaceChildren();
+          (data.suggestions || []).forEach((s) => {
+            const row = make('li', 'sharing__entry');
+            row.append(make('span', 'sharing__who', `${s.author}（${s.block}）`));
+            row.append(make('span', 'sharing__role', s.text));
+            if (s.status !== 'open') {
+              row.append(make('span', 'surface-note',
+                s.status === 'accepted' ? '反映済み' : '却下'));
+            } else if (s['stale?']) {
+              // Said before anyone presses accept, because accepting is
+              // what the server will refuse.
+              row.append(make('span', 'surface-note',
+                `この提案のあとに本文が変わりました（現在: ${s.current}）`));
+            }
+            if (s.status === 'open') {
+              const act = async (verb, message) => {
+                try {
+                  await postJSON(`${base}/suggestions/${encodeURIComponent(s.id)}/${verb}`,
+                                 {}, true);
+                  status.textContent = message;
+                  await reload();
+                  await loadWorkspace('drive', renderDrive);
+                } catch (error) { status.textContent = error.message; }
+              };
+              if (item['writable?']) {
+                const accept = make('button', 'tool-button', '反映');
+                accept.type = 'button';
+                accept.addEventListener('click', () => act('accept', '提案を反映しました。'));
+                row.append(accept);
+              }
+              const reject = make('button', 'tool-button', '却下');
+              reject.type = 'button';
+              reject.addEventListener('click', () => act('reject', '提案を却下しました。'));
+              row.append(reject);
+            }
+            list.append(row);
+          });
+          if (!(data.suggestions || []).length) {
+            list.append(make('li', 'empty-state', 'まだ提案はありません。'));
+          }
+        } catch (error) { status.textContent = error.message; }
+      };
+      add.addEventListener('click', async () => {
+        try {
+          await postJSON(`${base}/suggestions`,
+                         {block:block.value, text:text.value}, true);
+          text.value = '';
+          status.textContent = '提案しました。';
+          await reload();
+        } catch (error) { status.textContent = error.message; }
+      });
+      form.append(block, text, add);
+      panel.append(list, form, status);
+      reload();
+      return panel;
+    };
     const commentPanel = (item) => {
       const panel = make('div', 'sharing');
       const heading = make('h3', 'sharing__title', 'コメント');

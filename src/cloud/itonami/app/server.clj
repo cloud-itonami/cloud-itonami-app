@@ -7,6 +7,7 @@
             [cloud.itonami.app.config :as config]
             [cloud.itonami.app.contracts :as contracts]
             [cloud.itonami.app.credential :as credential]
+            [cloud.itonami.app.credential-trust :as credential-trust]
             [cloud.itonami.app.credential-assurance :as credential-assurance]
             [cloud.itonami.app.documents :as documents]
             [cloud.itonami.app.esign :as esign]
@@ -472,6 +473,37 @@
                 (send! exchange 200
                        (assoc (credential/verify-presented presented)
                               :schema credential/schema))))
+
+            ;; Verify a credential issued by ANOTHER organization. Separate from
+            ;; /api/credentials/verify because the trust question is different:
+            ;; that route checks a credential against this app's own key, while
+            ;; this one has to decide whether to believe a stranger. It answers
+            ;; only for issuers in :credentials :trusted-issuers, which is
+            ;; deny-by-default and shipped empty — for did:web the trust list is
+            ;; not hardening, it IS the trust model, since anyone can publish a
+            ;; DID document at a domain they control and sign with the matching
+            ;; key.
+            ;;
+            ;; :valid? is true only when revocation was actually determined. A
+            ;; credential naming a status list we cannot resolve comes back
+            ;; :revocation :unchecked and :valid? false.
+            (and (= method "POST") (= path "/api/credentials/verify/external"))
+            (let [session (require-app-session! exchange)]
+              (require-origin! exchange config)
+              (require-csrf! exchange session)
+              (let [body (read-json exchange)
+                    presented (or (get body "credential") (:credential body) body)]
+                (send! exchange 200
+                       (credential-trust/verify-external config presented))))
+
+            ;; Which external issuers this deployment believes. Read-only, and
+            ;; worth exposing: an operator who cannot see that the list is empty
+            ;; will read every external verification failure as a bug.
+            (and (= method "GET") (= path "/api/credentials/trusted-issuers"))
+            (let [_ (require-app-session! exchange)]
+              (send! exchange 200
+                     {:schema credential-trust/schema
+                      :trusted-issuers (vec (sort (credential-trust/trusted-issuers config)))}))
 
             ;; The status list a verifier fetches to learn whether a credential
             ;; we issued has been revoked. Public for the same reason, and signed
@@ -1694,6 +1726,52 @@
                                     #"/api/workspace/drive/documents/([^/]+)/responses-sheet")
                       (:user-id session))))
 
+            ;; Suggestions. A commenter may propose; a writer may accept.
+            (and (= method "GET")
+                 (id-from-path path #"/api/workspace/drive/documents/([^/]+)/suggestions"))
+            (let [session (require-app-session! exchange)]
+              (send! exchange 200
+                     (documents/suggestions
+                      (id-from-path path
+                                    #"/api/workspace/drive/documents/([^/]+)/suggestions")
+                      (:user-id session))))
+
+            (and (= method "POST")
+                 (id-from-path path #"/api/workspace/drive/documents/([^/]+)/suggestions"))
+            (let [session (require-app-session! exchange)
+                  request (read-json exchange)]
+              (require-origin! exchange config)
+              (require-csrf! exchange session)
+              (send! exchange 200
+                     (documents/suggest!
+                      (id-from-path path
+                                    #"/api/workspace/drive/documents/([^/]+)/suggestions")
+                      (:block request) (:text request) (:user-id session))))
+
+            (and (= method "POST")
+                 (id-from-path path
+                               #"/api/workspace/drive/documents/([^/]+)/suggestions/[^/]+/accept"))
+            (let [session (require-app-session! exchange)]
+              (require-origin! exchange config)
+              (require-csrf! exchange session)
+              (send! exchange 200
+                     (documents/accept-suggestion!
+                      (id-from-path path #"/api/workspace/drive/documents/([^/]+)/")
+                      (second (re-find #"/suggestions/([^/]+)/accept" path))
+                      (:user-id session))))
+
+            (and (= method "POST")
+                 (id-from-path path
+                               #"/api/workspace/drive/documents/([^/]+)/suggestions/[^/]+/reject"))
+            (let [session (require-app-session! exchange)]
+              (require-origin! exchange config)
+              (require-csrf! exchange session)
+              (send! exchange 200
+                     (documents/reject-suggestion!
+                      (id-from-path path #"/api/workspace/drive/documents/([^/]+)/")
+                      (second (re-find #"/suggestions/([^/]+)/reject" path))
+                      (:user-id session))))
+
             ;; Owner only — the responses are theirs.
             (and (= method "GET")
                  (id-from-path path #"/api/workspace/drive/documents/([^/]+)/submissions"))
@@ -1987,6 +2065,23 @@
                      :credential/unknown-role 400
                      :credential/no-subject 400
                      :credential/no-domain 409
+                     ;; External-issuer trust. 403 for an issuer the operator has
+                     ;; not decided to believe: the request was understood and
+                     ;; authenticated, and refused on policy. The fetch failures
+                     ;; are 502 -- this app could not reach or parse the
+                     ;; issuer's document, which is an upstream fault and not the
+                     ;; caller's.
+                     :credential-trust/untrusted-issuer 403
+                     :credential-trust/internal-address 403
+                     :credential-trust/insecure-transport 403
+                     :credential-trust/method-not-an-assertion-method 422
+                     :credential-trust/method-not-in-document 422
+                     :credential-trust/unsupported-key-type 422
+                     :credential-trust/document-id-mismatch 422
+                     :credential-trust/unsupported-did-method 422
+                     :credential-trust/document-unavailable 502
+                     :credential-trust/document-unparseable 502
+                     :credential-trust/document-too-large 502
                      :ao.worker/not-found 404
                      :ao.intent/invalid 400
                      :ao.intent/rejected 409
@@ -2016,6 +2111,12 @@
                      :drive/not-a-document 409
                      :drive/not-a-file 409
                      :drive/not-previewable 415
+                     ;; The paragraph moved under the proposal. 409 for the
+                     ;; same reason a stale save is: the client has to
+                     ;; re-read before it can win.
+                     :drive/suggestion-stale 409
+                     :drive/suggestion-settled 409
+                     :drive/invalid-suggestion 422
                      ;; Restoring what is already current is a request that
                      ;; conflicts with the state, not a malformed one.
                      :drive/already-current 409

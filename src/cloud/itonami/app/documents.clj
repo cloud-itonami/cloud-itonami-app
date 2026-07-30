@@ -2215,6 +2215,184 @@
 ;; as everything else: you can follow a link to a document you may read, and
 ;; a link to one you may not is indistinguishable from a link to nothing.
 
+;; ── suggestions ─────────────────────────────────────────────────────────────
+;;
+;; ## Proposing a change you may not make
+;;
+;; A commenter can say what should change and cannot change it. That is the
+;; whole of suggestion mode, and it is the same division comments already
+;; draw: `drive.workspace` says a `:commenter` may not write, so a proposal
+;; has to live beside the document rather than in it — writing one into
+;; `:docs/suggestions` would be a write, which is exactly what the proposer
+;; does not have. A *viewer* may do neither; that is `comment-roles`'
+;; existing line and not a new one drawn here.
+;;
+;; ## What a suggestion is about, and what happens when that changes
+;;
+;; It names a block and proposes text for it, and it records the text that
+;; was there when it was made. Accepting checks that the block still says
+;; what it said: alice editing the paragraph after bob proposed a change to
+;; it means bob's proposal is about a sentence that no longer exists, and
+;; applying it would silently discard her edit. That is the lost update this
+;; app already refuses for saves, arriving by a different door.
+
+(defn- suggestions-path [id] [:drive :suggestions id])
+
+(defn- block-text
+  "The current text of `block-id` in a rehydrated document, or nil."
+  [resource block-id]
+  (some #(when (= block-id (:docs/id %)) (str (:docs/text %)))
+        (filter map? (:docs/blocks resource))))
+
+(defn suggest!
+  "Propose replacing one block's text.
+
+  Anyone who may comment may suggest, which is a commenter and not a viewer.
+  `comment-roles` already draws that line for the same reason: a viewer is
+  someone the document was shown to, and annotating it is more than being
+  shown it. A commenter is exactly the person suggestion mode is for — able
+  to say what should change, and not able to change it.
+
+  Only `:docs` documents, and only a block's text. Proposing a new block, a
+  deletion or a reordering is a larger surface than this, and offering half
+  of it would leave a reviewer wondering which half."
+  ([id block-id text actor] (suggest! id block-id text actor (store-instance)))
+  ([id block-id text actor object-store]
+   (locking write-lock
+     (let [{:keys [item owner role]} (readable! actor id)
+           text (not-empty (str/trim (str text)))]
+       (when-not (contains? comment-roles role)
+         (refuse! {:reason :not-permitted :item-id id :principal actor}))
+       (when-not (= :docs/document (:drive/resource-kind item))
+         (throw (ex-info "提案できるのはドキュメントだけです。"
+                         {:type :drive/not-a-document :item-id id})))
+       (when-not text
+         (throw (ex-info "提案する本文を入力してください。"
+                         {:type :drive/invalid-suggestion :field :text})))
+       (let [resource (:resource (content id actor object-store))
+             before (block-text resource block-id)]
+         (when (nil? before)
+           (throw (ex-info "その段落が見つかりません。"
+                           {:type :drive/not-found :block block-id})))
+         (let [record {:id (store/new-id "sug")
+                       :document-id id
+                       :owner owner
+                       :author actor
+                       :block block-id
+                       :text text
+                       ;; What it said when this was proposed. Not for
+                       ;; display — for deciding, later, whether the
+                       ;; proposal is still about the same sentence.
+                       :before before
+                       :status "open"
+                       :created-at (store/now)}]
+           (store/transact! update-in (suggestions-path id) (fnil conj []) record)
+           {:schema schema :ok? true :suggestion (dissoc record :owner)}))))))
+
+(defn suggestions
+  "Every proposal on this document, oldest first.
+
+  Visible to anyone who may read it, like comments: being shown a document
+  and not what has been proposed for it is a strange half of a thing to be
+  shown.
+
+  `:stale?` is computed rather than stored — the block may have changed a
+  second ago, and a flag written when the suggestion was made would be
+  answering a question about the past."
+  ([id actor] (suggestions id actor (store-instance)))
+  ([id actor object-store]
+   (let [_ (readable! actor id)
+         resource (:resource (content id actor object-store))]
+     {:schema schema :ok? true :id id
+      :suggestions
+      (mapv (fn [s]
+              (let [now-text (block-text resource (:block s))]
+                (-> (dissoc s :owner)
+                    (assoc :stale? (and (= "open" (:status s))
+                                        (not= (:before s) now-text))
+                           :current now-text))))
+            (get-in (store/snapshot) (suggestions-path id) []))})))
+
+(defn- settle-suggestion!
+  "Mark one open suggestion `status`, or refuse and say why."
+  [id suggestion-id actor status]
+  (let [existing (get-in (store/snapshot) (suggestions-path id) [])
+        found (first (filter #(= suggestion-id (:id %)) existing))]
+    (cond
+      (nil? found)
+      (throw (ex-info "その提案が見つかりません。"
+                      {:type :drive/not-found :suggestion-id suggestion-id}))
+      (not= "open" (:status found))
+      (throw (ex-info "この提案はすでに処理されています。"
+                      {:type :drive/suggestion-settled :suggestion-id suggestion-id
+                       :status (:status found)}))
+      :else
+      (do (store/transact!
+           update-in (suggestions-path id)
+           (fn [xs] (mapv #(if (= suggestion-id (:id %))
+                             (assoc % :status status
+                                    :settled-at (store/now)
+                                    :settled-by actor)
+                             %)
+                          xs)))
+          found))))
+
+(defn accept-suggestion!
+  "Apply a proposal, as a new version.
+
+  Whoever accepts is the author of the version, the same as restoring one:
+  they made this version, and the suggestion still records who proposed it.
+  It goes through `write-resource!` like any other save, so the validator
+  sees it.
+
+  **Refused if the block no longer says what it said when the proposal was
+  made.** The proposal is about a sentence, and applying it to a different
+  sentence would discard whatever replaced it without anybody seeing —
+  which is the lost update this app refuses for saves, arriving through a
+  different door."
+  ([id suggestion-id actor] (accept-suggestion! id suggestion-id actor (store-instance)))
+  ([id suggestion-id actor object-store]
+   (locking write-lock
+     (let [{:keys [item] :as target} (writable! actor id)
+           existing (get-in (store/snapshot) (suggestions-path id) [])
+           found (first (filter #(= suggestion-id (:id %)) existing))
+           resource (:resource (content id actor object-store))]
+       (when (and found (= "open" (:status found))
+                  (not= (:before found) (block-text resource (:block found))))
+         (throw (ex-info "この提案が書かれたあとに本文が変わっています。読み直してください。"
+                         {:type :drive/suggestion-stale
+                          :suggestion-id suggestion-id
+                          :block (:block found)
+                          :was (:before found)
+                          :now (block-text resource (:block found))})))
+       (let [accepted (settle-suggestion! id suggestion-id actor "accepted")
+             updated (update resource :docs/blocks
+                             (fn [blocks]
+                               (mapv #(if (and (map? %) (= (:block accepted) (:docs/id %)))
+                                        (assoc % :docs/text (:text accepted))
+                                        %)
+                                     blocks)))]
+         (write-resource! target id actor object-store updated
+                          (:drive/object-ref item)))))))
+
+(defn reject-suggestion!
+  "Decline a proposal. Nothing is written to the document.
+
+  A writer may decline any of them, and the person who made one may withdraw
+  it — declining somebody else's proposal and withdrawing your own are the
+  same operation from two directions, and refusing the second would leave a
+  mistake on the page with no way to take it back."
+  [id suggestion-id actor]
+  (locking write-lock
+    (let [{:keys [role]} (readable! actor id)
+          existing (get-in (store/snapshot) (suggestions-path id) [])
+          found (first (filter #(= suggestion-id (:id %)) existing))]
+      (when-not (or (contains? #{:owner :editor} role)
+                    (and found (= actor (:author found))))
+        (refuse! {:reason :not-permitted :item-id id :principal actor}))
+      (settle-suggestion! id suggestion-id actor "rejected")
+      {:schema schema :ok? true :id id :suggestion-id suggestion-id})))
+
 (defn references
   "What this document points at, and whether each target is reachable.
 
