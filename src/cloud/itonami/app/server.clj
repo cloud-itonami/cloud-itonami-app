@@ -3,6 +3,7 @@
             [clojure.string :as str]
             [cloud.itonami.app.authority.api :as authority-api]
             [cloud.itonami.app.config :as config]
+            [cloud.itonami.app.credential-assurance :as credential-assurance]
             [cloud.itonami.app.documents :as documents]
             [cloud.itonami.app.executor :as executor]
             [cloud.itonami.app.filecoin :as filecoin]
@@ -381,6 +382,31 @@
             (and (= method "GET") (= path "/api/filecoin"))
             (send! exchange 200 (assoc (filecoin/status)
                                        :sample (filecoin/sample)))
+
+            ;; What each enrolled authenticator actually proves, and whether it
+            ;; clears each authority's floor. This is the read that closes the
+            ;; loop on `:credential-policy`: the shipped floor is the strongest
+            ;; one known to be reachable, and raising it should follow from what
+            ;; this reports on real hardware rather than from a guess.
+            (and (= method "GET") (= path "/api/passkeys/assurance"))
+            (let [session (require-app-session! exchange)
+                  state (store/snapshot)
+                  credentials (->> (vals (get-in state [:identity :passkeys] {}))
+                                   (filter #(= (:user-id session) (:user-id %)))
+                                   (sort-by :created-at))]
+              (send! exchange 200
+                     {:schema "cloud.itonami.app.passkeys.assurance.v1"
+                      :credentials (mapv credential-assurance/report credentials)
+                      :authorities
+                      (into {}
+                            (for [k (sort (keys authority-api/adapters))]
+                              [k {:policy (credential-assurance/policy-for config k)
+                                  :accepted
+                                  (mapv :credential-id
+                                        (filter #(empty?
+                                                  (credential-assurance/policy-issues
+                                                   % (credential-assurance/policy-for config k)))
+                                                credentials))}]))}))
 
             ;; ---- funding accounts (what the payment authority stands on) ----
             ;; These are reads and writes of the organization's own record, not
@@ -1273,6 +1299,11 @@
                      :authority/proposal-not-found 404
                      ;; The Passkey assertion did not authorise THIS proposal.
                      :authority/approval-mismatch 403
+                     ;; The assertion was genuine and for this proposal, but the
+                     ;; authenticator behind it is not one this authority
+                     ;; accepts. Distinct from a mismatch on purpose: the fix is
+                     ;; to enrol a platform authenticator, not to retry.
+                     :authority/credential-not-accepted 403
                      :authority/domain-invalid 500
                      :authority/material-invalid 500
 
