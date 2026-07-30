@@ -6,6 +6,7 @@
             [cloud.itonami.app.app :as app]
             [cloud.itonami.app.config :as config-loader]
             [cloud.itonami.app.did :as did]
+            [cloud.itonami.app.documents :as documents]
             [cloud.itonami.app.identity :as local-identity]
             [cloud.itonami.app.organism-gateway :as organism-gateway]
             [cloud.itonami.app.organism-worker :as organism-worker]
@@ -218,6 +219,43 @@
       (is (empty? (set/difference scripted html-ids)))
       (is (contains? views "worker"))
       (is (= views panels)))))
+
+(defn- js-object-keys
+  "The keys of a `const <name> = {a:x, b:y}` literal in the interaction layer.
+
+  Neither literal contains a nested brace, which is why `[^}]*` is enough and
+  why this stays a regex rather than becoming a JavaScript parser."
+  [name]
+  (some->> (re-find (re-pattern (str "const " name " = \\{([^}]*)\\}"))
+                    web/interaction-js)
+           second
+           (re-seq #"(\w+)\s*:")
+           (map second)
+           set))
+
+(deftest every-document-kind-has-a-rendered-surface-and-an-editor
+  ;; `documents/kinds` is the closed table the create bar is built from, and
+  ;; these two objects are what the pane looks a kind up in. A kind added to the
+  ;; server table and not to these is a document the app will happily create and
+  ;; then decline to show — which is the failure the rendered surfaces exist to
+  ;; remove, reappearing one kind later.
+  (let [kinds (set (map name (keys documents/kinds)))]
+    (is (seq kinds))
+    (is (= kinds (js-object-keys "surfacePreviews")))
+    (is (= kinds (js-object-keys "surfaceEditors")))))
+
+(deftest rendered-surfaces-style-the-classes-they-build
+  ;; A surface that builds `.doc-page` while the stylesheet defines `.docs-page`
+  ;; renders as unstyled markup and nothing fails — the same silent class of
+  ;; failure as an undefined design token. Only the roots are checked; they are
+  ;; the ones carrying the layout each surface depends on.
+  (doseq [class ["surface-modes" "surface-preview" "doc-page" "form-paper"
+                 "form-card" "sheet-paper" "sheet-table" "deck-canvas"
+                 "deck-thumb__frame" "deck-shape"]]
+    (is (re-find (re-pattern (str "\\." class "[,{ :]")) web/app-css)
+        (str "app-css does not style ." class))
+    (is (str/includes? web/interaction-js (str "'" class))
+        (str "no surface builds ." class))))
 
 (deftest workspace-snapshot-composes-existing-systems
   (with-redefs [workspace/inbox-snapshot (constantly {:items [{:id "mail"}]})
