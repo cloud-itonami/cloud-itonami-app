@@ -325,12 +325,28 @@
 
 ;; ── agent tools ──────────────────────────────────────────────────────
 ;;
-;; Descriptors and behaviour live here, not in agent-control. That namespace
-;; requires agent.run, which only resolves under the :dev alias's west sibling
-;; layout, so anything defined there is untestable in a plain -M:test run —
-;; which is why the repo has no agent-control tests at all. It is also the
-;; honest split: agent-control wires capabilities, the fleet knows what a
-;; fleet query means.
+;; Descriptors and behaviour live here, not in agent-control. It is the honest
+;; split: agent-control wires capabilities, the fleet knows what a fleet query
+;; means.
+;;
+;; This comment used to explain the absence of agent-control tests by its
+;; requiring agent.run, which only resolves under the :dev alias's west sibling
+;; layout. That is true and it is not the whole reason, and the missing half
+;; matters more. Measured 2026-07-31:
+;;
+;;   - agent.run and hil.core ARE nameable by git coordinate --
+;;     kotoba-lang/agent and kotoba-lang/hil both exist, and adding them to
+;;     :deps does let the namespace start loading in a plain -M:test run.
+;;   - it then fails anyway: agent_control.clj calls store/update-agent-control!
+;;     at four sites and cloud.itonami.app.store defines no such var. The
+;;     namespace does not compile, alias or no alias.
+;;   - nothing requires it. mcp.clj and this file mention agent-control only in
+;;     comments, so those 684 lines are unreachable as well as uncompilable.
+;;
+;; Left as found rather than resurrected: whether agent-control should be
+;; completed or deleted is a decision about product scope, not a test gap to
+;; close by adding the missing function. Recorded so the next reader does not
+;; conclude that fixing the alias would make it testable -- it would not.
 
 (def tools
   [{:name "fleet_search"
