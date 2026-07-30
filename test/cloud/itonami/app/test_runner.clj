@@ -35,6 +35,7 @@
             [cloud.itonami.app.payment-tools-test]
             [cloud.itonami.app.paypay-bank-test]
             [cloud.itonami.app.storj-node-test]
+            [cloud.itonami.app.store-test]
             [cloud.itonami.app.storj-test]
             [cloud.itonami.app.worker-http-test]))
 
@@ -66,6 +67,7 @@
     cloud.itonami.app.payment-tools-test
     cloud.itonami.app.paypay-bank-test
     cloud.itonami.app.storj-node-test
+    cloud.itonami.app.store-test
     cloud.itonami.app.storj-test
     cloud.itonami.app.worker-http-test])
 
