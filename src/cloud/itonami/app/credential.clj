@@ -250,8 +250,13 @@
     (store/transact!
      (fn [current]
        (assoc-in current [:credentials :issued index]
+                 ;; The record, not the credential. This app keeps only what it
+                 ;; needs to revoke it and to tell an operator what exists; the
+                 ;; holder keeps the signed document, which is the point of it
+                 ;; being verifiable without asking this server.
                  {:subject (get-in credential ["credentialSubject" "id"])
                   :role (get-in credential ["credentialSubject" "role"])
+                  :issuer (get credential "issuer")
                   :issued-at (get credential "validFrom")})))
     {:credential credential :status-index index}))
 
@@ -334,3 +339,66 @@
                   :role (get-in credential ["credentialSubject" "role"])
                   :verification-method (:verification-method result)}
            status (assoc :status-index (:index status))))))))
+
+;; ── the issued register ──────────────────────────────────────────────────────
+
+(def revoking-roles
+  "Roles that may revoke a membership credential. A member revoking their
+  colleague's credential is not a share, it is an eviction, so the two roles that
+  already administer the organization are the two that can do it."
+  #{:owner :admin})
+
+(defn may-revoke?
+  "Whether `role` may revoke. Not a matter of taste: `revoke!` flips a bit that
+  stops another person's credential from being honoured anywhere it is presented,
+  which is a strictly larger power than anything a `:member` holds here."
+  [role]
+  (contains? revoking-roles (keyword role)))
+
+(defn issued-credentials
+  "The register of credentials this app has issued, newest index first.
+
+  Returns the RECORD, never the credential itself: this app does not keep the
+  signed document, only what it needs to revoke it and to tell an operator what
+  exists. The holder keeps the credential — that is the point of it being
+  verifiable without asking this server."
+  [snapshot]
+  (let [st (credential-state snapshot)
+        revoked (set (:revoked st))]
+    (->> (:issued st)
+         (map (fn [[index record]]
+                (assoc record
+                       :status-index index
+                       :revoked? (contains? revoked index))))
+         (sort-by :status-index #(compare %2 %1))
+         vec)))
+
+(defn issued-count [snapshot]
+  (count (:issued (credential-state snapshot))))
+
+(defn verify-presented
+  "`verify` for a document that arrived from OUTSIDE this process.
+
+  Every input-level failure becomes `{:verified false :valid? false :reason kw}`
+  instead of an exception. The distinction matters at an HTTP boundary: `verify`
+  throwing on a malformed document would surface as a 500, telling the caller the
+  server broke when in fact the credential they sent was junk. \"Is this
+  credential good?\" is answered successfully; the answer is no.
+
+  Genuine programming errors are not swallowed — only `ex-info`, which is what
+  this stack raises for bad input, is caught. A NullPointerException still
+  propagates."
+  ([presented] (verify-presented presented (store/snapshot)))
+  ([presented snapshot]
+   (if-not (map? presented)
+     {:verified false :valid? false :reason :credential/not-a-document}
+     (try
+       (verify presented snapshot)
+       (catch clojure.lang.ExceptionInfo error
+         (let [data (ex-data error)]
+           {:verified false
+            :valid? false
+            :reason (or (:data-integrity/error data)
+                        (:status-list/error data)
+                        (:type data)
+                        :credential/unverifiable)}))))))

@@ -320,6 +320,48 @@
                 (:domain organization)))
             (vals (:organizations state))))))
 
+(defn membership-credential-context
+  "Everything `cloud.itonami.app.credential` needs to issue a membership
+  credential for this session's ACTIVE membership.
+
+  Lives here rather than in `credential` so that the credential namespace never
+  reads identity's private state shape: it takes explicit inputs and stays
+  testable without a session. The `:role` returned is the role of the active
+  membership, so a user who belongs to two organizations gets a credential for
+  the one they are currently acting in and not the union of both.
+
+  Throws rather than returning a partial context. A membership credential naming
+  a subject with no DID would be an assertion about nobody, and issuing one for
+  an organization that has not claimed an Organization ID would name an issuer
+  that does not exist yet."
+  [session]
+  (let [state (identity-state (store/snapshot))
+        user (get-in state [:users (:user-id session)])
+        membership (get-in state [:memberships (:membership-id session)])
+        organization (get-in state [:organizations (:organization-id session)])]
+    (when-not (:did user)
+      (throw (ex-info "Credential を発行するには Passkey の登録が必要です。"
+                      {:type :credential/no-subject-did})))
+    (when-not (:role membership)
+      (throw (ex-info "この session に有効な membership がありません。"
+                      {:type :credential/no-membership})))
+    (when-not (:organization-id organization)
+      (throw (ex-info "Organization ID を設定してから Credential を発行してください。"
+                      {:type :credential/organization-incomplete})))
+    {:subject-did (:did user)
+     :role (:role membership)
+     ;; nil until the deployment publishes did:web — `credential` falls back to
+     ;; the issuer did:key rather than naming an address that answers nothing.
+     :organization-did (:did organization)
+     :organization-domain (organization-domain-for-did-web)
+     :organization-name (:name organization)}))
+
+(defn membership-role
+  "The role of this session's active membership, for authorization checks."
+  [session]
+  (get-in (identity-state (store/snapshot))
+          [:memberships (:membership-id session) :role]))
+
 (defn public-state [token]
   (migrate-did-links!)
   (let [state (identity-state (store/snapshot))
