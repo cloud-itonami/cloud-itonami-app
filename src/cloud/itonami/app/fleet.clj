@@ -140,6 +140,36 @@
   [actor]
   (:revision actor))
 
+(defn pin-age-days
+  "Days since the pinned commit was authored, or nil if no date was recorded.
+
+  This measures the PIN, not the actor. It is the closest thing this catalog
+  has to liveness for a resident actor, and it is not liveness: a loop- repo
+  does commit what it produces — loop-system-dynamics carries evidence/ and
+  ledger/ and writes to them — so a pin that has not moved in months means
+  either the loop stopped or nobody advanced the pin. Both deserve a look and
+  this cannot tell them apart.
+
+  Recorded only for :reference-only entries, which is where every resident
+  actor is; fetching it for all 1,208 would mean 1,208 API calls at generation."
+  [actor]
+  (when-some [t (:revision-committed-at actor)]
+    (-> (java.time.Duration/between (java.time.Instant/parse t) (java.time.Instant/now))
+        .toDays)))
+
+(defn stale-pins
+  "Actors whose pin has not moved in `days`, oldest first. Resident actors are
+  the interesting case — an orchestrator that has not committed evidence in a
+  month is either stopped or unpinned — but the query is not restricted to
+  them, because an on-demand actor with a very old pin is worth noticing too."
+  ([] (stale-pins 30))
+  ([days]
+   (->> (actors)
+        (keep (fn [a] (when-some [age (pin-age-days a)]
+                        (when (>= age days) (assoc a :pin-age-days age)))))
+        (sort-by :pin-age-days >)
+        vec)))
+
 (defn counts
   "Directory shape at a glance. `:company-records` are the 155 repositories
   whose blueprint.edn is a `:company/*` legal-entity record rather than an
