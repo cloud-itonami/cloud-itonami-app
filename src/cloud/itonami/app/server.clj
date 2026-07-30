@@ -1,6 +1,7 @@
 (ns cloud.itonami.app.server
   (:require [clojure.data.json :as json]
             [clojure.string :as str]
+            [cloud.itonami.app.authority.api :as authority-api]
             [cloud.itonami.app.config :as config]
             [cloud.itonami.app.documents :as documents]
             [cloud.itonami.app.executor :as executor]
@@ -124,6 +125,17 @@
 
 (defn- id-from-path [path pattern]
   (some-> (re-matches pattern path) second))
+
+;; /api/authority/<authority>/... -- the authority key is a path segment so a
+;; disabled or unknown authority is refused by name rather than by inspecting a
+;; body. `authority-api/review!` etc. refuse an unknown key rather than
+;; defaulting, so a typo cannot reach a different authority.
+(defn- authority-from-path [path pattern]
+  (some-> (re-matches pattern path) second keyword))
+
+(defn- authority+id-from-path [path pattern]
+  (when-let [[_ a i] (re-matches pattern path)]
+    [(keyword a) i]))
 
 (defn- public-session [session-id]
   {:schema "cloud.itonami.app.session.v1"
@@ -342,6 +354,84 @@
             (and (= method "GET") (= path "/api/filecoin"))
             (send! exchange 200 (assoc (filecoin/status)
                                        :sample (filecoin/sample)))
+
+            ;; ---- governed outward authorities (ADR-2607300300) ----
+            ;; Every stage requires an app session, the origin check and the CSRF
+            ;; token, exactly as the other write surfaces do. `authority-api`
+            ;; refuses a disabled authority, and computes the cross-domain posture
+            ;; server-side rather than accepting one from the client.
+
+            (and (= method "GET") (= path "/api/authority"))
+            (let [session (require-app-session! exchange)]
+              (send! exchange 200 (authority-api/overview config session)))
+
+            (and (= method "GET")
+                 (authority-from-path path #"/api/authority/([^/]+)"))
+            (let [session (require-app-session! exchange)
+                  a (authority-from-path path #"/api/authority/([^/]+)")]
+              (send! exchange 200 (authority-api/proposals config session a)))
+
+            (and (= method "POST")
+                 (authority-from-path path #"/api/authority/([^/]+)/review"))
+            (let [session (require-app-session! exchange)
+                  a (authority-from-path path #"/api/authority/([^/]+)/review")]
+              (require-origin! exchange config)
+              (require-csrf! exchange session)
+              (send! exchange 200
+                     (authority-api/review! config session a
+                                            (read-json exchange))))
+
+            (and (= method "POST")
+                 (authority+id-from-path
+                  path #"/api/authority/([^/]+)/proposals/([^/]+)/approve/start"))
+            (let [session (require-app-session! exchange)
+                  [a id] (authority+id-from-path
+                          path #"/api/authority/([^/]+)/proposals/([^/]+)/approve/start")]
+              (require-origin! exchange config)
+              (require-csrf! exchange session)
+              (send! exchange 200
+                     (authority-api/start-approval!
+                      config session a id
+                      (get-in config [:server :webauthn-rp-id])
+                      (get-in config [:server :public-origin]))))
+
+            (and (= method "POST")
+                 (authority+id-from-path
+                  path #"/api/authority/([^/]+)/proposals/([^/]+)/approve/finish"))
+            (let [session (require-app-session! exchange)
+                  [a id] (authority+id-from-path
+                          path #"/api/authority/([^/]+)/proposals/([^/]+)/approve/finish")
+                  body (read-json exchange)]
+              (require-origin! exchange config)
+              (require-csrf! exchange session)
+              (send! exchange 200
+                     (authority-api/finish-approval!
+                      config session a id
+                      (:transaction-id body) (:credential body))))
+
+            (and (= method "POST")
+                 (authority+id-from-path
+                  path #"/api/authority/([^/]+)/proposals/([^/]+)/reject"))
+            (let [session (require-app-session! exchange)
+                  [a id] (authority+id-from-path
+                          path #"/api/authority/([^/]+)/proposals/([^/]+)/reject")]
+              (require-origin! exchange config)
+              (require-csrf! exchange session)
+              (send! exchange 200 (authority-api/reject! config session a id)))
+
+            ;; Commit is a separate call from finish-approval! on purpose: the
+            ;; hand-off to the actor can refuse (governor, transport), and that
+            ;; refusal is an outcome to record and show, not a failure of the
+            ;; consent that already happened.
+            (and (= method "POST")
+                 (authority+id-from-path
+                  path #"/api/authority/([^/]+)/proposals/([^/]+)/commit"))
+            (let [session (require-app-session! exchange)
+                  [a id] (authority+id-from-path
+                          path #"/api/authority/([^/]+)/proposals/([^/]+)/commit")]
+              (require-origin! exchange config)
+              (require-csrf! exchange session)
+              (send! exchange 200 (authority-api/commit! config session a id)))
 
             (and (= method "GET") (= path "/api/state"))
             (send! exchange 200 (public-state config))

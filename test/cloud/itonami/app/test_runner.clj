@@ -10,6 +10,7 @@
             [clojure.test :as test]
             [cloud.itonami.app.authority-test]
             [cloud.itonami.app.authority.adapters-test]
+            [cloud.itonami.app.authority.api-test]
             [cloud.itonami.app.authority.posture-test]
             [cloud.itonami.app.core-test]
             [cloud.itonami.app.documents-test]
@@ -24,6 +25,7 @@
 (def ^:private namespaces
   '[cloud.itonami.app.authority-test
     cloud.itonami.app.authority.adapters-test
+    cloud.itonami.app.authority.api-test
     cloud.itonami.app.authority.posture-test
     cloud.itonami.app.core-test
     cloud.itonami.app.documents-test
