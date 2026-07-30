@@ -6,7 +6,8 @@
   (:require [clojure.string :as str]
             [clojure.test :refer [deftest is testing]]
             [cloud.itonami.app.filecoin :as filecoin]
-            [drive.object :as object]))
+            [drive.object :as object]
+            [kotoba.bytes :as b]))
 
 (def payload (.getBytes "cloud-itonami-app · filecoin piece addressing" "UTF-8"))
 
@@ -32,9 +33,21 @@
   ;; A store that let a caller file bytes under someone else's PieceCID would
   ;; be content-addressed in name only, and the lie would only surface when a
   ;; provider was asked to prove the piece.
+  ;; This called `(object/write-item store ref payload)` — three arguments to a
+  ;; six-argument function — so it threw ArityException and passed without ever
+  ;; reaching the store. The refusal it names lives in `put-object`, and until
+  ;; now nothing exercised it: the one guarantee that makes this store
+  ;; content-addressed was untested.
   (let [store (filecoin/store)]
-    (is (thrown? Exception
-                 (object/write-item store "bafkzcibcnotthecid" payload)))))
+    (is (thrown-with-msg?
+         clojure.lang.ExceptionInfo
+         #"reference is not this content's PieceCID"
+         (object/-put-object store "bafkzcibcnotthecid" payload)))
+    (testing "and the right reference is accepted"
+      (let [ref (filecoin/piece-ref payload)]
+        (try
+          (is (:ok? (object/-put-object store ref payload)))
+          (finally (object/-delete-object store ref)))))))
 
 (deftest put-then-get-round-trips-through-staging
   (let [store (filecoin/store)
@@ -42,7 +55,13 @@
     (try
       (is (:ok? (object/-put-object store ref payload)))
       (is (object/-object-exists? store ref))
-      (is (= (seq payload) (seq (object/-get-object store ref))))
+      ;; `-get-object` answers in the protocol's shape — a vector of unsigned
+      ;; ints — not in the shape this backend happens to hold internally.
+      ;; Comparing raw `seq`s asserted the opposite: `payload` is a signed
+      ;; byte[], so `·` reads as -62 -73 there and 194 183 through the seam.
+      (is (= (b/->bytes payload) (object/-get-object store ref)))
+      (is (vector? (object/-get-object store ref))
+          "and a consumer never sees this backend's byte[]")
       (finally
         (object/-delete-object store ref)))
     (testing "and delete removes the staged copy only"
@@ -93,7 +112,7 @@
         ref (filecoin/piece-ref payload)
         store (filecoin/store {:provider-url "https://sp.example"
                                :fetch (fn [_] {:status 200 :bytes payload})})]
-    (is (= (seq payload) (seq (object/-get-object store ref))))))
+    (is (= (b/->bytes payload) (object/-get-object store ref)))))
 
 (deftest read-through-discards-bytes-that-do-not
   ;; The measured mainnet case: 11 of 13 providers reporting they held a live
