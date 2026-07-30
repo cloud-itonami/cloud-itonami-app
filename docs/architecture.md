@@ -68,6 +68,27 @@ nothing. `documents/purge!` is the one call that does, it refuses anything not
 already in the trash, and the Drive shows the trash and the quota together
 because otherwise a Drive that fills up cannot say why.
 
+### Editing
+
+Two views of one value. The Drive detail pane offers fields for the surface a
+document is — questions for a form, blocks for a document, a cell grid for a
+workbook — and the JSON underneath for everything the fields do not reach.
+Both mutate the same projected payload, which is the object the versions
+endpoint accepts, so a save does not care which produced it and neither is a
+parallel format that can drift.
+
+The vocabularies those fields offer (`forms.model/field-types`,
+`docs.model/block-kinds`) travel from the libraries through
+`documents/kinds` to the page, so the editor offers exactly what the
+validator accepts. Two things it cannot reach — a `docs` table or list, a
+workbook with no tabs — say so and hand over to the JSON view rather than
+editing part of a structure and leaving the rest.
+
+These are not `app-sheets`, `app-docs` and `app-slides`, which are separate
+applications on their own origin. Reaching those would mean widening
+`connect-src 'self'` in the page CSP, which is a decision about what this app
+may talk to and not one to make as a side effect of adding an editor.
+
 ### Sharing
 
 Each principal has their own `drive.workspace`, and a grant is recorded on the
