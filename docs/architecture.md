@@ -31,16 +31,25 @@ projects, or events.
 |---|---|---|
 | Inbox | `m365-archive` and `net-kotobase/mail-worker` | Lists archive metadata; sealed reception remains recipient-key controlled |
 | Projects | `kotoba-lang/com-github` | Reads GitHub Projects v2; shows `permission-required` without `read:project` |
-| Drive | `m365-archive` OneDrive snapshot | Lists file state without silently materializing git-annex objects |
+| Drive (archive) | `m365-archive` OneDrive snapshot | Lists file state without silently materializing git-annex objects |
+| Drive (documents) | `kotoba-lang/drive` workspace + an object store | Creates Sheets / Docs / Forms as office envelopes; per-user ACL, quota and versions |
 | Scheduler | `kotoba-lang/shell` EventKit + `kotoba-lang/calendar` | Reads seven days under the explicit `calendar/read` capability |
 
 `GET /api/workspace/worker` is served next to these but is not one of them: it
 reports live queue state rather than reading an external authority, so it
 bypasses the read cache.
 
-The combined read is cached for 60 seconds. It is intentionally separate from
+The combined read is cached for 60 seconds — except the created documents,
+which are read live, because a document missing from the list a moment after
+it was created reads as a failed create. It is intentionally separate from
 model context: viewing a calendar or mailbox does not send its data to an AI
-provider. Mutation adapters require a later capability and approval design.
+provider.
+
+Creating a document is the one mutation here, and it does not write to any of
+the external authorities above: it writes to a `drive.workspace` held in the
+app's own state and to an object store the app owns. Mutation adapters that
+write back to OneDrive, GitHub Projects or EventKit still require a later
+capability and approval design.
 
 ## Artificial-organism workers
 

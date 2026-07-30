@@ -2,6 +2,7 @@
   (:require [clojure.data.json :as json]
             [clojure.string :as str]
             [cloud.itonami.app.config :as config]
+            [cloud.itonami.app.documents :as documents]
             [cloud.itonami.app.executor :as executor]
             [cloud.itonami.app.filecoin :as filecoin]
             [cloud.itonami.app.identity :as identity]
@@ -454,11 +455,44 @@
               (send! exchange 200
                      (workspace/snapshot :projects workspace/projects-snapshot)))
 
+            ;; The archive half of this is cached for a minute by
+            ;; `workspace/snapshot`; the created documents are not, because a
+            ;; document that does not appear in the list a moment after it was
+            ;; created reads as a failed create.
             (and (= method "GET") (= path "/api/workspace/drive"))
-            (do
-              (require-app-session! exchange)
+            (let [session (require-app-session! exchange)]
               (send! exchange 200
-                     (workspace/snapshot :drive workspace/drive-snapshot)))
+                     (documents/drive-view
+                      (workspace/snapshot :drive workspace/drive-snapshot)
+                      (:user-id session))))
+
+            (and (= method "POST") (= path "/api/workspace/drive/documents"))
+            (let [session (require-app-session! exchange)
+                  request (read-json exchange)]
+              (require-origin! exchange config)
+              (require-csrf! exchange session)
+              (send! exchange 200
+                     (documents/create! (some-> (:kind request) name keyword)
+                                        (:title request)
+                                        (:user-id session))))
+
+            (and (= method "GET")
+                 (id-from-path path #"/api/workspace/drive/documents/([^/]+)"))
+            (let [session (require-app-session! exchange)]
+              (send! exchange 200
+                     (documents/content
+                      (id-from-path path #"/api/workspace/drive/documents/([^/]+)")
+                      (:user-id session))))
+
+            (and (= method "POST")
+                 (id-from-path path #"/api/workspace/drive/documents/([^/]+)/trash"))
+            (let [session (require-app-session! exchange)]
+              (require-origin! exchange config)
+              (require-csrf! exchange session)
+              (send! exchange 200
+                     (documents/trash!
+                      (id-from-path path #"/api/workspace/drive/documents/([^/]+)/trash")
+                      (:user-id session))))
 
             (and (= method "GET") (= path "/api/workspace/scheduler"))
             (do
@@ -682,6 +716,16 @@
                      :worker/invalid-request 400
                      :worker/not-found 404
                      :worker/not-cancellable 409
+                     :drive/unknown-kind 400
+                     :drive/not-found 404
+                     :drive/not-permitted 403
+                     :drive/no-content 409
+                     :drive/quota-exceeded 507
+                     ;; The model says these bytes exist and the store
+                     ;; disagrees, which is a broken backend rather than
+                     ;; anything the caller did.
+                     :drive/object-missing 502
+                     :drive/refused 409
                      :oauth/unsupported 400
                      :oauth/missing-code 400
                      :oauth/invalid-state 400
