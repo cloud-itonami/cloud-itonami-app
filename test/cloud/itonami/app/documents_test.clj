@@ -936,6 +936,131 @@
                  (try (documents/content (:id item) bob object-store)
                       (catch clojure.lang.ExceptionInfo e (:type (ex-data e)))))))))))
 
+;; ── import and export ───────────────────────────────────────────────────────
+
+(defn- as-text [bytes] (String. ^bytes bytes java.nio.charset.StandardCharsets/UTF_8))
+
+(deftest a-workbook-exports-as-csv
+  (with-state
+    (fn [_ object-store]
+      (let [{:keys [item]} (documents/create! :sheets "売上" alice object-store)
+            payload (:payload (documents/content (:id item) alice object-store))
+            _ (save! (:id item)
+                     (assoc-in payload ["sheets/tabs" "sheet1" "sheets/cells"]
+                               {"[1 1]" {"sheets/value" "Quarter"}
+                                "[1 2]" {"sheets/value" "Revenue"}
+                                "[2 1]" {"sheets/value" "Q1"}
+                                "[2 2]" {"sheets/value" "1200"}})
+                     alice object-store)
+            out (documents/export (:id item) "csv" alice object-store)]
+        (is (= "text/csv; charset=utf-8" (:media-type out)))
+        (is (= "売上.csv" (:filename out)))
+        (is (= "Quarter,Revenue\r\nQ1,1200" (as-text (:bytes out))))))))
+
+(deftest a-csv-imports-as-a-workbook
+  (with-state
+    (fn [state object-store]
+      (let [csv "Quarter,Revenue\r\nQ1,1200\r\nQ2,\"1,300\""
+            {:keys [item]} (documents/import! "csv" "取り込み売上"
+                                              (.getBytes csv "UTF-8") alice object-store)
+            back (:resource (documents/content (:id item) alice object-store))]
+        (is (= ":sheets/workbook" (:resource-kind item)))
+        (is (= "取り込み売上" (:name item)))
+        ;; Through create! and then a save, so it has two versions and the
+        ;; validator saw it.
+        (is (= 2 (:versions item)))
+        (is (= {:sheets/value "1,300"}
+               (get-in back [:sheets/tabs "imported" :sheets/cells [3 2]])))
+        (is (= 1 (count (documents/documents @state alice))))))))
+
+(deftest a-csv-round-trips-through-the-drive
+  (with-state
+    (fn [_ object-store]
+      (let [csv "a,b\r\n\"c,d\",\"say \"\"hi\"\"\""
+            {:keys [item]} (documents/import! "csv" "往復"
+                                              (.getBytes csv "UTF-8") alice object-store)
+            out (documents/export (:id item) "csv" alice object-store {:tab "imported"})]
+        (is (= csv (as-text (:bytes out))))))))
+
+(deftest every-surface-exports-as-edn
+  (with-state
+    (fn [_ object-store]
+      (doseq [kind [:sheets :docs :forms :slides]]
+        (let [{:keys [item]} (documents/create! kind "資料" alice object-store)
+              out (documents/export (:id item) "edn" alice object-store)
+              envelope (edn/read-string (as-text (:bytes out)))]
+          (is (= "application/edn" (:media-type out)))
+          (is (= "資料.edn" (:filename out)))
+          ;; Free, because the stored bytes already are this.
+          (is (= :kotoba.protocol/office (:kotoba.protocol/family envelope)))
+          (is (= (keyword (subs (:resource-kind item) 1))
+                 (:kotoba.resource/kind envelope))))))))
+
+(deftest an-edn-export-imports-back
+  (with-state
+    (fn [state object-store]
+      (let [{:keys [item]} (documents/create! :docs "設計" alice object-store)
+            out (documents/export (:id item) "edn" alice object-store)
+            copy (documents/import! "edn" "設計の複製" (:bytes out) alice object-store)]
+        (is (= ":docs/document" (:resource-kind (:item copy))))
+        (is (= "設計の複製" (:name (:item copy))))
+        (is (= 2 (count (documents/documents @state alice))) "a copy, not a replacement")))))
+
+(deftest a-surface-is-not-offered-a-format-it-has-no-writer-for
+  (with-state
+    (fn [_ object-store]
+      (let [{:keys [item]} (documents/create! :docs "設計" alice object-store)
+            error (try (documents/export (:id item) "csv" alice object-store)
+                       (catch clojure.lang.ExceptionInfo e (ex-data e)))]
+        (is (= :drive/unsupported-format (:type error)))
+        (is (= ["edn"] (:available error)))))))
+
+(deftest an-unknown-import-format-is-refused
+  (with-state
+    (fn [_ object-store]
+      (is (= :drive/unsupported-format
+             (try (documents/import! "xlsx" "売上" (.getBytes "x" "UTF-8") alice object-store)
+                  (catch clojure.lang.ExceptionInfo e (:type (ex-data e)))))))))
+
+(deftest an-imported-file-goes-through-the-validator-like-anything-else
+  (with-state
+    (fn [_ object-store]
+      ;; An EDN envelope carrying a deck whose slides are not a list. The
+      ;; import path is create! plus a save, so the save refuses it.
+      (let [broken (pr-str {:kotoba.protocol/family :kotoba.protocol/office
+                            :kotoba.protocol/version 1
+                            :kotoba.resource/kind :slides/deck
+                            :kotoba.resource/payload {:slides/id "d"
+                                                      :slides/kind :slides/deck
+                                                      :slides/title "壊れ"
+                                                      :slides/slides "nope"}})]
+        (is (= :drive/invalid-document
+               (try (documents/import! "edn" "壊れ" (.getBytes broken "UTF-8")
+                                       alice object-store)
+                    (catch clojure.lang.ExceptionInfo e (:type (ex-data e))))))))))
+
+(deftest a-title-does-not-become-a-path
+  (with-state
+    (fn [_ object-store]
+      (let [{:keys [item]} (documents/create! :docs "../../etc/passwd" alice object-store)
+            out (documents/export (:id item) "edn" alice object-store)
+            filename (:filename out)]
+        (is (= "__.._etc_passwd.edn" filename))
+        ;; What actually has to hold, rather than one exact string: no
+        ;; separator survives and it does not begin with a dot.
+        (is (not (re-find #"[/\\]" filename)))
+        (is (not (str/starts-with? filename ".")))))))
+
+(deftest exporting-obeys-the-same-permission-answer
+  (with-state
+    (fn [_ object-store]
+      (let [{:keys [item]} (documents/create! :docs "私信" alice object-store)]
+        (is (= :drive/not-found
+               (try (documents/export (:id item) "edn" bob object-store)
+                    (catch clojure.lang.ExceptionInfo e (:type (ex-data e))))))
+        (documents/grant! (:id item) bob "viewer" alice)
+        (is (:bytes (documents/export (:id item) "edn" bob object-store)))))))
+
 ;; ── two editors, one document ───────────────────────────────────────────────
 
 (deftest a-save-from-a-version-that-has-moved-is-refused

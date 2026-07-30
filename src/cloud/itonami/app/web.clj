@@ -1386,7 +1386,19 @@
       actions.append(row, status, modes, pane, editor, versions);
       renderPane();
       if (item.kind === 'forms') actions.append(answerPanel(item));
-      actions.append(referencePanel(item), commentPanel(item));
+      // Export is a plain link, not a fetch: the browser already knows how to
+      // save a response with a Content-Disposition, and routing binary
+      // through JavaScript to hand it back to the browser is work that only
+      // adds a place to get it wrong.
+      const exports = make('div', 'detail-actions__row');
+      ((driveData.kinds || []).find((k) => k.kind === item.kind)?.exports || []).forEach((format) => {
+        const link = make('a', 'tool-button', `${format.toUpperCase()} で書き出す`);
+        link.href = `/api/workspace/drive/documents/${encodeURIComponent(item.id)}`
+          + `/export?format=${encodeURIComponent(format)}`;
+        link.setAttribute('download', '');
+        exports.append(link);
+      });
+      actions.append(exports, referencePanel(item), commentPanel(item));
       if (item.role === 'owner') actions.append(sharingPanel(item, status));
       return actions;
     };

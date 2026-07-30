@@ -68,6 +68,34 @@ nothing. `documents/purge!` is the one call that does, it refuses anything not
 already in the trash, and the Drive shows the trash and the quota together
 because otherwise a Drive that fills up cannot say why.
 
+### Import and export
+
+Three formats, and only one of them is new code here.
+
+- **CSV**, from `sheets.csv`, which gained it for this. One tab in or out,
+  because that is what the format can carry.
+- **PPTX**, from `slides.pptx` and `slides.office`, which have had it all
+  along without the Drive ever offering it.
+- **EDN**, which is free: the stored bytes already are the EDN envelope, so
+  exporting one is handing over what is on disk. That makes every surface
+  exportable, including the two with no office format at all.
+
+`documents/export-formats` is keyed by surface, so asking a document for a
+format it has no writer for is refused by name (415) with the list of what it
+does have, rather than producing something empty. The Drive offers exactly
+those buttons, from the same table.
+
+An import **creates** rather than replaces. Importing into an existing
+document would be a save, and a save has an etag; an import has a file and no
+idea what it is landing on top of. It lands through `create!` and then
+`write-resource!` — the same path a save takes — so quota, ACL, versioning
+and the surface's own validator all apply to it. An imported deck that is not
+a deck is refused with the same code as a typed one.
+
+There is no xlsx and no docx. `spreadsheetml` and `wordprocessingml` do not
+exist in this workspace; `presentationml` does, which is why slides is the
+one surface with an office format.
+
 ### Two editors, one document
 
 A save carries the `:etag` of the version it was made from — the object
