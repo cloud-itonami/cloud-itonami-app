@@ -483,7 +483,7 @@
   sharing those are not the same question. `:role` is the asker's effective
   role, which is what the UI has to know before it offers a save button."
   ([item] (item-view item {}))
-  ([item {:keys [owner role own?] :or {own? true}}]
+  ([item {:keys [owner role own? trashed?] :or {own? true}}]
    (let [kind (:drive/resource-kind item)
          newest (latest-version item)]
      {:id (:drive/id item)
@@ -510,7 +510,12 @@
                      (:drive/versions item))
       :size-bytes (or (:drive.version/size-bytes newest) 0)
       :held-bytes (held-bytes item)
-      :trashed? (boolean (:drive/trashed? item))
+      ;; Given by the caller, which has the workspace, rather than read off
+      ;; the item: a file inside a trashed folder is in the trash, and an
+      ;; item view that said otherwise would put it back in the listing.
+      ;; The item's own flag is the fallback for a caller with no tree to
+      ;; ask, which is the answer that was always given before folders.
+      :trashed? (boolean (if (some? trashed?) trashed? (:drive/trashed? item)))
       :own? own?
       :owner owner
       :role (some-> role name)
@@ -528,7 +533,11 @@
        (filter #(= :file (:drive/kind %)))
        (keep (fn [item]
                (when-let [role (ws/effective-role workspace (:drive/id item) actor)]
-                 {:item item :role role :owner owner :own? (= owner actor)})))))
+                 {:item item :role role :owner owner :own? (= owner actor)
+                  ;; Answered here because this is where the tree is. Every
+                  ;; listing flows through `newest-first`, which passes the
+                  ;; entry straight to `item-view`.
+                  :trashed? (ws/trashed? workspace (:drive/id item))})))))
 
 (defn- newest-first [entries]
   (->> entries
@@ -592,7 +601,7 @@
   that would fix search."
   ([state actor] (documents state actor {}))
   ([state actor {:keys [limit cursor]}]
-   (let [views (-> (remove #(:drive/trashed? (:item %)) (visible-entries state actor))
+   (let [views (-> (remove :trashed? (visible-entries state actor))
                    newest-first
                    (after-cursor cursor))
          limit (or limit (count views))]
@@ -690,6 +699,124 @@
   ;; stays inside its alphabet on purpose.
   (str "obj-" (UUID/randomUUID)))
 
+(defn- folder-parent!
+  "The folder id a new item should go in, checked.
+
+  Nil means the root, which is where everything went before folders and is
+  what a caller that does not care should get. A folder that is not a folder,
+  is not there, or is not this principal's to write into is refused here
+  rather than by `ws/create-file`, whose message is about a parent and not
+  about a Drive."
+  [workspace folder actor]
+  (let [root (:drive.workspace/root-id workspace)]
+    (if (str/blank? (str folder))
+      root
+      (let [item (ws/item workspace folder)]
+        (cond
+          ;; Looked up in *this* workspace, which for `create!` is the
+          ;; creator's own. A folder shared from someone else's Drive is not
+          ;; here, and that is a limitation rather than a permission answer:
+          ;; creating into it would mean writing into the owner's workspace
+          ;; and against the owner's quota, which is what saving a shared
+          ;; document already does but not what creating one does yet.
+          (nil? item)
+          (throw (ex-info "そのフォルダはあなたのドライブにありません。"
+                          {:type :drive/not-found :folder folder}))
+          (not= :folder (:drive/kind item))
+          (throw (ex-info "フォルダではありません。"
+                          {:type :drive/not-a-folder :folder folder}))
+          (ws/trashed? workspace folder)
+          (throw (ex-info "ゴミ箱の中のフォルダには作成できません。"
+                          {:type :drive/item-is-trashed :folder folder}))
+          (not (ws/can-write? workspace folder actor))
+          (refuse! {:reason :not-permitted :item-id folder :principal actor})
+          :else folder)))))
+
+(defn folder-view
+  "One folder, in the shape the list renders.
+
+  Deliberately not `item-view`: a folder has no versions, no resource kind
+  and no size, and half of that view would be zeros standing for questions a
+  folder cannot be asked."
+  [workspace item actor]
+  {:id (:drive/id item)
+   :name (:drive/title item)
+   :kind "folder"
+   :label "フォルダ"
+   :parent-id (:drive/parent-id item)
+   :trashed? (ws/trashed? workspace (:drive/id item))
+   :role (some-> (ws/effective-role workspace (:drive/id item) actor) name)
+   :count (count (ws/children workspace (:drive/id item) actor))})
+
+(defn create-folder!
+  "A folder in `actor`'s Drive.
+
+  No object and no version: a folder holds nothing, so there is nothing to
+  write to the store and nothing to charge against the quota. That is why
+  this does not go through `object/write-item` like every other creation
+  here."
+  ([title actor] (create-folder! title actor nil))
+  ([title actor folder]
+   (when (str/blank? (str actor))
+     (throw (ex-info "作成者を特定できません。" {:type :identity/unauthenticated})))
+   (locking write-lock
+     (let [workspace (workspace-for (store/snapshot) actor)
+           parent (folder-parent! workspace folder actor)
+           id (store/new-id "fld")
+           title (or (not-empty (str/trim (str title))) "無題のフォルダ")
+           made (ws/create-folder workspace id parent title actor)]
+       (store/transact! assoc-in (workspace-path actor) made)
+       {:schema schema :ok? true :item (folder-view made (ws/item made id) actor)}))))
+
+(defn move!
+  "Put a document or folder inside another folder.
+
+  Owner only. Moving into a shared folder shares what was moved — that falls
+  out of `effective-role` walking up the parents — so a mover who was merely
+  an editor could widen the access the owner granted, which is the same
+  reason re-sharing is owner-only."
+  [id folder actor]
+  (locking write-lock
+    (let [{:keys [workspace owner]} (locate (store/snapshot) actor id)
+          item (when workspace (ws/item workspace id))]
+      (cond
+        (nil? item) (refuse! {:reason :no-such-item :item-id id})
+        (not= :owner (ws/effective-role workspace id actor))
+        (refuse! {:reason :not-permitted :item-id id :principal actor})
+        :else
+        (let [parent (folder-parent! workspace folder actor)
+              ;; `ws/move` refuses a cycle, and refuses in the library's
+              ;; vocabulary — an ex-info with no `:type`, which the server's
+              ;; status table cannot see and would answer 502 for. A folder
+              ;; dragged onto its own child is an ordinary mistake and
+              ;; deserves to be told so, not to look like a broken server.
+              moved (try (ws/move workspace id parent)
+                         (catch clojure.lang.ExceptionInfo e
+                           (throw (ex-info "そのフォルダの中には移動できません。"
+                                           (assoc (ex-data e)
+                                                  :type :drive/invalid-move)))))]
+          (store/transact! assoc-in (workspace-path owner) moved)
+          {:schema schema :ok? true :id id :folder parent
+           :path (mapv :drive/title (ws/path moved id))})))))
+
+(defn folders
+  "The folders inside `folder` — the root when it is not given — and the
+  breadcrumb that leads there.
+
+  Folders are listed separately from documents because they are a different
+  kind of thing with a different view, and because `documents` is ordered by
+  last write, which a folder does not have."
+  [state actor folder]
+  (let [workspace (workspace-for state actor)
+        here (or (not-empty (str folder)) (:drive.workspace/root-id workspace))]
+    (when (ws/item workspace here)
+      {:folder here
+       :path (mapv (fn [item] {:id (:drive/id item) :name (:drive/title item)})
+                   (ws/path workspace here))
+       :folders (->> (ws/children workspace here actor)
+                     (filter #(= :folder (:drive/kind %)))
+                     (mapv #(folder-view workspace % actor)))})))
+
 (defn create!
   "Create a document of `kind` in `actor`'s Drive and return its item view.
 
@@ -702,8 +829,9 @@
   because the write is IO: `transact!` is a `swap!`, and a `swap!` that
   retries would put the object twice under two references, the second of
   which nothing would ever reference again."
-  ([kind title actor] (create! kind title actor (store-instance)))
-  ([kind title actor object-store]
+  ([kind title actor] (create! kind title actor (store-instance) {}))
+  ([kind title actor object-store] (create! kind title actor object-store {}))
+  ([kind title actor object-store {:keys [folder]}]
    (let [spec (get kinds kind)]
      (when-not spec
        (throw (ex-info "作成できるのはスプレッドシート・ドキュメント・フォームだけです。"
@@ -717,7 +845,8 @@
              title (or (not-empty (str/trim (str title))) (:default-title spec))
              created-at (store/now)
              envelope (stored-envelope spec ((:seed spec) id title))
-             staged (ws/create-file workspace id (:drive.workspace/root-id workspace)
+             parent (folder-parent! workspace folder actor)
+             staged (ws/create-file workspace id parent
                                     {:drive/title title
                                      :drive/media-type stored-media-type
                                      :drive/resource-kind (:resource-kind spec)
@@ -801,6 +930,7 @@
          {:schema schema
           :ok? true
           :item (item-view item {:owner owner :own? own?
+                                 :trashed? (ws/trashed? workspace id)
                                  :role (ws/effective-role workspace id actor)})
           :resource-kind (some-> (:drive/resource-kind item) str)
           :resource resource
@@ -902,7 +1032,7 @@
         item (when found (ws/item workspace id))]
     (cond
       (nil? item) (refuse! {:reason :no-such-item :item-id id})
-      (:drive/trashed? item) (refuse! {:reason :item-is-trashed :item-id id})
+      (ws/trashed? workspace id) (refuse! {:reason :item-is-trashed :item-id id})
       (not (ws/can-write? workspace id actor))
       (refuse! {:reason :not-permitted :item-id id :principal actor})
       :else
@@ -1074,6 +1204,7 @@
            {:schema schema
             :ok? true
             :item (item-view item {:owner owner :own? own?
+                                   :trashed? (ws/trashed? workspace id)
                                    :role (ws/effective-role workspace id actor)})
             :index index
             :created-at (:drive.version/created-at version)
@@ -1156,7 +1287,7 @@
          ;; grantee is told they may not rather than told to trash it first.
          (not= :owner (ws/effective-role workspace id actor))
          (refuse! {:reason :not-permitted :item-id id :principal actor})
-         (not (:drive/trashed? item))
+         (not (ws/trashed? workspace id))
          (throw (ex-info "先にゴミ箱へ移動してください。"
                          {:type :drive/not-trashed :item-id id}))
          :else
@@ -1165,10 +1296,17 @@
              ;; forget-item empties the item and returns the quota; the item
              ;; itself is what is dropped here, because an entry with no
              ;; versions and no bytes is a row that can only confuse a list.
-             (let [without (-> (:workspace forgotten)
+             (let [parent (or (:drive/parent-id item)
+                              (:drive.workspace/root-id workspace))
+                   without (-> (:workspace forgotten)
                                (update :drive.workspace/items dissoc id)
-                               (update-in [:drive.workspace/items
-                                           (:drive.workspace/root-id workspace)
+                               ;; Its own parent, not the root. Everything
+                               ;; lived at the root until folders existed,
+                               ;; so this read correctly and meant the
+                               ;; wrong thing — a purged file would have
+                               ;; stayed listed in its folder for ever,
+                               ;; pointing at an item that is gone.
+                               (update-in [:drive.workspace/items parent
                                            :drive/children]
                                           (fn [children]
                                             (vec (remove #{id} children)))))]
@@ -1550,7 +1688,7 @@
         item (when workspace (ws/item workspace id))]
     (cond
       (nil? item) (refuse! {:reason :no-such-item :item-id id})
-      (:drive/trashed? item) (refuse! {:reason :item-is-trashed :item-id id})
+      (ws/trashed? workspace id) (refuse! {:reason :item-is-trashed :item-id id})
       :else {:owner owner :item item
              :role (ws/effective-role workspace id actor)})))
 

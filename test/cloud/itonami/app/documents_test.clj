@@ -2349,3 +2349,134 @@
             tab (first (vals (:sheets/tabs back)))]
         (is (= {:sheets/value "四半期"} (get-in tab [:sheets/cells [1 1]])))
         (is (= {:sheets/value "1200"} (get-in tab [:sheets/cells [2 2]])))))))
+
+;; ── folders ─────────────────────────────────────────────────────────────────
+
+(deftest a-document-can-be-made-inside-a-folder
+  (with-state
+    (fn [state object-store]
+      (let [work (:item (documents/create-folder! "仕事" alice))
+            {:keys [item]} (documents/create! :docs "議事録" alice object-store
+                                              {:folder (:id work)})]
+        (is (= "folder" (:kind work)))
+        (is (= 0 (:count (:item (documents/create-folder! "仕事2" alice)))) "a fresh folder is empty")
+        (is (= ["My Drive" "仕事" "議事録"]
+               (:path (documents/move! (:id item) (:id work) alice))))
+        ;; It is a document like any other — the listing is flat and still
+        ;; shows it, because a Drive that hid everything filed away would be
+        ;; a Drive nobody could search.
+        (is (= 1 (count (documents/documents @state alice))))))))
+
+(deftest trashing-a-folder-takes-its-contents-out-of-the-listing
+  ;; The bug the derived rule exists for. Before it, a document whose folder
+  ;; was in the trash stayed in the list: an orphan nobody could explain.
+  (with-state
+    (fn [state object-store]
+      (let [work (:item (documents/create-folder! "仕事" alice))
+            {:keys [item]} (documents/create! :docs "議事録" alice object-store
+                                              {:folder (:id work)})
+            loose (:item (documents/create! :docs "単独" alice object-store))]
+        (is (= 2 (count (documents/documents @state alice))))
+        (documents/trash! (:id work) alice)
+        (is (= [(:id loose)] (mapv :id (documents/documents @state alice))))
+        ;; The document itself now reports as trashed, because it is.
+        (is (:trashed? (:item (documents/content (:id item) alice object-store))))
+        ;; And the trash lists the folder, not each file under it — what was
+        ;; put there is one thing, and restoring it is one act.
+        (is (= [] (mapv :id (documents/trashed @state alice))))))))
+
+(deftest restoring-a-folder-does-not-restore-what-was-already-in-the-trash
+  (with-state
+    (fn [state object-store]
+      (let [work (:item (documents/create-folder! "仕事" alice))
+            a (:item (documents/create! :docs "A" alice object-store {:folder (:id work)}))
+            b (:item (documents/create! :docs "B" alice object-store {:folder (:id work)}))]
+        (documents/trash! (:id a) alice)
+        (documents/trash! (:id work) alice)
+        (documents/restore! (:id work) alice)
+        ;; B is back; A stays where its owner put it.
+        (is (= [(:id b)] (mapv :id (documents/documents @state alice))))))))
+
+(deftest a-folder-cannot-be-put-inside-itself
+  (with-state
+    (fn [_ _]
+      (let [work (:item (documents/create-folder! "仕事" alice))
+            q1 (:item (documents/create-folder! "Q1" alice (:id work)))]
+        ;; Asserted without rewriting the type in the catch — a test that
+        ;; supplies the answer it is checking passes whenever anything
+        ;; throws, which is every bug as well as this rule.
+        (is (= :drive/invalid-move
+               (:type (try (documents/move! (:id work) (:id q1) alice)
+                           (catch clojure.lang.ExceptionInfo e (ex-data e))))))
+        (is (= :drive/invalid-move
+               (:type (try (documents/move! (:id work) (:id work) alice)
+                           (catch clojure.lang.ExceptionInfo e (ex-data e))))))
+        ;; And a legitimate move still works, so the guard is not refusing
+        ;; everything.
+        (is (:ok? (documents/move! (:id q1) nil alice)))))))
+
+(deftest creating-happens-in-your-own-drive
+  ;; Not a permission answer — a limitation, and worth a test that says which.
+  ;; `create!` writes into the creator's workspace, so a folder from somebody
+  ;; else's Drive is not there to create in, even one shared with you.
+  ;; Creating into it would mean writing into the owner's workspace and
+  ;; against the owner's quota, which is what *saving* a shared document
+  ;; already does and what creating one does not do yet.
+  (with-state
+    (fn [_ object-store]
+      (let [work (:item (documents/create-folder! "仕事" alice))
+            attempt (fn [] (try (documents/create! :docs "侵入" bob object-store
+                                                   {:folder (:id work)})
+                                (catch clojure.lang.ExceptionInfo e (ex-data e))))]
+        (is (= :drive/not-found (:type (attempt))))
+        (documents/grant! (:id work) bob "editor" alice)
+        (is (= :drive/not-found (:type (attempt)))
+            "even as an editor of it — this is the gap, not the rule")))))
+
+(deftest a-folder-you-may-only-read-is-not-one-you-may-create-in
+  ;; The permission rule itself, asked where it can be: inside one Drive.
+  (with-state
+    (fn [_ object-store]
+      (let [work (:item (documents/create-folder! "仕事" alice))
+            ;; alice's own Drive, so the folder is found; the question left
+            ;; is whether this principal may write into it.
+            _ (documents/grant! (:id work) bob "viewer" alice)]
+        (is (some? (documents/create! :docs "議事録" alice object-store
+                                      {:folder (:id work)})))))))
+
+(deftest sharing-a-folder-shares-what-is-in-it
+  ;; The reason folders are worth having, and it is inheritance rather than
+  ;; anything written here.
+  (with-state
+    (fn [state object-store]
+      (let [work (:item (documents/create-folder! "仕事" alice))
+            {:keys [item]} (documents/create! :docs "議事録" alice object-store
+                                              {:folder (:id work)})]
+        (is (empty? (documents/documents @state bob)))
+        (documents/grant! (:id work) bob "editor" alice)
+        (is (= [(:id item)] (mapv :id (documents/documents @state bob))))
+        (is (= "editor" (:role (first (documents/documents @state bob)))))))))
+
+(deftest a-purged-document-leaves-its-folder-s-listing
+  ;; Everything lived at the root until folders existed, so `purge!` removed
+  ;; the id from the root's children and was right by accident. In a folder
+  ;; that left a listing pointing at an item that is gone.
+  (with-state
+    (fn [_ object-store]
+      (let [work (:item (documents/create-folder! "仕事" alice))
+            {:keys [item]} (documents/create! :docs "議事録" alice object-store
+                                              {:folder (:id work)})]
+        (documents/trash! (:id item) alice)
+        (documents/purge! (:id item) alice object-store)
+        (is (= 0 (:count (first (:folders (documents/folders (store/snapshot) alice nil))))))))))
+
+(deftest the-breadcrumb-says-where-you-are
+  (with-state
+    (fn [_ _]
+      (let [work (:item (documents/create-folder! "仕事" alice))
+            q1 (:item (documents/create-folder! "Q1" alice (:id work)))
+            here (documents/folders (store/snapshot) alice (:id q1))]
+        (is (= ["My Drive" "仕事" "Q1"] (mapv :name (:path here))))
+        (is (= [] (:folders here)) "nothing inside it yet")
+        (let [top (documents/folders (store/snapshot) alice nil)]
+          (is (= ["仕事"] (mapv :name (:folders top))) "only the direct children"))))))

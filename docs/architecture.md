@@ -272,6 +272,50 @@ Neither `slides.pptx` nor `sheets.xlsx` can yet say what *they* drop —
 those are the same function waiting to be written, not a claim that they are
 lossless.
 
+### Folders, and why the trash is a question rather than a flag
+
+`drive.workspace` had `create-folder`, `:drive/parent-id`, and an
+`effective-role` that walked up the parents — so sharing a folder always
+shared what was in it. What was missing was everything that reads the tree
+back, and an application that ever called any of it. Every document lived at
+the root.
+
+**Trashing is derived, not cascaded.** Writing the flag onto every descendant
+means restoring has to know which ones it wrote: a file already in the trash
+before its folder went there would come back out, restored by a fact about
+its parent. `trashed?` asks instead — is this item, or anything above it, in
+the trash — so trashing a folder hides its contents because the answer
+changes for all of them at once, and restoring reveals exactly what was
+visible before because nothing else was ever touched.
+
+The trash *listing* deliberately still reads the item's own flag. What was
+put in the trash is one thing and restoring it is one act; listing every file
+under a trashed folder separately would offer to restore each of them out of
+a folder that is still in the trash.
+
+**`purge!` used to remove the id from the root's children.** Everything lived
+at the root, so it was right by accident. In a folder it would have left a
+listing pointing at an item that is gone.
+
+**Creating happens in your own Drive.** `create!` writes into the creator's
+workspace, so a folder shared from someone else's is not there to create in —
+even as an editor of it. That is a gap rather than a rule, and the test says
+which: creating into it would mean writing into the owner's workspace and
+against the owner's quota, which is what *saving* a shared document already
+does and what creating one does not do yet.
+
+`move` refuses a folder into itself or its own descendant — a drag lands
+where it lands, so an interface will ask, and the result would be a subtree
+detached from the root, invisible walking down and unreachable walking up.
+The library refuses in its own vocabulary, an ex-info with no `:type`, which
+the server's status table cannot see and would answer 502 for; `move!`
+translates it to `:drive/invalid-move` and 409, because an ordinary mistake
+should not look like a broken server.
+
+Moving a file into a shared folder shares it. That falls out of inheritance
+rather than being implemented, and it is tested because it is a permission
+change nobody performed.
+
 ### Responses are a table, and the table is not the document
 
 A form collects a map per response, keyed by field id. Nobody reads them
