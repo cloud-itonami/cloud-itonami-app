@@ -2,7 +2,9 @@
   (:require [clojure.data.json :as json]
             [clojure.string :as str]
             [cloud.itonami.app.config :as config]
+            [cloud.itonami.app.filecoin :as filecoin]
             [cloud.itonami.app.identity :as identity]
+            [cloud.itonami.app.organism-gateway :as organism-gateway]
             [cloud.itonami.app.relay :as relay]
             [cloud.itonami.app.service :as service]
             [cloud.itonami.app.store :as store]
@@ -117,6 +119,19 @@
    :messages (mapv #(select-keys % [:id :role :content :at])
                    (store/session-messages session-id))})
 
+(defn- active-organization-slug [exchange]
+  (get-in (identity/public-state
+           (cookie-value exchange identity/cookie-name))
+          [:organization :organization-id]))
+
+(defn- require-visible-worker! [exchange worker-id]
+  (let [organization (active-organization-slug exchange)
+        visible (some #(when (= worker-id (:ao.worker/id %)) %)
+                      (:items (organism-gateway/directory organization)))]
+    (or visible
+        (throw (ex-info "organism worker was not found in the active organization"
+                        {:type :ao.worker/not-found :id worker-id})))))
+
 (defn- send-chat-stream! [^HttpExchange exchange config request]
   (doto (.getResponseHeaders exchange)
     (.set "Content-Type" "application/x-ndjson; charset=utf-8")
@@ -171,6 +186,13 @@
             (send! exchange 200 {:ok true :service "cloud-itonami-app"
                                  :schema "cloud.itonami.app.health.v1"})
 
+            ;; Public like /health: every value it returns is a read of public
+            ;; chain state or a pure PieceCID computation. Nothing here touches
+            ;; the workspace, so it is deliberately not behind require-session!.
+            (and (= method "GET") (= path "/api/filecoin"))
+            (send! exchange 200 (assoc (filecoin/status)
+                                       :sample (filecoin/sample)))
+
             (and (= method "GET") (= path "/api/state"))
             (send! exchange 200 (public-state config))
 
@@ -204,6 +226,36 @@
               (require-origin! exchange config)
               (require-csrf! exchange session)
               (identity/configure-organization! session (read-json exchange))
+              (send! exchange 200
+                     (identity/public-state
+                      (cookie-value exchange identity/cookie-name))))
+
+            (and (= method "POST") (= path "/api/identity/organizations"))
+            (let [session (require-app-session! exchange)]
+              (require-origin! exchange config)
+              (require-csrf! exchange session)
+              (identity/create-organization! session (read-json exchange))
+              (send! exchange 201
+                     (identity/public-state
+                      (cookie-value exchange identity/cookie-name))))
+
+            (and (= method "POST")
+                 (= path "/api/identity/organizations/switch"))
+            (let [session (require-app-session! exchange)]
+              (require-origin! exchange config)
+              (require-csrf! exchange session)
+              (identity/switch-organization! session (read-json exchange))
+              (send! exchange 200
+                     (identity/public-state
+                      (cookie-value exchange identity/cookie-name))))
+
+            (and (= method "POST")
+                 (= path "/api/identity/organizations/accept"))
+            (let [session (require-app-session! exchange)]
+              (require-origin! exchange config)
+              (require-csrf! exchange session)
+              (identity/accept-organization-invitation!
+               session (read-json exchange))
               (send! exchange 200
                      (identity/public-state
                       (cookie-value exchange identity/cookie-name))))
@@ -364,6 +416,37 @@
               (require-app-session! exchange)
               (send! exchange 200 (worker/snapshot config)))
 
+            (and (= method "GET") (= path "/api/organism-workers"))
+            (do
+              (require-app-session! exchange)
+              (send! exchange 200
+                     (organism-gateway/directory
+                      (active-organization-slug exchange))))
+
+            (and (= method "GET")
+                 (id-from-path path #"/api/organism-workers/([^/]+)/snapshot"))
+            (let [worker-id
+                  (id-from-path path
+                                #"/api/organism-workers/([^/]+)/snapshot")]
+              (require-app-session! exchange)
+              (require-visible-worker! exchange worker-id)
+              (send! exchange 200 (organism-gateway/snapshot worker-id)))
+
+            (and (= method "GET")
+                 (id-from-path path #"/api/organism-workers/([^/]+)/activity"))
+            (let [worker-id
+                  (id-from-path path
+                                #"/api/organism-workers/([^/]+)/activity")
+                  params (query-params exchange)]
+              (require-app-session! exchange)
+              (require-visible-worker! exchange worker-id)
+              (send! exchange 200
+                     (organism-gateway/activity
+                      (:cursor params)
+                      (try
+                        (Long/parseLong (or (:limit params) "100"))
+                        (catch Exception _ 100)))))
+
             (and (= method "POST") (= path "/api/workers"))
             (let [session (require-app-session! exchange)]
               (require-origin! exchange config)
@@ -452,7 +535,9 @@
                      :identity/invalid-origin 403
                      :provider/denied 403
                      :identity/already-registered 400
+                     :identity/already-member 409
                      :identity/invalid-registration 400
+                     :identity/invalid-invitation 400
                      :passkey/invalid-transaction 400
                      :passkey/invalid-enrollment 400
                      :passkey/user-verification-required 403
@@ -460,6 +545,7 @@
                      :passkey/required 428
                      :passkey/onboarding-unavailable 409
                      :identity/organization-id-immutable 409
+                     :ao.worker/not-found 404
                      :identity/organization-required 409
                      :worker/invalid-request 400
                      :worker/not-found 404

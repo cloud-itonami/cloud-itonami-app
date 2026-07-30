@@ -243,6 +243,11 @@
     padding:.625rem .75rem;background:var(--color-neutral-white);font:inherit}
   .field input:focus,.field select:focus{outline:4px solid var(--color-focus-yellow);
     outline-offset:1px;border-color:var(--color-key-600)}
+  .sidebar__organization{padding:0 .5rem}.sidebar__organization select{
+    min-height:2.5rem;width:100%;border:1px solid var(--color-neutral-solid-gray-300);
+    border-radius:.5rem;background:var(--color-neutral-white);padding:.5rem;font:inherit}
+  .organism-activity{max-height:20rem;overflow:auto}
+  .organism-activity .data-list__item{grid-template-columns:7rem minmax(0,1fr) 8rem}
   .form-help{margin:0;color:var(--color-neutral-solid-gray-600);
     font-size:.8125rem;line-height:1.6}
   .primary-action{min-height:2.75rem;border:0;border-radius:.5rem;
@@ -286,6 +291,7 @@
       border-right:1px solid var(--color-neutral-solid-gray-200);border-bottom:0;gap:1rem}
     .brand{padding:.25rem 0;text-align:center}
     .brand__eyebrow,.brand__name,.brand__note,.sidebar__status{display:none}
+    .sidebar__organization{display:none}
     .brand__mark{display:block;margin:0;color:var(--color-key-900);font-size:1.125rem;
       font-weight:700;line-height:2.5rem}
     .local-nav{width:100%;flex-direction:column;overflow:visible}
@@ -332,6 +338,10 @@
     const requestedView = location.hash.slice(1) || 'chat';
     let appUnlocked = false;
     let appBootstrapped = false;
+    // Views whose data is public, so the Passkey gate would protect nothing.
+    // `storage` reads public Filecoin chain state and computes a PieceCID —
+    // there is no workspace content in it. Everything else stays gated.
+    const publicViews = new Set(['settings', 'storage']);
     let currentView = 'settings';
     // Assigned once the worker surface is defined further down; showView runs
     // before that, so it must not name the worker helpers directly.
@@ -346,7 +356,7 @@
       ).format(date);
     };
     const showView = (name) => {
-      if (!appUnlocked && name !== 'settings') name = 'settings';
+      if (!appUnlocked && !publicViews.has(name)) name = 'settings';
       $$('.local-nav__item').forEach((item) => item.setAttribute(
         'aria-current', item.dataset.view === name ? 'page' : 'false'));
       $$('.view').forEach((panel) => { panel.hidden = panel.dataset.viewPanel !== name; });
@@ -675,6 +685,48 @@
       $('#drive-count').textContent = data.count || data.items.length;
       $('#drive-source').textContent = data.source;
     };
+    const renderFilecoin = (data) => {
+      const list = $('#storage-list'); list.replaceChildren();
+      const val = (v) => (v && typeof v === 'object' && v.error) ? `取得失敗: ${v.error}` : String(v ?? '—');
+      const rows = [
+        ['Chain height', val(data['chain-height']), 'live'],
+        ['Network', `${val(data['chain-network-name'])} · chainId ${val(data['chain-id'])}`, 'live'],
+        ['PDP data sets', val(data['pdp-next-data-set-id']), 'live'],
+        ['Challenge finality', `${val(data['pdp-challenge-finality'])} epochs`, 'live'],
+        ['Staged pieces', String((data['staged-pieces'] || []).length), 'local'],
+        ['Deals', '未実装', 'warn']
+      ];
+      rows.forEach(([title, meta, kind]) =>
+        list.append(listItem(title, meta, kind === 'warn' ? '未実装' : kind, kind === 'warn')));
+      const sample = data.sample || {};
+      setDetail($('#storage-detail'), 'PieceCID v2 · FRC-0069',
+        sample.cid || 'PieceCID 未計算',
+        'このアプリのプロセス内で計算した実際の PieceCID です。provider も資金も不要で、'
+          + 'Filecoin の識別子だけを先に確定できます。',
+        [['対象', sample.text], ['元サイズ', bytes(sample.bytes)],
+         ['tree height', String(sample.height ?? '—')],
+         ['zero padding', `${sample.padding ?? '—'} B`],
+         ['padded size', bytes(sample['padded-size'])],
+         ['PDPVerifier', data['pdp-verifier']],
+         ['PDPVerifier (f4)', data['pdp-verifier-f4']],
+         ['Warm Storage', data['warm-storage']],
+         ['Filecoin Pay', data['filecoin-pay']],
+         ['Retrieval', data['retrieval-domain']]]);
+      $('#storage-count').textContent = rows.filter(([, , k]) => k === 'live').length;
+      $('#storage-source').textContent =
+        `${val(data['chain-network-name'])} · height ${val(data['chain-height'])} · StateCall (無料・オンチェーン書き込みなし)`;
+      $('#storage-write-notice').hidden = data['write-status'] !== 'not-implemented';
+    };
+    // Loaded outside bootstrapApp on purpose: bootstrapApp only runs once a
+    // Passkey is enrolled, and this endpoint needs no session. Gating the load
+    // behind the gate would render the panel and leave it empty forever.
+    const loadFilecoin = () => fetch('/api/filecoin')
+      .then((r) => r.ok ? r.json() : null)
+      .then((d) => { if (d) renderFilecoin(d); return Boolean(d); })
+      .catch(() => {
+        $('#storage-source').textContent = 'Filecoin に接続できません。';
+        return false;
+      });
     const renderProjects = (data) => {
       const list = $('#project-list'); list.replaceChildren();
       data.items.forEach((item) => list.append(listItem(
@@ -749,11 +801,118 @@
         return false;
       }
     };
+    let organismWorkers = [];
+    let selectedOrganism = null;
+    let organismCursor = null;
+    let organismTimer = null;
+    const renderOrganismActivity = (data, replace = false) => {
+      const list = $('#organism-activity');
+      if (replace) list.replaceChildren();
+      (data.items || []).forEach((activity) => {
+        const item = make('li', 'data-list__item');
+        item.append(
+          make('span', 'data-list__meta', formatDate(activity.at, true)),
+          make('strong', null, String(activity.kind || 'system')),
+          make('span', 'data-list__meta',
+            String(activity.run || activity.parent || activity.stream || 'system')));
+        list.append(item);
+      });
+      while (list.children.length > 100) list.firstElementChild.remove();
+      organismCursor = data.cursor || organismCursor;
+      $('#organism-activity-state').textContent =
+        `${list.children.length} events · cursor ${String(organismCursor || '—').slice(-10)}`;
+      $('#organism-live-state').textContent =
+        (data.items || []).length ? 'live' : 'waiting';
+      $('#organism-live-state').className =
+        `state-chip${(data.items || []).length ? ' state-chip--run' : ''}`;
+    };
+    const loadOrganismActivity = async (replace = false) => {
+      if (!selectedOrganism) return;
+      const params = new URLSearchParams({limit:'100'});
+      if (!replace && organismCursor) params.set('cursor', organismCursor);
+      const request = await fetch(
+        `/api/organism-workers/${encodeURIComponent(selectedOrganism.id)}/activity?${params}`);
+      const data = await request.json();
+      if (!request.ok) throw new Error(data?.error?.message || 'activityを取得できません。');
+      renderOrganismActivity(data, replace);
+    };
+    const renderOrganismDetail = async () => {
+      const target = $('#organism-detail');
+      if (!selectedOrganism) {
+        target.replaceChildren(make('div', 'empty-state',
+          'active organization にAO workerはありません。'));
+        return;
+      }
+      target.replaceChildren(make('div', 'skeleton'));
+      try {
+        const request = await fetch(
+          `/api/organism-workers/${encodeURIComponent(selectedOrganism.id)}/snapshot`);
+        const snapshot = await request.json();
+        if (!request.ok) throw new Error(snapshot?.error?.message || 'snapshotを取得できません。');
+        const worker = snapshot.worker || selectedOrganism;
+        setDetail(target, worker.organization || 'Organization',
+          worker.id, '外部supervisorで稼働するrepository-bound AOです。',
+          [['状態', worker.status || 'unknown'],
+           ['Repository', worker.repository || '—'],
+           ['Runtime', worker.runtime || '—'],
+           ['Event authority', snapshot.connection?.['event-authority'] || '—'],
+           ['Recent activity', String(snapshot.activity?.recent || 0)],
+           ['AgentRuns', String(snapshot.activity?.['agent-runs'] || 0)]]);
+      } catch (error) {
+        target.replaceChildren(make('div', 'empty-state', error.message));
+      }
+    };
+    const renderOrganismDirectory = (data) => {
+      organismWorkers = data.items || [];
+      if (!organismWorkers.some((item) => item.id === selectedOrganism?.id)) {
+        selectedOrganism = organismWorkers[0] || null;
+        organismCursor = null;
+      }
+      const list = $('#organism-list'); list.replaceChildren();
+      organismWorkers.forEach((worker) => {
+        list.append(recordButton(worker, worker.id === selectedOrganism?.id,
+          (selected) => {
+            selectedOrganism = selected; organismCursor = null;
+            renderOrganismDirectory(data);
+          }, {title:worker.id, time:worker.status || 'unknown',
+              meta:worker.repository || 'repository',
+              snippet:`${worker.runtime} · ${(worker.capabilities || []).length} capabilities`}));
+      });
+      if (!organismWorkers.length) {
+        list.append(make('li', 'empty-state',
+          'このOrganizationに割り当てられたAO workerはありません。'));
+      }
+      $('#organism-count').textContent = organismWorkers.length;
+      $('#organism-source').textContent =
+        `${data.organization || 'organization'} · ${organismWorkers.length} AO`;
+      renderOrganismDetail();
+      loadOrganismActivity(true).catch((error) => {
+        $('#organism-activity-state').textContent = error.message;
+      });
+      scheduleOrganismPoll();
+    };
+    const loadOrganisms = async () => {
+      const request = await fetch('/api/organism-workers');
+      const data = await request.json();
+      if (!request.ok) throw new Error(data?.error?.message || 'AO workerを読み込めません。');
+      renderOrganismDirectory(data);
+    };
+    const scheduleOrganismPoll = () => {
+      if (organismTimer) { clearTimeout(organismTimer); organismTimer = null; }
+      if (!appUnlocked || currentView !== 'organisms' || !selectedOrganism) return;
+      organismTimer = setTimeout(async () => {
+        try { await loadOrganismActivity(false); }
+        finally { scheduleOrganismPoll(); }
+      }, 2000);
+    };
     const bootstrapApp = () => {
       if (appBootstrapped) return;
       appBootstrapped = true;
       loadSession();
       loadWorkspace('worker', renderWorker);
+      loadOrganisms().catch((error) => {
+        $('#organism-list').replaceChildren(make('li', 'empty-state', error.message));
+      });
       Promise.all([
         loadWorkspace('inbox', renderInbox),
         loadWorkspace('projects', renderProjects),
@@ -900,14 +1059,16 @@
         data['authenticated?'] && data.user?.['passkey-enrolled?']);
       appUnlocked = passkeyReady;
       $$('.local-nav__item').forEach((item) => {
-        item.disabled = !passkeyReady && item.dataset.view !== 'settings';
+        item.disabled = !passkeyReady && !publicViews.has(item.dataset.view);
         item.setAttribute('aria-disabled', String(item.disabled));
       });
       document.body.dataset.identityGate = passkeyReady ? 'ready' : 'required';
       $('#passkey-gate-notice').hidden = passkeyReady;
       if (!passkeyReady) {
-        showView('settings');
-        $('#current-view').textContent = 'Passkey 登録';
+        // a public view the user actually asked for stays put
+        showView(publicViews.has(requestedView) ? requestedView : 'settings');
+        $('#current-view').textContent =
+          currentView === 'storage' ? 'Storage' : 'Passkey 登録';
         $('#workspace-status').textContent = 'Passkey 登録が必要です';
       } else {
         bootstrapApp();
@@ -952,6 +1113,21 @@
         : 'Passkey 登録後に設定できます';
       $('#organization-did').textContent =
         data.organization?.did || 'Organization DID は ID 設定後に発行';
+      const organizationSwitcher = $('#organization-switcher');
+      organizationSwitcher.replaceChildren();
+      (data.organizations || []).forEach((organization) => {
+        const option = document.createElement('option');
+        option.value = organization.id;
+        option.textContent = organization.name || organization['organization-id']
+          || organization.id;
+        option.selected = Boolean(organization['active?']);
+        organizationSwitcher.append(option);
+      });
+      organizationSwitcher.disabled = (data.organizations || []).length < 2;
+      const invitations = data['organization-invitations'] || [];
+      $('#organization-invitation-state').textContent = invitations.length
+        ? `${invitations.length}件の参加待ち招待があります。コードを入力して参加できます。`
+        : '参加待ちの招待はありません。';
       $('#organization-form').hidden = organizationReady;
       $('#member-card').hidden = !organizationReady;
       renderMembers(data.organization);
@@ -1034,6 +1210,41 @@
         button.disabled = false; button.textContent = 'Organization ID を設定';
       }
     });
+    $('#organization-create-form').addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const button = $('#organization-create');
+      const fields = Object.fromEntries(new FormData(event.currentTarget));
+      button.disabled = true; button.textContent = '追加中…';
+      try {
+        const data = await postJSON('/api/identity/organizations', fields, true);
+        event.currentTarget.reset();
+        renderIdentity(data);
+        $('#identity-status').textContent =
+          `${fields['organization-name'] || fields['organization-id']} を追加しました。`;
+      } catch (error) {
+        $('#identity-status').textContent = error.message;
+      } finally {
+        button.disabled = false; button.textContent = 'Organizationを追加';
+      }
+    });
+    $('#organization-switcher').addEventListener('change', async (event) => {
+      const select = event.currentTarget;
+      select.disabled = true;
+      try {
+        const data = await postJSON('/api/identity/organizations/switch',
+          {'organization-id':select.value}, true);
+        organismCursor = null;
+        organismWorkers = [];
+        selectedOrganism = null;
+        renderIdentity(data);
+        await loadOrganisms();
+        $('#identity-status').textContent =
+          `${data.organization.name} に切り替えました。`;
+      } catch (error) {
+        $('#identity-status').textContent = error.message;
+        renderIdentity(identityState);
+      }
+    });
     $('#member-form').addEventListener('submit', async (event) => {
       event.preventDefault();
       const memberForm = event.currentTarget;
@@ -1049,11 +1260,39 @@
         const invitation = data.invitation;
         const result = $('#enrollment-result');
         result.hidden = false;
-        result.textContent =
-          `${invitation.email} の enrollment code: ${invitation['enrollment-code']}（24時間・1回限り）`;
-        $('#identity-status').textContent = '組織ユーザーと enrollment code を発行しました。';
+        const existing = invitation.kind === 'organization-invitation';
+        const code = existing
+          ? invitation['invitation-code'] : invitation['enrollment-code'];
+        result.textContent = existing
+          ? `${invitation.email} のOrganization招待コード: ${code}（24時間・1回限り）`
+          : `${invitation.email} のenrollment code: ${code}（24時間・1回限り）`;
+        $('#identity-status').textContent = existing
+          ? '既存UserへOrganization参加招待を発行しました。'
+          : '組織Userとenrollment codeを発行しました。';
       } catch (error) {
         $('#identity-status').textContent = error.message;
+      }
+    });
+    $('#organization-invitation-form').addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const button = $('#organization-invitation-accept');
+      const fields = Object.fromEntries(new FormData(event.currentTarget));
+      button.disabled = true; button.textContent = '参加中…';
+      try {
+        const data = await postJSON('/api/identity/organizations/accept',
+          fields, true);
+        event.currentTarget.reset();
+        organismCursor = null;
+        organismWorkers = [];
+        selectedOrganism = null;
+        renderIdentity(data);
+        await loadOrganisms();
+        $('#identity-status').textContent =
+          `${data.organization.name} に参加して切り替えました。`;
+      } catch (error) {
+        $('#identity-status').textContent = error.message;
+      } finally {
+        button.disabled = false; button.textContent = '招待を承認して参加';
       }
     });
     $('#passkey-register').addEventListener('click', async () => {
@@ -1243,7 +1482,15 @@
       workerTimer = setTimeout(() => loadWorkspace('worker', renderWorker),
         active ? 1500 : 5000);
     };
-    onViewChange = () => scheduleWorkerPoll();
+    onViewChange = () => {
+      scheduleWorkerPoll();
+      scheduleOrganismPoll();
+      if (currentView === 'organisms' && !organismWorkers.length) {
+        loadOrganisms().catch((error) => {
+          $('#organism-activity-state').textContent = error.message;
+        });
+      }
+    };
     $('#worker-form').addEventListener('submit', async (event) => {
       event.preventDefault();
       const button = $('#worker-submit');
@@ -1303,6 +1550,9 @@
         : `${initialParams.get('provider')} の接続を完了できませんでした。`;
     }
     loadIdentity();
+    // after every const above is defined — calling this next to the initial
+    // showView() would hit `Cannot access 'loadFilecoin' before initialization`
+    loadFilecoin();
     $$('.view-switcher button').forEach((button) => button.addEventListener('click', () => {
       $$('.view-switcher button').forEach((item) =>
         item.setAttribute('aria-pressed', item === button ? 'true' : 'false'));
@@ -1341,13 +1591,19 @@
         [:p {:class "brand__name"} brand]
         [:p {:class "brand__mark" :role "img" :aria-label brand} "ai"]
         [:p {:class "brand__note"} "Kotoba でつながる、手元の仕事場"]]
+       [:div {:class "field sidebar__organization"}
+        [:label {:for "organization-switcher"} "Organization"]
+        [:select {:id "organization-switcher" :disabled true}
+         [:option "確認中…"]]]
        [:nav {:class "local-nav"}
         (nav-item "chat" "Chat" "✦" nil)
         (nav-item "worker" "Worker" "◐" "worker-count")
+        (nav-item "organisms" "Organisms" "◎" "organism-count")
         (nav-item "inbox" "Inbox" "□" "inbox-count")
         (nav-item "projects" "Projects" "▦" "projects-count")
         (nav-item "drive" "Drive" "◇" "drive-count")
         (nav-item "scheduler" "Scheduler" "○" "scheduler-count")
+        (nav-item "storage" "Storage" "◈" "storage-count")
         (nav-item "settings" "Settings" "⚙" nil)]
        [:div {:class "sidebar__status"}
         [:strong "● ローカルモード"]
@@ -1453,6 +1709,28 @@
             [:li {:class "skeleton"}]]]
           [:article {:class "record-detail" :id "worker-detail" :aria-live "polite"}
            [:div {:class "empty-state"} "ジョブを読み込んでいます。"]]]]
+        [:section {:class "view" :data-view-panel "organisms" :hidden true}
+         (view-header "Artificial organisms"
+                      "active organization に所属するAO workerと、Tamakiの実活動を確認します。")
+         [:p {:class "source-note"} [:span {:class "source-dot"}]
+          [:span {:id "organism-source"}
+           "OrganismWorker directory を確認中…"]]
+         [:div {:class "record-browser"}
+          [:div {:class "record-list"}
+           [:ul {:class "record-list__items" :id "organism-list"}
+            [:li {:class "skeleton"}]]]
+          [:article {:class "record-detail" :id "organism-detail"
+                     :aria-live "polite"}
+           [:div {:class "empty-state"} "AO workerを読み込んでいます。"]]]
+         [:div {:class "local-card"}
+          [:div {:class "view-header"}
+           [:div
+            (dds/heading 2 "Live activity" {:size "24"})
+            [:p {:class "source-note" :id "organism-activity-state"}
+             "cursorを準備中…"]]
+           [:span {:class "state-chip" :id "organism-live-state"} "確認中"]]
+          [:ul {:class "data-list organism-activity" :id "organism-activity"}
+           [:li {:class "skeleton"}]]]]
         [:section {:class "view" :data-view-panel "inbox" :hidden true}
          (view-header "Inbox" "kotoba-lang/mail のメールボックスモデルで、受信履歴を安全に検索・確認します。")
          [:p {:class "source-note"} [:span {:class "source-dot"}]
@@ -1507,6 +1785,24 @@
             [:li {:class "skeleton"}]]]
           [:article {:class "record-detail" :id "calendar-detail" :aria-live "polite"}
            [:div {:class "empty-state"} "予定を読み込んでいます。"]]]]
+        [:section {:class "view" :data-view-panel "storage" :hidden true}
+         (view-header "Storage"
+                      (str "kotoba-lang/cloud-filecoin の PieceCID v2 でファイルを"
+                           "アドレス指定し、Filecoin mainnet の PDP 状態を直接読みます。"))
+         [:p {:class "source-note"} [:span {:class "source-dot"}]
+          [:span {:id "storage-source"} "Filecoin mainnet に接続中…"]]
+         [:div {:class "security-callout" :id "storage-write-notice"
+                :role "status" :aria-live "polite"}
+          [:strong "書き込みは未実装です。"]
+          " このアプリは内容の PieceCID を計算して待機領域に保管し、"
+          "チェーン上の状態を読みますが、ストレージ取引は作成しません。"
+          "provider の転送 API と資金が必要です。"]
+         [:div {:class "record-browser"}
+          [:div {:class "record-list"}
+           [:ul {:class "record-list__items" :id "storage-list"}
+            [:li {:class "skeleton"}]]]
+          [:article {:class "record-detail" :id "storage-detail" :aria-live "polite"}
+           [:div {:class "empty-state"} "Filecoin の状態を読み込んでいます。"]]]]
         [:section {:class "view" :data-view-panel "settings" :hidden true}
          (view-header "Settings" "Cloud Itonami の組織・ユーザーと、外部サービスへの委任接続を管理します。")
          [:p {:class "visually-hidden" :id "identity-status"
@@ -1596,6 +1892,36 @@
                 "設定後は変更できません。管理ドメインと owner の公開アドレスを発行します。"]]
               [:button {:class "primary-action" :id "organization-submit"
                         :type "submit"} "Organization ID を設定"]]
+             [:form {:class "settings-form" :id "organization-create-form"}
+              (dds/heading 3 "別のOrganizationを作成" {:size "16"})
+              [:div {:class "field"}
+               [:label {:for "new-organization-name"} "表示名"]
+               [:input {:id "new-organization-name" :name "organization-name"
+                        :autocomplete "organization"
+                        :placeholder "Etzhayyim"}]]
+              [:div {:class "field"}
+               [:label {:for "new-organization-id"} "Organization ID"]
+               [:input {:id "new-organization-id" :name "organization-id"
+                        :required true :autocomplete "off"
+                        :pattern "[a-z0-9][a-z0-9._-]{1,30}[a-z0-9]"
+                        :placeholder "etzhayyim"}]]
+              [:button {:class "tool-button" :id "organization-create"
+                        :type "submit"} "Organizationを追加"]]
+             [:form {:class "settings-form"
+                     :id "organization-invitation-form"}
+              (dds/heading 3 "既存Organizationへ参加" {:size "16"})
+              [:p {:class "form-help" :id "organization-invitation-state"}
+               "参加待ちの招待を確認中…"]
+              [:div {:class "field"}
+               [:label {:for "organization-invitation-code"} "招待コード"]
+               [:input {:id "organization-invitation-code"
+                        :name "invitation-code"
+                        :required true
+                        :autocomplete "one-time-code"}]]
+              [:button {:class "tool-button"
+                        :id "organization-invitation-accept"
+                        :type "submit"}
+               "招待を承認して参加"]]
              [:ul {:class "member-list" :id "member-list"}]]
             [:div {:class "local-card" :id "member-card"}
              (dds/heading 2 "User を追加" {:size "20"})

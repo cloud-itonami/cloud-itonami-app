@@ -19,9 +19,11 @@
   io.github.kotoba-lang/mail
   {:git/url "https://github.com/kotoba-lang/mail.git"
    :git/sha "2a00bd8d63842dd2d1cf38d35bfb66ae377e98dc"}
+  ;; advanced from 90eac285 (2 commits, fast-forward): that pin predates
+  ;; drive/object.cljc, which is the IObjectStore seam this app now fills
   io.github.kotoba-lang/drive
   {:git/url "https://github.com/kotoba-lang/drive.git"
-   :git/sha "90eac2854b86b78f6feffe2b6ce016b705baff6c"}
+   :git/sha "46605af22ac9930786388b01007723d096aa0eaf"}
   io.github.kotoba-lang/identity
   {:git/url "https://github.com/kotoba-lang/identity.git"
    :git/sha "5cf94e38c816ced6857ef62de344f6adea9fc050"}
@@ -33,7 +35,19 @@
    :git/sha "5beea7514b4791f6aae33cb0b75d49f0ec53437c"}
   io.github.kotoba-lang/jp-go-digital-design-system
   {:git/url "https://github.com/kotoba-lang/jp-go-digital-design-system.git"
-   :git/sha "277e8c38648a3030014637d11fcbefc4f5535ae7"}}
+   :git/sha "277e8c38648a3030014637d11fcbefc4f5535ae7"}
+
+  ;; Filecoin: PieceCID addressing + the on-chain read surface. Deliberately
+  ;; NOT a storage backend — see cloud.itonami.app.filecoin for what is and is
+  ;; not implemented. `drive` depends on neither, and neither depends on
+  ;; `drive`; this app depends on both, which is what drive/object's
+  ;; `store-of` docstring prescribes.
+  io.github.kotoba-lang/cloud-filecoin
+  {:git/url "https://github.com/kotoba-lang/cloud-filecoin.git"
+   :git/sha "0b0390036897a369f2e3651e342073c5f4aa8764"}
+  io.github.kotoba-lang/io-filecoin-transport
+  {:git/url "https://github.com/kotoba-lang/io-filecoin-transport.git"
+   :git/sha "919975293f59113cf3a6602a4c92ea8096e45643"}}
 
  :aliases
  {:server {:main-opts ["-m" "cloud.itonami.app.server"]}
