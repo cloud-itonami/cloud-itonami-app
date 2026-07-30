@@ -4,9 +4,30 @@
             [clojure.string :as str]
             [cloud.itonami.app.policy :as policy]))
 
-(defn data-dir []
+(def ^:private data-dir-property "cloud.itonami.data-dir")
+
+(defn data-dir
+  "Where this process keeps its store.
+
+  The system property WINS over the environment variable, which is the reverse
+  of the usual precedence and is deliberate. The property is set by a specific
+  invocation -- the `:test` alias sets it to a throwaway directory -- while the
+  environment variable is ambient and may be left over in a shell. If the
+  environment won, running the suite in a terminal that happened to export
+  CLOUD_ITONAMI_DATA_DIR would write test fixtures into a real store.
+
+  That is not hypothetical. On 2026-07-30 the suite, run from the repository
+  root where this defaults to `./data`, replaced a developer's real identity
+  state with a test fixture -- an organization named `jk-corp`, a user with no
+  email and no user handle -- which then made Passkey registration fail with a
+  NullPointerException inside the WebAuthn builder. Eighteen `store/transact!`
+  calls across the tests write through this function, and two of them replace
+  the whole `:identity` partition."
+  []
   (.getCanonicalFile
-   (io/file (or (System/getenv "CLOUD_ITONAMI_DATA_DIR") "data"))))
+   (io/file (or (System/getProperty data-dir-property)
+                (System/getenv "CLOUD_ITONAMI_DATA_DIR")
+                "data"))))
 
 (defn- deep-merge
   ([a b]
