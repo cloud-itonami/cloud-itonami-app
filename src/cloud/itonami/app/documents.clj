@@ -215,6 +215,7 @@
 (def import-formats
   "What a new document can be made from."
   {"csv" :sheets
+   "xlsx" :sheets
    "pptx" :slides
    "edn" nil})
 
@@ -1788,6 +1789,40 @@
                  "xlsx" (sheets-xlsx/xlsx-bytes resource)
                  (.getBytes ^String text StandardCharsets/UTF_8))}))))
 
+(defn- office-parts
+  "The entry names of `bytes` if they are a zip, else nil.
+
+  A format check rather than a guess. Both office readers answer something
+  for bytes that are not the file they claim to be — `slides.office` builds
+  a deck with one empty slide from an empty graph, and `sheets.xlsx` reads a
+  zip with no worksheets as a workbook with no tabs — so neither can be
+  asked whether the input was really a package. The package can."
+  [^bytes bytes]
+  (try
+    (with-open [zip (java.util.zip.ZipInputStream.
+                     (java.io.ByteArrayInputStream. bytes))]
+      (loop [names []]
+        (if-let [entry (.getNextEntry zip)]
+          (recur (conj names (.getName entry)))
+          (when (seq names) names))))
+    (catch Exception _ nil)))
+
+(defn- require-office-package!
+  "Refuse bytes that are not a package of the kind `format` names.
+
+  An import that silently produced an empty document would look exactly like
+  a working import of an empty file, which is the one failure a reader
+  cannot tell from success. Measured: three bytes of `x` imported as pptx
+  produced a one-slide deck, and as xlsx a workbook with no tabs, both
+  reported as successes."
+  [format ^bytes bytes]
+  (let [prefix (case format "pptx" "ppt/" "xlsx" "xl/" nil)]
+    (when prefix
+      (let [names (office-parts bytes)]
+        (when-not (some #(str/starts-with? % prefix) (or names []))
+          (throw (ex-info (str (str/upper-case format) " として読めませんでした。")
+                          {:type :drive/unsupported-format :format format})))))))
+
 (defn import!
   "A new document from `bytes` in `format`.
 
@@ -1805,10 +1840,12 @@
      (throw (ex-info (str "読み込めない形式です: " (pr-str format))
                      {:type :drive/unsupported-format
                       :available (vec (sort (keys import-formats)))})))
+   (require-office-package! format bytes)
    (let [text (delay (String. ^bytes bytes StandardCharsets/UTF_8))
          [kind imported]
          (case format
            "csv" [:sheets nil]
+           "xlsx" [:sheets (sheets-xlsx/workbook-from-bytes bytes)]
            "pptx" [:slides (slides-office/deck-from-office-bytes bytes)]
            "edn" (let [envelope (edn/read-string @text)
                        k (get resource-kinds (:kotoba.resource/kind envelope))]
@@ -1817,16 +1854,36 @@
                                      {:type :drive/unsupported-format
                                       :kind (str (:kotoba.resource/kind envelope))})))
                    [k (:kotoba.resource/payload envelope)]))
+         ;; Bytes that are not the file they claim to be. `slides.office`
+         ;; answers nil; `sheets.xlsx` answers an empty workbook, because a
+         ;; zip with no worksheet parts is still a zip — so the emptiness is
+         ;; what has to be checked. An import that silently produced an empty
+         ;; document would look exactly like a working import of an empty
+         ;; file, which is the one failure a reader cannot tell from success.
+         ;; pptx only: csv builds from the seeded workbook and legitimately
+         ;; has no `imported`, and edn has already thrown if its kind was
+         ;; not one of ours.
          _ (when (and (= "pptx" format) (nil? imported))
-             (throw (ex-info "PPTX として読めませんでした。"
+             (throw (ex-info (str (str/upper-case format) " として読めませんでした。")
                              {:type :drive/unsupported-format :format format})))
          created (create! kind (or (not-empty (str/trim (str title)))
                                    (str "取り込み " (store/now)))
                           actor object-store)
          doc-id (:id (:item created))
          seeded (:resource (content doc-id actor object-store))
-         resource (if (= "csv" format)
+         resource (cond
+                    (= "csv" format)
                     (sheets-csv/import-csv seeded "imported" @text)
+
+                    ;; A workbook arrives whole, tabs and all, so it
+                    ;; replaces the seeded one rather than being added
+                    ;; beside it — importing a five-tab file should not
+                    ;; leave an empty "sheet1" in front of them.
+                    (= "xlsx" format)
+                    (assoc imported :sheets/id doc-id
+                           :sheets/title (:name (:item created)))
+
+                    :else
                     ;; Keep the ids the Drive just minted and the title the
                     ;; caller asked for; take everything else from the file.
                     (assoc imported
