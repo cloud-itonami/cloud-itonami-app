@@ -152,6 +152,103 @@
       (is (= "(無名)" (:simulated-model m)))
       (is (= ["(無名)" "other"] (:models m))))))
 
+
+;; ---------------------------------------------------------------------------
+;; sensitivity — measured out of the model, not judged
+;; ---------------------------------------------------------------------------
+
+(def ^:private funnel-xmile
+  "A two-stock funnel with a conversion that moves tenants between them, plus a
+  constant nothing references. Shaped after the real
+  90-docs/business/cloud-itonami-saas-funnel.xmile."
+  (str "<?xml version=\"1.0\" encoding=\"utf-8\"?>"
+       "<xmile version=\"1.0\">"
+       "<sim_specs method=\"euler\"><start>0</start><stop>10</stop><dt>1</dt></sim_specs>"
+       "<model><variables>"
+       "<stock name=\"Non_Paying\"><eqn>5</eqn><inflow>Signup</inflow>"
+       "<outflow>Conversion</outflow><units>tenants</units></stock>"
+       "<stock name=\"Paying\"><eqn>1</eqn><inflow>Conversion</inflow>"
+       "<units>tenants</units></stock>"
+       "<flow name=\"Signup\"><eqn>0.1</eqn><units>tenants/day</units></flow>"
+       "<flow name=\"Conversion\"><eqn>Non_Paying * Rate</eqn>"
+       "<units>tenants/day</units></flow>"
+       "<aux name=\"Rate\"><eqn>0.02</eqn></aux>"
+       "<aux name=\"Weekly_Uniques\"><eqn>147</eqn><units>uniques/week</units></aux>"
+       "</variables></model></xmile>"))
+
+(defn- param [s nm] (first (filter #(= nm (:name %)) (:parameters s))))
+(defn- effect [p outcome] (first (filter #(= outcome (:outcome %)) (:effects p))))
+
+(deftest sensitivity-is-measured-by-re-running-the-model
+  (reset-all!)
+  (let [[config] (with-model funnel-xmile)
+        s (:sensitivity (loops/model config (a-business! {:model "loops/backlog.xmile"})))]
+    (is (= :computed (:state s)))
+    (is (= 0.10 (:perturbation s)))
+    (testing "outcomes are the stocks — the state of the system, not its rates"
+      (is (= ["Non_Paying" "Paying"] (:outcomes s))))
+    (testing "only leaf constants are parameters. Conversion's equation
+              references other variables, and overwriting it with a fixed number
+              would be a different model, not a sensitivity"
+      (is (= #{"Non_Paying" "Paying" "Signup" "Rate" "Weekly_Uniques"}
+             (set (map :name (:parameters s)))))
+      (is (nil? (param s "Conversion"))))
+    (testing "a stock's eqn is its initial value, so stocks are parameters too"
+      (is (= 5.0 (:baseline (param s "Non_Paying")))))))
+
+(deftest raising-the-conversion-rate-raises-paying-and-lowers-non-paying
+  (reset-all!)
+  (let [[config] (with-model funnel-xmile)
+        s (:sensitivity (loops/model config (a-business! {:model "loops/backlog.xmile"})))
+        rate (param s "Rate")]
+    (testing "signs come out of the structure, not out of an assumption: the same
+              flow drains one stock and fills the other"
+      (is (pos? (:value (effect rate "Paying"))))
+      (is (neg? (:value (effect rate "Non_Paying")))))
+    (testing "the elasticity is dimensionless, so a rate and a day count are
+              comparable — which is the only reason this ranking means anything"
+      (is (= :computed (:state (effect rate "Paying"))))
+      (is (number? (:value (effect (param s "Signup") "Paying")))))))
+
+(deftest a-constant-nothing-references-is-disconnected-not-ineffective
+  (reset-all!)
+  (let [[config] (with-model funnel-xmile)
+        s (:sensitivity (loops/model config (a-business! {:model "loops/backlog.xmile"})))
+        u (param s "Weekly_Uniques")]
+    (testing "0.0000 is ambiguous between 「効かない」 and 「繋がっていない」, and
+              the second is decidable from the model's own text"
+      (is (false? (:connected? u)))
+      (is (= [] (:referenced-by u)))
+      (is (str/includes? (:detail u) "繋がっていない"))
+      (is (zero? (:value (effect u "Paying")))))
+    (testing "and a connected one says what references it — including a flow
+              named structurally by a stock rather than in an equation"
+      (let [signup (param s "Signup")]
+        (is (true? (:connected? signup)))
+        (is (= ["Non_Paying"] (:referenced-by signup)))
+        (is (nil? (:detail signup)))))))
+
+(deftest an-elasticity-with-no-scale-is-undefined-not-zero
+  (reset-all!)
+  (let [[config] (with-model (str/replace funnel-xmile
+                                          "<stock name=\"Paying\"><eqn>1</eqn>"
+                                          "<stock name=\"Paying\"><eqn>0</eqn>"))
+        s (:sensitivity (loops/model config (a-business! {:model "loops/backlog.xmile"})))]
+    (testing "a parameter whose baseline is 0 cannot be nudged by a percentage"
+      (let [e (effect (param s "Paying") "Paying")]
+        (is (= :undefined (:state e)))
+        (is (= :zero-parameter (:reason e)))
+        (is (nil? (:value e)))))))
+
+(deftest a-model-that-cannot-run-has-no-sensitivity-either
+  (reset-all!)
+  (let [[config] (with-model (str/replace backlog-xmile "method=\"euler\"" "method=\"heun\""))
+        s (:sensitivity (loops/model config (a-business! {:model "loops/backlog.xmile"})))]
+    (is (= :unsimulatable (:state s)))
+    (is (str/includes? (:reason s) "heun"))
+    (testing "and no parameter list standing in for one"
+      (is (nil? (:parameters s))))))
+
 ;; ---------------------------------------------------------------------------
 ;; leverage — read the ledger, borrow the vocabulary, invent no numbers
 ;; ---------------------------------------------------------------------------

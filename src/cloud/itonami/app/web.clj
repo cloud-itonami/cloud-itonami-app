@@ -5258,6 +5258,8 @@
       if (meta) meta.textContent = bare(traj.state) === 'simulated'
         ? `${traj.steps} step` : '';
 
+      renderSensitivity(m.sensitivity);
+
       const st = $('#loops-structure');
       if (st) {
         st.replaceChildren();
@@ -5388,6 +5390,75 @@
       }
       const badge = $('#loops-count');
       if (badge) badge.textContent = (lv.ranked || []).length || '—';
+    };
+
+    // Elasticity: percent change in a stock per percent change in a constant,
+    // measured by re-running the model. Dimensionless, so a rate in tenants/day
+    // and a window in days are comparable — which is the only reason ordering
+    // them means anything.
+    //
+    // An elasticity of exactly 0 is ambiguous, so the server decides the
+    // ambiguity structurally: a constant no equation references is `disconnected`
+    // and says so, rather than reading as 「動かしても効かない」.
+    const sensitivityRow = (p) => {
+      const li = make('li', 'req-row');
+      const head = make('div', 'req-row__head');
+      head.append(make('strong', null,
+        `${p.name}${p.units ? ' (' + p.units + ')' : ''}`));
+      const chip = make('span', 'req-row__state',
+        p['connected?'] === false ? '未接続' : bare(p.kind));
+      chip.dataset.tone = p['connected?'] === false ? 'warn' : 'note';
+      head.append(chip);
+      li.append(head);
+      li.append(make('p', 'req-row__detail',
+        `baseline ${p.baseline}`
+        + (p['referenced-by']?.length ? ` · 参照元: ${p['referenced-by'].join('・')}` : '')));
+      if (p.detail) li.append(make('p', 'req-row__caveat', p.detail));
+      (p.effects || []).forEach((e) => {
+        const row = make('div', 'axis-row');
+        row.append(make('span', null, e.outcome));
+        if (bare(e.state) === 'computed') {
+          // The bar shows |elasticity| capped at 1, and the number carries the
+          // sign — a bar cannot show a negative without inventing a direction.
+          const track = make('div', 'axis-row__track');
+          const fill = make('div', 'axis-row__fill');
+          fill.style.width = `${Math.round(Math.min(1, Math.abs(e.value)) * 100)}%`;
+          track.append(fill);
+          row.append(track);
+          row.append(make('span', 'axis-row__value',
+            (e.value >= 0 ? '+' : '') + e.value.toFixed(3)));
+        } else {
+          row.append(make('div', 'axis-row__unscored'));
+          row.append(make('span', 'axis-row__value',
+            `未定義 (${bare(e.reason)})`));
+        }
+        li.append(row);
+      });
+      return li;
+    };
+
+    const renderSensitivity = (sens) => {
+      const list = $('#loops-sensitivity'); if (!list) return;
+      const note = $('#loops-sensitivity-note');
+      list.replaceChildren();
+      if (!sens || bare(sens.state) !== 'computed') {
+        list.append(make('li', 'empty-state',
+          sens?.reason ? `感度を計算できません: ${sens.reason}` : 'モデルがありません。'));
+        if (note) note.textContent = 'モデルを再実行して測ります（介入の実行しやすさを点数化しません）。';
+        return;
+      }
+      if (note) note.textContent = sens.note || '';
+      // Ordered by the largest absolute effect on any outcome, so the constant
+      // that moves the system most is first. Disconnected constants sort last
+      // by construction, since their effect is 0.
+      const strength = (p) => Math.max(0, ...(p.effects || [])
+        .filter((e) => bare(e.state) === 'computed')
+        .map((e) => Math.abs(e.value)));
+      [...(sens.parameters || [])].sort((a, b) => strength(b) - strength(a))
+        .forEach((p) => list.append(sensitivityRow(p)));
+      if (!(sens.parameters || []).length) {
+        list.append(make('li', 'empty-state', '定数がありません。'));
+      }
     };
 
     const loadLoops = (businessId) => {
@@ -6987,7 +7058,13 @@
           [:div {:class "sm-grid" :id "loops-series"}]
           [:div {:id "loops-table" :hidden true}]]
          [:div {:class "local-card"}
-          (dds/heading 2 "介入の効きどころ" {:size "24"})
+          (dds/heading 2 "感度 — どの定数が結果を動かすか" {:size "24"})
+          [:p {:class "form-help" :id "loops-sensitivity-note"}
+           "モデルを再実行して測ります（介入の実行しやすさを点数化しません）。"]
+          [:ul {:class "record-list__items" :id "loops-sensitivity"}
+           [:li {:class "empty-state"} "事業を選ぶと表示します。"]]]
+         [:div {:class "local-card"}
+          (dds/heading 2 "介入の効きどころ（ledger）" {:size "24"})
           [:p {:class "form-help" :id "loops-leverage-caveat"}
            "leverage ledger を確認中…"]
           [:ul {:class "record-list__items" :id "loops-leverage"}
