@@ -51,13 +51,16 @@
             [cloud.itonami.app.store :as store]
             [cloud.itonami.app.storj :as storj]
             [docs.model :as docs]
+            [docs.validate :as docs-validate]
             [docs.wire :as docs-wire]
             [drive.object :as object]
             [drive.store.fs :as fs]
             [drive.workspace :as ws]
             [forms.model :as forms]
+            [forms.validate :as forms-validate]
             [forms.wire :as forms-wire]
             [sheets.model :as sheets]
+            [sheets.validate :as sheets-validate]
             [sheets.wire :as sheets-wire])
   (:import [java.nio.charset StandardCharsets]
            [java.util UUID]))
@@ -74,13 +77,22 @@
   (* 1024 1024 1024))
 
 (def kinds
-  "The three surfaces, and how each one is seeded, wrapped and read back.
+  "The three surfaces, and how each one is seeded, wrapped, read and checked.
 
   A closed table rather than a naming convention: `:kind` arrives from an
-  HTTP request, and a convention would turn a typo into a namespace lookup."
+  HTTP request, and a convention would turn a typo into a namespace lookup.
+
+  `:problems` and the three keys under it exist because the surfaces do not
+  agree on what a problem looks like — `sheets.validate` reports
+  `:sheets/severity` and `:sheets/msg`, `docs.validate` reports
+  `:docs/severity` and `:docs/msg`, and `forms.validate` names its entry
+  point `form-problems` rather than `problems`. Normalising here is not an
+  endorsement of that; it is the app declining to leak three vocabularies
+  into one HTTP response."
   {:sheets {:resource-kind :sheets/workbook
             :label "スプレッドシート"
             :default-title "無題のスプレッドシート"
+            :title-key :sheets/title
             :seed (fn [id title]
                     (-> (sheets/workbook id {:sheets/title title})
                         ;; A workbook with no tabs has nowhere to put a cell,
@@ -88,23 +100,34 @@
                         ;; and no user ever asks for.
                         (sheets/add-tab (sheets/tab "sheet1" {:sheets/title "Sheet1"}))))
             :envelope sheets-wire/workbook-envelope
-            :read sheets-wire/read-workbook-envelope}
+            :read sheets-wire/read-workbook-envelope
+            :rehydrate sheets-wire/rehydrate-workbook
+            :problems sheets-validate/problems
+            :severity :sheets/severity :code :sheets/code :message :sheets/msg}
    :docs {:resource-kind :docs/document
           :label "ドキュメント"
           :default-title "無題のドキュメント"
+          :title-key :docs/title
           :seed (fn [id title]
                   (-> (docs/document id {:docs/title title})
                       (docs/add-block (docs/heading "title" 1 title))))
           :envelope docs-wire/document-envelope
-          :read docs-wire/read-document-envelope}
+          :read docs-wire/read-document-envelope
+          :rehydrate docs-wire/rehydrate-document
+          :problems docs-validate/problems
+          :severity :docs/severity :code :docs/code :message :docs/msg}
    :forms {:resource-kind :forms/form
            :label "フォーム"
            :default-title "無題のフォーム"
+           :title-key :forms/title
            ;; No seed field: an empty form is valid, and a placeholder
            ;; question is one the author has to notice and delete.
            :seed (fn [id title] (forms/form id {:forms/title title}))
            :envelope forms-wire/form-envelope
-           :read forms-wire/read-form-envelope}})
+           :read forms-wire/read-form-envelope
+           :rehydrate forms-wire/rehydrate-form
+           :problems forms-validate/form-problems
+           :severity :forms/severity :code :forms/code :message :forms/msg}})
 
 (def ^:private resource-kinds
   (into {} (map (juxt (comp :resource-kind val) key)) kinds))
@@ -329,6 +352,114 @@
                      (read-envelope body)
                      body)})
        (refuse! result)))))
+
+;; ── editing ─────────────────────────────────────────────────────────────────
+
+(defn- spec-of-item [item]
+  (get kinds (get resource-kinds (:drive/resource-kind item))))
+
+(defn errors-in
+  "The blocking problems in `resource`, in one shape rather than three.
+
+  Warnings are dropped: `docs.validate` reports a missing title as one, and
+  refusing a save over it would make the surface unusable for a draft."
+  [spec resource]
+  (->> ((:problems spec) resource)
+       (filter #(= :error (get % (:severity spec))))
+       (mapv (fn [problem]
+               {:code (some-> (get problem (:code spec)) str)
+                :message (get problem (:message spec))}))))
+
+(defn- writable!
+  "The workspace, item and spec for a write, or the refusal that stops it."
+  [actor id]
+  (let [workspace (workspace-for (store/snapshot) actor)
+        item (ws/item workspace id)]
+    (cond
+      (nil? item) (refuse! {:reason :no-such-item :item-id id})
+      (:drive/trashed? item) (refuse! {:reason :item-is-trashed :item-id id})
+      (not (ws/can-write? workspace id actor))
+      (refuse! {:reason :not-permitted :item-id id :principal actor})
+      :else
+      (if-let [spec (spec-of-item item)]
+        {:workspace workspace :item item :spec spec}
+        (throw (ex-info "このドキュメントの種類を判別できません。"
+                        {:type :drive/unknown-kind
+                         :resource-kind (:drive/resource-kind item)}))))))
+
+(defn- write-resource!
+  "Validate a rehydrated `resource` and store it as a new version of `id`.
+
+  Validated before anything is written, and re-projected from the value the
+  model accepted rather than from the bytes a client happened to send. The
+  envelope is rebuilt from the kind already on the item, so a save cannot
+  turn a document into a workbook by rewriting its discriminant.
+
+  A new object reference every time: `drive.object/write-item` refuses a
+  reused one, and the reason is the one that matters — reusing a reference
+  replaces an earlier version's bytes while the history saying otherwise is
+  still sitting in `:drive/versions`."
+  [{:keys [workspace item spec]} id actor object-store resource]
+  (let [errors (errors-in spec resource)]
+    (when (seq errors)
+      (throw (ex-info (str "保存できません: " (:message (first errors)))
+                      {:type :drive/invalid-document :problems errors})))
+    (let [envelope ((:envelope spec) resource)
+          title (or (not-empty (str/trim (str (get resource (:title-key spec)))))
+                    (:drive/title item))
+          ;; The resource's title and the Drive item's title are two places
+          ;; for one fact, so a save keeps them together rather than letting
+          ;; the list disagree with what is open.
+          retitled (assoc-in workspace [:drive.workspace/items id :drive/title] title)
+          written (object/write-item retitled object-store id actor
+                                     (envelope-bytes envelope)
+                                     {:object-ref (object-ref)
+                                      :created-at (store/now)})]
+      (if (:ok? written)
+        (do (store/transact! assoc-in (workspace-path actor) (:workspace written))
+            {:schema schema
+             :ok? true
+             :item (item-view (ws/item (:workspace written) id))})
+        (refuse! written)))))
+
+(defn update!
+  "Store an edited `payload` as a new version of `id`.
+
+  `payload` is the plain-JSON projection, as `content` returns it, and only
+  the payload — never a whole envelope.
+
+  Rehydrated before it is validated, because validation reads namespaced
+  keys and a projected payload has none: `sheets.validate/problems` on a
+  string-keyed map finds no tabs, reports no problems, and waves anything
+  through. That failure is silent in the direction that matters, which is
+  why the rehydrate step is not an optimisation."
+  ([id payload actor] (update! id payload actor (store-instance)))
+  ([id payload actor object-store]
+   (locking write-lock
+     (let [{:keys [spec] :as target} (writable! actor id)]
+       (write-resource! target id actor object-store ((:rehydrate spec) payload))))))
+
+(defn rename!
+  "Change a document's title.
+
+  This does record a new version, because the title is not only Drive
+  metadata — it is inside the stored resource as `:sheets/title` and its
+  siblings. Renaming only the Drive item would leave the two disagreeing,
+  and the one that travels with the bytes is the one another reader sees."
+  ([id title actor] (rename! id title actor (store-instance)))
+  ([id title actor object-store]
+   (locking write-lock
+     (let [{:keys [spec] :as target} (writable! actor id)
+           title (not-empty (str/trim (str title)))]
+       (when-not title
+         (throw (ex-info "名前を空にはできません。"
+                         {:type :drive/invalid-document
+                          :problems [{:code ":title/blank"
+                                      :message "名前を空にはできません。"}]})))
+       (let [current (content id actor object-store)
+             resource (assoc ((:rehydrate spec) (:payload current))
+                             (:title-key spec) title)]
+         (write-resource! target id actor object-store resource))))))
 
 (defn trash!
   "Move a document to the trash.

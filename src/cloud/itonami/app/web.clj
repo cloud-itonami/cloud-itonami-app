@@ -176,13 +176,19 @@
   .drive-create{display:flex;flex-wrap:wrap;gap:.5rem}
   .drive-create__status{margin:0;color:var(--color-neutral-solid-gray-600);
     font-size:.8125rem;line-height:1.5}
-  .detail-actions{display:flex;flex-direction:column;align-items:flex-start;gap:.75rem;
+  .detail-actions{display:flex;flex-direction:column;align-items:stretch;gap:.75rem;
     margin-top:1.25rem}
-  .document-preview{max-height:18rem;width:100%;box-sizing:border-box;overflow:auto;margin:0;
+  .detail-actions__row{display:flex;flex-wrap:wrap;align-items:center;gap:.5rem}
+  .document-title{flex:1 1 12rem;min-width:0;min-height:2.25rem;padding:.35rem .75rem;
+    border-radius:.5rem;font-size:.875rem}
+  .document-preview{height:18rem;width:100%;box-sizing:border-box;overflow:auto;margin:0;
     border:1px solid var(--color-neutral-solid-gray-200);border-radius:.5rem;
     background:var(--color-neutral-solid-gray-50);padding:.75rem;
     color:var(--color-neutral-solid-gray-800);font-size:.75rem;line-height:1.6;
-    white-space:pre-wrap;word-break:break-all}
+    font-family:ui-monospace,SFMono-Regular,Menlo,monospace;
+    white-space:pre;resize:vertical}
+  .document-preview:focus{outline:4px solid var(--color-primitive-yellow-300);outline-offset:1px;
+    border-color:var(--color-key-600)}
   .workspace-toolbar{display:flex;align-items:center;justify-content:space-between;gap:.75rem;
     margin:1rem 0}
   .workspace-search{width:min(100%,24rem);min-height:2.75rem;box-sizing:border-box;
@@ -740,29 +746,94 @@
         status.textContent = error.message;
       }
     };
+    // The editor is the payload itself. Three real editors are three
+    // applications — app-sheets, app-docs and app-forms exist and are not
+    // this app. What is offered here is the thing the API can actually
+    // promise: the stored resource, editable, refused by the surface's own
+    // validator if it stops being one.
     const documentActions = (item) => {
       const actions = make('div', 'detail-actions');
-      const show = make('button', 'tool-button', '内容を表示');
-      show.type = 'button';
-      const preview = make('pre', 'document-preview', '');
-      preview.hidden = true;
-      show.addEventListener('click', async () => {
-        show.disabled = true;
+      const row = make('div', 'detail-actions__row');
+      const open = make('button', 'tool-button', '編集');
+      open.type = 'button';
+      const save = make('button', 'tool-button', '保存');
+      save.type = 'button';
+      save.hidden = true;
+      const rename = make('button', 'tool-button', '名前を変更');
+      rename.type = 'button';
+      // An inline field rather than window.prompt: a modal dialog blocks the
+      // page, and this one would be blocking it to collect a single string
+      // the detail pane already has room for.
+      const titleField = make('input', 'workspace-search document-title');
+      titleField.type = 'text';
+      titleField.value = item.name;
+      titleField.setAttribute('aria-label', '名前');
+      const status = make('p', 'drive-create__status', '');
+      const editor = make('textarea', 'document-preview');
+      editor.hidden = true;
+      editor.spellcheck = false;
+      editor.setAttribute('aria-label', `${item.name} の内容`);
+
+      const load = async () => {
+        const request = await fetch(
+          `/api/workspace/drive/documents/${encodeURIComponent(item.id)}`);
+        const data = await request.json();
+        if (!request.ok) throw new Error(data?.error?.message || '内容を取得できませんでした。');
+        return data.payload;
+      };
+      open.addEventListener('click', async () => {
+        open.disabled = true; status.textContent = '読み込んでいます…';
         try {
-          const request = await fetch(
-            `/api/workspace/drive/documents/${encodeURIComponent(item.id)}`);
-          const data = await request.json();
-          if (!request.ok) throw new Error(data?.error?.message || '内容を取得できませんでした。');
-          preview.textContent = JSON.stringify(data.payload, null, 2);
-          preview.hidden = false;
+          editor.value = JSON.stringify(await load(), null, 2);
+          editor.hidden = false; save.hidden = false;
+          status.textContent = '';
         } catch (error) {
-          preview.textContent = error.message;
-          preview.hidden = false;
+          status.textContent = error.message;
         } finally {
-          show.disabled = false;
+          open.disabled = false;
         }
       });
-      actions.append(show, preview);
+      save.addEventListener('click', async () => {
+        let payload;
+        try {
+          payload = JSON.parse(editor.value);
+        } catch (error) {
+          // Refused here rather than sent: a body that is not JSON is not a
+          // document the server can say anything useful about.
+          status.textContent = `JSON として読めません: ${error.message}`;
+          return;
+        }
+        save.disabled = true; status.textContent = '保存しています…';
+        try {
+          const saved = await postJSON(
+            `/api/workspace/drive/documents/${encodeURIComponent(item.id)}/versions`,
+            {payload}, true);
+          status.textContent = `保存しました（版 ${saved.item.versions}）。`;
+          selectedDrive = saved.item;
+          await loadWorkspace('drive', renderDrive);
+        } catch (error) {
+          status.textContent = error.message;
+        } finally {
+          save.disabled = false;
+        }
+      });
+      rename.addEventListener('click', async () => {
+        rename.disabled = true; status.textContent = '名前を変更しています…';
+        try {
+          const renamed = await postJSON(
+            `/api/workspace/drive/documents/${encodeURIComponent(item.id)}/rename`,
+            {title:titleField.value}, true);
+          status.textContent = '';
+          selectedDrive = renamed.item;
+          await loadWorkspace('drive', renderDrive);
+        } catch (error) {
+          status.textContent = error.message;
+        } finally {
+          rename.disabled = false;
+        }
+      });
+      row.append(titleField, rename, open, save);
+      actions.append(row, status, editor);
       return actions;
     };
     const renderFilecoin = (data) => {

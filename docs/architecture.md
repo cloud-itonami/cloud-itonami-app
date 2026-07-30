@@ -32,7 +32,7 @@ projects, or events.
 | Inbox | `m365-archive` and `net-kotobase/mail-worker` | Lists archive metadata; sealed reception remains recipient-key controlled |
 | Projects | `kotoba-lang/com-github` | Reads GitHub Projects v2; shows `permission-required` without `read:project` |
 | Drive (archive) | `m365-archive` OneDrive snapshot | Lists file state without silently materializing git-annex objects |
-| Drive (documents) | `kotoba-lang/drive` workspace + an object store | Creates Sheets / Docs / Forms as office envelopes; per-user ACL, quota and versions |
+| Drive (documents) | `kotoba-lang/drive` workspace + an object store | Creates and edits Sheets / Docs / Forms as office envelopes; per-user ACL, quota and versions; a save the surface's own validator rejects is refused |
 | Scheduler | `kotoba-lang/shell` EventKit + `kotoba-lang/calendar` | Reads seven days under the explicit `calendar/read` capability |
 
 `GET /api/workspace/worker` is served next to these but is not one of them: it
@@ -45,11 +45,19 @@ it was created reads as a failed create. It is intentionally separate from
 model context: viewing a calendar or mailbox does not send its data to an AI
 provider.
 
-Creating a document is the one mutation here, and it does not write to any of
-the external authorities above: it writes to a `drive.workspace` held in the
-app's own state and to an object store the app owns. Mutation adapters that
-write back to OneDrive, GitHub Projects or EventKit still require a later
-capability and approval design.
+Creating and editing a document is the one mutation here, and it does not
+write to any of the external authorities above: it writes to a
+`drive.workspace` held in the app's own state and to an object store the app
+owns. Mutation adapters that write back to OneDrive, GitHub Projects or
+EventKit still require a later capability and approval design.
+
+A save is validated by the surface that owns the schema — `sheets.validate`,
+`docs.validate`, `forms.validate` — after the payload has been rehydrated out
+of its plain-JSON projection. The order is not an implementation detail: those
+validators read namespaced keys, find none on a projected payload, and report
+no problems, so validating before rehydrating would accept anything at all.
+Warnings do not block; a `docs` document with no title is a draft, not a
+rejected save.
 
 ## Artificial-organism workers
 

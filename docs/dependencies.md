@@ -23,14 +23,18 @@ entries belong only in the `:dev` override.
 | kotoba-lang/jp-go-digital-design-system | DADS UI components | immutable SHA |
 
 `transit` is named directly even though `sheets`, `docs` and `forms` each
-bring their own. They do not agree: sheets and docs pin `77e3ce7d`, the last
-commit before the office wire moved from Transit-tagged JSON to plain JSON,
-and forms pins the current one because `:forms/form` is only an admitted
-resource kind there. Resolution would pick a winner without being asked;
-naming it means the answer does not change the next time one of the three
-advances. The consequence is that a payload read back from an envelope is
-plain JSON — string keys, vectors — which is what
-`transit.core/read-office-envelope-body` documents.
+bring their own, and even though all three now agree on it. They did not:
+sheets and docs pinned `77e3ce7d`, the last commit before the office wire
+moved from Transit-tagged JSON to plain JSON, while forms pinned the current
+one because `:forms/form` is only an admitted resource kind there. Resolution
+picked a winner without being asked. Naming it here means that does not happen
+again silently.
+
+A payload read back from an envelope is plain JSON — string keys, `"text"`
+where `:text` went in — which is what `transit.core/read-office-envelope-body`
+documents. Each surface now ships a `rehydrate-*` that undoes it, and this app
+calls it before validating anything, because the validators read namespaced
+keys and report no problems at all on a payload that has none.
 
 The umbrella `kotoba-lang/authentication` dependency is intentionally absent.
 It currently contains workspace-relative transitive dependencies and the app
