@@ -1,0 +1,24 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "itonami-fleet-dispatch",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-07-30",
+  "observability": { "enabled": true },
+
+  // The binding that makes ~1,200 namespaced actors reachable. Without it a
+  // user Worker in a dispatch namespace has no URL at all, which is why
+  // ai-gftd-repository-dispatch held nothing callable between 2026-04-20 and
+  // 2026-07-30.
+  "dispatch_namespaces": [
+    { "binding": "FLEET", "namespace": "ai-gftd-repository-dispatch" }
+  ]
+
+  // No route and no custom domain yet: reachable on workers.dev while exactly
+  // one real actor is behind it. Binding a hostname is a separate decision
+  // from proving the path works, and doing both at once makes a rollback
+  // ambiguous.
+  //
+  // No secrets. This router authenticates nothing — each actor gates its own
+  // writes, and a second admission rule here would be a weaker copy of every
+  // governor's.
+}
