@@ -147,6 +147,43 @@
   (require-enabled! configuration authority-key)
   (authority/refresh! (domain-for authority-key) configuration session proposal-id))
 
+(defn resolve-pending!
+  "Refresh every proposal this session is waiting on an authority for, and report what
+  moved.
+
+  This exists because `refresh!` is per-proposal and, until now, nothing called it. It
+  was reachable only as an HTTP route needing a session and a CSRF token, and no part of
+  the UI and no timer ever hit it -- so an `:authority-pending` proposal never resolved
+  at all. The gap was recorded as 'the app learns the outcome late'. It did not learn it
+  late; absent someone hand-crafting a POST, it never learned it.
+
+  Only enabled authorities are asked. A disabled one has nothing to ask about, and
+  `refresh!` would refuse anyway -- collecting refusals for authorities the deployment
+  switched off would bury the answers that matter.
+
+  Never throws: one authority being unreachable must not stop the others resolving, so a
+  failure is recorded against its own proposal and the sweep continues."
+  [configuration session]
+  (let [pending (filter authority/pending-with-authority? (authority/proposals session))
+        enabled (filter #(transport/enabled? configuration %) (keys adapters))
+        askable (filter #(contains? (set enabled) (:authority %)) pending)]
+    {:schema "cloud.itonami.app.authority.api.resolve-pending.v1"
+     :asked (count askable)
+     ;; Named so a caller can tell "nothing was pending" from "everything pending
+     ;; belongs to an authority this deployment has switched off".
+     :skipped-disabled (- (count pending) (count askable))
+     :results
+     (vec (for [p askable]
+            (let [before (:status p)
+                  after (try (:status (refresh! configuration session
+                                                (:authority p) (:id p)))
+                             (catch Exception e
+                               {:error (or (.getMessage e) (str e))}))]
+              (cond-> {:id (:id p) :authority (:authority p) :was before}
+                (map? after) (assoc :error (:error after))
+                (keyword? after) (assoc :now after
+                                        :moved? (not= before after))))))}))
+
 (defn commit!
   "Hand the consented proposal to its authority and record the outcome.
 
