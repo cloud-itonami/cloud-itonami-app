@@ -16,7 +16,13 @@
 (defn- reset-credential-state! []
   (store/transact!
    (fn [current]
-     (assoc current :credentials {:next-status-index 0 :revoked #{} :issued {}}))))
+     ;; :events is reset alongside :credentials because issuance and revocation
+     ;; now append to it. Without this, every test in this namespace sees the
+     ;; events left by the ones before it — which is exactly how the first
+     ;; version of the audit tests failed, reporting 8 events for one issuance.
+     (assoc current
+            :credentials {:next-status-index 0 :revoked #{} :issued {}}
+            :events []))))
 
 (use-fixtures :each (fn [f] (reset-credential-state!) (f)))
 
@@ -454,3 +460,91 @@
       (testing "accessibility: the status regions announce"
         (is (re-find #"id=\"credential-issue-status\"" html))
         (is (re-find #"aria-live=\"polite\"" html))))))
+
+;; ── the audit ledger ─────────────────────────────────────────────────────────
+;; Issuance and revocation are the two security-relevant acts in this plane, and
+;; neither of them recorded anything until this was added. The credential itself
+;; cannot answer "who did this": its issuer is the organization, not the person.
+
+(defn- credential-events []
+  (filterv #(#{:credential/issued :credential/revoked} (:type %))
+           (:events (store/snapshot))))
+
+(deftest issuance-is-recorded-with-its-actor
+  (let [{:keys [credential status-index]}
+        (credential/issue-membership! {:organization-did org-did
+                                       :organization-domain org-domain
+                                       :subject-did subject-did
+                                       :role :auditor
+                                       :actor "user-alice"})
+        [event & more] (credential-events)]
+    (is (empty? more) "exactly one event")
+    (is (= :credential/issued (:type event)))
+    (is (= "user-alice" (:actor event)) "who pressed the button")
+    (is (= subject-did (:subject event)) "about whom")
+    (is (= "auditor" (:role event)))
+    (is (= status-index (:status-index event)) "which bit can withdraw it")
+    (is (= org-did (:issuer event)))
+    (is (= (get-in credential ["proof" "verificationMethod"])
+           (:verification-method event))
+        "which key signed, so a later rotation does not orphan the record")
+    (is (= (get credential "validFrom") (:at event)))
+    (testing "the register also remembers who issued"
+      (is (= "user-alice" (:issued-by (first (credential/issued-credentials
+                                             (store/snapshot)))))))))
+
+(deftest revocation-is-recorded-with-its-actor
+  (let [{:keys [status-index]}
+        (credential/issue-membership! {:organization-did org-did
+                                       :organization-domain org-domain
+                                       :subject-did subject-did
+                                       :role :member
+                                       :actor "user-alice"})]
+    (credential/revoke! status-index "user-bob")
+    (let [events (credential-events)
+          revocation (last events)]
+      (is (= 2 (count events)))
+      (is (= :credential/revoked (:type revocation)))
+      (is (= "user-bob" (:actor revocation))
+          "revocation stops a credential being honoured anywhere; an
+           unattributed one is a hole in the record that matters most")
+      (is (= status-index (:status-index revocation)))
+      (is (= subject-did (:subject revocation)) "whose credential was withdrawn")
+      (is (string? (:at revocation)))
+      (is (not (contains? revocation :already-revoked?))))))
+
+(deftest revoking-twice-is-idempotent-in-effect-but-not-in-the-ledger
+  (testing "two attempts happened, so two events are recorded — collapsing them
+            would lose the fact that somebody tried again, which is the sort of
+            thing an auditor is looking for"
+    (let [{:keys [status-index]}
+          (credential/issue-membership! {:organization-did org-did
+                                         :organization-domain org-domain
+                                         :subject-did subject-did
+                                         :role :member})
+          first-result (credential/revoke! status-index "user-bob")
+          second-result (credential/revoke! status-index "user-carol")
+          revocations (filterv #(= :credential/revoked (:type %)) (credential-events))]
+      (testing "the effect is the same both times"
+        (is (:revoked? first-result))
+        (is (:revoked? second-result))
+        (is (= #{status-index} (credential/revoked-indices (store/snapshot)))))
+      (testing "but the second is marked and attributed to whoever retried"
+        (is (= 2 (count revocations)))
+        (is (not (contains? (first revocations) :already-revoked?)))
+        (is (true? (:already-revoked? (second revocations))))
+        (is (true? (:already-revoked? second-result)))
+        (is (= ["user-bob" "user-carol"] (mapv :actor revocations)))))))
+
+(deftest an-actor-is-optional-only-for-callers-that-have-no-session
+  (testing "a CLI or a test has no session, so this must not throw — but the
+            event then says so with nil rather than inventing an actor"
+    (let [{:keys [status-index]}
+          (credential/issue-membership! {:subject-did subject-did :role :member})]
+      (credential/revoke! status-index)
+      (let [events (credential-events)]
+        (is (= 2 (count events)))
+        (is (every? #(contains? % :actor) events)
+            "the key is always present, so a reader cannot mistake absence for
+             an actor that was not recorded")
+        (is (every? #(nil? (:actor %)) events))))))
