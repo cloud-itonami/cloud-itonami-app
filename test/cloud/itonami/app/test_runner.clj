@@ -15,6 +15,7 @@
             [cloud.itonami.app.documents-test]
             [cloud.itonami.app.filecoin-test]
             [cloud.itonami.app.fleet-test]
+            [cloud.itonami.app.fleet-tools-test]
             [cloud.itonami.app.openai-compat-test]
             [cloud.itonami.app.storj-test]
             [cloud.itonami.app.worker-http-test]))
@@ -27,6 +28,7 @@
     cloud.itonami.app.documents-test
     cloud.itonami.app.filecoin-test
     cloud.itonami.app.fleet-test
+    cloud.itonami.app.fleet-tools-test
     cloud.itonami.app.openai-compat-test
     cloud.itonami.app.storj-test
     cloud.itonami.app.worker-http-test])

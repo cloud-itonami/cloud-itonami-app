@@ -204,7 +204,7 @@
     (search {:domain :marketplace/order-orchestration})
     (search {:iso3166 \"JPN\" :maturity :implemented})
     (search {:text \"marketplace\" :callable? true})"
-  [{:keys [text domain governor maturity status isic iso3166]
+  [{:keys [text domain governor maturity status isic iso3166 execution role]
     want-callable :callable?}]
   (cond->> (actors)
     text      (filter #(matches-text? % text))
@@ -214,6 +214,11 @@
     status    (filter #(= status (:status %)))
     isic      (filter #(= isic (isic-of %)))
     iso3166   (filter #(= iso3166 (:iso3166 %)))
+    ;; :execution and :role were accepted by the tool descriptor before search
+    ;; understood them, so an execution filter silently matched everything —
+    ;; a query that answers "all 1,206" to "show me the resident ones".
+    execution (filter #(= execution (:execution %)))
+    role      (filter #(= role (:role %)))
     ;; bound as want-callable so the criterion does not shadow callable?
     (some? want-callable) (filter #(= (boolean want-callable) (callable? %)))
     true      vec))
@@ -269,3 +274,115 @@
                             (probe* (:endpoint a) (:health-path a) timeout-ms)
                             :not-probeable)}]))
          (callable))))
+
+;; ── agent tools ──────────────────────────────────────────────────────
+;;
+;; Descriptors and behaviour live here, not in agent-control. That namespace
+;; requires agent.run, which only resolves under the :dev alias's west sibling
+;; layout, so anything defined there is untestable in a plain -M:test run —
+;; which is why the repo has no agent-control tests at all. It is also the
+;; honest split: agent-control wires capabilities, the fleet knows what a
+;; fleet query means.
+
+(def tools
+  [{:name "fleet_search"
+    :description
+    (str "Search the cloud-itonami actor directory: 1,206 actors with their "
+         "domain, governor, maturity and ISIC/ISCO/ISO-3166 coding. Reads a "
+         "catalog bundled with the app — no network. Most actors are not "
+         "deployed; `callable` filters to the ones that have an address.")
+    :parameters {:type "object"
+                 :properties
+                 {:text {:type "string"
+                         :description "Substring of id, name or domain."}
+                  :domain {:type "string" :description "Exact domain keyword, e.g. marketplace/order-orchestration."}
+                  :isic {:type "string" :description "ISIC code in whichever revision the actor declares."}
+                  :iso3166 {:type "string" :description "ISO-3166 alpha-3, e.g. JPN."}
+                  :maturity {:type "string" :enum ["implemented" "blueprint"]}
+                  :execution {:type "string" :enum ["on-demand" "resident"]}
+                  :callable {:type "boolean" :description "Only actors that declare an endpoint."}
+                  :limit {:type "integer" :description "Default 20, max 100."}}}}
+   {:name "fleet_call"
+    :description
+    (str "GET a path on a deployed actor. The actor is named by its repository, "
+         "never by URL: the endpoint comes from the catalog, so this cannot "
+         "reach anywhere the fleet has not published. Read-only — the fleet's "
+         "write paths need a CACAO the app does not hold. Use fleet_search "
+         "with callable=true to find actors that can be called.")
+    :parameters {:type "object"
+                 :properties
+                 {:repo {:type "string"
+                         :description "Repository name, e.g. cloud-itonami-marketplace-order."}
+                  :path {:type "string"
+                         :description "Absolute path on that actor, e.g. /orders. Defaults to its declared health path."}}
+                 :required ["repo"]}}])
+
+(defn valid-path!
+  "Validate a path for fleet_call. Absolute, no traversal, no authority.
+
+  The tool takes a repository name and never a URL, so the host cannot be
+  chosen by the caller — this only has to stop the path from escaping the
+  actor it was resolved to."
+  [value]
+  (let [p (str (or value "/"))]
+    (when-not (str/starts-with? p "/")
+      (throw (ex-info "path は / で始めてください。" {:type :fleet/invalid-path :path p})))
+    (when (or (str/includes? p "..") (str/starts-with? p "//"))
+      (throw (ex-info "path に .. や // は使えません。" {:type :fleet/invalid-path :path p})))
+    (when (> (count p) 200)
+      (throw (ex-info "path が長すぎます。" {:type :fleet/invalid-path})))
+    p))
+
+(defn- http-get!
+  "GET {endpoint}{path} on a catalogued actor. Body truncated; never parsed."
+  [endpoint path timeout-ms]
+  (let [c (doto ^java.net.HttpURLConnection
+                (.openConnection (java.net.URL. (str endpoint path)))
+            (.setRequestMethod "GET")
+            (.setConnectTimeout timeout-ms)
+            (.setReadTimeout timeout-ms))
+        code (.getResponseCode c)
+        stream (if (<= 200 code 299) (.getInputStream c) (.getErrorStream c))
+        body (if stream (slurp stream) "")]
+    (.disconnect c)
+    {:status code
+     :body (if (> (count body) 4000) (str (subs body 0 4000) "…") body)}))
+
+(defn search-tool [input]
+  (let [limit (min 100 (max 1 (or (:limit input) 20)))
+            kw (fn [v] (when (and v (seq (str v))) (keyword (str v))))
+            hits (search
+                  (cond-> {}
+                    (:text input) (assoc :text (:text input))
+                    (:domain input) (assoc :domain (kw (:domain input)))
+                    (:isic input) (assoc :isic (str (:isic input)))
+                    (:iso3166 input) (assoc :iso3166 (str (:iso3166 input)))
+                    (:maturity input) (assoc :maturity (kw (:maturity input)))
+                    (:execution input) (assoc :execution (kw (:execution input)))
+                    (contains? input :callable) (assoc :callable? (true? (:callable input)))))]
+        ;; The total is reported alongside the page. A model shown twenty of
+        ;; 340 matches without being told so will reason as if it saw them all.
+        {:matched (count hits)
+         :returned (min limit (count hits))
+         :actors (mapv #(select-keys % [:repo :id :name :domain :governor :maturity
+                                        :execution :role :endpoint :endpoint-kind])
+                       (take limit hits))}))
+
+(defn call-tool [input]
+  (let [repo (str (:repo input))
+            actor (actor repo)
+            path (valid-path! (:path input))]
+        (cond
+          (nil? actor)
+          (throw (ex-info (str repo " は艦隊カタログにありません。")
+                          {:type :fleet/unknown-actor :repo repo}))
+          (not (callable? actor))
+          ;; Deliberately distinct from "unknown": the actor is real, it simply
+          ;; has no address. 1,197 of 1,206 are in that state and saying so is
+          ;; more useful than a connection error.
+          (throw (ex-info (str repo " は endpoint を宣言していません（未デプロイ）。")
+                          {:type :fleet/not-callable :repo repo}))
+          :else
+          (let [path (if (= "/" path) (or (:health-path actor) "/") path)]
+            (merge {:repo repo :endpoint (:endpoint actor) :path path}
+                   (http-get! (:endpoint actor) path 10000))))))

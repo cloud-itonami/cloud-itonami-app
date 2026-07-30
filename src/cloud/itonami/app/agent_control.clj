@@ -4,6 +4,7 @@
             [clojure.java.io :as io]
             [clojure.string :as str]
             [cloud.itonami.app.cli-runner :as cli-runner]
+            [cloud.itonami.app.fleet :as fleet]
             [cloud.itonami.app.config :as config]
             [cloud.itonami.app.policy :as policy]
             [cloud.itonami.app.provider :as provider]
@@ -86,7 +87,11 @@
                              :success {:type "boolean"}}
                 :required ["text"]}})
 
-(def ^:private read-only-tools #{"browser_snapshot" "computer_screenshot"})
+
+;; fleet_search reads a bundled file and touches nothing, so it needs no
+;; approval. fleet_call leaves the machine, so it does.
+(def ^:private read-only-tools
+  #{"browser_snapshot" "computer_screenshot" "fleet_search"})
 
 (defn- now-ms [] (System/currentTimeMillis))
 
@@ -99,6 +104,10 @@
         (merge (select-keys saved [:enabled? :max-turns :max-tool-calls]))
         (update :browser merge (:browser saved))
         (update :computer merge (:computer saved))
+        ;; :fleet merges like the others. Without this line configure! would
+        ;; persist the toggle and settings would keep handing back the default,
+        ;; so the capability could never actually be turned on.
+        (update :fleet merge (:fleet saved))
         (update :cli merge (:cli saved)))))
 
 (defn- clean-domains [domains]
@@ -137,6 +146,8 @@
                         (if (seq domains) domains ["localhost" "127.0.0.1"])))
             (assoc-in [:computer :enabled?]
                       (true? (get-in request [:computer :enabled?])))
+            (assoc-in [:fleet :enabled?]
+                      (true? (get-in request [:fleet :enabled?])))
             (assoc-in [:cli :enabled?]
                       (true? (get-in request [:cli :enabled?])))
             (assoc-in [:cli :workspace] workspace)
@@ -305,9 +316,14 @@
      :media-type "image/png"
      :application application}))
 
+
 (defn- execute-tool! [configuration name input]
   (let [s (settings configuration)]
     (case name
+      "fleet_search" (fleet/search-tool input)
+
+      "fleet_call"   (fleet/call-tool input)
+
       "browser_snapshot"
       (guarded-browser! s "snapshot" "-i" "--urls")
 
@@ -384,12 +400,14 @@
   (let [s (settings configuration)]
     (cond-> [done-tool]
       (get-in s [:browser :enabled?]) (into browser-tools)
-      (get-in s [:computer :enabled?]) (into computer-tools))))
+      (get-in s [:computer :enabled?]) (into computer-tools)
+      (get-in s [:fleet :enabled?]) (into fleet/tools))))
 
 (defn- capability-for [tool-name]
   (cond
     (str/starts-with? tool-name "browser_") :browser/use
     (str/starts-with? tool-name "computer_") :computer/use
+    (str/starts-with? tool-name "fleet_") :fleet/use
     (= "cli_agent" tool-name) :workspace/use
     :else :agent/run))
 
@@ -410,6 +428,8 @@
       "computer_click" (str (:application input) " の画面座標 " (:x input) ", " (:y input)
                             " を " (or (:button input) "left") " clickします。")
       "computer_scroll" (str (:application input) " を " (:direction input) " にスクロールします。")
+      "fleet_call" (str "艦隊アクター " (:repo input) " の "
+                        (or (:path input) "health path") " を GET します。")
       "cli_agent" (str (:provider input) " を " (:access input)
                        " で " (preview (:workspace input)) " に実行します。")
       (str tool-name " を実行します。"))))
@@ -427,6 +447,8 @@
               (if (= "workspace-write" (:access input))
                 "指定workspace内のファイルを読み書きできます。shell bypassは許可しません。"
                 "指定workspaceを読み取れますが、ファイル変更は許可しません。")
+              (= "fleet_call" tool-name)
+              "カタログに載っているアクターの endpoint へ読み取り要求を送ります。書き込みはしません。"
               (str/starts-with? tool-name "computer_")
               "現在前面にあるアプリへ入力・操作する可能性があります。"
               :else
