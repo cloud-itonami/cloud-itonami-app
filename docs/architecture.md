@@ -635,6 +635,45 @@ them. `documents` also sorts by id as well as timestamp, because two
 processes do not share the atom that makes `now` monotonic — the clock is
 the answer within one process and the tiebreaker is the answer across them.
 
+### Proposing a change you may not make
+
+`docs.model` had `:docs/suggestions` from the start — `add-suggestion`, a
+validation rule, and an entry in both `unexpressed` lists — and nothing in
+this application ever created or applied one. The same shape folders were
+in.
+
+**A commenter may say what should change and may not change it.** That is
+the whole of suggestion mode, and it is the division comments already draw:
+`drive.workspace` says a `:commenter` may not write, so a proposal lives
+beside the document rather than in it — writing one into `:docs/suggestions`
+would be a write, which is exactly what the proposer does not have. A
+*viewer* may do neither; that is `comment-roles`' existing line, not a new
+one. I first wrote this feature as "a viewer may propose", which
+contradicted a line this app had already drawn and which the tests caught.
+
+**A proposal records what the paragraph said when it was made, and
+accepting checks that it still says it.** Alice rewriting the paragraph
+after bob proposed a change to it means bob's proposal is about a sentence
+that no longer exists; applying it would discard her rewrite without anybody
+seeing. That is the lost update this app refuses for saves, arriving through
+a different door, and it is refused the same way — `:drive/suggestion-stale`
+and a 409, with what it *was* and what it is *now* in the error. The listing
+computes `:stale?` rather than storing it, because the paragraph may have
+changed a second ago and a flag written at proposal time would be answering
+a question about the past.
+
+Accepting is an ordinary save: validated, versioned, and authored by
+whoever accepted. They made that version; the suggestion still records who
+proposed it — the same rule `restore-version!` follows.
+
+Declining somebody else's proposal and withdrawing your own are one
+operation. Refusing the second would leave a mistake on the page with no way
+to take it back.
+
+Only `:docs`, and only a block's text. Proposing a new block, a deletion or
+a reordering is a larger surface, and offering half of it would leave a
+reviewer wondering which half.
+
 ### Two editors, one document
 
 A save carries the `:etag` of the version it was made from — the object
