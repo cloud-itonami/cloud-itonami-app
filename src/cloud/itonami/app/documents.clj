@@ -62,6 +62,7 @@
             [forms.validate :as forms-validate]
             [forms.wire :as forms-wire]
             [docs.markdown :as docs-md]
+            [forms.responses :as forms-responses]
             [sheets.csv :as sheets-csv]
             [sheets.xlsx :as sheets-xlsx]
             [sheets.model :as sheets]
@@ -208,7 +209,13 @@
             "edn" {:media-type "application/edn" :extension "edn"}}
    :docs {"md" {:media-type "text/markdown; charset=utf-8" :extension "md"}
           "edn" {:media-type "application/edn" :extension "edn"}}
-   :forms {"edn" {:media-type "application/edn" :extension "edn"}}
+   :forms {"csv" {:media-type "text/csv; charset=utf-8" :extension "csv"
+                  ;; Not the questions — the answers. Every other format on
+                  ;; this table writes the document; this one writes what was
+                  ;; collected with it, which is why `export` asks a
+                  ;; different question about who may have it.
+                  :owner-only? true}
+           "edn" {:media-type "application/edn" :extension "edn"}}
    :slides {"pptx" {:media-type
                     "application/vnd.openxmlformats-officedocument.presentationml.presentation"
                     :extension "pptx"}
@@ -659,7 +666,17 @@
                            ;; So the pane offers exactly the formats this
                            ;; surface has a writer for, from the one table
                            ;; that decides.
-                           :exports (vec (sort (keys (get export-formats k))))})
+                           :exports (vec (sort (keys (get export-formats k))))
+                           ;; Which of those write something other than the
+                           ;; document, so the pane does not offer a button
+                           ;; that refuses. The role is per item and this
+                           ;; table is per kind, so the filtering is the
+                           ;; caller's — this says what to filter on.
+                           :owner-only-exports
+                           (->> (get export-formats k)
+                                (keep (fn [[format shape]]
+                                        (when (:owner-only? shape) format)))
+                                sort vec)})
                         kinds)
            :source (str (:source archive) " · 作成済み " (count created) " 件"
                         (when next-cursor " 以降あり"))))))
@@ -1781,6 +1798,30 @@
                  (str/replace #"^[.]+" "_"))]
     (str (if (str/blank? base) "document" base) "." extension)))
 
+(defn responses-workbook
+  "This form's answers as a one-tab workbook.
+
+  The bridge between `forms.responses`, which returns a grid and stops, and
+  `sheets`, which is what a grid is for. Both are already here, which is why
+  the join lives in this application rather than making `forms` depend on
+  `sheets`.
+
+  A snapshot, not a link. Google Forms keeps its sheet updated as answers
+  arrive; this is the responses at the moment it was asked for, and calling
+  it a linked spreadsheet would be describing a feature that is not here."
+  [form id]
+  (let [rows (forms-responses/rows-with-header
+              form (get-in (store/snapshot) (submissions-path id) []))]
+    (sheets/add-tab
+     (sheets/workbook id {:sheets/title (:forms/title form)})
+     (reduce-kv (fn [tab r cells]
+                  (reduce-kv (fn [tab c value]
+                               (sheets/put-cell tab (inc r) (inc c) value))
+                             tab
+                             (vec cells)))
+                (sheets/tab "回答" {:sheets/title "回答"})
+                (vec rows)))))
+
 (defn export
   "One document in `format`, as bytes plus what to call them.
 
@@ -1799,15 +1840,29 @@
                        {:type :drive/unsupported-format
                         :format format
                         :available (vec (sort (keys available)))})))
+     ;; A format that writes something other than the document is asked
+     ;; about separately. `readable!` answers whether this principal may have
+     ;; the *form*; a viewer of a form may not have its responses, and a
+     ;; download route inheriting the document's permission would be the
+     ;; quietest possible way to hand them over.
+     (when (:owner-only? shape) (owned! actor id))
      (let [resource (:resource (content id actor object-store))
            text (case format
                   "edn" (pr-str (stored-envelope (get kinds kind) resource))
                   "md" (docs-md/write resource)
-                  "csv" (let [tab-id (or tab (first (sort (keys (:sheets/tabs resource)))))]
-                          (or (sheets-csv/workbook->csv resource tab-id)
-                              (throw (ex-info (str "タブ " (pr-str tab-id) " はありません。")
-                                              {:type :drive/not-found :tab tab-id
-                                               :tabs (vec (sort (keys (:sheets/tabs resource))))}))))
+                  "csv" (if (= :forms kind)
+                          ;; Responses, not questions. Through a workbook
+                          ;; rather than joining strings here, so the quoting
+                          ;; is `sheets.csv`'s one implementation of it — an
+                          ;; answer containing a comma or a newline is
+                          ;; ordinary, and a second escaping routine is a
+                          ;; second place to get it wrong.
+                          (sheets-csv/workbook->csv (responses-workbook resource id) "回答")
+                          (let [tab-id (or tab (first (sort (keys (:sheets/tabs resource)))))]
+                            (or (sheets-csv/workbook->csv resource tab-id)
+                                (throw (ex-info (str "タブ " (pr-str tab-id) " はありません。")
+                                                {:type :drive/not-found :tab tab-id
+                                                 :tabs (vec (sort (keys (:sheets/tabs resource))))})))))
                   nil)]
        {:media-type (:media-type shape)
         :filename (safe-filename (:drive/title item) (:extension shape))
@@ -1817,6 +1872,38 @@
                  "pptx" (slides-pptx/pptx-bytes resource)
                  "xlsx" (sheets-xlsx/xlsx-bytes resource)
                  (.getBytes ^String text StandardCharsets/UTF_8))}))))
+
+(defn responses-sheet!
+  "Put this form's answers into a new workbook in the Drive.
+
+  What Google Forms means by sending responses to a spreadsheet, with one
+  difference stated in the name and in the document it produces: **this is a
+  snapshot.** Theirs stays up to date as answers arrive; this is what had
+  been collected when it was asked for. Keeping it current would mean every
+  submission writing a second document — a new version, charged to the
+  owner's quota, on a document somebody may be editing.
+
+  Owner-only for the same reason the CSV is: it is the answers, not the
+  questions.
+
+  A new document each time rather than overwriting the last one. Two
+  snapshots of different days are two things somebody may want, and
+  silently replacing the earlier one would destroy a document the owner
+  never asked to lose."
+  ([id actor] (responses-sheet! id actor (store-instance)))
+  ([id actor object-store]
+   (let [_ (owned! actor id)
+         {:keys [form]} (readable-form! id actor object-store)
+         item (ws/item (:workspace (locate (store/snapshot) actor id)) id)
+         title (str (:drive/title item) " の回答 " (store/now))
+         created (create! :sheets title actor object-store)
+         sheet-id (:id (:item created))
+         workbook (assoc (responses-workbook form id)
+                         :sheets/id sheet-id
+                         :sheets/title (:name (:item created)))
+         target (writable! actor sheet-id)]
+     (write-resource! target sheet-id actor object-store workbook
+                      (:drive/object-ref (:item target))))))
 
 (defn- office-parts
   "The entry names of `bytes` if they are a zip, else nil.
