@@ -332,6 +332,10 @@
     const requestedView = location.hash.slice(1) || 'chat';
     let appUnlocked = false;
     let appBootstrapped = false;
+    // Views whose data is public, so the Passkey gate would protect nothing.
+    // `storage` reads public Filecoin chain state and computes a PieceCID —
+    // there is no workspace content in it. Everything else stays gated.
+    const publicViews = new Set(['settings', 'storage']);
     let currentView = 'settings';
     // Assigned once the worker surface is defined further down; showView runs
     // before that, so it must not name the worker helpers directly.
@@ -346,7 +350,7 @@
       ).format(date);
     };
     const showView = (name) => {
-      if (!appUnlocked && name !== 'settings') name = 'settings';
+      if (!appUnlocked && !publicViews.has(name)) name = 'settings';
       $$('.local-nav__item').forEach((item) => item.setAttribute(
         'aria-current', item.dataset.view === name ? 'page' : 'false'));
       $$('.view').forEach((panel) => { panel.hidden = panel.dataset.viewPanel !== name; });
@@ -675,6 +679,48 @@
       $('#drive-count').textContent = data.count || data.items.length;
       $('#drive-source').textContent = data.source;
     };
+    const renderFilecoin = (data) => {
+      const list = $('#storage-list'); list.replaceChildren();
+      const val = (v) => (v && typeof v === 'object' && v.error) ? `取得失敗: ${v.error}` : String(v ?? '—');
+      const rows = [
+        ['Chain height', val(data['chain-height']), 'live'],
+        ['Network', `${val(data['chain-network-name'])} · chainId ${val(data['chain-id'])}`, 'live'],
+        ['PDP data sets', val(data['pdp-next-data-set-id']), 'live'],
+        ['Challenge finality', `${val(data['pdp-challenge-finality'])} epochs`, 'live'],
+        ['Staged pieces', String((data['staged-pieces'] || []).length), 'local'],
+        ['Deals', '未実装', 'warn']
+      ];
+      rows.forEach(([title, meta, kind]) =>
+        list.append(listItem(title, meta, kind === 'warn' ? '未実装' : kind, kind === 'warn')));
+      const sample = data.sample || {};
+      setDetail($('#storage-detail'), 'PieceCID v2 · FRC-0069',
+        sample.cid || 'PieceCID 未計算',
+        'このアプリのプロセス内で計算した実際の PieceCID です。provider も資金も'
+          + '不要で、Filecoin の識別子だけを先に確定できます。',
+        [['対象', sample.text], ['元サイズ', bytes(sample.bytes)],
+         ['tree height', String(sample.height ?? '—')],
+         ['zero padding', `${sample.padding ?? '—'} B`],
+         ['padded size', bytes(sample['padded-size'])],
+         ['PDPVerifier', data['pdp-verifier']],
+         ['PDPVerifier (f4)', data['pdp-verifier-f4']],
+         ['Warm Storage', data['warm-storage']],
+         ['Filecoin Pay', data['filecoin-pay']],
+         ['Retrieval', data['retrieval-domain']]]);
+      $('#storage-count').textContent = rows.filter(([, , k]) => k === 'live').length;
+      $('#storage-source').textContent =
+        `${val(data['chain-network-name'])} · height ${val(data['chain-height'])} · StateCall (無料・オンチェーン書き込みなし)`;
+      $('#storage-write-notice').hidden = data['write-status'] !== 'not-implemented';
+    };
+    // Loaded outside bootstrapApp on purpose: bootstrapApp only runs once a
+    // Passkey is enrolled, and this endpoint needs no session. Gating the load
+    // behind the gate would render the panel and leave it empty forever.
+    const loadFilecoin = () => fetch('/api/filecoin')
+      .then((r) => r.ok ? r.json() : null)
+      .then((d) => { if (d) renderFilecoin(d); return Boolean(d); })
+      .catch(() => {
+        $('#storage-source').textContent = 'Filecoin に接続できません。';
+        return false;
+      });
     const renderProjects = (data) => {
       const list = $('#project-list'); list.replaceChildren();
       data.items.forEach((item) => list.append(listItem(
@@ -900,14 +946,16 @@
         data['authenticated?'] && data.user?.['passkey-enrolled?']);
       appUnlocked = passkeyReady;
       $$('.local-nav__item').forEach((item) => {
-        item.disabled = !passkeyReady && item.dataset.view !== 'settings';
+        item.disabled = !passkeyReady && !publicViews.has(item.dataset.view);
         item.setAttribute('aria-disabled', String(item.disabled));
       });
       document.body.dataset.identityGate = passkeyReady ? 'ready' : 'required';
       $('#passkey-gate-notice').hidden = passkeyReady;
       if (!passkeyReady) {
-        showView('settings');
-        $('#current-view').textContent = 'Passkey 登録';
+        // a public view the user actually asked for stays put
+        showView(publicViews.has(requestedView) ? requestedView : 'settings');
+        $('#current-view').textContent =
+          currentView === 'storage' ? 'Storage' : 'Passkey 登録';
         $('#workspace-status').textContent = 'Passkey 登録が必要です';
       } else {
         bootstrapApp();
@@ -1303,6 +1351,9 @@
         : `${initialParams.get('provider')} の接続を完了できませんでした。`;
     }
     loadIdentity();
+    // after every const above is defined — calling this next to the initial
+    // showView() would hit `Cannot access 'loadFilecoin' before initialization`
+    loadFilecoin();
     $$('.view-switcher button').forEach((button) => button.addEventListener('click', () => {
       $$('.view-switcher button').forEach((item) =>
         item.setAttribute('aria-pressed', item === button ? 'true' : 'false'));
@@ -1348,6 +1399,7 @@
         (nav-item "projects" "Projects" "▦" "projects-count")
         (nav-item "drive" "Drive" "◇" "drive-count")
         (nav-item "scheduler" "Scheduler" "○" "scheduler-count")
+        (nav-item "storage" "Storage" "◈" "storage-count")
         (nav-item "settings" "Settings" "⚙" nil)]
        [:div {:class "sidebar__status"}
         [:strong "● ローカルモード"]
@@ -1507,6 +1559,24 @@
             [:li {:class "skeleton"}]]]
           [:article {:class "record-detail" :id "calendar-detail" :aria-live "polite"}
            [:div {:class "empty-state"} "予定を読み込んでいます。"]]]]
+        [:section {:class "view" :data-view-panel "storage" :hidden true}
+         (view-header "Storage"
+                      (str "kotoba-lang/cloud-filecoin の PieceCID v2 でファイルを"
+                           "アドレス指定し、Filecoin mainnet の PDP 状態を直接読みます。"))
+         [:p {:class "source-note"} [:span {:class "source-dot"}]
+          [:span {:id "storage-source"} "Filecoin mainnet に接続中…"]]
+         [:div {:class "security-callout" :id "storage-write-notice"
+                :role "status" :aria-live "polite"}
+          [:strong "書き込みは未実装です。"]
+          " このアプリは内容の PieceCID を計算して待機領域に保管し、"
+          "チェーン上の状態を読みますが、ストレージ取引は作成しません。"
+          "provider の転送 API と資金が必要です。"]
+         [:div {:class "record-browser"}
+          [:div {:class "record-list"}
+           [:ul {:class "record-list__items" :id "storage-list"}
+            [:li {:class "skeleton"}]]]
+          [:article {:class "record-detail" :id "storage-detail" :aria-live "polite"}
+           [:div {:class "empty-state"} "Filecoin の状態を読み込んでいます。"]]]]
         [:section {:class "view" :data-view-panel "settings" :hidden true}
          (view-header "Settings" "Cloud Itonami の組織・ユーザーと、外部サービスへの委任接続を管理します。")
          [:p {:class "visually-hidden" :id "identity-status"

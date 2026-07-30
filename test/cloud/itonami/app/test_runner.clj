@@ -2,10 +2,12 @@
   (:require [clojure.test :as test]
             [cloud.itonami.app.core-test]
             [cloud.itonami.app.fleet-test]
+            [cloud.itonami.app.filecoin-test]
             [cloud.itonami.app.worker-http-test]))
 
 (def ^:private namespaces
   '[cloud.itonami.app.core-test
+    cloud.itonami.app.filecoin-test
     cloud.itonami.app.fleet-test
     cloud.itonami.app.worker-http-test])
 

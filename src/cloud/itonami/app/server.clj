@@ -2,6 +2,7 @@
   (:require [clojure.data.json :as json]
             [clojure.string :as str]
             [cloud.itonami.app.config :as config]
+            [cloud.itonami.app.filecoin :as filecoin]
             [cloud.itonami.app.identity :as identity]
             [cloud.itonami.app.relay :as relay]
             [cloud.itonami.app.service :as service]
@@ -170,6 +171,13 @@
             (and (= method "GET") (= path "/health"))
             (send! exchange 200 {:ok true :service "cloud-itonami-app"
                                  :schema "cloud.itonami.app.health.v1"})
+
+            ;; Public like /health: every value returned is a read of public
+            ;; chain state or a pure PieceCID computation. Nothing here touches
+            ;; the workspace, so it is deliberately not behind require-session!.
+            (and (= method "GET") (= path "/api/filecoin"))
+            (send! exchange 200 (assoc (filecoin/status)
+                                       :sample (filecoin/sample)))
 
             (and (= method "GET") (= path "/api/state"))
             (send! exchange 200 (public-state config))
