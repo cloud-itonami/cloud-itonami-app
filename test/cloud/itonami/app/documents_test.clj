@@ -1429,6 +1429,43 @@
         (documents/grant! (:id item) bob "viewer" alice)
         (is (:bytes (documents/export (:id item) "edn" bob object-store)))))))
 
+(deftest a-workbook-exports-as-xlsx
+  (with-state
+    (fn [_ object-store]
+      (let [{:keys [item]} (documents/create! :sheets "売上" alice object-store)
+            payload (:payload (documents/content (:id item) alice object-store))
+            _ (save! (:id item)
+                     (assoc-in payload ["sheets/tabs" "sheet1" "sheets/cells"]
+                               {"[1 1]" {"sheets/value" "四半期"}
+                                "[2 2]" {"sheets/formula" "SUM(B1:B1)"}})
+                     alice object-store)
+            out (documents/export (:id item) "xlsx" alice object-store)]
+        (is (= "売上.xlsx" (:filename out)))
+        (is (str/includes? (:media-type out) "spreadsheetml.sheet"))
+        (is (= [0x50 0x4b] (mapv #(bit-and (int %) 0xff) (take 2 (:bytes out))))
+            "PK, so it is a zip")
+        (with-open [zip (java.util.zip.ZipInputStream.
+                         (java.io.ByteArrayInputStream. (:bytes out)))]
+          (let [entries (loop [acc []]
+                          (if-let [e (.getNextEntry zip)] (recur (conj acc (.getName e))) acc))]
+            (is (contains? (set entries) "[Content_Types].xml"))
+            (is (contains? (set entries) "xl/worksheets/sheet1.xml"))))))))
+
+(deftest only-a-workbook-is-offered-xlsx
+  (with-state
+    (fn [_ object-store]
+      (let [{:keys [item]} (documents/create! :docs "設計" alice object-store)
+            error (try (documents/export (:id item) "xlsx" alice object-store)
+                       (catch clojure.lang.ExceptionInfo e (ex-data e)))]
+        (is (= :drive/unsupported-format (:type error)))
+        (is (= ["edn"] (:available error))))
+      ;; And a workbook is offered exactly the three it has writers for.
+      (let [{:keys [item]} (documents/create! :sheets "売上" alice object-store)]
+        (is (= ["csv" "edn" "xlsx"]
+               (->> (documents/drive-view {:items []} alice)
+                    :kinds
+                    (some #(when (= "sheets" (:kind %)) (:exports %))))))))))
+
 ;; ── two editors, one document ───────────────────────────────────────────────
 
 (deftest a-save-from-a-version-that-has-moved-is-refused

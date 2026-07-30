@@ -190,9 +190,15 @@ idea what it is landing on top of. It lands through `create!` and then
 and the surface's own validator all apply to it. An imported deck that is not
 a deck is refused with the same code as a typed one.
 
-There is no xlsx and no docx. `spreadsheetml` and `wordprocessingml` do not
-exist in this workspace; `presentationml` does, which is why slides is the
-one surface with an office format.
+xlsx joined them, from `sheets.xlsx` on `ooxml` — the same division
+`slides.pptx` uses, and no `spreadsheetml` repository, because `ooxml`
+already knew what an xlsx was and what was left fitted in one namespace.
+Every cell is written as an inline string: refusing to guess on the way in
+and then guessing on the way out would be the same mistake arriving late.
+
+There is still no docx, and xlsx is export only. Reading one needs an XML
+parser plus the sharedStrings/styles/date-serial handling writing gets to
+skip.
 
 ### Two editors, one document
 

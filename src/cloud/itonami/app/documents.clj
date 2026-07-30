@@ -62,6 +62,7 @@
             [forms.validate :as forms-validate]
             [forms.wire :as forms-wire]
             [sheets.csv :as sheets-csv]
+            [sheets.xlsx :as sheets-xlsx]
             [sheets.model :as sheets]
             [sheets.validate :as sheets-validate]
             [sheets.wire :as sheets-wire]
@@ -200,6 +201,9 @@
   Keyed by surface so a request for a format a surface has no writer for is
   refused by name rather than by producing something empty."
   {:sheets {"csv" {:media-type "text/csv; charset=utf-8" :extension "csv"}
+            "xlsx" {:media-type
+                    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                    :extension "xlsx"}
             "edn" {:media-type "application/edn" :extension "edn"}}
    :docs {"edn" {:media-type "application/edn" :extension "edn"}}
    :forms {"edn" {:media-type "application/edn" :extension "edn"}}
@@ -1777,8 +1781,11 @@
                   nil)]
        {:media-type (:media-type shape)
         :filename (safe-filename (:drive/title item) (:extension shape))
-        :bytes (if (= "pptx" format)
-                 (slides-pptx/pptx-bytes resource)
+        :bytes (case format
+                 ;; The two that are already bytes; everything else was
+                 ;; built as text above.
+                 "pptx" (slides-pptx/pptx-bytes resource)
+                 "xlsx" (sheets-xlsx/xlsx-bytes resource)
                  (.getBytes ^String text StandardCharsets/UTF_8))}))))
 
 (defn import!
