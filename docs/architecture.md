@@ -117,6 +117,30 @@ somebody may be relying on, at a moment they did not choose, to solve a
 problem they had not noticed. A Drive that fills up and says so is the
 better of the two.
 
+### One page at a time
+
+The listing returned everything. `documents/page` returns `default-page-size`
+(50) and a `:next-cursor`, nil at the end so a caller stops by being told to
+rather than by asking again.
+
+**A keyset cursor, not an offset**, and the reason is specific to this list:
+it is ordered by last write, so saving anything moves that document to the
+front and shifts every offset after it. Offset paging would then show one
+document twice and skip another, silently. A cursor says where to continue
+from, which stays meaningful however the list moves — a document that jumps
+to the front is seen again at the top rather than lost from the middle. There
+is a test that saves the oldest document between two pages and checks nothing
+is seen twice.
+
+**`:limit` bounds the response, not the work.** Every workspace is still
+scanned and sorted, because a grant is recorded on the item rather than
+anywhere central and there is no index to consult. When the scan itself needs
+bounding the fix is the same index that would fix search.
+
+Only the created half is paged. The archive is eighty files that
+`workspace/drive-snapshot` has already capped, so a second cursor for a list
+that does not grow would be ceremony.
+
 ### Searching inside documents
 
 The Drive could filter a list of names. What a cell says, what a paragraph

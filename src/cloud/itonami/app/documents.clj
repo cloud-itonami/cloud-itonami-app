@@ -537,14 +537,64 @@
                        (all-workspaces state))]
     (concat own shared)))
 
+(def default-page-size
+  "How many documents a listing returns when the caller does not say.
+
+  Fifty, which is a number rather than a principle: enough that a household
+  Drive is one page and small enough that a large one does not arrive as a
+  single response."
+  50)
+
+(defn- cursor-of
+  "Where a page stops, as the sort key of its last entry.
+
+  A keyset cursor rather than an offset, and the reason is specific to this
+  list: it is ordered by last write, so saving anything moves that document
+  to the front and shifts every offset after it. Offset paging would then
+  show one document twice and skip another, silently. A cursor says \"after
+  this position\", which stays meaningful however the list moves — an item
+  that jumps to the front is seen again at the top rather than lost from the
+  middle."
+  [entry]
+  (str (:updated-at entry) "\u0000" (:id entry)))
+
+(defn- after-cursor [views cursor]
+  (if (str/blank? (str cursor))
+    views
+    (vec (drop-while #(not (neg? (compare (cursor-of %) (str cursor)))) views))))
+
 (defn documents
-  "Every document this principal can see, most recently written first.
+  "Documents this principal can see, most recently written first.
 
   By last write rather than by creation, because a list that does not move
   when something is saved is a list that cannot be used to find what was
-  just saved."
-  [state actor]
-  (newest-first (remove #(:drive/trashed? (:item %)) (visible-entries state actor))))
+  just saved.
+
+  `:limit` bounds the *response*, not the work. Every workspace is still
+  scanned and sorted, because a grant is recorded on the item rather than
+  anywhere central and there is no index to consult. A page is what a caller
+  receives; when the scan itself needs bounding the fix is the same index
+  that would fix search."
+  ([state actor] (documents state actor {}))
+  ([state actor {:keys [limit cursor]}]
+   (let [views (-> (remove #(:drive/trashed? (:item %)) (visible-entries state actor))
+                   newest-first
+                   (after-cursor cursor))
+         limit (or limit (count views))]
+     (vec (take limit views)))))
+
+(defn page
+  "One page of `documents`, with where the next one starts.
+
+  `:next-cursor` is nil at the end rather than a cursor that would return
+  nothing, so a caller stops by being told to rather than by asking again."
+  ([state actor] (page state actor {}))
+  ([state actor {:keys [limit cursor] :or {limit default-page-size}}]
+   (let [taken (documents state actor {:limit (inc limit) :cursor cursor})
+         more? (> (count taken) limit)
+         shown (vec (take limit taken))]
+     {:items shown
+      :next-cursor (when more? (cursor-of (peek shown)))})))
 
 (defn trashed
   "Everything this principal has trashed.
@@ -574,14 +624,20 @@
   The trash rides along rather than being fetched separately: it is the only
   place quota goes to be reclaimed, and a Drive that never shows it is one
   where nobody finds out why it is full."
-  [archive actor]
+  ([archive actor] (drive-view archive actor {}))
+  ([archive actor {:keys [limit cursor] :or {limit default-page-size}}]
   (let [state (store/snapshot)
-        created (documents state actor)
+        {created :items next-cursor :next-cursor} (page state actor {:limit limit
+                                                                     :cursor cursor})
         binned (trashed state actor)
         archived (mapv #(assoc % :origin "archive") (:items archive))]
     (assoc archive
            :schema schema
            :items (into created archived)
+           ;; Only the created half is paged. The archive is eighty files
+           ;; that `workspace/drive-snapshot` has already capped, so paging
+           ;; it too would be a second cursor for a list that does not grow.
+           :next-cursor next-cursor
            :trash binned
            :count (+ (count created) (count archived))
            :documents (count created)
@@ -597,7 +653,8 @@
                            ;; that decides.
                            :exports (vec (sort (keys (get export-formats k))))})
                         kinds)
-           :source (str (:source archive) " · 作成済み " (count created) " 件"))))
+           :source (str (:source archive) " · 作成済み " (count created) " 件"
+                        (when next-cursor " 以降あり"))))))
 
 ;; ── creating ────────────────────────────────────────────────────────────────
 

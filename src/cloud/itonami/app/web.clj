@@ -764,6 +764,14 @@
       } else {
         $('#drive-detail').replaceChildren(make('div', 'empty-state', 'ファイルを選択してください。'));
       }
+      // Only the first response carries the cursor; a later append keeps
+      // whatever the last page said.
+      if (data['next-cursor'] !== undefined) driveCursor = data['next-cursor'];
+      const more = $('#drive-more');
+      if (more) {
+        more.hidden = !driveCursor;
+        more.textContent = driveCursor ? 'さらに読み込む' : '';
+      }
       renderDriveCreateBar(data.kinds || []);
       renderDriveTrash(data.trash || []);
       const quota = data.quota;
@@ -1962,6 +1970,23 @@
       $('#scheduler-count').textContent = data.items.length;
       $('#calendar-source').textContent = `${data.source} · ${data.status}`;
     };
+    // Appended rather than replacing: a cursor says where to continue from,
+    // so a later page is more of the same list and not a different view of it.
+    let driveCursor = null;
+    const loadMoreDrive = async () => {
+      if (!driveCursor) return;
+      try {
+        const request = await fetch(
+          `/api/workspace/drive?cursor=${encodeURIComponent(driveCursor)}`);
+        const data = await request.json();
+        if (!request.ok) return;
+        const seen = new Set((driveData.items || []).map((i) => i.id));
+        const added = (data.items || []).filter((i) => !seen.has(i.id));
+        driveCursor = data['next-cursor'] || null;
+        renderDrive({...driveData, items:(driveData.items || []).concat(added),
+                     'next-cursor':driveCursor});
+      } catch (error) { /* the button simply stays */ }
+    };
     const loadWorkspace = async (name, renderer) => {
       try {
         const request = await fetch(`/api/workspace/${name}`);
@@ -2259,6 +2284,7 @@
       window.clearTimeout(contentSearchTimer);
       contentSearchTimer = window.setTimeout(() => runContentSearch(query), 300);
     });
+    $('#drive-more').addEventListener('click', loadMoreDrive);
     $('#drive-trash-empty').addEventListener('click', () => driveAction(
       '/api/workspace/drive/trash/empty', {}, 'ゴミ箱を空にしました。'));
     let identityState = null;
@@ -3140,7 +3166,8 @@
           [:span {:class "result-count" :id "drive-visible-count"} "読み込み中…"]]
          [:div {:class "record-browser"}
           [:div {:class "record-list"}
-           [:ul {:class "record-list__items" :id "drive-list"} [:li {:class "skeleton"}]]]
+           [:ul {:class "record-list__items" :id "drive-list"} [:li {:class "skeleton"}]]
+           [:button {:class "tool-button" :type "button" :id "drive-more" :hidden true}]]
           [:article {:class "record-detail" :id "drive-detail" :aria-live "polite"}
            [:div {:class "empty-state"} "ファイルを読み込んでいます。"]]]
          [:section {:class "sharing" :id "drive-found" :hidden true
