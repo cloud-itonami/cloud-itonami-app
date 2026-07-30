@@ -40,7 +40,6 @@
             [cloud.itonami.app.mailbox :as app-mailbox]
             [cloud.itonami.app.scheduler :as scheduler]
             [cloud.itonami.app.service :as service]
-            [cloud.itonami.app.scheduler :as scheduler]
             [cloud.itonami.app.store :as store]
             [cloud.itonami.app.web :as web]
             [cloud.itonami.app.worker :as worker]
@@ -815,7 +814,9 @@
     (let [session (mutation-session! exchange config)
           watcher? (= path "/api/agent/watchers")]
       (send! exchange 201
-             ((if watcher? scheduler/create-watcher! scheduler/create!)
+             ((if watcher?
+                scheduler/create-watcher!
+                scheduler/create-schedule!)
               config (read-json exchange) (:user-id session)))
       true)
 
@@ -2742,7 +2743,7 @@
                   id (id-from-path path
                                    #"/api/workspace/scheduler/events/([^/]+)/conflicts")]
               (send! exchange 200
-                     {:schema scheduler/schema :ok? true :id id
+                     {:schema scheduler/calendar-schema :ok? true :id id
                       :conflicts (scheduler/conflicts id (:user-id session))}))
 
             (and (= method "POST")

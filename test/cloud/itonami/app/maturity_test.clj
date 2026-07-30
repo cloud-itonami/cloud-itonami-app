@@ -123,7 +123,7 @@
     (try
       (reset! store/state (store/initial-state))
       (let [schedule
-            (scheduler/create!
+            (scheduler/create-schedule!
              configuration
              {:goal "Inspect the inbox" :interval-seconds 300}
              actor)
