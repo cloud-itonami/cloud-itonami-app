@@ -1207,6 +1207,37 @@
                    {:tab (:tab params)})]
               (send-bytes! exchange media-type filename bytes))
 
+            ;; The same shape as import: the body is the file, the name is
+            ;; in the query. Uploading is not importing — an import becomes
+            ;; a document of one of the four surfaces, and this stays bytes.
+            (and (= method "POST") (= path "/api/workspace/drive/upload"))
+            (let [session (require-app-session! exchange)
+                  params (query-params exchange)
+                  body (read-body-bytes exchange)]
+              (require-origin! exchange config)
+              (require-csrf! exchange session)
+              (send! exchange 200
+                     (documents/upload! (:filename params)
+                                        (:media-type params)
+                                        body
+                                        (:user-id session)
+                                        (documents/store-instance)
+                                        {:folder (:folder params)})))
+
+            ;; Served as an attachment with a fixed octet-stream type,
+            ;; whatever the file claims to be. Bytes uploaded by one person
+            ;; and served from this origin to another are stored XSS if the
+            ;; browser is allowed to decide they are HTML.
+            (and (= method "GET")
+                 (id-from-path path #"/api/workspace/drive/documents/([^/]+)/download"))
+            (let [session (require-app-session! exchange)
+                  out (documents/file-bytes
+                       (id-from-path path
+                                     #"/api/workspace/drive/documents/([^/]+)/download")
+                       (:user-id session))]
+              (.set (.getResponseHeaders exchange) "X-Content-Type-Options" "nosniff")
+              (send-bytes! exchange (:media-type out) (:filename out) (:bytes out)))
+
             ;; The body is the file. No multipart: one file per request with
             ;; the name in the query is the whole of what this needs, and a
             ;; multipart parser is a lot of surface to add for a boundary
@@ -1623,6 +1654,11 @@
                      ;; tree can hold.
                      :drive/invalid-move 409
                      :drive/not-a-folder 400
+                     ;; Asking a file for its document, or a document for
+                     ;; its bytes. The request was understood and is about
+                     ;; the wrong kind of thing.
+                     :drive/not-a-document 409
+                     :drive/not-a-file 409
                      ;; Restoring what is already current is a request that
                      ;; conflicts with the state, not a malformed one.
                      :drive/already-current 409

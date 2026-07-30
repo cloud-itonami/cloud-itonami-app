@@ -990,10 +990,45 @@
       // Marked, because creating in one puts the document in somebody
       // else's Drive and against their quota.
       (folderData.shared || []).forEach((folder) => nav.append(openable(folder, true)));
+      const upload = $('#drive-upload');
+      if (upload && !upload.dataset.wired) {
+        upload.dataset.wired = 'true';
+        upload.addEventListener('change', uploadFile);
+      }
       const add = make('button', 'tool-button', 'フォルダを作成');
       add.type = 'button';
       add.addEventListener('click', createFolder);
       nav.append(add);
+    };
+    const uploadFile = async () => {
+      const input = $('#drive-upload');
+      const file = input?.files?.[0];
+      if (!file) return;
+      const status = $('#drive-create-status');
+      status.textContent = `${file.name} をアップロードしています…`;
+      try {
+        // The body is the file and the name is in the query — the same
+        // shape import uses, and no multipart parser for a boundary string.
+        const query = new URLSearchParams({filename:file.name,
+                                           'media-type':file.type || ''});
+        if (driveFolder) query.set('folder', driveFolder);
+        const response = await fetch(`/api/workspace/drive/upload?${query}`, {
+          method:'POST',
+          // The same header every other authenticated write sends —
+          // `identityHeaders` names it, and inventing a second spelling
+          // here would be a request the server rejects for a reason nobody
+          // would look for in this function.
+          headers:{...identityHeaders(), 'Content-Type':'application/octet-stream'},
+          body:await file.arrayBuffer()});
+        const data = await response.json();
+        if (!response.ok) throw new Error(data?.error?.message || 'アップロードできませんでした。');
+        status.textContent = `${data.item.name} をアップロードしました。`;
+        input.value = '';
+        await loadFolders();
+        await loadWorkspace('drive', renderDrive);
+      } catch (error) {
+        status.textContent = error.message;
+      }
     };
     const createFolder = async () => {
       const status = $('#drive-create-status');
@@ -1865,6 +1900,18 @@
         return actions;
       }
 
+      // A file is bytes, not a document: there is nothing for the editors to
+      // open, so the pane offers the one thing that makes sense for it.
+      if (item['file?']) {
+        const download = make('a', 'tool-button', 'ダウンロード');
+        download.href = `/api/workspace/drive/documents/${encodeURIComponent(item.id)}/download`;
+        download.setAttribute('download', '');
+        row.append(download);
+        if (item.role === 'owner') row.append(trash);
+        actions.append(row, status, referencePanel(item), commentPanel(item));
+        if (item.role === 'owner') actions.append(sharingPanel(item, status));
+        return actions;
+      }
       const open = make('button', 'tool-button', driveEditor.open ? '再読み込み' : '編集');
       open.type = 'button';
       const save = make('button', 'tool-button', '保存');
@@ -5135,6 +5182,10 @@
           [:p {:class "drive-create__status" :id "drive-create-status" :aria-live "polite"}]]
          [:nav {:class "drive-folders" :id "drive-folders" :aria-label "フォルダ"}]
          [:div {:class "drive-folders"}
+          [:label {:class "visually-hidden" :for "drive-upload"} "ファイルをアップロード"]
+          ;; Any bytes: a PDF, an image, a zip. Not an import — an import
+          ;; becomes one of the four surfaces and this stays a file.
+          [:input {:class "workspace-search" :id "drive-upload" :type "file"}]
           [:label {:class "visually-hidden" :for "drive-folder-name"} "新しいフォルダの名前"]
           ;; An inline field rather than window.prompt, for the same reason
           ;; renaming uses one: a modal blocks the page to collect a single

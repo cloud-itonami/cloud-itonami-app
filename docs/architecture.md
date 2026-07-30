@@ -460,6 +460,59 @@ so the quoting is `sheets.csv`'s one implementation of it — an answer
 containing a comma or a newline is ordinary, and a second escaping routine is
 a second place to get it wrong.
 
+### Files that are not documents
+
+A Drive that could only hold the four surfaces could not hold a PDF, a
+photograph, or a zip — which is most of what people put in one. `upload!`
+takes arbitrary bytes and makes an item with a media type and no resource
+kind. `content` refuses it by name rather than handing a PDF to the EDN
+reader, which is what used to happen and produced *"unexpected character:
+%"* as a 500.
+
+**The reference is the content's PieceCID.**
+`cloud.itonami.app.filecoin/piece-ref` computes it, and `drive` never has to
+know what a PieceCID is because it lets the caller name the reference — its
+own docstring said "a content hash, a uuid, a path" from the start. Two
+people uploading the same file store one object.
+
+That is the whole feature and it is also the whole hazard, because two of
+`drive.object`'s safety rules assumed the uuid case:
+
+- **`write-item` refused a reference already in use.** Right when the caller
+  picks the name, impossible when the bytes pick it. It now allows reuse
+  when the bytes are the same bytes — compared against what is stored, not
+  taken on the caller's word, because a caller trusted to say "this is
+  content-addressed" is trusted with exactly what the guard exists to not
+  trust.
+- **`forget-item` deleted every reference the item held.** With sharing, that
+  destroys the other holder's file. It now takes `:keep-ref?`, and `purge!`
+  passes one built by scanning **every** workspace — the other holder may be
+  somebody else entirely, so a check scoped to one Drive would be correct
+  exactly until two people uploaded the same file, which is the case content
+  addressing exists for.
+
+Both are tested through the Drive: purging one holder leaves the other
+readable, purging the last one takes the bytes with it, and the same holds
+across two Drives.
+
+The quota is charged per item, not per object. Two items over one object
+cost twice even though the disk holds one copy — which is per-item
+accounting rather than disk accounting, and the number a person can act on.
+
+**An uploaded file is served as `application/octet-stream`, whatever it
+claims to be**, with `Content-Disposition: attachment` and
+`X-Content-Type-Options: nosniff`. Bytes uploaded by one person and served
+from this origin to another are stored XSS if the browser is allowed to
+decide they are HTML: a `text/html` upload opened from the Drive would run
+with this app's session. The declared type is kept on the item so the list
+can say what it is. The cost is that an image cannot be previewed inline —
+doing that safely means serving user bytes from a different origin, which is
+a decision about what this app may talk to and not one to make while adding
+uploads.
+
+An empty upload is refused: its PieceCID is the CID of nothing, shared by
+every empty upload anyone ever makes.
+
 ### Make a copy
 
 The operation a reader of a shared document actually needs. Until now the

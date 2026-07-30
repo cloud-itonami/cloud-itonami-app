@@ -49,6 +49,7 @@
             [clojure.java.io :as io]
             [clojure.string :as str]
             [cloud.itonami.app.capability :as capability]
+            [cloud.itonami.app.filecoin :as filecoin]
             [cloud.itonami.app.config :as config]
             [cloud.itonami.app.store :as store]
             [cloud.itonami.app.storj :as storj]
@@ -507,8 +508,18 @@
       :parent-id (when own? (:drive/parent-id item))
       :media-type (:drive/media-type item)
       :resource-kind (some-> kind str)
-      :kind (some-> (get resource-kinds kind) name)
-      :label (get-in kinds [(get resource-kinds kind) :label])
+      ;; An uploaded file has no resource kind: it is bytes with a media
+      ;; type, not one of the four surfaces. It is still an item, so it
+      ;; still needs a kind and a label the list can render — saying nothing
+      ;; would put a blank row in the Drive.
+      :kind (if kind (some-> (get resource-kinds kind) name) "file")
+      :label (if kind
+               (get-in kinds [(get resource-kinds kind) :label])
+               "ファイル")
+      ;; Whether this is something the editors can open at all. The pane
+      ;; asks before it offers an editor, rather than opening one on bytes
+      ;; that are not a document and failing at the first read.
+      :file? (nil? kind)
       :created-at (:drive/created-at item)
       ;; What a save has to echo back. The object reference of the current
       ;; version, which `write-item` guarantees is unique per version, so it
@@ -1040,6 +1051,13 @@
   ([id actor object-store]
    (let [{:keys [workspace owner own?] :as found} (locate (store/snapshot) actor id)
          _ (when-not found (refuse! {:reason :no-such-item :item-id id}))
+         ;; An uploaded file has no envelope. Without this the bytes reach
+         ;; `decode-stored`, which hands a PDF to the EDN or JSON reader and
+         ;; the caller gets "unexpected character: %" as a 500 — a parse
+         ;; error standing in for "that is not a document".
+         _ (when-not (:drive/resource-kind (ws/item workspace id))
+             (throw (ex-info "これはドキュメントではありません。ダウンロードしてください。"
+                             {:type :drive/not-a-document :item-id id})))
          result (object/read-item workspace object-store id actor)]
      (if (:ok? result)
        (let [item (ws/item workspace id)
@@ -1463,6 +1481,44 @@
            :item (item-view (ws/item restored id)
                             {:owner owner :own? (= owner actor) :role :owner})})))))
 
+(defn- shared-ref?
+  "A predicate over object references that something *other* than `item-id`
+  still points at.
+
+  Only meaningful because references can be content-derived: an uploaded
+  file's reference is its PieceCID, so two people holding the same PDF hold
+  the same reference and deleting it for one destroys it for the other.
+  Documents are unaffected — their references are uuids and no two items
+  ever share one — so this answers false for every one of them and costs a
+  scan nobody notices.
+
+  Every workspace, not just this one. The other holder may be somebody else
+  entirely; a check scoped to one Drive would be correct exactly until two
+  people uploaded the same file, which is the case content addressing exists
+  for.
+
+  `current` is the workspace as it stands mid-purge, so that a folder's
+  descendants already removed by earlier steps do not count as holders of
+  what they used to hold."
+  [current item-id]
+  (let [refs-of (fn [item]
+                  (into #{} (comp (map :drive.version/object-ref) (filter some?))
+                        (cons {:drive.version/object-ref (:drive/object-ref item)}
+                              (:drive/versions item))))
+        others (fn [ws]
+                 (->> (vals (:drive.workspace/items ws))
+                      (remove #(= item-id (:drive/id %)))
+                      (mapcat refs-of)))
+        ;; The Drive being purged is `current` — the in-flight value, not
+        ;; the stored copy. Earlier steps of this same purge have already
+        ;; removed items from it, and counting those as holders would keep
+        ;; the bytes of a folder's own contents alive for ever.
+        here (:drive.workspace/id current)
+        elsewhere (->> (all-workspaces (store/snapshot))
+                       (remove (fn [[_ ws]] (= here (:drive.workspace/id ws))))
+                       (mapcat (fn [[_ ws]] (others ws))))]
+    (into #{} (concat (others current) elsewhere))))
+
 (defn purge!
   "Delete a trashed document's bytes for good, and give the quota back.
 
@@ -1512,7 +1568,9 @@
                         ;; `forget-item` to forget and no quota to return.
                         forgotten (if (= :folder (:drive/kind child))
                                     {:ok? true :workspace ws :freed-bytes 0}
-                                    (object/forget-item ws object-store target actor))]
+                                    (object/forget-item
+                                     ws object-store target actor
+                                     {:keep-ref? (shared-ref? ws target)}))]
                     (if (:ok? forgotten)
                       (let [parent (or (:drive/parent-id child)
                                        (:drive.workspace/root-id ws))]
@@ -2187,6 +2245,107 @@
                              (vec cells)))
                 (sheets/tab "回答" {:sheets/title "回答"})
                 (vec rows)))))
+
+(def ^:private upload-media-type
+  "What an uploaded file is served as, whatever it claims to be.
+
+  Not the client's Content-Type. Bytes uploaded by one person and served
+  from this origin to another are stored XSS if the browser is allowed to
+  decide they are HTML — `text/html` with a script in it, opened from the
+  Drive, runs with this app's session. The declared type is kept on the item
+  so the list can say what it is; the response says
+  `application/octet-stream` and `Content-Disposition: attachment`, and the
+  browser downloads it instead of rendering it.
+
+  The cost is that an image cannot be previewed inline. Previewing safely
+  means serving user bytes from a different origin, which is a decision
+  about what this app is allowed to talk to and not one to make while adding
+  uploads."
+  "application/octet-stream")
+
+(defn upload!
+  "Put arbitrary bytes in `actor`'s Drive — a PDF, an image, a zip.
+
+  **The reference is the content's PieceCID**, so the store is content
+  addressed: `cloud.itonami.app.filecoin/piece-ref` computes it, and `drive`
+  never has to know what a PieceCID is because it lets the caller name the
+  reference. Two people uploading the same file store one object.
+
+  That has two consequences the rest of this file has to honour, and both
+  are handled rather than hoped for. `drive.object/write-item` allows a
+  reference already in use only when the bytes are identical, which is
+  exactly this case and is checked against the store rather than asserted.
+  And `purge!` passes `:keep-ref?`, so deleting one holder's copy does not
+  delete the bytes another holder still points at.
+
+  No resource kind, no envelope, no validator: this is not one of the four
+  surfaces and pretending it is would mean a document whose `:docs/blocks`
+  is a PDF. `content` refuses it and says so."
+  ([filename media-type bytes actor] (upload! filename media-type bytes actor
+                                              (store-instance) {}))
+  ([filename media-type bytes actor object-store]
+   (upload! filename media-type bytes actor object-store {}))
+  ([filename media-type bytes actor object-store {:keys [folder]}]
+   (when (str/blank? (str actor))
+     (throw (ex-info "作成者を特定できません。" {:type :identity/unauthenticated})))
+   (when (or (nil? bytes) (zero? (alength ^bytes bytes)))
+     (throw (ex-info "空のファイルはアップロードできません。"
+                     {:type :drive/invalid-document
+                      :problems [{:code ":file/empty"
+                                  :message "空のファイルはアップロードできません。"}]})))
+   (locking write-lock
+     (let [{:keys [workspace owner parent]}
+           (locate-folder! (store/snapshot) actor folder)
+           id (store/new-id "file")
+           title (or (not-empty (str/trim (str filename))) "無題のファイル")
+           created-at (store/now)
+           staged (ws/create-file workspace id parent
+                                  {:drive/title title
+                                   ;; What it says it is, kept for the list.
+                                   ;; What it is *served* as is decided at
+                                   ;; the response — see `upload-media-type`.
+                                   :drive/media-type (or (not-empty (str media-type))
+                                                         upload-media-type)
+                                   :drive/created-at created-at}
+                                  actor)
+           staged (cond-> staged
+                    (not= owner actor)
+                    (assoc-in [:drive.workspace/items id :drive/permissions]
+                              {owner :owner actor :editor}))
+           written (object/write-item staged object-store id actor bytes
+                                      {:object-ref (filecoin/piece-ref bytes)
+                                       :created-at created-at})]
+       (if (:ok? written)
+         (do (store/transact! assoc-in (workspace-path owner) (:workspace written))
+             {:schema schema :ok? true
+              :item (item-view (ws/item (:workspace written) id)
+                               {:owner owner :own? (= owner actor)
+                                :role (ws/effective-role (:workspace written) id actor)})})
+         (refuse! written))))))
+
+(defn file-bytes
+  "An uploaded file's bytes, read back through the ACL.
+
+  Through `drive.object/read-item`, which is what answers whether this
+  principal may have them — the same seam every document read goes through,
+  for the same reason."
+  ([id actor] (file-bytes id actor (store-instance)))
+  ([id actor object-store]
+   (let [{:keys [workspace]} (locate (store/snapshot) actor id)
+         item (when workspace (ws/item workspace id))]
+     (when-not item (refuse! {:reason :no-such-item :item-id id}))
+     (when (:drive/resource-kind item)
+       (throw (ex-info "これはドキュメントです。書き出しを使ってください。"
+                       {:type :drive/not-a-file :item-id id})))
+     (let [result (object/read-item workspace object-store id actor)]
+       (if (:ok? result)
+         {:schema schema :ok? true :id id
+          :filename (:drive/title item)
+          :declared-media-type (:drive/media-type item)
+          :media-type upload-media-type
+          :object-ref (:drive/object-ref item)
+          :bytes (:bytes result)}
+         (refuse! result))))))
 
 (defn copy!
   "A new document with this one's contents, in `actor`'s Drive.
