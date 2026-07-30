@@ -504,14 +504,43 @@ claims to be**, with `Content-Disposition: attachment` and
 `X-Content-Type-Options: nosniff`. Bytes uploaded by one person and served
 from this origin to another are stored XSS if the browser is allowed to
 decide they are HTML: a `text/html` upload opened from the Drive would run
-with this app's session. The declared type is kept on the item so the list
-can say what it is. The cost is that an image cannot be previewed inline —
-doing that safely means serving user bytes from a different origin, which is
-a decision about what this app may talk to and not one to make while adding
-uploads.
+with this app's session.
+
+**Except for a closed list of raster image types, which are served inline.**
+There is no execution context in a PNG — a raster format cannot carry
+script — and `nosniff` forbids the browser from looking for a second opinion
+about what the bytes are, so a `.png` full of HTML stays a broken image
+rather than becoming a page. The declared type is trusted only to *select*
+from that set, never to label an arbitrary response.
+
+**SVG is deliberately not on it.** It is an image everywhere except in the
+way that matters: it is XML, it may contain `<script>`, and a browser runs
+that when the SVG is a document rather than an `<img>` source. Admitting it
+because it is "an image" is the mistake the list exists to not make. The
+tests name it, along with `text/html`, `application/xhtml+xml` and a
+mis-cased `IMAGE/PNG `.
+
+The preview is a separate route from the download rather than a query
+parameter on it, so the inline path cannot be reached for a `.html` by
+adding `?disposition=inline`; it refuses anything `file-bytes` did not mark
+inline, and carries `Content-Security-Policy: default-src 'none'; sandbox`
+as well, so even a type that slipped through the list could load and run
+nothing.
+
+I originally wrote that inline preview needed a second origin. That is true
+of arbitrary types and not of this closed set, and the earlier note was too
+broad.
 
 An empty upload is refused: its PieceCID is the CID of nothing, shared by
 every empty upload anyone ever makes.
+
+**Search does not look inside a file**, and skips it by asking rather than by
+throwing. The extractors are per-surface and a file has no surface, so there
+is nothing to read; `search` already caught the exception `content` raises,
+but that catch was written for a document whose bytes are gone — which is
+exceptional — and a Drive full of PDFs is not. Control flow through an
+exception stops being noticed the moment it becomes routine. A file is still
+found by its name.
 
 ### Make a copy
 
