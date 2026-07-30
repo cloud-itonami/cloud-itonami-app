@@ -6,6 +6,7 @@
             [cloud.itonami.app.documents :as documents]
             [cloud.itonami.app.executor :as executor]
             [cloud.itonami.app.filecoin :as filecoin]
+            [cloud.itonami.app.funding :as funding]
             [cloud.itonami.app.identity :as identity]
             [cloud.itonami.app.organism-gateway :as organism-gateway]
             [cloud.itonami.app.relay :as relay]
@@ -354,6 +355,49 @@
             (and (= method "GET") (= path "/api/filecoin"))
             (send! exchange 200 (assoc (filecoin/status)
                                        :sample (filecoin/sample)))
+
+            ;; ---- funding accounts (what the payment authority stands on) ----
+            ;; These are reads and writes of the organization's own record, not
+            ;; an outward authority, so they are not behind an `:authorities`
+            ;; switch. They still require the session, the origin check and the
+            ;; CSRF token: linking an account changes which account a settlement
+            ;; would be drawn on, and recording a balance changes whether the
+            ;; funds gate opens.
+
+            (and (= method "GET") (= path "/api/funding"))
+            (let [session (require-app-session! exchange)]
+              (send! exchange 200 (funding/snapshot config session)))
+
+            (and (= method "POST") (= path "/api/funding/accounts"))
+            (let [session (require-app-session! exchange)]
+              (require-origin! exchange config)
+              (require-csrf! exchange session)
+              (send! exchange 200
+                     (funding/link-account! session (read-json exchange))))
+
+            ;; A balance is RECORDED, never fetched: this app has no bank
+            ;; connector, and the `:as-of` in the body is the instant the bank
+            ;; stated, not the instant of this request. See
+            ;; `cloud.itonami.app.funding` for why that distinction is load-bearing.
+            (and (= method "POST")
+                 (re-matches #"/api/funding/accounts/([^/]+)/balance" path))
+            (let [session (require-app-session! exchange)
+                  [_ account-id] (re-matches
+                                  #"/api/funding/accounts/([^/]+)/balance" path)]
+              (require-origin! exchange config)
+              (require-csrf! exchange session)
+              (send! exchange 200
+                     (funding/record-balance! session account-id
+                                              (read-json exchange))))
+
+            (and (= method "POST")
+                 (re-matches #"/api/funding/accounts/([^/]+)/close" path))
+            (let [session (require-app-session! exchange)
+                  [_ account-id] (re-matches
+                                  #"/api/funding/accounts/([^/]+)/close" path)]
+              (require-origin! exchange config)
+              (require-csrf! exchange session)
+              (send! exchange 200 (funding/close-account! session account-id)))
 
             ;; ---- governed outward authorities (ADR-2607300300) ----
             ;; Every stage requires an app session, the origin check and the CSRF
@@ -1118,6 +1162,55 @@
                      :relay/invalid-destination 400
                      :relay/request-failed
                      (or (:status (ex-data error)) 502)
+
+                     ;; ---- authority spine ----
+                     ;; Without these an authority that is simply switched off
+                     ;; answers 502, which reads as "this server is broken" when
+                     ;; the truth is "this surface is deliberately not on".
+                     :authority/disabled 501
+                     :authority/unknown-authority 404
+                     :authority/proposal-not-found 404
+                     ;; The Passkey assertion did not authorise THIS proposal.
+                     :authority/approval-mismatch 403
+                     :authority/domain-invalid 500
+                     :authority/material-invalid 500
+
+                     ;; ---- funding accounts ----
+                     :funding/institution-missing 400
+                     :funding/currency-unsupported 400
+                     :funding/account-type-invalid 400
+                     :funding/amount-invalid 400
+                     :funding/as-of-invalid 400
+                     :funding/source-invalid 400
+                     :funding/account-not-found 404
+                     ;; Understood, but at odds with what the account already
+                     ;; says it is — a conflict, not a malformed request.
+                     :funding/currency-mismatch 409
+                     :funding/account-inactive 409
+
+                     ;; ---- payment settlement ----
+                     :payment/op-unsupported 400
+                     :payment/payee-missing 400
+                     :payment/reference-missing 400
+                     :payment/amount-invalid 400
+                     :payment/currency-mismatch 409
+                     :payment/account-not-linked 409
+                     :payment/account-inactive 409
+                     :payment/duplicate-settlement 409
+                     ;; The balance is missing or too old to answer "will this
+                     ;; clear?". The request is well-formed; the precondition is
+                     ;; not met, and recording a balance resolves it.
+                     :payment/balance-unknown 409
+                     ;; Exactly what 402 is for.
+                     :payment/insufficient-funds 402
+                     ;; Held by the cross-domain SIM-swap invariant, not by
+                     ;; anything wrong with the request.
+                     :payment/spend-hold 423
+                     ;; Only reachable if the server failed to compute a fact it
+                     ;; owns — `authority.api` injects both on every review.
+                     :payment/posture-unknown 500
+                     :payment/settlement-history-unknown 500
+
                      502)
                    {:error {:type (name (or (:type (ex-data error))
                                            :provider/error))
