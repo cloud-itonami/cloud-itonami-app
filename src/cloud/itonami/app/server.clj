@@ -26,6 +26,7 @@
             [cloud.itonami.app.organism-gateway :as organism-gateway]
             [cloud.itonami.app.relay :as relay]
             [cloud.itonami.app.repos :as business-repos]
+            [cloud.itonami.app.mailbox :as app-mailbox]
             [cloud.itonami.app.scheduler :as scheduler]
             [cloud.itonami.app.service :as service]
             [cloud.itonami.app.store :as store]
@@ -1192,11 +1193,64 @@
               (require-app-session! exchange)
               (send! exchange 200 (workspace/snapshot)))
 
+            ;; The archive, as this reader has marked it. Not through
+            ;; `workspace/snapshot`: that cache is keyed per server, and what
+            ;; one person has read is not what the next one has.
             (and (= method "GET") (= path "/api/workspace/inbox"))
-            (do
-              (require-app-session! exchange)
+            (let [session (require-app-session! exchange)
+                  params (query-params exchange)]
               (send! exchange 200
-                     (workspace/snapshot :inbox workspace/inbox-snapshot)))
+                     (app-mailbox/view (:user-id session)
+                                       {:label (:label params)
+                                        :query (:q params)
+                                        :unread? (when (= "true" (:unread params)) true)})))
+
+            (and (= method "GET")
+                 (id-from-path path #"/api/workspace/inbox/threads/([^/]+)"))
+            (let [session (require-app-session! exchange)]
+              (send! exchange 200
+                     (app-mailbox/thread
+                      (id-from-path path #"/api/workspace/inbox/threads/([^/]+)")
+                      (:user-id session))))
+
+            (and (= method "POST")
+                 (id-from-path path #"/api/workspace/inbox/messages/([^/]+)/read"))
+            (let [session (require-app-session! exchange)
+                  request (read-json exchange)]
+              (require-origin! exchange config)
+              (require-csrf! exchange session)
+              (send! exchange 200
+                     (app-mailbox/set-read!
+                      (id-from-path path #"/api/workspace/inbox/messages/([^/]+)/read")
+                      ;; Absent means read: the button that sends nothing is
+                      ;; the one that marks it read.
+                      (if (contains? request :read?) (:read? request) true)
+                      (:user-id session))))
+
+            (and (= method "POST")
+                 (id-from-path path #"/api/workspace/inbox/messages/([^/]+)/label"))
+            (let [session (require-app-session! exchange)
+                  request (read-json exchange)]
+              (require-origin! exchange config)
+              (require-csrf! exchange session)
+              (send! exchange 200
+                     (app-mailbox/set-label!
+                      (id-from-path path #"/api/workspace/inbox/messages/([^/]+)/label")
+                      (:label request)
+                      (if (contains? request :on?) (:on? request) true)
+                      (:user-id session))))
+
+            (and (= method "POST")
+                 (id-from-path path #"/api/workspace/inbox/messages/([^/]+)/trash"))
+            (let [session (require-app-session! exchange)
+                  request (read-json exchange)]
+              (require-origin! exchange config)
+              (require-csrf! exchange session)
+              (send! exchange 200
+                     (app-mailbox/set-trashed!
+                      (id-from-path path #"/api/workspace/inbox/messages/([^/]+)/trash")
+                      (if (contains? request :trashed?) (:trashed? request) true)
+                      (:user-id session))))
 
             (and (= method "GET") (= path "/api/workspace/projects"))
             (do
@@ -2378,6 +2432,13 @@
                      :scheduler/invalid-event 422
                      :scheduler/unknown-rsvp 400
                      :scheduler/no-such-person 400
+                     ;; ---- mail ----
+                     :mail/not-found 404
+                     :mail/invalid-label 400
+                     ;; Asking for `:inbox` or `:trash` as a label. The
+                     ;; request was understood and names a place rather than
+                     ;; a label, which is a bad request and not a refusal.
+                     :mail/reserved-label 400
                      :scheduler/organizer-is-not-an-attendee 400
                      :oauth/unsupported 400
                      :oauth/missing-code 400

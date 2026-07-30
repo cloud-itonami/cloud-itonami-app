@@ -62,7 +62,8 @@
                    (remove #(or (str/blank? %)
                                 (re-find #"[(\[+\\]" %)
                                 (contains? #{"api" "workspace" "drive" "documents"
-                                             "scheduler" "events"} %)))
+                                             "scheduler" "events" "inbox"
+                                             "messages"} %)))
                    (str/join "/"))))
        (remove str/blank?)
        distinct
@@ -87,7 +88,8 @@
 (deftest every-workspace-route-is-reachable-from-the-interface
   (let [server (source "server.clj")
         web (source "web.clj")
-        families ["/api/workspace/drive" "/api/workspace/scheduler"]
+        families ["/api/workspace/drive" "/api/workspace/scheduler"
+                  "/api/workspace/inbox"]
         found (mapcat #(:routes (unreached server web %)) families)
         missing (mapcat #(:unreached (unreached server web %)) families)]
     (is (seq found) "the routes were found at all")

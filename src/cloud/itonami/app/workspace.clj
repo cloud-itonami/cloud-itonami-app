@@ -142,15 +142,39 @@
     (decode-transfer (or body "") (:content-transfer-encoding headers)
                      (charset-from content-type))))
 
-(defn- message-snippet [content]
-  (let [body (text-part content)]
-    (-> (or body "")
-        (str/replace #"(?s)<[^>]+>" " ")
-        (str/replace #"[\r\n\t ]+" " ")
-        str/trim
-        (#(subs % 0 (min 220 (count %)))))))
+(defn- message-text
+  "The message's body as one line of readable text."
+  [content]
+  (-> (or (text-part content) "")
+      (str/replace #"(?s)<[^>]+>" " ")
+      (str/replace #"[\r\n\t ]+" " ")
+      str/trim))
 
-(defn inbox-snapshot []
+(defn- message-snippet
+  "The first 220 characters, which is what a list row has room for.
+
+  Only for display. The message itself keeps the whole body — this used to
+  be all there was, and `mail.mailbox/search` reads what is in the message,
+  so a word in the fifth paragraph was not findable by anything: not by the
+  interface, which filtered this string, and not by the model, which had
+  been handed this string as the body."
+  [content]
+  (let [text (message-text content)]
+    (subs text 0 (min 220 (count text)))))
+
+(defn inbox-mailbox
+  "The archive's 受信トレイ as a `mail.mailbox`.
+
+  Lifted out of `inbox-snapshot`, which built exactly this and then threw it
+  away to return a list of view maps. The box is what `mail.mailbox` answers
+  questions about — threads, labels, unread counts, search over the body —
+  and none of those were askable while the only thing that left this
+  namespace was the projection.
+
+  Read-only, and the same for everyone: these are files on disk. What one
+  person has read, starred or filed is not in here — that is per principal
+  and lives in `cloud.itonami.app.mailbox`, laid over the top."
+  []
   (let [directory (io/file (archive-root) "mail/受信トレイ")
         files (if (.isDirectory directory)
                 (->> (.listFiles directory)
@@ -174,7 +198,12 @@
                               :from (:email sender)
                               :to ["local@cloud-itonami.invalid"]
                               :subject (or (not-empty (:subject headers)) "(件名なし)")
-                              :text (or (not-empty snippet) "本文はアーカイブされています。")
+                              ;; The body, not the snippet. `mailbox/search`
+                              ;; searches the message's parts, so what goes
+                              ;; in here is the difference between searching
+                              ;; the mail and searching its first line.
+                              :text (or (not-empty (message-text content))
+                                        "本文はアーカイブされています。")
                               :headers headers
                               :received-at received-at})]
                (assoc
@@ -193,27 +222,42 @@
                     (mailbox/mailbox "local-inbox"
                                      "local@cloud-itonami.invalid")
                     entries)]
-    {:source "m365-archive / mail / 受信トレイ"
+    (assoc box
+           :mailbox/source "m365-archive / mail / 受信トレイ"
+           :mailbox/file-count (if (.isDirectory directory)
+                                 (count (filter #(.isFile %) (.listFiles directory)))
+                                 0))))
+
+(defn entry-view
+  "One message as this app hands it out.
+
+  Here rather than in `inbox-snapshot` because `cloud.itonami.app.mailbox`
+  renders the same entries after laying a principal's marks over them, and
+  two functions turning the same entry into JSON would be two answers to
+  what a message is."
+  [entry]
+  (let [message (:mailbox.message/message entry)
+        sender (get entry :sender)]
+    {:id (:mailbox.message/id entry)
+     :thread (:mailbox.message/thread-id entry)
+     :subject (:mail/subject message)
+     :from (:display sender)
+     :from-email (:email sender)
+     :received-at (:mailbox.message/received-at entry)
+     :snippet (get entry :snippet)
+     :size-bytes (:mailbox.message/size-bytes entry)
+     :available? (get entry :available?)
+     :read? (boolean (:mailbox.message/read? entry))
+     :labels (vec (sort (map name (:mailbox.message/labels entry))))}))
+
+(defn inbox-snapshot []
+  (let [box (inbox-mailbox)]
+    {:source (:mailbox/source box)
      :model "kotoba-lang/mail"
      :mode "archive"
      :sealed-receiver "net-kotobase/mail-worker"
-     :count (if (.isDirectory directory)
-              (count (filter #(.isFile %) (.listFiles directory)))
-              0)
-     :items
-     (mapv
-      (fn [entry]
-        (let [message (:mailbox.message/message entry)
-              sender (get entry :sender)]
-          {:id (:mailbox.message/id entry)
-           :subject (:mail/subject message)
-           :from (:display sender)
-           :from-email (:email sender)
-           :received-at (:mailbox.message/received-at entry)
-           :snippet (get entry :snippet)
-           :size-bytes (:mailbox.message/size-bytes entry)
-           :available? (get entry :available?)}))
-      (mailbox/search box "" {:label :inbox}))}))
+     :count (:mailbox/file-count box)
+     :items (mapv entry-view (mailbox/search box "" {:label :inbox}))}))
 
 (defn- shallow-files [directory]
   (if-not (.isDirectory directory)

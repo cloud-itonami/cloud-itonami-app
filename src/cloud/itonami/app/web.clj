@@ -1006,24 +1006,177 @@
     };
     let inboxData = {items:[]};
     let selectedInbox = null;
+    // ── what one person has done with the mail ────────────────────────────
+    //
+    // The Inbox listed forty archived messages and offered nothing to do
+    // with one. `mail.mailbox` has had read state, labels, a trash and
+    // threads all along; these calls are what was missing between them.
+    //
+    // Where the list is looking. Null is the inbox, which is where the list
+    // was before there was anywhere else to look.
+    let inboxLabel = null;
+    let inboxUnreadOnly = false;
+    const inboxQuery = () => {
+      const query = new URLSearchParams();
+      const needle = ($('#inbox-search')?.value || '').trim();
+      // Asked of the server, which searches the body and the envelope. The
+      // list used to filter the snippet it had already been sent, so a word
+      // in the fifth paragraph was not findable and neither was a cc.
+      if (needle) query.set('q', needle);
+      if (inboxLabel) query.set('label', inboxLabel);
+      if (inboxUnreadOnly) query.set('unread', 'true');
+      return query.toString();
+    };
+    const loadInbox = async () => {
+      const query = inboxQuery();
+      try {
+        const request = await fetch(`/api/workspace/inbox${query ? `?${query}` : ''}`);
+        const data = await request.json();
+        if (!request.ok) throw new Error(data?.error?.message || 'メールを読み込めませんでした。');
+        renderInbox(data);
+      } catch (error) {
+        $('#inbox-list')?.replaceChildren(make('li', 'empty-state', error.message));
+      }
+    };
+    const inboxAction = async (path, body, done) => {
+      const status = $('#inbox-status');
+      try {
+        await postJSON(path, body, true);
+        if (status) status.textContent = done;
+        await loadInbox();
+      } catch (error) {
+        if (status) status.textContent = error.message;
+      }
+    };
+    const messagePath = (id, action) =>
+      `/api/workspace/inbox/messages/${encodeURIComponent(id)}/${action}`;
+    const inboxActions = (item) => {
+      const box = make('div', 'appointment');
+      const row = make('div', 'appointment__answers');
+      const starred = (item.labels || []).includes('starred');
+      const trashed = (item.labels || []).includes('trash');
+      const star = make('button', 'tool-button', starred ? 'スターを外す' : 'スターを付ける');
+      star.type = 'button';
+      star.setAttribute('aria-pressed', starred ? 'true' : 'false');
+      star.addEventListener('click', () => inboxAction(messagePath(item.id, 'label'),
+        {label:'starred', 'on?':!starred},
+        starred ? 'スターを外しました。' : 'スターを付けました。'));
+      const read = make('button', 'tool-button', item['read?'] ? '未読にする' : '既読にする');
+      read.type = 'button';
+      read.addEventListener('click', () => inboxAction(messagePath(item.id, 'read'),
+        {'read?':!item['read?']},
+        item['read?'] ? '未読にしました。' : '既読にしました。'));
+      const trash = make('button', 'tool-button', trashed ? '受信トレイに戻す' : 'ゴミ箱に入れる');
+      trash.type = 'button';
+      trash.addEventListener('click', () => {
+        selectedInbox = null;
+        inboxAction(messagePath(item.id, 'trash'), {'trashed?':!trashed},
+          trashed ? '受信トレイに戻しました。' : 'ゴミ箱に入れました。ファイルは消えていません。');
+      });
+      row.append(star, read, trash);
+      box.append(row);
+      // A label of your own. The server keeps the set in play, so one
+      // invented here appears as somewhere to look next time.
+      const filing = make('div', 'appointment__invite');
+      const field = make('input', 'workspace-search');
+      field.type = 'text';
+      field.placeholder = 'ラベル';
+      field.setAttribute('aria-label', 'ラベルを付ける');
+      const file = make('button', 'tool-button', 'ラベルを付ける');
+      file.type = 'button';
+      file.addEventListener('click', () => {
+        const label = field.value.trim();
+        if (!label) return;
+        field.value = '';
+        inboxAction(messagePath(item.id, 'label'), {label, 'on?':true},
+          `${label} を付けました。`);
+      });
+      filing.append(field, file);
+      box.append(filing);
+      const others = (item.labels || []).filter((l) => l !== 'inbox' && l !== 'trash');
+      if (others.length) {
+        const chips = make('div', 'appointment__answers');
+        others.forEach((label) => {
+          const chip = make('button', 'tool-button', `${label} ✕`);
+          chip.type = 'button';
+          chip.setAttribute('aria-label', `${label} を外す`);
+          chip.addEventListener('click', () => inboxAction(messagePath(item.id, 'label'),
+            {label, 'on?':false}, `${label} を外しました。`));
+          chips.append(chip);
+        });
+        box.append(chips);
+      }
+      // The rest of the conversation, when there is one. A thread of one is
+      // a message, and saying so under every message would be noise.
+      const conversation = make('div', 'appointment__people');
+      box.append(conversation);
+      if (item.thread) {
+        fetch(`/api/workspace/inbox/threads/${encodeURIComponent(item.thread)}`)
+          .then((response) => response.json())
+          .then((data) => {
+            const rest = (data.items || []).filter((m) => m.id !== item.id);
+            if (!rest.length) return;
+            conversation.append(make('p', 'record-detail__eyebrow',
+              `このやり取り（${rest.length + 1} 通）`));
+            rest.forEach((m) => {
+              const line = make('button', 'tool-button', `${m.from || m['from-email']}: ${m.subject}`);
+              line.type = 'button';
+              line.addEventListener('click', () => { selectedInbox = m; renderInbox(inboxData); });
+              conversation.append(line);
+            });
+          })
+          .catch(() => { /* the conversation simply stays unlisted */ });
+      }
+      return box;
+    };
     const renderInbox = (data) => {
       inboxData = data;
-      const query = ($('#inbox-search').value || '').trim().toLocaleLowerCase('ja');
-      const items = data.items.filter((item) =>
-        [item.subject, item.from, item['from-email'], item.snippet]
-          .some((value) => String(value || '').toLocaleLowerCase('ja').includes(query)));
+      // Filtered by the server now, which reads the body and the envelope
+      // and knows the labels. Filtering here again would narrow a list that
+      // has already been narrowed, by less.
+      const items = data.items || [];
       if (!items.some((item) => item.id === selectedInbox?.id)) selectedInbox = items[0] || null;
+      const places = $('#inbox-labels');
+      if (places) {
+        places.replaceChildren();
+        const chip = (label, text, active) => {
+          const button = make('button', 'tool-button', text);
+          button.type = 'button';
+          button.setAttribute('aria-pressed', active ? 'true' : 'false');
+          button.addEventListener('click', () => {
+            inboxLabel = label; selectedInbox = null; loadInbox();
+          });
+          return button;
+        };
+        const current = data.label || 'inbox';
+        (data.labels || ['inbox']).forEach((label) => {
+          places.append(chip(label === 'inbox' ? null : label, label, current === label));
+        });
+        const unread = make('button', 'tool-button',
+          `未読だけ${data.unread ? `（${data.unread}）` : ''}`);
+        unread.type = 'button';
+        unread.setAttribute('aria-pressed', inboxUnreadOnly ? 'true' : 'false');
+        unread.addEventListener('click', () => {
+          inboxUnreadOnly = !inboxUnreadOnly; selectedInbox = null; loadInbox();
+        });
+        places.append(unread);
+      }
       const list = $('#inbox-list'); list.replaceChildren();
       const select = (item) => { selectedInbox = item; renderInbox(inboxData); };
       items.forEach((item) => list.append(recordButton(item, item.id === selectedInbox?.id, select, {
         title:item.subject, time:item['received-at'] || '日時不明',
         meta:item.from || item['from-email'], snippet:item.snippet || '本文プレビューなし'})));
       if (!items.length) list.append(make('li', 'empty-state', '条件に一致するメールはありません。'));
-      if (selectedInbox) setDetail($('#inbox-detail'), selectedInbox.from,
-        selectedInbox.subject, selectedInbox.snippet || '本文は安全なプレビューを作成できませんでした。',
-        [['差出人', selectedInbox['from-email']], ['受信', selectedInbox['received-at']],
-         ['保管状態', selectedInbox['available?'] ? '本文あり' : '暗号化・封印済み'],
-         ['サイズ', bytes(selectedInbox['size-bytes'])]]);
+      if (selectedInbox) {
+        setDetail($('#inbox-detail'), selectedInbox.from,
+          selectedInbox.subject, selectedInbox.snippet || '本文は安全なプレビューを作成できませんでした。',
+          [['差出人', selectedInbox['from-email']], ['受信', selectedInbox['received-at']],
+           ['保管状態', selectedInbox['available?'] ? '本文あり' : '暗号化・封印済み'],
+           ['既読', selectedInbox['read?'] ? '既読' : '未読'],
+           ['ラベル', (selectedInbox.labels || []).join('、')],
+           ['サイズ', bytes(selectedInbox['size-bytes'])]]);
+        $('#inbox-detail').append(inboxActions(selectedInbox));
+      }
       else $('#inbox-detail').replaceChildren(make('div', 'empty-state', 'メールを選択してください。'));
       $('#inbox-visible-count').textContent = `${items.length} 件を表示`;
       $('#inbox-count').textContent = data.count;
@@ -5552,7 +5705,14 @@
         .catch(() => { $('#operator-source').textContent = 'プロファイルを保存できません。'; });
     });
 
-    $('#inbox-search').addEventListener('input', () => renderInbox(inboxData));
+    // Debounced, because this asks the server now: the Drive's search
+    // filters a list it already has and can run on every keystroke, and
+    // this one would be a request per character.
+    let inboxSearchTimer = null;
+    $('#inbox-search').addEventListener('input', () => {
+      if (inboxSearchTimer) clearTimeout(inboxSearchTimer);
+      inboxSearchTimer = setTimeout(() => { selectedInbox = null; loadInbox(); }, 200);
+    });
     // The box filters the list as you type, which is instant and local, and
     // separately asks the server what is inside the documents, which is not.
     // Debounced because the server read is every readable document's bytes —
@@ -7044,6 +7204,13 @@
           [:input {:class "workspace-search" :id "inbox-search" :type "search"
                    :placeholder "差出人、件名、本文を検索" :autocomplete "off"}]
           [:span {:class "result-count" :id "inbox-visible-count"} "読み込み中…"]]
+         ;; Where the list is looking: the inbox, the trash, and whatever
+         ;; labels this reader has put on things. Built from what the server
+         ;; says is in play rather than a fixed list, so a label somebody
+         ;; invents appears here without this file being told about it.
+         [:div {:class "drive-import-choice" :id "inbox-labels"
+                :role "group" :aria-label "ラベルで絞り込む"}]
+         [:p {:class "drive-create__status" :id "inbox-status" :aria-live "polite"}]
          [:div {:class "record-browser"}
           [:div {:class "record-list"}
            [:ul {:class "record-list__items" :id "inbox-list"}
