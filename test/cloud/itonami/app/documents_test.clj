@@ -3558,3 +3558,70 @@
           ;; The bytes are a zip, so this only checks it did not throw; the
           ;; XML itself is asserted in sheets.
           (is (pos? (count xlsx))))))))
+
+;; ── more than one tab ───────────────────────────────────────────────────────
+
+(defn- two-tab-workbook [object-store]
+  (let [{:keys [item]} (documents/create! :sheets "売上" alice object-store)
+        wb (:resource (documents/content (:id item) alice object-store))
+        first-id (first (keys (:sheets/tabs wb)))]
+    (save! (:id item)
+           (-> wb
+               (assoc-in [:sheets/tabs first-id :sheets/title] "上期")
+               (assoc-in [:sheets/tabs first-id :sheets/cells]
+                         {[1 1] {:sheets/value "1200"}
+                          [2 1] {:sheets/formula "A1*2"}})
+               (assoc-in [:sheets/tabs "sheet2"]
+                         {:sheets/id "sheet2" :sheets/title "下期"
+                          :sheets/cells {[1 1] {:sheets/value "1500"}
+                                         [2 1] {:sheets/formula "SUM(A1:A1)"}}}))
+           alice object-store)
+    {:item item :first-id first-id}))
+
+(deftest a-workbook-can-have-more-than-one-tab
+  ;; Every other surface could add to itself — a question, a paragraph, a
+  ;; slide — and a workbook was stuck with the tab it was created with
+  ;; unless somebody hand-edited JSON. This is the server half: a two-tab
+  ;; workbook has to survive the validator, the evaluator and both writers.
+  (with-state
+    (fn [_ object-store]
+      (let [{:keys [item first-id]} (two-tab-workbook object-store)
+            back (documents/content (:id item) alice object-store)]
+        (is (= #{first-id "sheet2"} (set (keys (:sheets/tabs (:resource back))))))
+        (is (= "上期" (get-in back [:resource :sheets/tabs first-id :sheets/title])))
+        ;; Each tab computes against its own cells, not against the first.
+        (is (= "2400" (get-in back [:computed first-id "[2 1]"])))
+        (is (= "1500" (get-in back [:computed "sheet2" "[2 1]"])))))))
+
+(deftest both-writers-take-every-tab
+  (with-state
+    (fn [_ object-store]
+      (let [{:keys [item]} (two-tab-workbook object-store)
+            xlsx (:bytes (documents/export (:id item) "xlsx" alice object-store))
+            entries (sheets-xlsx/xlsx-entries xlsx)]
+        ;; One worksheet part per tab, and the workbook part naming both.
+        (is (= 2 (count (filter #(str/starts-with? % "xl/worksheets/") (keys entries)))))
+        (is (str/includes? (get entries "xl/workbook.xml") "上期"))
+        (is (str/includes? (get entries "xl/workbook.xml") "下期"))
+        ;; And back in, whole.
+        (let [again (:item (documents/import! "xlsx" "往復" xlsx alice object-store))
+              wb (:resource (documents/content (:id again) alice object-store))]
+          (is (= #{"上期" "下期"} (set (keys (:sheets/tabs wb))))))
+        ;; CSV is one tab by name, because a CSV is one table — asking for a
+        ;; tab that is not there says so rather than quietly giving the
+        ;; first.
+        (is (= :drive/not-found
+               (:type (try (documents/export (:id item) "csv" alice object-store
+                                             {:tab "無い"})
+                           (catch clojure.lang.ExceptionInfo e (ex-data e))))))))))
+
+(deftest a-formula-does-not-reach-into-another-tab
+  ;; `A1` means this tab's A1. Cross-tab references are 'シート'!A1 in a
+  ;; spreadsheet and are not implemented — so the honest answer is this
+  ;; tab's cell, not the other tab's, and certainly not a silent mixture.
+  (with-state
+    (fn [_ object-store]
+      (let [{:keys [item first-id]} (two-tab-workbook object-store)
+            back (documents/content (:id item) alice object-store)]
+        (is (= "2400" (get-in back [:computed first-id "[2 1]"])) "1200 * 2")
+        (is (= "1500" (get-in back [:computed "sheet2" "[2 1]"])) "not 1200")))))
