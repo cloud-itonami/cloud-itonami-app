@@ -1400,10 +1400,92 @@
             || block['docs/kind'] === 'code') {
           row.append(field('本文', textInput(block['docs/text'],
             (value) => { block['docs/text'] = value; changed(false); }, 'surface-input--wide')));
+        } else if (block['docs/kind'] === 'list') {
+          // A list is its items. They used to be reachable only through the
+          // JSON editor, which is a working escape hatch and a wall for
+          // anybody who has not been told about it.
+          const items = block['docs/items'] || [];
+          const itemBox = make('div', 'surface-editor');
+          itemBox.append(field('番号付き', (() => {
+            const check = make('input', 'surface-check');
+            check.type = 'checkbox';
+            check.checked = Boolean(block['docs/ordered?']);
+            check.setAttribute('aria-label', '番号付きリスト');
+            check.addEventListener('change', () => {
+              block['docs/ordered?'] = check.checked; changed(true);
+            });
+            return check;
+          })()));
+          items.forEach((item, i) => {
+            const itemRow = make('div', 'detail-actions__row');
+            itemRow.append(textInput(item, (value) => {
+              block['docs/items'][i] = value; changed(false);
+            }, 'surface-input--wide'));
+            itemRow.append(removeButton(() => {
+              block['docs/items'].splice(i, 1); changed(true);
+            }));
+            itemBox.append(itemRow);
+          });
+          const addItem = make('button', 'tool-button', '項目を追加');
+          addItem.type = 'button';
+          addItem.addEventListener('click', () => {
+            block['docs/items'] = (block['docs/items'] || []).concat(['']);
+            changed(true);
+          });
+          itemBox.append(addItem);
+          row.append(itemBox);
+        } else if (block['docs/kind'] === 'table') {
+          // Rows of rows. The model allows ragged ones, so the grid is drawn
+          // to the widest row and a shorter row simply has empty boxes at
+          // the end; typing in one fills that row out to the width, and a
+          // row nobody touches stays short. The writers pad on the way out —
+          // a ragged `w:tr` draws with a torn edge in Word — so what is
+          // stored stays what was entered.
+          const rows = block['docs/rows'] || [];
+          const width = Math.max(1, ...rows.map((r) => r.length));
+          const grid = make('table', 'surface-grid');
+          rows.forEach((cells, r) => {
+            const tr = make('tr');
+            for (let c = 0; c < width; c += 1) {
+              const td = make('td');
+              const input = make('input', 'surface-cell');
+              input.type = 'text';
+              input.value = cells[c] ?? '';
+              input.setAttribute('aria-label', `${r + 1}行${c + 1}列`);
+              input.addEventListener('change', () => {
+                while (block['docs/rows'][r].length < width) block['docs/rows'][r].push('');
+                block['docs/rows'][r][c] = input.value;
+                changed(false);
+              });
+              td.append(input);
+              tr.append(td);
+            }
+            const td = make('td');
+            td.append(removeButton(() => {
+              block['docs/rows'].splice(r, 1); changed(true);
+            }));
+            tr.append(td);
+            grid.append(tr);
+          });
+          const tableBox = make('div', 'surface-editor');
+          tableBox.append(grid);
+          const tableRow = make('div', 'detail-actions__row');
+          const addRow = make('button', 'tool-button', '行を追加');
+          addRow.type = 'button';
+          addRow.addEventListener('click', () => {
+            block['docs/rows'] = (block['docs/rows'] || []).concat([new Array(width).fill('')]);
+            changed(true);
+          });
+          const addCol = make('button', 'tool-button', '列を追加');
+          addCol.type = 'button';
+          addCol.addEventListener('click', () => {
+            block['docs/rows'] = (block['docs/rows'] || [[]]).map((r) => r.concat(['']));
+            changed(true);
+          });
+          tableRow.append(addRow, addCol);
+          tableBox.append(tableRow);
+          row.append(tableBox);
         } else {
-          // A table or a list. Editing those structurally is a bigger surface
-          // than this pane; saying so beats a field that silently edits only
-          // part of one.
           row.append(make('span', 'surface-note', 'この種類は JSON で編集してください。'));
         }
         row.append(removeButton(() => {
