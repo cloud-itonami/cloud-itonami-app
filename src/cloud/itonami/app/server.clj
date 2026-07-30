@@ -26,6 +26,7 @@
             [cloud.itonami.app.organism-gateway :as organism-gateway]
             [cloud.itonami.app.relay :as relay]
             [cloud.itonami.app.repos :as business-repos]
+            [cloud.itonami.app.scheduler :as scheduler]
             [cloud.itonami.app.service :as service]
             [cloud.itonami.app.store :as store]
             [cloud.itonami.app.web :as web]
@@ -1965,11 +1966,96 @@
                       (id-from-path path #"/api/workspace/drive/documents/([^/]+)/trash")
                       (:user-id session))))
 
+            ;; The machine's calendar and this app's appointments, in one
+            ;; list, because a person has one afternoon.
+            ;;
+            ;; Only the EventKit half is cached. `workspace/snapshot` caches
+            ;; under one key for the whole server, and appointments are per
+            ;; principal — putting them through it would hand one person's
+            ;; meetings to the next reader for a minute.
             (and (= method "GET") (= path "/api/workspace/scheduler"))
-            (do
-              (require-app-session! exchange)
+            (let [session (require-app-session! exchange)
+                  mirror (workspace/snapshot :scheduler workspace/calendar-snapshot)
+                  mine (:items (scheduler/events (:user-id session)))
+                  items (vec (sort-by (juxt #(str (:start %)) #(str (:id %)))
+                                      (concat (:items mirror) mine)))]
               (send! exchange 200
-                     (workspace/snapshot :scheduler workspace/calendar-snapshot)))
+                     (assoc mirror
+                            :items items
+                            :you (:user-id session)
+                            ;; Recomputed, or a day rail built from the
+                            ;; mirror alone would show the meeting in the
+                            ;; list and not on the day it is on.
+                            :days (mapv (fn [{:keys [date]}]
+                                          {:date date
+                                           :items (filterv
+                                                   #(str/starts-with? (str (:start %))
+                                                                      (str date))
+                                                   items)})
+                                        (:days mirror)))))
+
+            (and (= method "POST") (= path "/api/workspace/scheduler/events"))
+            (let [session (require-app-session! exchange)
+                  request (read-json exchange)]
+              (require-origin! exchange config)
+              (require-csrf! exchange session)
+              (send! exchange 200
+                     (scheduler/create! {:title (:title request)
+                                         :start (:start request)
+                                         :end (:end request)
+                                         :all-day? (:all-day? request)
+                                         :attendees (:attendees request)}
+                                        (:user-id session))))
+
+            (and (= method "POST")
+                 (id-from-path path #"/api/workspace/scheduler/events/([^/]+)/invite"))
+            (let [session (require-app-session! exchange)
+                  request (read-json exchange)]
+              (require-origin! exchange config)
+              (require-csrf! exchange session)
+              (send! exchange 200
+                     (scheduler/invite!
+                      (id-from-path path
+                                    #"/api/workspace/scheduler/events/([^/]+)/invite")
+                      (:person request)
+                      (:user-id session))))
+
+            (and (= method "POST")
+                 (id-from-path path #"/api/workspace/scheduler/events/([^/]+)/respond"))
+            (let [session (require-app-session! exchange)
+                  request (read-json exchange)]
+              (require-origin! exchange config)
+              (require-csrf! exchange session)
+              (send! exchange 200
+                     (scheduler/respond!
+                      (id-from-path path
+                                    #"/api/workspace/scheduler/events/([^/]+)/respond")
+                      (:status request)
+                      (:user-id session))))
+
+            ;; What the asker has already said yes to that overlaps this.
+            ;; Asked separately rather than folded into every event in the
+            ;; list: it is a question about one candidate, and answering it
+            ;; for all of them is quadratic in a list nobody is looking at.
+            (and (= method "GET")
+                 (id-from-path path #"/api/workspace/scheduler/events/([^/]+)/conflicts"))
+            (let [session (require-app-session! exchange)
+                  id (id-from-path path
+                                   #"/api/workspace/scheduler/events/([^/]+)/conflicts")]
+              (send! exchange 200
+                     {:schema scheduler/schema :ok? true :id id
+                      :conflicts (scheduler/conflicts id (:user-id session))}))
+
+            (and (= method "POST")
+                 (id-from-path path #"/api/workspace/scheduler/events/([^/]+)/cancel"))
+            (let [session (require-app-session! exchange)]
+              (require-origin! exchange config)
+              (require-csrf! exchange session)
+              (send! exchange 200
+                     (scheduler/cancel!
+                      (id-from-path path
+                                    #"/api/workspace/scheduler/events/([^/]+)/cancel")
+                      (:user-id session))))
 
             ;; Worker runs are live queue state, so they bypass the workspace
             ;; read cache.
@@ -2277,6 +2363,22 @@
                      ;; anything the caller did.
                      :drive/object-missing 502
                      :drive/refused 409
+                     ;; ---- appointments ----
+                     ;; An event that is not yours and one that does not
+                     ;; exist answer the same, so the code is the same: 404
+                     ;; here is "there is no such event for you".
+                     :scheduler/not-found 404
+                     :scheduler/not-organizer 403
+                     ;; Answering an invitation you do not have. Not 404 —
+                     ;; you can see the event, you are simply not on it.
+                     :scheduler/not-invited 403
+                     ;; The request was understood and the appointment it
+                     ;; describes is not one the model accepts, which is 422
+                     ;; for the same reason an unacceptable document is.
+                     :scheduler/invalid-event 422
+                     :scheduler/unknown-rsvp 400
+                     :scheduler/no-such-person 400
+                     :scheduler/organizer-is-not-an-attendee 400
                      :oauth/unsupported 400
                      :oauth/missing-code 400
                      :oauth/invalid-state 400
