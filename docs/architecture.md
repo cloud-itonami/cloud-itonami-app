@@ -268,9 +268,34 @@ the parser does here by never throwing — junk becomes the nearest blocks and
 the validator is what reports the document, because a parser that threw
 would turn a bad paste into a 500.
 
-Neither `slides.pptx` nor `sheets.xlsx` can yet say what *they* drop —
-those are the same function waiting to be written, not a claim that they are
-lossless.
+### Word
+
+`docs.docx` writes a document Word opens, and reads one back. It is one
+namespace on top of `ooxml`, the same as `slides.pptx` and `sheets.xlsx` —
+`ooxml/package-kind` already returned `:docx` for a `word/` prefix.
+
+**Structure rather than appearance.** A heading is a paragraph carrying
+`w:pStyle Heading1`, not bold 18pt text; a list is `w:numPr`, not a line
+beginning with a hyphen; a table is `w:tbl`, not aligned spaces. Word renders
+both the same way and only one of them can be read back as a heading,
+collapsed into an outline, or restyled by whoever receives it. That is why
+`styles.xml` and `numbering.xml` are written: a style id referring to nothing
+is a paragraph with no style, and a `numId` with no entry is a list Word shows
+with no marker at all.
+
+Junk bytes are refused by `require-office-package!` looking for a `word/`
+part, for the same reason as pptx and xlsx: the reader answers an empty
+document for anything it cannot parse, which is right for a reader and
+indistinguishable from a working import of an empty file.
+
+**What docx does not carry is the same list Markdown does not, plus one
+more.** Block ids, comments and suggestions have nowhere to go. And the
+writer ignores `:docs/text-runs` entirely — Markdown at least spells bold and
+italic, and this does not spell any of them, so a styled run goes out plain.
+`:export-warnings` does not yet cover it: `docs.markdown/unexpressed` is the
+only one of these functions that exists, and neither `slides.pptx` nor
+`sheets.xlsx` has one either. Those are the same function waiting to be
+written, not a claim that any of them are lossless.
 
 ### Folders, and why the trash is a question rather than a flag
 
