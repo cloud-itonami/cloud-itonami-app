@@ -945,13 +945,23 @@
         crumb.append(button);
       });
       nav.append(crumb);
-      (folderData.folders || []).forEach((folder) => {
+      if (folderData.owner && folderData.owner !== folderData.you) {
+        nav.append(make('span', 'surface-note',
+          `${folderData.owner} のドライブです。ここで作成したものはその人のドライブに入ります。`));
+      }
+      const openable = (folder, shared) => {
         const button = make('button', 'tool-button drive-folder',
-          `${folder.name}（${folder.count}）`);
+          `${shared ? '共有 · ' : ''}${folder.name}（${folder.count}）`);
         button.type = 'button';
         button.addEventListener('click', () => goToFolder(folder.id));
-        nav.append(button);
-      });
+        return button;
+      };
+      (folderData.folders || []).forEach((folder) => nav.append(openable(folder, false)));
+      // Folders from another Drive, at the top level only: they are not
+      // inside anything here, so there is nowhere else they could appear.
+      // Marked, because creating in one puts the document in somebody
+      // else's Drive and against their quota.
+      (folderData.shared || []).forEach((folder) => nav.append(openable(folder, true)));
       const add = make('button', 'tool-button', 'フォルダを作成');
       add.type = 'button';
       add.addEventListener('click', createFolder);
