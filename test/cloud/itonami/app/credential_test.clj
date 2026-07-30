@@ -4,6 +4,8 @@
             [cloud.itonami.app.credential :as credential]
             [cloud.itonami.app.did :as app-did]
             [cloud.itonami.app.store :as store]
+            [cloud.itonami.app.config :as config]
+            [cloud.itonami.app.web :as web]
             [data-integrity.core :as di]
             [ed25519.core :as ed]
             [status-list.core :as sl]))
@@ -397,3 +399,48 @@
                    (credential/verify-presented
                     credential
                     {:credentials {:next-status-index 0 :revoked :nope :issued {}}}))))))
+
+;; ── the rendered surface ─────────────────────────────────────────────────────
+;; Six endpoints nobody can reach from the app are not a feature, and a UI claim
+;; that is not asserted is the same unproven-claim problem as an untested
+;; portability claim. These pin the view's existence, the controls that reach each
+;; endpoint, and — deliberately — the two honest caveats, because a screen that
+;; showed "有効" without them would imply more than a signature establishes.
+
+(deftest the-credentials-view-is-rendered
+  (with-redefs [cloud.itonami.app.store/snapshot
+                (constantly (cloud.itonami.app.store/initial-state))]
+    (let [html (cloud.itonami.app.web/page-html
+                (cloud.itonami.app.config/load-config))]
+      (testing "the view and its nav entry exist"
+        (is (re-find #"data-view-panel=\"credentials\"" html))
+        (is (re-find #"data-view=\"credentials\"" html))
+        (is (re-find #"id=\"credentials-count\"" html)))
+
+      (testing "a control for every endpoint the plane exposes"
+        (is (re-find #"id=\"credential-issue\"" html) "POST /api/credentials/membership")
+        (is (re-find #"id=\"credential-list\"" html) "GET /api/credentials")
+        (is (re-find #"id=\"credential-verify-form\"" html) "POST /api/credentials/verify")
+        (is (re-find #"id=\"credential-verify-external\"" html)
+            "POST /api/credentials/verify/external")
+        (is (re-find #"id=\"credential-trusted-issuers\"" html)
+            "GET /api/credentials/trusted-issuers")
+        (testing "revocation has no static control — the buttons are per row, so
+                  the register render is what reaches that endpoint"
+          (is (re-find #"/revoke" html))))
+
+      (testing "the honest caveats are on the screen, not only in a docstring"
+        (is (re-find #"Verifiable Presentation" html)
+            "a Passkey cannot produce a Data Integrity proof; say so")
+        (is (re-find #"authenticatorData" html) "and say why")
+        (is (re-find #"信頼モデル" html)
+            "for did:web the trust list IS the trust model"))
+
+      (testing "DADS discipline: app layout is local-* and no raw hex or px type"
+        (is (re-find #"class=\"local-actions\"" html))
+        (is (nil? (re-find #"class=\"form-actions\"" html))
+            "form-actions is not a class this app defines"))
+
+      (testing "accessibility: the status regions announce"
+        (is (re-find #"id=\"credential-issue-status\"" html))
+        (is (re-find #"aria-live=\"polite\"" html))))))

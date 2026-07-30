@@ -568,6 +568,8 @@
   .organism-activity .data-list__item{grid-template-columns:7rem minmax(0,1fr) 8rem}
   .form-help{margin:0;color:var(--color-neutral-solid-gray-600);
     font-size:.8125rem;line-height:1.6}
+  /* アプリ固有レイアウトなので local-* 名前空間（ADR-0001）。DADS class は上書きしない。 */
+  .local-actions{display:flex;flex-wrap:wrap;gap:.5rem;align-items:center}
   .primary-action{min-height:2.75rem;border:0;border-radius:.5rem;
     background:var(--color-key-900);color:var(--color-neutral-white);
     padding:.625rem 1rem;font-weight:700;cursor:pointer}
@@ -5473,12 +5475,175 @@
       workerTimer = setTimeout(() => loadWorkspace('worker', renderWorker),
         active ? 1500 : 5000);
     };
+    // ── Credentials ──────────────────────────────────────────────────────
+    const credentialRoleText = {
+      owner:'オーナー', admin:'管理者', member:'メンバー',
+      auditor:'監査', guest:'ゲスト'
+    };
+    let credentialsMayRevoke = false;
+    const credentialIssueStatus = (message) => {
+      $('#credential-issue-status').textContent = message || '';
+    };
+    const revokeCredential = async (index) => {
+      credentialIssueStatus('失効させています…');
+      try {
+        await postJSON(`/api/credentials/${encodeURIComponent(index)}/revoke`, {}, true);
+        credentialIssueStatus(`#${index} を失効させました。提示されたどこでも honour されません。`);
+        await loadCredentials();
+      } catch (error) {
+        credentialIssueStatus(error.message);
+      }
+    };
+    const renderCredentialRegister = (data) => {
+      credentialsMayRevoke = Boolean(data['may-revoke?']);
+      const list = $('#credential-list');
+      list.replaceChildren();
+      const issued = data.issued || [];
+      $('#credentials-count').textContent = issued.length;
+      const live = issued.filter((record) => !record['revoked?']).length;
+      $('#credentials-source').textContent = issued.length
+        ? `${issued.length} 件発行済み・${issued.length - live} 件失効`
+        : 'まだ発行していません。';
+      if (!issued.length) {
+        list.append(make('li', 'empty-state',
+          'まだありません。上の「発行する」で、いま操作している membership に対して発行できます。'));
+        return;
+      }
+      issued.forEach((record) => {
+        const item = make('li', 'data-list__item');
+        const body = make('div');
+        const revoked = Boolean(record['revoked?']);
+        body.append(make('p', 'data-list__title',
+          `#${record['status-index']} · ${credentialRoleText[record.role] || record.role}`));
+        body.append(make('p', 'data-list__meta',
+          `${record.subject || '主体不明'} · ${formatDate(record['issued-at'])}`));
+        item.append(body);
+        const side = make('div', 'data-list__side');
+        // 「署名は正しいが失効済み」を1語で言う。:verified だけで判断すると
+        // 失効後も通してしまうので、画面でもその2つを分けて出す。
+        side.append(make('span', null, revoked ? '失効済み' : '有効'));
+        if (!revoked && credentialsMayRevoke) {
+          const button = make('button', 'tool-button', '失効させる');
+          button.type = 'button';
+          button.setAttribute('aria-label',
+            `#${record['status-index']} の credential を失効させる`);
+          button.addEventListener('click', () => revokeCredential(record['status-index']));
+          side.append(button);
+        }
+        item.append(side);
+        list.append(item);
+      });
+    };
+    const renderTrustedIssuers = (data) => {
+      const list = $('#credential-trusted-issuers');
+      list.replaceChildren();
+      const issuers = data['trusted-issuers'] || [];
+      if (!issuers.length) {
+        // 空であることを見せる。見えないと、他組織検証の失敗が全部
+        // 不具合に見える。
+        list.append(make('li', 'empty-state',
+          '空です。他組織が発行した credential は、どれも検証を拒否されます。'));
+        return;
+      }
+      issuers.forEach((domain) => {
+        const item = make('li', 'data-list__item');
+        item.append(make('div', 'data-list__title', domain));
+        item.append(make('div', 'data-list__side', 'did:web'));
+        list.append(item);
+      });
+    };
+    const loadCredentials = async () => {
+      const [register, issuers] = await Promise.all([
+        fetch('/api/credentials').then((request) => request.json()),
+        fetch('/api/credentials/trusted-issuers').then((request) => request.json())
+      ]);
+      renderCredentialRegister(register);
+      renderTrustedIssuers(issuers);
+    };
+    const renderVerifyResult = (result) => {
+      const target = $('#credential-verify-result');
+      target.replaceChildren();
+      const verified = Boolean(result.verified);
+      const valid = Boolean(result['valid?']);
+      target.append(make('p', 'data-list__title',
+        valid ? '有効です。' : (verified ? '署名は正しいが、有効ではありません。' : '検証できませんでした。')));
+      const detail = [];
+      if (verified && !valid) {
+        // この2つを混ぜないことがこの画面の要点。
+        if (result.revocation === 'unchecked') {
+          detail.push('失効一覧を解決できないため、失効しているかどうかが分かりません。'
+            + '署名が正しいことは、まだ有効であることを意味しません。');
+        } else if (result['revoked?'] || result.revocation === 'revoked') {
+          detail.push('失効しています。honour してはいけません。');
+        }
+      }
+      if (result.reason) detail.push(`理由: ${result.reason}`);
+      if (result.subject) detail.push(`主体: ${result.subject}`);
+      if (result.role) detail.push(`役割: ${credentialRoleText[result.role] || result.role}`);
+      if (result.issuer) detail.push(`発行体: ${result.issuer}`);
+      if (result['verification-method']) {
+        detail.push(`鍵: ${result['verification-method']}`);
+      }
+      detail.forEach((line) => target.append(make('p', 'data-list__meta', line)));
+    };
+    const verifyCredential = async (path) => {
+      const raw = $('#credential-verify-input').value.trim();
+      const target = $('#credential-verify-result');
+      if (!raw) {
+        target.replaceChildren(make('p', 'data-list__meta', 'credential の JSON を貼り付けてください。'));
+        return;
+      }
+      let parsed;
+      try {
+        parsed = JSON.parse(raw);
+      } catch (error) {
+        // 貼り付け間違いを「検証失敗」と混同させない。
+        target.replaceChildren(make('p', 'data-list__meta',
+          'JSON として読めませんでした。貼り付け内容を確認してください。'));
+        return;
+      }
+      target.replaceChildren(make('p', 'data-list__meta', '検証しています…'));
+      try {
+        renderVerifyResult(await postJSON(path, {credential:parsed}, true));
+      } catch (error) {
+        target.replaceChildren(make('p', 'data-list__meta', error.message));
+      }
+    };
+    $('#credential-issue').addEventListener('click', async () => {
+      const button = $('#credential-issue');
+      button.disabled = true;
+      credentialIssueStatus('発行しています…');
+      try {
+        const issued = await postJSON('/api/credentials/membership', {}, true);
+        credentialIssueStatus(
+          `#${issued['status-index']} を発行しました。credential 本体は保存していないので、`
+          + 'この結果を holder へ渡してください。');
+        $('#credential-verify-input').value = JSON.stringify(issued.credential, null, 2);
+        await loadCredentials();
+      } catch (error) {
+        credentialIssueStatus(error.message);
+      } finally {
+        button.disabled = false;
+      }
+    });
+    $('#credential-verify-form').addEventListener('submit', (event) => {
+      event.preventDefault();
+      verifyCredential('/api/credentials/verify');
+    });
+    $('#credential-verify-external').addEventListener('click', () =>
+      verifyCredential('/api/credentials/verify/external'));
+
     onViewChange = () => {
       scheduleWorkerPoll();
       scheduleOrganismPoll();
       if (currentView === 'organisms' && !organismWorkers.length) {
         loadOrganisms().catch((error) => {
           $('#organism-activity-state').textContent = error.message;
+        });
+      }
+      if (currentView === 'credentials') {
+        loadCredentials().catch((error) => {
+          $('#credentials-source').textContent = error.message;
         });
       }
     };
@@ -5614,6 +5779,7 @@
         (nav-item "projects" "Projects" "▦" "projects-count")
         (nav-item "drive" "Drive" "◇" "drive-count")
         (nav-item "esign" "eSign" "✍" "esign-count")
+        (nav-item "credentials" "Credentials" "▣" "credentials-count")
         (nav-item "scheduler" "Scheduler" "○" "scheduler-count")
         (nav-item "storage" "Storage" "◈" "storage-count")
         (nav-group "SETTINGS")
@@ -6271,6 +6437,70 @@
            [:button {:class "primary-action" :type "submit"} "署名を依頼する"]]
           [:p {:class "visually-hidden" :id "esign-request-status"
                :role "status" :aria-live "polite"}]]]
+        [:section {:class "view" :data-view-panel "credentials" :hidden true}
+         (view-header "Credentials"
+                      (str "所属を、この画面の外へ持ち出せる W3C Verifiable Credential として"
+                           "発行します。台帳の行と違い、発行体を信頼する相手なら"
+                           "このアプリに問い合わせずに検証できます。"))
+         [:p {:class "source-note"} [:span {:class "source-dot"}]
+          [:span {:id "credentials-source"} "発行状況を確認中…"]]
+         ;; 画面に書く。credential が何を証明し、何を証明しないかを知る必要が
+         ;; あるのは、それを提示する本人だから。
+         [:div {:class "security-callout" :id "credentials-notice"}
+          [:strong "発行体の署名は「発行体がそう言った」ことを証明します。"]
+          "「今もそう言っている」ことは失効一覧が示すもので、失効させると、"
+          "提示されたどこでもこの credential は honour されなくなります。"
+          [:br]
+          [:strong "holder 自身の署名による提示（Verifiable Presentation）は未対応です。"]
+          "これは未完成ではなく構造的な制約で、WebAuthn は自分の "
+          "authenticatorData ‖ clientDataHash に署名する仕様のため、"
+          "正規化した文書に対する Data Integrity proof を Passkey では作れません。"]
+         [:div {:class "local-card"}
+          (dds/heading 2 "発行する" {:size "24"})
+          [:p {:class "form-help"}
+           "いま操作している membership に対して発行します。Passkey の登録と "
+           "Organization ID の設定が前提で、どちらも欠けていればその場で拒否されます。"
+           "組織が did:web を公開していない間は、発行体 did:key で署名します——"
+           "応答しないアドレスを名乗るより、自己記述的な鍵の方が検証できるからです。"]
+          [:button {:class "primary-action" :type "button" :id "credential-issue"}
+           "membership credential を発行する"]
+          [:p {:class "form-help" :id "credential-issue-status"
+               :role "status" :aria-live "polite"}]]
+         [:div {:class "local-card"}
+          (dds/heading 2 "発行済み" {:size "24"})
+          [:p {:class "form-help"}
+           "これは台帳で、署名済みの credential 本体は保存していません。"
+           "持っているのは holder です——それが「このサーバーに聞かずに検証できる」"
+           "ということの意味なので、失くした場合は再発行になります。"]
+          [:ul {:class "data-list" :id "credential-list"}
+           [:li {:class "skeleton"}]]]
+         [:div {:class "local-card"}
+          (dds/heading 2 "検証する" {:size "24"})
+          [:form {:class "settings-form" :id "credential-verify-form"}
+           [:label {:for "credential-verify-input"} "credential の JSON（必須）"]
+           [:textarea {:id "credential-verify-input" :name "credential" :rows 8
+                       :required true
+                       :placeholder "{\"@context\": [...], \"proof\": {...}}"}]
+           [:p {:class "form-help"}
+            "「このアプリが発行したものとして検証」は自分の鍵で照合します。"
+            "「他組織発行として検証」は発行体の did:web を解決しますが、"
+            "信頼している発行者に限ります。"]
+           [:div {:class "local-actions"}
+            [:button {:class "primary-action" :type "submit"}
+             "このアプリが発行したものとして検証"]
+            [:button {:class "tool-button" :type "button" :id "credential-verify-external"}
+             "他組織発行として検証"]]]
+          [:div {:id "credential-verify-result" :role "status" :aria-live "polite"}]]
+         [:div {:class "local-card"}
+          (dds/heading 2 "信頼している発行者" {:size "24"})
+          [:p {:class "form-help"}
+           "空が既定です。did:web では信頼一覧が防御策ではなく信頼モデルそのもので——"
+           "誰でも自分が支配するドメインに DID document を公開して対応鍵で署名できるため、"
+           "credential が名乗った鍵を取得して検証することは、偽造者の計算を"
+           "偽造者自身の鍵で検算しているのと同じです。どのドメインを信じるかは"
+           "設定（:credentials :trusted-issuers）で先に決めます。"]
+          [:ul {:class "data-list" :id "credential-trusted-issuers"}
+           [:li {:class "skeleton"}]]]]
         [:section {:class "view" :data-view-panel "contracts" :hidden true}
          (view-header "Contracts"
                       (str "契約している継続課金を、kagi の vault から復号して読みます。"
