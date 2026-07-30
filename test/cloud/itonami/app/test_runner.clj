@@ -13,6 +13,8 @@
             [cloud.itonami.app.business-http-test]
             [cloud.itonami.app.canvas-test]
             [cloud.itonami.app.loops-test]
+            [cloud.itonami.app.metrics-test]
+            [cloud.itonami.app.repos-test]
             [cloud.itonami.app.authority.adapters-test]
             [cloud.itonami.app.authority.api-test]
             [cloud.itonami.app.authority.payment-test]
@@ -44,6 +46,8 @@
     cloud.itonami.app.business-http-test
     cloud.itonami.app.canvas-test
     cloud.itonami.app.loops-test
+    cloud.itonami.app.metrics-test
+    cloud.itonami.app.repos-test
     cloud.itonami.app.authority.adapters-test
     cloud.itonami.app.authority.api-test
     cloud.itonami.app.authority.payment-test

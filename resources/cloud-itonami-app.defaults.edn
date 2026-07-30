@@ -64,7 +64,13 @@
  ;; Unset does NOT mean 'nothing found': every plane-backed face reports
  ;; :unresolvable and names this setting, because a face that read 'missing' when
  ;; nobody said where to look would be a measurement of nothing.
- :business {:workspace-root nil}
+ :business {:workspace-root nil
+            ;; How old a metrics/<product>.edn may be and still read as current.
+            ;; 3 days: the emitter runs daily, so one missed run is not staleness
+            ;; and three are. Measured 2026-07-30: eleven of twelve metrics files
+            ;; were same-day, and ai-gftd-yukkuri was 28 days old — which is the
+            ;; case this exists to mark rather than print as a current figure.
+            :metrics-max-age-days 3}
 
  ;; Governed outward authorities (ADR-2607300300). Each rides the
  ;; `cloud.itonami.app.authority` spine: deterministic pre-check -> Passkey
