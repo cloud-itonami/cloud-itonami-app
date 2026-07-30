@@ -19,9 +19,14 @@
   io.github.kotoba-lang/mail
   {:git/url "https://github.com/kotoba-lang/mail.git"
    :git/sha "2a00bd8d63842dd2d1cf38d35bfb66ae377e98dc"}
+  ;; advanced from 90eac285 (fast-forward): that pin predates
+  ;; drive/object.cljc, which is the IObjectStore seam this app now fills. The
+  ;; :dev alias overrides this to a :local/root, so this gap only appears in a
+  ;; plain `-M:test` run — which is how it appeared: filecoin.clj is already on
+  ;; main (landed as untracked WIP) and cannot load there.
   io.github.kotoba-lang/drive
   {:git/url "https://github.com/kotoba-lang/drive.git"
-   :git/sha "90eac2854b86b78f6feffe2b6ce016b705baff6c"}
+   :git/sha "46605af22ac9930786388b01007723d096aa0eaf"}
   io.github.kotoba-lang/identity
   {:git/url "https://github.com/kotoba-lang/identity.git"
    :git/sha "5cf94e38c816ced6857ef62de344f6adea9fc050"}
@@ -33,7 +38,20 @@
    :git/sha "5beea7514b4791f6aae33cb0b75d49f0ec53437c"}
   io.github.kotoba-lang/jp-go-digital-design-system
   {:git/url "https://github.com/kotoba-lang/jp-go-digital-design-system.git"
-   :git/sha "277e8c38648a3030014637d11fcbefc4f5535ae7"}}
+   :git/sha "277e8c38648a3030014637d11fcbefc4f5535ae7"}
+
+  ;; Filecoin: PieceCID v2 addressing + the on-chain read surface + the
+  ;; provider transfer surface. Deliberately NOT a storage backend — see
+  ;; cloud.itonami.app.filecoin for exactly what is and is not implemented.
+  ;; `drive` depends on neither and neither depends on `drive`; this app
+  ;; depends on both, which is what drive.object/store-of's docstring
+  ;; prescribes.
+  io.github.kotoba-lang/cloud-filecoin
+  {:git/url "https://github.com/kotoba-lang/cloud-filecoin.git"
+   :git/sha "67147752a8486715f2e049756446a92ffe0816f5"}
+  io.github.kotoba-lang/io-filecoin-transport
+  {:git/url "https://github.com/kotoba-lang/io-filecoin-transport.git"
+   :git/sha "b0f434c81f778c00321af9572da2346a5e0fc5c7"}}
 
  :aliases
  {:server {:main-opts ["-m" "cloud.itonami.app.server"]}

@@ -14,16 +14,36 @@
   - **A local staging area.** Bytes live under the app's data directory,
     keyed by their PieceCID. This is where a piece would sit *before* a deal.
   - **Read-through retrieval.** A piece that is not staged is fetched over
-    HTTP from FilBeam, which serves content already on Filecoin. That path is
-    real network retrieval.
+    HTTP from a storage provider. That path is real network retrieval, and it
+    **verifies**: bytes that do not hash back to the PieceCID they were asked
+    for are discarded (see `fetch-piece`).
+
+  ## Retrieval is configured, not guessed
+
+  There are two URL shapes and this app can only use one of them unaided:
+
+      provider   <serviceURL>/piece/<cid>          needs a serviceURL
+      FilBeam    https://<client-address>.<domain>/<cid>   needs a client address
+
+  The CDN form is a **per-client subdomain**. Set `FILECOIN_PROVIDER_URL`
+  and/or `FILECOIN_CLIENT_ADDRESS` to enable each; with neither set,
+  read-through is off and a miss is a miss.
+
+  Provider *discovery* would remove the configuration, and is the one part of
+  the provider surface `cloud-filecoin` still lacks — decoding the SP
+  registry's `getProviderWithProduct` struct. Until then, guessing a provider
+  URL would be worse than asking for one.
 
   ## What is missing, and why writes stop here
 
-  Putting data *on* Filecoin needs three things this app cannot do today:
+  Putting data *on* Filecoin needs three things, and this app has none of
+  them:
 
-  1. **A provider upload API.** `cloud-filecoin` covers the on-chain half —
-     PieceCID, PDP calldata, Filecoin Pay, Warm Storage — and nothing else in
-     this workspace implements a storage provider's HTTP transfer surface.
+  1. **A data set.** `filecoin.cloud.provider` now implements the transfer
+     surface (`POST pdp/piece` → `PUT pdp/piece/upload/<id>`), so the upload
+     itself is expressible. But an upload alone stores nothing durably: the
+     bytes are only *parked* until an on-chain `addPieces` makes them part of
+     a data set someone is paid to prove.
   2. **Funds.** `addPieces` and opening a payment rail are transactions.
   3. **A funded key.** Which the agent that wrote this deliberately does not
      hold.
@@ -44,7 +64,7 @@
             [filecoin.cloud.evm :as evm]
             [filecoin.cloud.pdp :as pdp]
             [filecoin.cloud.piece :as piece]
-            [filecoin.protocols :as p]
+            [filecoin.cloud.provider :as provider]
             [filecoin.transport :as transport]))
 
 (def schema "cloud.itonami.app.filecoin.v1")
@@ -83,30 +103,86 @@
 
 ;; ── the store ────────────────────────────────────────────────────────────────
 
-(defn- retrieval-url [ref]
-  (str "https://" (:retrieval-domain (chain/chain network)) "/piece/" ref))
+(defn- env [k] (some-> (System/getenv k) str/trim not-empty))
+
+(defn- config-of
+  "Explicit options win over the environment, so this is testable without
+  mutating the process."
+  [opts]
+  {:provider-url (or (:provider-url opts) (env "FILECOIN_PROVIDER_URL"))
+   :client-address (or (:client-address opts) (env "FILECOIN_CLIENT_ADDRESS"))})
+
+(defn retrieval-urls
+  "Every URL this app is configured to read `ref` from, provider first.
+
+  Empty when neither is configured — a real state, not a misconfiguration to
+  paper over with a default."
+  ([ref] (retrieval-urls ref nil))
+  ([ref opts]
+   (let [{:keys [provider-url client-address]} (config-of opts)
+         domain (:retrieval-domain (chain/chain network))]
+     (cond-> []
+       provider-url (conj {:kind "provider"
+                           :url (provider/piece-url provider-url ref)})
+       client-address (conj {:kind "cdn"
+                             :url (provider/cdn-url client-address domain ref)})))))
+
+(defn- get-bytes
+  "`GET url` → raw bytes, bypassing `filecoin.protocols/IHttp`.
+
+  IHttp specifies `body` as a **String** and `filecoin.transport` builds it
+  with `BodyHandlers/ofString`, which decodes as UTF-8 and rewrites every byte
+  above 0x7f. A piece cannot survive that, so this uses `ofByteArray`
+  directly. Widening IHttp is the fix and belongs in `io-filecoin`; until then
+  this bypass is deliberate and is why `http` is unused on this path.
+
+  (The previous version read `(.getBytes body \"ISO-8859-1\")`, which looks
+  like a latin-1 round trip but is not one — the damage happened during
+  decoding, before this code saw the string.)"
+  [^String url]
+  (let [client (java.net.http.HttpClient/newHttpClient)
+        req (-> (java.net.http.HttpRequest/newBuilder (java.net.URI/create url))
+                (.timeout (java.time.Duration/ofSeconds 30))
+                (.GET)
+                (.build))
+        resp (.send client req (java.net.http.HttpResponse$BodyHandlers/ofByteArray))]
+    {:status (.statusCode resp) :bytes (.body resp)}))
 
 (defn- fetch-piece
   "Read-through retrieval for a piece that is not staged. Returns bytes or
-  nil — a miss is an ordinary outcome here, not an error."
-  [http ref]
-  (try
-    (let [{:keys [status body]} (p/request http {:method :get
-                                                    :url (retrieval-url ref)
-                                                    :headers {}})]
-      (when (<= 200 status 299)
-        (.getBytes ^String body "ISO-8859-1")))
-    (catch Exception _ nil)))
+  nil — a miss is an ordinary outcome here, not an error.
+
+  **Every response is verified against the PieceCID before it is returned.**
+  Not defensive habit: measured against mainnet on 2026-07-30, of 13 providers
+  reporting they held one live piece, 1 served a 27-byte nginx placeholder as
+  `application/octet-stream` and 10 served an identical wrong 81,918 bytes —
+  all with status 200. Eleven of thirteen were indistinguishable from success
+  at the HTTP layer. Unverified read-through would hand those bytes to `drive`
+  under a reference they do not belong to, which is the one failure a
+  content-addressed store must not have."
+  [fetch ref opts]
+  (some (fn [{:keys [url]}]
+          (try
+            (let [{:keys [status bytes]} (fetch url)]
+              (when (<= 200 status 299)
+                (let [v (provider/verify-bytes ref (mapv #(bit-and (int %) 0xff) bytes))]
+                  (when (:ok? v) bytes))))
+            (catch Exception _ nil)))
+        (retrieval-urls ref opts)))
 
 (defn store
-  "An `IObjectStore` over PieceCID-addressed staging with FilBeam
+  "An `IObjectStore` over PieceCID-addressed staging with verified
   read-through.
+
+  `opts` may carry `:provider-url` / `:client-address` to override the
+  environment, and `:fetch` to replace the HTTP GET (which is how the
+  verification path is tested offline).
 
   `put` **verifies** the reference against the content rather than trusting
   it. A store that let a caller file bytes under someone else's PieceCID
   would be content-addressed in name only."
-  ([] (store (transport/http)))
-  ([http]
+  ([] (store {}))
+  ([{:keys [fetch] :as opts}]
    (object/store-of
     {:put-object
      (fn [ref bytes]
@@ -125,7 +201,7 @@
              (let [out (java.io.ByteArrayOutputStream.)]
                (io/copy in out)
                (.toByteArray out)))
-           (fetch-piece http ref))))
+           (fetch-piece (or fetch get-bytes) ref opts))))
 
      :delete-object
      (fn [ref]
@@ -192,13 +268,22 @@
      :warm-storage (chain/contract network :warm-storage)
      :filecoin-pay (chain/contract network :filecoin-pay)
      :retrieval-domain (:retrieval-domain c)
+     :retrieval-urls (mapv :kind (retrieval-urls "<pieceCID>"))
+     :retrieval-note
+     (if (seq (retrieval-urls "<pieceCID>"))
+       (str "Read-through is on. Every response is checked by recomputing the "
+            "PieceCID; bytes that do not match are discarded.")
+       (str "Read-through is off — set FILECOIN_PROVIDER_URL (a provider's "
+            "serviceURL) or FILECOIN_CLIENT_ADDRESS (FilBeam serves each "
+            "client from its own subdomain). Neither is guessed."))
      :staged-pieces (staged-pieces)
      :write-status "not-implemented"
      :write-reason
-     (str "Putting data on Filecoin needs a storage provider's upload API "
-          "(not implemented in this workspace), plus funds for addPieces and "
-          "a payment rail. This store addresses and stages; it does not "
-          "create a deal.")}))
+     (str "The provider transfer surface exists now (filecoin.cloud.provider), "
+          "but an upload only parks bytes: they become durable when an "
+          "on-chain addPieces adds them to a data set, which needs funds and "
+          "a funded key. This store addresses and stages; it does not create "
+          "a deal.")}))
 
 (defn sample
   "A PieceCID computed here and now, so the addressing is visible rather than
