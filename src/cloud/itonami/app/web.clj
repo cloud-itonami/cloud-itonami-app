@@ -1562,8 +1562,11 @@
             (value) => { entry['forms/id'] = value; changed(false); })),
           field('ラベル', textInput(entry['forms/label'],
             (value) => { entry['forms/label'] = value; changed(false); })),
+          // `changed(true)` rather than false: switching a field to
+          // `choice` has to bring its options box into existence, and only
+          // a redraw does that.
           field('種類', selectInput(entry['forms/field-type'], vocabulary,
-            (value) => { entry['forms/field-type'] = value; changed(false); })));
+            (value) => { entry['forms/field-type'] = value; changed(true); })));
         const required = make('input', 'surface-check');
         required.type = 'checkbox';
         required.checked = Boolean(entry['forms/required?']);
@@ -1571,6 +1574,22 @@
           entry['forms/required?'] = required.checked; changed(false);
         });
         row.append(field('必須', required));
+        // The choices, for a choice. One per line, because a comma is a
+        // thing people put inside an option; `forms.validate` refuses a
+        // choice field with none of them, so a question left empty here is
+        // one the document will not save with.
+        if (entry['forms/field-type'] === 'choice') {
+          const area = make('textarea', 'form-control form-control--area');
+          area.value = (entry['forms/options'] || []).join('\\n');
+          area.setAttribute('aria-label', '選択肢（1行に1つ）');
+          area.placeholder = '選択肢を1行に1つ';
+          area.addEventListener('change', () => {
+            entry['forms/options'] = area.value.split('\\n')
+              .map((line) => line.trim()).filter(Boolean);
+            changed(false);
+          });
+          row.append(field('選択肢', area));
+        }
         row.append(removeButton(() => {
           payload['forms/fields'].splice(index, 1); changed(true);
         }));
@@ -3409,17 +3428,45 @@
             body.append(make('p', 'empty-state', 'まだ質問がありません。'));
           }
           (data.fields || []).forEach((entry) => {
-            const control = entry['field-type'] === 'textarea'
-              ? make('textarea', 'document-preview')
-              : make('input', 'workspace-search surface-input--wide');
-            if (control.tagName === 'INPUT') {
-              control.type = inputTypes[entry['field-type']] || 'text';
-            }
-            if (entry['field-type'] === 'checkbox') {
+            const type = entry['field-type'];
+            // A choice is picked, not typed. This built a text box for one,
+            // so a question with a fixed set of answers was answered by
+            // typing — and the options were not even sent, though the
+            // preview panel two screens up drew them correctly. The server
+            // refuses an answer that is not one of them now, which would
+            // have made a free-text box a question you could only get
+            // wrong.
+            let control;
+            if (type === 'choice') {
+              control = make('select', 'form-control');
+              const options = entry.options || [];
+              // A blank first option only when the answer is optional. On a
+              // required question it is an answer nobody can mean, and the
+              // server would refuse it as missing.
+              if (!entry['required?']) control.append(make('option', null, ''));
+              options.forEach((option) => {
+                const node = make('option', null, String(option));
+                node.value = String(option);
+                control.append(node);
+              });
+              if (!options.length) {
+                control.append(make('option', null, '選択肢が未設定です'));
+                control.disabled = true;
+              }
+              // A required select starts on its first option, which is what
+              // it will send if nobody touches it.
+              if (entry['required?'] && options.length) answers[entry.id] = String(options[0]);
+              control.addEventListener('change', () => { answers[entry.id] = control.value; });
+            } else if (type === 'textarea') {
+              control = make('textarea', 'document-preview');
+              control.addEventListener('input', () => { answers[entry.id] = control.value; });
+            } else if (type === 'checkbox') {
+              control = make('input', 'surface-check');
               control.type = 'checkbox';
-              control.className = 'surface-check';
               control.addEventListener('change', () => { answers[entry.id] = control.checked; });
             } else {
+              control = make('input', 'workspace-search surface-input--wide');
+              control.type = inputTypes[type] || 'text';
               control.addEventListener('input', () => { answers[entry.id] = control.value; });
             }
             body.append(field(`${entry.label}${entry['required?'] ? ' *' : ''}`, control));

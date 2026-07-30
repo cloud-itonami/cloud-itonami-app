@@ -557,10 +557,19 @@
                          :kinds
                          (some #(when (= "forms" (:kind %)) (:vocabulary %))))
             fields (map-indexed (fn [index type]
-                                  {"forms/id" (str "q" index)
-                                   "forms/label" type
-                                   "forms/field-type" type
-                                   "forms/required?" false})
+                                  (cond-> {"forms/id" (str "q" index)
+                                           "forms/label" type
+                                           "forms/field-type" type
+                                           "forms/required?" false}
+                                    ;; A choice needs its choices. It is the
+                                    ;; one offered type that is not a whole
+                                    ;; field on its own — `forms.validate`
+                                    ;; calls one with no options a broken
+                                    ;; form, because it cannot be answered —
+                                    ;; and the editor grows a box for them
+                                    ;; when the type is set to this.
+                                    (= "choice" type)
+                                    (assoc "forms/options" ["赤" "青"])))
                                 offered)]
         (is (= 7 (count offered)))
         (is (:ok? (save! (:id item) (assoc payload "forms/fields" (vec fields))
@@ -775,9 +784,12 @@
         ;; make every respondent an editor of the questions.
         (let [{:keys [fields title]} (documents/form-for-answering (:id item) bob object-store)]
           (is (= "問い合わせ" title))
-          (is (= [{:id "name" :label "お名前" :field-type "text" :required? true}
-                  {:id "email" :label "メール" :field-type "email" :required? false}]
-                 fields)))
+          (is (= [{:id "name" :label "お名前" :field-type "text" :required? true
+                   :options []}
+                  {:id "email" :label "メール" :field-type "email" :required? false
+                   :options []}]
+                 fields)
+              ":options on every field, empty where there is nothing to choose"))
         (let [sent (documents/submit! (:id item) {"name" "Bob" "email" "bob@example.com"}
                                       bob object-store)]
           (is (:ok? sent))
@@ -4198,3 +4210,63 @@
         (let [loose (:item (documents/import! "csv" "無所属"
                                               (.getBytes csv "UTF-8") alice object-store))]
           (is (= "root" (:parent-id loose)) "which is the root, named"))))))
+
+(defn- survey
+  "A form with a choice field, as the editor makes one now."
+  [object-store]
+  (let [{:keys [item]} (documents/create! :forms "アンケート" alice object-store)
+        payload (:payload (documents/content (:id item) alice object-store))]
+    (save! (:id item)
+           (assoc payload "forms/fields"
+                  [{"forms/id" "colour" "forms/label" "色"
+                    "forms/field-type" "choice" "forms/required?" true
+                    "forms/options" ["赤" "青"]}])
+           alice object-store)
+    item))
+
+(deftest a-choice-field-reaches-the-form-with-its-choices
+  ;; The projection dropped the options, so the form a person answered
+  ;; rendered a question with a fixed set of answers as an empty text box —
+  ;; while the preview panel beside it drew the list correctly from the same
+  ;; document, which made the omission look like a decision.
+  (with-state
+    (fn [_ object-store]
+      (let [item (survey object-store)
+            {:keys [fields]} (documents/form-for-answering (:id item) alice object-store)]
+        (is (= [{:id "colour" :label "色" :field-type "choice" :required? true
+                 :options ["赤" "青"]}]
+               fields))))))
+
+(deftest an-answer-that-is-not-one-of-the-choices-is-refused
+  ;; A form is answerable over an API as well as through a select box. A
+  ;; rule only the select box knows is one anything else walks past.
+  (with-state
+    (fn [_ object-store]
+      (let [item (survey object-store)]
+        (is (:ok? (documents/submit! (:id item) {"colour" "赤"} alice object-store)))
+        (let [refused (try (documents/submit! (:id item) {"colour" "緑"} alice object-store)
+                           nil
+                           (catch clojure.lang.ExceptionInfo e (ex-data e)))]
+          (is (= :drive/invalid-submission (:type refused)))
+          (is (= ":submission/answer-not-an-option"
+                 (:code (first (:problems refused))))))))))
+
+(deftest a-choice-with-nothing-to-choose-from-does-not-save
+  ;; `forms.validate` calls it a broken form rather than an untidy one: it
+  ;; cannot be answered at all, and it is the shape every choice field had
+  ;; while the model had no options.
+  (with-state
+    (fn [_ object-store]
+      (let [{:keys [item]} (documents/create! :forms "アンケート" alice object-store)
+            payload (:payload (documents/content (:id item) alice object-store))
+            refused (try (save! (:id item)
+                                (assoc payload "forms/fields"
+                                       [{"forms/id" "colour" "forms/label" "色"
+                                         "forms/field-type" "choice"
+                                         "forms/required?" true}])
+                                alice object-store)
+                         nil
+                         (catch clojure.lang.ExceptionInfo e (ex-data e)))]
+        (is (= :drive/invalid-document (:type refused)))
+        (is (some #(= ":field/choice-without-options" (:code %)) (:problems refused))
+            (pr-str (:problems refused)))))))
