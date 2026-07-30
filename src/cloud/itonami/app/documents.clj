@@ -60,10 +60,13 @@
             [forms.model :as forms]
             [forms.validate :as forms-validate]
             [forms.wire :as forms-wire]
+            [sheets.csv :as sheets-csv]
             [sheets.model :as sheets]
             [sheets.validate :as sheets-validate]
             [sheets.wire :as sheets-wire]
             [slides.model :as slides]
+            [slides.office :as slides-office]
+            [slides.pptx :as slides-pptx]
             [slides.validate :as slides-validate]
             [slides.wire :as slides-wire]
             ;; Only to project EDN onto the wire. What is at rest is EDN; what
@@ -166,6 +169,26 @@
                          (slides/add-item (slides/workspace "cloud-itonami") deck)))
             :severity :slides/severity :code :slides/code :message :slides/msg
             :vocabulary slides-validate/shape-kinds}})
+
+(def export-formats
+  "What each surface can be asked for, and what that produces.
+
+  Keyed by surface so a request for a format a surface has no writer for is
+  refused by name rather than by producing something empty."
+  {:sheets {"csv" {:media-type "text/csv; charset=utf-8" :extension "csv"}
+            "edn" {:media-type "application/edn" :extension "edn"}}
+   :docs {"edn" {:media-type "application/edn" :extension "edn"}}
+   :forms {"edn" {:media-type "application/edn" :extension "edn"}}
+   :slides {"pptx" {:media-type
+                    "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+                    :extension "pptx"}
+            "edn" {:media-type "application/edn" :extension "edn"}}})
+
+(def import-formats
+  "What a new document can be made from."
+  {"csv" :sheets
+   "pptx" :slides
+   "edn" nil})
 
 (def ^:private resource-kinds
   (into {} (map (juxt (comp :resource-kind val) key)) kinds))
@@ -484,7 +507,11 @@
                            :resource-kind (str (:resource-kind spec))
                            ;; So the editor offers exactly what the validator
                            ;; accepts, from the one place that defines it.
-                           :vocabulary (some->> (:vocabulary spec) (mapv name) sort vec)})
+                           :vocabulary (some->> (:vocabulary spec) (mapv name) sort vec)
+                           ;; So the pane offers exactly the formats this
+                           ;; surface has a writer for, from the one table
+                           ;; that decides.
+                           :exports (vec (sort (keys (get export-formats k))))})
                         kinds)
            :source (str (:source archive) " · 作成済み " (count created) " 件"))))
 
@@ -1454,3 +1481,104 @@
           :block (:docs/id block)
           :kind (name (:docs/kind block))}))})))
 
+
+;; ── import and export ───────────────────────────────────────────────────────
+;;
+;; Two formats that already existed somewhere and were not reachable from
+;; here: CSV, which `sheets.csv` gained for this, and PPTX, which `slides`
+;; has had all along in `slides.pptx` and `slides.office` without the Drive
+;; ever offering it.
+;;
+;; EDN is the third, and it is free: the stored bytes are already the EDN
+;; envelope, so exporting one is handing over what is on disk. That makes
+;; every surface exportable, including the two with no office format at all.
+
+(defn- safe-filename
+  "A title as a filename. Refuses to become a path, for the same reason
+  `drive.store.fs` refuses an object reference that could be one."
+  [title extension]
+  (let [base (-> (str title)
+                 (str/replace #"[^\p{L}\p{N}_.-]" "_")
+                 (str/replace #"^[.]+" "_"))]
+    (str (if (str/blank? base) "document" base) "." extension)))
+
+(defn export
+  "One document in `format`, as bytes plus what to call them.
+
+  Returns `{:media-type :filename :bytes}` where `:bytes` is a JVM byte
+  array, because that is what an HTTP response wants and what
+  `slides.pptx/pptx-bytes` produces."
+  ([id format actor] (export id format actor (store-instance) {}))
+  ([id format actor object-store] (export id format actor object-store {}))
+  ([id format actor object-store {:keys [tab]}]
+   (let [{:keys [item]} (readable! actor id)
+         kind (get resource-kinds (:drive/resource-kind item))
+         available (get export-formats kind)
+         shape (get available format)]
+     (when-not shape
+       (throw (ex-info (str "この種類は " (pr-str format) " で書き出せません。")
+                       {:type :drive/unsupported-format
+                        :format format
+                        :available (vec (sort (keys available)))})))
+     (let [resource (:resource (content id actor object-store))
+           text (case format
+                  "edn" (pr-str (stored-envelope (get kinds kind) resource))
+                  "csv" (let [tab-id (or tab (first (sort (keys (:sheets/tabs resource)))))]
+                          (or (sheets-csv/workbook->csv resource tab-id)
+                              (throw (ex-info (str "タブ " (pr-str tab-id) " はありません。")
+                                              {:type :drive/not-found :tab tab-id
+                                               :tabs (vec (sort (keys (:sheets/tabs resource))))}))))
+                  nil)]
+       {:media-type (:media-type shape)
+        :filename (safe-filename (:drive/title item) (:extension shape))
+        :bytes (if (= "pptx" format)
+                 (slides-pptx/pptx-bytes resource)
+                 (.getBytes ^String text StandardCharsets/UTF_8))}))))
+
+(defn import!
+  "A new document from `bytes` in `format`.
+
+  Creates rather than replaces. Importing into an existing document would be
+  a save, and a save has an etag; an import has a file and no idea what it is
+  landing on top of.
+
+  It lands through `create!` and then `write-resource!` — the same path a
+  save takes — so quota, ACL, versioning and the surface's own validator all
+  apply to it exactly as they do to anything else. An imported deck that is
+  not a deck is refused with the same code as a typed one."
+  ([format title bytes actor] (import! format title bytes actor (store-instance)))
+  ([format title bytes actor object-store]
+   (when-not (contains? import-formats format)
+     (throw (ex-info (str "読み込めない形式です: " (pr-str format))
+                     {:type :drive/unsupported-format
+                      :available (vec (sort (keys import-formats)))})))
+   (let [text (delay (String. ^bytes bytes StandardCharsets/UTF_8))
+         [kind imported]
+         (case format
+           "csv" [:sheets nil]
+           "pptx" [:slides (slides-office/deck-from-office-bytes bytes)]
+           "edn" (let [envelope (edn/read-string @text)
+                       k (get resource-kinds (:kotoba.resource/kind envelope))]
+                   (when-not k
+                     (throw (ex-info "この EDN はこの Drive の資源ではありません。"
+                                     {:type :drive/unsupported-format
+                                      :kind (str (:kotoba.resource/kind envelope))})))
+                   [k (:kotoba.resource/payload envelope)]))
+         _ (when (and (= "pptx" format) (nil? imported))
+             (throw (ex-info "PPTX として読めませんでした。"
+                             {:type :drive/unsupported-format :format format})))
+         created (create! kind (or (not-empty (str/trim (str title)))
+                                   (str "取り込み " (store/now)))
+                          actor object-store)
+         doc-id (:id (:item created))
+         seeded (:resource (content doc-id actor object-store))
+         resource (if (= "csv" format)
+                    (sheets-csv/import-csv seeded "imported" @text)
+                    ;; Keep the ids the Drive just minted and the title the
+                    ;; caller asked for; take everything else from the file.
+                    (assoc imported
+                           (:title-key (get kinds kind)) (:name (:item created))
+                           (if (= kind :slides) :slides/id :docs/id) doc-id))
+         target (writable! actor doc-id)]
+     (write-resource! target doc-id actor object-store resource
+                      (:drive/object-ref (:item target))))))

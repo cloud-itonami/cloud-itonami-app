@@ -50,6 +50,32 @@
     (with-open [out (.getResponseBody exchange)]
       (.write out bytes)))))
 
+(defn- read-body-bytes
+  "The request body as a byte array.
+
+  Every other reader here slurps into a string, which is right for JSON and
+  wrong for a PPTX: decoding a zip as UTF-8 and encoding it back does not
+  give you the zip."
+  ^bytes [^HttpExchange exchange]
+  (.readAllBytes (.getRequestBody exchange)))
+
+(defn- send-bytes!
+  "A binary response with a filename.
+
+  `filename*=UTF-8''…` as well as the plain form: a Japanese title in a
+  Content-Disposition header is not ASCII, and RFC 5987 is how that is said."
+  [^HttpExchange exchange media-type filename ^bytes body]
+  (doto (.getResponseHeaders exchange)
+    (.set "Content-Type" media-type)
+    (.set "Cache-Control" "no-store")
+    (.set "Content-Disposition"
+          (str "attachment; filename*=UTF-8''"
+               (-> (java.net.URLEncoder/encode ^String filename StandardCharsets/UTF_8)
+                   (str/replace "+" "%20")))))
+  (.sendResponseHeaders exchange 200 (alength body))
+  (with-open [out (.getResponseBody exchange)]
+    (.write out body)))
+
 (defn- session-cookie [token]
   (str identity/cookie-name "=" token
        "; Path=/; HttpOnly; SameSite=Strict; Max-Age="
@@ -821,6 +847,37 @@
                        (documents/grant! id (:principal request) (:role request)
                                          (:user-id session)))))
 
+            ;; Binary out. Not `send!` — a PPTX is a zip, and a CSV that has
+            ;; been through a JSON string is a CSV with quotes in it.
+            (and (= method "GET")
+                 (id-from-path path #"/api/workspace/drive/documents/([^/]+)/export"))
+            (let [session (require-app-session! exchange)
+                  params (query-params exchange)
+                  {:keys [media-type filename bytes]}
+                  (documents/export
+                   (id-from-path path #"/api/workspace/drive/documents/([^/]+)/export")
+                   (or (:format params) "edn")
+                   (:user-id session)
+                   (documents/store-instance)
+                   {:tab (:tab params)})]
+              (send-bytes! exchange media-type filename bytes))
+
+            ;; The body is the file. No multipart: one file per request with
+            ;; the name in the query is the whole of what this needs, and a
+            ;; multipart parser is a lot of surface to add for a boundary
+            ;; string.
+            (and (= method "POST") (= path "/api/workspace/drive/import"))
+            (let [session (require-app-session! exchange)
+                  params (query-params exchange)
+                  body (read-body-bytes exchange)]
+              (require-origin! exchange config)
+              (require-csrf! exchange session)
+              (send! exchange 200
+                     (documents/import! (or (:format params) "edn")
+                                        (:title params)
+                                        body
+                                        (:user-id session))))
+
             ;; What this document points at, and what points at it. Both
             ;; resolve through `locate`, so a reference to something the
             ;; asker may not read is reported as unresolved rather than
@@ -1176,6 +1233,7 @@
                      ;; The document moved under the editor. 409 is the whole
                      ;; point: the client has to re-read before it can win.
                      :drive/stale-version 409
+                     :drive/unsupported-format 415
                      :drive/invalid-share 400
                      :drive/invalid-submission 422
                      :drive/invalid-comment 400
