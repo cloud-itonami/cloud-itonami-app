@@ -15,6 +15,8 @@
             [cloud.itonami.app.loops-test]
             [cloud.itonami.app.metrics-test]
             [cloud.itonami.app.repos-test]
+            [cloud.itonami.app.scheduler-test]
+            [cloud.itonami.app.scheduler-http-test]
             [cloud.itonami.app.authority.adapters-test]
             [cloud.itonami.app.authority.api-test]
             [cloud.itonami.app.authority.payment-test]
@@ -33,7 +35,7 @@
             [cloud.itonami.app.data-isolation-test]
             [cloud.itonami.app.did-test]
             [cloud.itonami.app.documents-test]
-            [cloud.itonami.app.drive-reachability-test]
+            [cloud.itonami.app.workspace-reachability-test]
             [cloud.itonami.app.web-script-test]
             [cloud.itonami.app.esign-test]
             [cloud.itonami.app.esign-retention-test]
@@ -79,7 +81,7 @@
     cloud.itonami.app.data-isolation-test
     cloud.itonami.app.did-test
     cloud.itonami.app.documents-test
-    cloud.itonami.app.drive-reachability-test
+    cloud.itonami.app.workspace-reachability-test
     cloud.itonami.app.web-script-test
     cloud.itonami.app.esign-test
     cloud.itonami.app.esign-retention-test
@@ -92,6 +94,8 @@
     cloud.itonami.app.fleet-tools-test
     cloud.itonami.app.openai-compat-test
     cloud.itonami.app.passkey-test
+    cloud.itonami.app.scheduler-test
+    cloud.itonami.app.scheduler-http-test
     cloud.itonami.app.payment-tools-test
     cloud.itonami.app.paypay-bank-test
     cloud.itonami.app.storj-node-test

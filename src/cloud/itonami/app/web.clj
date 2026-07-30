@@ -285,6 +285,18 @@
      missing. */
   .drive-import-choice{display:flex;gap:.5rem;flex-wrap:wrap}
   .drive-import-choice:empty{display:none}
+  .scheduler-create{display:flex;gap:.5rem;flex-wrap:wrap;align-items:center}
+  .appointment{margin-top:1rem;display:flex;flex-direction:column;gap:.75rem}
+  .appointment__people{list-style:none;margin:0;padding:0;display:flex;
+    flex-direction:column;gap:.25rem}
+  .appointment__person{display:flex;justify-content:space-between;gap:1rem;
+    font-size:.875rem}
+  /* The state is said in words beside the name; the colour is a second way
+     to read the same thing, not the only way. */
+  .appointment__status{color:var(--color-neutral-solid-gray-600)}
+  .appointment__person--accepted .appointment__status{color:var(--color-semantic-success-1)}
+  .appointment__person--declined .appointment__status{color:var(--color-semantic-error-1)}
+  .appointment__answers,.appointment__invite{display:flex;gap:.5rem;flex-wrap:wrap}
   .drive-trash{margin-top:1.5rem;border:1px solid var(--color-neutral-solid-gray-200);
     border-radius:.75rem;background:var(--color-neutral-white);padding:1rem 1.25rem}
   .drive-trash__head{display:flex;align-items:center;flex-wrap:wrap;gap:.75rem}
@@ -3836,8 +3848,150 @@
     let calendarData = {items:[], days:[]};
     let selectedDay = null;
     let selectedEvent = null;
+    // ── appointments ──────────────────────────────────────────────────────
+    //
+    // The Scheduler showed the machine's calendar and nothing else: this app
+    // could not make an appointment, ask anyone to it, or answer one, while
+    // `kotoba-lang/calendar` had attendees, RSVP and conflict detection all
+    // along. These four calls are the whole of what was missing.
+    const rsvpLabels = {'needs-action':'返事待ち', accepted:'参加', declined:'不参加',
+                        tentative:'仮'};
+    const reloadScheduler = () => loadWorkspace('scheduler', renderCalendar);
+    // A local field is a wall clock; the model stores instants. Sending what
+    // the field says would put `2026-08-03T09:00` next to EventKit's
+    // `2026-08-03T09:00:00Z` in one list, and two events an hour apart would
+    // sort as though they were not.
+    const instantFrom = (value) => {
+      if (!value) return null;
+      const when = new Date(value);
+      return Number.isNaN(when.getTime()) ? null : when.toISOString();
+    };
+    const createAppointment = async () => {
+      const status = $('#scheduler-status');
+      const start = instantFrom($('#scheduler-start')?.value);
+      const end = instantFrom($('#scheduler-end')?.value);
+      // Asked here as well as at the server, because the server's refusal
+      // comes from the model and is worded for a developer.
+      if (!start || !end) {
+        status.textContent = '開始と終了の日時を入れてください。';
+        return;
+      }
+      status.textContent = '予定を作成しています…';
+      try {
+        const made = await postJSON('/api/workspace/scheduler/events', {
+          title:($('#scheduler-title')?.value || '').trim(),
+          start, end,
+          attendees:($('#scheduler-attendees')?.value || '')
+            .split(/[,、\\s]+/).map((s) => s.trim()).filter(Boolean)
+        }, true);
+        status.textContent = `${made.event.title} を作成しました。`;
+        ['#scheduler-title', '#scheduler-attendees'].forEach((id) => {
+          if ($(id)) $(id).value = '';
+        });
+        selectedEvent = null;
+        await reloadScheduler();
+      } catch (error) {
+        status.textContent = error.message;
+      }
+    };
+    const appointmentAction = async (path, body, done) => {
+      const status = $('#scheduler-status');
+      try {
+        await postJSON(path, body, true);
+        status.textContent = done;
+        await reloadScheduler();
+      } catch (error) {
+        status.textContent = error.message;
+      }
+    };
+    const appointmentActions = (event) => {
+      const box = make('div', 'appointment');
+      const people = Object.entries(event.rsvp || {});
+      if (people.length) {
+        const list = make('ul', 'appointment__people');
+        people.forEach(([person, status]) => {
+          const row = make('li', `appointment__person appointment__person--${status}`);
+          row.append(make('span', 'appointment__name', person),
+            make('span', 'appointment__status', rsvpLabels[status] || status));
+          list.append(row);
+        });
+        box.append(make('p', 'record-detail__eyebrow', '出席'), list);
+      } else if (event.role === 'organizer') {
+        box.append(make('p', 'surface-note', 'まだ誰も招いていません。'));
+      }
+      // An attendee answers. All three, including tentative: the model has
+      // it, and an interface offering only yes and no makes the third answer
+      // unreachable for anyone but a script.
+      if (event.role === 'attendee') {
+        const answers = make('div', 'appointment__answers');
+        [['accepted', '参加する'], ['tentative', '仮で入れる'],
+         ['declined', '参加しない']].forEach(([status, label]) => {
+          const button = make('button', 'tool-button', label);
+          button.type = 'button';
+          button.setAttribute('aria-pressed', event['your-rsvp'] === status ? 'true' : 'false');
+          button.addEventListener('click', () => appointmentAction(
+            `/api/workspace/scheduler/events/${encodeURIComponent(event.id)}/respond`,
+            {status}, `「${event.title}」に${label}と答えました。`));
+          answers.append(button);
+        });
+        box.append(answers);
+      }
+      if (event.role === 'organizer') {
+        const invite = make('div', 'appointment__invite');
+        const field = make('input', 'workspace-search');
+        field.type = 'text';
+        field.placeholder = '招く人';
+        field.setAttribute('aria-label', '招く人');
+        const ask = make('button', 'tool-button', '招く');
+        ask.type = 'button';
+        ask.addEventListener('click', () => {
+          const person = field.value.trim();
+          if (!person) return;
+          field.value = '';
+          appointmentAction(
+            `/api/workspace/scheduler/events/${encodeURIComponent(event.id)}/invite`,
+            {person}, `${person} を招きました。`);
+        });
+        const cancel = make('button', 'tool-button', 'この予定を取り消す');
+        cancel.type = 'button';
+        cancel.addEventListener('click', () => {
+          selectedEvent = null;
+          appointmentAction(
+            `/api/workspace/scheduler/events/${encodeURIComponent(event.id)}/cancel`,
+            {}, `「${event.title}」を取り消しました。`);
+        });
+        invite.append(field, ask, cancel);
+        box.append(invite);
+      }
+      // What this clashes with, for whoever is reading. Asked per event
+      // rather than for the whole list: it is a question about one
+      // appointment, and asking it for every row is a request per row.
+      const clashes = make('p', 'surface-note');
+      box.append(clashes);
+      fetch(`/api/workspace/scheduler/events/${encodeURIComponent(event.id)}/conflicts`)
+        .then((response) => response.json())
+        .then((data) => {
+          const found = data.conflicts || [];
+          // Nothing rather than 'no conflicts': an empty line under every
+          // appointment is a report on a question nobody asked.
+          if (found.length) {
+            clashes.textContent =
+              `重なっています: ${found.map((c) => c.title).join('、')}`;
+          }
+        })
+        .catch(() => { /* the line simply stays empty */ });
+      return box;
+    };
     const renderCalendar = (data) => {
       calendarData = data;
+      // Static markup, so it is wired once rather than on every render —
+      // the same guard the upload input uses, and for the same reason: a
+      // listener added per render fires once per render.
+      const create = $('#scheduler-create-button');
+      if (create && !create.dataset.wired) {
+        create.dataset.wired = 'true';
+        create.addEventListener('click', createAppointment);
+      }
       const days = data.days || [];
       if (!days.some((day) => day.date === selectedDay)) selectedDay = days[0]?.date || null;
       const rail = $('#calendar-days'); rail.replaceChildren();
@@ -3869,11 +4023,20 @@
           }));
       });
       if (!items.length) list.append(make('li', 'empty-state', data.message || 'この日の予定はありません。'));
-      if (selectedEvent) setDetail($('#calendar-detail'), selectedEvent.calendar || 'Calendar',
-        selectedEvent.title, selectedEvent['all-day?'] ? '終日の予定です。' : '時間を確保した予定です。',
-        [['開始', selectedEvent['all-day?'] ? '終日' : formatDate(selectedEvent.start)],
-         ['終了', selectedEvent['all-day?'] ? '終日' : formatDate(selectedEvent.end)],
-         ['カレンダー', selectedEvent.calendar || 'Calendar']]);
+      if (selectedEvent) {
+        setDetail($('#calendar-detail'), selectedEvent.calendar || 'Calendar',
+          selectedEvent.title, selectedEvent['all-day?'] ? '終日の予定です。' : '時間を確保した予定です。',
+          [['開始', selectedEvent['all-day?'] ? '終日' : formatDate(selectedEvent.start)],
+           ['終了', selectedEvent['all-day?'] ? '終日' : formatDate(selectedEvent.end)],
+           ['カレンダー', selectedEvent.calendar || 'Calendar']]);
+        // Only for the appointments this app owns. An event mirrored from
+        // the machine's calendar has no attendees here to answer to, and
+        // offering to accept one would be offering to write somewhere this
+        // app only reads.
+        if (selectedEvent.origin === 'app') {
+          $('#calendar-detail').append(appointmentActions(selectedEvent));
+        }
+      }
       else $('#calendar-detail').replaceChildren(make('div', 'empty-state', 'この日の予定はありません。'));
       $('#scheduler-count').textContent = data.items.length;
       $('#calendar-source').textContent = `${data.source} · ${data.status}`;
@@ -6955,6 +7118,24 @@
          (view-header "Scheduler" "kotoba-lang/calendar と EventKit で、この先7日間を日ごとに整理します。")
          [:p {:class "source-note"} [:span {:class "source-dot"}]
           [:span {:id "calendar-source"} "EventKit を読み込み中…"]]
+         [:div {:class "drive-create-bar"}
+          [:div {:class "scheduler-create" :role "group" :aria-label "予定を作成"}
+           [:label {:class "visually-hidden" :for "scheduler-title"} "予定の名前"]
+           [:input {:class "workspace-search" :id "scheduler-title" :type "text"
+                    :placeholder "予定の名前" :autocomplete "off"}]
+           [:label {:class "visually-hidden" :for "scheduler-start"} "開始"]
+           [:input {:class "workspace-search" :id "scheduler-start"
+                    :type "datetime-local"}]
+           [:label {:class "visually-hidden" :for "scheduler-end"} "終了"]
+           [:input {:class "workspace-search" :id "scheduler-end"
+                    :type "datetime-local"}]
+           [:label {:class "visually-hidden" :for "scheduler-attendees"}
+            "招く人（カンマ区切り）"]
+           [:input {:class "workspace-search" :id "scheduler-attendees" :type "text"
+                    :placeholder "招く人（カンマ区切り）" :autocomplete "off"}]
+           [:button {:class "tool-button" :type "button" :id "scheduler-create-button"}
+            "予定を作成"]]
+          [:p {:class "drive-create__status" :id "scheduler-status" :aria-live "polite"}]]
          [:div {:class "date-rail" :id "calendar-days" :aria-label "日付を選択"}]
          [:div {:class "record-browser"}
           [:div {:class "record-list"}

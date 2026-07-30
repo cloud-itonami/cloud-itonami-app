@@ -1,5 +1,5 @@
-(ns cloud.itonami.app.drive-reachability-test
-  "Every Drive route the server answers, against what the app can reach.
+(ns cloud.itonami.app.workspace-reachability-test
+  "Every workspace route the server answers, against what the app can reach.
 
   This is written because of a gap nobody was looking for: `import!` reads
   six formats — csv, xlsx, docx, pptx, md, edn — through the same validator,
@@ -45,15 +45,15 @@
 (defn- source [path]
   (slurp (io/file "src/cloud/itonami/app" path)))
 
-(defn- drive-routes
+(defn- routes-under
   "The distinctive segment of every Drive route the server matches.
 
   `/api/workspace/drive/documents/([^/]+)/suggestions/[^/]+/accept` is
   `suggestions/accept`: the parameters are not part of what to look for, and
   the last two literal segments are what makes a route this one and not its
   neighbour."
-  [server]
-  (->> (re-seq #"\"(/api/workspace/drive[^\"]*)\"" server)
+  [server prefix]
+  (->> (re-seq (re-pattern (str "\"(" prefix "[^\"]*)\"")) server)
        (map second)
        (map (fn [route]
               ;; The character class first, or splitting on `/` splits
@@ -61,16 +61,18 @@
               (->> (str/split (str/replace route "[^/]" "X") #"/")
                    (remove #(or (str/blank? %)
                                 (re-find #"[(\[+\\]" %)
-                                (contains? #{"api" "workspace" "drive" "documents"} %)))
+                                (contains? #{"api" "workspace" "drive" "documents"
+                                             "scheduler" "events"} %)))
                    (str/join "/"))))
        (remove str/blank?)
        distinct
        sort))
 
-(deftest every-drive-route-is-reachable-from-the-interface
-  (let [server (source "server.clj")
-        web (source "web.clj")
-        reached? (fn [segment]
+(defn- unreached
+  "The routes under `prefix` whose distinctive segment appears nowhere in the
+  interface."
+  [server web prefix]
+  (let [reached? (fn [segment]
                    ;; The last literal segment, in a string, after a slash.
                    ;; `${base}/suggestions` and `/suggestions/${id}/accept`
                    ;; both count; the word in a comment does not.
@@ -78,18 +80,25 @@
                      (or (str/includes? web (str "/" tail))
                          ;; The verb an event handler passes in, which is
                          ;; the whole of what puts it in the URL.
-                         (str/includes? web (str "'" tail "'")))))
-        routes (drive-routes server)
-        unreached (remove reached? routes)]
-    (is (seq routes) "the routes were found at all")
-    (is (= (set (keys no-interface)) (set unreached))
-        (str "unreachable now: " (pr-str unreached)
-             " — recorded as unreachable: " (pr-str (sort (keys no-interface)))))
+                         (str/includes? web (str "'" tail "'")))))]
+    {:routes (routes-under server prefix)
+     :unreached (remove reached? (routes-under server prefix))}))
+
+(deftest every-workspace-route-is-reachable-from-the-interface
+  (let [server (source "server.clj")
+        web (source "web.clj")
+        families ["/api/workspace/drive" "/api/workspace/scheduler"]
+        found (mapcat #(:routes (unreached server web %)) families)
+        missing (mapcat #(:unreached (unreached server web %)) families)]
+    (is (seq found) "the routes were found at all")
+    (is (= (set (keys no-interface)) (set missing))
+        (str "unreachable now: " (pr-str missing)
+             " -- recorded as unreachable: " (pr-str (sort (keys no-interface)))))
     ;; And the record does not outlive what it describes: a route that grew
     ;; an interface has to leave the list, or the list becomes a place where
     ;; finished work goes to look unfinished.
     (doseq [[segment reason] no-interface]
-      (is (some #(= segment %) routes)
+      (is (some #(= segment %) found)
           (str segment " is recorded as having no interface and is not a route"))
       (is (not (str/blank? reason))))))
 
@@ -101,3 +110,16 @@
     (is (str/includes? web "drive-import-choice") "and there is somewhere to say so")
     (doseq [format ["xlsx" "docx" "pptx" "csv" "md" "edn"]]
       (is (str/includes? web (str format ":")) (str format " can be chosen")))))
+
+(deftest making-an-appointment-is-reachable
+  ;; `POST /api/workspace/scheduler/events` reduces to no distinctive
+  ;; segment — `events` is the word every route in the family shares, so the
+  ;; set difference above cannot see it. Named here instead, or the one route
+  ;; that creates anything in this family would be the one nothing checks.
+  (let [web (source "web.clj")]
+    (is (str/includes? web "/api/workspace/scheduler/events"))
+    (is (str/includes? web "scheduler-create-button") "and there is something to press")
+    ;; All three answers. The model has `tentative`; an interface offering
+    ;; only yes and no makes the third unreachable for anyone but a script.
+    (doseq [answer ["accepted" "tentative" "declined"]]
+      (is (str/includes? web (str "'" answer "'")) answer))))
