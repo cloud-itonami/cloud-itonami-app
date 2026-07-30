@@ -28,13 +28,26 @@
   so lookup is by `:repo` — the directory, which is unique — and `find-by-id`
   returns every match rather than picking one.
 
-  `:execution` says when an actor runs, and it changes what a missing endpoint
-  means. An `:on-demand` actor wakes for an API or MCP call and stops; having
-  no endpoint means nobody has exposed it yet, which is unremarkable when 1,326
-  of them have no deploy config at all. A `:resident` actor carries its own
-  loop and runs unprompted; a missing endpoint there would mean the loop is not
-  running, which is a fault. Reporting both the same way would either bury a
-  dead organism or flag hundreds of healthy unexposed agents as broken.
+  `:execution` says when an actor runs. An `:on-demand` actor wakes for an API
+  or MCP call and stops; no endpoint means nobody has exposed it yet, which is
+  unremarkable when most have no deploy config at all. A `:resident` actor —
+  the loop orchestrators and the person organisms — carries its own loop and
+  runs unprompted.
+
+  An earlier version of this docstring said a resident actor without an
+  endpoint means its loop is dead. That was wrong, and worth correcting rather
+  than quietly dropping: a `loop-*` orchestrator runs in CI or on a schedule
+  and has no HTTP surface by design, so its endpoint was never going to exist.
+  Liveness for a resident actor is whether it recently recorded evidence — the
+  taxonomy makes `:record-evidence` one of its obligations — and this catalog
+  does not carry that. It reports `:not-probeable` and says why, instead of
+  reusing a signal that does not apply.
+
+  Some entries are `:reference-only`. They are in the catalog because west
+  pins them and the authority classifies them, not because they carry a
+  blueprint: repository, remote and revision, and nothing read out of the
+  repository itself. That is how the resident actors got here without every
+  one of them having to grow a blueprint.edn.
 
   The value is derived from the workspace authority
   (`manifest/repository-rules.edn`, ADR-2607299000), not restated in the app,
@@ -75,7 +88,11 @@
 (defn probeable?
   "True when the actor names a health path. A callable actor need not be
   probeable: the Pages actors serve a real API under /api/* and have no health
-  endpoint at all, so there is nothing honest to probe."
+  endpoint at all, so there is nothing honest to probe.
+
+  Resident actors are never probeable through this namespace. A loop that runs
+  on a schedule has no HTTP surface to ask, and asking the wrong question would
+  be worse than not asking."
   [actor]
   (and (callable? actor) (some? (:health-path actor))))
 
@@ -112,6 +129,17 @@
     (filterv #(nil? (:execution %)) (actors))
     (filterv #(= execution (:execution %)) (actors))))
 
+(defn reference-only
+  "Entries present as a pin rather than a description: repo, remote, revision.
+  No file was read from them."
+  []
+  (filterv :reference-only (actors)))
+
+(defn revision
+  "The west pin for this actor — the hash the workspace currently agrees on."
+  [actor]
+  (:revision actor))
+
 (defn counts
   "Directory shape at a glance. `:company-records` are the 155 repositories
   whose blueprint.edn is a `:company/*` legal-entity record rather than an
@@ -123,9 +151,7 @@
      :callable (:callable-count c)
      :company-records (:company-record-count c)
      :duplicate-ids (count (:duplicate-ids c))
-     ;; No :resident actors appear here, and that is a scope fact rather than
-     ;; an absence of them: person-* and loop-* live outside cloud-itonami and
-     ;; carry no blueprint.edn, so this generator cannot see them.
+     :reference-only (count (filter :reference-only (:actors c)))
      :by-execution (frequencies (map #(or (:execution %) :unclassified)
                                      (:actors c)))}))
 
