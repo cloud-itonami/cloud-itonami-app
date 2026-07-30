@@ -3,13 +3,17 @@
   authority cannot be reached by a typo, that the transport records why a hand-off
   could not happen, and -- the one that matters most -- that a CLIENT CANNOT
   SUPPLY ITS OWN POSTURE."
-  (:require [clojure.test :refer [deftest is testing]]
+  (:require [clojure.data.json :as json]
+            [clojure.test :refer [deftest is testing]]
             [cloud.itonami.app.authority :as authority]
             [cloud.itonami.app.authority.api :as api]
             [cloud.itonami.app.authority.esim :as esim-adapter]
             [cloud.itonami.app.authority.posture :as posture]
             [cloud.itonami.app.authority.transport :as transport]
-            [cloud.itonami.app.store :as store]))
+            [cloud.itonami.app.store :as store])
+  (:import [com.sun.net.httpserver HttpHandler HttpServer]
+           [java.net InetSocketAddress]
+           [java.nio.charset StandardCharsets]))
 
 (def session {:user-id "user-1" :organization-id "org-1"})
 
@@ -218,3 +222,138 @@
                                            :profiles [{:esim/iccid iccid-a :esim/state :enabled}
                                                       {:esim/iccid iccid-b :esim/state :disabled}])))))
       (is (empty? (authority/proposals session))))))
+
+;; ---------------------------------------------------------------------------
+;; the third outcome: accepted, awaiting the authority's own operator
+;; ---------------------------------------------------------------------------
+
+(defn- pending-domain
+  "A domain whose commit! answers the way an actor's POST /commit does when it
+  accepted the proposal and is holding it for its operator."
+  []
+  {:authority/key :fixture
+   :authority/context-type (fn [_] :fixture/op)
+   :authority/pre-check (fn [_ _ _] {:x 1})
+   :authority/material (fn [v] (str "fixture/" (:x v)))
+   :authority/commit! (fn [_ _ _]
+                        {:authority/ok? false
+                         :authority/pending? true
+                         :authority/reference "commit-p-1-abc"})})
+
+(deftest a-pending-outcome-is-neither-committed-nor-refused
+  (reset-proposals!)
+  (let [d (pending-domain)
+        p (authority/review! d {} session {:op :x})]
+    (store/transact! assoc-in [:authority :proposals (:id p) :status] :approved)
+    (let [out (authority/commit! d {} session (:id p))]
+      (is (= :authority-pending (:status out))
+          "the subject consented and the operator has not decided -- two states
+           could not say that")
+      (is (= "commit-p-1-abc" (:authority-reference out))
+          "the reference is what an operator resumes")
+      (is (nil? (:authority-record out)) "nothing was committed")
+      (is (nil? (:authority-refusal out)) "and nothing was refused")
+      (testing "it is NOT terminal, because the operator has still to decide"
+        (is (not (authority/terminal? out)))
+        (is (authority/pending-with-authority? out))))))
+
+(deftest a-pending-proposal-cannot-be-re-committed
+  (reset-proposals!)
+  (let [d (pending-domain)
+        p (authority/review! d {} session {:op :x})]
+    (store/transact! assoc-in [:authority :proposals (:id p) :status] :approved)
+    (authority/commit! d {} session (:id p))
+    (is (= :authority/proposal-not-found
+           (refuses #(authority/commit! d {} session (:id p))))
+        "commit requires :approved, so a pending proposal cannot silently
+         accumulate attempts")))
+
+(deftest pending-is-checked-before-ok-so-it-is-not-filed-as-refused
+  (testing "a pending outcome carries ok? false and no refusal; testing ok? first
+            would file it as :authority-refused"
+    (reset-proposals!)
+    (let [d (pending-domain)
+          p (authority/review! d {} session {:op :x})]
+      (store/transact! assoc-in [:authority :proposals (:id p) :status] :approved)
+      (is (= :authority-pending
+             (:status (authority/commit! d {} session (:id p))))))))
+
+
+;; ---------------------------------------------------------------------------
+;; the transport reads the three-state wire contract, over a real socket
+;; ---------------------------------------------------------------------------
+
+(defn- with-stub-actor
+  "Run f with a tiny HTTP server that answers `payload` for POST /commit, so the
+  transport's real code path -- socket, status code, JSON decode, status mapping --
+  is exercised rather than a stubbed function."
+  [payload f]
+  (let [server (HttpServer/create (InetSocketAddress. "127.0.0.1" 0) 0)]
+    (.createContext
+     server "/"
+     (reify HttpHandler
+       (handle [_ ex]
+         (let [bytes (.getBytes (json/write-str payload) StandardCharsets/UTF_8)]
+           (.set (.getResponseHeaders ex) "Content-Type" "application/json")
+           (.sendResponseHeaders ex 200 (alength bytes))
+           (with-open [out (.getResponseBody ex)] (.write out bytes))
+           (.close ex)))))
+    (.setExecutor server nil)
+    (.start server)
+    (try (f (str "http://127.0.0.1:" (.getPort (.getAddress server)) "/commit"))
+         (finally (.stop server 0)))))
+
+(defn- transport-outcome [payload]
+  (with-stub-actor
+    payload
+    (fn [endpoint]
+      (let [cfg (-> (on :esim) (assoc-in [:authorities :esim :endpoint] endpoint))]
+        ((transport/commit-fn :esim) cfg session {:id "p1"})))))
+
+(deftest the-transport-maps-committed
+  (let [out (transport-outcome {:status "committed" :record {:x 1}})]
+    (is (true? (:authority/ok? out)))
+    (is (= {:x 1} (:authority/record out)))
+    (is (not (:authority/pending? out)))))
+
+(deftest the-transport-maps-held-to-a-refusal
+  (let [out (transport-outcome {:status "held" :refusal {:rule "iccid-invalid"}})]
+    (is (false? (:authority/ok? out)))
+    (is (= {:rule "iccid-invalid"} (:authority/refusal out)))
+    (is (not (:authority/pending? out)))))
+
+(deftest the-transport-maps-pending-and-does-not-call-it-refused
+  (let [out (transport-outcome {:status "pending" :reference "commit-p1-abc"})]
+    (is (false? (:authority/ok? out)))
+    (is (true? (:authority/pending? out)))
+    (is (= "commit-p1-abc" (:authority/reference out)))
+    (is (nil? (:authority/refusal out))
+        "pending must carry no refusal, or the spine would file it as refused")))
+
+(deftest a-held-answer-with-no-refusal-body-still-names-a-rule
+  (let [out (transport-outcome {:status "held"})]
+    (is (= :governor-refused (get-in out [:authority/refusal :rule])))))
+
+(deftest an-unrecognised-status-is-a-transport-failure-not-a-guess
+  (doseq [payload [{:status "maybe"} {:status nil} {:ok true} {}]]
+    (let [out (transport-outcome payload)]
+      (is (false? (:authority/ok? out)) (str (pr-str payload)))
+      (is (= :transport-failed (get-in out [:authority/refusal :rule]))
+          (str "payload " (pr-str payload) " must not be interpreted"))))
+  (testing "the old boolean contract is no longer accepted -- it could not express
+            pending, and silently honouring it would hide an un-migrated actor"
+    (let [out (transport-outcome {:ok false :refusal {:rule "x"}})]
+      (is (= :transport-failed (get-in out [:authority/refusal :rule]))))))
+
+(deftest a-pending-wire-answer-becomes-a-pending-proposal
+  (reset-proposals!)
+  (with-stub-actor
+    {:status "pending" :reference "commit-p1-abc"}
+    (fn [endpoint]
+      (let [cfg (-> (on :esim) (assoc-in [:authorities :esim :endpoint] endpoint))
+            p (api/review! cfg session :esim lifecycle-request)]
+        (store/transact! assoc-in [:authority :proposals (:id p) :status] :approved)
+        (let [out (api/commit! cfg session :esim (:id p))]
+          (is (= :authority-pending (:status out)))
+          (is (= "commit-p1-abc" (:authority-reference out)))
+          (is (not (authority/terminal? out))))))))
