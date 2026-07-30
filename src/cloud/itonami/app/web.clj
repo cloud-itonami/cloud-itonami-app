@@ -1686,7 +1686,11 @@
         card.append(
           field('ID', textInput(slide['slides/id'],
             (value) => { slide['slides/id'] = value; changed(false); })),
-          field('見出し', textInput(slide['slides/title'],
+          // A name for the slide, not a heading on it. `slides.pptx` writes
+          // it nowhere and `slides.office` generates one when reading a file
+          // that has none, so calling it a heading promises text that never
+          // appears — on the slide or in the exported .pptx.
+          field('スライド名', textInput(slide['slides/title'],
             (value) => { slide['slides/title'] = value; changed(false); },
             'surface-input--wide')));
         (slide['slides/shapes'] || []).forEach((shape) => {

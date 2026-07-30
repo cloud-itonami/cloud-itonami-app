@@ -316,11 +316,30 @@ italic, and this does not spell any of them, so a styled run goes out plain.
 
 `export-warnings` asks a table of `[surface format] → fn`, so the formats
 that *can* answer are one line each and the ones that cannot are visible as
-absences rather than as an unstated assumption. Three answer today:
-`docs.markdown`, `docs.docx` and `sheets.xlsx`. EDN is not in the table
-because it is the stored bytes and loses nothing. CSV and PPTX are not in it
-because nobody has written the function for them, which is a gap rather than
-a claim that they are lossless.
+absences rather than as an unstated assumption. All five answer now — `docs.markdown`, `docs.docx`, `sheets.xlsx`,
+`sheets.csv` and `slides.pptx`. EDN is the one absence and is not a gap: it
+is the stored bytes, so there is nothing for it to drop.
+
+**CSV's first entry is the one that surprises people.** A CSV is one table,
+so every other tab is left behind — unlike the rest of any of these lists,
+that one is most of the document. It also reports that a formula goes out as
+`=SUM(B2:B9)` rather than as what it comes to: Excel re-evaluates on open,
+which is why it is written that way, and a reader that is not a spreadsheet
+gets the formula. Both are defensible and only one can be written, so the
+choice is reported rather than argued.
+
+**PPTX's list has one entry, and that is the finding.** Checked against
+every constructor the slides model has: text boxes, rectangles and images
+travel with position, fill, weight and size; notes become a notesSlide part;
+the deck's title becomes `docProps/core.xml`; the theme becomes a theme
+part. The exception is a *slide's* title, which is written nowhere.
+
+That one is a label rather than content — `slide` defaults it to the slide's
+id and `slides.office` generates `Slide 1 · source` when reading a file that
+has none, so rendering it would put `s1` on every auto-named slide. So it is
+reported rather than rendered, and the editor's field is now called
+スライド名 rather than 見出し: calling it a heading promised text that never
+appears, on the slide or in the export.
 
 Keying by format rather than reporting one set of losses per document is not
 tidiness: the lists differ. A bold run is spelled by Markdown and dropped by
