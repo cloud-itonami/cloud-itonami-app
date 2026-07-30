@@ -580,7 +580,33 @@
         (is (not (str/includes? (pr-str receipt) "private objective")))
         (is (= 1 (count (:items
                          (organism-gateway/receipts
-                          "ao:etzhayyim:tamaki")))))))))
+                          "ao:etzhayyim:tamaki")))))
+        (spit
+         (io/file state-dir "workplace/receipts/intent-test.edn")
+         (pr-str
+          {:receipt/schema "kotoba.ao.worker-intent-receipt.v1"
+           :receipt/id "receipt-test"
+           :receipt/worker "ao:etzhayyim:tamaki"
+           :receipt/organization "etzhayyim"
+           :receipt/intent "intent-test"
+           :receipt/capability :intent/submit
+           :receipt/status :completed
+           :receipt/effect-status :succeeded
+           :receipt/reason :effect-complete
+           :receipt/evidence
+           {:agent.run/id "run-safe"
+            :agent.run/status :succeeded
+            :private/output "must remain private"}
+           :receipt/updated-at 4000}))
+        (let [projected
+              (first (:items
+                      (organism-gateway/receipts
+                       "ao:etzhayyim:tamaki")))]
+          (is (= "succeeded" (:receipt/effect-status projected)))
+          (is (= "run-safe" (get-in projected
+                                    [:receipt/evidence :run-id])))
+          (is (not (str/includes? (pr-str projected)
+                                  "must remain private"))))))))
 
 (deftest local-identity-registers-organization-owner-and-members-safely
   (let [temporary (java.nio.file.Files/createTempDirectory
