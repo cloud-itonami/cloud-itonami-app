@@ -1114,13 +1114,17 @@
           ;; inside it: the payload is what a save sends back, and a
           ;; computed value in there would come back as something somebody
           ;; typed. Keyed as the cells are, per tab.
+          ;; `workbook-values`, not `values` per tab: a named range belongs to
+          ;; the workbook, and a tab does not know which workbook it is in —
+          ;; so evaluating tab by tab makes `=SUM(売上)` a #NAME? on every
+          ;; sheet that uses one.
           :computed (when (= :sheets/workbook (:drive/resource-kind item))
                       (into {}
-                            (map (fn [[tab-id tab]]
+                            (map (fn [[tab-id cells]]
                                    [tab-id (into {}
                                                  (map (fn [[k v]] [(pr-str k) v]))
-                                                 (sheets-formula/values tab))]))
-                            (:sheets/tabs resource)))
+                                                 cells)]))
+                            (sheets-formula/workbook-values resource)))
           :payload (transit/write-json resource)})
        (refuse! result)))))
 
