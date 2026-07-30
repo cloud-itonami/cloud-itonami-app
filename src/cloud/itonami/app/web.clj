@@ -29,6 +29,25 @@
     border:1px solid var(--color-semantic-success-2)}
   .req-row__caveat{margin:.25rem 0 0;font-size:.8125rem;
     color:var(--color-neutral-solid-gray-600)}
+  /* The lean canvas is a grid because the nine blocks' arrangement carries
+     meaning; a list would render the same data and lose it. Not .record-browser:
+     that is a list+detail for picking one of many, and a canvas is read whole. */
+  .canvas-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(15rem,1fr));
+    gap:.75rem;margin:0 0 1rem}
+  .canvas-block{min-width:0;padding:.75rem 1rem;border-radius:8px;
+    background:var(--color-neutral-white);
+    border:1px solid var(--color-neutral-solid-gray-200)}
+  .canvas-block__label{margin:0 0 .5rem;font-size:.8125rem;font-weight:700;
+    color:var(--color-neutral-solid-gray-700)}
+  .canvas-block__items{margin:0;padding-left:1.1rem;font-size:.875rem;
+    line-height:1.7;color:var(--color-neutral-solid-gray-800);overflow-wrap:anywhere}
+  .canvas-block__note{margin:.5rem 0 0;font-size:.8125rem;
+    color:var(--color-neutral-solid-gray-600);overflow-wrap:anywhere}
+  .canvas-block__empty{margin:0;font-size:.875rem;
+    color:var(--color-neutral-solid-gray-600)}
+  /* The riskiest hypothesis is marked in the datoms (:hyp/risk :riskiest), so
+     the highlight follows the data. A canvas that never marked one gets none. */
+  .req-row--risk{border-left:4px solid var(--color-key-900);padding-left:.5rem}
   .stat-row{display:grid;grid-template-columns:repeat(auto-fill,minmax(9rem,1fr));
     gap:.75rem;margin:0 0 1rem}
   .stat-tile{min-width:0;padding:.75rem 1rem;border-radius:8px;
@@ -3575,6 +3594,7 @@
         }
       }
       renderBusinessDetail(rows.find((b) => b.id === selectedBusinessId));
+      fillCanvasBusinesses(rows);
 
       const un = $('#portfolio-unassigned');
       if (un) {
@@ -3631,6 +3651,248 @@
         selectedBusinessId = body && body.id;
         return loadPortfolio();
       }).catch(() => { if (status) status.textContent = '保存できません。'; });
+    });
+
+    // ── Canvas（事業の仮説）────────────────────────────────────────────
+    //
+    // Two things this renderer must not do. It must not draw a canvas it could
+    // not read as an empty canvas — `unresolvable` / `missing` / `unreadable`
+    // each say what to fix. And it must not draw a proposal as landed on the
+    // strength of having recorded it: the state comes back from the server,
+    // which derived it by reading the projection.
+    const canvasStateLabel = {resolved:'読み込み済み', unbound:'canvas 未紐付け',
+      unresolvable:'解析不能', missing:'投影が無い', unreadable:'読取不能'};
+    const proposalStateLabel = {'awaiting-governor':'governor 待ち', landed:'着地',
+      unverifiable:'判定不能', withdrawn:'取り下げ'};
+    const proposalStateTone = {'awaiting-governor':'note', landed:'ok',
+      unverifiable:'note', withdrawn:'note'};
+    let canvasData = null;
+
+    const canvasBlockCard = (b) => {
+      const d = make('div', 'canvas-block');
+      d.append(make('p', 'canvas-block__label', b.label || bare(b.block)));
+      const items = b.items || [];
+      if (items.length) {
+        const ul = make('ul', 'canvas-block__items');
+        items.forEach((i) => ul.append(make('li', null, i)));
+        d.append(ul);
+      } else {
+        // An empty block is a real state in a lean canvas — say so rather than
+        // rendering a card with nothing in it.
+        d.append(make('p', 'canvas-block__empty', 'item がありません'));
+      }
+      if (b.note) d.append(make('p', 'canvas-block__note', b.note));
+      return d;
+    };
+
+    const hypothesisRow = (h, riskiest) => {
+      const li = make('li', 'req-row');
+      if (bare(h.id) === bare(riskiest)) li.classList.add('req-row--risk');
+      const head = make('div', 'req-row__head');
+      head.append(make('strong', null, bare(h.id)
+        + (bare(h.risk) === 'riskiest' ? '  最も危険な仮説' : '')));
+      // Two chips on purpose: :hyp/status is what the ledger says, :gate/status
+      // is what the metrics say, and one of them moving without the other is
+      // the interesting case.
+      const badge = make('span', 'req-row__state', bare(h.status));
+      badge.dataset.tone = bare(h.status) === 'validated' ? 'ok'
+        : (bare(h.status) === 'refuted' ? 'warn' : 'note');
+      head.append(badge);
+      li.append(head);
+      li.append(make('p', 'req-row__detail', h.claim || ''));
+      if (h.gate) li.append(make('p', 'req-row__caveat', 'gate: ' + h.gate));
+      const gs = bare(h['gate-status'] ?? '');
+      if (gs) {
+        const line = make('p', 'req-row__caveat',
+          `測定: ${gs}` + (h['gate-distance'] ? ` — ${h['gate-distance']}` : '')
+          + (h['gate-evidence'] ? ` — ${h['gate-evidence']}` : ''));
+        li.append(line);
+      } else {
+        li.append(make('p', 'req-row__caveat', '測定: 未測定（gate spec か metrics がありません）'));
+      }
+      if (h.evidence) li.append(make('p', 'req-row__caveat', '根拠: ' + h.evidence));
+      return li;
+    };
+
+    const renderCanvas = (d) => {
+      canvasData = d;
+      const c = (d && d.canvas) || {};
+      const state = bare(c.state);
+      const note = $('#canvas-state');
+      if (note) {
+        note.replaceChildren();
+        note.append(make('strong', null, (canvasStateLabel[state] || state) + ' '));
+        if (c.detail) note.append(document.createTextNode(c.detail));
+        if (state === 'resolved') {
+          note.append(document.createTextNode(
+            `投影 ${c.source || ''}（as-of ${c['as-of'] || '不明'}）`));
+          // A projection whose file disagrees with its own header is truncated;
+          // saying so beats rendering eight of nine blocks as the canvas.
+          if (c.counts && c.counts['complete?'] === false) {
+            note.append(make('strong', null,
+              ` 投影が宣言した件数と一致しません（block ${c.counts.blocks}/${c.counts['declared-blocks']}）`));
+          }
+        }
+      }
+      const meta = $('#canvas-meta');
+      if (meta) meta.textContent = state === 'resolved'
+        ? `${(c.blocks || []).length} block · ${(c.hypotheses || []).length} 仮説`
+        : '';
+      const src = $('#canvas-source');
+      if (src) src.textContent = d && d.business
+        ? `${d.business.name || d.business.slug}${c.product ? ' → ' + bare(c.product) : ''}`
+        : '事業を選択してください。';
+      const auth = $('#canvas-authority');
+      if (auth && d && d.authority) auth.textContent = d.authority;
+
+      const grid = $('#canvas-blocks');
+      if (grid) {
+        grid.replaceChildren();
+        (c.blocks || []).forEach((b) => grid.append(canvasBlockCard(b)));
+      }
+
+      const hs = $('#canvas-hypotheses');
+      if (hs) {
+        hs.replaceChildren();
+        (c.hypotheses || []).forEach((h) => hs.append(hypothesisRow(h, c['riskiest-hyp'])));
+        if (!(c.hypotheses || []).length) {
+          hs.append(make('li', 'empty-state',
+            state === 'resolved' ? '仮説が登録されていません。' : 'canvas を読み込めていません。'));
+        }
+      }
+
+      // The block select is filled from the projection, so a proposal cannot
+      // name a block that does not exist. With no projection there is nothing
+      // honest to offer, and the form stays hidden.
+      const card = $('#canvas-propose-card');
+      const blockSelect = $('#canvas-propose-block');
+      if (blockSelect) {
+        const keep = blockSelect.value;
+        blockSelect.replaceChildren(make('option', null, 'block を選択…'));
+        blockSelect.firstChild.value = '';
+        (c.blocks || []).forEach((b) => {
+          const o = make('option', null, `${b.label || bare(b.block)} (${bare(b.id)})`);
+          o.value = bare(b.id);
+          blockSelect.append(o);
+        });
+        blockSelect.value = keep;
+      }
+      if (card) card.hidden = state !== 'resolved';
+
+      const list = $('#canvas-proposals');
+      if (list) {
+        list.replaceChildren();
+        (d?.proposals || []).forEach((p) => {
+          const st = bare(p.state);
+          const li = make('li', 'req-row');
+          const head = make('div', 'req-row__head');
+          head.append(make('strong', null,
+            `${bare(p.action)} ${bare(p['canvas-id'])}`));
+          const badge = make('span', 'req-row__state', proposalStateLabel[st] || st);
+          badge.dataset.tone = proposalStateTone[st] || 'note';
+          head.append(badge);
+          li.append(head);
+          li.append(make('p', 'req-row__detail', p.value || ''));
+          li.append(make('p', 'req-row__caveat',
+            `${p['proposed-by'] || ''} · ${p['proposed-at'] || ''}`
+            + (p.reason ? ` · ${p.reason}` : '')));
+          // The exact command, because there is no Apply button this app could
+          // honestly offer.
+          if (st !== 'landed' && st !== 'withdrawn' && p.command) {
+            li.append(make('p', 'req-row__caveat', p.command));
+            const drop = make('button', 'tool-button', '取り下げる');
+            drop.type = 'button';
+            drop.addEventListener('click', () => withdrawProposal(p.id));
+            li.append(drop);
+          }
+          list.append(li);
+        });
+        if (!(d?.proposals || []).length) {
+          list.append(make('li', 'empty-state', 'まだ提案はありません。'));
+        }
+      }
+      const badge = $('#canvas-count');
+      if (badge) {
+        const awaiting = (d?.proposals || [])
+          .filter((p) => bare(p.state) === 'awaiting-governor').length;
+        badge.textContent = awaiting;
+      }
+    };
+
+    const loadCanvas = (businessId) => {
+      if (!businessId) { renderCanvas(null); return Promise.resolve(false); }
+      return fetch(`/api/business/${encodeURIComponent(businessId)}/canvas`)
+        .then((r) => r.ok ? r.json() : null)
+        .then((d) => { renderCanvas(d); return Boolean(d); })
+        .catch(() => {
+          const src = $('#canvas-source');
+          if (src) src.textContent = 'canvas を読み込めません。';
+          return false;
+        });
+    };
+
+    const withdrawProposal = (proposalId) => {
+      const businessId = $('#canvas-business')?.value;
+      if (!businessId || !proposalId) return;
+      fetch(`/api/business/${encodeURIComponent(businessId)}/canvas/proposals/`
+            + `${encodeURIComponent(proposalId)}/withdraw`, {
+        method: 'POST', headers: identityHeaders(),
+        body: JSON.stringify({by: ($('#canvas-propose-by')?.value || '').trim()})
+      }).then(() => loadCanvas(businessId))
+        .catch(() => {
+          const st = $('#canvas-propose-status');
+          if (st) st.textContent = '取り下げられません。';
+        });
+    };
+
+    // Filled from the portfolio, so the two panes cannot disagree about which
+    // businesses exist.
+    const fillCanvasBusinesses = (rows) => {
+      const sel = $('#canvas-business'); if (!sel) return;
+      const keep = sel.value || selectedBusinessId || '';
+      sel.replaceChildren(make('option', null, '事業を選択…'));
+      sel.firstChild.value = '';
+      (rows || []).forEach((b) => {
+        const o = make('option', null, b.name || b.slug);
+        o.value = b.id;
+        sel.append(o);
+      });
+      const next = (rows || []).some((b) => b.id === keep) ? keep : '';
+      sel.value = next;
+      if (next && next !== canvasData?.business?.id) loadCanvas(next);
+      if (!next) renderCanvas(null);
+    };
+
+    $('#canvas-business')?.addEventListener('change', (e) => {
+      selectedBusinessId = e.currentTarget.value || selectedBusinessId;
+      loadCanvas(e.currentTarget.value);
+    });
+
+    $('#canvas-propose-form')?.addEventListener('submit', (e) => {
+      e.preventDefault();
+      const status = $('#canvas-propose-status');
+      const businessId = $('#canvas-business')?.value;
+      if (!businessId) { if (status) status.textContent = '事業を選んでください。'; return; }
+      fetch(`/api/business/${encodeURIComponent(businessId)}/canvas/propose`, {
+        method: 'POST', headers: identityHeaders(),
+        body: JSON.stringify({
+          action: ($('#canvas-propose-action')?.value || '').trim(),
+          'canvas-id': ($('#canvas-propose-block')?.value || '').trim(),
+          value: ($('#canvas-propose-value')?.value || '').trim(),
+          reason: ($('#canvas-propose-reason')?.value || '').trim(),
+          by: ($('#canvas-propose-by')?.value || '').trim()
+        })
+      }).then(async (r) => {
+        const body = await r.json().catch(() => null);
+        if (!r.ok) {
+          if (status) status.textContent = body?.error?.message
+            || body?.error?.type || `記録できません (${r.status})`;
+          return;
+        }
+        if (status) status.textContent = '提案を記録しました。ledger へは governor が入れます。';
+        const v = $('#canvas-propose-value'); if (v) v.value = '';
+        return loadCanvas(businessId);
+      }).catch(() => { if (status) status.textContent = '記録できません。'; });
     });
 
     $('#portfolio-bind-form')?.addEventListener('submit', (e) => {
@@ -4421,6 +4683,7 @@
         ;; 増やすことと道具を1つ増やすことが同じ操作に見えていた。
         (nav-group "BUSINESS")
         (nav-item "portfolio" "Portfolio" "▤" "portfolio-count")
+        (nav-item "canvas" "Canvas" "◱" "canvas-count")
         (nav-item "fleet" "Fleet" "◉" "fleet-count")
         (nav-item "operator" "\u4e8b\u696d\u8005" "◐" "operator-count")
         (nav-item "contracts" "Contracts" "◫" "contracts-count")
@@ -4621,6 +4884,68 @@
            "参与を表明したが、どの事業にも紐付いていない blueprint です。"]
           [:ul {:class "record-list__items" :id "portfolio-unassigned"}
            [:li {:class "empty-state"} "確認中…"]]]]
+
+        ;; ── Canvas（事業の仮説）─────────────────────────────────────
+        ;; 読みは fold 済み投影（superproject の `gftd canvas datoms` が生成）、
+        ;; 書きは提案。canvas-ledger は governed append-only で、このアプリに
+        ;; governor は無い。だから ledger へ書く経路は「失敗する route」ではなく
+        ;; 「存在しない」。提案が着地したかは投影を読み直して判定する（保存しない）。
+        [:section {:class "view" :data-view-panel "canvas" :hidden true}
+         (view-header "Canvas"
+                      (str "事業に紐付いた lean canvas（BMC）と仮説。"
+                           "変更はこのアプリからは提案までで、ledger へは governor が入れます。"))
+         [:p {:class "source-note"} [:span {:class "source-dot"}]
+          [:span {:id "canvas-source"} "事業を確認中…"]]
+         [:div {:class "workspace-toolbar"}
+          [:label {:class "visually-hidden" :for "canvas-business"} "事業"]
+          [:select {:id "canvas-business"}
+           [:option {:value ""} "事業を選択…"]]
+          [:span {:class "result-count" :id "canvas-meta"}]]
+         [:div {:class "security-callout" :id "canvas-state"
+                :role "status" :aria-live "polite"}
+          "canvas を確認中…"]
+         [:div {:class "canvas-grid" :id "canvas-blocks"}]
+         [:div {:class "local-card"}
+          (dds/heading 2 "仮説と gate" {:size "24"})
+          [:p {:class "form-help"}
+           (str "gate は metrics が在るときだけ付きます。測っていない仮説に gate の"
+                "状態は表示しません — それは失敗ではなく未測定です。")]
+          [:ul {:class "record-list__items" :id "canvas-hypotheses"}
+           [:li {:class "empty-state"} "事業を選ぶと表示します。"]]]
+         [:div {:class "local-card" :id "canvas-propose-card" :hidden true}
+          (dds/heading 2 "変更を提案する" {:size "24"})
+          [:p {:class "form-help" :id "canvas-authority"}
+           "このアプリは canvas-ledger に書きません。"]
+          [:form {:class "settings-form" :id "canvas-propose-form"}
+           [:div {:class "field"}
+            [:label {:for "canvas-propose-action"} "操作"]
+            [:select {:id "canvas-propose-action"}
+             [:option {:value "add-item"} "item を追加 (canvas add)"]
+             [:option {:value "retract-item"} "item を撤回 (canvas retract)"]
+             [:option {:value "note"} "note を差替 (canvas note)"]]]
+           [:div {:class "field"}
+            [:label {:for "canvas-propose-block"} "block"]
+            [:select {:id "canvas-propose-block"}
+             [:option {:value ""} "block を選択…"]]]
+           [:div {:class "field"}
+            [:label {:for "canvas-propose-value"} "内容"]
+            [:textarea {:id "canvas-propose-value" :rows 2 :required true}]]
+           [:div {:class "field"}
+            [:label {:for "canvas-propose-reason"} "理由（任意）"]
+            [:input {:id "canvas-propose-reason" :autocomplete "off"}]]
+           [:div {:class "field"}
+            [:label {:for "canvas-propose-by"} "提案者"]
+            [:input {:id "canvas-propose-by" :required true :autocomplete "off"
+                     :placeholder "山田 太郎"}]]
+           [:button {:class "primary-action" :type "submit"} "提案を記録"]]
+          [:p {:class "form-help" :id "canvas-propose-status" :aria-live "polite"}]]
+         [:div {:class "local-card"}
+          (dds/heading 2 "提案の状態" {:size "24"})
+          [:p {:class "form-help"}
+           (str "着地したかは投影を読み直して判定します（保存された値ではありません）。"
+                "workspace checkout が無いときは landed とも awaiting とも言えません。")]
+          [:ul {:class "record-list__items" :id "canvas-proposals"}
+           [:li {:class "empty-state"} "まだ提案はありません。"]]]]
 
         [:section {:class "view" :data-view-panel "fleet" :hidden true}
          (view-header "Fleet"

@@ -205,9 +205,35 @@ on its own and cannot assume a west checkout of the superproject beside it — s
 out of the box every plane-backed face is `unresolvable` and names the setting,
 rather than reporting `missing` for a place nobody said to look.
 
-The pane reports whether a face resolves, not what it says: no canvas items, no
-leverage band, no maturity score. Proving the join comes before building the
-analysis views on it. See
+The Portfolio pane reports whether a face resolves, not what it says. The Canvas
+pane is the first one that reads a face's contents.
+
+### Canvas — read the fold, propose the change
+
+```bash
+GET  /api/business/{id}/canvas
+POST /api/business/{id}/canvas/propose   {"action":"add-item","canvas-id":"cloud-itonami.problem",
+                                          "value":"…","by":"山田","reason":"…"}
+POST /api/business/{id}/canvas/proposals/{pid}/withdraw
+```
+
+The read is `90-docs/business/<product>-canvas.datoms.edn` — the **folded**
+canvas, base datoms with every canvas-ledger event applied, generated upstream by
+`gftd canvas datoms --all`. This app does not fold: `gftd.canvas/apply-event` is
+the fold, and a second copy of it here would drift (its rolling-observation
+window — three most recent `観測 (signal):` items per block — is not behaviour
+anyone would rediscover from the ledger format).
+
+**Writing is a proposal, not a ledger entry.** `canvas-ledger.edn` is append-only
+and governed; this app has no governor, so there is no route that appends to it —
+not one that fails, one that does not exist. A proposal is recorded here and
+rendered as the exact `gftd` command that would apply it.
+
+**Whether a proposal landed is measured, not stored.** `awaiting-governor` means
+the value is not in the projection; `landed` means it is, read back out of the
+regenerated projection; `unverifiable` means there is no checkout to read.
+`withdrawn` is the one state a human sets, because 「もう要らない」 is not
+something a projection can show. See
 [ADR-0008](docs/adr/0008-business-is-the-join-of-five-planes.md).
 
 ## Funding accounts and payment settlement
