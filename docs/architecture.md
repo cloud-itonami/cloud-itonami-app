@@ -168,11 +168,18 @@ making Codex or Claude wire payloads part of Cloud's state. The lifecycle
 authority is the host supervisor; final model text is a report, while tool,
 artifact, approval, and verification events are evidence.
 
-The initial adapter records coarse run/phase/evidence facts around the existing
-CLI subprocess. A text-only Agent result is `needs-review`, not verified work.
-Codex app-server, Claude stream-json, a shared approval broker, worktree leases,
-and replay evaluation land behind this same contract in the staged order
-defined by [ADR-0004](adr/0004-provider-neutral-agent-runtime.md).
+Codex now uses the app-server stdio thread/turn/item protocol for streamed
+interactive work; Claude uses stream-json. Both project into the same bounded
+events. A text-only Agent result is `needs-review`, not verified work.
+
+An Agent writer receives a detached Git worktree and an exclusive repository
+lease. Codex approval requests pause at the local approval broker and can be
+accepted or declined from the activity stream. Every run receives a result
+score derived from artifact, tool, failure, verification, duration, and usage
+facts. The remaining provider and evaluation gaps are tracked in
+[ADR-0004](adr/0004-provider-neutral-agent-runtime.md) and the runtime safety
+boundary is fixed by
+[ADR-0005](adr/0005-durable-agent-execution-boundary.md).
 
 ### CLI conversation continuity
 

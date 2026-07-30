@@ -15,8 +15,9 @@
     :model/started :model/completed
     :tool/started :tool/completed :tool/failed
     :artifact/changed
+    :workspace/prepared :workspace/released
     :approval/requested :approval/resolved
-    :verification/completed})
+    :verification/completed :evaluation/completed})
 
 (def phases [:discover :plan :execute :verify :review :integrate :reflect])
 
@@ -53,5 +54,6 @@
           #(select-keys % [:phase :status :provider :model :effort
                            :tool :item-type :exit-code :path :paths
                            :check :passed? :reason :evidence-count
-                           :duration-ms :usage])))
-
+                           :duration-ms :usage :approval-id :kind :decision
+                           :digest :workspace :isolation :score :grade
+                           :artifact-events :successful-tools :failed-tools])))

@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted incrementally.
+Accepted and implemented incrementally.
 
 ## Context
 
@@ -133,19 +133,16 @@ Prompt, model, policy, and workflow changes are versioned experiments. They may
 be promoted only when a representative task corpus improves without weakening
 security or increasing regression rate.
 
-## Migration
+## Migration status
 
-1. **Event spine** — land `agent-event.v1`, lifecycle persistence, UI activity,
-   and honest `needs-review` verdicts around the existing adapters.
-2. **Native streams** — replace buffered Codex parsing with app-server
-   thread/turn/item events and Claude JSON output with stream-json.
-3. **Approval broker** — connect Codex approval requests and Claude
-   `--permission-prompt-tool` to the same HIL capability authority.
-4. **Evidence gates** — repository-specific test, lint, build, review, and
-   visual checks; completion requires receipts.
-5. **Isolation** — worktree and write leases, checkpoints, resume, steering,
-   retry budgets, and idempotency keys.
-6. **Evaluation** — replayable task corpus and versioned kaizen promotion.
+| Stage | State | Delivered boundary | Remaining work |
+| --- | --- | --- | --- |
+| Event spine | Complete | `agent-event.v1`, durable lifecycle, live/history UI, honest verdicts | Event schema versioning policy |
+| Native streams | Complete for interactive Codex and Claude | Codex app-server stdio; Claude stream-json | Long-lived pooled app-server and Claude MCP permission adapter |
+| Approval broker | Codex complete | Exact-request digest, expiry, local UI decision, fail-closed timeout | Claude permission-prompt MCP and passkey escalation for outward capabilities |
+| Evidence gates | Baseline complete | Agent success needs both artifact and successful tool evidence | Repository-declared test/lint/build/visual receipts |
+| Isolation | Core complete | One detached worktree and repository write lease per Agent run | Checkpoint/resume, integration lease, steering, retry and idempotency |
+| Evaluation | Per-run complete | Deterministic result score and grade | Replay corpus, regression comparison, experiment promotion |
 
 Each stage must preserve the loopback-only server, local durable state,
 provider fail-closed policy, and the OrganismWorker authority boundary from
@@ -158,8 +155,7 @@ ADR-0002.
 - A text-only completion is no longer mislabeled as completed implementation.
 - The existing `agent-control` HIL can migrate onto the same event vocabulary
   instead of being replaced.
-- The first stage adds lifecycle truth but does not claim native mid-turn
-  steering or approval; those require the provider-native adapter stages.
+- Codex approval requests can now pause and resume a live turn. Mid-turn
+  steering remains a separate capability and is not implied by approval.
 - More evidence calls consume time and tokens, so budgets and measured
   promotion are part of the runtime rather than later optimization.
-

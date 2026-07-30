@@ -1,6 +1,7 @@
 (ns cloud.itonami.app.server
   (:require [clojure.data.json :as json]
             [clojure.string :as str]
+            [cloud.itonami.app.approval-broker :as approval-broker]
             [cloud.itonami.app.agent-event :as agent-event]
             [cloud.itonami.app.config :as config]
             [cloud.itonami.app.documents :as documents]
@@ -132,7 +133,8 @@
    :messages (mapv #(select-keys % [:id :role :content :at])
                    (store/session-messages session-id))
    :agent-events (mapv agent-event/public-event
-                       (store/agent-events session-id))})
+                       (store/agent-events session-id))
+   :pending-approvals (approval-broker/pending session-id)})
 
 (defn- public-sessions []
   {:schema "cloud.itonami.app.sessions.v1"
@@ -899,6 +901,23 @@
                    :agent-id (:agent request)}
                   (execution-fields request)))))
 
+            (and (= method "GET") (= path "/api/agent/approvals"))
+            (let [_session (require-app-session! exchange)
+                  session-id (:session (query-params exchange))]
+              (send! exchange 200
+                     {:schema approval-broker/schema
+                      :items (approval-broker/pending session-id)}))
+
+            (and (= method "POST")
+                 (re-matches #"/api/agent/approvals/[^/]+" path))
+            (let [session (require-app-session! exchange)
+                  _ (require-origin! exchange config)
+                  _ (require-csrf! exchange session)
+                  approval-id (last (str/split path #"/"))
+                  request (read-json exchange)]
+              (approval-broker/resolve! approval-id (:decision request))
+              (send! exchange 200 {:ok true :id approval-id}))
+
             (and (= method "POST") (= path "/api/session/clear"))
             (let [_session (require-app-session! exchange)
                   request (read-json exchange)
@@ -916,6 +935,8 @@
                      :identity/invalid-csrf 403
                      :identity/invalid-origin 403
                      :provider/denied 403
+                     :agent-approval/invalid-decision 400
+                     :agent-approval/not-active 409
                      :identity/already-registered 400
                      :identity/already-member 409
                      :identity/invalid-registration 400

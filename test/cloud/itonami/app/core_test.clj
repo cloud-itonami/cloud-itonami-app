@@ -1,11 +1,17 @@
 (ns cloud.itonami.app.core-test
   (:require [clojure.test :refer [deftest is]]
+            [clojure.data.json :as json]
             [clojure.java.io :as io]
+            [clojure.java.shell :as shell]
             [clojure.set :as set]
             [clojure.string :as str]
             [cloud.itonami.app.app :as app]
+            [cloud.itonami.app.agent-eval :as agent-eval]
             [cloud.itonami.app.agent-event :as agent-event]
+            [cloud.itonami.app.agent-workspace :as agent-workspace]
+            [cloud.itonami.app.approval-broker :as approval-broker]
             [cloud.itonami.app.cli-runner :as cli-runner]
+            [cloud.itonami.app.codex-app-server :as codex-app-server]
             [cloud.itonami.app.config :as config-loader]
             [cloud.itonami.app.did :as did]
             [cloud.itonami.app.identity :as local-identity]
@@ -157,6 +163,8 @@
                       (on-delta "にちは")
                       (on-event {:type :tool/completed :tool :shell
                                  :exit-code 0})
+                      (on-event {:type :artifact/changed
+                                 :paths ["src/example.clj"]})
                       {:content "こんにちは" :usage {:total_tokens 3}})]
         (let [response (service/run-chat-stream!
                         config
@@ -167,11 +175,16 @@
           (is (= ["こん" "にちは"] @deltas))
           (is (some #(= :tool/completed (:event/type %)) @events))
           (is (= :succeeded (get-in response [:agent-run :status])))
+          (is (= :a (get-in response [:agent-run :evaluation :grade])))
           (is (= "こんにちは" (get-in response [:message :content])))
           (is (some #(= :verification/completed (:event/type %))
                     (store/agent-events "stream")))
           (is (= ["hello" "こんにちは"]
-                 (mapv :content (store/session-messages "stream"))))))
+                 (mapv :content (store/session-messages "stream"))))
+          (is (= :succeeded
+                 (:status
+                  (first (vals (get-in (store/snapshot)
+                                       [:agent-loops :runs]))))))))
       (finally
         (reset! store/state previous)))))
 
@@ -186,6 +199,137 @@
     (is (agent-event/valid-event? value))
     (is (= {:tool :shell :exit-code 0} (:event/data public)))
     (is (not (re-find #"print-secret" (pr-str public))))))
+
+(deftest approval-broker-binds-a-decision-to-one-request-digest
+  (let [temporary (java.nio.file.Files/createTempDirectory
+                   "cloud-itonami-approval-test"
+                   (make-array java.nio.file.attribute.FileAttribute 0))
+        previous @store/state
+        requested (promise)]
+    (try
+      (reset! store/state (store/initial-state))
+      (with-redefs [config-loader/data-dir (fn [] (.toFile temporary))]
+        (let [decision
+              (future
+                (approval-broker/request!
+                 {:run-id "run-1" :session-id "session-1"
+                  :kind :command-execution :summary "Run verification"
+                  :private-request {:command "secret-command"}
+                  :timeout-ms 2000
+                  :on-event #(when (= :approval/requested (:type %))
+                               (deliver requested %))}))]
+          @requested
+          (let [pending (first (approval-broker/pending "session-1"))]
+            (is (= :pending (:status pending)))
+            (is (string? (:digest pending)))
+            (is (not (re-find #"secret-command" (pr-str pending))))
+            (is (true? (approval-broker/resolve! (:id pending) :accept)))
+            (is (= :accept (deref decision 2000 :timeout)))
+            (is (empty? (approval-broker/pending "session-1"))))))
+      (finally
+        (reset! store/state previous)))))
+
+(deftest result-evaluation-is-derived-from-artifacts-tools-and-failures
+  (let [strong (agent-eval/evaluate
+                {:verification {:passed? true :status :succeeded}
+                 :provider-events [{:type :artifact/changed}
+                                   {:type :tool/completed}
+                                   {:type :tool/completed}]
+                 :result {:usage {:total_tokens 12}} :duration-ms 40})
+        weak (agent-eval/evaluate
+              {:verification {:passed? false :status :needs-review}
+               :provider-events [{:type :tool/failed}]
+               :result {} :duration-ms 50})]
+    (is (= 90 (:score strong)))
+    (is (= :a (:grade strong)))
+    (is (= 0 (:score weak)))
+    (is (= :needs-kaizen (:grade weak)))))
+
+(deftest agent-workspace-enforces-one-writer-per-repository
+  (let [temporary (java.nio.file.Files/createTempDirectory
+                   "cloud-itonami-worktree-test"
+                   (make-array java.nio.file.attribute.FileAttribute 0))
+        repo (.toFile (.resolve temporary "repo"))
+        data (.toFile (.resolve temporary "data"))
+        previous @store/state]
+    (try
+      (.mkdirs repo)
+      (is (zero? (:exit (shell/sh "git" "-C" (.getPath repo) "init" "-q"))))
+      (spit (io/file repo "README.md") "test\n")
+      (is (zero? (:exit (shell/sh "git" "-C" (.getPath repo) "add"
+                                  "README.md"))))
+      (is (zero?
+           (:exit
+            (shell/sh "git" "-C" (.getPath repo)
+                      "-c" "user.name=Cloud Itonami"
+                      "-c" "user.email=local@cloud-itonami.invalid"
+                      "commit" "-q" "-m" "initial"))))
+      (reset! store/state (store/initial-state))
+      (with-redefs [config-loader/data-dir (constantly data)]
+        (let [first-run (agent-workspace/prepare! (.getPath repo) "run-1")
+              conflict
+              (try
+                (agent-workspace/prepare! (.getPath repo) "run-2")
+                nil
+                (catch clojure.lang.ExceptionInfo error error))]
+          (is (= :git-worktree (:isolation first-run)))
+          (is (.isFile (io/file (:path first-run) "README.md")))
+          (is (= :agent-workspace/write-lease-conflict
+                 (:type (ex-data conflict))))
+          (agent-workspace/release! "run-1" :ready-for-review)
+          (is (= :active
+                 (:status
+                  (agent-workspace/prepare! (.getPath repo) "run-2"))))))
+      (finally
+        (reset! store/state previous)))))
+
+(deftest codex-app-server-projects-thread-turn-and-item-events
+  (let [temporary (java.nio.file.Files/createTempDirectory
+                   "cloud-itonami-app-server-test"
+                   (make-array java.nio.file.attribute.FileAttribute 0))
+        executable (.toFile (.resolve temporary "fake-codex"))
+        lines
+        [{:id 1 :result {:thread {:id "thread-app-server"}}}
+         {:method "item/started"
+          :params {:item {:type "commandExecution" :status "inProgress"}}}
+         {:method "item/completed"
+          :params {:item {:type "commandExecution" :status "completed"
+                          :exitCode 0}}}
+         {:method "item/completed"
+          :params {:item {:type "fileChange" :status "completed"
+                          :changes [{:path "src/example.clj"}]}}}
+         {:method "item/agentMessage/delta" :params {:delta "done"}}
+         {:method "item/completed"
+          :params {:item {:type "agentMessage" :text "done"}}}
+         {:method "thread/tokenUsage/updated"
+          :params {:tokenUsage {:total_tokens 8}}}
+         {:method "turn/completed"
+          :params {:turn {:id "turn-1" :status "completed"}}}]
+        script (str "#!/bin/sh\n"
+                    (apply str
+                           (map #(str "printf '%s\\n' '"
+                                      (json/write-str %)
+                                      "'\n")
+                                lines))
+                    "sleep 5\n")
+        deltas (atom [])
+        events (atom [])]
+    (spit executable script)
+    (.setExecutable executable true)
+    (let [result
+          (codex-app-server/run!
+           {:binary (.getCanonicalPath executable)
+            :prompt "test" :cwd (.getCanonicalPath (.toFile temporary))
+            :model "codex:gpt-test" :effort "medium" :read-only? true
+            :timeout-seconds 3
+            :on-delta #(swap! deltas conj %)
+            :on-event #(swap! events conj %)})]
+      (is (= "done" (:content result)))
+      (is (= "thread-app-server" (:runner-session-id result)))
+      (is (= ["done"] @deltas))
+      (is (= [:tool/started :tool/completed :artifact/changed]
+             (mapv :type @events)))
+      (is (= 8 (get-in result [:usage :total_tokens]))))))
 
 (deftest cli-chat-session-is-recorded-and-resumed-per-provider
   (let [temporary (java.nio.file.Files/createTempDirectory

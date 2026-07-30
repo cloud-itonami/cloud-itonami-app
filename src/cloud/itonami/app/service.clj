@@ -1,5 +1,8 @@
 (ns cloud.itonami.app.service
-  (:require [cloud.itonami.app.agent-loop :as agent-loop]
+  (:require [cloud.itonami.app.agent-eval :as agent-eval]
+            [cloud.itonami.app.agent-loop :as agent-loop]
+            [cloud.itonami.app.agent-workspace :as agent-workspace]
+            [cloud.itonami.app.approval-broker :as approval-broker]
             [cloud.itonami.app.policy :as policy]
             [cloud.itonami.app.provider :as provider]
             [cloud.itonami.app.store :as store]))
@@ -98,6 +101,8 @@
           :as prepared}
          (prepare-chat! config request)
          provider-events (atom [])
+         started-at (System/currentTimeMillis)
+         workspace (atom nil)
          loop-context
          (agent-loop/start!
           {:session-id session-id
@@ -109,6 +114,18 @@
            (swap! provider-events conj event)
            (agent-loop/provider-event! loop-context event))]
      (try
+       (when (and (= mode :agent)
+                  (get-in config [:agent-runtime :isolate-writes?]))
+         (let [prepared
+               (agent-workspace/prepare!
+                (or cwd (System/getProperty "user.dir"))
+                (:run-id loop-context))]
+           (reset! workspace prepared)
+           (agent-loop/provider-event!
+            loop-context {:type :workspace/prepared
+                          :workspace (:path prepared)
+                          :isolation (:isolation prepared)
+                          :status :active})))
        (when (= mode :agent)
          (agent-loop/phase! loop-context :execute))
        (agent-loop/provider-event!
@@ -119,7 +136,18 @@
               :temperature temperature
               :session-id session-id
               :runner-session-id runner-session-id
-              :mode mode :guardrail guardrail :effort effort :cwd cwd}
+              :mode mode :guardrail guardrail :effort effort
+              :cwd (or (:path @workspace) cwd)
+              :transport (get-in config [:agent-runtime :codex-transport])
+              :approval-handler
+              (fn [{:keys [kind summary reason cwd params]}]
+                (approval-broker/request!
+                 {:run-id (:run-id loop-context) :session-id session-id
+                  :kind kind :summary summary :reason reason :cwd cwd
+                  :private-request params
+                  :timeout-ms (get-in config
+                                      [:agent-runtime :approval-timeout-ms])
+                  :on-event provider-event!}))}
              result (if on-event
                       (provider/chat-stream!
                        selected provider-request on-delta provider-event!)
@@ -129,14 +157,38 @@
                               :provider (:id selected)
                               :model chosen-model :usage (:usage result)})
              verification (agent-loop/verify! loop-context result @provider-events)
-             _ (agent-loop/complete! loop-context verification result)]
+             _ (agent-loop/phase! loop-context :review)
+             evaluation
+             (agent-eval/record!
+              (:run-id loop-context)
+              (agent-eval/evaluate
+               {:verification verification :provider-events @provider-events
+                :result result
+                :duration-ms (- (System/currentTimeMillis) started-at)}))
+             _ (agent-loop/provider-event!
+                loop-context
+                (assoc evaluation :type :evaluation/completed))]
+         (agent-loop/phase! loop-context :reflect)
+         (when @workspace
+           (agent-workspace/release! (:run-id loop-context) :ready-for-review)
+           (agent-loop/provider-event!
+            loop-context {:type :workspace/released
+                          :workspace (:path @workspace)
+                          :isolation (:isolation @workspace)
+                          :status :ready-for-review}))
+         (agent-loop/complete! loop-context verification result)
          (finish-chat!
           prepared
           (assoc result :agent-run
                  {:id (:run-id loop-context)
                   :status (:status verification)
-                  :verification verification})))
+                  :verification verification
+                  :evaluation evaluation
+                  :workspace (select-keys @workspace
+                                          [:path :repo-root :isolation])})))
        (catch Exception error
+         (when @workspace
+           (agent-workspace/release! (:run-id loop-context) :failed))
          (agent-loop/fail! loop-context error)
          (throw error))))))
 

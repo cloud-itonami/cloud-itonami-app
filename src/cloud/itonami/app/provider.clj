@@ -1,6 +1,7 @@
 (ns cloud.itonami.app.provider
   (:require [clojure.data.json :as json]
             [clojure.string :as str]
+            [cloud.itonami.app.codex-app-server :as codex-app-server]
             [cloud.itonami.app.cli-runner :as cli-runner]
             [cloud.itonami.app.config :as config])
   (:import [java.io BufferedReader InputStreamReader]
@@ -180,7 +181,7 @@
   ([provider request on-delta]
    (chat-stream! provider request on-delta nil))
   ([provider {:keys [model messages temperature session-id runner-session-id
-                     mode guardrail effort cwd]}
+                     mode guardrail effort cwd] :as request}
     on-delta on-event]
   (let [content (StringBuilder.)
         usage (volatile! nil)
@@ -231,16 +232,37 @@
                 (vreset! usage chunk-usage))))))
 
       :cli
-      (let [result (cli-runner/chat
-                    provider
-                    {:messages messages
-                     :model model
-                     :session-id session-id
-                     :runner-session-id runner-session-id
-                     :mode mode :guardrail guardrail
-                     :effort effort :cwd cwd :on-event on-event})]
-        (when-let [emitted (emit! on-delta (:content result))]
-          (.append content emitted))
+      (let [resolved (cli-runner/profile (:runner provider))
+            app-server? (and (= :codex (:runner provider))
+                             (= :app-server (:transport request)))
+            result
+            (if app-server?
+              (codex-app-server/run!
+               {:binary (:binary resolved)
+                :prompt (cli-runner/agent-prompt
+                         (if (= mode :plan) :plan :agent)
+                         messages (boolean runner-session-id))
+                :cwd (or cwd (System/getProperty "user.dir"))
+                :model model :effort effort
+                :read-only? (or (= mode :plan) (= guardrail :plan))
+                :runner-session-id runner-session-id
+                :timeout-seconds (:timeout-seconds request)
+                :on-delta (fn [delta]
+                            (when-let [emitted (emit! on-delta delta)]
+                              (.append content emitted)))
+                :on-event on-event
+                :approval-handler (:approval-handler request)})
+              (cli-runner/chat
+               provider
+               {:messages messages
+                :model model
+                :session-id session-id
+                :runner-session-id runner-session-id
+                :mode mode :guardrail guardrail
+                :effort effort :cwd cwd :on-event on-event}))]
+        (when-not app-server?
+          (when-let [emitted (emit! on-delta (:content result))]
+            (.append content emitted)))
         (vreset! usage (:usage result))
         (when-let [runner-session-id (:runner-session-id result)]
           (vreset! cli-session runner-session-id)))

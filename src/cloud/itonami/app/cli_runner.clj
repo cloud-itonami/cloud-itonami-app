@@ -128,7 +128,7 @@
                                        (min 2000 (count (:stderr result))))})))
       result)))
 
-(defn- agent-prompt [mode messages resumed?]
+(defn agent-prompt [mode messages resumed?]
   (let [latest (or (:content (last (filter #(= "user" (:role %)) messages))) "")
         context (str/join "\n\n"
                           (map (fn [{:keys [role content]}]

@@ -157,6 +157,9 @@
     background:var(--color-primitive-green-50);color:var(--color-semantic-success-2)}
   .agent-event--attention{border-color:var(--color-primitive-yellow-300);
     background:var(--color-key-50);color:var(--color-neutral-solid-gray-900)}
+  .agent-event__decision{border:0;border-left:1px solid currentColor;
+    background:transparent;color:inherit;margin-left:.25rem;padding:.05rem 0 .05rem .4rem;
+    cursor:pointer;font:700 .6875rem inherit}
   .typing{display:flex;gap:.3rem;padding:.55rem 0}
   .typing span{width:.45rem;height:.45rem;border-radius:50%;
     background:var(--color-neutral-solid-gray-400);animation:typing 1.2s infinite}
@@ -555,6 +558,12 @@
       if (type === 'verification/completed') {
         return data['passed?'] ? 'verification ✓' : 'needs review';
       }
+      if (type === 'approval/requested') return `approval · ${data.kind}`;
+      if (type === 'approval/resolved') return `approval · ${data.decision}`;
+      if (type === 'workspace/prepared') return `worktree · ${data.isolation}`;
+      if (type === 'evaluation/completed') {
+        return `eval · ${data.score}/100 · ${data.grade}`;
+      }
       if (type === 'run/completed') return `run · ${data.status}`;
       if (type === 'run/failed') return 'run · failed';
       return type.replace('/', ' · ');
@@ -566,12 +575,38 @@
         || (type === 'verification/completed' && data['passed?'])
         || (type === 'run/completed' && data.status === 'succeeded');
       const attention = type === 'tool/failed' || type === 'run/failed'
+        || type === 'approval/requested'
         || (type === 'verification/completed' && !data['passed?'])
         || (type === 'run/completed' && data.status === 'needs-review');
       const chip = make('span',
         `agent-event${success ? ' agent-event--success' : ''}${attention
           ? ' agent-event--attention' : ''}`,
         agentEventLabel(event));
+      if (type === 'approval/requested' && data['approval-id']) {
+        [['承認', 'accept'], ['拒否', 'decline']].forEach(([label, decision]) => {
+          const button = make('button', 'agent-event__decision', label);
+          button.type = 'button';
+          button.addEventListener('click', async () => {
+            button.disabled = true;
+            try {
+              const response = await fetch(
+                `/api/agent/approvals/${encodeURIComponent(data['approval-id'])}`,
+                {method:'POST', headers:identityHeaders(),
+                 body:JSON.stringify({decision})});
+              const result = await response.json();
+              if (!response.ok) {
+                throw new Error(result?.error?.message || '承認を更新できません。');
+              }
+              chip.replaceChildren(document.createTextNode(`approval · ${decision}`));
+              announce(`Agent actionを${decision === 'accept' ? '承認' : '拒否'}しました。`);
+            } catch (error) {
+              button.disabled = false;
+              announce(error.message);
+            }
+          });
+          chip.append(button);
+        });
+      }
       target.append(chip);
       target.hidden = false;
     };

@@ -22,6 +22,8 @@
    :sessions {}
    :runner-sessions {}
    :agent-loops {:runs {} :events []}
+   :agent-approvals {:requests {}}
+   :agent-workspaces {:runs {} :leases {}}
    :agent-control {:runs {} :events []}
    ;; One `drive.workspace` per principal — the tree, the ACL, the quota and
    ;; the version history. The bytes those versions point at are not in here;
@@ -133,13 +135,19 @@
                             {:schema "cloud.itonami.app.agent-loop.v1"
                              :id run-id
                              :session-id (:session/id event)
-                             :status (or (:status event-data)
-                                         (if (= event-type :run/started)
-                                           :running
-                                           (get-in value
-                                                   [:agent-loops :runs run-id
-                                                    :status])))
-                             :phase (or (:phase event-data)
+                             :status (if (contains?
+                                          #{:run/started :run/completed
+                                            :run/failed :run/blocked}
+                                          event-type)
+                                       (or (:status event-data) :running)
+                                       (get-in value
+                                               [:agent-loops :runs run-id
+                                                :status]))
+                             :phase (or (when (contains?
+                                               #{:phase/started
+                                                 :phase/completed}
+                                               event-type)
+                                          (:phase event-data))
                                         (get-in value
                                                 [:agent-loops :runs run-id
                                                  :phase]))

@@ -57,11 +57,11 @@
   not represented as verified implementation work."
   [context result provider-events]
   (let [content? (not (str/blank? (:content result)))
-        evidence (filter #(contains? #{:tool/completed :artifact/changed}
-                                     (:type %))
-                         provider-events)
+        tools (filter #(= :tool/completed (:type %)) provider-events)
+        artifacts (filter #(= :artifact/changed (:type %)) provider-events)
+        evidence (concat tools artifacts)
         plan? (= :plan (:mode context))
-        passed? (and content? (or plan? (seq evidence)))
+        passed? (and content? (or plan? (and (seq tools) (seq artifacts))))
         status (if passed? :succeeded :needs-review)]
     (phase! context :verify)
     (emit! context :verification/completed
@@ -70,7 +70,7 @@
             :status status
             :evidence-count (count evidence)
             :reason (when-not passed?
-                      :provider-completed-without-verifiable-artifact)})
+                      :artifact-and-verification-evidence-required)})
     {:status status :passed? (boolean passed?) :evidence-count (count evidence)}))
 
 (defn complete! [context verification result]

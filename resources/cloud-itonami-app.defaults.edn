@@ -69,6 +69,10 @@
                :access-token-env "CLOUD_ITONAMI_RELAY_ACCESS_TOKEN"}
  :memory {:max-session-messages 40
           :max-context-messages 20}
+ :agent-runtime {:codex-transport :app-server
+                 :isolate-writes? true
+                 :approval-timeout-ms 120000
+                 :evaluation-version "result-v1"}
  ;; Background worker runs. Concurrency is deliberately small: these share the
  ;; local model with interactive chat.
  :worker {:max-concurrency 2
