@@ -21,6 +21,10 @@ entries belong only in the `:dev` override.
 | kotoba-lang/identity | directory and identity model | immutable SHA |
 | kotoba-lang/oauth | OAuth request model | immutable SHA |
 | kotoba-lang/com-github | GitHub Projects adapter | immutable SHA |
+| kotoba-lang/agent | bounded AgentRun state machine | immutable SHA |
+| kotoba-lang/hil | portable human-approval contract | immutable SHA |
+| kotoba-lang/wallet | EIP-4361 message and secp256k1 signature verification | immutable SHA |
+| kotoba-lang/bitcoin-node | backend-neutral watch-only node contract and hardened Bitcoin Core adapter | immutable SHA |
 | kotoba-lang/jp-go-digital-design-system | DADS UI components | immutable SHA |
 
 `transit` is named directly even though `sheets`, `docs` and `forms` each

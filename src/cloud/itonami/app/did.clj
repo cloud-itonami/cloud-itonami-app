@@ -16,7 +16,9 @@
 
 (defn- cose-value [^Map cose key]
   (or (.get cose (int key))
-      (.get cose (long key))))
+      (.get cose (long key))
+      ;; Untyped Jackson CBOR maps expose numeric COSE labels as strings.
+      (.get cose (str key))))
 
 (defn- base58btc [bytes]
   (let [leading-zeroes (count (take-while zero? (map unsigned-byte bytes)))

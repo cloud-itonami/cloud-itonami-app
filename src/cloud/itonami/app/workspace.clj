@@ -2,6 +2,7 @@
   "Read-only adapters for the existing Kotoba and Cloud Itonami workspace systems."
   (:require [calendar.model :as calendar]
             [cloud.itonami.app.identity :as local-identity]
+            [cloud.itonami.app.store :as store]
             [clojure.data.json :as json]
             [clojure.java.io :as io]
             [clojure.string :as str]
@@ -19,8 +20,16 @@
            [java.util.concurrent TimeUnit]))
 
 (defonce cache (atom {}))
+(defonce runtime-config (atom {}))
 (def cache-duration (Duration/ofSeconds 60))
 (def jst (ZoneId/of "Asia/Tokyo"))
+
+(defn invalidate! []
+  (reset! cache {}))
+
+(defn configure! [configuration]
+  (reset! runtime-config (:workspace configuration))
+  (invalidate!))
 
 (defn workspace-root []
   (io/file (or (System/getenv "CLOUD_ITONAMI_WORKSPACE")
@@ -28,6 +37,7 @@
 
 (defn- archive-root []
   (io/file (or (System/getenv "CLOUD_ITONAMI_M365_ARCHIVE")
+               (:m365-archive @runtime-config)
                (str (io/file (workspace-root) "m365-archive")))))
 
 (defn- annex-pointer? [file]
@@ -192,28 +202,43 @@
         box (reduce mailbox/deliver
                     (mailbox/mailbox "local-inbox"
                                      "local@cloud-itonami.invalid")
-                    entries)]
-    {:source "m365-archive / mail / 受信トレイ"
+                    entries)
+        archive-items
+        (mapv
+         (fn [entry]
+           (let [message (:mailbox.message/message entry)
+                 sender (get entry :sender)]
+             {:id (:mailbox.message/id entry)
+              :provider :m365-archive
+              :subject (:mail/subject message)
+              :from (:display sender)
+              :from-email (:email sender)
+              :received-at (:mailbox.message/received-at entry)
+              :snippet (get entry :snippet)
+              :labels [:inbox :archive]
+              :size-bytes (:mailbox.message/size-bytes entry)
+              :available? (get entry :available?)}))
+         (mailbox/search box "" {:label :inbox}))
+        synced-messages (vals (get-in (store/snapshot)
+                                      [:mail-sync :messages]))
+        synced (->> synced-messages
+                    (sort-by :received-at #(compare %2 %1))
+                    (take 100)
+                    (mapv #(-> %
+                               (select-keys [:id :provider :subject :from
+                                             :from-email :received-at :snippet
+                                             :labels :size-bytes])
+                               (assoc :available? true))))]
+    {:source "m365-archive / Gmail / Microsoft Graph"
      :model "kotoba-lang/mail"
-     :mode "archive"
+     :mode "oauth-delta+archive"
      :sealed-receiver "net-kotobase/mail-worker"
-     :count (if (.isDirectory directory)
-              (count (filter #(.isFile %) (.listFiles directory)))
-              0)
-     :items
-     (mapv
-      (fn [entry]
-        (let [message (:mailbox.message/message entry)
-              sender (get entry :sender)]
-          {:id (:mailbox.message/id entry)
-           :subject (:mail/subject message)
-           :from (:display sender)
-           :from-email (:email sender)
-           :received-at (:mailbox.message/received-at entry)
-           :snippet (get entry :snippet)
-           :size-bytes (:mailbox.message/size-bytes entry)
-           :available? (get entry :available?)}))
-      (mailbox/search box "" {:label :inbox}))}))
+     :sync (get-in (store/snapshot) [:mail-sync :providers])
+     :count (+ (if (.isDirectory directory)
+                 (count (filter #(.isFile %) (.listFiles directory)))
+                 0)
+               (count synced-messages))
+     :items (vec (concat synced archive-items))}))
 
 (defn- shallow-files [directory]
   (if-not (.isDirectory directory)

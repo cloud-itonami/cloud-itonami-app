@@ -25,6 +25,27 @@
    :base-url "http://127.0.0.1:1234/v1"
    :local? true
    :enabled? false}
+  {:id "codex-cli"
+   :name "Codex CLI"
+   :kind :cli
+   :runner :codex
+   :model "codex:default"
+   :local? true
+   :enabled? true}
+  {:id "claude-cli"
+   :name "Claude Code"
+   :kind :cli
+   :runner :claude
+   :model "claude:sonnet"
+   :local? true
+   :enabled? true}
+  {:id "claude-zai"
+   :name "Claude ZAI"
+   :kind :cli
+   :runner :claude-zai
+   :model "claude-zai:default"
+   :local? true
+   :enabled? true}
   {:id "openai"
    :name "OpenAI"
    :kind :openai-compatible
@@ -36,6 +57,48 @@
            :allow-cloud-without-review? false}
  :cloud-relay {:base-url nil
                :access-token-env "CLOUD_ITONAMI_RELAY_ACCESS_TOKEN"}
+ :identity-sync {:base-url "https://hooks.itonami.cloud"
+                 :access-token-env "ITONAMI_IDENTITY_SYNC_TOKEN"}
+ :bitcoin
+ {:explorer-base-url "https://mempool.space/api"
+  ;; PSBTs exceeding either limit are rejected before Passkey approval.
+  :max-fee-sats 1000000
+  :max-fee-ratio 0.1
+  :core-rpc
+  {:url nil
+   :expected-chain "main"
+   :expected-genesis-hash
+   "000000000019d6689c085ae165831e934ff763ae46a2a6c172b3f1b60a8ce26f"
+   :cookie-file nil
+   :require-secure-cookie? true
+   :username-env "BITCOIN_CORE_RPC_USER"
+   :password-env "BITCOIN_CORE_RPC_PASSWORD"
+   :timeout-seconds 30
+   :allow-remote? false}}
+ :workspace {:m365-archive nil}
+ :mail-sync {:gmail-topic nil}
+ :account-services
+ {:murakumo
+  {:id "murakumo.cloud" :name "Murakumo Cloud"
+   :base-url "https://murakumo.cloud" :plan "cloud-itonami"
+   :quota-bytes 5368709120
+   :quota-source :cloud-itonami-allocation}
+  :kotobase
+  {:id "kotobase.net" :name "Kotobase"
+   :base-url "https://kotobase.net" :plan "p2p"
+   :quota-bytes 104857600 :quota-pins 3
+   :quota-source :service-contract}}
+ :agent-control
+ {:enabled? false
+  :max-turns 8
+  :max-tool-calls 12
+  :browser {:enabled? false
+            :allowed-domains ["localhost" "127.0.0.1"]
+            :headed? true}
+  :computer {:enabled? false}
+  :cli {:enabled? false
+        :workspace nil
+        :access :read-only}}
  :memory {:max-session-messages 40
           :max-context-messages 20}
  ;; Background worker runs. Concurrency is deliberately small: these share the

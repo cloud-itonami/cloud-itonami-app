@@ -1,12 +1,15 @@
 (ns cloud.itonami.app.provider
   (:require [clojure.data.json :as json]
+            [clojure.java.io :as io]
             [clojure.string :as str]
+            [cloud.itonami.app.cli-runner :as cli-runner]
             [cloud.itonami.app.config :as config])
   (:import [java.io BufferedReader InputStreamReader]
            [java.net URI]
            [java.net.http HttpClient HttpRequest HttpRequest$BodyPublishers
             HttpResponse$BodyHandlers]
-           [java.time Duration]))
+           [java.time Duration]
+           [java.util Base64]))
 
 (defonce ^HttpClient client
   (-> (HttpClient/newBuilder)
@@ -16,8 +19,10 @@
 (defn- request-json
   ([method url body] (request-json method url body nil))
   ([method url body api-key]
+   (request-json method url body api-key 120))
+  ([method url body api-key timeout-seconds]
    (let [builder (-> (HttpRequest/newBuilder (URI/create url))
-                     (.timeout (Duration/ofSeconds 120))
+                     (.timeout (Duration/ofSeconds timeout-seconds))
                      (.header "Accept" "application/json")
                      (.header "Content-Type" "application/json"))
          _ (when api-key (.header builder "Authorization" (str "Bearer " api-key)))
@@ -51,6 +56,8 @@
           (:data (request-json :get (str (str/replace (:base-url provider) #"/$" "")
                                          "/models")
                                nil (config/env-secret provider))))
+
+    :cli (cli-runner/list-models provider)
     []))
 
 (defn chat
@@ -77,7 +84,118 @@
       {:content (get-in result [:choices 0 :message :content])
        :usage (:usage result)})
 
+    :cli
+    (cli-runner/chat provider {:model model :messages messages
+                               :temperature temperature})
+
     (throw (ex-info "unsupported provider kind" {:provider provider}))))
+
+(defn- image-data-url [{:keys [image-path media-type]}]
+  (str "data:" (or media-type "image/png") ";base64,"
+       (.encodeToString (Base64/getEncoder)
+                        (java.nio.file.Files/readAllBytes
+                         (.toPath (io/file image-path))))))
+
+(defn- openai-message [{:keys [role content tool-calls tool-call-id]}]
+  (case role
+    "assistant"
+    (cond-> {:role role :content (or content "")}
+      (seq tool-calls)
+      (assoc :tool_calls
+             (mapv (fn [{:keys [id name input]}]
+                     {:id id :type "function"
+                      :function {:name name
+                                 :arguments (json/write-str (or input {}))}})
+                   tool-calls)))
+
+    "tool" {:role role :tool_call_id tool-call-id
+            :content (if (map? content)
+                       (or (:text content) "")
+                       (str content))}
+
+    {:role role :content content}))
+
+(defn- openai-messages [messages]
+  (vec
+   (mapcat
+    (fn [message]
+      (let [converted (openai-message message)
+            content (:content message)]
+        (if (and (= "tool" (:role message))
+                 (map? content) (:image-path content))
+          [converted
+           {:role "user"
+            :content [{:type "text" :text "The tool screenshot follows."}
+                      {:type "image_url"
+                       :image_url {:url (image-data-url content)}}]}]
+          [converted])))
+    messages)))
+
+(defn- ollama-message [{:keys [role content tool-calls]}]
+  (cond-> {:role role
+           :content (if (map? content) (or (:text content) "") (or content ""))}
+    (seq tool-calls)
+    (assoc :tool_calls
+           (mapv (fn [{:keys [name input]}]
+                   {:function {:name name :arguments (or input {})}})
+                 tool-calls))
+    (and (= "tool" role) (map? content) (:image-path content))
+    (assoc :images
+           [(.encodeToString
+             (Base64/getEncoder)
+             (java.nio.file.Files/readAllBytes
+              (.toPath (io/file (:image-path content)))))])))
+
+(defn- tool-definition [{:keys [name description parameters]}]
+  {:type "function"
+   :function {:name name :description description :parameters parameters}})
+
+(defn- parse-tool-input [value]
+  (cond
+    (map? value) value
+    (and (string? value) (not (str/blank? value)))
+    (json/read-str value :key-fn keyword)
+    :else {}))
+
+(defn- normalize-agent-result [result]
+  (let [message (or (get-in result [:choices 0 :message]) (:message result))
+        calls (mapv
+               (fn [index call]
+                 (let [function (:function call)]
+                   {:id (or (:id call) (str "call-" (System/nanoTime) "-" index))
+                    :name (:name function)
+                    :input (parse-tool-input (:arguments function))}))
+               (range)
+               (:tool_calls message))]
+    {:content (or (:content message) "")
+     :tool-calls calls
+     :usage (:usage result)}))
+
+(defn agent-turn
+  "One non-streaming model turn with portable function tools."
+  [provider {:keys [model messages tools temperature]}]
+  (let [tools (mapv tool-definition tools)
+        result
+        (case (:kind provider)
+          :ollama
+          (request-json
+           :post (str (:base-url provider) "/api/chat")
+           {:model model :messages (mapv ollama-message messages)
+            :tools tools :stream false
+            :options {:temperature (or temperature 0.2)}}
+           nil 300)
+
+          :openai-compatible
+          (request-json
+           :post (str (str/replace (:base-url provider) #"/$" "")
+                      "/chat/completions")
+           {:model model :messages (openai-messages messages)
+            :tools tools :tool_choice "auto" :stream false
+            :temperature (or temperature 0.2)}
+           (config/env-secret provider) 300)
+
+          (throw (ex-info "unsupported provider kind" {:provider provider})))]
+    (normalize-agent-result result)))
 
 (defn- streaming-response [url body api-key]
   (let [builder (-> (HttpRequest/newBuilder (URI/create url))
@@ -150,6 +268,14 @@
                 (.append content emitted))
               (when-let [chunk-usage (:usage chunk)]
                 (vreset! usage chunk-usage))))))
+
+      :cli
+      (let [result (cli-runner/chat
+                    provider {:model model :messages messages
+                              :temperature temperature})]
+        (when-let [emitted (emit! on-delta (:content result))]
+          (.append content emitted))
+        (vreset! usage (:usage result)))
 
       (throw (ex-info "unsupported provider kind" {:provider provider})))
     {:content (.toString content) :usage @usage}))
