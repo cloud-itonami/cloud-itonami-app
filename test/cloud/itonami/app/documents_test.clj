@@ -3625,3 +3625,50 @@
             back (documents/content (:id item) alice object-store)]
         (is (= "2400" (get-in back [:computed first-id "[2 1]"])) "1200 * 2")
         (is (= "1500" (get-in back [:computed "sheet2" "[2 1]"])) "not 1200")))))
+
+(deftest a-named-range-survives-the-way-the-editor-saves
+  ;; The editor writes into the projected payload and saves that, so what
+  ;; matters is the round trip through JSON and back — the place a nested
+  ;; map is most likely to be quietly lost. Checked here rather than assumed
+  ;; from the panel existing.
+  (with-state
+    (fn [_ object-store]
+      (let [{:keys [item]} (documents/create! :sheets "売上" alice object-store)
+            before (documents/content (:id item) alice object-store)
+            tab-id (first (keys (:sheets/tabs (:resource before))))
+            title (get-in before [:resource :sheets/tabs tab-id :sheets/title])
+            ;; Exactly what the panel builds, through `update!` — the
+            ;; projected payload, not the EDN resource.
+            payload (assoc (:payload before)
+                           "sheets/named-ranges"
+                           {"売上" {"sheets/id" "売上" "sheets/tab" title
+                                    "sheets/range" "A1:A2"}})
+            payload (assoc-in payload ["sheets/tabs" tab-id "sheets/cells"]
+                              {"[1 1]" {"sheets/value" "1200"}
+                               "[2 1]" {"sheets/value" "1300"}
+                               "[3 1]" {"sheets/formula" "SUM(売上)"}})
+            _ (documents/update! (:id item) payload alice
+                                 (:etag (:item before)) object-store)
+            back (documents/content (:id item) alice object-store)]
+        ;; Stored as a rehydrated map, not as string keys.
+        (is (= {:sheets/id "売上" :sheets/tab title :sheets/range "A1:A2"}
+               (get-in back [:resource :sheets/named-ranges "売上"])))
+        ;; And it resolves, which is the only reason to have defined it.
+        (is (= "2500" (get-in back [:computed tab-id "[3 1]"])))))))
+
+(deftest a-malformed-named-range-is-refused-with-a-reason
+  ;; The panel does not validate; the surface does. A range with no tab is
+  ;; what a hand-edited payload looks like, and refusing it with a message
+  ;; beats storing a name that resolves nowhere.
+  (with-state
+    (fn [_ object-store]
+      (let [{:keys [item]} (documents/create! :sheets "売上" alice object-store)
+            before (documents/content (:id item) alice object-store)
+            payload (assoc (:payload before)
+                           "sheets/named-ranges"
+                           {"売上" {"sheets/id" "売上" "sheets/range" "A1:A2"}})
+            error (try (documents/update! (:id item) payload alice
+                                          (:etag (:item before)) object-store)
+                       (catch clojure.lang.ExceptionInfo e (ex-data e)))]
+        (is (= :drive/invalid-document (:type error)))
+        (is (= ":named-range/invalid" (:code (first (:problems error)))))))))
