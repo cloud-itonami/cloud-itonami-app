@@ -1042,6 +1042,93 @@
                (try (documents/history (:id item) bob)
                     (catch clojure.lang.ExceptionInfo e (:type (ex-data e))))))))))
 
+;; ── forgetting part of a history ────────────────────────────────────────────
+
+(deftest pruning-keeps-the-newest-and-gives-the-quota-back
+  (with-state
+    (fn [state object-store]
+      (let [{:keys [item]} (documents/create! :docs "設計" alice object-store)]
+        (dotimes [n 4] (with-paragraph item (str "段落" n) alice object-store))
+        (let [before (:used-bytes (documents/quota-view @state alice))
+              held (:held-bytes (first (documents/documents @state alice)))
+              out (documents/prune! (:id item) alice 2 object-store)]
+          (is (= 5 (+ (:deleted out) (:kept out))))
+          (is (= 2 (:kept out)))
+          (is (= 2 (:versions (:item out))))
+          (is (pos? (:freed-bytes out)))
+          (is (= (- before (:freed-bytes out)) (:used-bytes (:quota out))))
+          (is (= held before) "what the document held is what the Drive was counting")
+          ;; And it still reads.
+          (is (:ok? (documents/content (:id item) alice object-store))))))))
+
+(deftest pruning-cannot-take-the-current-version
+  (with-state
+    (fn [_ object-store]
+      (let [{:keys [item]} (documents/create! :docs "設計" alice object-store)]
+        (with-paragraph item "ひとつめ" alice object-store)
+        (is (= :drive/invalid-document
+               (try (documents/prune! (:id item) alice 0 object-store)
+                    (catch clojure.lang.ExceptionInfo e (:type (ex-data e))))))
+        (is (= 2 (:versions (first (documents/documents (store/snapshot) alice)))))))))
+
+(deftest a-prune-renumbers-what-is-left
+  (with-state
+    (fn [_ object-store]
+      (let [{:keys [item]} (documents/create! :docs "設計" alice object-store)]
+        (with-paragraph item "ひとつめ" alice object-store)
+        (with-paragraph item "ふたつめ" alice object-store)
+        (is (= ["title"] (mapv #(get % "docs/id")
+                               (get (:payload (documents/version-content
+                                               (:id item) 1 alice object-store))
+                                    "docs/blocks")))
+            "version 1 is the first save")
+        (documents/prune! (:id item) alice 1 object-store)
+        ;; An index is a position in `:drive/versions`, not an identity, so
+        ;; pruning renumbers: what was version 3 is now version 1. The two
+        ;; earlier ones are gone and do not come back — irreversible, which
+        ;; is why this is owner-only and never automatic.
+        (is (= 1 (:current (documents/history (:id item) alice))))
+        (is (= ["title" "ひとつめ" "ふたつめ"]
+               (mapv #(get % "docs/id")
+                     (get (:payload (documents/version-content (:id item) 1 alice
+                                                               object-store))
+                          "docs/blocks")))
+            "and version 1 is now the newest content, not the oldest")
+        (is (= :drive/not-found
+               (try (documents/version-content (:id item) 2 alice object-store)
+                    (catch clojure.lang.ExceptionInfo e (:type (ex-data e))))))))))
+
+(deftest only-the-owner-may-prune
+  (with-state
+    (fn [_ object-store]
+      (let [{:keys [item]} (documents/create! :docs "共同設計" alice object-store)]
+        (documents/grant! (:id item) bob "editor" alice)
+        (with-paragraph item "ひとつめ" bob object-store)
+        ;; An editor may change a document and still not destroy the record
+        ;; of how it got that way.
+        (is (= :drive/not-permitted
+               (try (documents/prune! (:id item) bob 1 object-store)
+                    (catch clojure.lang.ExceptionInfo e (:type (ex-data e))))))))))
+
+(deftest pruning-with-nothing-to-prune-is-not-an-error
+  (with-state
+    (fn [_ object-store]
+      (let [{:keys [item]} (documents/create! :sheets "計画" alice object-store)
+            out (documents/prune! (:id item) alice 10 object-store)]
+        (is (:ok? out))
+        (is (zero? (:deleted out)))
+        (is (zero? (:freed-bytes out)))))))
+
+(deftest nothing-prunes-on-its-own
+  (with-state
+    (fn [state object-store]
+      (let [{:keys [item]} (documents/create! :docs "設計" alice object-store)]
+        (dotimes [n 15] (with-paragraph item (str "段落" n) alice object-store))
+        ;; Well past the default. A Drive that quietly deleted history at a
+        ;; moment nobody chose, to solve a problem nobody had noticed, would
+        ;; be a worse thing than one that fills up and says so.
+        (is (= 16 (:versions (first (documents/documents @state alice)))))))))
+
 ;; ── searching inside documents ──────────────────────────────────────────────
 
 (defn- with-cell [item value object-store]

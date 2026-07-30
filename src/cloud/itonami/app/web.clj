@@ -1252,6 +1252,31 @@
 
       const versions = make('div', 'detail-actions__row');
       const bytesDelta = (n) => (n > 0 ? `+${bytes(n)}` : (n < 0 ? `-${bytes(-n)}` : '±0'));
+      // Owner only and never automatic: it is irreversible, and a Drive that
+      // deleted history at a moment nobody chose would be worse than one
+      // that fills up and says so.
+      if (item.role === 'owner' && (item.versions || 0) > 1) {
+        const prune = make('button', 'tool-button',
+          `古い版を削除（最新 ${item.versions > 10 ? 10 : 1} 件を残す・${bytes(item['held-bytes'])} 使用中）`);
+        prune.type = 'button';
+        prune.addEventListener('click', async () => {
+          prune.disabled = true; status.textContent = '古い版を削除しています…';
+          try {
+            const out = await postJSON(
+              `/api/workspace/drive/documents/${encodeURIComponent(item.id)}/prune`,
+              {keep: item.versions > 10 ? 10 : 1}, true);
+            selectedDrive = out.item;
+            await loadWorkspace('drive', renderDrive);
+            $('#drive-create-status').textContent =
+              `${out.deleted} 件の版を削除し、${bytes(out['freed-bytes'])} を回収しました。`;
+          } catch (error) {
+            status.textContent = error.message;
+          } finally {
+            prune.disabled = false;
+          }
+        });
+        versions.append(prune);
+      }
       for (let n = (item.versions || 0); n >= 1; n -= 1) {
         // Newest first, labelled with who wrote it and what it cost. On a
         // shared document the version number alone does not tell you whose
