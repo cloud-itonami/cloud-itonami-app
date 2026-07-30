@@ -3615,10 +3615,10 @@
                                              {:tab "無い"})
                            (catch clojure.lang.ExceptionInfo e (ex-data e))))))))))
 
-(deftest a-formula-does-not-reach-into-another-tab
-  ;; `A1` means this tab's A1. Cross-tab references are 'シート'!A1 in a
-  ;; spreadsheet and are not implemented — so the honest answer is this
-  ;; tab's cell, not the other tab's, and certainly not a silent mixture.
+(deftest a-formula-reaches-into-another-tab-only-when-asked
+  ;; `A1` means this tab's A1, and `原価表!A1` means that tab's. The first
+  ;; half is what an unqualified reference must keep meaning now that the
+  ;; second half exists.
   (with-state
     (fn [_ object-store]
       (let [{:keys [item first-id]} (two-tab-workbook object-store)
@@ -3742,3 +3742,23 @@
         (is (pos? (count (:bytes (documents/export (:id item) "md" alice object-store)))))
         (is (pos? (count (:bytes (documents/export (:id item) "docx" alice
                                                    object-store)))))))))
+
+(deftest a-cross-tab-formula-works-through-the-drive
+  (with-state
+    (fn [_ object-store]
+      (let [{:keys [item first-id]} (two-tab-workbook object-store)
+            before (documents/content (:id item) alice object-store)
+            wb (:resource before)
+            _ (save! (:id item)
+                     (assoc-in wb [:sheets/tabs first-id :sheets/cells]
+                               {[1 1] {:sheets/value "1200"}
+                                [2 1] {:sheets/formula "A1*2"}
+                                [3 1] {:sheets/formula "下期!A1"}
+                                [4 1] {:sheets/formula "A1+下期!A1"}
+                                [5 1] {:sheets/formula "無い表!A1"}})
+                     alice object-store)
+            computed (:computed (documents/content (:id item) alice object-store))]
+        (is (= "1500" (get-in computed [first-id "[3 1]"])) "the other tab's A1")
+        (is (= "2700" (get-in computed [first-id "[4 1]"])) "1200 + 1500")
+        (is (= "2400" (get-in computed [first-id "[2 1]"])) "unqualified is still local")
+        (is (= "#REF!" (get-in computed [first-id "[5 1]"])))))))
