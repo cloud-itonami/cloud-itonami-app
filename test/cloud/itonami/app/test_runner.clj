@@ -36,6 +36,7 @@
             [cloud.itonami.app.operator-test]
             [cloud.itonami.app.funding-test]
             [cloud.itonami.app.mcp-test]
+            [cloud.itonami.app.namespaces-test]
             [cloud.itonami.app.fleet-tools-test]
             [cloud.itonami.app.openai-compat-test]
             [cloud.itonami.app.passkey-test]
@@ -75,6 +76,7 @@
     cloud.itonami.app.operator-test
     cloud.itonami.app.funding-test
     cloud.itonami.app.mcp-test
+    cloud.itonami.app.namespaces-test
     cloud.itonami.app.fleet-tools-test
     cloud.itonami.app.openai-compat-test
     cloud.itonami.app.passkey-test
