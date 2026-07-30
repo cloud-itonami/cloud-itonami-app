@@ -62,12 +62,29 @@ The local management API exposes the active organization boundary:
 - `GET /api/organism-workers` — assigned AO directory;
 - `GET /api/organism-workers/:id/snapshot` — safe current projection;
 - `GET /api/organism-workers/:id/activity?cursor=…` — bounded cursor page.
+- `GET /api/organism-workers/:id/receipts` — redacted admission/effect state;
+- `POST /api/organism-workers/:id/intents` — enqueue an expiring typed intent;
+- `POST /api/organism-workers/:id/intents/:intent-id/decision` — enqueue a
+  human approval or rejection bound to its parent intent.
 
 The activity adapter seeks directly to the append-only event byte cursor. An
 initial request starts near the tail, and no request folds the complete Tamaki
 history. Prompt, command, goal, private body, credential, and arbitrary event
 data are excluded; only allow-listed lifecycle and runner metadata cross the
 workplace boundary.
+
+The cursor is persisted in the local Cloud state under the authenticated User,
+active Organization, and Worker ID. Switching Organizations or AO workers
+therefore cannot reuse another boundary's position. Event-file truncation or
+rotation falls back to a bounded tail instead of leaving the observer stuck
+beyond EOF.
+
+Intent bodies do not enter Cloud's durable state or a public repository. The
+local adapter atomically writes the complete envelope into Tamaki's private
+`.tamaki/workplace/inbox/` and exposes only a digest-bearing receipt to the UI.
+The UI says `admitted / not-executed` until the external supervisor emits an
+effect receipt. Stop and approval intents additionally require the active
+membership to be an Organization owner or admin.
 
 ## Runtime boundaries
 

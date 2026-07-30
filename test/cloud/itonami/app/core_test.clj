@@ -528,11 +528,21 @@
     (.mkdirs state-dir)
     (spit (io/file organisms "cloud-itonami-worker.edn")
           (pr-str tamaki-worker-assignment))
+    (spit (io/file organisms "other-worker.edn")
+          (pr-str
+           (assoc tamaki-worker-assignment
+                  :ao.worker/id "ao:other:worker"
+                  :ao.worker/organization "other"
+                  :ao.worker/subject "did:key:other"
+                  :ao.worker/repository "rad:other")))
+    (spit (io/file organisms "family.edn") (pr-str {:family/id :not-a-worker}))
     (spit events (str (pr-str (event "1" 1000 :run/started)) "\n"
                       (pr-str (event "2" 2000 :run/succeeded)) "\n"))
     (with-redefs [organism-gateway/tamaki-root (constantly root)]
       (is (= 1 (count (:items (organism-gateway/directory "etzhayyim")))))
-      (is (empty? (:items (organism-gateway/directory "other"))))
+      (is (= ["ao:other:worker"]
+             (mapv :ao.worker/id
+                   (:items (organism-gateway/directory "other")))))
       (let [first-page (organism-gateway/activity nil 10)
             cursor (:cursor first-page)
             projected (first (:items first-page))]
@@ -548,7 +558,29 @@
           (is (= "3" (:activity/id (first (:items next-page)))))))
       (is (= "ao:etzhayyim:tamaki"
              (get-in (organism-gateway/snapshot "ao:etzhayyim:tamaki")
-                     [:worker :ao.worker/id]))))))
+                     [:worker :ao.worker/id])))
+      (let [receipt
+            (organism-gateway/submit-intent!
+             "ao:etzhayyim:tamaki"
+             {:intent/id "intent-test"
+              :intent/organization "etzhayyim"
+              :intent/worker "ao:etzhayyim:tamaki"
+              :intent/capability :intent/submit
+              :intent/issued-by "did:key:human"
+              :intent/expires-at 5000
+              :intent/payload {:type "objective"
+                               :summary "private objective"}}
+             3000)
+            inbox (slurp (io/file state-dir
+                                  "workplace/inbox/intent-test.edn"))]
+        (is (= "intent/submit" (:receipt/capability receipt)))
+        (is (= "admitted" (:receipt/status receipt)))
+        (is (= "not-executed" (:receipt/effect-status receipt)))
+        (is (str/includes? inbox "private objective"))
+        (is (not (str/includes? (pr-str receipt) "private objective")))
+        (is (= 1 (count (:items
+                         (organism-gateway/receipts
+                          "ao:etzhayyim:tamaki")))))))))
 
 (deftest local-identity-registers-organization-owner-and-members-safely
   (let [temporary (java.nio.file.Files/createTempDirectory

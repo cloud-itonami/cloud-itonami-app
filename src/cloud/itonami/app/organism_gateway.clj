@@ -8,7 +8,10 @@
             [clojure.string :as str]
             [cloud.itonami.app.organism-worker :as organism-worker])
   (:import [java.io RandomAccessFile]
-           [java.nio.charset StandardCharsets]))
+           [java.nio.charset StandardCharsets]
+           [java.nio.file Files StandardCopyOption]
+           [java.security MessageDigest]
+           [java.util UUID]))
 
 (def activity-schema "cloud.itonami.app.organism-activity.v1")
 (def snapshot-schema "cloud.itonami.app.organism-snapshot.v1")
@@ -26,35 +29,48 @@
    (or (System/getenv "CLOUD_ITONAMI_TAMAKI_ROOT")
        (io/file (workspace-root) "orgs/etzhayyim/tamaki"))))
 
-(defn- assignment-file []
-  (io/file (tamaki-root) "organisms/cloud-itonami-worker.edn"))
+(defn- assignment-files []
+  (let [directory (io/file (tamaki-root) "organisms")]
+    (->> (or (.listFiles directory) (make-array java.io.File 0))
+         (filter #(and (.isFile %)
+                       (str/ends-with? (.getName %) ".edn")))
+         (sort-by #(.getName %)))))
+
+(defn- read-assignment [file]
+  (try
+    (let [value (-> file slurp edn/read-string)]
+      (when (or (= organism-worker/schema (:ao.worker/schema value))
+                (= :artificial-organism (:ao.worker/kind value)))
+        (organism-worker/assignment value)))
+    (catch Exception _ nil)))
+
+(defn assignments []
+  (->> (assignment-files) (keep read-assignment) vec))
 
 (defn- events-file []
   (io/file (or (System/getenv "CLOUD_ITONAMI_TAMAKI_STATE_DIR")
                (io/file (tamaki-root) ".tamaki"))
            "events.edn"))
 
-(defn assignment []
-  (let [file (assignment-file)]
-    (when (.isFile file)
-      (-> file slurp edn/read-string organism-worker/assignment))))
+(defn assignment
+  ([] (first (assignments)))
+  ([worker-id]
+   (some #(when (= worker-id (:ao.worker/id %)) %) (assignments))))
 
 (defn directory
   "List externally assigned AOs visible to one organization slug."
   [organization]
-  (if-let [worker (assignment)]
-    (if (= (str/lower-case (str organization))
-           (str/lower-case (str (:ao.worker/organization worker))))
-      {:schema "cloud.itonami.app.organism-directory.v1"
-       :organization organization
-       :items [(organism-worker/public-assignment worker)]}
-      {:schema "cloud.itonami.app.organism-directory.v1"
-       :organization organization
-       :items []})
-    {:schema "cloud.itonami.app.organism-directory.v1"
-     :organization organization
-     :items []
-     :state :not-configured}))
+  (let [workers (assignments)
+        organization (str/lower-case (str organization))
+        visible (->> workers
+                     (filter #(= organization
+                                 (str/lower-case
+                                  (str (:ao.worker/organization %)))))
+                     (mapv organism-worker/public-assignment))]
+    (cond-> {:schema "cloud.itonami.app.organism-directory.v1"
+             :organization organization
+             :items visible}
+      (empty? workers) (assoc :state :not-configured))))
 
 (def safe-event-data-keys
   #{:actor/id :actor/replica :loop/cycle :reason
@@ -102,12 +118,16 @@
     (catch Exception _ nil)))
 
 (defn- cursor-value [cursor length]
-  (try
-    (let [value (if (str/blank? (str cursor))
-                  (max 0 (- length default-tail-bytes))
-                  (Long/parseLong (str cursor)))]
-      (min length (max 0 value)))
-    (catch Exception _ length)))
+  (let [tail (max 0 (- length default-tail-bytes))]
+    (try
+      (if (str/blank? (str cursor))
+        tail
+        (let [value (Long/parseLong (str cursor))]
+          ;; A cursor beyond EOF means the authority file was truncated or
+          ;; rotated. Resume from the bounded tail instead of waiting forever
+          ;; at the new EOF.
+          (if (<= 0 value length) value tail)))
+      (catch Exception _ tail))))
 
 (defn activity
   "Read at most `limit` complete events after an opaque byte cursor.
@@ -145,9 +165,160 @@
                      (recur (cond-> items
                               event (conj (project-event event cursor)))))))))))))))
 
+(def intent-receipt-schema "kotoba.ao.worker-intent-receipt.v1")
+(def allowed-payload-keys
+  #{:type :summary :target :reference :decision :reason})
+(def max-intent-summary-characters 4000)
+
+(defn- workplace-root []
+  (io/file (or (System/getenv "CLOUD_ITONAMI_TAMAKI_STATE_DIR")
+               (io/file (tamaki-root) ".tamaki"))
+           "workplace"))
+
+(defn- private-directory [kind]
+  (io/file (workplace-root) (name kind)))
+
+(defn- safe-id [value]
+  (let [value (str value)]
+    (when-not (re-matches #"[A-Za-z0-9._:-]{1,160}" value)
+      (throw (ex-info "invalid organism intent id"
+                      {:type :ao.intent/invalid :id value})))
+    value))
+
+(defn- canonical-payload [payload]
+  (let [payload (select-keys (or payload {}) allowed-payload-keys)
+        summary (some-> (:summary payload) str)]
+    (cond-> (into (sorted-map) payload)
+      summary
+      (assoc :summary
+             (subs summary 0 (min (count summary)
+                                  max-intent-summary-characters))))))
+
+(defn- sha256 [value]
+  (let [bytes (.digest (MessageDigest/getInstance "SHA-256")
+                       (.getBytes (pr-str value) StandardCharsets/UTF_8))]
+    (str "sha256:"
+         (apply str (map #(format "%02x" (bit-and (int %) 0xff)) bytes)))))
+
+(defn- write-edn-atomically! [file value]
+  (let [parent (.getParentFile file)
+        temporary (io/file parent (str "." (.getName file) "."
+                                        (UUID/randomUUID) ".tmp"))]
+    (.mkdirs parent)
+    (spit temporary (str (pr-str value) "\n"))
+    (Files/move (.toPath temporary) (.toPath file)
+                (into-array StandardCopyOption
+                            [StandardCopyOption/ATOMIC_MOVE
+                             StandardCopyOption/REPLACE_EXISTING]))
+    value))
+
+(defn- public-receipt [receipt]
+  (let [public
+        (select-keys receipt
+                     [:receipt/schema :receipt/id :receipt/worker
+                      :receipt/organization :receipt/intent
+                      :receipt/capability :receipt/status
+                      :receipt/effect-status :receipt/payload-hash
+                      :receipt/parent :receipt/decision
+                      :receipt/next-gates :receipt/created-at
+                      :receipt/updated-at])
+        qualified-name
+        (fn [value]
+          (when value
+            (if-let [prefix (namespace value)]
+              (str prefix "/" (name value))
+              (name value))))]
+    (cond-> public
+      (:receipt/capability public)
+      (update :receipt/capability qualified-name)
+      (:receipt/status public)
+      (update :receipt/status qualified-name)
+      (:receipt/effect-status public)
+      (update :receipt/effect-status qualified-name)
+      (:receipt/decision public)
+      (update :receipt/decision qualified-name)
+      (:receipt/next-gates public)
+      (update :receipt/next-gates #(mapv qualified-name %)))))
+
+(defn submit-intent!
+  "Atomically place an admitted intent in Tamaki's private workplace inbox.
+  The returned receipt proves admission only; it never claims execution."
+  [worker-id intent now-ms]
+  (let [worker (assignment worker-id)]
+    (when-not worker
+      (throw (ex-info "organism worker was not found"
+                      {:type :ao.worker/not-found :id worker-id})))
+    (let [payload (canonical-payload (:intent/payload intent))
+          intent-id (safe-id (or (:intent/id intent)
+                                 (str "intent-" (UUID/randomUUID))))
+          prepared (-> intent
+                       (assoc :intent/id intent-id
+                              :intent/worker worker-id
+                              :intent/payload payload
+                              :intent/payload-hash (sha256 payload))
+                       (dissoc :intent/status :intent/effect-status))
+          decision (organism-worker/intent-decision worker prepared now-ms)]
+      (when-not (= :admitted (:intent/status decision))
+        (throw (ex-info "organism intent was rejected"
+                        {:type :ao.intent/rejected
+                         :reason (:intent/reason decision)})))
+      (let [receipt-id (str "receipt-" (UUID/randomUUID))
+            envelope (merge prepared decision
+                            {:intent/received-at now-ms
+                             :intent/next-gates
+                             (or (get-in worker
+                                         [:ao.worker/intents :required-gates])
+                                 [:incarnation-lease :capability :authority
+                                  :homeostasis :hil])})
+            receipt {:receipt/schema intent-receipt-schema
+                     :receipt/id receipt-id
+                     :receipt/worker worker-id
+                     :receipt/organization (:intent/organization envelope)
+                     :receipt/intent intent-id
+                     :receipt/capability (:intent/capability envelope)
+                     :receipt/status :admitted
+                     :receipt/effect-status :not-executed
+                     :receipt/payload-hash (:intent/payload-hash envelope)
+                     :receipt/parent (:intent/parent envelope)
+                     :receipt/decision (get-in envelope
+                                               [:intent/payload :decision])
+                     :receipt/next-gates (:intent/next-gates envelope)
+                     :receipt/created-at now-ms
+                     :receipt/updated-at now-ms}]
+        (write-edn-atomically!
+         (io/file (private-directory :inbox) (str intent-id ".edn"))
+         envelope)
+        (write-edn-atomically!
+         (io/file (private-directory :receipts) (str intent-id ".edn"))
+         receipt)
+        (public-receipt receipt)))))
+
+(defn receipts
+  "Return redacted receipts emitted by admission or the external supervisor."
+  [worker-id]
+  (when-not (assignment worker-id)
+    (throw (ex-info "organism worker was not found"
+                    {:type :ao.worker/not-found :id worker-id})))
+  (let [directory (private-directory :receipts)]
+    {:schema "cloud.itonami.app.organism-receipts.v1"
+     :worker worker-id
+     :items
+     (->> (or (.listFiles directory) (make-array java.io.File 0))
+          (filter #(.isFile %))
+          (keep (fn [file]
+                  (try
+                    (let [receipt (-> file slurp edn/read-string)]
+                      (when (= worker-id (:receipt/worker receipt))
+                        (public-receipt receipt)))
+                    (catch Exception _ nil))))
+          (sort-by (juxt :receipt/updated-at :receipt/id))
+          reverse
+          (take 100)
+          vec)}))
+
 (defn snapshot [worker-id]
-  (let [worker (assignment)]
-    (when-not (= worker-id (:ao.worker/id worker))
+  (let [worker (assignment worker-id)]
+    (when-not worker
       (throw (ex-info "organism worker was not found"
                       {:type :ao.worker/not-found :id worker-id})))
     (let [recent (activity nil 50)
