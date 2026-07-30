@@ -11,6 +11,7 @@
             [cloud.itonami.app.capability :as capability]
             [cloud.itonami.app.documents :as documents]
             [cloud.itonami.app.filecoin :as filecoin]
+            [drive.object]
             [cloud.itonami.app.store :as store]
             [drive.object :as object]
             [drive.store.memory :as memory]
@@ -3166,3 +3167,134 @@
                            (catch clojure.lang.ExceptionInfo e (ex-data e))))))
         (documents/grant! (:id item) bob "viewer" alice)
         (is (:inline? (documents/file-bytes (:id item) bob object-store)))))))
+
+;; ── searching twice ─────────────────────────────────────────────────────────
+
+(defn- counting-store
+  "An object store that records how many reads it served.
+
+  Measured rather than asserted: a cache whose benefit is described in a
+  comment is a cache nobody can tell is working."
+  [inner]
+  (let [reads (atom 0)]
+    {:reads reads
+     :store (reify drive.object/IObjectStore
+              (-get-object [_ ref] (swap! reads inc)
+                (drive.object/-get-object inner ref))
+              (-put-object [_ ref bytes] (drive.object/-put-object inner ref bytes))
+              (-delete-object [_ ref] (drive.object/-delete-object inner ref))
+              (-object-exists? [_ ref] (drive.object/-object-exists? inner ref)))}))
+
+(deftest a-second-search-does-not-read-the-bytes-again
+  (with-state
+    (fn [_ object-store]
+      (let [{:keys [reads store]} (counting-store object-store)]
+        (doseq [n (range 5)]
+          (let [{:keys [item]} (documents/create! :docs (str "文書" n) alice store)
+                doc (:resource (documents/content (:id item) alice store))]
+            (save! (:id item)
+                   (assoc doc :docs/blocks
+                          [{:docs/id "p" :docs/kind :paragraph
+                            :docs/text (str "共通の語 " n)}])
+                   alice store)))
+        (reset! reads 0)
+        (documents/search "共通の語" alice store)
+        (let [first-pass @reads]
+          (is (pos? first-pass) "the first search reads them")
+          (reset! reads 0)
+          (documents/search "共通の語" alice store)
+          (is (zero? @reads)
+              (str "the second reads none; the first read " first-pass)))))))
+
+(deftest an-edited-document-is-read-again
+  ;; The invalidation that needs no invalidating: a save is a new object
+  ;; reference, so it is a new cache entry and the old one is simply never
+  ;; asked for again.
+  (with-state
+    (fn [_ object-store]
+      (let [{:keys [reads store]} (counting-store object-store)
+            {:keys [item]} (documents/create! :docs "設計" alice store)
+            doc (:resource (documents/content (:id item) alice store))]
+        (save! (:id item)
+               (assoc doc :docs/blocks
+                      [{:docs/id "p" :docs/kind :paragraph :docs/text "最初の本文"}])
+               alice store)
+        (is (= 1 (count (:results (documents/search "最初の本文" alice store)))))
+        (save! (:id item)
+               (assoc doc :docs/blocks
+                      [{:docs/id "p" :docs/kind :paragraph :docs/text "書き直した本文"}])
+               alice store)
+        (reset! reads 0)
+        ;; The new text is found…
+        (is (= 1 (count (:results (documents/search "書き直した本文" alice store)))))
+        (is (pos? @reads) "which required reading the new version")
+        ;; …and the old text is not, which is what a stale cache would get
+        ;; wrong.
+        (is (= 0 (count (:results (documents/search "最初の本文" alice store)))))))))
+
+(deftest a-restored-version-is-found-by-its-own-text
+  ;; Restoring writes the old content as a *new* version with a new
+  ;; reference, so it caches as a new entry rather than colliding with the
+  ;; one it came from.
+  (with-state
+    (fn [_ object-store]
+      (let [{:keys [item]} (documents/create! :docs "設計" alice object-store)
+            doc (:resource (documents/content (:id item) alice object-store))]
+        (save! (:id item)
+               (assoc doc :docs/blocks
+                      [{:docs/id "p" :docs/kind :paragraph :docs/text "版1の語"}])
+               alice object-store)
+        (save! (:id item)
+               (assoc doc :docs/blocks
+                      [{:docs/id "p" :docs/kind :paragraph :docs/text "版2の語"}])
+               alice object-store)
+        (is (= 1 (count (:results (documents/search "版2の語" alice object-store)))))
+        (documents/restore-version!
+         (:id item) 2 alice
+         (:etag (:item (documents/content (:id item) alice object-store)))
+         object-store)
+        (is (= 1 (count (:results (documents/search "版1の語" alice object-store)))))
+        (is (= 0 (count (:results (documents/search "版2の語" alice object-store)))))))))
+
+(defn- documents-with-content
+  "`n` documents whose text does not appear in their titles.
+
+  A search whose needle matches the title never reads the bytes at all —
+  `in-title?` answers first — so a fixture named after what you search for
+  measures nothing, cache or no cache. That is how the first version of the
+  test below passed while proving nothing."
+  [n actor store]
+  (doseq [i (range n)]
+    (let [{:keys [item]} (documents/create! :docs (str "資料" i) actor store)
+          doc (:resource (documents/content (:id item) actor store))]
+      (save! (:id item)
+             (assoc doc :docs/blocks
+                    [{:docs/id "p" :docs/kind :paragraph
+                      :docs/text (str "本文にだけある語 " i)}])
+             actor store))))
+
+(deftest the-cache-is-bounded
+  ;; Otherwise it is a memory leak that grows with every version anyone ever
+  ;; saves. Pinned behaviourally — with a limit smaller than the Drive, a
+  ;; second search is *not* free, which is what a bound means and what an
+  ;; unbounded cache would get wrong.
+  (with-state
+    (fn [_ object-store]
+      (with-redefs [documents/text-cache-limit 4]
+        (let [{:keys [reads store]} (counting-store object-store)]
+          (documents-with-content 12 alice store)
+          (documents/search "本文にだけある語" alice store)
+          (reset! reads 0)
+          (documents/search "本文にだけある語" alice store)
+          (is (pos? @reads)
+              "twelve documents do not fit in four, so some were read again")))))
+  ;; And at a size inside the limit, nothing is read twice — the bound is a
+  ;; ceiling, not the behaviour.
+  (with-state
+    (fn [_ object-store]
+      (let [{:keys [reads store]} (counting-store object-store)]
+        (documents-with-content 12 alice store)
+        (documents/search "本文にだけある語" alice store)
+        (reset! reads 0)
+        (documents/search "本文にだけある語" alice store)
+        (is (zero? @reads))))))

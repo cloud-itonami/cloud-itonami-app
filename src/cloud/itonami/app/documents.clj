@@ -2731,6 +2731,52 @@
     (->> (extract resource) (keep identity) (map str) (remove str/blank?))
     []))
 
+(def text-cache-limit
+  "How many documents' extracted text to keep.
+
+  A number rather than a principle. Large enough that a household Drive is
+  entirely cached, small enough that the memory is bounded and predictable."
+  2000)
+
+(defonce ^:private text-cache (atom {}))
+
+(defn- cached-text
+  "The searchable text of the version `ref` names, reading it at most once.
+
+  **Safe because a reference identifies immutable bytes.** For an uploaded
+  file the reference *is* the content — its PieceCID — so the same reference
+  cannot ever name different bytes. For a document, `drive.object/write-item`
+  mints a fresh reference per version and refuses to reuse one for different
+  content, so the same guarantee holds for a different reason. There is no
+  invalidation to get wrong: an edit is a new reference and therefore a new
+  entry, and the old one is simply never asked for again.
+
+  This is not the index the listing still lacks. It does not bound the
+  *first* search, or a Drive larger than the cache, and it does not make the
+  scan itself smaller — every readable document is still visited. What it
+  removes is re-reading bytes that have not changed, which is what a second
+  search does with all of them.
+
+  On overflow half of it is dropped rather than all of it. Which half is
+  arbitrary — a hash map has no insertion order and this does not carry one —
+  so this is not an LRU and does not pretend to be. What it buys is that a
+  Drive sitting just above the limit keeps finding half its documents cached
+  instead of re-reading every one on every search, and the cost of being
+  wrong about which half is one read."
+  [ref read-text]
+  (if-not ref
+    (read-text)
+    (if-let [entry (find @text-cache ref)]
+      (val entry)
+      (let [text (vec (read-text))]
+        (swap! text-cache
+               (fn [cache]
+                 (let [cache (if (>= (count cache) text-cache-limit)
+                               (into {} (drop (quot text-cache-limit 2) cache))
+                               cache)]
+                   (assoc cache ref text))))
+        text))))
+
 (defn search
   "Documents whose title or contents contain `query`, for this principal.
 
@@ -2759,15 +2805,18 @@
                           ;; exception stops being noticed the moment it
                           ;; becomes routine.
                           hit (when (and (not in-title?) (not (:file? candidate)))
-                                (let [resource (try
-                                                 (:resource (content (:id candidate) actor
-                                                                     object-store))
-                                                 ;; A document whose bytes are
-                                                 ;; gone must not fail the
-                                                 ;; whole search.
-                                                 (catch clojure.lang.ExceptionInfo _ nil))]
-                                  (some #(when (str/includes? (str/lower-case %) needle) %)
-                                        (text-of (keyword (:kind candidate)) resource))))]
+                                (some #(when (str/includes? (str/lower-case %) needle) %)
+                                      (cached-text
+                                       (:etag candidate)
+                                       #(let [resource
+                                              (try
+                                                (:resource (content (:id candidate) actor
+                                                                    object-store))
+                                                ;; A document whose bytes are
+                                                ;; gone must not fail the
+                                                ;; whole search.
+                                                (catch clojure.lang.ExceptionInfo _ nil))]
+                                          (text-of (keyword (:kind candidate)) resource)))))]
                     :when (or in-title? hit)]
                 {:id (:id candidate)
                  :name (:name candidate)
