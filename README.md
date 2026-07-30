@@ -77,6 +77,51 @@ select a configured provider, one of the local agents, and the stored
 conversation the turn joins. Function calling, embeddings and the Responses API
 are not implemented.
 
+## MCP server (fleet directory)
+
+The actor fleet is also served over the Model Context Protocol, so an MCP client
+— Claude Code, Claude Desktop, an editor — can query the directory directly.
+Transport is stdio, so nothing new listens on the network.
+
+```json
+{
+  "mcpServers": {
+    "cloud-itonami-fleet": {
+      "command": "clojure",
+      "args": ["-M:mcp"],
+      "cwd": "/path/to/cloud-itonami-app"
+    }
+  }
+}
+```
+
+There is no wrapper script on purpose: MCP clients launch a command directly, and
+putting another process in the middle of a stdio protocol stream only risks its
+framing.
+
+Two tools, the same ones the in-app agent uses — the descriptors and behaviour
+live in `cloud.itonami.app.fleet`, and `cloud.itonami.app.mcp` is an adapter over
+them rather than a second implementation:
+
+| Tool | What it does |
+|---|---|
+| `fleet_search` | Query the bundled catalog of ~1,200 actors by text, domain, ISIC, ISO-3166, maturity, execution, or whether they have an address. No network. |
+| `fleet_call` | `GET` a path on a deployed actor. The actor is named by repository, never by URL, so the host comes from the catalog and cannot be chosen by the caller. Read-only. |
+
+Both require the fleet capability to be enabled; until then `tools/list` is
+empty, which is the same fail-closed default the agent capabilities have:
+
+```clojure
+;; data/config.edn
+{:agent-control {:fleet {:enabled? true}}}
+```
+
+Browser, computer, mail, calendar, drive and chat are deliberately **not**
+exposed. The device tools verify the frontmost application between approval and
+action, which does not survive translation to a protocol whose consent model
+belongs to the client; the workspace reads sit behind the Passkey session on
+`/api/*`, and a surface with no session must not reach around it.
+
 ## Background worker runs
 
 The Worker tab queues prompts that take longer than an interactive turn. Runs

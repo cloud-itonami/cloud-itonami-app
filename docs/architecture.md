@@ -18,7 +18,7 @@ its Swift implementation.
 | Provider selection | safe `.kotoba` policy + host-side mirror |
 | Local/cloud model transport | localhost service adapters |
 | Session memory | `kotoba.kgraph` EAV datoms + durable EDN |
-| Compatible client access | OpenAI-compatible loopback HTTP API |
+| Compatible client access | OpenAI-compatible loopback HTTP API; MCP over stdio for the fleet |
 | Secret access | named environment variables at provider boundary |
 
 ## Workspace integrations
@@ -184,6 +184,27 @@ mirror is intentionally small and covered by the same truth table. Moving the
 actual server decision into a tendered Wasm component is the next hardening
 step; the current host mirror is not described as if it were already tendered.
 
+## MCP surface
+
+`cloud.itonami.app.mcp` serves the fleet capability's two tools — `fleet_search`
+and `fleet_call` — over MCP on **stdio**, launched as `clojure -M:mcp`. It is an
+adapter: `cloud.itonami.app.fleet` already owns the descriptors and behaviour for
+the in-app agent loop, and this translates them for a client that is not that
+loop. `mcp.model` holds the manifest, `mcp.execute` does the JSON-RPC dispatch,
+and an `ITool` port calls the same two functions.
+
+Stdio rather than a route on the loopback server: `/v1/*` is already the one
+unauthenticated exception the loopback bind exists to protect, and an MCP route
+would be a second. Over stdio the client is a process the operator launched, so
+nothing new listens and the trust boundary is one they already set.
+
+The fleet capability gate is honoured, so `tools/list` is empty until it is
+enabled — the same fail-closed default as the other agent capabilities. Browser
+and computer tools are excluded because their approval path verifies the
+frontmost application between approval and action, which cannot survive a
+protocol whose consent model belongs to the client; the workspace reads are
+excluded because they sit behind the Passkey session. See ADR-0004.
+
 ## API profile
 
 The public compatibility slice is:
@@ -281,7 +302,8 @@ relevance queries. Writes replace the state file atomically.
 1. Tender the provider policy Wasm in the live request path.
 2. Add tool manifests with per-working-folder capabilities and approval
    receipts.
-3. Add MCP server/client profiles.
+3. Add an MCP **client** profile. (The server half exists for the fleet
+   capability: `cloud.itonami.app.mcp` on stdio — see below and ADR-0004.)
 4. Add memory distillation and relevance retrieval over kgraph.
 5. Add schedules/watchers after tool isolation is available.
 6. Add a function-call compatibility suite. (Streaming has one:
