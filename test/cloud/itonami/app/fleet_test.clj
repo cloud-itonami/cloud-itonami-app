@@ -54,13 +54,20 @@
     ;; now carry an address. cloud-itonami-partners still does not, for a
     ;; different reason: it has no blueprint.edn at all, so it is not in the
     ;; catalog to address.
-    (doseq [repo ["cloud-itonami-isic-6492" "cloud-itonami-commitment-ledger"]]
+    ;; cloud-itonami-partners joined these on 2026-07-30. It had been deployed
+    ;; and serving /api/intake with no blueprint.edn, so the catalog — built
+    ;; from those files — could not see it. Its record was written from what the
+    ;; repository already states (README: ScreeningAdvisor with a sealed LLM
+    ;; behind an independent PartnerGovernor; ADR-2607194000), not invented,
+    ;; which is why it took a separate pass rather than a guess.
+    (doseq [repo ["cloud-itonami-isic-6492" "cloud-itonami-commitment-ledger"
+                  "cloud-itonami-partners"]]
       (let [a (fleet/actor repo)]
         (is (some? a) (str repo " should be in the catalog"))
         (is (fleet/callable? a) (str repo " is deployed on Pages and has an address"))
-        (is (= :pages-dev (:endpoint-kind a)))))
-    (is (nil? (fleet/actor "cloud-itonami-partners"))
-        "deployed but has no blueprint.edn, so it cannot be catalogued")))
+        (is (= :pages-dev (:endpoint-kind a)))
+        (is (nil? (:health-path a))
+            (str repo " serves its SPA index at /health, so it declares no probe path"))))))
 
 (deftest ids-no-longer-collide-because-the-duplicates-were-not-real
   (testing "id is unique again, and the three collisions were an artefact"
