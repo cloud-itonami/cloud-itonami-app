@@ -7,6 +7,7 @@
             [cloud.itonami.app.config :as config]
             [cloud.itonami.app.contracts :as contracts]
             [cloud.itonami.app.credential :as credential]
+            [cloud.itonami.app.credential-sd-jwt :as credential-sd-jwt]
             [cloud.itonami.app.credential-trust :as credential-trust]
             [cloud.itonami.app.presentation-request :as presentation-request]
             [cloud.itonami.app.credential-assurance :as credential-assurance]
@@ -508,6 +509,37 @@
                     presented (or (get body "credential") body)]
                 (send! exchange 200
                        (credential-trust/verify-external config presented))))
+
+            ;; Issue the same membership claim as an SD-JWT VC, whose SUBJECT
+            ;; the holder can withhold. The Data Integrity path above discloses
+            ;; everything to whoever sees the credential, so presenting it twice
+            ;; links those presentations; this format does not.
+            ;;
+            ;; Both formats exist rather than one replacing the other, and the
+            ;; response says `bearer-presentable?` because without `cnf` this
+            ;; proves what the organization asserted and not who presented it.
+            (and (= method "POST") (= path "/api/credentials/membership/sd-jwt-vc"))
+            (let [session (require-app-session! exchange)]
+              (require-origin! exchange config)
+              (require-csrf! exchange session)
+              (identity/require-passkey! session)
+              (let [context (identity/membership-credential-context session)]
+                (send! exchange 200
+                       (credential-sd-jwt/issue
+                        (assoc context
+                               :issued-at (quot (System/currentTimeMillis) 1000))))))
+
+            (and (= method "POST") (= path "/api/credentials/sd-jwt-vc/verify"))
+            (let [session (require-app-session! exchange)]
+              (require-origin! exchange config)
+              (require-csrf! exchange session)
+              ;; A presentation is a compact string, not a document, so read-json
+              ;; is right here — but the field is read explicitly rather than
+              ;; falling back to the whole body.
+              (let [body (read-json exchange)
+                    presentation (or (:presentation body) (:credential body))]
+                (send! exchange 200
+                       (credential-sd-jwt/verify presentation))))
 
             ;; Ask a wallet for a presentation (OID4VP 1.0, Verifier side).
             ;; Returns the Authorization Request; the caller renders it as a QR
