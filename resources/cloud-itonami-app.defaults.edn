@@ -41,4 +41,34 @@
  ;; Background worker runs. Concurrency is deliberately small: these share the
  ;; local model with interactive chat.
  :worker {:max-concurrency 2
-          :max-runs 50}}
+          :max-runs 50}
+
+ ;; Governed outward authorities (ADR-2607300300). Each rides the
+ ;; `cloud.itonami.app.authority` spine: deterministic pre-check -> Passkey
+ ;; consent -> hand-off to an actor that has its own Governor and ledger.
+ ;;
+ ;; ALL DISABLED BY DEFAULT, the same posture as :agent-control. These are the
+ ;; only surfaces in this app that carry a proposal outward to something that
+ ;; could affect a real card, a real line or a real phone call, so switching one
+ ;; on is a deployment decision and not a default.
+ ;;
+ ;; `:endpoint nil` means there is nowhere to hand a proposal to, so an enabled
+ ;; authority with no endpoint still cannot commit. Every actor behind these is
+ ;; propose-only today (see the ADR's ceiling section): a committed proposal
+ ;; records a governed proposal, NOT an issued card, a downloaded profile or an
+ ;; answered call. A UI that reads :committed as "done" is lying.
+ :authorities
+ {:esim {:enabled? false
+         :endpoint nil}   ; cloud-itonami/cloud-itonami-esim
+  :card {:enabled? false
+         :endpoint nil    ; cloud-itonami/cloud-itonami-card-issuing
+         ;; Pre-check arithmetic only. The issuer's own limits are the issuer's;
+         ;; this is the app refusing to ask a human about something it can already
+         ;; tell will exceed the funding account's recorded daily limit.
+         :default-daily-limit nil}
+  :voice {:enabled? false
+          :endpoint nil   ; cloud-itonami/denwaban (R0: run-session raises at G7)
+          ;; nil = no allowlist configured, so the pre-check does not apply one.
+          ;; An EMPTY vector means nothing is allowed -- an absent policy is not a
+          ;; permissive policy, and `[]` is how you say "no callers yet".
+          :allowed-callers nil}}}

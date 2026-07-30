@@ -49,6 +49,19 @@
   io.github.kotoba-lang/transit
   {:git/url "https://github.com/kotoba-lang/transit.git"
    :git/sha "ab5d9d956e088d77d7f91357f36a4a0c6bdfcadc"}
+
+  ;; The records-and-reachability authorities the authority adapters pre-check
+  ;; against. The app is a consent surface, so it must be able to answer "is this
+  ;; even reachable?" locally and deterministically -- and it must answer it with
+  ;; the SAME table the governed actor enforces, not a second copy. esim brings
+  ;; card and phone transitively; card is named directly because
+  ;; cloud.itonami.app.authority.card requires it by itself.
+  io.github.kotoba-lang/esim
+  {:git/url "https://github.com/kotoba-lang/esim.git"
+   :git/sha "7bfa343adad0c60282c5fde104e45c083d1df57d"}
+  io.github.kotoba-lang/card
+  {:git/url "https://github.com/kotoba-lang/card.git"
+   :git/sha "488ec3252086380aeaad46d94d47766500ecb425"}
   ;; Storj as an IObjectStore. Its store-fns produce exactly the four-function
   ;; map drive.object/store-of takes, and neither library depends on the other
   ;; — this app depends on both, which is the arrangement both docstrings name.
@@ -97,6 +110,8 @@
     io.github.kotoba-lang/mail {:local/root "../../kotoba-lang/mail"}
     io.github.kotoba-lang/drive {:local/root "../../kotoba-lang/drive"}
     io.github.kotoba-lang/sheets {:local/root "../../kotoba-lang/sheets"}
+    io.github.kotoba-lang/esim {:local/root "../../kotoba-lang/esim"}
+    io.github.kotoba-lang/card {:local/root "../../kotoba-lang/card"}
     io.github.kotoba-lang/docs {:local/root "../../kotoba-lang/docs"}
     io.github.kotoba-lang/forms {:local/root "../../kotoba-lang/forms"}
     io.github.kotoba-lang/transit {:local/root "../../kotoba-lang/transit"}
