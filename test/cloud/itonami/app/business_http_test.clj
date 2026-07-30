@@ -112,11 +112,11 @@
         (is (= 200 (:status created)))
         (is (string? id))
 
-        (testing "the created business appears with five unbound faces"
+        (testing "the created business appears with six unbound faces"
           (let [r (authed :get "/api/business")
                 b (first (get-in r [:body :businesses]))]
             (is (= 1 (get-in r [:body :counts :businesses])))
-            (is (= 5 (count (:faces b))))
+            (is (= 6 (count (:faces b))))
             (is (= #{"unbound"} (set (map :state (:faces b)))))
             (is (= 0 (get-in b [:coverage :bound])))))
 

@@ -29,6 +29,31 @@
     border:1px solid var(--color-semantic-success-2)}
   .req-row__caveat{margin:.25rem 0 0;font-size:.8125rem;
     color:var(--color-neutral-solid-gray-600)}
+  /* Small multiples, not one multi-series chart. XMILE variables carry their own
+     units — a stock in repos and a flow in repos/day — and putting them on one
+     y-axis is the dual-axis mistake with extra steps. One panel per variable,
+     each with its own scale, its units named. A single series per panel also
+     means no legend and no categorical palette to get wrong. */
+  .sm-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(13rem,1fr));
+    gap:.75rem;margin:0 0 1rem}
+  .sm{min-width:0;padding:.625rem .75rem;border-radius:8px;
+    background:var(--color-neutral-white);
+    border:1px solid var(--color-neutral-solid-gray-200)}
+  .sm__name{margin:0;font-size:.8125rem;font-weight:700;
+    color:var(--color-neutral-solid-gray-800);overflow-wrap:anywhere}
+  .sm__meta{margin:.125rem 0 .375rem;font-size:.75rem;
+    color:var(--color-neutral-solid-gray-600)}
+  .sm__plot{display:block;width:100%;height:4rem}
+  /* Kind is encoded by colour AND named in .sm__meta, so identity is never
+     colour-alone. These three are DADS primitives that pass the categorical
+     six-checks under --pairs all (blue-800 / orange-700 / cyan-700). */
+  .sm__line{fill:none;stroke-width:2;stroke-linejoin:round;stroke-linecap:round}
+  .sm[data-kind='stock'] .sm__line{stroke:var(--color-primitive-blue-800)}
+  .sm[data-kind='flow'] .sm__line{stroke:var(--color-primitive-orange-700)}
+  .sm[data-kind='aux'] .sm__line{stroke:var(--color-primitive-cyan-700)}
+  .sm__axis{stroke:var(--color-neutral-solid-gray-200);stroke-width:1}
+  .sm__flat{font-size:.75rem;fill:var(--color-neutral-solid-gray-600)}
+  .loop-arrow{color:var(--color-neutral-solid-gray-600)}
   /* The lean canvas is a grid because the nine blocks' arrangement carries
      meaning; a list would render the same data and lose it. Not .record-browser:
      that is a list+detail for picking one of many, and a canvas is read whole. */
@@ -3541,6 +3566,7 @@
         const set = (id, v) => { const e = $('#' + id); if (e) e.value = v || ''; };
         set('portfolio-bind-canvas', bare(b.canvas));
         set('portfolio-bind-model', b.model);
+        set('portfolio-bind-leverage', b.leverage);
         set('portfolio-bind-adoptions', (b.adoptions || []).join(', '));
         set('portfolio-bind-repos', (b.repos || []).join(', '));
         set('portfolio-bind-lei', b.lei);
@@ -3603,6 +3629,7 @@
       }
       renderBusinessDetail(rows.find((b) => b.id === selectedBusinessId));
       fillCanvasBusinesses(rows);
+      fillLoopsBusinesses(rows);
 
       const un = $('#portfolio-unassigned');
       if (un) {
@@ -3903,6 +3930,282 @@
       }).catch(() => { if (status) status.textContent = '記録できません。'; });
     });
 
+    // ── Loops（stock-flow 構造とシミュレーション）──────────────────────
+    //
+    // Small multiples rather than one multi-series chart, because XMILE
+    // variables carry their own units: a stock in `repos` and a flow in
+    // `repos/day` on one y-axis is the dual-axis mistake. One panel per
+    // variable, its own scale, units named — which also means one series per
+    // panel, so there is no legend to omit and no categorical palette to get
+    // wrong. Kind is carried by colour AND by the text under the name, never by
+    // colour alone.
+    const svgEl = (tag, attrs) => {
+      const n = document.createElementNS('http://www.w3.org/2000/svg', tag);
+      Object.entries(attrs || {}).forEach(([k, v]) => n.setAttribute(k, String(v)));
+      return n;
+    };
+    const num = (v) => (typeof v === 'number' && Number.isFinite(v) ? v : null);
+
+    const sparkline = (values) => {
+      const pts = (values || []).map(num);
+      const known = pts.filter((v) => v !== null);
+      const svg = svgEl('svg', {class:'sm__plot', viewBox:'0 0 100 40',
+                                preserveAspectRatio:'none', role:'img'});
+      if (known.length < 2) {
+        // One point is not a trajectory. Saying so beats drawing a flat line
+        // that looks like a simulated constant.
+        svg.append(svgEl('line', {class:'sm__axis', x1:0, y1:39, x2:100, y2:39}));
+        const t = svgEl('text', {class:'sm__flat', x:2, y:22});
+        t.textContent = '系列が短すぎて描けません';
+        svg.append(t);
+        return svg;
+      }
+      const lo = Math.min(...known), hi = Math.max(...known);
+      const span = hi - lo;
+      // A constant series is real (a stock nothing drains). Drawn on the
+      // midline, and the panel's own meta line reports the value, so a flat
+      // line is never mistaken for a missing one.
+      const y = (v) => (span === 0 ? 20 : 38 - ((v - lo) / span) * 36);
+      const x = (i) => (i / (pts.length - 1)) * 100;
+      let d = '', open = false;
+      pts.forEach((v, i) => {
+        if (v === null) { open = false; return; }
+        d += `${open ? 'L' : 'M'}${x(i).toFixed(2)},${y(v).toFixed(2)} `;
+        open = true;
+      });
+      svg.append(svgEl('line', {class:'sm__axis', x1:0, y1:39, x2:100, y2:39}));
+      svg.append(svgEl('path', {class:'sm__line', d: d.trim(),
+                                'vector-effect':'non-scaling-stroke'}));
+      return svg;
+    };
+
+    const smPanel = (name, kind, units, values) => {
+      const d = make('div', 'sm');
+      d.dataset.kind = String(kind || '').replace(/^:/, '');
+      d.append(make('p', 'sm__name', name));
+      const known = (values || []).map(num).filter((v) => v !== null);
+      const range = known.length
+        ? `${known[0].toPrecision(4)} → ${known[known.length - 1].toPrecision(4)}`
+        : '値なし';
+      d.append(make('p', 'sm__meta',
+        `${d.dataset.kind}${units ? ' · ' + units : ''} · ${range}`));
+      d.append(sparkline(values));
+      return d;
+    };
+
+    let loopsData = null;
+
+    const renderLoops = (d) => {
+      loopsData = d;
+      const m = (d && d.model) || {};
+      const lv = (d && d.leverage) || {};
+      const state = bare(m.state);
+      const traj = m.trajectory || {};
+
+      const src = $('#loops-source');
+      if (src) src.textContent = d && d.business
+        ? (d.business.name || d.business.slug)
+        : '事業を選択してください。';
+
+      const note = $('#loops-model-state');
+      if (note) {
+        note.replaceChildren();
+        if (state === 'resolved') {
+          note.append(make('strong', null, `モデル ${m.name || m['simulated-model'] || ''} `));
+          note.append(document.createTextNode(m.source || ''));
+          // Which model ran, when a document declares several. Picking the first
+          // is a choice, so it is stated rather than hidden.
+          if ((m.models || []).length > 1) {
+            note.append(make('strong', null,
+              ` ${m.models.length} 個のモデルのうち「${m['simulated-model']}」を実行`));
+          }
+          if (bare(traj.state) !== 'simulated') {
+            note.append(make('strong', null, ' シミュレーションできません: '));
+            note.append(document.createTextNode(traj.reason || ''));
+          }
+        } else {
+          note.append(make('strong', null, (m.detail ? '' : state) + ' '));
+          note.append(document.createTextNode(m.detail || ''));
+        }
+      }
+      const meta = $('#loops-meta');
+      if (meta) meta.textContent = bare(traj.state) === 'simulated'
+        ? `${traj.steps} step` : '';
+
+      const st = $('#loops-structure');
+      if (st) {
+        st.replaceChildren();
+        const s = m.structure || {};
+        (s.stocks || []).forEach((v) => {
+          const li = make('li', 'req-row');
+          const head = make('div', 'req-row__head');
+          head.append(make('strong', null, v.name));
+          const b = make('span', 'req-row__state', 'stock');
+          b.dataset.tone = 'note';
+          head.append(b);
+          li.append(head);
+          li.append(make('p', 'req-row__detail',
+            `${(v.inflows || []).join('・') || '流入なし'} → ${v.name} → `
+            + `${(v.outflows || []).join('・') || '流出なし'}`));
+          if (v.units) li.append(make('p', 'req-row__caveat', v.units));
+          st.append(li);
+        });
+        [['flow', s.flows], ['aux', s.auxes]].forEach(([kind, vs]) => {
+          (vs || []).forEach((v) => {
+            const li = make('li', 'req-row');
+            const head = make('div', 'req-row__head');
+            head.append(make('strong', null, v.name));
+            const b = make('span', 'req-row__state', kind);
+            b.dataset.tone = 'note';
+            head.append(b);
+            li.append(head);
+            if (v.units) li.append(make('p', 'req-row__caveat', v.units));
+            st.append(li);
+          });
+        });
+        if (!st.childElementCount) {
+          st.append(make('li', 'empty-state',
+            state === 'resolved' ? '変数がありません。' : 'モデルを読み込めていません。'));
+        }
+      }
+
+      // The series grid and the table are the same data in two forms; the table
+      // is the accessible view and also the one that shows every variable when
+      // the grid gets long.
+      const grid = $('#loops-series');
+      const table = $('#loops-table');
+      const series = traj.series || {};
+      const names = Object.keys(series).sort();
+      const kindOf = {};
+      const unitsOf = {};
+      ['stocks','flows','auxes'].forEach((g) => {
+        ((m.structure || {})[g] || []).forEach((v) => {
+          kindOf[v.name] = bare(v.kind); unitsOf[v.name] = v.units;
+        });
+      });
+      if (grid) {
+        grid.replaceChildren();
+        if (bare(traj.state) === 'simulated') {
+          names.forEach((n) => grid.append(
+            smPanel(n, kindOf[n] || 'aux', unitsOf[n], series[n])));
+        }
+      }
+      if (table) {
+        table.replaceChildren();
+        if (bare(traj.state) === 'simulated') {
+          const t = make('table', 'dads-table');
+          const thead = make('thead');
+          const hr = make('tr');
+          hr.append(make('th', null, 't'));
+          names.forEach((n) => hr.append(make('th', null, n)));
+          thead.append(hr); t.append(thead);
+          const tb = make('tbody');
+          (traj.times || []).forEach((tv, i) => {
+            const row = make('tr');
+            row.append(make('td', null, String(tv)));
+            names.forEach((n) => {
+              const v = (series[n] || [])[i];
+              // An absent value is not zero. `—` is what the funding pane does
+              // with an unknown balance, for the same reason.
+              row.append(make('td', null,
+                typeof v === 'number' && Number.isFinite(v) ? v.toPrecision(6) : '—'));
+            });
+            tb.append(row);
+          });
+          t.append(tb);
+          table.append(t);
+        }
+      }
+
+      const cav = $('#loops-leverage-caveat');
+      if (cav) {
+        cav.textContent = bare(lv.state) === 'resolved'
+          ? (lv['models-what'] || '')
+          : (lv.detail || '');
+      }
+      const list = $('#loops-leverage');
+      if (list) {
+        list.replaceChildren();
+        (lv.ranked || []).forEach((r) => {
+          const li = make('li', 'req-row');
+          const head = make('div', 'req-row__head');
+          head.append(make('strong', null, r.id));
+          const b = make('span', 'req-row__state',
+            `${bare(r.band)} · ${typeof r.score === 'number' ? r.score.toPrecision(3) : '—'}`);
+          b.dataset.tone = (lv['top-3'] || []).includes(r.id) ? 'ok' : 'note';
+          head.append(b);
+          li.append(head);
+          li.append(make('p', 'req-row__detail', r['band-label'] || ''));
+          list.append(li);
+        });
+        if (!(lv.ranked || []).length) {
+          list.append(make('li', 'empty-state', lv.detail || 'ranking がありません。'));
+        }
+      }
+      const strength = $('#loops-strength');
+      if (strength) {
+        const s = lv['structural-strength'];
+        // nil from dynamics.core is carried through as its own state; it is not
+        // rendered as 0, and not omitted either.
+        strength.textContent = !s ? ''
+          : (bare(s.state) === 'computed'
+             ? `構造的強度: ${Number(s.value).toPrecision(4)}`
+             : `構造的強度: — ${s.detail || ''}`);
+      }
+      const bands = $('#loops-bands');
+      if (bands) {
+        bands.replaceChildren();
+        (d?.bands || []).forEach((b) => bands.append(
+          listItem(`${bare(b.band)} — ${b.label}`,
+                   `Meadows tier ${(b.tiers || []).join(', ')}`,
+                   `重み ${b.weight}`)));
+      }
+      const badge = $('#loops-count');
+      if (badge) badge.textContent = (lv.ranked || []).length || '—';
+    };
+
+    const loadLoops = (businessId) => {
+      if (!businessId) { renderLoops(null); return Promise.resolve(false); }
+      return fetch(`/api/business/${encodeURIComponent(businessId)}/loops`)
+        .then((r) => r.ok ? r.json() : null)
+        .then((d) => { renderLoops(d); return Boolean(d); })
+        .catch(() => {
+          const src = $('#loops-source');
+          if (src) src.textContent = 'loops を読み込めません。';
+          return false;
+        });
+    };
+
+    const fillLoopsBusinesses = (rows) => {
+      const sel = $('#loops-business'); if (!sel) return;
+      const keep = sel.value || selectedBusinessId || '';
+      sel.replaceChildren(make('option', null, '事業を選択…'));
+      sel.firstChild.value = '';
+      (rows || []).forEach((b) => {
+        const o = make('option', null, b.name || b.slug);
+        o.value = b.id;
+        sel.append(o);
+      });
+      const next = (rows || []).some((b) => b.id === keep) ? keep : '';
+      sel.value = next;
+      if (next && next !== loopsData?.business?.id) loadLoops(next);
+      if (!next) renderLoops(null);
+    };
+
+    $('#loops-business')?.addEventListener('change', (e) => {
+      selectedBusinessId = e.currentTarget.value || selectedBusinessId;
+      loadLoops(e.currentTarget.value);
+    });
+
+    $('#loops-table-toggle')?.addEventListener('click', (e) => {
+      const table = $('#loops-table'), grid = $('#loops-series');
+      const showTable = table.hidden;
+      table.hidden = !showTable;
+      if (grid) grid.hidden = showTable;
+      e.currentTarget.setAttribute('aria-pressed', String(showTable));
+      e.currentTarget.textContent = showTable ? 'グラフで見る' : '表で見る';
+    });
+
     $('#portfolio-bind-form')?.addEventListener('submit', (e) => {
       e.preventDefault();
       const status = $('#portfolio-bind-status');
@@ -3912,6 +4215,7 @@
         body: JSON.stringify({
           canvas: ($('#portfolio-bind-canvas')?.value || '').trim(),
           model: ($('#portfolio-bind-model')?.value || '').trim(),
+          leverage: ($('#portfolio-bind-leverage')?.value || '').trim(),
           lei: ($('#portfolio-bind-lei')?.value || '').trim(),
           adoptions: splitList('portfolio-bind-adoptions'),
           repos: splitList('portfolio-bind-repos')
@@ -4692,6 +4996,7 @@
         (nav-group "BUSINESS")
         (nav-item "portfolio" "Portfolio" "▤" "portfolio-count")
         (nav-item "canvas" "Canvas" "◱" "canvas-count")
+        (nav-item "loops" "Loops" "∞" "loops-count")
         (nav-item "fleet" "Fleet" "◉" "fleet-count")
         (nav-item "operator" "\u4e8b\u696d\u8005" "◐" "operator-count")
         (nav-item "contracts" "Contracts" "◫" "contracts-count")
@@ -4881,6 +5186,10 @@
             [:input {:id "portfolio-bind-repos" :autocomplete "off"
                      :placeholder "orgs/cloud-itonami/cloud-itonami-app"}]]
            [:div {:class "field"}
+            [:label {:for "portfolio-bind-leverage"} "Leverage — ledger の相対パス"]
+            [:input {:id "portfolio-bind-leverage" :autocomplete "off"
+                     :placeholder "orgs/kotoba-lang/loop-system-dynamics/ledger/…"}]]
+           [:div {:class "field"}
             [:label {:for "portfolio-bind-lei"} "法人実体 LEI"]
             [:input {:id "portfolio-bind-lei" :autocomplete "off"
                      :placeholder "ZSN2LWNPYW6ISMRUC664"}]]
@@ -4954,6 +5263,55 @@
                 "workspace checkout が無いときは landed とも awaiting とも言えません。")]
           [:ul {:class "record-list__items" :id "canvas-proposals"}
            [:li {:class "empty-state"} "まだ提案はありません。"]]]]
+
+        ;; ── Loops（stock-flow 構造とシミュレーション）───────────────
+        ;; 実行は xmile.execute/run（OASIS XMILE 1.0、Euler/RK4）。第2の
+        ;; シミュレータは書かない。計算できなかった軌跡は空の系列として
+        ;; 描かない — engine 自身のメッセージを出す。leverage の band は
+        ;; dynamics.core から読む（このアプリで言い換えない）。
+        [:section {:class "view" :data-view-panel "loops" :hidden true}
+         (view-header "Loops"
+                      (str "事業に紐付いた stock-flow モデルを実際に走らせ、"
+                           "介入の効きどころ（Meadows band）を並べます。"))
+         [:p {:class "source-note"} [:span {:class "source-dot"}]
+          [:span {:id "loops-source"} "事業を確認中…"]]
+         [:div {:class "workspace-toolbar"}
+          [:label {:class "visually-hidden" :for "loops-business"} "事業"]
+          [:select {:id "loops-business"}
+           [:option {:value ""} "事業を選択…"]]
+          [:span {:class "result-count" :id "loops-meta"}]]
+         [:div {:class "security-callout" :id "loops-model-state"
+                :role "status" :aria-live "polite"}
+          "モデルを確認中…"]
+         [:div {:class "local-card"}
+          (dds/heading 2 "構造" {:size "24"})
+          [:p {:class "form-help"}
+           "stock は状態、flow はその微分です。矢印は XMILE の inflow / outflow 宣言そのものです。"]
+          [:ul {:class "record-list__items" :id "loops-structure"}
+           [:li {:class "empty-state"} "事業を選ぶと表示します。"]]]
+         [:div {:class "local-card"}
+          [:div {:class "view-header" :style "margin-bottom:1rem"}
+           [:div
+            (dds/heading 2 "シミュレーション" {:size "24"})
+            [:p {:class "form-help" :id "loops-sim-note"}
+             (str "変数ごとに別の軸で描きます — stock（repos）と flow（repos/日）を"
+                  "同じ軸に載せるのは誤りです。")]]
+           [:button {:class "tool-button" :type "button" :id "loops-table-toggle"
+                     :aria-pressed "false"} "表で見る"]]
+          [:div {:class "sm-grid" :id "loops-series"}]
+          [:div {:id "loops-table" :hidden true}]]
+         [:div {:class "local-card"}
+          (dds/heading 2 "介入の効きどころ" {:size "24"})
+          [:p {:class "form-help" :id "loops-leverage-caveat"}
+           "leverage ledger を確認中…"]
+          [:ul {:class "record-list__items" :id "loops-leverage"}
+           [:li {:class "empty-state"} "事業を選ぶと表示します。"]]
+          [:p {:class "source-note" :id "loops-strength"}]]
+         [:div {:class "local-card"}
+          (dds/heading 3 "Meadows band" {:size "18"})
+          [:p {:class "form-help"}
+           "重みは Meadows (1999) の順序を近似した監査可能な heuristic であって、測定された物理定数ではありません。"]
+          [:ul {:class "data-list" :id "loops-bands"}]]]
 
         [:section {:class "view" :data-view-panel "fleet" :hidden true}
          (view-header "Fleet"

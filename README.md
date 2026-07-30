@@ -233,7 +233,37 @@ rendered as the exact `gftd` command that would apply it.
 the value is not in the projection; `landed` means it is, read back out of the
 regenerated projection; `unverifiable` means there is no checkout to read.
 `withdrawn` is the one state a human sets, because 「もう要らない」 is not
-something a projection can show. See
+something a projection can show.
+
+### Loops — run the model, and refuse to fake a run
+
+```bash
+GET /api/business/{id}/loops
+```
+
+`:business/model` binds an XMILE 1.0 file and `:business/leverage` a leverage
+ledger, both relative to the workspace root. The simulator is
+[`kotoba-lang/org-oasis-open-xmile`](https://github.com/kotoba-lang/org-oasis-open-xmile)
+(`xmile.execute/run`, Euler or RK4) and the Meadows band vocabulary is
+[`kotoba-lang/dynamics`](https://github.com/kotoba-lang/dynamics). Both are
+dependencies, not reimplementations: a second simulator in this app is what
+ADR-2607309600 forbids.
+
+A model that will not run — array-dimensioned, an unsupported method, no
+sim-specs — comes back as `unsimulatable` **carrying the engine's own message**,
+and with no series at all. An empty series would read as 「シミュレーションした
+結果、全部ゼロ」, which is a different and false claim. Likewise
+`dynamics.core/loop-structural-strength` returns nil when cycle time was never
+observed, and that nil is reported as `uncomputable-until-measured` rather than 0.
+
+The pane draws **small multiples, one panel per variable** — a stock in `repos`
+and a flow in `repos/day` do not share a y-axis — with a table view beside it.
+
+Two things it says out loud: which model was simulated when a document declares
+several, and that today's leverage ledgers model the **fleet's own repository
+registration backlog**, not a business's economics. There is also no `.xmile`
+file in the workspace yet, so the model face is `missing` until somebody writes
+one; the engine path is verified by tests, not by a shipped model. See
 [ADR-0008](docs/adr/0008-business-is-the-join-of-five-planes.md).
 
 ## Funding accounts and payment settlement

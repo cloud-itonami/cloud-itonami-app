@@ -1,4 +1,4 @@
-# ADR-0008: A business is the join of five planes, and nothing else in the app was
+# ADR-0008: A business is the join of the planes, and nothing else in the app was
 
 Status: accepted (2026-07-30)
 
@@ -128,6 +128,41 @@ So the payload is re-keyed explicitly, ids travel as strings that keep their
 namespace, and a test asserts that no two keys in the shape strip to the same
 name. (The same wire rule had already left `renderOperator` reading
 `['operator/name']` as undefined; that was fixed in Phase 1.)
+
+## Phase 3: the Loops pane
+
+`:business/leverage` joins the bindings as a sixth face — a leverage ranking and a
+stock-flow model are different artifacts, and inferring one's path from the
+other's is the guess `fleet` refuses when it will not invent an endpoint.
+
+Both libraries are now dependencies: `org-oasis-open-xmile` owns the model and the
+Euler/RK4 simulator (ADR-2607072350 makes it authoritative for this workspace) and
+`dynamics` owns the Meadows bands. `cloud.itonami.app.loops` parses the XML into
+the shape `xmile.xml/parse-doc` expects, resolves document-level `<sim_specs>` into
+the model per XMILE 1.0, and hands it over. It integrates nothing and restates no
+band label.
+
+**It refuses two things.** A trajectory it could not compute: `run`'s exception —
+array-dimensioned variable, unsupported method — becomes `unsimulatable` carrying
+that message, with no series. And a strength score from guessed inputs: nil from
+`loop-structural-strength` is `uncomputable-until-measured`, never 0. (The first
+implementation shipped `:state :computed :value false`, because `if-some` treats
+the `false` from `(and (map? nil) …)` as a present value. A test caught it.)
+
+**Form: small multiples, not one chart.** XMILE variables carry their own units,
+so a stock in `repos` and a flow in `repos/day` on one y-axis is the dual-axis
+mistake. One panel per variable with its own scale, one series per panel — so no
+legend to omit and no categorical palette to get wrong — plus a table view where
+an absent value is `—` and never 0. Kind is carried by colour *and* named in text.
+The three kind colours are DADS primitives (blue-800 / orange-700 / cyan-700) that
+pass the categorical six-checks under all-pairs CVD separation; dark mode is out
+of scope because DADS is light-only (ADR-2607262000).
+
+**Two limits stated in the UI.** Which model was simulated when a document
+declares several, and that today's leverage ledgers model the fleet's own
+repository registration backlog rather than a business's economics — the gap
+ADR-2607309600 recorded as still open. There is no `.xmile` file in the workspace
+yet either, so the engine path is proven by tests rather than by a shipped model.
 
 ## Consequences
 
