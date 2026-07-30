@@ -23,6 +23,7 @@
             [cloud.itonami.app.config-test]
             [cloud.itonami.app.contracts-test]
             [cloud.itonami.app.core-test]
+            [cloud.itonami.app.credential-http-test]
             [cloud.itonami.app.credential-test]
             [cloud.itonami.app.credential-trust-test]
             [cloud.itonami.app.credential-assurance-test]
@@ -63,6 +64,7 @@
     cloud.itonami.app.config-test
     cloud.itonami.app.contracts-test
     cloud.itonami.app.core-test
+    cloud.itonami.app.credential-http-test
     cloud.itonami.app.credential-test
     cloud.itonami.app.credential-trust-test
     cloud.itonami.app.credential-assurance-test

@@ -474,8 +474,11 @@
             (let [session (require-app-session! exchange)]
               (require-origin! exchange config)
               (require-csrf! exchange session)
-              (let [body (read-json exchange)
-                    presented (or (get body "credential") (:credential body) body)]
+              ;; read-json-raw, not read-json: a credential is a document whose
+              ;; keys are part of what was signed, and read-json keywordizes every
+              ;; key at every depth. That is what read-json-raw exists for.
+              (let [body (read-json-raw exchange)
+                    presented (or (get body "credential") body)]
                 (send! exchange 200
                        (assoc (credential/verify-presented presented)
                               :schema credential/schema))))
@@ -497,8 +500,11 @@
             (let [session (require-app-session! exchange)]
               (require-origin! exchange config)
               (require-csrf! exchange session)
-              (let [body (read-json exchange)
-                    presented (or (get body "credential") (:credential body) body)]
+              ;; read-json-raw, not read-json: a credential is a document whose
+              ;; keys are part of what was signed, and read-json keywordizes every
+              ;; key at every depth. That is what read-json-raw exists for.
+              (let [body (read-json-raw exchange)
+                    presented (or (get body "credential") body)]
                 (send! exchange 200
                        (credential-trust/verify-external config presented))))
 
