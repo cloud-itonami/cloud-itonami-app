@@ -91,6 +91,29 @@
   [endpoint path]
   (str (str/replace (str endpoint) #"/+$" "") path))
 
+(defn consent-header
+  "The header an actor's consent surface expects. Derived from the authority key so the
+  three actors agree without a table: :card -> X-CARD-CONSENT-TOKEN."
+  [authority-key]
+  (str "X-" (str/upper-case (name authority-key)) "-CONSENT-TOKEN"))
+
+(defn consent-token
+  "The consent token for one authority, read from the environment at call time.
+
+  Config names the VARIABLE, never the value -- the same rule the provider keys follow.
+  A token written into defaults.edn or into the store would be a secret in git or in a
+  backup, and this one is what lets a caller claim a subject consented.
+
+  nil when unconfigured, and that is NOT treated as an error here: the actor refuses on
+  its own side (503, fail closed), and its refusal is the honest thing to record. An app
+  that pre-emptively refused would be guessing at the actor's configuration."
+  [configuration authority-key]
+  (some-> (:consent-token-env (settings configuration authority-key))
+          str
+          not-empty
+          System/getenv
+          not-empty))
+
 (defn- decode
   "Read a JSON body, or nil."
   [^String body]
@@ -136,7 +159,7 @@
   "POST the proposal to the actor's commit route. Returns the actor's own answer,
   or a :transport-failed refusal. Never throws -- a transport problem is an
   outcome to record, not an exception to leak into a route."
-  [endpoint proposal]
+  [endpoint proposal header token]
   (try
     (let [body {:proposal (select-keys proposal
                                        [:id :authority :op :value :digest
@@ -146,6 +169,7 @@
                       (.timeout (Duration/ofSeconds 20))
                       (.header "Accept" "application/json")
                       (.header "Content-Type" "application/json")
+                      (cond-> token (.header header token))
                       (.POST (HttpRequest$BodyPublishers/ofString
                               (json/write-str body)))
                       (.build))
@@ -164,12 +188,13 @@
   "Ask the actor what became of a reference. Read-only: this hits the consent
   surface, which cannot decide -- learning the outcome and causing it are
   different authorities and different listeners."
-  [endpoint reference]
+  [endpoint reference header token]
   (try
     (let [request (-> (HttpRequest/newBuilder
                        (URI/create (url endpoint (str "/proposals/" reference))))
                       (.timeout (Duration/ofSeconds 20))
                       (.header "Accept" "application/json")
+                      (cond-> token (.header header token))
                       (.GET)
                       (.build))
           response (.send client request (HttpResponse$BodyHandlers/ofString))
@@ -203,7 +228,9 @@
                  {:detail (str (name authority-key) " authority に endpoint がありません")})
 
         :else
-        (post-proposal! endpoint proposal)))))
+        (post-proposal! endpoint proposal
+                        (consent-header authority-key)
+                        (consent-token configuration authority-key))))))
 
 (defn status-fn
   "The read used to refresh a pending proposal, closed over its authority key.
@@ -225,4 +252,6 @@
                  {:detail "pending proposal に reference がありません"})
 
         :else
-        (get-status! endpoint reference)))))
+        (get-status! endpoint reference
+                     (consent-header authority-key)
+                     (consent-token configuration authority-key))))))

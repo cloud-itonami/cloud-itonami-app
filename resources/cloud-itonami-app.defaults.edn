@@ -149,11 +149,18 @@
  ;; Nothing in THIS app holds a Stripe key. The provider reads it from an
  ;; environment variable named by its own caller, at call time, inside the actor's
  ;; process.
+ ;; :consent-token-env names the ENVIRONMENT VARIABLE holding the shared secret this
+ ;; app presents to an actor's consent surface -- never the value. A token written here
+ ;; would be a secret in git, and this particular one is what lets a caller claim a
+ ;; subject consented. The actor refuses (503) when its own side is unconfigured, which
+ ;; is the honest failure; this app does not pre-emptively refuse on the actor's behalf.
  :authorities
  {:esim {:enabled? false
-         :endpoint nil}   ; cloud-itonami/cloud-itonami-esim
+         :endpoint nil    ; cloud-itonami/cloud-itonami-esim
+         :consent-token-env "ESIM_CONSENT_TOKEN"}
   :card {:enabled? false
          :endpoint nil    ; cloud-itonami/cloud-itonami-card-issuing
+         :consent-token-env "CARD_CONSENT_TOKEN"   ; actor: X-CARD-CONSENT-TOKEN
          ;; Pre-check arithmetic only. The issuer's own limits are the issuer's;
          ;; this is the app refusing to ask a human about something it can already
          ;; tell will exceed the funding account's recorded daily limit.
@@ -200,6 +207,7 @@
             :balance-max-age-seconds 86400}
   :voice {:enabled? false
           :endpoint nil   ; cloud-itonami/denwaban (R0: run-session raises at G7)
+          :consent-token-env "VOICE_CONSENT_TOKEN"
           ;; nil = no allowlist configured, so the pre-check does not apply one.
           ;; An EMPTY vector means nothing is allowed -- an absent policy is not a
           ;; permissive policy, and `[]` is how you say "no callers yet".
