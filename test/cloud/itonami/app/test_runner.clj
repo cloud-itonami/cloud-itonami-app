@@ -19,6 +19,7 @@
             [cloud.itonami.app.mcp-test]
             [cloud.itonami.app.fleet-tools-test]
             [cloud.itonami.app.openai-compat-test]
+            [cloud.itonami.app.storj-node-test]
             [cloud.itonami.app.storj-test]
             [cloud.itonami.app.worker-http-test]))
 
@@ -34,6 +35,7 @@
     cloud.itonami.app.mcp-test
     cloud.itonami.app.fleet-tools-test
     cloud.itonami.app.openai-compat-test
+    cloud.itonami.app.storj-node-test
     cloud.itonami.app.storj-test
     cloud.itonami.app.worker-http-test])
 
