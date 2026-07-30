@@ -9,6 +9,8 @@
             [cloud.itonami.app.documents :as documents]
             [cloud.itonami.app.executor :as executor]
             [cloud.itonami.app.filecoin :as filecoin]
+            [cloud.itonami.app.fleet :as fleet]
+            [cloud.itonami.app.operator :as operator]
             [cloud.itonami.app.funding :as funding]
             [cloud.itonami.app.identity :as identity]
             [cloud.itonami.app.organism-gateway :as organism-gateway]
@@ -439,6 +441,108 @@
                                                   (credential-assurance/policy-issues
                                                    % (credential-assurance/policy-for config k)))
                                                 credentials))}]))}))
+
+            ;; ---- fleet directory + 事業者としての参与 ----
+            ;;
+            ;; Reads are unauthenticated: the directory is the fleet's public
+            ;; face and every blueprint in it is already public OSS. The writes
+            ;; are the operator's own record and take the session, the origin
+            ;; check and the CSRF token, because a declaration carries a name
+            ;; and a date and an endpoint registration changes what the app
+            ;; reports as running.
+
+            (and (= method "GET") (= path "/api/fleet"))
+            (send! exchange 200
+                   {:counts (fleet/counts)
+                    :facets {:role (fleet/facets :role)
+                             :maturity (fleet/facets :maturity)
+                             :execution (fleet/facets :execution)
+                             :iso3166 (take 30 (fleet/facets :iso3166))}})
+
+            (and (= method "GET") (= path "/api/fleet/search"))
+            (let [q (query-params exchange)
+                  ;; query-params keywordizes its keys.
+                  crit (cond-> {}
+                         (seq (:text q)) (assoc :text (:text q))
+                         (seq (:role q)) (assoc :role (keyword (:role q)))
+                         (seq (:maturity q)) (assoc :maturity (keyword (:maturity q)))
+                         (seq (:iso3166 q)) (assoc :iso3166 (:iso3166 q))
+                         (= "true" (:callable q)) (assoc :callable? true))
+                  hits (fleet/search crit)
+                  op (operator/profile)]
+              (send! exchange 200
+                     {:total (count hits)
+                      ;; Paged at 200. Said out loud rather than silently cut:
+                      ;; a directory that quietly shows a slice of 1,213 reads
+                      ;; as a complete answer.
+                      :shown (min 200 (count hits))
+                      :actors (into []
+                                    (map (fn [a]
+                                           (cond-> (select-keys
+                                                    a [:repo :id :name :domain :role
+                                                       :maturity :execution :iso3166
+                                                       :isic :isic-rev5 :isco-08
+                                                       :governor :endpoint :deploy-config])
+                                             op (assoc :fit (operator/fit op a)))))
+                                    (take 200 hits))}))
+
+            (and (= method "GET") (= path "/api/operator"))
+            (send! exchange 200
+                   (let [op (operator/profile)]
+                     {:summary (operator/summary)
+                      :profile op
+                      :caveat operator/attestation-caveat
+                      :adoptions (operator/adoptions)
+                      :matches (when op
+                                 (into [] (comp (map #(select-keys
+                                                       % [:repo :name :domain :role
+                                                          :maturity :fit :deploy-config]))
+                                                (take 20))
+                                       (operator/matches op)))}))
+
+            (and (= method "GET")
+                 (re-matches #"/api/operator/readiness/([^/]+)" path))
+            (let [repo (second (re-matches #"/api/operator/readiness/([^/]+)" path))
+                  a (fleet/actor repo)]
+              (if a
+                (send! exchange 200
+                       (assoc (operator/readiness (operator/profile) a)
+                              :actor (select-keys a [:repo :name :domain :role :maturity
+                                                     :governor :required-technologies
+                                                     :deploy-config :endpoint])
+                              :adoption (operator/adoption repo)
+                              :caveat operator/attestation-caveat))
+                (send! exchange 404 {:error "unknown blueprint"})))
+
+            (and (= method "POST") (= path "/api/operator/profile"))
+            (let [session (require-app-session! exchange)]
+              (require-origin! exchange config)
+              (require-csrf! exchange session)
+              (send! exchange 200 (operator/save-profile! (read-json exchange))))
+
+            (and (= method "POST") (= path "/api/operator/declare"))
+            (let [session (require-app-session! exchange)]
+              (require-origin! exchange config)
+              (require-csrf! exchange session)
+              (let [{:keys [repo by note]} (read-json exchange)]
+                (send! exchange 200 (operator/declare! repo {:by by :note note}))))
+
+            (and (= method "POST") (= path "/api/operator/withdraw"))
+            (let [session (require-app-session! exchange)]
+              (require-origin! exchange config)
+              (require-csrf! exchange session)
+              (let [{:keys [repo by]} (read-json exchange)]
+                (send! exchange 200 (operator/withdraw! repo {:by by}))))
+
+            (and (= method "POST") (= path "/api/operator/endpoint"))
+            (let [session (require-app-session! exchange)]
+              (require-origin! exchange config)
+              (require-csrf! exchange session)
+              (let [{:keys [repo endpoint health-path by]} (read-json exchange)]
+                (send! exchange 200
+                       (operator/register-endpoint!
+                        repo (cond-> {:endpoint endpoint :by by}
+                               (seq health-path) (assoc :health-path health-path))))))
 
             ;; ---- funding accounts (what the payment authority stands on) ----
             ;; These are reads and writes of the organization's own record, not
