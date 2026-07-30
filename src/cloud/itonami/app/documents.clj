@@ -48,6 +48,7 @@
             [clojure.edn :as edn]
             [clojure.java.io :as io]
             [clojure.string :as str]
+            [cloud.itonami.app.capability :as capability]
             [cloud.itonami.app.config :as config]
             [cloud.itonami.app.store :as store]
             [cloud.itonami.app.storj :as storj]
@@ -243,6 +244,56 @@
 
 (defn- workspace-path [actor] [:drive :workspaces actor])
 
+(defn- capability-path [document-id principal]
+  [:drive :capabilities document-id principal])
+
+(defn capability-for [state document-id principal]
+  (get-in state (capability-path document-id principal)))
+
+(defn- honour-capabilities
+  "The workspace with expired grants dropped before `drive` is asked anything.
+
+  This is what makes a capability more than decoration. A CACAO carries an
+  expiry; if the ACL kept answering yes after it passed, the signed thing
+  would be a description of a permission rather than the permission itself.
+  So the expiry is applied where every read already goes, and
+  `drive.workspace/effective-role` needs to know nothing about it.
+
+  Only grants that have a capability are subject to this. A workspace's own
+  owner has none — nobody granted it to them — and grants made before this
+  existed have none either, which is deliberate: retroactively expiring a
+  share nobody was warned about would be the change taking something away
+  rather than adding something."
+  [state workspace now]
+  (update workspace :drive.workspace/items
+          (fn [items]
+            (reduce-kv
+             (fn [acc id item]
+               (assoc acc id
+                      (update item :drive/permissions
+                              (fn [permissions]
+                                (reduce-kv
+                                 (fn [kept principal role]
+                                   (let [cap (capability-for state id principal)]
+                                     (if (and cap (capability/expired? cap now))
+                                       kept
+                                       (assoc kept principal role))))
+                                 {} (or permissions {}))))))
+             {} (or items {})))))
+
+(defn stored-workspace-for
+  "The workspace as stored, with expired grants still in it.
+
+  For the one caller that needs to see a lapsed share rather than have it
+  disappear: its owner. Everywhere a permission is decided uses
+  `workspace-for`, which has already dropped them — an owner being shown
+  \"bob, expired\" and bob being told the document does not exist are the
+  right pair of answers, and a share that silently vanished would leave the
+  owner re-granting without ever learning why."
+  [state actor]
+  (or (get-in state (workspace-path actor))
+      (ws/workspace (str "drive-" actor) actor quota-bytes)))
+
 (defn workspace-for
   "This principal's Drive, created empty if they have never had one.
 
@@ -250,11 +301,19 @@
   build anyway, so writing one on a read would put a row in the state file
   for every principal that has ever loaded the Drive tab."
   [state actor]
-  (or (get-in state (workspace-path actor))
-      (ws/workspace (str "drive-" actor) actor quota-bytes)))
+  (honour-capabilities
+   state
+   (or (get-in state (workspace-path actor))
+       (ws/workspace (str "drive-" actor) actor quota-bytes))
+   (java.time.Instant/now)))
 
-(defn- all-workspaces [state]
-  (get-in state [:drive :workspaces] {}))
+(defn- all-workspaces
+  "Every Drive, with expired grants already dropped — see `honour-capabilities`."
+  [state]
+  (let [now (java.time.Instant/now)]
+    (reduce-kv (fn [acc owner workspace]
+                 (assoc acc owner (honour-capabilities state workspace now)))
+               {} (get-in state [:drive :workspaces] {}))))
 
 (defn locate
   "Which Drive holds `id`, and whether this principal may read it.
@@ -1063,7 +1122,8 @@
 
   Owner-only, because it is the only view that lists other principals."
   [id actor]
-  (let [{:keys [workspace item]} (owned! actor id)
+  (let [{:keys [workspace]} (owned! actor id)
+        item (ws/item (stored-workspace-for (store/snapshot) actor) id)
         links (->> (vals (:drive.workspace/share-links workspace))
                    (filter #(= id (:drive.share/item-id %)))
                    (mapv (fn [link]
@@ -1073,10 +1133,21 @@
     {:schema schema
      :ok? true
      :id id
+     :issuer (capability/issuer-did)
      :grants (->> (:drive/permissions item)
                   (remove (fn [[principal _]] (= principal actor)))
                   (mapv (fn [[principal role]]
-                          {:principal principal :role (name role)})))
+                          (let [cap (capability-for (store/snapshot) id principal)]
+                            (cond-> {:principal principal :role (name role)}
+                              cap (assoc :expires-at (:exp cap)
+                                         :capability (:cacao-b64 cap)
+                                         ;; Checked here so the answer shown
+                                         ;; is the library's, not a guess
+                                         ;; from the dates.
+                                         :verified?
+                                         (:valid? (capability/verify-grant
+                                                   cap id role
+                                                   (java.time.Instant/now)))))))))
      :links links
      :roles (vec (keys grantable-roles))
      :link-roles (vec (keys link-roles))}))
@@ -1104,8 +1175,14 @@
                         {:type :drive/invalid-share :field :role
                          :given role-name :known (vec (keys grantable-roles))}))
         :else
-        (let [granted (ws/grant workspace id principal role)]
+        ;; The ACL entry and the capability are written together. The entry
+        ;; is what `drive` answers from; the capability is what anybody else
+        ;; can check, and what stops the entry being true forever.
+        (let [granted (ws/grant workspace id principal role)
+              cap (capability/mint-grant {:document-id id :role role
+                                          :audience principal})]
           (store/transact! assoc-in (workspace-path owner) granted)
+          (store/transact! assoc-in (capability-path id principal) cap)
           (sharing id actor))))))
 
 (defn revoke-grant!
@@ -1123,6 +1200,11 @@
                                [:drive.workspace/items id :drive/permissions]
                                dissoc principal)]
         (store/transact! assoc-in (workspace-path owner) revoked)
+        ;; The capability goes with the entry. Leaving it behind would mean
+        ;; handing a revoked grantee something that still verifies, which is
+        ;; the failure this layer exists to not have — and is why revocation
+        ;; is still this server's word rather than the capability's.
+        (store/transact! update-in [:drive :capabilities id] dissoc principal)
         (sharing id actor)))))
 
 (defn create-link!

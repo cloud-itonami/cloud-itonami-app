@@ -24,6 +24,12 @@
   ;; :dev alias overrides this to a :local/root, so this gap only appears in a
   ;; plain `-M:test` run — which is how it appeared: filecoin.clj is already on
   ;; main (landed as untracked WIP) and cannot load there.
+;; A grant is a signed, expiring, offline-verifiable capability rather than
+  ;; a row only this server can interpret. CAIP-74 over Ed25519, with chain
+  ;; verification already in the library for when a grantee may re-grant.
+  io.github.kotoba-lang/org-chainagnostic-cacao
+  {:git/url "https://github.com/kotoba-lang/org-chainagnostic-cacao.git"
+   :git/sha "3aaab02fb993a1d0b716c8fc1aefe37e4e3ab850"}
   io.github.kotoba-lang/drive
   {:git/url "https://github.com/kotoba-lang/drive.git"
    :git/sha "54d7aeface7135b572c9cccfc03ef7a31a7344be"}

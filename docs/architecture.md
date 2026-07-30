@@ -341,6 +341,48 @@ form. Against a projected payload `missing-required` reads `:forms/fields`,
 finds nil, and reports that nothing is required, so an empty submission would
 pass. There is a test asserting exactly that difference.
 
+### A grant is a signed capability
+
+A grant used to be `{principal-id role}` in this server's state: nothing
+outside the process could check it, nothing expired, and the only evidence
+that alice had let bob read a document was that this server said so.
+
+A grant now also mints a CACAO (CAIP-74) — a SIWE statement naming an
+audience, a `drive:<id>#<verb>` resource and an expiry, signed with Ed25519.
+It can be verified without asking this server, it stops being true on its
+own, and `cacao.core/verify-chain` is already there for re-granting.
+
+**The expiry is real, not decorative.** `documents/honour-capabilities` drops
+lapsed grants from the workspace before `drive` is asked anything, so
+`drive.workspace/effective-role` needs to know nothing about capabilities and
+every read is already filtered. The owner still sees the lapsed entry, marked
+unverified — an owner re-granting without ever learning why is worse than one
+who is told.
+
+Grants made before this existed have no capability and are not filtered.
+Retroactively expiring a share nobody was warned about would be the change
+taking something away rather than adding something.
+
+**What this does not do, and saying otherwise would be the whole lie of this
+layer.** The issuer is the Drive's own key, not the granting user's, so the
+Drive can mint any capability it likes. It is the Drive attesting "I let bob
+read this, until then", verifiable by anyone afterwards — not alice proving
+she chose to. Revocation is likewise still this server's word: the
+capability is deleted with the ACL entry, and one already handed out would
+still verify until its expiry.
+
+The reason it is not alice's key is concrete. Her identity here is a
+`did:key` derived from a WebAuthn P-256 credential, and WebAuthn signs its
+own `authenticatorData || clientDataHash` with ES256; `cacao.core/mint`
+signs a SIWE string with EdDSA. Making a user-issued CACAO possible means
+teaching `org-chainagnostic-cacao` a WebAuthn signature type.
+
+**This is authorization, not confidentiality.** The stored objects are
+plaintext EDN and this server reads all of them — which is what
+`documents/search` and every validator depend on. Encryption at rest, and
+then per-document keys wrapped per member, are separate steps with a real
+cost: an end-to-end encrypted document cannot be searched or validated here.
+
 ### Sharing
 
 Each principal has their own `drive.workspace`, and a grant is recorded on the

@@ -8,6 +8,7 @@
             [clojure.edn :as edn]
             [clojure.string :as str]
             [clojure.test :refer [deftest is testing]]
+            [cloud.itonami.app.capability :as capability]
             [cloud.itonami.app.documents :as documents]
             [cloud.itonami.app.store :as store]
             [drive.object :as object]
@@ -1745,6 +1746,79 @@
         (is (= :drive/not-found
                (try (documents/comments (:id item) bob)
                     (catch clojure.lang.ExceptionInfo e (:type (ex-data e))))))))))
+
+;; ── a grant is a signed capability ──────────────────────────────────────────
+
+(deftest a-grant-mints-a-capability-anyone-can-check
+  (with-state
+    (fn [state object-store]
+      (let [{:keys [item]} (documents/create! :docs "共同設計" alice object-store)
+            out (documents/grant! (:id item) bob "editor" alice)
+            grant (first (:grants out))]
+        (is (str/starts-with? (:issuer out) "did:key:"))
+        (is (:verified? grant) "the library's answer, not a guess from the dates")
+        (is (string? (:capability grant)))
+        (is (string? (:expires-at grant)))
+        ;; Verifiable without this namespace being asked: the token, the
+        ;; document and the role are all it takes.
+        (let [cap (documents/capability-for @state (:id item) bob)]
+          (is (:valid? (capability/verify-grant cap (:id item) :editor
+                                                (java.time.Instant/now))))
+          ;; And it is about this document and this role only.
+          (is (= :resource-mismatch
+                 (:reason (capability/verify-grant cap (:id item) :viewer
+                                                   (java.time.Instant/now)))))
+          (is (= :resource-mismatch
+                 (:reason (capability/verify-grant cap "doc-other" :editor
+                                                   (java.time.Instant/now))))))))))
+
+(deftest an-expired-capability-stops-being-honoured
+  (with-state
+    (fn [state object-store]
+      (let [{:keys [item]} (documents/create! :docs "共同設計" alice object-store)]
+        (documents/grant! (:id item) bob "editor" alice)
+        (is (= 1 (count (documents/documents @state bob))))
+        ;; A genuinely lapsed capability — minted a year ago with a day to
+        ;; live, so the token and the record agree. This is what makes it
+        ;; the permission rather than a description of one: the ACL entry is
+        ;; still there and stops answering yes.
+        (swap! state assoc-in
+               [:drive :capabilities (:id item) bob]
+               (capability/mint-grant
+                {:document-id (:id item) :role :editor :audience bob
+                 :expires-in-days 1
+                 :now (.minusSeconds (java.time.Instant/now) (* 365 86400))}))
+        (is (empty? (documents/documents @state bob)))
+        (is (= :drive/not-found
+               (try (documents/content (:id item) bob object-store)
+                    (catch clojure.lang.ExceptionInfo e (:type (ex-data e))))))
+        ;; The entry itself was not deleted — the owner can still see who it
+        ;; was issued to, and that it has lapsed.
+        (is (= [bob] (mapv :principal (:grants (documents/sharing (:id item) alice)))))
+        (is (false? (:verified? (first (:grants (documents/sharing (:id item) alice))))))))))
+
+(deftest revoking-takes-the-capability-with-the-entry
+  (with-state
+    (fn [state object-store]
+      (let [{:keys [item]} (documents/create! :docs "設計" alice object-store)]
+        (documents/grant! (:id item) bob "editor" alice)
+        (documents/revoke-grant! (:id item) bob alice)
+        ;; Leaving it behind would hand a revoked grantee something that
+        ;; still verifies.
+        (is (nil? (documents/capability-for @state (:id item) bob)))))))
+
+(deftest a-grant-made-before-capabilities-existed-still-works
+  (with-state
+    (fn [state object-store]
+      (let [{:keys [item]} (documents/create! :docs "設計" alice object-store)]
+        ;; An ACL entry with no capability beside it, as every grant looked
+        ;; before this. Retroactively expiring a share nobody was warned
+        ;; about would be the change taking something away.
+        (swap! state update-in [:drive :workspaces alice :drive.workspace/items
+                                (:id item) :drive/permissions]
+               assoc bob :editor)
+        (is (= 1 (count (documents/documents @state bob))))
+        (is (:ok? (documents/content (:id item) bob object-store)))))))
 
 ;; ── share links ─────────────────────────────────────────────────────────────
 
