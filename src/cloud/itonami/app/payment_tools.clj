@@ -40,7 +40,8 @@
   (:require [clojure.string :as str]
             [cloud.itonami.app.authority.api :as authority-api]
             [cloud.itonami.app.funding :as funding]
-            [cloud.itonami.app.identity :as identity])
+            [cloud.itonami.app.identity :as identity]
+            [cloud.itonami.app.paypay-bank :as paypay-bank])
   (:import [java.util.concurrent TimeUnit]))
 
 (def keychain-service "cloud-itonami-app.mcp")
@@ -157,6 +158,29 @@
                :description "Where the figure came from."}
       :source-detail {:type "string" :description "Free text, e.g. which statement."}}
      :required ["funding-account-id" "amount-minor" "as-of" "source"]}}
+
+   {:name "paypay_ingest_balance_notice"
+    :description
+    (str "Record a balance by parsing a PayPay銀行 【残高不足】引落予定のご案内 "
+         "mail. Pass the mail's subject, body and the instant it ARRIVED; the "
+         "balance and its as-of come from the bank's own text, so no figure is "
+         "invented. Prefer this over funding_record_balance whenever such a "
+         "mail exists — it is the bank speaking rather than someone retyping.\n\n"
+         "IMPORTANT: this is a WARNING feed. PayPay銀行 sends this notice only "
+         "when it expects a direct debit to fail. A quiet inbox means either a "
+         "comfortable balance or nothing scheduled, and there is no way to tell "
+         "which. Never report the absence of a notice as evidence that the "
+         "balance is healthy. Refuses (returns null) if the body has no balance "
+         "line — it will not fall back to zero.")
+    :parameters
+    {:type "object"
+     :properties
+     {:funding-account-id {:type "string" :description "From funding_accounts."}
+      :subject {:type "string" :description "The mail subject, used to classify it."}
+      :body {:type "string" :description "The mail's plaintext body."}
+      :received-at {:type "string"
+                    :description "ISO-8601 instant the mail ARRIVED. Becomes the balance's as-of, because the notice never says when the balance was measured. Not the time of this call."}}
+     :required ["funding-account-id" "subject" "body" "received-at"]}}
 
    {:name "payment_review"
     :description
@@ -289,6 +313,32 @@
          :as-of (:as-of b)
          :source (:source b)
          :recorded-at (:recorded-at b)})
+
+      "paypay_ingest_balance_notice"
+      (let [parsed (paypay-bank/parse (select-keys arguments [:subject :body]))
+            record (paypay-bank/balance-record parsed (:received-at arguments))]
+        (if-not record
+          ;; Not an error: many PayPay mails are not balance notices, and a
+          ;; balance notice whose format changed has nothing to record either.
+          ;; Both answer the same way -- there is no balance here -- and saying
+          ;; so beats returning a number nobody established.
+          {:recorded? false
+           :kind (:kind parsed)
+           :reason (if parsed
+                     "この mail は残高を含みません（balance-notice ではない、または本文に口座残高の行がありません）"
+                     "この mail は PayPay銀行の既知の通知形式に一致しません")}
+          (let [b (funding/record-balance! s (:funding-account-id arguments) record)]
+            {:recorded? true
+             :funding-account-id (:account-id b)
+             :balance-minor (:amount-minor b)
+             :currency (:currency b)
+             :as-of (:as-of b)
+             :source (:source b)
+             :source-detail (:source-detail b)
+             :scheduled-debit-date (:scheduled-debit-date parsed)
+             :scheduled-debit-total-minor (:scheduled-debit-total-minor parsed)
+             :shortfall-minor (:shortfall-minor parsed)
+             :caveat "警告フィードです。通知が来ないことは残高が十分である証拠になりません。"})))
 
       "payment_review"
       (let [p (authority-api/review!

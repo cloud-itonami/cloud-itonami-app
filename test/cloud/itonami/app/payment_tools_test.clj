@@ -214,6 +214,76 @@
                           {:funding-account-id theirs :amount-minor 38500
                            :currency "JPY" :reference "r1" :payee payee}))))))))
 
+(def ^:private balance-notice
+  "Real text, from message 19f9923559cfbaf5 (2026-07-25)."
+  {:subject "【残高不足】引落予定のご案内"
+   :body (str "本メールは、残高不足により引き落としができない恐れのあるお客さまにお送りしています。\n"
+              "引落予定日：2026/07/27\n合計引落予定額：496131円\n口座残高：435180円\n")})
+
+(deftest an-agent-records-the-banks-own-figure-instead-of-retyping-one
+  (let [token (seed-identity! true)
+        session (identity/session token)
+        account-id (linked! session nil)]
+    (with-redefs [payment-tools/session-token (constantly token)]
+      (let [r (payment-tools/call-tool
+               unset-env "paypay_ingest_balance_notice"
+               (merge balance-notice {:funding-account-id account-id
+                                      :received-at "2026-07-25T11:54:23Z"}))]
+        (is (true? (:recorded? r)))
+        (is (= 435180 (:balance-minor r)))
+        (is (= :statement (:source r)) "published to us, not queried by us")
+        (is (= "2026-07-25T11:54:23Z" (:as-of r))
+            "the mail's arrival time, not the time of this call")
+        (is (= 60951 (:shortfall-minor r)))
+        (is (seq (:caveat r))
+            "the reply must carry the warning-feed caveat, or an agent will
+             report a quiet inbox as a healthy balance")))))
+
+(deftest a-mail-that-is-not-a-balance-notice-records-nothing-rather-than-zero
+  (let [token (seed-identity! true)
+        session (identity/session token)
+        account-id (linked! session nil)]
+    (with-redefs [payment-tools/session-token (constantly token)]
+      (doseq [m [{:subject "ポイント受取設定完了のお知らせ" :body "..."}
+                 {:subject "【残高不足】引落予定のご案内" :body "壊れた本文"}]]
+        (let [r (payment-tools/call-tool
+                 unset-env "paypay_ingest_balance_notice"
+                 (merge m {:funding-account-id account-id
+                           :received-at "2026-07-25T11:54:23Z"}))]
+          (is (false? (:recorded? r)) (pr-str m))
+          (is (seq (:reason r)) (pr-str m))))
+      (is (nil? (funding/balance session account-id))
+          "still never-recorded -- a parser that fell back to 0 would look like
+           it worked and refuse every payment forever")
+      (is (= :payment/balance-unknown
+             (refuses #(payment-tools/call-tool
+                        unset-env "payment_review"
+                        {:funding-account-id account-id :amount-minor 1
+                         :currency "JPY" :reference "r1" :payee payee})))))))
+
+(deftest the-ingested-balance-then-drives-the-funds-gate
+  (let [token (seed-identity! true)
+        session (identity/session token)
+        account-id (linked! session nil)]
+    (with-redefs [payment-tools/session-token (constantly token)]
+      (payment-tools/call-tool
+       unset-env "paypay_ingest_balance_notice"
+       (merge balance-notice {:funding-account-id account-id
+                              :received-at (store/now)}))
+      (testing "¥435,180 covers the ¥38,500 advisory fee"
+        (is (= :awaiting-passkey
+               (:status (payment-tools/call-tool
+                         unset-env "payment_review"
+                         {:funding-account-id account-id :amount-minor 38500
+                          :currency "JPY" :reference "03356-20260730"
+                          :payee payee})))))
+      (testing "and does not cover ¥500,000 -- the same figure, both directions"
+        (is (= :payment/insufficient-funds
+               (refuses #(payment-tools/call-tool
+                          unset-env "payment_review"
+                          {:funding-account-id account-id :amount-minor 500000
+                           :currency "JPY" :reference "other" :payee payee}))))))))
+
 ;; ---------------------------------------------------------------------------
 ;; the manifest
 ;; ---------------------------------------------------------------------------
@@ -224,8 +294,9 @@
       (let [published (mcp/published-tools unset-env)
             names (set (map :name published))]
         (is (= #{"funding_accounts" "funding_link_account"
-                 "funding_record_balance" "payment_review"
-                 "payment_proposals" "payment_commit" "payment_reject"}
+                 "funding_record_balance" "paypay_ingest_balance_notice"
+                 "payment_review" "payment_proposals" "payment_commit"
+                 "payment_reject"}
                names))
         (testing "the fleet tools are absent because that capability is off --
                   the two groups gate independently"
