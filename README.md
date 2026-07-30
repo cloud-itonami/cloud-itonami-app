@@ -27,7 +27,7 @@ Data Integrity proof.
 ## Requirements
 
 - macOS 14 or later for the native shell, EventKit, and Keychain integrations
-- Java 21+
+- Java 24+ (required for the standard ML-DSA-65 provider used by `kagi`)
 - Clojure CLI
 - `jq` and `curl`
 - Ollama or another configured OpenAI-compatible provider
