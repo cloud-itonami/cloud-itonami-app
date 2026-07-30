@@ -1292,6 +1292,14 @@
                      :passkey/user-verification-required 403
                      :passkey/verification-failed 403
                      :passkey/required 428
+                     ;; The ceremony succeeded and the credential it produced is
+                     ;; not one we can root a did:key in. Understood request,
+                     ;; unacceptable content -- 422, like :drive/invalid-document.
+                     ;; Previously these fell through to 502, which reads as
+                     ;; "the server is broken" and hid a real bug for as long as
+                     ;; it existed.
+                     :did/invalid-public-key 422
+                     :did/unsupported-public-key 422
                      :passkey/onboarding-unavailable 409
                      :identity/organization-id-immutable 409
                      :ao.worker/not-found 404
