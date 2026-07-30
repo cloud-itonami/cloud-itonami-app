@@ -227,6 +227,74 @@
         (catch Exception error
           (write-event! {:type "error" :message (.getMessage error)}))))))
 
+(defn- send-openai-stream!
+  "Serve `POST /v1/chat/completions` with `stream: true` as OpenAI SSE.
+
+  The response headers are written on the first frame rather than up front,
+  and that is the whole reason this is not a few lines. Once `200` and
+  `text/event-stream` are on the wire the status can no longer change, so a
+  failure that happens before the provider has produced anything — a denied
+  provider, a refused local model — could only be reported inside a successful
+  stream, where a client reads it as an empty answer rather than an error.
+  Deferring the headers leaves those failures on an untouched exchange, where
+  the handler's own `ex-data` mapping still turns them into a real status.
+
+  After the first delta that is no longer available, so an error there is
+  reported as an `error` frame instead. That is a worse contract than a status
+  code and it is the honest one: the alternative is closing a 200 stream on a
+  truncated answer, which reads as success."
+  [^HttpExchange exchange config chat include-usage?]
+  (let [response-id (store/new-id "chatcmpl")
+        envelope (service/stream-envelope
+                  response-id (service/chosen-model config chat))
+        writer (volatile! nil)
+        open-writer!
+        (fn []
+          (or @writer
+              (do
+                (doto (.getResponseHeaders exchange)
+                  (.set "Content-Type" "text/event-stream; charset=utf-8")
+                  (.set "Cache-Control" "no-store")
+                  (.set "X-Content-Type-Options" "nosniff"))
+                (.sendResponseHeaders exchange 200 0)
+                (vreset! writer (OutputStreamWriter. (.getResponseBody exchange)
+                                                     StandardCharsets/UTF_8)))))
+        frame!
+        (fn [payload]
+          (let [^java.io.Writer out (open-writer!)]
+            (.write out "data: ")
+            (.write out (if (string? payload) payload (json/write-str payload)))
+            (.write out "\n\n")
+            (.flush out)))
+        open-stream!
+        (fn []
+          (when-not @writer
+            (frame! (service/openai-chunk envelope {:role "assistant"} nil))))]
+    (try
+      (let [result (service/run-chat-stream!
+                    config (assoc chat :response-id response-id)
+                    (fn [delta]
+                      (open-stream!)
+                      (frame! (service/openai-chunk
+                               envelope {:content delta} nil))))]
+        ;; A completion that streamed no delta at all — an empty answer — still
+        ;; owes the client a well-formed stream rather than a bare `[DONE]`.
+        (open-stream!)
+        (frame! (service/openai-chunk envelope {} "stop"))
+        (when include-usage?
+          (frame! (service/openai-usage-chunk envelope (:usage result))))
+        (frame! "[DONE]"))
+      (catch Exception error
+        (if @writer
+          (do (frame! {:error {:type (name (or (:type (ex-data error))
+                                               :provider/error))
+                               :message (.getMessage error)}})
+              (frame! "[DONE]"))
+          (throw error)))
+      (finally
+        (when-let [^java.io.Writer out @writer]
+          (.close out))))))
+
 (defn- public-state [config]
   (let [state (store/snapshot)]
     {:schema "cloud.itonami.app.public-state.v1"
@@ -678,15 +746,19 @@
 
             (and (= method "POST") (= path "/v1/chat/completions"))
             (let [request (read-json exchange)
-                  response (service/run-chat!
-                            config
-                            {:messages (:messages request)
-                             :model (:model request)
-                             :provider-id (:provider request)
-                             :session-id (or (:session_id request) "openai")
-                             :agent-id (:agent_id request)
-                             :temperature (:temperature request)})]
-              (send! exchange 200 (service/openai-response response)))
+                  chat {:messages (:messages request)
+                        :model (:model request)
+                        :provider-id (:provider request)
+                        :session-id (or (:session_id request) "openai")
+                        :agent-id (:agent_id request)
+                        :temperature (:temperature request)}]
+              (if (:stream request)
+                (send-openai-stream!
+                 exchange config chat
+                 (boolean (get-in request [:stream_options :include_usage])))
+                (send! exchange 200
+                       (service/openai-response
+                        (service/run-chat! config chat)))))
 
             (and (= method "POST") (= path "/api/chat"))
             (let [_session (require-app-session! exchange)

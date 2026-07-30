@@ -17,8 +17,20 @@
           (catch Exception _ []))))
     (:providers config))))
 
+(defn chosen-model
+  "The model a request will run on, answerable before it runs.
+
+  A streamed completion has to name its model in every chunk, including the
+  first one — which is written before the provider has been asked anything. So
+  the defaulting rule lives here rather than inside `prepare-chat!`, where the
+  transport could only reach it by repeating it."
+  [config request]
+  (or (:model request) (get-in config [:routing :default-model])))
+
 (defn- prepare-chat!
-  [config {:keys [messages model provider-id session-id agent-id temperature]}]
+  [config {:keys [messages provider-id session-id agent-id temperature
+                  response-id]
+           :as request}]
   (let [selected (policy/select-provider config provider-id)
         _ (when-not selected
             (throw (ex-info "provider denied or unavailable"
@@ -34,17 +46,17 @@
         provider-messages
         (into [{:role "system" :content (:system-prompt current-agent)}]
               (map #(select-keys % [:role :content]) context))
-        chosen-model (or model (get-in config [:routing :default-model]))]
+        chosen-model (chosen-model config request)]
     {:selected selected :session-id session-id :max-messages max-messages
      :chosen-model chosen-model :provider-messages provider-messages
-     :temperature temperature}))
+     :temperature temperature :response-id response-id}))
 
 (defn- finish-chat!
-  [{:keys [selected session-id max-messages chosen-model]} result]
+  [{:keys [selected session-id max-messages chosen-model response-id]} result]
   (let [assistant (store/append-message!
                    session-id {:role "assistant" :content (:content result)}
                    max-messages)
-        response {:id (store/new-id "chatcmpl")
+        response {:id (or response-id (store/new-id "chatcmpl"))
                   :created (quot (System/currentTimeMillis) 1000)
                   :provider (:id selected)
                   :model chosen-model
@@ -83,3 +95,29 @@
               :message (select-keys (:message response) [:role :content])
               :finish_reason "stop"}]
    :usage (:usage response)})
+
+;; The streamed form of the same completion. `chat.completion.chunk` repeats
+;; `id`, `created` and `model` in every chunk, so those are fixed once in an
+;; envelope and each chunk only carries what changed — a client that saw a
+;; different id per delta could not tell one completion from several.
+
+(defn stream-envelope [response-id model]
+  {:id response-id
+   :object "chat.completion.chunk"
+   :created (quot (System/currentTimeMillis) 1000)
+   :model model})
+
+(defn openai-chunk
+  "One chunk of a streamed completion: `delta` for choice 0, plus the
+  `finish_reason` that ends it (`nil` on every chunk but the last)."
+  [envelope delta finish-reason]
+  (assoc envelope
+         :choices [{:index 0 :delta delta :finish_reason finish-reason}]))
+
+(defn openai-usage-chunk
+  "The usage-only chunk that closes a stream, sent only when the caller asked
+  for it with `stream_options.include_usage`. Its `choices` is empty by
+  design: usage belongs to the completion, not to a choice, and a client that
+  folds deltas by index must not find a fabricated one here."
+  [envelope usage]
+  (assoc envelope :choices [] :usage usage))

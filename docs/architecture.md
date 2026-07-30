@@ -135,9 +135,25 @@ The public compatibility slice is:
 - `POST /v1/chat/completions`
 
 Management endpoints live under `/api` and are not part of the OpenAI
-compatibility claim. The current completion endpoint is non-streaming.
-Function-call deltas, Responses API, Anthropic compatibility, and MCP are
-future profiles and will receive separate compatibility tests.
+compatibility claim. Function-call deltas, Responses API, embeddings, Anthropic
+compatibility, and MCP are future profiles and will receive separate
+compatibility tests.
+
+`POST /v1/chat/completions` honours `stream: true` as Server-Sent Events in the
+`chat.completion.chunk` format: a role chunk, one chunk per provider delta, a
+`finish_reason: "stop"` chunk, the usage chunk when
+`stream_options.include_usage` asked for it, then `data: [DONE]`. Every chunk
+repeats the completion id, which is the same id the store records for the turn.
+
+The response headers are written on the first frame rather than when the
+request arrives. Once `200` and `text/event-stream` are sent the status can no
+longer change, so a provider refusal or a refused local model would have to be
+reported inside a successful stream — where a client reads it as an empty
+answer. Deferring means those failures reach the same `ex-data` status mapping
+as a non-streaming request: a denied cloud provider is a `403`, under
+`stream: true` as much as without it. After the first delta that is no longer
+possible and the failure is an `error` frame instead, with no `stop` chunk
+claiming the answer finished.
 
 The first-party chat UI uses `POST /api/chat/stream`, a chunked NDJSON
 management endpoint. Provider deltas are forwarded as they arrive; only a
@@ -211,4 +227,6 @@ relevance queries. Writes replace the state file atomically.
 3. Add MCP server/client profiles.
 4. Add memory distillation and relevance retrieval over kgraph.
 5. Add schedules/watchers after tool isolation is available.
-6. Add streaming and function-call compatibility suites.
+6. Add a function-call compatibility suite. (Streaming has one:
+   `test/cloud/itonami/app/openai_compat_test.clj` reads the SSE frames over
+   real HTTP, in both modes.)
