@@ -89,6 +89,46 @@ says: no canvas items, no leverage band, no maturity score, no revenue from the
 `market-intel` join. Proving the join before building three analysis views on top
 of it is the point of the phase. Canvas, Loops, Repos and Metrics panes follow.
 
+## Phase 2: the Canvas pane
+
+Reading a face's contents needed one thing the workspace did not have: the folded
+canvas as data. `gftd canvas md` renders prose into `:doc/body`, which cannot be
+queried, and nothing outside that tool could draw the nine blocks.
+
+So the fold stayed where it is and learned to emit data —
+`gftd canvas datoms` (superproject) writes
+`90-docs/business/<product>-canvas.datoms.edn`, tagged
+`:source/dataset "canvas-projection"` so a query can tell it from the pre-fold
+base datoms, which are what `90-docs` carried until now (the ledger events are
+not in that plane at all, so a `:find` over it answered with the canvas as first
+written). `cloud.itonami.app.canvas` reads that projection and folds nothing.
+
+**The write path does not exist.** `canvas-ledger.edn` is append-only and every
+event passes `gftd.react/governor`. This app has no governor, so `propose!`
+records the proposal in the app's own store and renders the `gftd` command that
+would apply it. `writes-only-locally?` returns `[[:canvas-proposals]]` and a test
+asserts it, alongside one that reads the projection file's bytes before and after
+a proposal and requires them identical.
+
+**Landed-ness is measured.** A proposal's state is derived on every read by
+looking for its value in the projection — `:landed` is only true after the
+governor accepted it and the projection was rebuilt. A retraction counts as
+landed only if its block was actually found, because 「消えた」 and 「見ていない」
+would otherwise be the same answer. With no checkout the state is
+`:unverifiable`, which is neither.
+
+### The wire collision this uncovered
+
+`clojure.data.json` drops a keyword key's namespace, and the projection has three
+pairs that collide once stripped: `:db/id`/`:canvas/id`, `:hyp/status`/`:gate/status`,
+`:hyp/evidence`/`:gate/evidence`. A collision does not error — one wins by map
+iteration order — and the two `status` values are exactly what this pane exists to
+show apart: what the ledger says about a hypothesis versus what the metrics say.
+So the payload is re-keyed explicitly, ids travel as strings that keep their
+namespace, and a test asserts that no two keys in the shape strip to the same
+name. (The same wire rule had already left `renderOperator` reading
+`['operator/name']` as undefined; that was fixed in Phase 1.)
+
 ## Consequences
 
 - A business is created and bound by hand. Nothing is derived — which repo or

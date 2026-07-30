@@ -3,6 +3,7 @@
             [clojure.string :as str]
             [cloud.itonami.app.authority.api :as authority-api]
             [cloud.itonami.app.business :as business]
+            [cloud.itonami.app.canvas :as canvas]
             [cloud.itonami.app.config :as config]
             [cloud.itonami.app.contracts :as contracts]
             [cloud.itonami.app.credential :as credential]
@@ -577,6 +578,42 @@
               (require-csrf! exchange session)
               (send! exchange 200
                      (business/bind! session id (read-json exchange))))
+
+            ;; ---- 事業の canvas（読みは投影、書きは提案）----
+            ;;
+            ;; The read is the FOLDED canvas, generated upstream by
+            ;; `gftd canvas datoms`. The write is a proposal recorded in this
+            ;; app's store: `canvas-ledger.edn` is append-only and governed, and
+            ;; this app has no governor. So there is no route that appends to it —
+            ;; not one that fails, one that does not exist.
+
+            (and (= method "GET")
+                 (re-matches #"/api/business/([^/]+)/canvas" path))
+            (let [session (require-app-session! exchange)
+                  id (second (re-matches #"/api/business/([^/]+)/canvas" path))]
+              (if-some [snapshot (canvas/snapshot config session id)]
+                (send! exchange 200 snapshot)
+                (send! exchange 404 {:error {:type "not-found"
+                                             :message "該当する business がありません"}})))
+
+            (and (= method "POST")
+                 (re-matches #"/api/business/([^/]+)/canvas/propose" path))
+            (let [session (require-app-session! exchange)
+                  id (second (re-matches #"/api/business/([^/]+)/canvas/propose" path))]
+              (require-origin! exchange config)
+              (require-csrf! exchange session)
+              (send! exchange 200 (canvas/propose! session id (read-json exchange))))
+
+            (and (= method "POST")
+                 (re-matches #"/api/business/[^/]+/canvas/proposals/([^/]+)/withdraw" path))
+            (let [session (require-app-session! exchange)
+                  proposal-id (second (re-matches
+                                       #"/api/business/[^/]+/canvas/proposals/([^/]+)/withdraw"
+                                       path))
+                  {:keys [by]} (read-json exchange)]
+              (require-origin! exchange config)
+              (require-csrf! exchange session)
+              (send! exchange 200 (canvas/withdraw! session proposal-id {:by by})))
 
             ;; ---- funding accounts (what the payment authority stands on) ----
             ;; These are reads and writes of the organization's own record, not
@@ -1623,6 +1660,16 @@
                      ;; existing record rather than a malformed request.
                      :business/slug-taken 409
                      :business/not-found 404
+
+                     ;; ---- 事業の canvas 提案 ----
+                     :canvas/action-unsupported 400
+                     :canvas/canvas-id-missing 400
+                     :canvas/value-missing 400
+                     :canvas/anonymous-proposal 400
+                     ;; Understood, but the business has no canvas to change yet —
+                     ;; a conflict with the record's state, not a bad request.
+                     :canvas/product-unbound 409
+                     :canvas/proposal-not-found 404
 
                      ;; ---- funding accounts ----
                      :funding/institution-missing 400
