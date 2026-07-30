@@ -120,7 +120,15 @@
   ;; The MCP server speaks JSON-RPC on stdout, so nothing else may print there:
   ;; run it with this alias, never alongside :server in one process.
   :mcp {:main-opts ["-m" "cloud.itonami.app.mcp"]}
+  ;; The suite writes through cloud.itonami.app.store, which persists to
+  ;; `cloud.itonami.app.config/data-dir`. Without this it defaults to `./data`
+  ;; and the tests overwrite the real store -- measured on 2026-07-30, when a
+  ;; fixture replaced a developer's identity state and broke Passkey
+  ;; registration. The property beats the environment variable on purpose, so
+  ;; an exported CLOUD_ITONAMI_DATA_DIR cannot redirect the suite back onto a
+  ;; real store.
   :test {:extra-paths ["test"]
+         :jvm-opts ["-Dcloud.itonami.data-dir=target/test-data"]
          :main-opts ["-m" "cloud.itonami.app.test-runner"]}
   :lint {:replace-deps {clj-kondo/clj-kondo {:mvn/version "2024.11.14"}}
          :main-opts ["-m" "clj-kondo.main" "--lint" "src" "test"
