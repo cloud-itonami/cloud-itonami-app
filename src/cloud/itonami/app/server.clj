@@ -17,8 +17,10 @@
             [cloud.itonami.app.funding :as funding]
             [cloud.itonami.app.identity :as identity]
             [cloud.itonami.app.loops :as loops]
+            [cloud.itonami.app.metrics :as business-metrics]
             [cloud.itonami.app.organism-gateway :as organism-gateway]
             [cloud.itonami.app.relay :as relay]
+            [cloud.itonami.app.repos :as business-repos]
             [cloud.itonami.app.service :as service]
             [cloud.itonami.app.store :as store]
             [cloud.itonami.app.web :as web]
@@ -636,6 +638,31 @@
             (let [session (require-app-session! exchange)
                   id (second (re-matches #"/api/business/([^/]+)/loops" path))]
               (if-some [snapshot (loops/snapshot config session id)]
+                (send! exchange 200 snapshot)
+                (send! exchange 404 {:error {:type "not-found"
+                                             :message "該当する business がありません"}})))
+
+            ;; ---- 事業の repo と実測 ----
+            ;;
+            ;; Both read-only, both joined out of generated files in the
+            ;; configured workspace: repo-taxonomy + repo-maturity on
+            ;; :repo/path, and metrics/<product>.edn on the bound canvas
+            ;; product. Neither has a write path.
+
+            (and (= method "GET")
+                 (re-matches #"/api/business/([^/]+)/repos" path))
+            (let [session (require-app-session! exchange)
+                  id (second (re-matches #"/api/business/([^/]+)/repos" path))]
+              (if-some [snapshot (business-repos/snapshot config session id)]
+                (send! exchange 200 snapshot)
+                (send! exchange 404 {:error {:type "not-found"
+                                             :message "該当する business がありません"}})))
+
+            (and (= method "GET")
+                 (re-matches #"/api/business/([^/]+)/metrics" path))
+            (let [session (require-app-session! exchange)
+                  id (second (re-matches #"/api/business/([^/]+)/metrics" path))]
+              (if-some [snapshot (business-metrics/snapshot config session id)]
                 (send! exchange 200 snapshot)
                 (send! exchange 404 {:error {:type "not-found"
                                              :message "該当する business がありません"}})))

@@ -29,6 +29,25 @@
     border:1px solid var(--color-semantic-success-2)}
   .req-row__caveat{margin:.25rem 0 0;font-size:.8125rem;
     color:var(--color-neutral-solid-gray-600)}
+  /* One bar per maturity axis. A bar is the right mark for a bounded 0-1
+     magnitude, and an UNSCORED axis gets no bar at all — a zero-width bar and a
+     zero score would look identical, and 70% of the fleet has no stage score. */
+  .axis-row{display:grid;grid-template-columns:minmax(0,11rem) 1fr auto;
+    gap:.5rem;align-items:center;margin:.25rem 0;font-size:.8125rem}
+  .axis-row__track{height:.5rem;border-radius:999px;
+    background:var(--color-neutral-solid-gray-100)}
+  .axis-row__fill{height:100%;border-radius:999px;
+    background:var(--color-primitive-blue-800)}
+  .axis-row__unscored{height:.5rem;border-radius:999px;
+    border:1px dashed var(--color-neutral-solid-gray-200)}
+  .axis-row__value{font-variant-numeric:tabular-nums;
+    color:var(--color-neutral-solid-gray-700)}
+  .kv{display:grid;grid-template-columns:minmax(0,14rem) 1fr;gap:.25rem .75rem;
+    margin:0;font-size:.8125rem}
+  .kv dt{font-weight:700;color:var(--color-neutral-solid-gray-700);
+    overflow-wrap:anywhere}
+  .kv dd{margin:0;color:var(--color-neutral-solid-gray-800);
+    overflow-wrap:anywhere;font-variant-numeric:tabular-nums}
   /* Small multiples, not one multi-series chart. XMILE variables carry their own
      units — a stock in repos and a flow in repos/day — and putting them on one
      y-axis is the dual-axis mistake with extra steps. One panel per variable,
@@ -3800,6 +3819,8 @@
     };
 
     let selectedBusinessId = null;
+    let reposBusinessId = null;
+    let metricsBusinessId = null;
 
     const renderBusinessDetail = (b) => {
       const box = $('#portfolio-detail'); if (!box) return;
@@ -3892,6 +3913,8 @@
       renderBusinessDetail(rows.find((b) => b.id === selectedBusinessId));
       fillCanvasBusinesses(rows);
       fillLoopsBusinesses(rows);
+      fillBusinessSelect('repos-business', rows, loadRepos, reposBusinessId);
+      fillBusinessSelect('metrics-business', rows, loadMetrics, metricsBusinessId);
 
       const un = $('#portfolio-unassigned');
       if (un) {
@@ -4466,6 +4489,223 @@
       if (grid) grid.hidden = showTable;
       e.currentTarget.setAttribute('aria-pressed', String(showTable));
       e.currentTarget.textContent = showTable ? 'グラフで見る' : '表で見る';
+    });
+
+    // ── Repos（事業の実装と成熟度）─────────────────────────────────────
+    //
+    // An UNSCORED axis gets no bar. A zero-width bar and a score of 0.0 look
+    // identical, and :maturity/stage-score is nil for 2,732 of 3,899 repos —
+    // drawing those as empty bars would put 70% of the fleet at the bottom of an
+    // axis nobody assessed them on.
+    const axisRow = (a) => {
+      const row = make('div', 'axis-row');
+      row.append(make('span', null, a.label || bare(a.axis)));
+      if (a['scored?'] && typeof a.score === 'number') {
+        const track = make('div', 'axis-row__track');
+        const fill = make('div', 'axis-row__fill');
+        fill.style.width = `${Math.round(Math.max(0, Math.min(1, a.score)) * 100)}%`;
+        track.append(fill);
+        row.append(track);
+        // The method rides beside the number: an :impl score is a
+        // size-and-scaffold heuristic and a :stage score is a parsed marker,
+        // and two identical-looking decimals hide which is which.
+        row.append(make('span', 'axis-row__value',
+          a.score.toFixed(2) + (a.method ? ` (${bare(a.method)})` : '')));
+      } else {
+        row.append(make('div', 'axis-row__unscored'));
+        row.append(make('span', 'axis-row__value', '未評価'));
+      }
+      row.title = a.detail || '';
+      return row;
+    };
+
+    const repoRow = (r) => {
+      const li = make('li', 'req-row');
+      const head = make('div', 'req-row__head');
+      head.append(make('strong', null, r.path || r.repo || '(path 不明)'));
+      const chip = make('span', 'req-row__state',
+        typeof r.composite === 'number' ? r.composite.toFixed(2) : '未評価');
+      chip.dataset.tone = typeof r.composite === 'number' ? 'ok' : 'note';
+      head.append(chip);
+      li.append(head);
+      const bits = [bare(r.source) === 'adoptions' ? '参与' : '宣言',
+                    r.kind ? bare(r.kind) : null,
+                    r.stage ? `stage ${bare(r.stage)}` : null,
+                    r.traits || null].filter(Boolean);
+      li.append(make('p', 'req-row__detail', bits.join(' · ')));
+      if (r['kind-evidence']) li.append(make('p', 'req-row__caveat', r['kind-evidence']));
+      if (r.detail) li.append(make('p', 'req-row__caveat', r.detail));
+      (r.axes || []).forEach((a) => li.append(axisRow(a)));
+      return li;
+    };
+
+    const renderRepos = (d) => {
+      const rows = (d && d.repos) || [];
+      const plane = (d && d.plane) || {};
+      const roll = (d && d['roll-up']) || {};
+      const src = $('#repos-source');
+      if (src) src.textContent = d && d.business
+        ? (d.business.name || d.business.slug) : '事業を選択してください。';
+      const note = $('#repos-plane');
+      if (note) {
+        note.replaceChildren();
+        if (bare(plane.state) === 'resolved') {
+          note.append(make('strong', null, 'generated plane: '));
+          note.append(document.createTextNode(
+            `${d.sources?.taxonomy || ''} + ${d.sources?.maturity || ''}`));
+        } else {
+          note.append(make('strong', null, bare(plane.state) + ' '));
+          note.append(document.createTextNode(plane.detail || ''));
+        }
+      }
+      const stats = $('#repos-stats');
+      if (stats) {
+        stats.replaceChildren(
+          statTile('repo', roll.repos ?? 0),
+          statTile('評価済み', roll.scored ?? 0),
+          // Shown beside the mean on purpose: a mean over 3 of 12 is a different
+          // claim from a mean over 12.
+          statTile('未評価', roll.unscored ?? 0),
+          statTile('composite 平均',
+            typeof roll['mean-composite'] === 'number'
+              ? roll['mean-composite'].toFixed(2) : '—'));
+      }
+      const list = $('#repos-list');
+      if (list) {
+        list.replaceChildren();
+        rows.forEach((r) => list.append(repoRow(r)));
+        if (!rows.length) {
+          list.append(make('li', 'empty-state',
+            'この事業に repo / 参与が紐付いていません。Portfolio で紐付けてください。'));
+        }
+      }
+      const meta = $('#repos-meta');
+      if (meta) meta.textContent = rows.length ? `${rows.length} repo` : '';
+      const badge = $('#repos-count');
+      if (badge) badge.textContent = rows.length || '—';
+    };
+
+    const loadRepos = (businessId) => {
+      if (!businessId) { renderRepos(null); return Promise.resolve(false); }
+      return fetch(`/api/business/${encodeURIComponent(businessId)}/repos`)
+        .then((r) => r.ok ? r.json() : null)
+        .then((d) => { reposBusinessId = businessId; renderRepos(d); return Boolean(d); })
+        .catch(() => {
+          const s = $('#repos-source');
+          if (s) s.textContent = 'repo を読み込めません。';
+          return false;
+        });
+    };
+
+    // ── Metrics（実測と、その古さ）─────────────────────────────────────
+    //
+    // Freshness leads. A 28-day-old file's numbers are not current numbers, and
+    // one of the twelve real metrics files is exactly that.
+    const freshnessLabel = {fresh:'新しい', stale:'古い', undated:'日付なし'};
+    const kv = (dl, pairs) => {
+      dl.replaceChildren();
+      pairs.forEach(([k, v]) => {
+        if (v === null || v === undefined || v === '') return;
+        dl.append(make('dt', null, k), make('dd', null, String(v)));
+      });
+    };
+
+    const renderMetrics = (d) => {
+      const state = bare(d && d.state);
+      const f = (d && d.freshness) || {};
+      const src = $('#metrics-source');
+      if (src) src.textContent = d && d.business
+        ? `${d.business.name || d.business.slug}`
+          + (d.business.canvas ? ` → ${bare(d.business.canvas)}` : '')
+        : '事業を選択してください。';
+
+      const note = $('#metrics-freshness');
+      if (note) {
+        note.replaceChildren();
+        if (state === 'resolved') {
+          const fs = bare(f.state);
+          note.append(make('strong', null,
+            `測定 ${freshnessLabel[fs] || fs}: ${f['as-of'] || '不明'} `));
+          if (typeof f['age-days'] === 'number') {
+            note.append(document.createTextNode(
+              `（${f['age-days'].toFixed(1)} 日前 / 上限 ${f['max-age-days']} 日）`));
+          }
+          if (fs === 'stale') {
+            note.append(make('strong', null,
+              ' この数値は現在の値ではありません。emitter を再実行してください。'));
+          }
+          if (fs === 'undated') note.append(document.createTextNode(' ' + (f.detail || '')));
+        } else {
+          note.append(make('strong', null, state + ' '));
+          note.append(document.createTextNode((d && d.detail) || ''));
+        }
+      }
+
+      const t = (d && d.traffic) || {};
+      kv($('#metrics-traffic'), [
+        ['zone', t.zone],
+        ['requests / 7d', t['requests-7d']],
+        ['pageviews / 7d', t['pageviews-7d']],
+        ['uniques / 7d', t['uniques-7d']],
+        [`probe 4xx (${t.window || ''})`, t['probe-4xx-pct'] != null ? t['probe-4xx-pct'] + '%' : null],
+        [`5xx (${t.window || ''})`, t['error-5xx-pct'] != null ? t['error-5xx-pct'] + '%' : null],
+        ['health', d && d['health-status']]
+      ]);
+      const cav = $('#metrics-traffic-caveat');
+      // The caveat comes from the server, which decided it from the same numbers
+      // it sent — the renderer does not re-derive a threshold of its own.
+      if (cav) cav.textContent = t.caveat || '';
+
+      const sig = $('#metrics-signal');
+      if (sig) sig.textContent = (d && d.signal) || '—';
+      const tp = $('#metrics-top-paths');
+      if (tp) tp.textContent = (d && d['top-paths']) || '';
+      const so = $('#metrics-sources');
+      if (so) so.textContent = (d && d.sources || []).length
+        ? `sources: ${d.sources.join(' · ')}${d.note ? ' — ' + d.note : ''}` : '';
+
+      kv($('#metrics-specific'),
+         ((d && d['product-specific']) || []).map((e) => [e.key, e.value]));
+      const meta = $('#metrics-meta');
+      if (meta) meta.textContent = state === 'resolved' ? (d.source || '') : '';
+      const badge = $('#metrics-count');
+      if (badge) badge.textContent = state === 'resolved' ? bare(f.state).slice(0, 1).toUpperCase() : '—';
+    };
+
+    const loadMetrics = (businessId) => {
+      if (!businessId) { renderMetrics(null); return Promise.resolve(false); }
+      return fetch(`/api/business/${encodeURIComponent(businessId)}/metrics`)
+        .then((r) => r.ok ? r.json() : null)
+        .then((d) => { metricsBusinessId = businessId; renderMetrics(d); return Boolean(d); })
+        .catch(() => {
+          const s = $('#metrics-source');
+          if (s) s.textContent = 'metrics を読み込めません。';
+          return false;
+        });
+    };
+
+    // One filler per pane, all fed from the portfolio, so no two panes can
+    // disagree about which businesses exist.
+    const fillBusinessSelect = (id, rows, load, currentId) => {
+      const sel = $('#' + id); if (!sel) return;
+      const keep = sel.value || selectedBusinessId || '';
+      sel.replaceChildren(make('option', null, '事業を選択…'));
+      sel.firstChild.value = '';
+      (rows || []).forEach((b) => {
+        const o = make('option', null, b.name || b.slug);
+        o.value = b.id;
+        sel.append(o);
+      });
+      const next = (rows || []).some((b) => b.id === keep) ? keep : '';
+      sel.value = next;
+      if (next && next !== currentId) load(next); else if (!next) load(null);
+    };
+
+    ['repos-business', 'metrics-business'].forEach((id) => {
+      $('#' + id)?.addEventListener('change', (e) => {
+        selectedBusinessId = e.currentTarget.value || selectedBusinessId;
+        (id === 'repos-business' ? loadRepos : loadMetrics)(e.currentTarget.value);
+      });
     });
 
     $('#portfolio-bind-form')?.addEventListener('submit', (e) => {
@@ -5259,6 +5499,8 @@
         (nav-item "portfolio" "Portfolio" "▤" "portfolio-count")
         (nav-item "canvas" "Canvas" "◱" "canvas-count")
         (nav-item "loops" "Loops" "∞" "loops-count")
+        (nav-item "repos" "Repos" "⌗" "repos-count")
+        (nav-item "metrics" "Metrics" "⌸" "metrics-count")
         (nav-item "fleet" "Fleet" "◉" "fleet-count")
         (nav-item "operator" "\u4e8b\u696d\u8005" "◐" "operator-count")
         (nav-item "contracts" "Contracts" "◫" "contracts-count")
@@ -5575,6 +5817,64 @@
           [:p {:class "form-help"}
            "重みは Meadows (1999) の順序を近似した監査可能な heuristic であって、測定された物理定数ではありません。"]
           [:ul {:class "data-list" :id "loops-bands"}]]]
+
+        ;; ── Repos（事業の実装と成熟度）──────────────────────────────
+        ;; repo-taxonomy と repo-maturity を :repo/path で join する。未評価の軸は
+        ;; bar を描かない — 幅 0 の bar と score 0 は見分けが付かず、stage-score は
+        ;; 3,899 repo のうち 2,732 が未評価。平均も評価済みだけで取り、除外件数を出す。
+        [:section {:class "view" :data-view-panel "repos" :hidden true}
+         (view-header "Repos"
+                      (str "事業が実装されている repository と、その成熟度。"
+                           "未評価の軸は 0 ではなく未評価として表示します。"))
+         [:p {:class "source-note"} [:span {:class "source-dot"}]
+          [:span {:id "repos-source"} "事業を確認中…"]]
+         [:div {:class "workspace-toolbar"}
+          [:label {:class "visually-hidden" :for "repos-business"} "事業"]
+          [:select {:id "repos-business"}
+           [:option {:value ""} "事業を選択…"]]
+          [:span {:class "result-count" :id "repos-meta"}]]
+         [:div {:class "security-callout" :id "repos-plane"
+                :role "status" :aria-live "polite"}
+          "generated plane を確認中…"]
+         [:div {:class "stat-row" :id "repos-stats"}]
+         [:ul {:class "record-list__items" :id "repos-list"}
+          [:li {:class "empty-state"} "事業を選ぶと表示します。"]]]
+
+        ;; ── Metrics（実測と、その古さ）───────────────────────────────
+        ;; 鮮度を最初に出す。:funnel の形は product ごとに違うので統一しない —
+        ;; freeClaim を signup と同一視する判断の根拠がこのアプリに無い。
+        ;; requests は traffic-quality と必ず同じ塊で出す。
+        [:section {:class "view" :data-view-panel "metrics" :hidden true}
+         (view-header "Metrics"
+                      (str "product の実測値と、その測定がいつのものか。"
+                           "古い測定を現在の数値として出しません。"))
+         [:p {:class "source-note"} [:span {:class "source-dot"}]
+          [:span {:id "metrics-source"} "事業を確認中…"]]
+         [:div {:class "workspace-toolbar"}
+          [:label {:class "visually-hidden" :for "metrics-business"} "事業"]
+          [:select {:id "metrics-business"}
+           [:option {:value ""} "事業を選択…"]]
+          [:span {:class "result-count" :id "metrics-meta"}]]
+         [:div {:class "security-callout" :id "metrics-freshness"
+                :role "status" :aria-live "polite"}
+          "鮮度を確認中…"]
+         [:div {:class "local-card"}
+          (dds/heading 2 "トラフィック" {:size "24"})
+          [:p {:class "form-help" :id "metrics-traffic-caveat"}]
+          [:dl {:class "kv" :id "metrics-traffic"}]]
+         [:div {:class "local-card"}
+          (dds/heading 2 "emitter の要約" {:size "24"})
+          [:p {:class "form-help"}
+           "測定した側が書いた 1 行をそのまま出します（数値から別の要約を作り直しません）。"]
+          [:p {:class "record-detail__body" :id "metrics-signal"} "—"]
+          [:p {:class "req-row__caveat" :id "metrics-top-paths"}]
+          [:p {:class "source-note" :id "metrics-sources"}]]
+         [:div {:class "local-card"}
+          (dds/heading 2 "product 固有の測定" {:size "24"})
+          [:p {:class "form-help"}
+           (str "このアプリが意味を主張しないキーです。:funnel の形は product ごとに"
+                "違うので、共通の funnel に畳まずそのまま出します。")]
+          [:dl {:class "kv" :id "metrics-specific"}]]]
 
         [:section {:class "view" :data-view-panel "fleet" :hidden true}
          (view-header "Fleet"

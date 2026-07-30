@@ -164,6 +164,41 @@ repository registration backlog rather than a business's economics — the gap
 ADR-2607309600 recorded as still open. There is no `.xmile` file in the workspace
 yet either, so the engine path is proven by tests rather than by a shipped model.
 
+## Phase 4: the Repos and Metrics panes
+
+Both read generated files out of the configured workspace and neither has a write
+path. What they share is the discipline the earlier phases built: a number nobody
+measured is not zero.
+
+**Repos** joins `repo-taxonomy.edn` and `repo-maturity.edn` on `:repo/path`. The
+maturity generator's own header promises 「nil when not computable — no fabricated
+defaults」 and delivers: `:maturity/stage-score` is nil for 2,732 of 3,899 repos,
+because most carry no stage marker to parse. So an unscored axis renders as no bar
+at all (a zero-width bar and a 0.0 score are indistinguishable), the mean
+composite covers only scored repos, and the excluded count sits beside the mean.
+Each axis carries its `-method`, so `:impl`'s size-and-scaffold heuristic is not
+mistaken for a parsed declaration.
+
+**Metrics** reads `metrics/<product>.edn` and leads with freshness, because the
+files are not uniformly fresh — eleven of twelve were same-day when this was
+built and one was 28 days old. `undated` is a third state beside `fresh`/`stale`.
+
+Two refusals in the metrics pane are worth naming. It does not unify `:funnel`:
+the three real shapes disagree, and mapping a `freeClaim` onto a `signup` is a
+product judgement with no basis here, so unrecognised keys pass through under
+their own names marked product-specific. And `requests-7d` never travels without
+`probe-4xx-pct`/`error-5xx-pct` in the same map — one real file reports 508,284
+requests at 80% 5xx, so the count alone is the wrong fact.
+
+A bug this phase's tests caught **twice in the same namespace**, worth recording
+because the shape recurs: `:detail` was built with `cond->` chains that `assoc`
+the same key more than once, so the last condition silently overwrote every
+earlier one. A blueprint absent from the fleet catalog *and* undeclared reported
+only the second reason; then, after that was fixed, a row whose path was also
+missing from the generated plane overwrote both. `cond->` threading the same key
+twice is a quiet overwrite, not an accumulation — so the append is now a named
+function (`add-note`) rather than a habit to remember.
+
 ## Consequences
 
 - A business is created and bound by hand. Nothing is derived — which repo or

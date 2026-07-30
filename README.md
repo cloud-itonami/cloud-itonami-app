@@ -261,10 +261,60 @@ and a flow in `repos/day` do not share a y-axis — with a table view beside it.
 
 Two things it says out loud: which model was simulated when a document declares
 several, and that today's leverage ledgers model the **fleet's own repository
-registration backlog**, not a business's economics. There is also no `.xmile`
-file in the workspace yet, so the model face is `missing` until somebody writes
-one; the engine path is verified by tests, not by a shipped model. See
-[ADR-0008](docs/adr/0008-business-is-the-join-of-five-planes.md).
+registration backlog**, not a business's economics.
+
+The superproject now ships one real model —
+`90-docs/business/cloud-itonami-saas-funnel.xmile`, every parameter a dated
+measurement, with the unconverted funnel expressed as a 95% upper bound rather
+than as zero (com-junkawasaki/root ADR-2607310100). Bind it with
+`:business/model` to see it here.
+
+### Repos — an unscored axis is not a zero
+
+```bash
+GET /api/business/{id}/repos
+```
+
+`manifest/repo-taxonomy.edn` and `manifest/repo-maturity.edn` joined on
+`:repo/path`: what kind of thing each repository is, and five 0.0–1.0 maturity
+axes plus a composite. Repos come from two bindings and are labelled by which —
+`:business/repos` is a path the owner named, `:business/adoptions` is a blueprint
+an operator declared they run (its workspace path comes from the fleet catalog,
+never from concatenating org and repo).
+
+`repo-maturity.edn` says in its own header that an axis is nil when not
+computable, and it means it: `:maturity/stage-score` is nil for **2,732 of 3,899**
+repos. So an unscored axis gets **no bar and no number**, the mean composite is
+taken over only the repos that have one, and the count it left out is reported
+beside it. An average that counts a missing score as zero is how a maturity
+dashboard becomes a lie about work nobody assessed. Each axis also carries its
+method, because an `:impl` score is a size-and-scaffold heuristic and a `:stage`
+score is a parsed marker — two identical-looking decimals otherwise.
+
+### Metrics — how old is this number?
+
+```bash
+GET /api/business/{id}/metrics
+```
+
+`90-docs/business/metrics/<product>.edn`, keyed by the bound canvas product.
+**Freshness leads**: every file carries `:as-of`, and measured across the twelve
+real files eleven were same-day while `ai-gftd-yukkuri` was **28 days old**. The
+age is computed against `:business :metrics-max-age-days` (3 by default, because
+the emitter runs daily) and reported as `fresh` / `stale` / `undated` — `undated`
+being its own state, since a file with no date did not measure late, it declined
+to say when.
+
+Two things this pane will not do. It does not unify `:funnel`, because the shape
+differs per product (`{:trials :freeClaims :paid}` vs `{:visitors :chatters
+:paying}` vs `{:visitors :signups :checkouts}`) and deciding a `freeClaim` is a
+`signup` is a product judgement the app has no basis for — product-specific keys
+pass through under their own names. And it never returns `requests-7d` without
+`probe-4xx-pct` and `error-5xx-pct` in the same map: one real file reports 508,284
+requests at 80% 5xx, and 57% probe traffic is normal here, so a request count
+alone would state the wrong fact.
+
+See [ADR-0008](docs/adr/0008-business-is-the-join-of-five-planes.md).
 
 ## Funding accounts and payment settlement
 
