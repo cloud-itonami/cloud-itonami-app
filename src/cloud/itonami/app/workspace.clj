@@ -2,6 +2,7 @@
   "Read-only adapters for the existing Kotoba and Cloud Itonami workspace systems."
   (:require [calendar.model :as calendar]
             [cloud.itonami.app.identity :as local-identity]
+            [cloud.itonami.app.store :as store]
             [clojure.data.json :as json]
             [clojure.java.io :as io]
             [clojure.string :as str]
@@ -19,8 +20,16 @@
            [java.util.concurrent TimeUnit]))
 
 (defonce cache (atom {}))
+(defonce runtime-config (atom {}))
 (def cache-duration (Duration/ofSeconds 60))
 (def jst (ZoneId/of "Asia/Tokyo"))
+
+(defn invalidate! []
+  (reset! cache {}))
+
+(defn configure! [configuration]
+  (reset! runtime-config (:workspace configuration))
+  (invalidate!))
 
 (defn workspace-root []
   (io/file (or (System/getenv "CLOUD_ITONAMI_WORKSPACE")
@@ -28,6 +37,7 @@
 
 (defn- archive-root []
   (io/file (or (System/getenv "CLOUD_ITONAMI_M365_ARCHIVE")
+               (:m365-archive @runtime-config)
                (str (io/file (workspace-root) "m365-archive")))))
 
 (defn- annex-pointer? [file]
@@ -251,13 +261,31 @@
      :labels (vec (sort (map name (:mailbox.message/labels entry))))}))
 
 (defn inbox-snapshot []
-  (let [box (inbox-mailbox)]
-    {:source (:mailbox/source box)
+  (let [box (inbox-mailbox)
+        archive-items
+        (mapv (fn [entry]
+                (-> (entry-view entry)
+                    (assoc :provider :m365-archive)
+                    (update :labels #(vec (distinct (conj % "archive"))))))
+              (mailbox/search box "" {:label :inbox}))
+        synced-messages (vals (get-in (store/snapshot)
+                                      [:mail-sync :messages]))
+        synced (->> synced-messages
+                    (sort-by :received-at #(compare %2 %1))
+                    (take 100)
+                    (mapv #(-> %
+                               (select-keys [:id :provider :subject :from
+                                             :from-email :received-at :snippet
+                                             :labels :size-bytes])
+                               (assoc :available? true))))]
+    {:source "m365-archive / Gmail / Microsoft Graph"
      :model "kotoba-lang/mail"
-     :mode "archive"
+     :mode "oauth-delta+archive"
      :sealed-receiver "net-kotobase/mail-worker"
-     :count (:mailbox/file-count box)
-     :items (mapv entry-view (mailbox/search box "" {:label :inbox}))}))
+     :sync (get-in (store/snapshot) [:mail-sync :providers])
+     :count (+ (:mailbox/file-count box)
+               (count synced-messages))
+     :items (vec (concat synced archive-items))}))
 
 (defn- shallow-files [directory]
   (if-not (.isDirectory directory)

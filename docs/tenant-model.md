@@ -113,3 +113,22 @@ The gftd profile is one distribution of the same application:
 - relay delivery remains a separate, authenticated service boundary.
 
 No gftd-specific behavior is required by the core namespaces.
+
+## Passkey and Wallet Account Links
+
+The User DID is the durable product subject. Passkey credentials authenticate
+that subject; Wallet addresses are replaceable linked accounts:
+
+```text
+User DID
+├── Passkey credential A
+├── Passkey credential B
+├── eip155:1:0x... (active)
+└── eip155:8453:0x... (revoked)
+```
+
+The app never copies or derives one private key from another. EIP-6963
+discovers injected providers such as Coinbase Wallet and MetaMask. EIP-4361
+proves address ownership, while CAIP-10 supplies the chain-qualified account
+identifier. Storage quota and organization membership remain keyed to the User
+DID, so Wallet rotation does not move or duplicate entitlements.
