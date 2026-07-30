@@ -489,6 +489,12 @@
      {:id (:drive/id item)
       :name (:drive/title item)
       :folder (if own? "マイドライブ" "共有アイテム")
+      ;; Which folder it is in, so a listing can be scoped to one without
+      ;; asking the server per item. Nil for a document in somebody else's
+      ;; Drive: the folder it sits in there is not one this principal can
+      ;; navigate to, and naming it would put an id in a breadcrumb that
+      ;; goes nowhere.
+      :parent-id (when own? (:drive/parent-id item))
       :media-type (:drive/media-type item)
       :resource-kind (some-> kind str)
       :kind (some-> (get resource-kinds kind) name)
@@ -525,6 +531,23 @@
       :writable? (contains? #{:owner :editor} role)
       :available? true
       :origin "workspace"})))
+
+(defn folder-view
+  "One folder, in the shape the list renders.
+
+  Deliberately not `item-view`: a folder has no versions, no resource kind
+  and no size, and half of that view would be zeros standing for questions a
+  folder cannot be asked."
+  [workspace item actor]
+  {:id (:drive/id item)
+   :name (:drive/title item)
+   :kind "folder"
+   :label "フォルダ"
+   :parent-id (:drive/parent-id item)
+   :trashed? (ws/trashed? workspace (:drive/id item))
+   :role (some-> (ws/effective-role workspace (:drive/id item) actor) name)
+   :count (count (ws/children workspace (:drive/id item) actor))})
+
 
 (defn- viewable-files
   "Every file in `workspace` this principal may read, with their role."
@@ -630,9 +653,24 @@
   answers to different questions and the trash is not a place anything
   should appear by accident."
   [state actor]
-  (let [workspace (workspace-for state actor)]
-    (newest-first (filter #(:drive/trashed? (:item %))
-                          (viewable-files workspace actor actor)))))
+  (let [workspace (workspace-for state actor)
+        own-flag? #(:drive/trashed? (ws/item workspace %))]
+    (into
+     ;; Folders first, and only those trashed in their own right — a folder
+     ;; inside a trashed folder is not a second thing to restore. Without
+     ;; them the trash could never be emptied of a folder at all, and the
+     ;; bytes of everything inside it would stay charged to the quota with
+     ;; nothing listing them.
+     (->> (vals (:drive.workspace/items workspace))
+          (filter #(and (= :folder (:drive/kind %))
+                        (:drive/trashed? %)
+                        (not (some own-flag? (ws/ancestors workspace (:drive/id %))))))
+          (mapv #(folder-view workspace % actor)))
+     (newest-first (filter #(and (:drive/trashed? (:item %))
+                                 (not (some own-flag?
+                                            (ws/ancestors workspace
+                                                          (:drive/id (:item %))))))
+                           (viewable-files workspace actor actor))))))
 
 (defn quota-view [state actor]
   (let [workspace (workspace-for state actor)]
@@ -732,22 +770,6 @@
           (refuse! {:reason :not-permitted :item-id folder :principal actor})
           :else folder)))))
 
-(defn folder-view
-  "One folder, in the shape the list renders.
-
-  Deliberately not `item-view`: a folder has no versions, no resource kind
-  and no size, and half of that view would be zeros standing for questions a
-  folder cannot be asked."
-  [workspace item actor]
-  {:id (:drive/id item)
-   :name (:drive/title item)
-   :kind "folder"
-   :label "フォルダ"
-   :parent-id (:drive/parent-id item)
-   :trashed? (ws/trashed? workspace (:drive/id item))
-   :role (some-> (ws/effective-role workspace (:drive/id item) actor) name)
-   :count (count (ws/children workspace (:drive/id item) actor))})
-
 (defn create-folder!
   "A folder in `actor`'s Drive.
 
@@ -815,7 +837,23 @@
                    (ws/path workspace here))
        :folders (->> (ws/children workspace here actor)
                      (filter #(= :folder (:drive/kind %)))
-                     (mapv #(folder-view workspace % actor)))})))
+                     (mapv #(folder-view workspace % actor)))
+       ;; Every folder, with where it is, for a *move* — which is a choice
+       ;; among all of them and not among the ones you happen to be standing
+       ;; in. Named by path rather than by title, because two folders called
+       ;; Q1 are an ordinary thing to have and a picker showing both as "Q1"
+       ;; would be asking an unanswerable question.
+       :all (->> (vals (:drive.workspace/items workspace))
+                 (filter #(and (= :folder (:drive/kind %))
+                               (not (ws/trashed? workspace (:drive/id %)))
+                               (ws/can-write? workspace (:drive/id %) actor)))
+                 (mapv (fn [item]
+                         {:id (:drive/id item)
+                          :name (str/join " / "
+                                          (map :drive/title
+                                               (ws/path workspace (:drive/id item))))}))
+                 (sort-by :name)
+                 vec)})))
 
 (defn create!
   "Create a document of `kind` in `actor`'s Drive and return its item view.
@@ -1275,7 +1313,12 @@
   Refuses anything not already trashed. `drive.object/forget-item` names the
   hazard exactly — a caller that wires it to the trash button has made
   deletion silent and permanent — so the trash is the gate rather than a
-  suggestion, and emptying it is a second, separate act."
+  suggestion, and emptying it is a second, separate act.
+
+  Purging a folder purges what is inside it, deepest first, and `:purged`
+  says how many items that was. There is no other way for those bytes to be
+  reclaimed: they are in the trash because their folder is, so nothing ever
+  lists them on their own."
   ([id actor] (purge! id actor (store-instance)))
   ([id actor object-store]
    (locking write-lock
@@ -1291,30 +1334,49 @@
          (throw (ex-info "先にゴミ箱へ移動してください。"
                          {:type :drive/not-trashed :item-id id}))
          :else
-         (let [forgotten (object/forget-item workspace object-store id actor)]
-           (if (:ok? forgotten)
-             ;; forget-item empties the item and returns the quota; the item
-             ;; itself is what is dropped here, because an entry with no
-             ;; versions and no bytes is a row that can only confuse a list.
-             (let [parent (or (:drive/parent-id item)
-                              (:drive.workspace/root-id workspace))
-                   without (-> (:workspace forgotten)
-                               (update :drive.workspace/items dissoc id)
-                               ;; Its own parent, not the root. Everything
-                               ;; lived at the root until folders existed,
-                               ;; so this read correctly and meant the
-                               ;; wrong thing — a purged file would have
-                               ;; stayed listed in its folder for ever,
-                               ;; pointing at an item that is gone.
-                               (update-in [:drive.workspace/items parent
-                                           :drive/children]
-                                          (fn [children]
-                                            (vec (remove #{id} children)))))]
-               (store/transact! assoc-in (workspace-path owner) without)
-               {:schema schema :ok? true :id id
-                :freed-bytes (:freed-bytes forgotten)
-                :quota (quota-view (store/snapshot) owner)})
-             (refuse! forgotten))))))))
+         (let [;; Deepest first, then the item itself. A folder purged before
+               ;; what is inside it would leave those files pointing at a
+               ;; parent that no longer exists — and `trashed?` walks
+               ;; upwards, so the walk would end at a missing item and answer
+               ;; "not in the trash". They would come back into the listing,
+               ;; unreachable and undeletable, having been resurrected by the
+               ;; deletion of their folder.
+               order (conj (vec (reverse (ws/descendants workspace id))) id)
+               result
+               (reduce
+                (fn [{:keys [ws freed] :as acc} target]
+                  (let [child (ws/item ws target)
+                        ;; A folder holds no bytes, so there is nothing for
+                        ;; `forget-item` to forget and no quota to return.
+                        forgotten (if (= :folder (:drive/kind child))
+                                    {:ok? true :workspace ws :freed-bytes 0}
+                                    (object/forget-item ws object-store target actor))]
+                    (if (:ok? forgotten)
+                      (let [parent (or (:drive/parent-id child)
+                                       (:drive.workspace/root-id ws))]
+                        {:ws (-> (:workspace forgotten)
+                                 (update :drive.workspace/items dissoc target)
+                                 ;; Its own parent, not the root. Everything
+                                 ;; lived at the root until folders existed,
+                                 ;; so this read correctly and meant the
+                                 ;; wrong thing — a purged file would have
+                                 ;; stayed listed in its folder for ever,
+                                 ;; pointing at an item that is gone.
+                                 (update-in [:drive.workspace/items parent
+                                             :drive/children]
+                                            (fn [children]
+                                              (vec (remove #{target} children)))))
+                         :freed (+ freed (or (:freed-bytes forgotten) 0))})
+                      (reduced (assoc acc :failed forgotten)))))
+                {:ws workspace :freed 0}
+                order)]
+           (if-let [failed (:failed result)]
+             (refuse! failed)
+             (do (store/transact! assoc-in (workspace-path owner) (:ws result))
+                 {:schema schema :ok? true :id id
+                  :purged (count order)
+                  :freed-bytes (:freed result)
+                  :quota (quota-view (store/snapshot) owner)}))))))))
 
 (defn empty-trash!
   "Purge everything in the trash, and report what came back.
@@ -1327,7 +1389,11 @@
      (let [ids (mapv :id (trashed (store/snapshot) actor))
            results (mapv #(purge! % actor object-store) ids)]
        {:schema schema :ok? true
-        :purged (count results)
+        ;; What was removed, not how many things were listed. Purging a
+        ;; folder purges what is inside it, so the two stopped being the
+        ;; same number the moment folders existed — and the one worth
+        ;; reporting is the one that says how much is gone.
+        :purged (reduce + 0 (map #(or (:purged %) 1) results))
         :freed-bytes (reduce + 0 (map :freed-bytes results))
         :quota (quota-view (store/snapshot) actor)}))))
 

@@ -174,6 +174,14 @@
   .drive-create-bar{display:flex;align-items:center;flex-wrap:wrap;gap:.5rem .75rem;
     margin:1rem 0 0}
   .drive-create{display:flex;flex-wrap:wrap;gap:.5rem}
+  .drive-folders{display:flex;align-items:center;flex-wrap:wrap;gap:.375rem .5rem;
+    margin:.5rem 0}
+  .drive-crumb{display:flex;align-items:center;flex-wrap:wrap;gap:.25rem}
+  .drive-crumb__sep{color:var(--color-neutral-solid-gray-600);font-size:.8125rem}
+  .drive-folder{display:inline-flex;align-items:center;gap:.375rem}
+  /* The one place a folder is not a document: it is a destination, so it
+     reads as a chip rather than as a row in the list below. */
+  .drive-folder--chip{border-radius:999px;padding:.25rem .75rem}
   .drive-create__status{margin:0;color:var(--color-neutral-solid-gray-600);
     font-size:.8125rem;line-height:1.5}
   .drive-trash{margin-top:1.5rem;border:1px solid var(--color-neutral-solid-gray-200);
@@ -732,12 +740,94 @@
     };
     let driveData = {items:[]};
     let selectedDrive = null;
+    // Where in the tree the list is looking. Null is the root, which is
+    // where everything was before folders existed and where a first visit
+    // starts.
+    let driveFolder = null;
+    let folderData = {folders:[], path:[], all:[]};
+    const loadFolders = async () => {
+      const url = '/api/workspace/drive/folders'
+        + (driveFolder ? `?folder=${encodeURIComponent(driveFolder)}` : '');
+      const request = await fetch(url);
+      const data = await request.json();
+      // A folder that is gone — purged by another session, or trashed —
+      // puts the listing back at the root rather than leaving it pointing
+      // at nothing.
+      if (!request.ok || data.error) { driveFolder = null; return; }
+      folderData = data;
+    };
+    const goToFolder = async (id) => {
+      driveFolder = id;
+      await loadFolders();
+      renderDrive(driveData);
+    };
+    const renderFolders = (query) => {
+      const nav = $('#drive-folders'); if (!nav) return;
+      nav.replaceChildren();
+      if (query) {
+        // Searching looks everywhere, so a breadcrumb saying where you are
+        // standing would be describing a place the results are not from.
+        nav.append(make('span', 'surface-note', '検索中はすべてのフォルダから探します。'));
+        return;
+      }
+      const crumb = make('div', 'drive-crumb');
+      (folderData.path || []).forEach((step, index) => {
+        if (index) crumb.append(make('span', 'drive-crumb__sep', '›'));
+        const button = make('button', 'tool-button drive-folder--chip', step.name);
+        button.type = 'button';
+        button.disabled = index === (folderData.path || []).length - 1;
+        button.addEventListener('click', () => goToFolder(index === 0 ? null : step.id));
+        crumb.append(button);
+      });
+      nav.append(crumb);
+      (folderData.folders || []).forEach((folder) => {
+        const button = make('button', 'tool-button drive-folder',
+          `${folder.name}（${folder.count}）`);
+        button.type = 'button';
+        button.addEventListener('click', () => goToFolder(folder.id));
+        nav.append(button);
+      });
+      const add = make('button', 'tool-button', 'フォルダを作成');
+      add.type = 'button';
+      add.addEventListener('click', createFolder);
+      nav.append(add);
+    };
+    const createFolder = async () => {
+      const status = $('#drive-create-status');
+      const name = ($('#drive-folder-name')?.value || '').trim();
+      status.textContent = 'フォルダを作成しています…';
+      try {
+        const made = await postJSON('/api/workspace/drive/folders',
+          {title:name || '無題のフォルダ', folder:driveFolder}, true);
+        status.textContent = `${made.item.name} を作成しました。`;
+        // Cleared, or the next folder silently gets the same name.
+        if ($('#drive-folder-name')) $('#drive-folder-name').value = '';
+        await loadFolders();
+        await loadWorkspace('drive', renderDrive);
+      } catch (error) {
+        status.textContent = error.message;
+      }
+    };
     const renderDrive = (data) => {
       driveData = data;
       const query = ($('#drive-search').value || '').trim().toLocaleLowerCase('ja');
-      const items = data.items.filter((item) =>
+      const matches = data.items.filter((item) =>
         [item.name, item.folder, item['media-type']]
           .some((value) => String(value || '').toLocaleLowerCase('ja').includes(query)));
+      // Searching looks everywhere. A search scoped to the folder you happen
+      // to be standing in is a search that cannot find what you are looking
+      // for, which is the only reason to search. Shared items are not in
+      // this tree at all — they have no reachable parent here — so they stay
+      // visible at the root rather than disappearing into a folder nobody
+      // can open.
+      const here = folderData.folder || null;
+      const items = query ? matches : matches.filter((item) => {
+        // A document shared from somebody else's Drive sits in their tree,
+        // so it has no folder in this one. It belongs at the top rather
+        // than nowhere.
+        if (!item['parent-id']) return !driveFolder;
+        return item['parent-id'] === here;
+      });
       if (!items.some((item) => item.id === selectedDrive?.id)) selectedDrive = items[0] || null;
       const list = $('#drive-list'); list.replaceChildren();
       const select = (item) => { selectedDrive = item; renderDrive(driveData); };
@@ -745,7 +835,12 @@
         title:item.name, time:bytes(item['size-bytes']),
         meta:item.origin === 'workspace' ? `${item.label} · ${item.folder}` : item.folder,
         snippet:item['media-type']})));
-      if (!items.length) list.append(make('li', 'empty-state', '条件に一致するファイルはありません。'));
+      if (!items.length) {
+        list.append(make('li', 'empty-state',
+          query ? '条件に一致するファイルはありません。'
+                : 'このフォルダにはまだ何もありません。'));
+      }
+      renderFolders(query);
       if (selectedDrive && selectedDrive.origin === 'workspace') {
         setDetail($('#drive-detail'), selectedDrive.label,
           selectedDrive.name, selectedDrive['trashed?']
@@ -849,7 +944,7 @@
       status.textContent = `${kind.label}を作成しています…`;
       try {
         const created = await postJSON('/api/workspace/drive/documents',
-          {kind:kind.kind}, true);
+          {kind:kind.kind, folder:driveFolder}, true);
         status.textContent = `${created.item.name} を作成しました。`;
         selectedDrive = created.item;
         await loadWorkspace('drive', renderDrive);
@@ -1462,7 +1557,34 @@
       if (item['writable?']) row.append(rename);
       row.append(open);
       if (item['writable?']) row.append(save);
-      if (item.role === 'owner') row.append(trash);
+      if (item.role === 'owner') {
+        // Owner only, because moving into a shared folder shares what was
+        // moved — an editor who could move could widen the access the owner
+        // granted, the same reason re-sharing is owner-only.
+        const destinations = (folderData.all || [])
+          .filter((folder) => folder.id !== item.id);
+        const picker = selectInput(item['parent-id'] || '',
+          destinations.map((folder) => folder.id),
+          async (value) => {
+            const status = $('#drive-create-status');
+            try {
+              await postJSON(
+                `/api/workspace/drive/documents/${encodeURIComponent(item.id)}/move`,
+                {folder:value}, true);
+              status.textContent = `${item.name} を移動しました。`;
+              await loadFolders();
+              await loadWorkspace('drive', renderDrive);
+            } catch (error) { status.textContent = error.message; }
+          });
+        // Labelled by path, valued by id: two folders called Q1 are ordinary
+        // and a picker showing both as Q1 asks an unanswerable question.
+        Array.from(picker.options).forEach((option) => {
+          const hit = destinations.find((folder) => folder.id === option.value);
+          if (hit) option.textContent = hit.name;
+        });
+        row.append(field('フォルダ', picker));
+        row.append(trash);
+      }
       actions.append(row, status, modes, pane, editor, versions);
       renderPane();
       if (item.kind === 'forms') actions.append(answerPanel(item));
@@ -2217,6 +2339,10 @@
         const request = await fetch(`/api/workspace/${name}`);
         const data = await request.json();
         if (!request.ok) throw new Error(data?.error?.message || `${name} を読み込めませんでした。`);
+        // The tree the Drive list is scoped by. Fetched here rather than
+        // inside renderDrive, which runs on every keystroke in the search
+        // box — that would be a request per character.
+        if (name === 'drive' && !(folderData.path || []).length) await loadFolders();
         renderer(data);
         return true;
       } catch (error) {
@@ -3389,6 +3515,14 @@
                  :role "group" :aria-label "新しいドキュメントを作成"}]
           [:span {:class "result-count" :id "drive-quota"}]
           [:p {:class "drive-create__status" :id "drive-create-status" :aria-live "polite"}]]
+         [:nav {:class "drive-folders" :id "drive-folders" :aria-label "フォルダ"}]
+         [:div {:class "drive-folders"}
+          [:label {:class "visually-hidden" :for "drive-folder-name"} "新しいフォルダの名前"]
+          ;; An inline field rather than window.prompt, for the same reason
+          ;; renaming uses one: a modal blocks the page to collect a single
+          ;; string this bar already has room for.
+          [:input {:class "workspace-search" :id "drive-folder-name" :type "text"
+                   :placeholder "新しいフォルダの名前" :autocomplete "off"}]]
          [:div {:class "workspace-toolbar"}
           [:label {:class "visually-hidden" :for "drive-search"} "ファイルを検索"]
           [:input {:class "workspace-search" :id "drive-search" :type "search"
