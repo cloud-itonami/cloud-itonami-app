@@ -1437,18 +1437,50 @@
       const root = make('div', 'surface-editor');
       const tabs = payload['sheets/tabs'] || {};
       const tabIds = Object.keys(tabs);
+      // A workbook with no tabs is not a dead end any more: the button
+      // below makes one. It used to send the reader to the JSON editor,
+      // which is a thing to say about a corrupted file and not about an
+      // empty one.
+      const addTab = make('button', 'tool-button', 'タブを追加');
+      addTab.type = 'button';
+      addTab.addEventListener('click', () => {
+        payload['sheets/tabs'] = payload['sheets/tabs'] || {};
+        // The first free number rather than the count: in a workbook whose
+        // first two tabs were deleted the count is 1, and reusing an id
+        // silently replaces the tab that already has it.
+        let n = Object.keys(payload['sheets/tabs']).length + 1;
+        while (payload['sheets/tabs'][`sheet${n}`]) n += 1;
+        const id = `sheet${n}`;
+        payload['sheets/tabs'][id] = {'sheets/id':id, 'sheets/title':`シート${n}`,
+                                      'sheets/cells':{}};
+        driveEditor.tab = id;
+        changed(true);
+      });
       if (!tabIds.length) {
-        root.append(make('p', 'empty-state', 'タブがありません。JSON で編集してください。'));
+        root.append(make('p', 'empty-state', 'タブがありません。'), addTab);
         return root;
       }
       const current = tabIds.includes(driveEditor.tab) ? driveEditor.tab : tabIds[0];
       driveEditor.tab = current;
-      root.append(field('タブ', selectInput(current, tabIds, (value) => {
+      const tabRow = make('div', 'detail-actions__row');
+      tabRow.append(field('タブ', selectInput(current, tabIds, (value) => {
         driveEditor.tab = value; changed(true);
       })));
       const tab = tabs[current];
-      root.append(field('タブ名', textInput(tab['sheets/title'],
+      tabRow.append(field('タブ名', textInput(tab['sheets/title'],
         (value) => { tab['sheets/title'] = value; changed(false); })));
+      tabRow.append(addTab);
+      // Removing the last one would leave a workbook the editor cannot show
+      // and the reader has to invent a sheet for. Offered only while there
+      // is another to go back to.
+      if (tabIds.length > 1) {
+        tabRow.append(removeButton(() => {
+          delete payload['sheets/tabs'][current];
+          driveEditor.tab = Object.keys(payload['sheets/tabs'])[0] || null;
+          changed(true);
+        }));
+      }
+      root.append(tabRow);
       const cells = tab['sheets/cells'] || {};
       // Two beyond whatever is used, so there is always somewhere to type.
       let maxRow = 3; let maxCol = 3;

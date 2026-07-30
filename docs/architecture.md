@@ -674,6 +674,30 @@ Only `:docs`, and only a block's text. Proposing a new block, a deletion or
 a reordering is a larger surface, and offering half of it would leave a
 reviewer wondering which half.
 
+### A workbook can have more than one tab
+
+Every other surface could add to itself — a form a question, a document a
+paragraph, a deck a slide — and a workbook was stuck with the tab it was
+created with unless somebody hand-edited the JSON. The same shape folders,
+suggestions and named ranges were in: the model allowed it and nothing
+offered it.
+
+Removing the last tab is not offered. It would leave a workbook the editor
+cannot show and the writer has to invent a sheet for, which is a state
+nobody chose. A new tab takes the first free `sheetN`, not the count: in a
+workbook whose first two tabs were deleted the count is 1, and reusing an id
+silently replaces the tab that already has it.
+
+The server half is what the tests cover, because it is what can be
+checked here: a two-tab workbook survives the validator, each tab computes
+against its own cells, both worksheets are written, and the pair comes back
+whole through an xlsx round trip. CSV still takes one tab by name and says
+so when asked for one that is not there — a CSV is one table.
+
+`A1` means *this* tab's A1. Cross-tab references are `'シート'!A1` in a
+spreadsheet and are not implemented, so the answer is this tab's cell rather
+than a silent mixture of two.
+
 ### A spreadsheet that computes
 
 A workbook could hold `=SUM(B2:B9)` and never compute one. `sheets.xlsx`
