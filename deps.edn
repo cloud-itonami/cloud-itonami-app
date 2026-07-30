@@ -26,7 +26,13 @@
   ;; main (landed as untracked WIP) and cannot load there.
   io.github.kotoba-lang/drive
   {:git/url "https://github.com/kotoba-lang/drive.git"
-   :git/sha "46605af22ac9930786388b01007723d096aa0eaf"}
+   :git/sha "af096f28367b3f651980750f2f5256d887fc9db4"}
+  ;; Storj as an IObjectStore. Its store-fns produce exactly the four-function
+  ;; map drive.object/store-of takes, and neither library depends on the other
+  ;; — this app depends on both, which is the arrangement both docstrings name.
+  io.github.kotoba-lang/io-storj
+  {:git/url "https://github.com/kotoba-lang/io-storj.git"
+   :git/sha "daa038ba72fd515452d0f4091298568755a39ec9"}
   io.github.kotoba-lang/identity
   {:git/url "https://github.com/kotoba-lang/identity.git"
    :git/sha "5cf94e38c816ced6857ef62de344f6adea9fc050"}

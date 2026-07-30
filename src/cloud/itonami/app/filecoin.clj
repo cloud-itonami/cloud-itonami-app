@@ -59,6 +59,7 @@
             [clojure.string :as str]
             [cloud.itonami.app.config :as config]
             [drive.object :as object]
+            [kotoba.bytes :as b]
             [filecoin.client :as client]
             [filecoin.cloud.chain :as chain]
             [filecoin.cloud.evm :as evm]
@@ -165,7 +166,7 @@
           (try
             (let [{:keys [status bytes]} (fetch url)]
               (when (<= 200 status 299)
-                (let [v (provider/verify-bytes ref (mapv #(bit-and (int %) 0xff) bytes))]
+                (let [v (provider/verify-bytes ref (b/->bytes bytes))]
                   (when (:ok? v) bytes))))
             (catch Exception _ nil)))
         (retrieval-urls ref opts)))
@@ -184,7 +185,15 @@
   ([] (store {}))
   ([{:keys [fetch] :as opts}]
    (object/store-of
-    {:put-object
+    {;; `drive` hands the write side a vector of unsigned ints — that is the
+     ;; protocol's shape, and `write-item` normalises to it before it measures
+     ;; quota. `io/copy` and `piece-ref` both want a real array, so this is
+     ;; where that is said. Without it a write through `drive.object/write-item`
+     ;; reaches `io/copy` as a vector and fails; direct `-put-object` callers
+     ;; passing an array still work, because the coercion is total.
+     :bytes-out (fn [v] (byte-array (map unchecked-byte (b/->bytes v))))
+
+     :put-object
      (fn [ref bytes]
        (let [computed (piece-ref bytes)]
          (when-not (= ref computed)
