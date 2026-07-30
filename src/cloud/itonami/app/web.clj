@@ -2127,6 +2127,192 @@
         if (found) $('#contracts-detail').replaceChildren(contractDetail(found));
       }
     };
+    let esignData = null;
+    let selectedEnvelope = null;
+    const esignStatusText = {
+      'awaiting-signatures':'署名待ち', completed:'署名完了', declined:'辞退'
+    };
+    const esignAssuranceText = {
+      'hardware-attested':'ハードウェア（attestation 検証済み）',
+      'platform-attested':'ハードウェア（AAGUID 一致）',
+      'platform-claimed':'クライアントの申告のみ（未署名の主張）',
+      unknown:'不明'
+    };
+    const envelopeDetail = (envelope) => {
+      const root = make('div');
+      root.append(make('h3', null, envelope['document-title'] || envelope['document-id']),
+        make('p', 'data-list__meta',
+          `${esignStatusText[envelope.status] || envelope.status} · ` +
+          `${envelope.intent}`));
+      const digests = make('div', 'local-card');
+      digests.append(make('h4', null, '署名の対象'),
+        make('p', 'wallet-address', `文書 digest: ${envelope['document-digest']}`),
+        make('p', 'wallet-address', `表示 digest: ${envelope['presentation-digest']}`),
+        make('p', 'form-help',
+          'この 2 つが commitment に入り、その SHA-256 が challenge になります。' +
+          '文書を後から編集しても、この envelope が指す版は変わりません。'));
+      root.append(digests);
+      // What you see is what you sign. The outline is exhaustive by
+      // construction, so 'this document contains nothing you were not shown'
+      // is a property of the format rather than a claim about this pane —
+      // which is why the whole of it is rendered and not a summary.
+      if (envelope.presentation) {
+        const view = make('div', 'local-card');
+        view.append(make('h4', null, '署名者に表示される内容（全文）'),
+          make('p', 'form-help',
+            '構造化データの中身をすべて 1 行ずつ列挙したものです。' +
+            '折りたたまれた項目や表示範囲外のセルも含まれるため、' +
+            '「見えていないものに署名する」ことが起こりません。'));
+        const pre = make('pre', 'wallet-address');
+        pre.textContent = envelope.presentation;
+        pre.style.maxHeight = '18rem';
+        pre.style.overflow = 'auto';
+        pre.style.whiteSpace = 'pre-wrap';
+        view.append(pre);
+        root.append(view);
+      } else if (envelope['content-forgotten?']) {
+        root.append(make('p', 'form-help',
+          '内容は削除要求により破棄されています。署名と digest は残っているため、' +
+          'この digest の文書に署名がなされた事実は今も検証できます。'));
+      }
+      (envelope.signers || []).forEach((signer) => {
+        const row = make('div', 'local-card');
+        row.append(make('p', 'wallet-address', signer.did),
+          make('p', 'data-list__meta',
+            `${esignStatusText[signer.status] || signer.status}` +
+            (signer.at ? ` · ${signer.at}` : '')));
+        if (signer.assurance) {
+          row.append(make('p', 'form-help',
+            `鍵の保証: ${esignAssuranceText[signer.assurance] || signer.assurance}`));
+        }
+        if (signer.reason) row.append(make('p', 'form-help', signer.reason));
+        if (signer.status === 'pending' && signer.did === esignData['my-did']) {
+          const sign = make('button', 'primary-action', 'Passkey で署名');
+          sign.type = 'button';
+          sign.addEventListener('click', () => signEnvelope(envelope, sign));
+          const decline = make('button', null, '辞退する');
+          decline.type = 'button';
+          decline.addEventListener('click', () => declineEnvelope(envelope, decline));
+          row.append(sign, decline);
+        }
+        root.append(row);
+      });
+      const evidence = make('button', null, '証拠記録を取得');
+      evidence.type = 'button';
+      evidence.addEventListener('click', async () => {
+        evidence.disabled = true;
+        try {
+          const record = await fetch(`/api/esign/envelopes/${encodeURIComponent(envelope.id)}/evidence`)
+            .then((r) => r.json());
+          const verified = await postJSON('/api/esign/verify', {evidence:record}, true);
+          const panel = make('div', 'local-card');
+          panel.append(make('h4', null, '検証結果'),
+            make('p', 'data-list__title', verified['esign/status']),
+            make('p', 'form-help', verified['esign/time-note']));
+          (verified['esign/signatures'] || []).forEach((s) => {
+            panel.append(make('p', 'wallet-address',
+              `${s['signer-did']} · ${s.status}`));
+            (s.reasons || []).forEach((r) => panel.append(
+              make('p', 'form-help', `${r.reason}: ${r.detail}`)));
+          });
+          root.append(panel);
+        } catch (error) {
+          root.append(make('p', 'form-help', error.message));
+        } finally {
+          evidence.disabled = false;
+        }
+      });
+      root.append(evidence);
+      return root;
+    };
+    const renderEsign = (data) => {
+      esignData = data;
+      const list = $('#esign-list'); list.replaceChildren();
+      $('#esign-count').textContent = data.envelopes.length;
+      const waiting = data.envelopes.filter(
+        (e) => e.status === 'awaiting-signatures').length;
+      $('#esign-source').textContent =
+        `${data.envelopes.length} 件 · 署名待ち ${waiting} 件`;
+      data.envelopes.forEach((envelope) => {
+        const item = listItem(envelope['document-title'] || envelope['document-id'],
+          `${esignStatusText[envelope.status] || envelope.status} · ${envelope['created-at']}`,
+          `${envelope['signature-count']} / ${(envelope.signers || []).length}`,
+          false);
+        item.addEventListener('click', () => {
+          selectedEnvelope = envelope.id;
+          $('#esign-detail').replaceChildren(envelopeDetail(envelope));
+        });
+        list.append(item);
+      });
+      if (!data.envelopes.length) {
+        list.append(make('li', 'empty-state', '署名の依頼はまだありません。'));
+      } else if (selectedEnvelope) {
+        const found = data.envelopes.find((e) => e.id === selectedEnvelope);
+        if (found) $('#esign-detail').replaceChildren(envelopeDetail(found));
+      }
+    };
+    const refreshEsignDocuments = () => {
+      const select = $('#esign-document');
+      if (!select) return;
+      const chosen = select.value;
+      select.replaceChildren();
+      // Only documents this Drive can actually freeze a version of. An archive
+      // item has no object reference to digest, so offering one would produce a
+      // request that fails after the user chose it.
+      (driveData.items || [])
+        .filter((item) => item.origin === 'workspace' && !item['trashed?'])
+        .forEach((item) => {
+          const option = make('option', null, item.name);
+          option.value = item.id;
+          select.append(option);
+        });
+      if (!select.children.length) {
+        const option = make('option', null, '署名できるドキュメントがありません');
+        option.value = '';
+        select.append(option);
+      }
+      if (chosen) select.value = chosen;
+    };
+    const loadEsign = () => fetch('/api/esign')
+      .then((r) => r.ok ? r.json() : null)
+      .then((d) => { if (d) { renderEsign(d); refreshEsignDocuments(); }
+                     return Boolean(d); })
+      .catch(() => {
+        $('#esign-source').textContent = 'envelope を読み込めません。';
+        return false;
+      });
+    const signEnvelope = async (envelope, button) => {
+      button.disabled = true; button.textContent = '署名の準備中…';
+      try {
+        requireWebAuthn();
+        const started = await postJSON(
+          `/api/esign/envelopes/${encodeURIComponent(envelope.id)}/sign/start`, {}, true);
+        button.textContent = '生体認証を待っています…';
+        const credential = await navigator.credentials.get(assertionOptions(started));
+        await postJSON(
+          `/api/esign/envelopes/${encodeURIComponent(envelope.id)}/sign/finish`,
+          {'transaction-id':started['transaction-id'],
+           credential:credentialJSON(credential)}, true);
+        await loadEsign();
+      } catch (error) {
+        $('#esign-detail').append(make('p', 'form-help', error.message));
+      } finally {
+        button.disabled = false; button.textContent = 'Passkey で署名';
+      }
+    };
+    const declineEnvelope = async (envelope, button) => {
+      button.disabled = true;
+      try {
+        await postJSON(
+          `/api/esign/envelopes/${encodeURIComponent(envelope.id)}/decline`,
+          {reason:''}, true);
+        await loadEsign();
+      } catch (error) {
+        $('#esign-detail').append(make('p', 'form-help', error.message));
+      } finally {
+        button.disabled = false;
+      }
+    };
     const loadContracts = () => fetch('/api/contracts')
       .then((r) => r.ok ? r.json() : null)
       .then((d) => { if (d) renderContracts(d); return Boolean(d); })
@@ -2464,12 +2650,41 @@
         // items behind a session, and every reveal writes a line into kagi's
         // audit ledger. Loading it before a Passkey exists would put unattributed
         // reveals in the ledger of a user who has not logged in yet.
-        loadContracts()
+        loadContracts(),
+        // After loadWorkspace('drive', …) has run, because the request form's
+        // document list is built from what that loaded. Promise.all does not
+        // order these, so `refreshEsignDocuments` is also called on every
+        // subsequent `loadEsign` rather than only here.
+        loadEsign()
       ]).then((results) => {
         const connected = results.filter(Boolean).length;
         $('#workspace-status').textContent = `${connected} / ${results.length} サービス接続`;
       });
     };
+    $('#esign-request-form').addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const button = event.submitter;
+      const status = $('#esign-request-status');
+      button.disabled = true; button.textContent = '依頼を作成中…';
+      try {
+        const dids = $('#esign-signers').value.split('\\n')
+          .map((line) => line.trim()).filter(Boolean);
+        if (!dids.length) throw new Error('署名者の DID を 1 件以上入力してください。');
+        if (!$('#esign-document').value) throw new Error('ドキュメントを選んでください。');
+        await postJSON('/api/esign/envelopes', {
+          'document-id':$('#esign-document').value,
+          purpose:$('#esign-purpose').value,
+          'signer-dids':dids
+        }, true);
+        $('#esign-signers').value = '';
+        status.textContent = '署名を依頼しました。';
+        await loadEsign();
+      } catch (error) {
+        status.textContent = error.message;
+      } finally {
+        button.disabled = false; button.textContent = '署名を依頼する';
+      }
+    });
     $('#inbox-search').addEventListener('input', () => renderInbox(inboxData));
     // The box filters the list as you type, which is instant and local, and
     // separately asks the server what is inside the documents, which is not.
@@ -3199,6 +3414,7 @@
         (nav-item "drive" "Drive" "◇" "drive-count")
         (nav-item "scheduler" "Scheduler" "○" "scheduler-count")
         (nav-item "storage" "Storage" "◈" "storage-count")
+        (nav-item "esign" "eSign" "✍" "esign-count")
         (nav-item "contracts" "Contracts" "◫" "contracts-count")
         (nav-item "settings" "Settings" "⚙" nil)]
        [:div {:class "sidebar__status"}
@@ -3444,6 +3660,54 @@
             [:li {:class "skeleton"}]]]
           [:article {:class "record-detail" :id "storage-detail" :aria-live "polite"}
            [:div {:class "empty-state"} "Filecoin の状態を読み込んでいます。"]]]]
+        [:section {:class "view" :data-view-panel "esign" :hidden true}
+         (view-header "eSign"
+                      (str "Drive のドキュメントを Passkey で署名します。署名の対象は"
+                           "文書そのものではなく、文書 digest と「あなたが読んだ内容」の"
+                           "digest を含む commitment で、その SHA-256 が WebAuthn の"
+                           "challenge になります。"))
+         [:p {:class "source-note"} [:span {:class "source-dot"}]
+          [:span {:id "esign-source"} "envelope を確認中…"]]
+         ;; Stated on the screen, not only in the evidence record. A UI that
+         ;; showed "署名済み" without this would be implying more than the
+         ;; signature establishes, and the person reading it is the one who has
+         ;; to know.
+         [:div {:class "security-callout" :id "esign-time-notice"}
+          [:strong "署名時刻はこのアプリが記録したもので、認定タイムスタンプではありません。"]
+          " RFC 3161 の時刻認証局（総務大臣認定事業者）による時刻認証は未実装のため、"
+          "電子帳簿保存法が求める真実性の確保措置としては、この時刻だけでは足りません。"
+          "署名そのもの（誰が・何に同意したか）は、この画面を離れても検証できます。"]
+         [:div {:class "record-browser"}
+          [:div {:class "record-list"}
+           [:ul {:class "record-list__items" :id "esign-list"}
+            [:li {:class "skeleton"}]]]
+          [:article {:class "record-detail" :id "esign-detail" :aria-live "polite"}
+           [:div {:class "empty-state"}
+            "envelope を選ぶと、署名の対象と、署名者に表示される内容の全文を確認できます。"]]]
+         [:div {:class "local-card"}
+          (dds/heading 2 "署名を依頼する" {:size "24"})
+          [:form {:class "settings-form" :id "esign-request-form"}
+           [:label {:for "esign-document"} "ドキュメント"]
+           [:select {:id "esign-document" :name "document"}]
+           [:label {:for "esign-purpose"} "目的"]
+           [:select {:id "esign-purpose" :name "purpose"}
+            [:option {:value "contract/execute"} "契約に署名する"]
+            [:option {:value "consent/give"} "同意する"]
+            [:option {:value "minutes/approve"} "議事録を承認する"]
+            [:option {:value "acknowledgement/receive"} "受領を確認する"]
+            [:option {:value "application/submit"} "申請を提出する"]]
+           ;; DIDs, not email addresses. A commitment names the key that will
+           ;; sign, and a person with two Passkeys has two DIDs — asking for an
+           ;; address would make the app pick one of them silently.
+           [:label {:for "esign-signers"} "署名者の DID（1 行に 1 件）"]
+           [:textarea {:id "esign-signers" :name "signers" :rows 3
+                       :placeholder "did:key:z..."}]
+           [:p {:class "form-help"}
+            "Passkey を登録していない相手は指定できません。署名待ちのまま永久に"
+            "完了しない envelope を作らないため、その場で拒否されます。"]
+           [:button {:class "primary-action" :type "submit"} "署名を依頼する"]]
+          [:p {:class "visually-hidden" :id "esign-request-status"
+               :role "status" :aria-live "polite"}]]]
         [:section {:class "view" :data-view-panel "contracts" :hidden true}
          (view-header "Contracts"
                       (str "契約している継続課金を、kagi の vault から復号して読みます。"

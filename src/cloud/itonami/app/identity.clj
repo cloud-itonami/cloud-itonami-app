@@ -288,6 +288,18 @@
             with-users
             (:organizations identity-state))))))))
 
+(defn session-organization-did
+  "The `did:web` of the organization this session belongs to, or nil.
+
+  nil when the organization has not claimed an Organization ID yet, and a
+  caller must treat that as \"no organization DID\" rather than substituting the
+  issuer's own — `cloud.itonami.app.esign` puts this inside a signing
+  commitment, and naming a DID that does not resolve would produce a signature
+  that appears to be on behalf of an entity nobody can look up."
+  [session]
+  (get-in (identity-state (store/snapshot))
+          [:organizations (:organization-id session) :did]))
+
 (defn organization-domain-for-did-web
   "The domain whose `did:web` document this deployment should serve, or nil.
 
