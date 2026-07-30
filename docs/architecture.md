@@ -68,6 +68,31 @@ nothing. `documents/purge!` is the one call that does, it refuses anything not
 already in the trash, and the Drive shows the trash and the quota together
 because otherwise a Drive that fills up cannot say why.
 
+### Searching inside documents
+
+The Drive could filter a list of names. What a cell says, what a paragraph
+says, what is written on a slide — none of it was reachable except by
+opening the document.
+
+What counts as text is the model's business and lives with each surface as
+`:text` in `documents/kinds`, next to `:vocabulary` and `:problems`.
+Searching is the app's, because only the app knows which documents this
+principal may read — and a search reaches exactly as far as a listing does,
+so it cannot be used to learn that a document exists.
+
+A title match wins over a content match and a document appears once. The
+snippet is cut to a window around the hit and quotes the *document's* casing,
+not the query's: echoing the query back would be quoting something the
+document does not say.
+
+**It reads every readable document's bytes on every search.** No index, so
+nothing can be stale and nothing has to be rebuilt — linear in the size of
+the Drive, which is the right trade for one household's documents and the
+wrong one for an organisation's. When it stops being right, the fix is an
+index keyed on the object reference, which already changes on every save.
+The UI debounces at 300 ms for the same reason: a request per keystroke
+would be a scan per keystroke.
+
 ### Import and export
 
 Three formats, and only one of them is new code here.

@@ -115,6 +115,13 @@
             :rehydrate sheets-wire/rehydrate-workbook
             :problems sheets-validate/problems
             :severity :sheets/severity :code :sheets/code :message :sheets/msg
+            :text (fn [wb]
+                    (concat (keep :sheets/title (vals (:sheets/tabs wb)))
+                            (for [tab (vals (:sheets/tabs wb))
+                                  cell (vals (:sheets/cells tab))
+                                  text [(:sheets/value cell) (:sheets/formula cell)]
+                                  :when (some? text)]
+                              text)))
             ;; A workbook has no closed vocabulary an editor has to offer —
             ;; a cell holds whatever it holds.
             :vocabulary nil}
@@ -130,6 +137,14 @@
           :rehydrate docs-wire/rehydrate-document
           :problems docs-validate/problems
           :severity :docs/severity :code :docs/code :message :docs/msg
+          :text (fn [doc]
+                  (concat (keep :docs/text (:docs/blocks doc))
+                          (mapcat :docs/items (:docs/blocks doc))
+                          (for [block (:docs/blocks doc)
+                                row (:docs/rows block)
+                                cell row]
+                            cell)
+                          (keep :docs/text (:docs/comments doc))))
           ;; From `docs.model` rather than restated: the editor offers the
           ;; kinds the validator will accept, and there is one list of them.
           :vocabulary docs/block-kinds}
@@ -145,6 +160,7 @@
            :rehydrate forms-wire/rehydrate-form
            :problems forms-validate/form-problems
            :severity :forms/severity :code :forms/code :message :forms/msg
+           :text (fn [form] (keep :forms/label (:forms/fields form)))
            :vocabulary forms/field-types}
    :slides {:resource-kind :slides/deck
             :label "スライド"
@@ -168,6 +184,13 @@
                         (slides-validate/deck-problems
                          (slides/add-item (slides/workspace "cloud-itonami") deck)))
             :severity :slides/severity :code :slides/code :message :slides/msg
+            :text (fn [deck]
+                    (concat (keep :slides/title (:slides/slides deck))
+                            (for [slide (:slides/slides deck)
+                                  shape (:slides/shapes slide)
+                                  :let [text (:slides/text shape)]
+                                  :when (some? text)]
+                              text)))
             :vocabulary slides-validate/shape-kinds}})
 
 (def export-formats
@@ -1582,3 +1605,95 @@
          target (writable! actor doc-id)]
      (write-resource! target doc-id actor object-store resource
                       (:drive/object-ref (:item target))))))
+
+;; ── searching inside documents ──────────────────────────────────────────────
+;;
+;; The Drive could filter a list of names. Everything else about a document —
+;; what a cell says, what a paragraph says, what is written on a slide — was
+;; unreachable except by opening it.
+;;
+;; What counts as text is the model's business and lives with each surface as
+;; `:text`, next to `:vocabulary` and `:problems`. Searching is the app's,
+;; because only the app knows which documents this principal may read.
+;;
+;; ## It reads everything, and that is the honest version of this
+;;
+;; Every readable document's bytes, on every search. No index, so nothing can
+;; be stale and nothing has to be rebuilt — and it is linear in the size of
+;; the Drive. That is the right trade at a scale where a Drive is one
+;; household's documents, and the wrong one at an organisation's. When it
+;; stops being right, the fix is an index keyed on the version, invalidated
+;; by the object reference that already changes on every save.
+
+(def ^:private snippet-radius
+  "Characters either side of a match. Enough to see which occurrence it is."
+  40)
+
+(defn- snippet
+  "The matching text, cut to a window around the match.
+
+  Case-folded for finding and *not* for showing: a result that echoed back
+  the query's casing rather than the document's would be quoting something
+  the document does not say."
+  [text needle]
+  (let [text (str text)
+        at (str/index-of (str/lower-case text) needle)]
+    (if (nil? at)
+      text
+      (let [from (max 0 (- at snippet-radius))
+            to (min (count text) (+ at (count needle) snippet-radius))]
+        (str (when (pos? from) "…")
+             (subs text from to)
+             (when (< to (count text)) "…"))))))
+
+(defn- text-of
+  "Every piece of text in `resource`, per its surface. Empty for a surface
+  with no extractor rather than an error — a new surface should be findable
+  by name before it is findable by content."
+  [kind resource]
+  (if-let [extract (get-in kinds [kind :text])]
+    (->> (extract resource) (keep identity) (map str) (remove str/blank?))
+    []))
+
+(defn search
+  "Documents whose title or contents contain `query`, for this principal.
+
+  Returns each match once, with where it was found and a snippet. A title
+  match wins over a content match: it is the stronger signal and showing
+  both for one document is noise."
+  ([query actor] (search query actor (store-instance)))
+  ([query actor object-store]
+   (let [needle (str/lower-case (str/trim (str query)))]
+     (if (str/blank? needle)
+       {:schema schema :ok? true :query "" :count 0 :results []}
+       (let [results
+             (vec
+              (for [candidate (documents (store/snapshot) actor)
+                    :let [in-title? (str/includes? (str/lower-case (str (:name candidate)))
+                                                   needle)
+                          ;; Read once per document, and only when the title
+                          ;; did not already answer.
+                          hit (when-not in-title?
+                                (let [resource (try
+                                                 (:resource (content (:id candidate) actor
+                                                                     object-store))
+                                                 ;; A document whose bytes are
+                                                 ;; gone must not fail the
+                                                 ;; whole search.
+                                                 (catch clojure.lang.ExceptionInfo _ nil))]
+                                  (some #(when (str/includes? (str/lower-case %) needle) %)
+                                        (text-of (keyword (:kind candidate)) resource))))]
+                    :when (or in-title? hit)]
+                {:id (:id candidate)
+                 :name (:name candidate)
+                 :label (:label candidate)
+                 :kind (:kind candidate)
+                 :own? (:own? candidate)
+                 :owner (:owner candidate)
+                 :where (if in-title? "title" "content")
+                 :snippet (if in-title? (:name candidate) (snippet hit needle))}))]
+         {:schema schema
+          :ok? true
+          :query (str/trim (str query))
+          :count (count results)
+          :results results})))))

@@ -2112,7 +2112,49 @@
       });
     };
     $('#inbox-search').addEventListener('input', () => renderInbox(inboxData));
-    $('#drive-search').addEventListener('input', () => renderDrive(driveData));
+    // The box filters the list as you type, which is instant and local, and
+    // separately asks the server what is inside the documents, which is not.
+    // Debounced because the server read is every readable document's bytes —
+    // a request per keystroke would be a scan per keystroke.
+    let contentSearchTimer = null;
+    const runContentSearch = async (query) => {
+      const panel = $('#drive-found');
+      if (!query) { panel.hidden = true; panel.replaceChildren(); return; }
+      try {
+        const request = await fetch(
+          `/api/workspace/drive/search?q=${encodeURIComponent(query)}`);
+        const data = await request.json();
+        if (!request.ok) return;
+        const inside = (data.results || []).filter((r) => r.where === 'content');
+        panel.replaceChildren();
+        if (!inside.length) { panel.hidden = true; return; }
+        panel.hidden = false;
+        panel.append(make('h3', 'sharing__title', `本文に一致 ${inside.length} 件`));
+        const list = make('ul', 'sharing__list');
+        inside.forEach((hit) => {
+          const row = make('li', 'sharing__entry');
+          const open = make('button', 'tool-button', `${hit.name}（${hit.label}）`);
+          open.type = 'button';
+          open.addEventListener('click', () => {
+            const item = (driveData.items || []).find((i) => i.id === hit.id);
+            if (!item) return;
+            driveEditor = closedEditor(item.id);
+            selectedDrive = item;
+            $('#drive-search').value = '';
+            renderDrive(driveData);
+          });
+          row.append(open, make('span', 'surface-note', hit.snippet));
+          list.append(row);
+        });
+        panel.append(list);
+      } catch (error) { panel.hidden = true; }
+    };
+    $('#drive-search').addEventListener('input', () => {
+      renderDrive(driveData);
+      const query = ($('#drive-search').value || '').trim();
+      window.clearTimeout(contentSearchTimer);
+      contentSearchTimer = window.setTimeout(() => runContentSearch(query), 300);
+    });
     $('#drive-trash-empty').addEventListener('click', () => driveAction(
       '/api/workspace/drive/trash/empty', {}, 'ゴミ箱を空にしました。'));
     let identityState = null;
@@ -2989,6 +3031,7 @@
          [:div {:class "workspace-toolbar"}
           [:label {:class "visually-hidden" :for "drive-search"} "ファイルを検索"]
           [:input {:class "workspace-search" :id "drive-search" :type "search"
+                   :aria-describedby "drive-found"
                    :placeholder "ファイル名、フォルダー、種類を検索" :autocomplete "off"}]
           [:span {:class "result-count" :id "drive-visible-count"} "読み込み中…"]]
          [:div {:class "record-browser"}
@@ -2996,6 +3039,8 @@
            [:ul {:class "record-list__items" :id "drive-list"} [:li {:class "skeleton"}]]]
           [:article {:class "record-detail" :id "drive-detail" :aria-live "polite"}
            [:div {:class "empty-state"} "ファイルを読み込んでいます。"]]]
+         [:section {:class "sharing" :id "drive-found" :hidden true
+                    :aria-live "polite"}]
          [:section {:class "drive-trash" :id "drive-trash" :hidden true}
           [:div {:class "drive-trash__head"}
            (dds/heading 2 "ゴミ箱" {:size "20"})

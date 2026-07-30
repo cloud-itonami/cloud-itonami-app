@@ -936,6 +936,110 @@
                  (try (documents/content (:id item) bob object-store)
                       (catch clojure.lang.ExceptionInfo e (:type (ex-data e)))))))))))
 
+;; ── searching inside documents ──────────────────────────────────────────────
+
+(defn- with-cell [item value object-store]
+  (let [payload (:payload (documents/content (:id item) alice object-store))]
+    (save! (:id item)
+           (assoc-in payload ["sheets/tabs" "sheet1" "sheets/cells"]
+                     {"[1 1]" {"sheets/value" value}})
+           alice object-store)))
+
+(deftest a-cell-is-findable
+  (with-state
+    (fn [_ object-store]
+      (let [book (:item (documents/create! :sheets "売上" alice object-store))]
+        (with-cell book "四半期の粗利" object-store)
+        (let [{:keys [count results]} (documents/search "粗利" alice object-store)]
+          (is (= 1 count))
+          (is (= {:id (:id book) :name "売上" :where "content" :snippet "四半期の粗利"}
+                 (select-keys (first results) [:id :name :where :snippet]))))))))
+
+(deftest every-surface-is-searchable-by-its-own-text
+  (with-state
+    (fn [_ object-store]
+      ;; What counts as text is the model's business, so each surface has its
+      ;; own extractor and each one is exercised.
+      (let [book (:item (documents/create! :sheets "帳簿" alice object-store))
+            doc (:item (documents/create! :docs "議事録" alice object-store))
+            form (:item (documents/create! :forms "問い合わせ" alice object-store))
+            deck (:item (documents/create! :slides "報告" alice object-store))]
+        (with-cell book "みつばち" object-store)
+        (let [p (:payload (documents/content (:id doc) alice object-store))]
+          (save! (:id doc) (update p "docs/blocks" conj
+                                   {"docs/id" "b" "docs/kind" "paragraph"
+                                    "docs/text" "みつばちの話"})
+                 alice object-store))
+        (let [p (:payload (documents/content (:id form) alice object-store))]
+          (save! (:id form) (assoc p "forms/fields"
+                                   [{"forms/id" "q" "forms/label" "みつばちは好きですか"
+                                     "forms/field-type" "text" "forms/required?" false}])
+                 alice object-store))
+        (let [p (:payload (documents/content (:id deck) alice object-store))]
+          (save! (:id deck)
+                 (assoc-in p ["slides/slides" 0 "slides/shapes" 0 "slides/text"] "みつばち")
+                 alice object-store))
+        (is (= #{"帳簿" "議事録" "問い合わせ" "報告"}
+               (set (map :name (:results (documents/search "みつばち" alice object-store))))))))))
+
+(deftest a-title-match-wins-over-a-content-match
+  (with-state
+    (fn [_ object-store]
+      (let [book (:item (documents/create! :sheets "みつばち" alice object-store))]
+        (with-cell book "みつばち" object-store)
+        (let [results (:results (documents/search "みつばち" alice object-store))]
+          ;; Once, not twice: the same document matching both ways is one
+          ;; document, and the stronger signal is the one to show.
+          (is (= 1 (clojure.core/count results)))
+          (is (= "title" (:where (first results)))))))))
+
+(deftest a-snippet-quotes-the-document-and-not-the-query
+  (with-state
+    (fn [_ object-store]
+      (let [book (:item (documents/create! :sheets "帳簿" alice object-store))]
+        (with-cell book "Quarterly REVENUE for the year" object-store)
+        (let [hit (first (:results (documents/search "revenue" alice object-store)))]
+          ;; Case-folded for finding, not for showing.
+          (is (str/includes? (:snippet hit) "REVENUE")))))))
+
+(deftest a-long-cell-is-cut-around-the-match
+  (with-state
+    (fn [_ object-store]
+      (let [book (:item (documents/create! :sheets "帳簿" alice object-store))
+            filler (apply str (repeat 200 "あ"))]
+        (with-cell book (str filler "みつばち" filler) object-store)
+        (let [snippet (:snippet (first (:results (documents/search "みつばち" alice
+                                                                   object-store))))]
+          (is (str/starts-with? snippet "…"))
+          (is (str/ends-with? snippet "…"))
+          (is (str/includes? snippet "みつばち"))
+          (is (< (clojure.core/count snippet) 100)))))))
+
+(deftest search-only-reaches-what-the-asker-may-read
+  (with-state
+    (fn [_ object-store]
+      (let [book (:item (documents/create! :sheets "私信" alice object-store))]
+        (with-cell book "みつばち" object-store)
+        (is (zero? (:count (documents/search "みつばち" bob object-store))))
+        (documents/grant! (:id book) bob "viewer" alice)
+        (is (= 1 (:count (documents/search "みつばち" bob object-store))))))))
+
+(deftest a-trashed-document-is-not-found
+  (with-state
+    (fn [_ object-store]
+      (let [book (:item (documents/create! :sheets "旧" alice object-store))]
+        (with-cell book "みつばち" object-store)
+        (documents/trash! (:id book) alice)
+        (is (zero? (:count (documents/search "みつばち" alice object-store))))))))
+
+(deftest an-empty-query-finds-nothing-rather-than-everything
+  (with-state
+    (fn [_ object-store]
+      (documents/create! :docs "設計" alice object-store)
+      (doseq [q ["" "   " nil]]
+        (is (zero? (:count (documents/search q alice object-store)))
+            (str "query " (pr-str q)))))))
+
 ;; ── import and export ───────────────────────────────────────────────────────
 
 (defn- as-text [bytes] (String. ^bytes bytes java.nio.charset.StandardCharsets/UTF_8))
