@@ -2014,7 +2014,12 @@
       // Guarded on all three of payload, loading and failed, because this runs
       // on every render of the detail pane — a keystroke in the search box is
       // one — and without the guard that is a request per keystroke.
-      if (!driveEditor.payload && !driveEditor.loading && !driveEditor.failed) {
+      //
+      // And on `resource-kind`, which is what `documents/item-view` carries and
+      // `documents/folder-view` deliberately does not: a folder has no bytes,
+      // and asking for its content is a request that can only fail.
+      if (item['resource-kind'] && !driveEditor.payload
+          && !driveEditor.loading && !driveEditor.failed) {
         driveEditor.loading = true;
         status.textContent = '読み込んでいます…';
         (async () => {
