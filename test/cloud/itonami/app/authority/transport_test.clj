@@ -11,11 +11,17 @@
   :transport-failed -- telling a human the actor was unreachable when the truth was
   that their own operator had approved and the provider said no."
   (:require [clojure.data.json :as json]
+            [clojure.string :as str]
             [clojure.test :refer [deftest is testing]]
             [cloud.itonami.app.authority.transport :as transport])
   (:import [com.sun.net.httpserver HttpExchange HttpHandler HttpServer]
            [java.net InetSocketAddress]
            [java.nio.charset StandardCharsets]))
+
+(def ^:private seen-headers
+  "Headers the stub actor was given, so a test can assert what was SENT rather than
+  only what came back."
+  (atom {}))
 
 (defn- stub-actor
   "An actor that answers every request with `payload`. Returns [endpoint stop!]."
@@ -25,6 +31,9 @@
      server "/"
      (reify HttpHandler
        (handle [_ exchange]
+         (reset! seen-headers
+                 (into {} (for [[k v] (.getRequestHeaders ^HttpExchange exchange)]
+                            [(str/lower-case (str k)) (vec v)])))
          (let [body (.getBytes (json/write-str payload) StandardCharsets/UTF_8)]
            (.set (.getResponseHeaders ^HttpExchange exchange)
                  "Content-Type" "application/json")
@@ -117,3 +126,70 @@
       (is (false? (:authority/ok? out)))
       (is (= "g7-outward-gate" (get-in out [:authority/refusal :rule])))
       (is (not= :endpoint-not-configured (get-in out [:authority/refusal :rule]))))))
+
+;; ---------------------------------------------------------------------------
+;; the consent token this app presents
+;; ---------------------------------------------------------------------------
+
+(deftest the-consent-header-is-derived-from-the-authority-key
+  (testing "so the three actors agree on the name without a lookup table anyone can
+            forget to update"
+    (is (= "X-CARD-CONSENT-TOKEN" (transport/consent-header :card)))
+    (is (= "X-ESIM-CONSENT-TOKEN" (transport/consent-header :esim)))
+    (is (= "X-VOICE-CONSENT-TOKEN" (transport/consent-header :voice)))))
+
+(deftest the-token-comes-from-the-environment-not-the-config
+  (testing "config names the VARIABLE; a token written into defaults.edn would be a
+            secret in git, and this one is what lets a caller claim a subject consented"
+    (is (= (System/getenv "HOME")
+           (transport/consent-token {:authorities {:card {:consent-token-env "HOME"}}}
+                                    :card))
+        "HOME stands in for a real token -- the point is where the value is read from")
+    (testing "and an unset or unnamed variable is nil rather than an empty string"
+      (is (nil? (transport/consent-token
+                 {:authorities {:card {:consent-token-env "CLOUD_ITONAMI_UNSET_XYZ"}}}
+                 :card)))
+      (is (nil? (transport/consent-token {:authorities {:card {}}} :card)))
+      (is (nil? (transport/consent-token {} :card))))))
+
+(deftest the-header-is-actually-sent
+  (testing "asserted on the wire rather than by reading the builder -- the actor now
+            refuses a request without it, so this is the difference between the card
+            path working and not"
+    (reset! seen-headers {})
+    (let [[endpoint stop!] (stub-actor {:status "pending" :reference "r-1"})]
+      (try
+        ((transport/commit-fn :card)
+         {:authorities {:card {:enabled? true :endpoint endpoint
+                               :consent-token-env "HOME"}}}
+         {} {:id "p-1"})
+        (is (= [(System/getenv "HOME")] (get @seen-headers "x-card-consent-token")))
+        (finally (stop!))))))
+
+(deftest a-read-carries-it-too
+  (testing "the proposal read names a subject's reference, and the actor guards it"
+    (reset! seen-headers {})
+    (let [[endpoint stop!] (stub-actor {:status "committed" :record {}})]
+      (try
+        ((transport/status-fn :card)
+         {:authorities {:card {:enabled? true :endpoint endpoint
+                               :consent-token-env "HOME"}}}
+         "r-1")
+        (is (= [(System/getenv "HOME")] (get @seen-headers "x-card-consent-token")))
+        (finally (stop!))))))
+
+(deftest no-token-configured-sends-no-header-and-does-not-pre-refuse
+  (testing "the actor refuses on its own side with 503, and its refusal is the honest
+            thing to record. An app that refused first would be guessing at the actor's
+            configuration -- and would report a different reason than the real one."
+    (reset! seen-headers {})
+    (let [[endpoint stop!] (stub-actor {:status "held"
+                                        :refusal {:rule "consent-surface-unconfigured"}})]
+      (try
+        (let [out ((transport/commit-fn :card)
+                   {:authorities {:card {:enabled? true :endpoint endpoint}}}
+                   {} {:id "p-1"})]
+          (is (nil? (get @seen-headers "x-card-consent-token")) "no header invented")
+          (is (= "consent-surface-unconfigured" (get-in out [:authority/refusal :rule]))
+              "the actor's own reason survives to the ledger"))
+        (finally (stop!))))))
