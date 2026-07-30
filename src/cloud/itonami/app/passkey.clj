@@ -193,7 +193,12 @@
     {:user-id user-id :credential-id credential-id
      :did user-did :verified? true}))
 
-(defn start-authentication! [rp-id origin]
+(defn- start-assertion!
+  "Begin a user-verifying assertion. `kind` distinguishes a plain sign-in
+  (`:assertion`) from an operation-bound authorization (`:authorization`), and
+  `transaction-data` is merged into the stored transaction so an authorization can
+  bind server-side facts a later response cannot alter."
+  [kind transaction-data rp-id origin]
   (let [rp (relying-party rp-id origin)
         request (.startAssertion
                  rp
@@ -205,16 +210,43 @@
         expires-at (str (.plusSeconds (Instant/now) transaction-seconds))]
     (store/transact!
      assoc-in [:identity :webauthn-transactions transaction-id]
-     {:id transaction-id :kind :assertion
-      :request-json (.toJson request) :origin origin :rp-id rp-id
-      :created-at (store/now) :expires-at expires-at :used? false})
+     (merge
+      {:id transaction-id :kind kind
+       :request-json (.toJson request) :origin origin :rp-id rp-id
+       :created-at (store/now) :expires-at expires-at :used? false}
+      transaction-data))
     {:transaction-id transaction-id
      :options (json/read-str (.toCredentialsGetJson request) :key-fn keyword)
      :expires-at expires-at}))
 
-(defn finish-authentication! [transaction-id credential-response]
-  (let [{:keys [request-json origin rp-id]}
-        (active-transaction! transaction-id :assertion)
+(defn start-authentication! [rp-id origin]
+  (start-assertion! :assertion {} rp-id origin))
+
+(defn start-authorization!
+  "Start a user-verifying Passkey assertion bound server-side to an immutable
+  operation context, such as a PSBT digest or a proposal digest.
+
+  The context is stored with the transaction and returned by
+  `finish-authorization!`, so the caller can verify that what the human approved
+  is what it is about to act on. Binding it here rather than trusting the client
+  to echo it back is the whole point: a client-supplied context could be swapped
+  after the user consented.
+
+  A separate `:kind` from `:assertion` matters -- without it a plain sign-in
+  assertion could be presented to `finish-authorization!` and would carry no
+  context at all, so an operation would appear approved by a user who only
+  logged in. `active-transaction!` enforces the kind."
+  [user-id context rp-id origin]
+  (start-assertion! :authorization
+                    {:expected-user-id user-id
+                     :authorization-context context}
+                    rp-id origin))
+
+(defn- finish-assertion!
+  [transaction-id credential-response expected-kind]
+  (let [{:keys [request-json origin rp-id expected-user-id
+                authorization-context]}
+        (active-transaction! transaction-id expected-kind)
         request (AssertionRequest/fromJson request-json)
         response (PublicKeyCredential/parseAssertionResponseJson
                   (json/write-str credential-response))
@@ -229,7 +261,12 @@
         user (some #(when (= user-handle (:user-handle %)) %)
                    (vals (:users (identity-state))))
         now (store/now)]
-    (when-not (and (.isSuccess result) (.isUserVerified result) user)
+    ;; expected-user-id is nil for a plain sign-in and set for an authorization:
+    ;; an authorization must be completed by the SAME user it was started for,
+    ;; or one signed-in user could complete another's pending approval.
+    (when-not (and (.isSuccess result) (.isUserVerified result) user
+                   (or (nil? expected-user-id)
+                       (= expected-user-id (:id user))))
       (throw (ex-info "Passkey 認証を確認できませんでした。"
                       {:type :passkey/verification-failed})))
     (store/transact!
@@ -243,4 +280,16 @@
            (update :events conj {:type :passkey/authenticated :at now
                                  :user-id (:id user)
                                  :credential-id credential-id}))))
-    {:user-id (:id user) :credential-id credential-id :verified? true}))
+    (cond-> {:user-id (:id user) :credential-id credential-id :verified? true}
+      (some? authorization-context)
+      (assoc :authorization-context authorization-context))))
+
+(defn finish-authentication! [transaction-id credential-response]
+  (finish-assertion! transaction-id credential-response :assertion))
+
+(defn finish-authorization!
+  "Complete an operation-bound assertion. Returns the sign-in result plus
+  `:authorization-context` exactly as it was stored at `start-authorization!`,
+  so the caller can compare it against what it is about to act on."
+  [transaction-id credential-response]
+  (finish-assertion! transaction-id credential-response :authorization))
