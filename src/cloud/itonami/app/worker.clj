@@ -103,6 +103,13 @@
                                      :status (:status run)})))))))
 
 (defn- finish! [config id status extra]
+  ;; Before the status becomes terminal, not after. `await-idle!` returns as
+  ;; soon as every run has a terminal status, so anything torn down afterwards
+  ;; is observable by a caller that has already been told the worker is idle —
+  ;; the per-run session was cleared in a `finally` below, and a test asserting
+  ;; it was gone failed intermittently in exactly that window (CI, 2026-07-30).
+  ;; The `finally` still clears, for the paths that never reach here.
+  (store/clear-session! (str "worker:" id))
   (update-run! id
                (fn [run]
                  (-> (merge run extra)
