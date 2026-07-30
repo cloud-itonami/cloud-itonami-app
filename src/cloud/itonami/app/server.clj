@@ -756,7 +756,10 @@
               (send! exchange 200
                      (documents/drive-view
                       (workspace/snapshot :drive workspace/drive-snapshot)
-                      (:user-id session))))
+                      (:user-id session)
+                      ;; A page of created documents; the archive half is
+                      ;; already capped by `drive-snapshot`.
+                      {:cursor (:cursor (query-params exchange))})))
 
             (and (= method "POST") (= path "/api/workspace/drive/documents"))
             (let [session (require-app-session! exchange)

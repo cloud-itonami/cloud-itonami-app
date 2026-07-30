@@ -1130,6 +1130,76 @@
         ;; be a worse thing than one that fills up and says so.
         (is (= 16 (:versions (first (documents/documents @state alice)))))))))
 
+;; ── one page at a time ──────────────────────────────────────────────────────
+
+(defn- names-of [page] (mapv :name (:items page)))
+
+(deftest a-page-stops-and-says-where
+  (with-state
+    (fn [state object-store]
+      (doseq [n (range 5)]
+        (documents/create! :docs (str "文書" n) alice object-store))
+      (let [first-page (documents/page @state alice {:limit 2})
+            second-page (documents/page @state alice {:limit 2
+                                                      :cursor (:next-cursor first-page)})
+            third-page (documents/page @state alice {:limit 2
+                                                     :cursor (:next-cursor second-page)})]
+        (is (= 2 (count (:items first-page))))
+        (is (some? (:next-cursor first-page)))
+        (is (= 2 (count (:items second-page))))
+        (is (= 1 (count (:items third-page))))
+        ;; Nil at the end rather than a cursor that would return nothing, so
+        ;; a caller stops by being told to.
+        (is (nil? (:next-cursor third-page)))
+        ;; Five documents, each once, newest first.
+        (is (= ["文書4" "文書3" "文書2" "文書1" "文書0"]
+               (concat (names-of first-page) (names-of second-page) (names-of third-page))))))))
+
+(deftest a-cursor-survives-the-list-moving-under-it
+  (with-state
+    (fn [state object-store]
+      (let [items (mapv #(:item (documents/create! :docs (str "文書" %) alice object-store))
+                        (range 5))
+            first-page (documents/page @state alice {:limit 2})]
+        ;; The list is ordered by last write, so saving the oldest moves it
+        ;; to the front. An offset would now show one document twice and
+        ;; skip another; a cursor says "after this position".
+        (save! (:id (first items))
+               (:payload (documents/content (:id (first items)) alice object-store))
+               alice object-store)
+        (let [second-page (documents/page @state alice {:limit 2
+                                                        :cursor (:next-cursor first-page)})
+              seen (concat (names-of first-page) (names-of second-page))]
+          (is (= 4 (count seen)))
+          (is (= (count (distinct seen)) (count seen)) "nothing seen twice")
+          ;; 文書0 jumped to the front, which the first page had already
+          ;; passed — so it is not in this page, and it was not silently
+          ;; dropped from the middle either.
+          (is (not (contains? (set seen) "文書0"))))))))
+
+(deftest a-listing-with-no-limit-is-still-everything
+  (with-state
+    (fn [state object-store]
+      (dotimes [n 3] (documents/create! :docs (str "文書" n) alice object-store))
+      (is (= 3 (count (documents/documents @state alice))))
+      (is (= 2 (count (documents/documents @state alice {:limit 2})))))))
+
+(deftest the-drive-view-pages-the-created-half-only
+  (with-state
+    (fn [_ object-store]
+      (dotimes [n 4] (documents/create! :docs (str "文書" n) alice object-store))
+      (let [archive {:source "m365-archive / onedrive" :count 2
+                     :items [{:id "a.txt" :name "a.txt"} {:id "b.txt" :name "b.txt"}]}
+            view (documents/drive-view archive alice {:limit 2})]
+        ;; Two created plus the whole archive, which `drive-snapshot` has
+        ;; already capped — a second cursor for a list that does not grow
+        ;; would be ceremony.
+        (is (= 4 (count (:items view))))
+        (is (= 2 (:documents view)))
+        (is (some? (:next-cursor view)))
+        (is (str/includes? (:source view) "以降あり"))
+        (is (nil? (:next-cursor (documents/drive-view archive alice {:limit 50}))))))))
+
 ;; ── searching inside documents ──────────────────────────────────────────────
 
 (defn- with-cell [item value object-store]
