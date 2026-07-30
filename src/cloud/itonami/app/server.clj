@@ -590,6 +590,43 @@
                       (:title request)
                       (:user-id session))))
 
+            (and (= method "GET")
+                 (re-matches #"/api/workspace/drive/documents/([^/]+)/versions/(\d+)" path))
+            (let [session (require-app-session! exchange)
+                  [_ id index]
+                  (re-matches #"/api/workspace/drive/documents/([^/]+)/versions/(\d+)" path)]
+              (send! exchange 200
+                     (documents/version-content id (parse-long index)
+                                                (:user-id session))))
+
+            (and (= method "POST")
+                 (id-from-path path #"/api/workspace/drive/documents/([^/]+)/restore"))
+            (let [session (require-app-session! exchange)]
+              (require-origin! exchange config)
+              (require-csrf! exchange session)
+              (send! exchange 200
+                     (documents/restore!
+                      (id-from-path path #"/api/workspace/drive/documents/([^/]+)/restore")
+                      (:user-id session))))
+
+            ;; Irreversible, and only reachable for something already in the
+            ;; trash — `documents/purge!` refuses anything else.
+            (and (= method "POST")
+                 (id-from-path path #"/api/workspace/drive/documents/([^/]+)/purge"))
+            (let [session (require-app-session! exchange)]
+              (require-origin! exchange config)
+              (require-csrf! exchange session)
+              (send! exchange 200
+                     (documents/purge!
+                      (id-from-path path #"/api/workspace/drive/documents/([^/]+)/purge")
+                      (:user-id session))))
+
+            (and (= method "POST") (= path "/api/workspace/drive/trash/empty"))
+            (let [session (require-app-session! exchange)]
+              (require-origin! exchange config)
+              (require-csrf! exchange session)
+              (send! exchange 200 (documents/empty-trash! (:user-id session))))
+
             (and (= method "POST")
                  (id-from-path path #"/api/workspace/drive/documents/([^/]+)/trash"))
             (let [session (require-app-session! exchange)]
@@ -830,6 +867,9 @@
                      ;; The request was understood and the document it carries
                      ;; is not one the model accepts — which is 422, not 400.
                      :drive/invalid-document 422
+                     ;; Purging something that is not in the trash yet is a
+                     ;; conflict with its current state, not a bad request.
+                     :drive/not-trashed 409
                      :drive/not-found 404
                      :drive/not-permitted 403
                      :drive/no-content 409

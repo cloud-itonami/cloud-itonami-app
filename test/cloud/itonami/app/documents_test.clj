@@ -272,6 +272,163 @@
         (let [restored (ws/restore (documents/workspace-for @state alice) (:id item))]
           (is (= 1 (count (:drive/versions (ws/item restored (:id item)))))))))))
 
+;; ── the trash, and the quota it holds ───────────────────────────────────────
+
+(deftest trashing-does-not-give-the-quota-back-and-purging-does
+  (with-state
+    (fn [state object-store]
+      (let [{:keys [item]} (documents/create! :sheets "旧計画" alice object-store)
+            _ (documents/update! (:id item)
+                                 (:payload (documents/content (:id item) alice object-store))
+                                 alice object-store)
+            held (:held-bytes (first (documents/documents @state alice)))
+            used-before (:used-bytes (documents/quota-view @state alice))]
+        ;; Two versions, and both are counted: `add-version` adds and nothing
+        ;; ever subtracts.
+        (is (= 2 (:versions (first (documents/documents @state alice)))))
+        (is (= held used-before))
+        (documents/trash! (:id item) alice)
+        (is (= used-before (:used-bytes (documents/quota-view @state alice)))
+            "trashing is a flag, not a reclamation")
+        (is (= [(:id item)] (mapv :id (documents/trashed @state alice))))
+        (let [purged (documents/purge! (:id item) alice object-store)]
+          (is (= held (:freed-bytes purged)))
+          (is (zero? (:used-bytes (documents/quota-view @state alice))))
+          (is (empty? (documents/trashed @state alice)))
+          (is (empty? (documents/documents @state alice))))))))
+
+(deftest a-live-document-cannot-be-purged
+  (with-state
+    (fn [state object-store]
+      (let [{:keys [item]} (documents/create! :docs "設計" alice object-store)]
+        (is (= :drive/not-trashed
+               (try (documents/purge! (:id item) alice object-store)
+                    (catch clojure.lang.ExceptionInfo e (:type (ex-data e))))))
+        (is (= 1 (count (documents/documents @state alice))))))))
+
+(deftest restoring-brings-it-back-with-its-versions
+  (with-state
+    (fn [state object-store]
+      (let [{:keys [item]} (documents/create! :forms "問い合わせ" alice object-store)]
+        (documents/trash! (:id item) alice)
+        (is (empty? (documents/documents @state alice)))
+        (let [restored (documents/restore! (:id item) alice)]
+          (is (false? (:trashed? (:item restored))))
+          (is (= [(:id item)] (mapv :id (documents/documents @state alice))))
+          (is (empty? (documents/trashed @state alice)))
+          ;; And readable again — trash is what made it unreadable.
+          (is (:ok? (documents/content (:id item) alice object-store))))))))
+
+(deftest emptying-the-trash-purges-only-the-trash
+  (with-state
+    (fn [state object-store]
+      (let [kept (:item (documents/create! :docs "残す" alice object-store))
+            binned (:item (documents/create! :sheets "捨てる" alice object-store))
+            also (:item (documents/create! :forms "これも" alice object-store))]
+        (documents/trash! (:id binned) alice)
+        (documents/trash! (:id also) alice)
+        (let [emptied (documents/empty-trash! alice object-store)]
+          (is (= 2 (:purged emptied)))
+          (is (pos? (:freed-bytes emptied)))
+          (is (= [(:id kept)] (mapv :id (documents/documents @state alice))))
+          (is (= (:held-bytes (first (documents/documents @state alice)))
+                 (:used-bytes (documents/quota-view @state alice)))))))))
+
+(deftest purging-is-refused-for-someone-elses-document
+  (with-state
+    (fn [state object-store]
+      (let [{:keys [item]} (documents/create! :docs "私信" alice object-store)]
+        (documents/trash! (:id item) alice)
+        (swap! state assoc-in [:drive :workspaces bob]
+               (get-in @state [:drive :workspaces alice]))
+        (is (= :drive/not-permitted
+               (try (documents/purge! (:id item) bob object-store)
+                    (catch clojure.lang.ExceptionInfo e (:type (ex-data e))))))
+        (is (= :drive/not-permitted
+               (try (documents/restore! (:id item) bob)
+                    (catch clojure.lang.ExceptionInfo e (:type (ex-data e))))))))))
+
+;; ── version history ─────────────────────────────────────────────────────────
+
+(deftest an-earlier-version-is-still-readable
+  (with-state
+    (fn [_ object-store]
+      (let [{:keys [item]} (documents/create! :sheets "計画" alice object-store)
+            first-payload (:payload (documents/content (:id item) alice object-store))
+            edited (assoc-in first-payload ["sheets/tabs" "sheet1" "sheets/cells"]
+                             {"[1 1]" {"sheets/value" "Q1"}})
+            _ (documents/update! (:id item) edited alice object-store)
+            v1 (documents/version-content (:id item) 1 alice object-store)
+            v2 (documents/version-content (:id item) 2 alice object-store)]
+        (is (= first-payload (:payload v1)) "the bytes the first version wrote")
+        (is (= edited (:payload v2)))
+        (is (= ":sheets/workbook" (:resource-kind v1)))
+        ;; Out of range is a 404, not an empty answer that reads as an empty
+        ;; document.
+        (is (= :drive/not-found
+               (try (documents/version-content (:id item) 3 alice object-store)
+                    (catch clojure.lang.ExceptionInfo e (:type (ex-data e))))))))))
+
+(deftest an-earlier-version-of-a-trashed-document-is-refused
+  ;; The check `read-item` would have made, made here too — reaching an older
+  ;; version means going to the store directly, and the store does not know
+  ;; about trash.
+  (with-state
+    (fn [_ object-store]
+      (let [{:keys [item]} (documents/create! :docs "私信" alice object-store)]
+        (documents/trash! (:id item) alice)
+        (is (= :drive/not-found
+               (try (documents/version-content (:id item) 1 alice object-store)
+                    (catch clojure.lang.ExceptionInfo e (:type (ex-data e))))))))))
+
+(deftest an-earlier-version-is-refused-to-a-principal-who-may-not-read-it
+  (with-state
+    (fn [state object-store]
+      (let [{:keys [item]} (documents/create! :docs "私信" alice object-store)]
+        (swap! state assoc-in [:drive :workspaces bob]
+               (get-in @state [:drive :workspaces alice]))
+        (is (= :drive/not-permitted
+               (try (documents/version-content (:id item) 1 bob object-store)
+                    (catch clojure.lang.ExceptionInfo e (:type (ex-data e))))))))))
+
+;; ── warnings ────────────────────────────────────────────────────────────────
+
+(deftest a-warning-is-reported-rather-than-swallowed
+  (with-state
+    (fn [_ object-store]
+      (let [{:keys [item]} (documents/create! :docs "下書き" alice object-store)
+            payload (:payload (documents/content (:id item) alice object-store))
+            saved (documents/update! (:id item) (assoc payload "docs/title" "")
+                                     alice object-store)]
+        (is (:ok? saved) "a missing title is a warning, and a draft still saves")
+        (is (= [":document/missing-title"] (mapv :code (:warnings saved))))
+        (is (:quota saved))))))
+
+(deftest a-clean-save-reports-no-warnings
+  (with-state
+    (fn [_ object-store]
+      (let [{:keys [item]} (documents/create! :forms "問い合わせ" alice object-store)
+            payload (:payload (documents/content (:id item) alice object-store))]
+        (is (empty? (:warnings (documents/update! (:id item) payload alice object-store))))))))
+
+;; ── listing order ───────────────────────────────────────────────────────────
+
+(deftest the-list-moves-when-something-is-saved
+  (with-state
+    (fn [state object-store]
+      (let [first-doc (:item (documents/create! :docs "先" alice object-store))
+            second-doc (:item (documents/create! :docs "後" alice object-store))]
+        (is (= [(:id second-doc) (:id first-doc)]
+               (mapv :id (documents/documents @state alice))))
+        ;; Saving the older one moves it to the front. Ordering by creation
+        ;; would leave it where it was, which is not where anyone looks for
+        ;; the thing they just saved.
+        (documents/update! (:id first-doc)
+                           (:payload (documents/content (:id first-doc) alice object-store))
+                           alice object-store)
+        (is (= [(:id first-doc) (:id second-doc)]
+               (mapv :id (documents/documents @state alice))))))))
+
 (deftest the-drive-view-keeps-the-archive-and-labels-both-sides
   (with-state
     (fn [_ object-store]
