@@ -4,7 +4,8 @@
             [cloud.itonami.app.credential :as credential]
             [cloud.itonami.app.credential-trust :as trust]
             [data-integrity.core :as di]
-            [ed25519.core :as ed]))
+            [ed25519.core :as ed]
+            [status-list.core :as sl]))
 
 (use-fixtures :each (fn [f] (trust/clear-cache!) (f)))
 
@@ -225,3 +226,158 @@
           (is (= (vec (resolver (partner-vm))) (vec (resolver (partner-vm)))))
           (is (= 1 @calls) "the second resolution came from the cache")))
       (resolve-twice (partner-vm)))))
+
+;; ── revocation of an external credential ─────────────────────────────────────
+;; The fetch is stubbed; what is under test is the trust logic around it, which is
+;; where the security properties live.
+
+(defn- status-entry [index]
+  {"type" "BitstringStatusListEntry"
+   "statusPurpose" "revocation"
+   "statusListIndex" (str index)
+   "statusListCredential" "https://partner.example/status/1"})
+
+(defn- partner-status-list
+  "A status list credential signed by the partner, revoking `revoked`."
+  ([revoked] (partner-status-list revoked partner-seed partner-web-did))
+  ([revoked seed issuer]
+   (di/issue-credential
+    (sl/status-list-credential {:id "https://partner.example/status/1"
+                                :issuer issuer
+                                :purpose "revocation"
+                                :encoded-list (sl/generate revoked)})
+    {:seed seed
+     :verification-method (str issuer "#" (subs (ed/did-key-from-seed seed)
+                                                (count "did:key:")))
+     :created "2026-07-31T00:00:00Z"})))
+
+(defn- with-partner-fetches
+  "Run `f` with both fetches served locally: the partner's DID document, and
+  whatever status list `status-list` is."
+  [status-list f]
+  (with-redefs [trust/fetch-json
+                (fn [_ url _]
+                  (if (str/includes? url "did.json")
+                    (partner-did-document)
+                    status-list))]
+    (f)))
+
+(deftest a-live-external-credential-is-current
+  (with-partner-fetches
+    (partner-status-list #{99})
+    (fn []
+      (trust/clear-status-cache!)
+      (let [r (trust/verify-external trusting (partner-credential {:status (status-entry 3)}))]
+        (is (:verified r))
+        (is (= :current (:revocation r)))
+        (is (true? (:valid? r)))))))
+
+(deftest a-revoked-external-credential-is-not-valid
+  (with-partner-fetches
+    (partner-status-list #{3})
+    (fn []
+      (trust/clear-status-cache!)
+      (let [r (trust/verify-external trusting (partner-credential {:status (status-entry 3)}))]
+        (is (:verified r) "the signature is still good")
+        (is (= :revoked (:revocation r)))
+        (is (false? (:valid? r)) "and it must not be honoured")))))
+
+(deftest an-unverified-status-list-is-refused
+  (testing "an unverified list is a file at a URL. Believing one would let
+            whoever answers that URL publish zeros and un-revoke everything."
+    (with-partner-fetches
+      ;; strip the proof
+      (dissoc (partner-status-list #{3}) "proof")
+      (fn []
+        (trust/clear-status-cache!)
+        (let [r (trust/verify-external trusting
+                                       (partner-credential {:status (status-entry 3)}))]
+          (is (:verified r))
+          (is (= :unchecked (:revocation r)))
+          (is (false? (:valid? r)) "unchecked is NOT a pass"))))))
+
+(deftest a-tampered-status-list-is-refused
+  (testing "flipping a bit in the published list must invalidate its own proof"
+    (with-partner-fetches
+      (assoc-in (partner-status-list #{3})
+                ["credentialSubject" "encodedList"] (sl/generate #{}))
+      (fn []
+        (trust/clear-status-cache!)
+        (let [r (trust/verify-external trusting
+                                       (partner-credential {:status (status-entry 3)}))]
+          (is (= :unchecked (:revocation r)))
+          (is (false? (:valid? r))))))))
+
+(deftest a-status-list-signed-by-another-issuer-is-refused
+  (testing "a VALID list from a different issuer is a valid statement about
+            someone else's credentials. Honouring it here would let any trusted
+            issuer clear another issuer's revocations."
+    (let [other-seed (byte-array (repeat 32 (byte 21)))
+          other-did (ed/did-key-from-seed other-seed)
+          ;; correctly signed, by the wrong party, and saying nothing is revoked
+          foreign-list (partner-status-list #{} other-seed other-did)]
+      (with-redefs [trust/fetch-json
+                    (fn [_ url _]
+                      (if (str/includes? url "did.json")
+                        (partner-did-document)
+                        foreign-list))]
+        (trust/clear-status-cache!)
+        (let [r (trust/verify-external trusting
+                                       (partner-credential {:status (status-entry 3)}))]
+          (is (:verified r))
+          (is (= :unchecked (:revocation r)))
+          (is (false? (:valid? r))
+              "a stranger's list must not clear the issuer's revocation"))))))
+
+(deftest a-failed-fetch-fails-closed
+  (testing "every way of not knowing is :unchecked, never :current"
+    (with-redefs [trust/fetch-json
+                  (fn [_ url _]
+                    (if (str/includes? url "did.json")
+                      (partner-did-document)
+                      (throw (ex-info "boom" {:type :credential-trust/document-unavailable}))))]
+      (trust/clear-status-cache!)
+      (let [r (trust/verify-external trusting
+                                     (partner-credential {:status (status-entry 3)}))]
+        (is (:verified r))
+        (is (= :unchecked (:revocation r)))
+        (is (false? (:valid? r)))))))
+
+(deftest a-malformed-status-entry-fails-closed
+  (with-partner-fetches
+    (partner-status-list #{})
+    (fn []
+      (trust/clear-status-cache!)
+      (doseq [entry ["not-a-map" {"type" "BitstringStatusListEntry"}]]
+        (let [r (trust/verify-external trusting (partner-credential {:status entry}))]
+          (is (= :unchecked (:revocation r)) (str "entry " (pr-str entry)))
+          (is (false? (:valid? r))))))))
+
+(deftest the-status-list-is-cached-but-briefly
+  (testing "a revocation is the thing being asked about, so it is cached for far
+            less time than a key — and the list's own ttl wins when shorter"
+    (let [fetches (atom 0)
+          list-credential (partner-status-list #{3})]
+      (with-redefs [trust/fetch-json
+                    (fn [_ url _]
+                      (if (str/includes? url "did.json")
+                        (partner-did-document)
+                        (do (swap! fetches inc) list-credential)))]
+        (trust/clear-status-cache!)
+        (let [cred (partner-credential {:status (status-entry 3)})]
+          (trust/verify-external trusting cred)
+          (trust/verify-external trusting cred)
+          (is (= 1 @fetches) "the second check came from the cache")
+          (trust/clear-status-cache!)
+          (trust/verify-external trusting cred)
+          (is (= 2 @fetches) "and clearing it forces a refetch"))))))
+
+(deftest fetch-json-applies-the-same-guards-to-both-urls
+  (testing "a guard on one of the two fetched URLs and not the other is the same
+            as no guard, which is why they share one function"
+    (is (= :credential-trust/insecure-transport
+           (:type (ex-data (try (trust/fetch-json {} "http://partner.example/status/1" {})
+                                (catch clojure.lang.ExceptionInfo e e))))))
+    (is (= :credential-trust/internal-address
+           (:type (ex-data (try (trust/fetch-json {} "https://localhost/status/1" {})
+                                (catch clojure.lang.ExceptionInfo e e))))))))

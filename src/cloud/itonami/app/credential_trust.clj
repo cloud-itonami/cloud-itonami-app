@@ -23,26 +23,39 @@
 
   ## Revocation we cannot check is not revocation we can ignore
 
-  A signature proves the issuer said it. It does not prove they still say it. If
-  an external credential carries a `credentialStatus` we cannot resolve, this
-  returns `:valid? false` with `:revocation :unchecked` rather than reporting a
-  good signature as a usable credential. Fetching a stranger's status list is a
-  second network dependency and a second trust question, and is deliberately not
-  done here.
+  A signature proves the issuer said it. It does not prove they still say it, so
+  `credentialStatus` is now resolved rather than skipped — and the resolution
+  FAILS CLOSED. Every way of not knowing (no URL, a failed fetch, a list that does
+  not verify, a list signed by somebody else, a length error) comes back
+  `:revocation :unchecked` and `:valid? false`, never `:current`. Treating \"could
+  not ask\" as \"not revoked\" is exactly what makes a revocation list decorative.
+
+  The status list is **verified, and required to be signed by the same controller
+  as the credential it is about**. An unverified list is a file at a URL: believing
+  one would let whoever can answer that URL publish a list of zeros and un-revoke
+  everything the issuer ever withdrew. And a *valid* list from a different issuer
+  is a valid statement about somebody else's credentials, so honouring it here
+  would let any trusted issuer clear another issuer's revocations.
 
   ## What is fetched, and the limits on it
 
-  Exactly one URL per issuer domain: `https://<domain>/.well-known/did.json`,
-  derived by `did.core/did-web-url` rather than assembled here. HTTPS only, a
-  hard timeout, a response size cap, and a refusal to talk to an address that
-  resolves inside the network this process sits in — because the app binds
-  loopback and \"fetch a URL named by attacker-supplied content\" is otherwise an
-  SSRF primitive pointed at everything else on the machine."
+  Two URLs, both named by content this app did not author: the issuer's
+  `https://<domain>/.well-known/did.json` (derived by `did.core/did-web-url`, not
+  assembled here) and the `statusListCredential` its credentials point at. Both go
+  through one `fetch-json` — HTTPS only, redirects never followed, a hard timeout,
+  a response size cap, and a refusal to talk to an address resolving inside the
+  network this process sits in, because the app binds loopback and a guard that
+  exists on one of these fetches but not the other is the same as no guard.
+
+  Keys cache for an hour, status lists for five minutes or the list's own `ttl`,
+  whichever is shorter: a key rotates rarely, a revocation is the thing being
+  asked about."
   (:require [clojure.data.json :as json]
             [clojure.string :as str]
             [data-integrity.core :as di]
             [did.core :as did]
-            [ed25519.core :as ed])
+            [ed25519.core :as ed]
+            [status-list.core :as sl])
   (:import [java.net InetAddress URI]
            [java.net.http HttpClient HttpRequest HttpResponse$BodyHandlers]
            [java.time Duration Instant]))
@@ -115,6 +128,48 @@
       ;; error.
       true)))
 
+(defn fetch-json
+  "GET `url` and parse it as JSON, under every limit this namespace imposes.
+
+  Shared by the DID document fetch and the status list fetch rather than written
+  twice: these are the only two URLs this app is ever told to fetch by content it
+  did not author, and a guard that exists on one of them and not the other is the
+  same as no guard."
+  [configuration url {:keys [accept what]
+                      :or {accept "application/json" what "document"}}]
+  (let [uri (URI/create url)]
+    (when-not (= "https" (.getScheme uri))
+      (fail! :credential-trust/insecure-transport
+             (str "a " what " must be fetched over HTTPS") {:url url}))
+    (when (internal-address? (.getHost uri))
+      (fail! :credential-trust/internal-address
+             (str (.getHost uri) " resolves to an address inside this network")
+             {:url url}))
+    (let [timeout (or (:fetch-timeout-seconds (settings configuration))
+                      default-fetch-timeout-seconds)
+          max-bytes (or (:max-document-bytes (settings configuration))
+                        default-max-document-bytes)
+          request (-> (HttpRequest/newBuilder uri)
+                      (.timeout (Duration/ofSeconds (long timeout)))
+                      (.header "accept" accept)
+                      .GET
+                      .build)
+          response (.send @http-client request (HttpResponse$BodyHandlers/ofString))]
+      (when-not (= 200 (.statusCode response))
+        (fail! :credential-trust/document-unavailable
+               (str what " returned HTTP " (.statusCode response))
+               {:status (.statusCode response) :url url}))
+      (let [body (.body response)]
+        (when (> (count body) max-bytes)
+          (fail! :credential-trust/document-too-large
+                 (str what " exceeds " max-bytes " bytes")
+                 {:url url :bytes (count body)}))
+        (try
+          (json/read-str body)
+          (catch Exception _
+            (fail! :credential-trust/document-unparseable
+                   (str what " is not JSON") {:url url})))))))
+
 (defn fetch-did-document
   "GET `https://<domain>/.well-known/did.json` and parse it.
 
@@ -129,39 +184,9 @@
                 "verifier must decide which domains it believes before fetching "
                 "one.")
            {:domain domain}))
-  (let [url (did/did-web-url (str "did:web:" domain))
-        uri (URI/create url)]
-    (when-not (= "https" (.getScheme uri))
-      (fail! :credential-trust/insecure-transport
-             "a DID document must be fetched over HTTPS" {:url url}))
-    (when (internal-address? (.getHost uri))
-      (fail! :credential-trust/internal-address
-             (str (.getHost uri) " resolves to an address inside this network")
-             {:domain domain}))
-    (let [timeout (or (:fetch-timeout-seconds (settings configuration))
-                      default-fetch-timeout-seconds)
-          max-bytes (or (:max-document-bytes (settings configuration))
-                        default-max-document-bytes)
-          request (-> (HttpRequest/newBuilder uri)
-                      (.timeout (Duration/ofSeconds (long timeout)))
-                      (.header "accept" "application/did+json, application/json")
-                      .GET
-                      .build)
-          response (.send @http-client request (HttpResponse$BodyHandlers/ofString))]
-      (when-not (= 200 (.statusCode response))
-        (fail! :credential-trust/document-unavailable
-               (str "did:web document returned HTTP " (.statusCode response))
-               {:domain domain :status (.statusCode response) :url url}))
-      (let [body (.body response)]
-        (when (> (count body) max-bytes)
-          (fail! :credential-trust/document-too-large
-                 (str "did:web document exceeds " max-bytes " bytes")
-                 {:domain domain :bytes (count body)}))
-        (try
-          (json/read-str body)
-          (catch Exception _
-            (fail! :credential-trust/document-unparseable
-                   "did:web document is not JSON" {:domain domain})))))))
+  (fetch-json configuration (did/did-web-url (str "did:web:" domain))
+              {:accept "application/did+json, application/json"
+               :what "did:web document"}))
 
 ;; ── document -> key ──────────────────────────────────────────────────────────
 
@@ -261,6 +286,117 @@
                "only did:key and did:web issuers can be resolved"
                {:verification-method verification-method})))))
 
+;; ── revocation ───────────────────────────────────────────────────────────────
+;; Cached separately from keys and for much less time: a key rotates rarely, a
+;; revocation is the thing we are asking about. The list's own `ttl` (RFC
+;; milliseconds) wins when it is shorter than ours, because the issuer knows how
+;; often it republishes.
+(def default-status-cache-seconds 300)
+(defonce ^:private status-cache (atom {}))
+
+(defn clear-status-cache! [] (reset! status-cache {}))
+
+(defn- controller-of [verification-method]
+  (if-let [i (str/index-of (str verification-method) "#")]
+    (subs verification-method 0 i)
+    verification-method))
+
+(defn- cached-status-list [url]
+  (let [entry (get @status-cache url)]
+    (when (and entry (pos? (compare (:expires-at entry) (Instant/now))))
+      (:credential entry))))
+
+(defn- cache-status-list! [configuration url credential]
+  (let [configured (or (:status-cache-seconds (settings configuration))
+                       default-status-cache-seconds)
+        ;; `ttl` on a BitstringStatusList is in milliseconds.
+        declared (when-let [ms (get-in credential ["credentialSubject" "ttl"])]
+                   (when (number? ms) (quot (long ms) 1000)))
+        seconds (max 1 (min (long configured) (long (or declared configured))))]
+    (swap! status-cache assoc url
+           {:credential credential
+            :expires-at (.plusSeconds (Instant/now) seconds)})
+    credential))
+
+(defn fetch-status-list-credential
+  "Fetch and VERIFY the status list credential `url` points at.
+
+  The verification is the whole point, not a formality. An unverified list is a
+  file at a URL, and believing one would let anyone who can answer that URL —
+  including whoever compromised it — publish a list of zeros and un-revoke every
+  credential the issuer ever withdrew.
+
+  It must also be signed by the SAME controller as the credential being checked.
+  A valid list from a different issuer is a valid statement about someone else's
+  credentials, and honouring it here would let any trusted issuer clear another
+  issuer's revocations."
+  [configuration url expected-controller]
+  (or (cached-status-list url)
+      (let [document (fetch-json configuration url
+                                 {:accept "application/vc+json, application/json"
+                                  :what "status list credential"})
+            result (di/verify-credential
+                    document
+                    {:resolve-key (resolve-external-key configuration)})]
+        (when-not (:verified result)
+          (fail! :credential-trust/status-list-unverified
+                 (str "the status list credential at " url " does not verify. An "
+                      "unverified list is just a file at a URL, and believing one "
+                      "would let whoever answers that URL un-revoke everything.")
+                 {:url url :reason (:reason result)}))
+        (when-not (= expected-controller
+                     (controller-of (:verification-method result)))
+          (fail! :credential-trust/status-list-issuer-mismatch
+                 (str "the status list at " url " is signed by "
+                      (controller-of (:verification-method result))
+                      ", not by the credential's issuer. A valid list from a "
+                      "different issuer is a statement about someone else's "
+                      "credentials.")
+                 {:url url
+                  :expected expected-controller
+                  :actual (controller-of (:verification-method result))}))
+        (cache-status-list! configuration url document))))
+
+(defn check-revocation
+  "Resolve a credential's `credentialStatus` against its issuer's status list.
+
+  Returns `{:revocation :current|:revoked|:not-applicable|:unchecked …}`.
+
+  FAILS CLOSED. Every way of not knowing — no URL, a fetch that failed, a list
+  that does not verify, a list signed by someone else, a length error — comes back
+  `:unchecked`, never `:current`. Treating \"could not ask\" as \"not revoked\" is
+  exactly the mistake that makes a revocation list decorative."
+  [configuration credential expected-controller]
+  (let [entry (get credential "credentialStatus")]
+    (cond
+      (nil? entry) {:revocation :not-applicable}
+
+      (not (map? entry))
+      {:revocation :unchecked :reason :credential-trust/status-entry-malformed}
+
+      :else
+      (let [url (get entry "statusListCredential")]
+        (if-not (string? url)
+          {:revocation :unchecked
+           :reason :credential-trust/status-entry-malformed}
+          (try
+            (let [list-credential (fetch-status-list-credential
+                                   configuration url expected-controller)
+                  status (sl/check-status entry list-credential
+                                          {:expected-purpose
+                                           (get entry "statusPurpose")})]
+              {:revocation (if (:valid? status) :current :revoked)
+               :status (:status status)
+               :status-index (:index status)
+               :status-list url})
+            (catch clojure.lang.ExceptionInfo error
+              (let [data (ex-data error)]
+                {:revocation :unchecked
+                 :status-list url
+                 :reason (or (:type data) (:status-list/error data)
+                             (:data-integrity/error data)
+                             :credential-trust/status-unresolvable)}))))))))
+
 ;; ── verification ─────────────────────────────────────────────────────────────
 
 (defn verify-external
@@ -290,18 +426,19 @@
         (if-not (:verified result)
           (assoc (select-keys result [:verified :reason])
                  :valid? false :revocation :not-applicable :schema schema)
-          (let [has-status? (some? (get presented "credentialStatus"))]
-            {:verified true
-             ;; Deliberately NOT fetched. A stranger's status list is a second
-             ;; network dependency and a second trust question; leaving it
-             ;; unchecked and saying so is honest, and fetching it silently
-             ;; would not be.
-             :revocation (if has-status? :unchecked :not-applicable)
-             :valid? (not has-status?)
-             :issuer (get presented "issuer")
-             :subject (get-in presented ["credentialSubject" "id"])
-             :verification-method (:verification-method result)
-             :schema schema})))
+          (let [revocation (check-revocation
+                            configuration presented
+                            (controller-of (:verification-method result)))]
+            (merge
+             {:verified true
+              ;; :valid? is true ONLY when revocation came back :current.
+              ;; :unchecked is not a pass — see check-revocation.
+              :valid? (contains? #{:current :not-applicable} (:revocation revocation))
+              :issuer (get presented "issuer")
+              :subject (get-in presented ["credentialSubject" "id"])
+              :verification-method (:verification-method result)
+              :schema schema}
+             revocation))))
       (catch clojure.lang.ExceptionInfo error
         (let [data (ex-data error)]
           {:verified false
