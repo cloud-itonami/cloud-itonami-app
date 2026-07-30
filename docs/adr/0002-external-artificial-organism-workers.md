@@ -42,6 +42,11 @@ Cloud Itonami is the workplace and human control surface. It may:
 - submit expiring, typed intents within an assigned capability;
 - record human approval, refusal, stop, and budget receipts.
 
+Each repository AO has one assignment file under Tamaki's `organisms/`
+directory. The Cloud directory scans all valid assignments and filters them by
+the active Organization membership; a process is not restricted to one AO or
+one Organization.
+
 It may not:
 
 - treat an admitted intent as an executed effect;
@@ -67,6 +72,21 @@ projection. The append-only Tamaki stream remains the event authority.
 The initial wire profile is cursor-based NDJSON or SSE over a loopback or
 mutually authenticated adapter. Reconnection resumes from a durable event ID;
 it does not replace the organism's local-first memory.
+
+The first local adapter uses an atomic, filesystem-backed workplace protocol:
+
+- full intents are written only to Tamaki's private
+  `.tamaki/workplace/inbox/`;
+- redacted admission and effect receipts live in
+  `.tamaki/workplace/receipts/`;
+- the Cloud state stores only an Organization/User/Worker-scoped activity
+  cursor;
+- `admitted` always starts with `effect-status = not-executed`.
+
+The inbox is a transport boundary, not an execution authority. Tamaki's
+supervisor must consume the envelope, evaluate every declared gate, perform or
+refuse the effect, and atomically update the receipt. Cloud Itonami polls that
+receipt; it never infers success from admission.
 
 ## Consequences
 

@@ -814,6 +814,77 @@
     let selectedOrganism = null;
     let organismCursor = null;
     let organismTimer = null;
+    let organismReceipts = [];
+    const sendOrganismIntent = async (payload) => {
+      if (!selectedOrganism) throw new Error('AO workerを選択してください。');
+      return postJSON(
+        `/api/organism-workers/${encodeURIComponent(selectedOrganism.id)}/intents`,
+        payload, true);
+    };
+    const decideOrganismIntent = async (intentId, decision) => {
+      if (!selectedOrganism) throw new Error('AO workerを選択してください。');
+      return postJSON(
+        `/api/organism-workers/${encodeURIComponent(selectedOrganism.id)}`
+          + `/intents/${encodeURIComponent(intentId)}/decision`,
+        {decision}, true);
+    };
+    const renderOrganismReceipts = (data) => {
+      organismReceipts = data.items || [];
+      const decidedIntents = new Set(
+        organismReceipts
+          .filter((receipt) => receipt.capability === 'approval/submit'
+            && receipt.parent)
+          .map((receipt) => receipt.parent));
+      const list = $('#organism-receipts'); list.replaceChildren();
+      organismReceipts.forEach((receipt) => {
+        const item = make('li', 'data-list__item');
+        const copy = make('div');
+        copy.append(
+          make('strong', null,
+            `${receipt.capability || 'intent'} · ${receipt.status || 'unknown'}`),
+          make('p', 'data-list__meta',
+            `${receipt.intent} · effect ${receipt['effect-status'] || 'unknown'}`));
+        item.append(copy);
+        if (receipt.status === 'admitted'
+            && receipt.capability === 'intent/submit'
+            && !decidedIntents.has(receipt.intent)) {
+          const actions = make('div', 'worker-actions');
+          [['approved', '承認'], ['rejected', '拒否']].forEach(([decision, label]) => {
+            const button = make('button', 'tool-button', label);
+            button.type = 'button';
+            button.addEventListener('click', async () => {
+              button.disabled = true;
+              try {
+                await decideOrganismIntent(receipt.intent, decision);
+                await loadOrganismReceipts();
+              } catch (error) {
+                $('#organism-intent-state').textContent = error.message;
+                button.disabled = false;
+              }
+            });
+            actions.append(button);
+          });
+          item.append(actions);
+        }
+        list.append(item);
+      });
+      if (!organismReceipts.length) {
+        list.append(make('li', 'empty-state', 'intent receiptはまだありません。'));
+      }
+      $('#organism-receipt-state').textContent =
+        `${organismReceipts.length} receipts · effect完了とは別です`;
+    };
+    const loadOrganismReceipts = async () => {
+      if (!selectedOrganism) {
+        renderOrganismReceipts({items:[]});
+        return;
+      }
+      const request = await fetch(
+        `/api/organism-workers/${encodeURIComponent(selectedOrganism.id)}/receipts`);
+      const data = await request.json();
+      if (!request.ok) throw new Error(data?.error?.message || 'receiptを取得できません。');
+      renderOrganismReceipts(data);
+    };
     const renderOrganismActivity = (data, replace = false) => {
       const list = $('#organism-activity');
       if (replace) list.replaceChildren();
@@ -898,6 +969,9 @@
       loadOrganismActivity(true).catch((error) => {
         $('#organism-activity-state').textContent = error.message;
       });
+      loadOrganismReceipts().catch((error) => {
+        $('#organism-receipt-state').textContent = error.message;
+      });
       scheduleOrganismPoll();
     };
     const loadOrganisms = async () => {
@@ -910,10 +984,52 @@
       if (organismTimer) { clearTimeout(organismTimer); organismTimer = null; }
       if (!appUnlocked || currentView !== 'organisms' || !selectedOrganism) return;
       organismTimer = setTimeout(async () => {
-        try { await loadOrganismActivity(false); }
+        try {
+          await Promise.all([
+            loadOrganismActivity(false),
+            loadOrganismReceipts()
+          ]);
+        }
         finally { scheduleOrganismPoll(); }
       }, 2000);
     };
+    $('#organism-intent-form').addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const button = $('#organism-intent-submit');
+      const fields = Object.fromEntries(new FormData(event.currentTarget));
+      button.disabled = true; button.textContent = 'admit中…';
+      try {
+        const receipt = await sendOrganismIntent({
+          capability:'intent/submit',
+          type:'objective',
+          summary:fields.summary
+        });
+        event.currentTarget.reset();
+        $('#organism-intent-state').textContent =
+          `${receipt.intent} をadmitしました。effectは未実行です。`;
+        await loadOrganismReceipts();
+      } catch (error) {
+        $('#organism-intent-state').textContent = error.message;
+      } finally {
+        button.disabled = false; button.textContent = 'Tamaki inboxへ送る';
+      }
+    });
+    $('#organism-stop').addEventListener('click', async () => {
+      const button = $('#organism-stop');
+      button.disabled = true;
+      try {
+        const receipt = await sendOrganismIntent({
+          capability:'stop/request',
+          type:'stop',
+          summary:'Human operator requested a governed stop.'
+        });
+        $('#organism-intent-state').textContent =
+          `${receipt.intent} のstop requestをadmitしました。`;
+        await loadOrganismReceipts();
+      } catch (error) {
+        $('#organism-intent-state').textContent = error.message;
+      } finally { button.disabled = false; }
+    });
     const bootstrapApp = () => {
       if (appBootstrapped) return;
       appBootstrapped = true;
@@ -1731,6 +1847,28 @@
           [:article {:class "record-detail" :id "organism-detail"
                      :aria-live "polite"}
            [:div {:class "empty-state"} "AO workerを読み込んでいます。"]]]
+         [:div {:class "local-card"}
+          (dds/heading 2 "Governed intent" {:size "24"})
+          [:p {:class "form-help" :id "organism-intent-state"
+               :role "status" :aria-live "polite"}
+           "admitは実行完了ではありません。Tamakiのcapability・homeostasis・HITL gateへ送ります。"]
+          [:form {:class "settings-form" :id "organism-intent-form"}
+           [:div {:class "field"}
+            [:label {:for "organism-intent-summary"} "Objective / intent"]
+            [:textarea {:id "organism-intent-summary" :name "summary"
+                        :rows 3 :required true
+                        :maxlength 4000
+                        :placeholder "Tamakiに検討・実行してほしいobjectiveを入力"}]]
+           [:div {:class "worker-actions"}
+            [:button {:class "primary-action" :id "organism-intent-submit"
+                      :type "submit"} "Tamaki inboxへ送る"]
+            [:button {:class "tool-button" :id "organism-stop"
+                      :type "button"} "Governed stopを要求"]]]
+          (dds/heading 3 "Intent receipts" {:size "18"})
+          [:p {:class "source-note" :id "organism-receipt-state"}
+           "receiptを確認中…"]
+          [:ul {:class "data-list" :id "organism-receipts"}
+           [:li {:class "skeleton"}]]]
          [:div {:class "local-card"}
           [:div {:class "view-header"}
            [:div

@@ -10,6 +10,7 @@
             [clojure.test :refer [deftest is]]
             [cloud.itonami.app.config :as config-loader]
             [cloud.itonami.app.identity :as local-identity]
+            [cloud.itonami.app.organism-gateway :as organism-gateway]
             [cloud.itonami.app.provider :as provider]
             [cloud.itonami.app.server :as server]
             [cloud.itonami.app.store :as store]
@@ -158,3 +159,81 @@
       (is (= 401 (:status (request :post "/api/workers"
                                    {:body (json/write-str {:prompt "x"})}))))
       (finally (server/stop!)))))
+
+(deftest organism-workplace-routes-preserve-org-and-effect-boundaries
+  (let [activity-cursors (atom [])
+        submitted (atom [])]
+    (with-redefs
+      [local-identity/public-state
+       (fn [_]
+         {:user {:id "test-user" :did "did:key:test-user"}
+          :organization {:id "org-internal"
+                         :organization-id "etzhayyim"
+                         :role :owner}})
+       organism-gateway/directory
+       (fn [organization]
+         {:schema "cloud.itonami.app.organism-directory.v1"
+          :organization organization
+          :items [{:ao.worker/id "ao:etzhayyim:tamaki"
+                   :ao.worker/organization "etzhayyim"}]})
+       organism-gateway/snapshot
+       (fn [worker-id] {:worker {:ao.worker/id worker-id}})
+       organism-gateway/activity
+       (fn [cursor _]
+         (swap! activity-cursors conj cursor)
+         {:schema "cloud.itonami.app.organism-activity.v1"
+          :cursor "17"
+          :items []})
+       organism-gateway/receipts
+       (fn [worker-id]
+         {:schema "cloud.itonami.app.organism-receipts.v1"
+          :worker worker-id :items []})
+       organism-gateway/submit-intent!
+       (fn [worker-id intent _]
+         (swap! submitted conj [worker-id intent])
+         {:receipt/intent (:intent/id intent)
+          :receipt/capability
+          (str (namespace (:intent/capability intent)) "/"
+               (name (:intent/capability intent)))
+          :receipt/status "admitted"
+          :receipt/effect-status "not-executed"})]
+      (with-server
+        (fn []
+          (let [directory (authed :get "/api/organism-workers")]
+            (is (= 200 (:status directory)))
+            (is (= "etzhayyim" (get-in directory [:body :organization]))))
+
+          ;; The first cursor comes from the bounded tail. Its successor is
+          ;; remembered per User/Organization/Worker for reconnect.
+          (is (= 200 (:status
+                      (authed :get
+                              "/api/organism-workers/ao%3Aetzhayyim%3Atamaki/activity"))))
+          (is (= 200 (:status
+                      (authed :get
+                              "/api/organism-workers/ao%3Aetzhayyim%3Atamaki/activity"))))
+          (is (= [nil "17"] @activity-cursors))
+
+          (let [intent
+                (authed
+                 :post
+                 "/api/organism-workers/ao%3Aetzhayyim%3Atamaki/intents"
+                 (json/write-str
+                  {:capability "intent/submit"
+                   :type "objective"
+                   :summary "private objective"}))]
+            (is (= 202 (:status intent)))
+            (is (= "admitted" (get-in intent [:body :status])))
+            (is (= "not-executed" (get-in intent [:body :effect-status]))))
+
+          (let [decision
+                (authed
+                 :post
+                 (str "/api/organism-workers/ao%3Aetzhayyim%3Atamaki"
+                      "/intents/intent-parent/decision")
+                 (json/write-str {:decision "approved"}))]
+            (is (= 202 (:status decision))))
+
+          (is (= [:intent/submit :approval/submit]
+                 (mapv (comp :intent/capability second) @submitted)))
+          (is (= "intent-parent"
+                 (get-in @submitted [1 1 :intent/parent]))))))))

@@ -119,10 +119,67 @@
    :messages (mapv #(select-keys % [:id :role :content :at])
                    (store/session-messages session-id))})
 
+(defn- identity-context [exchange]
+  (identity/public-state (cookie-value exchange identity/cookie-name)))
+
 (defn- active-organization-slug [exchange]
-  (get-in (identity/public-state
-           (cookie-value exchange identity/cookie-name))
-          [:organization :organization-id]))
+  (get-in (identity-context exchange) [:organization :organization-id]))
+
+(defn- require-control-role! [context capability]
+  (when (and (#{:approval/submit :stop/request} capability)
+             (not (#{:owner :admin}
+                   (get-in context [:organization :role]))))
+    (throw (ex-info "この操作にはOrganizationのownerまたはadmin権限が必要です。"
+                    {:type :identity/forbidden :capability capability}))))
+
+(defn- cursor-path [context worker-id]
+  [:organism-cursors
+   (get-in context [:user :id])
+   (get-in context [:organization :id])
+   worker-id])
+
+(defn- remembered-cursor [context worker-id]
+  (get-in (store/snapshot) (cursor-path context worker-id)))
+
+(defn- remember-cursor! [context worker-id cursor]
+  (let [path (cursor-path context worker-id)]
+    (when (and cursor (not= cursor (get-in (store/snapshot) path)))
+      (store/transact! assoc-in path cursor))))
+
+(defn- capability-keyword [value]
+  (let [value (some-> value str (str/replace #"^:" ""))]
+    (when (and (not (str/blank? value))
+               (re-matches #"[a-z][a-z0-9.-]{0,62}/[a-z][a-z0-9.-]{0,62}"
+                           value))
+      (keyword value))))
+
+(defn- decision-keyword [value]
+  (case (some-> value str (str/replace #"^:" ""))
+    "approved" :approved
+    "rejected" :rejected
+    nil))
+
+(defn- organism-intent [context worker-id request capability now]
+  (let [requested-expiry
+        (try
+          (when-let [value (:expires-at request)]
+            (if (number? value) (long value) (Long/parseLong (str value))))
+          (catch Exception _ nil))
+        expires-at (min (+ now 3600000)
+                        (max (+ now 1000)
+                             (or requested-expiry (+ now 900000))))]
+    {:intent/id (str "intent-" (java.util.UUID/randomUUID))
+     :intent/organization
+     (get-in context [:organization :organization-id])
+     :intent/worker worker-id
+     :intent/capability capability
+     :intent/issued-by (or (get-in context [:user :did])
+                           (get-in context [:user :id]))
+     :intent/expires-at expires-at
+     :intent/parent (:parent request)
+     :intent/payload
+     (select-keys request [:type :summary :target :reference
+                           :decision :reason])}))
 
 (defn- require-visible-worker! [exchange worker-id]
   (let [organization (active-organization-slug exchange)
@@ -437,15 +494,88 @@
             (let [worker-id
                   (id-from-path path
                                 #"/api/organism-workers/([^/]+)/activity")
-                  params (query-params exchange)]
+                  params (query-params exchange)
+                  context (identity-context exchange)]
               (require-app-session! exchange)
               (require-visible-worker! exchange worker-id)
-              (send! exchange 200
-                     (organism-gateway/activity
-                      (:cursor params)
-                      (try
-                        (Long/parseLong (or (:limit params) "100"))
-                        (catch Exception _ 100)))))
+              (let [result
+                    (organism-gateway/activity
+                     (or (:cursor params)
+                         (remembered-cursor context worker-id))
+                     (try
+                       (Long/parseLong (or (:limit params) "100"))
+                       (catch Exception _ 100)))]
+                (remember-cursor! context worker-id (:cursor result))
+                (send! exchange 200 result)))
+
+            (and (= method "GET")
+                 (id-from-path path #"/api/organism-workers/([^/]+)/receipts"))
+            (let [worker-id
+                  (id-from-path path
+                                #"/api/organism-workers/([^/]+)/receipts")]
+              (require-app-session! exchange)
+              (require-visible-worker! exchange worker-id)
+              (send! exchange 200 (organism-gateway/receipts worker-id)))
+
+            (and (= method "POST")
+                 (id-from-path path #"/api/organism-workers/([^/]+)/intents"))
+            (let [session (require-app-session! exchange)
+                  context (identity-context exchange)
+                  worker-id
+                  (id-from-path path
+                                #"/api/organism-workers/([^/]+)/intents")
+                  request (read-json exchange)
+                  capability
+                  (if (nil? (:capability request))
+                    :intent/submit
+                    (or (capability-keyword (:capability request))
+                        (throw
+                         (ex-info "capability must be a qualified safe name"
+                                  {:type :ao.intent/invalid}))))
+                  now (System/currentTimeMillis)]
+              (require-origin! exchange config)
+              (require-csrf! exchange session)
+              (require-visible-worker! exchange worker-id)
+              (require-control-role! context capability)
+              (send! exchange 202
+                     (organism-gateway/submit-intent!
+                      worker-id
+                      (organism-intent context worker-id request capability now)
+                      now)))
+
+            (and (= method "POST")
+                 (id-from-path
+                  path
+                  #"/api/organism-workers/([^/]+)/intents/([^/]+)/decision"))
+            (let [[_ worker-id intent-id]
+                  (re-matches
+                   #"/api/organism-workers/([^/]+)/intents/([^/]+)/decision"
+                   path)
+                  session (require-app-session! exchange)
+                  context (identity-context exchange)
+                  request (read-json exchange)
+                  decision (decision-keyword (:decision request))
+                  now (System/currentTimeMillis)]
+              (require-origin! exchange config)
+              (require-csrf! exchange session)
+              (require-visible-worker! exchange worker-id)
+              (require-control-role! context :approval/submit)
+              (when-not (#{:approved :rejected} decision)
+                (throw (ex-info "decision must be approved or rejected"
+                                {:type :ao.intent/invalid})))
+              (send! exchange 202
+                     (organism-gateway/submit-intent!
+                      worker-id
+                      (organism-intent
+                       context worker-id
+                       {:parent intent-id
+                        :type "approval"
+                        :reference intent-id
+                        :decision decision
+                        :reason (:reason request)}
+                       :approval/submit
+                       now)
+                      now)))
 
             (and (= method "POST") (= path "/api/workers"))
             (let [session (require-app-session! exchange)]
@@ -546,6 +676,8 @@
                      :passkey/onboarding-unavailable 409
                      :identity/organization-id-immutable 409
                      :ao.worker/not-found 404
+                     :ao.intent/invalid 400
+                     :ao.intent/rejected 409
                      :identity/organization-required 409
                      :worker/invalid-request 400
                      :worker/not-found 404
