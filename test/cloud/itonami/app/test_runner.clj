@@ -13,6 +13,7 @@
             [cloud.itonami.app.authority.api-test]
             [cloud.itonami.app.authority.payment-test]
             [cloud.itonami.app.authority.posture-test]
+            [cloud.itonami.app.authority.transport-test]
             [cloud.itonami.app.contracts-test]
             [cloud.itonami.app.core-test]
             [cloud.itonami.app.credential-assurance-test]
@@ -37,6 +38,7 @@
     cloud.itonami.app.authority.api-test
     cloud.itonami.app.authority.payment-test
     cloud.itonami.app.authority.posture-test
+    cloud.itonami.app.authority.transport-test
     cloud.itonami.app.contracts-test
     cloud.itonami.app.core-test
     cloud.itonami.app.credential-assurance-test

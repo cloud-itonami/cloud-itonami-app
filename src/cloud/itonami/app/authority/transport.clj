@@ -17,27 +17,41 @@
   authority that cannot be reached is not the same as one that said no, and the
   ledger should be able to tell them apart.
 
-  What an actor answers with -- THREE states, not two:
+  What an actor answers with -- FOUR states, not two:
 
     {\"status\": \"committed\", \"record\": {...}}    the governor cleared it
     {\"status\": \"held\",      \"refusal\": {...}}   the governor refused it
     {\"status\": \"pending\",   \"reference\": \"…\"}  accepted, awaiting the
                                                    actor's OWN operator
+    {\"status\": \"approved-not-actuated\", …}      the operator APPROVED and the
+                                                   outward call did not happen
 
   The third state is why the earlier boolean contract was wrong. A governor
   refusal is NOT an error -- it is the second gate doing its job, the human
   consented and the licensed operator said no. But \"the human consented and the
   operator has not decided yet\" is neither success nor refusal, and a boolean
-  forced it to be filed as one of them. With today's fleet it is also the ONLY
-  answer a well-formed proposal gets: every op a consent surface can send is
-  absent from every phase's :auto set, permanently.
+  forced it to be filed as one of them.
 
-  NOTE on reachability: `cloud-itonami/cloud-itonami-esim` now serves
-  `POST /commit` (`clojure -M:serve`, loopback), so the eSIM authority is
-  reachable once an endpoint is configured. `cloud-itonami-card-issuing` and
-  `denwaban` still have no HTTP surface, so those two remain
-  :endpoint-not-configured / :transport-failed until they get one. See
-  ADR-2607300300's remaining gaps."
+  THE FOURTH STATE arrived with `cloud-itonami-card-issuing`, the first actor in
+  this fleet that can perform a real outward act (issue a card through Stripe
+  Issuing). There, approving and issuing are separate events that can fail
+  separately: the approval is written to the actor's ledger first, and the provider
+  is called second. When the provider refuses, the approval still happened.
+
+  Reading that as `:transport-failed` -- which is what this function did before the
+  branch below existed -- would have told a human \"the actor could not be reached\"
+  when the truth was \"your operator approved this and Stripe declined it\". Those
+  need different responses from a person, so they get different records. It is not
+  `:authority/ok?` (no card exists) and not pending (nobody is deciding), so it is
+  recorded as a refusal carrying `:approval-recorded true`.
+
+  NOTE on reachability, current as of 2026-07-30: all three of
+  `cloud-itonami-esim`, `cloud-itonami-card-issuing` and `denwaban` now serve
+  `POST /commit` (`clojure -M:serve`, loopback), so each is reachable once an
+  endpoint is configured. denwaban's surface answers `held` at its G7 gate for every
+  outward op and never `pending` -- being told \"no\" is different from
+  :endpoint-not-configured, which is what it answered while it had no surface at
+  all. See ADR-2607300300's remaining gaps."
   (:require [clojure.data.json :as json]
             [clojure.string :as str])
   (:import [java.net URI]
@@ -83,7 +97,7 @@
   (try (json/read-str body :key-fn keyword) (catch Exception _ nil)))
 
 (defn- interpret
-  "Map an actor's three-state answer onto a spine outcome. One function, so the
+  "Map an actor's four-state answer onto a spine outcome. One function, so the
   commit path and the refresh path cannot read the same wire word differently."
   [payload]
   (condp = (:status payload)
@@ -94,6 +108,18 @@
     "committed" {:authority/ok? true :authority/record (:record payload)}
     "held"      {:authority/ok? false
                  :authority/refusal (or (:refusal payload) {:rule :governor-refused})}
+    ;; The operator approved and the outward call did not happen. Not ok (nothing
+    ;; was issued) and not pending (nobody is deciding), so it is a refusal -- but
+    ;; one that must carry the fact that an approval really exists in the actor's
+    ;; ledger. A human who sees only "refused" would reasonably conclude their
+    ;; operator declined, and go ask them why.
+    "approved-not-actuated"
+    {:authority/ok? false
+     :authority/approval-recorded? true
+     :authority/refusal (merge {:rule :actuation-failed}
+                               (:refusal payload)
+                               {:approval-recorded true
+                                :decided-by (:decided-by payload)})}
     ;; "unknown" is the actor saying it has no record of this reference -- after a
     ;; restart, every older reference is unknown. That is not a refusal by a
     ;; governor and must not be recorded as one.
@@ -102,8 +128,9 @@
                  :authority/refusal {:rule :reference-unknown
                                      :detail (:detail payload)}}
     (refusal :transport-failed
-             {:detail (str "actor の応答 status が committed|held|pending|unknown の"
-                           "いずれでもありません: " (pr-str (:status payload)))})))
+             {:detail (str "actor の応答 status が committed|held|pending|unknown|"
+                           "approved-not-actuated のいずれでもありません: "
+                           (pr-str (:status payload)))})))
 
 (defn- post-proposal!
   "POST the proposal to the actor's commit route. Returns the actor's own answer,
