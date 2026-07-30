@@ -1700,7 +1700,11 @@
             _ (save! (:id item)
                      (-> wb
                          (assoc-in [:sheets/tabs "sheet1" :sheets/cells [1 1]]
-                                   {:sheets/value "四半期" :sheets/style {:bold true}})
+                                   ;; Bold is written now, so the style has
+                                   ;; to carry something that is not for
+                                   ;; this to report anything.
+                                   {:sheets/value "四半期"
+                                    :sheets/style {:bold true :color "red"}})
                          ;; A named range the validator accepts: it wants a
                          ;; tab and a range, and a save with anything else
                          ;; is refused before `unexpressed` is ever asked.
@@ -1712,7 +1716,7 @@
         ;; Both writers answer now, and they answer differently — CSV loses
         ;; the other tabs as well, which xlsx does not.
         (is (= #{"xlsx" "csv"} (set (keys warnings))))
-        (is (= #{":xlsx/cell-styles-dropped" ":xlsx/named-ranges-dropped"}
+        (is (= #{":xlsx/cell-style-parts-dropped" ":xlsx/named-ranges-dropped"}
                (set (map :code (get warnings "xlsx")))))
         ;; Flattened out of `sheets.validate`'s namespaced shape into the
         ;; app's, the same as the docs ones — the pane renders both with the
@@ -3794,3 +3798,53 @@
                                                           object-store))]
         (is (= ["pptx"] (keys warnings)))
         (is (= [":pptx/slide-title-dropped"] (mapv :code (get warnings "pptx"))))))))
+
+(deftest a-bold-header-survives-an-xlsx-round-trip-through-the-drive
+  ;; The largest of the losses this Drive used to report. A spreadsheet
+  ;; imported with a bold header row came back plain, and exporting it again
+  ;; lost the formatting for good.
+  (with-state
+    (fn [_ object-store]
+      (let [{:keys [item]} (documents/create! :sheets "売上" alice object-store)
+            wb (:resource (documents/content (:id item) alice object-store))
+            tab-id (first (keys (:sheets/tabs wb)))
+            _ (save! (:id item)
+                     (assoc-in wb [:sheets/tabs tab-id :sheets/cells]
+                               {[1 1] {:sheets/value "四半期"
+                                       :sheets/style {:bold true}}
+                                [1 2] {:sheets/value "金額"
+                                       :sheets/style {:bold true :align :center}}
+                                [2 2] {:sheets/value "1200"
+                                       :sheets/style {:number-format "#,##0\"円\""}}})
+                     alice object-store)
+            xlsx (:bytes (documents/export (:id item) "xlsx" alice object-store))
+            back (:item (documents/import! "xlsx" "往復" xlsx alice object-store))
+            reimported (:resource (documents/content (:id back) alice object-store))
+            ;; Whatever the tab came back keyed as — `workbook-from-files`
+            ;; keys by sheet name, which is the tab's title and not the
+            ;; document's.
+            cells (:sheets/cells (first (vals (:sheets/tabs reimported))))]
+        (is (= {:bold true} (:sheets/style (get cells [1 1]))))
+        (is (= {:bold true :align :center} (:sheets/style (get cells [1 2]))))
+        (is (= {:number-format "#,##0\"円\""} (:sheets/style (get cells [2 2]))))
+        (is (= "四半期" (:sheets/value (get cells [1 1]))))))))
+
+(deftest what-a-style-still-loses-is-named-by-key
+  ;; Not "the style is dropped" any more — what is written is written, and
+  ;; the report is about the parts that are not.
+  (with-state
+    (fn [_ object-store]
+      (let [{:keys [item]} (documents/create! :sheets "売上" alice object-store)
+            wb (:resource (documents/content (:id item) alice object-store))
+            tab-id (first (keys (:sheets/tabs wb)))
+            _ (save! (:id item)
+                     (assoc-in wb [:sheets/tabs tab-id :sheets/cells]
+                               {[1 1] {:sheets/value "x"
+                                       :sheets/style {:bold true :color "red"}}})
+                     alice object-store)
+            warnings (:export-warnings (documents/content (:id item) alice
+                                                          object-store))]
+        (is (= [":xlsx/cell-style-parts-dropped"]
+               (mapv :code (get warnings "xlsx"))))
+        (is (str/includes? (:message (first (get warnings "xlsx"))) "color"))
+        (is (not (str/includes? (:message (first (get warnings "xlsx"))) "bold")))))))

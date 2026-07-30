@@ -356,8 +356,20 @@ export drops them on every document, so an entry would appear on everything
 and mean nothing; the docstrings say it instead, and a test pins the silence
 so it stays a decision rather than an omission.
 
-`xlsx` names three: a cell's `:sheets/style`, the workbook's
-`:sheets/named-ranges`, and its `:sheets/charts`. What it deliberately does
+`xlsx` named three losses and now names one and a half. Named ranges are
+written. **Cell styles are written and read back** — weight, slant,
+underline, alignment and a number format — which was the largest of the
+three: a spreadsheet imported with a bold header row came back plain, and
+exporting it again lost the formatting for good.
+
+A style is two levels of indirection, cell → `cellXfs` entry → font and
+`numFmt`, which is what made it the largest. A writer that emits a
+`<font b="1"/>` and nothing else produces a file Excel opens with no bold in
+it, because nothing pointed at the font.
+
+What is left of a style — a colour, a border, a font family — is reported
+**by key** rather than as "the style is dropped", so the report says what is
+actually lost. Charts are still dropped whole. What it deliberately does
 *not* name is a formula written without a cached value — that is Excel
 recalculating on open, which is the format working.
 
