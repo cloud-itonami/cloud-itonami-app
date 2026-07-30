@@ -10,6 +10,7 @@
             [clojure.test :refer [deftest is testing]]
             [cloud.itonami.app.capability :as capability]
             [cloud.itonami.app.documents :as documents]
+            [cloud.itonami.app.filecoin :as filecoin]
             [cloud.itonami.app.store :as store]
             [drive.object :as object]
             [drive.store.memory :as memory]
@@ -2980,3 +2981,126 @@
         (is (= 1 (:versions copy)))
         ;; And that version is the contents, not an empty document.
         (is (= 1 (count (:versions (documents/history (:id copy) alice)))))))))
+
+;; ── files that are not documents ────────────────────────────────────────────
+
+(defn- pdf-bytes [text]
+  (.getBytes (str "%PDF-1.4\n" text "\n%%EOF") "UTF-8"))
+
+(deftest a-pdf-can-live-in-the-drive
+  (with-state
+    (fn [state object-store]
+      (let [{:keys [item]} (documents/upload! "見積.pdf" "application/pdf"
+                                              (pdf-bytes "quote") alice object-store)]
+        (is (= "見積.pdf" (:name item)))
+        (is (:file? item) "not one of the four surfaces")
+        (is (= "file" (:kind item)))
+        (is (= "ファイル" (:label item)))
+        (is (nil? (:resource-kind item)))
+        (is (= "application/pdf" (:media-type item)))
+        (is (= 1 (count (documents/documents @state alice))))
+        (let [back (documents/file-bytes (:id item) alice object-store)]
+          (is (= "見積.pdf" (:filename back)))
+          (is (= (seq (pdf-bytes "quote")) (seq (:bytes back)))))))))
+
+(deftest the-reference-is-the-content
+  ;; A PieceCID, so the same bytes are stored once and named by what they
+  ;; are. Two uploads of one file are two items over one object.
+  (with-state
+    (fn [_ object-store]
+      (let [bytes (pdf-bytes "same")
+            a (:item (documents/upload! "a.pdf" "application/pdf" bytes alice
+                                        object-store))
+            b (:item (documents/upload! "b.pdf" "application/pdf" bytes alice
+                                        object-store))
+            c (:item (documents/upload! "c.pdf" "application/pdf"
+                                        (pdf-bytes "different") alice object-store))]
+        (is (= (:etag a) (:etag b)) "same bytes, same reference")
+        (is (not= (:etag a) (:etag c)))
+        ;; And the reference really is derived from the content, not minted.
+        (is (= (filecoin/piece-ref bytes) (:etag a)))))))
+
+(deftest purging-one-holder-does-not-delete-the-other-s-bytes
+  ;; The failure content addressing makes possible: two items over one
+  ;; object, and deleting either destroys both. It would surface much later,
+  ;; as a download that used to work.
+  (with-state
+    (fn [_ object-store]
+      (let [bytes (pdf-bytes "shared")
+            a (:item (documents/upload! "a.pdf" "application/pdf" bytes alice
+                                        object-store))
+            b (:item (documents/upload! "b.pdf" "application/pdf" bytes alice
+                                        object-store))]
+        (documents/trash! (:id a) alice)
+        (let [{:keys [freed-bytes]} (documents/purge! (:id a) alice object-store)]
+          (is (pos? freed-bytes) "the quota still comes back"))
+        ;; b still reads.
+        (is (= (seq bytes) (seq (:bytes (documents/file-bytes (:id b) alice
+                                                              object-store)))))
+        ;; And once the last holder goes, so do the bytes.
+        (documents/trash! (:id b) alice)
+        (documents/purge! (:id b) alice object-store)
+        (is (= :drive/not-found
+               (:type (try (documents/file-bytes (:id b) alice object-store)
+                           (catch clojure.lang.ExceptionInfo e (ex-data e))))))))))
+
+(deftest another-drive-holding-the-same-bytes-counts-too
+  ;; The other holder may be somebody else entirely. A check scoped to one
+  ;; Drive would be correct exactly until two people uploaded the same file,
+  ;; which is the case content addressing exists for.
+  (with-state
+    (fn [_ object-store]
+      (let [bytes (pdf-bytes "everyone has this")
+            mine (:item (documents/upload! "a.pdf" "application/pdf" bytes alice
+                                           object-store))
+            theirs (:item (documents/upload! "a.pdf" "application/pdf" bytes bob
+                                             object-store))]
+        (is (= (:etag mine) (:etag theirs)))
+        (documents/trash! (:id mine) alice)
+        (documents/purge! (:id mine) alice object-store)
+        (is (= (seq bytes) (seq (:bytes (documents/file-bytes (:id theirs) bob
+                                                              object-store)))))))))
+
+(deftest a-file-is-not-a-document-and-says-so
+  (with-state
+    (fn [_ object-store]
+      (let [{:keys [item]} (documents/upload! "見積.pdf" "application/pdf"
+                                              (pdf-bytes "q") alice object-store)]
+        ;; No envelope, so `content` has nothing to give. Without the guard
+        ;; the bytes reach the EDN/JSON reader and the caller gets
+        ;; "unexpected character: %" as a 500 — a parse error standing in
+        ;; for "that is not a document".
+        (is (= :drive/not-a-document
+               (:type (try (documents/content (:id item) alice object-store)
+                           (catch clojure.lang.ExceptionInfo e (ex-data e))))))
+        ;; And a document is not a file.
+        (let [doc (:item (documents/create! :docs "設計" alice object-store))]
+          (is (= :drive/not-a-file
+                 (:type (try (documents/file-bytes (:id doc) alice object-store)
+                             (catch clojure.lang.ExceptionInfo e (ex-data e)))))))))))
+
+(deftest an-empty-upload-is-refused
+  ;; Its PieceCID would be the CID of nothing, shared by every empty upload
+  ;; anyone ever makes — an item pointing at a shared object holding no
+  ;; content, which is a row that can only confuse.
+  (with-state
+    (fn [_ object-store]
+      (is (= :drive/invalid-document
+             (:type (try (documents/upload! "空.pdf" "application/pdf"
+                                            (byte-array 0) alice object-store)
+                         (catch clojure.lang.ExceptionInfo e (ex-data e)))))))))
+
+(deftest a-file-can-be-filed-shared-and-trashed-like-anything-else
+  (with-state
+    (fn [state object-store]
+      (let [work (:item (documents/create-folder! "資料" alice))
+            {:keys [item]} (documents/upload! "見積.pdf" "application/pdf"
+                                              (pdf-bytes "q") alice object-store
+                                              {:folder (:id work)})]
+        (is (= (:id work) (:parent-id item)))
+        (documents/grant! (:id item) bob "viewer" alice)
+        (is (= [(:id item)] (mapv :id (documents/documents @state bob))))
+        (is (= (seq (pdf-bytes "q"))
+               (seq (:bytes (documents/file-bytes (:id item) bob object-store)))))
+        (documents/trash! (:id item) alice)
+        (is (empty? (documents/documents @state alice)))))))
