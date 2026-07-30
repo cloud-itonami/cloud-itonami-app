@@ -72,6 +72,31 @@
             ;; case this exists to mark rather than print as a current figure.
             :metrics-max-age-days 3}
 
+ ;; Verifiable Credentials issued by OTHER organizations
+ ;; (cloud.itonami.app.credential-trust). Credentials this app issued itself need
+ ;; nothing here — they are checked against its own key.
+ ;;
+ ;; :trusted-issuers is DENY-BY-DEFAULT and there is no way to switch it off,
+ ;; because for did:web the trust list is not hardening, it is the trust model.
+ ;; Anyone can publish a DID document at a domain they control and sign a
+ ;; credential with the matching key; verifying that proves only "whoever
+ ;; controls that domain said this". A verifier that fetches the key the
+ ;; credential names is checking the forger's arithmetic against the forger's own
+ ;; key. So the operator decides which domains to believe, in advance, here.
+ ;;
+ ;; nil accepts nothing. [] accepts nothing and says so deliberately -- an absent
+ ;; policy is not a permissive policy, the same reading :authorities :voice
+ ;; :allowed-callers already documents.
+ :credentials {:trusted-issuers nil
+               :fetch-timeout-seconds 5
+               ;; A DID document is a handful of keys; the cap is what stops a
+               ;; trusted-but-compromised domain streaming until this process
+               ;; runs out of heap.
+               :max-document-bytes 65536
+               ;; Cached per verificationMethod rather than per domain, so a key
+               ;; rotation is not answered from a stale entry for a sibling key.
+               :cache-seconds 3600}
+
  ;; Governed outward authorities (ADR-2607300300). Each rides the
  ;; `cloud.itonami.app.authority` spine: deterministic pre-check -> Passkey
  ;; consent -> hand-off to an actor that has its own Governor and ledger.
