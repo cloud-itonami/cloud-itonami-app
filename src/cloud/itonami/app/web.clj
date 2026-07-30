@@ -256,6 +256,144 @@
     background:var(--color-neutral-white);font:inherit;font-size:.8125rem}
   .surface-cell:focus{outline:4px solid var(--color-primitive-yellow-300);outline-offset:-1px;
     border-color:var(--color-key-600)}
+  /* ── one surface per kind ─────────────────────────────────────────────
+     A form should look like a form and a deck like a deck. The fields above
+     edit the same value; these render it as the artifact it is, which is the
+     view that answers what was just created without reading JSON. */
+  .surface-modes{display:flex;gap:.25rem;padding:.25rem;width:fit-content;
+    border-radius:.625rem;background:var(--color-neutral-solid-gray-100)}
+  .surface-modes button{min-height:2.25rem;border:0;border-radius:.375rem;
+    background:transparent;padding:.35rem .875rem;
+    color:var(--color-neutral-solid-gray-700);font-size:.8125rem;cursor:pointer}
+  .surface-modes button[aria-pressed='true']{background:var(--color-neutral-white);
+    color:var(--color-key-900);font-weight:700;box-shadow:0 1px 3px rgba(0,0,0,.12)}
+  .surface-modes button:focus-visible{outline:4px solid var(--color-primitive-yellow-300);
+    outline-offset:1px}
+  .surface-preview{padding:1.25rem;border:1px solid var(--color-neutral-solid-gray-200);
+    border-radius:.75rem;background:var(--color-neutral-solid-gray-100);overflow:auto}
+  .doc-page{max-width:40rem;margin:0 auto;box-sizing:border-box;
+    padding:2.5rem clamp(1.25rem,4vw,3rem);background:var(--color-neutral-white);
+    border:1px solid var(--color-neutral-solid-gray-200);border-radius:.25rem;
+    box-shadow:0 1px 3px rgba(0,0,0,.08);color:var(--color-neutral-solid-gray-900);
+    line-height:1.9}
+  .doc-page__title{margin:0 0 1.5rem;padding-bottom:.75rem;font-size:1.75rem;
+    line-height:1.45;border-bottom:1px solid var(--color-neutral-solid-gray-200)}
+  .doc-page h2,.doc-page h3,.doc-page h4,.doc-page h5,.doc-page h6{
+    margin:1.75rem 0 .5rem;line-height:1.5}
+  .doc-page h2{font-size:1.5rem}.doc-page h3{font-size:1.25rem}
+  .doc-page h4{font-size:1.0625rem}.doc-page h5,.doc-page h6{font-size:1rem}
+  .doc-page>*:first-child{margin-top:0}
+  .doc-page p{margin:0 0 1rem;overflow-wrap:anywhere}
+  .doc-page blockquote{margin:0 0 1rem;padding:.25rem 0 .25rem 1rem;
+    border-left:4px solid var(--color-key-600);color:var(--color-neutral-solid-gray-700)}
+  .doc-page pre{margin:0 0 1rem;padding:.875rem 1rem;overflow-x:auto;border-radius:.5rem;
+    background:var(--color-neutral-solid-gray-900);color:var(--color-neutral-white);
+    font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.8125rem;line-height:1.7}
+  .doc-page ul{margin:0 0 1rem;padding-left:1.5rem}
+  .doc-page li{margin:.25rem 0}
+  .doc-table{border-collapse:collapse;width:100%;margin:0 0 1rem;font-size:.9375rem}
+  .doc-table th,.doc-table td{padding:.5rem .625rem;text-align:left;vertical-align:top;
+    border:1px solid var(--color-neutral-solid-gray-300)}
+  .doc-table th{background:var(--color-neutral-solid-gray-50);font-weight:700}
+  .doc-ref{display:inline-flex;align-items:center;gap:.375rem;padding:.375rem .75rem;
+    border-radius:999px;background:var(--color-key-50);color:var(--color-key-900);
+    font-size:.8125rem;font-weight:700}
+  .doc-ref--dangling{background:var(--color-primitive-yellow-200);
+    color:var(--color-neutral-black)}
+  .doc-aside{margin:2rem 0 0;padding-top:1rem;
+    border-top:1px solid var(--color-neutral-solid-gray-200)}
+  .doc-aside h2{margin:0 0 .5rem;font-size:.875rem;font-weight:700;
+    color:var(--color-neutral-solid-gray-600)}
+  .doc-aside p{margin:0 0 .5rem;color:var(--color-neutral-solid-gray-700);
+    font-size:.8125rem;line-height:1.7}
+  .doc-run--bold{font-weight:700}.doc-run--italic{font-style:italic}
+  .doc-run--underline{text-decoration:underline}
+  .doc-run--strike{text-decoration:line-through}
+  .doc-run--code{padding:.05rem .3rem;border-radius:.25rem;
+    background:var(--color-neutral-solid-gray-100);
+    font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.9em}
+  .form-paper{max-width:40rem;margin:0 auto;display:grid;gap:.75rem}
+  .form-paper__head{padding:1.5rem;border:1px solid var(--color-neutral-solid-gray-200);
+    border-top:.5rem solid var(--color-key-900);border-radius:.5rem;
+    background:var(--color-neutral-white)}
+  .form-paper__title{margin:0;font-size:1.5rem;line-height:1.5;overflow-wrap:anywhere}
+  .form-paper__lead{margin:.5rem 0 0;color:var(--color-neutral-solid-gray-600);
+    font-size:.875rem;line-height:1.7}
+  .form-card{display:grid;gap:.5rem;padding:1.25rem;
+    border:1px solid var(--color-neutral-solid-gray-200);border-radius:.5rem;
+    background:var(--color-neutral-white)}
+  .form-card__label{margin:0;font-weight:700;line-height:1.6;overflow-wrap:anywhere}
+  .form-card__required{margin-left:.25rem;color:var(--color-semantic-error-2)}
+  .form-card__type{color:var(--color-neutral-solid-gray-500);font-size:.75rem}
+  .form-control{box-sizing:border-box;width:100%;min-height:2.75rem;border:0;
+    border-bottom:1px solid var(--color-neutral-solid-gray-300);padding:.5rem 0;
+    background:transparent;color:var(--color-neutral-solid-gray-600);font:inherit}
+  .form-control--area{min-height:5rem;padding:.5rem .75rem;resize:vertical;
+    border:1px solid var(--color-neutral-solid-gray-300);border-radius:.5rem}
+  .form-control--check{display:flex;align-items:center;gap:.5rem;min-height:2.75rem;
+    color:var(--color-neutral-solid-gray-600);font-size:.875rem}
+  .sheet-paper{border:1px solid var(--color-neutral-solid-gray-200);border-radius:.5rem;
+    background:var(--color-neutral-white);overflow:hidden}
+  .sheet-tabs{display:flex;gap:.25rem;padding:.5rem .5rem 0;overflow-x:auto;
+    background:var(--color-neutral-solid-gray-50);
+    border-bottom:1px solid var(--color-neutral-solid-gray-200)}
+  .sheet-tab{min-height:2.25rem;border:1px solid transparent;border-bottom:0;
+    border-radius:.375rem .375rem 0 0;background:transparent;padding:.35rem .875rem;
+    color:var(--color-neutral-solid-gray-700);font-size:.8125rem;white-space:nowrap;
+    cursor:pointer}
+  .sheet-tab[aria-pressed='true']{background:var(--color-neutral-white);
+    border-color:var(--color-neutral-solid-gray-200);color:var(--color-key-900);
+    font-weight:700}
+  .sheet-tab:focus-visible{outline:4px solid var(--color-primitive-yellow-300);
+    outline-offset:-2px}
+  .sheet-scroll{max-height:26rem;overflow:auto}
+  .sheet-table{border-collapse:separate;border-spacing:0;font-size:.8125rem;
+    font-variant-numeric:tabular-nums}
+  .sheet-table th{position:sticky;top:0;z-index:2;min-width:6rem;padding:.3rem .5rem;
+    background:var(--color-neutral-solid-gray-100);
+    color:var(--color-neutral-solid-gray-600);font-size:.6875rem;font-weight:400;
+    border-right:1px solid var(--color-neutral-solid-gray-200);
+    border-bottom:1px solid var(--color-neutral-solid-gray-300)}
+  .sheet-table th.sheet-corner{left:0;z-index:3;min-width:2.75rem}
+  .sheet-table th.sheet-rownum{position:sticky;top:auto;left:0;z-index:1;
+    min-width:2.75rem;text-align:center}
+  .sheet-table td{padding:.3rem .5rem;background:var(--color-neutral-white);
+    white-space:nowrap;border-right:1px solid var(--color-neutral-solid-gray-200);
+    border-bottom:1px solid var(--color-neutral-solid-gray-200)}
+  .sheet-cell--num{text-align:right}
+  .sheet-cell--head{background:var(--color-neutral-solid-gray-50);font-weight:700}
+  .sheet-cell--formula{color:var(--color-key-900);
+    font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+  .deck-stage{display:grid;gap:.75rem}
+  /* Inches on a 10 × 5.625in stage, as percentages, so one builder makes both
+     the stage and the thumbnail. `container-type` is what lets a point-sized
+     font survive the scale change: 1pt is 1/72in and 1in is 10cqw. */
+  .deck-canvas,.deck-thumb__frame{position:relative;width:100%;aspect-ratio:16/9;
+    container-type:inline-size;overflow:hidden;background:var(--color-neutral-white)}
+  .deck-canvas{border:1px solid var(--color-neutral-solid-gray-300);border-radius:.375rem;
+    box-shadow:0 2px 8px rgba(0,0,0,.1)}
+  .deck-shape{position:absolute;box-sizing:border-box;overflow:hidden}
+  .deck-shape--text{display:flex;align-items:flex-start;line-height:1.35;
+    color:var(--color-neutral-solid-gray-900);white-space:pre-wrap;overflow-wrap:anywhere}
+  .deck-shape--rect{border:1px solid transparent}
+  .deck-shape--placeholder{display:grid;place-items:center;text-align:center;
+    border:1px dashed var(--color-neutral-solid-gray-400);
+    color:var(--color-neutral-solid-gray-500);font-size:3cqw;line-height:1.4}
+  .deck-empty{position:absolute;inset:0;display:grid;place-items:center;
+    color:var(--color-neutral-solid-gray-500);font-size:3cqw}
+  .deck-film{display:flex;gap:.5rem;padding:.25rem 0;overflow-x:auto}
+  .deck-thumb{flex:0 0 9rem;border:2px solid transparent;border-radius:.375rem;
+    background:transparent;padding:0;text-align:left;cursor:pointer}
+  .deck-thumb[aria-pressed='true']{border-color:var(--color-key-900)}
+  .deck-thumb:focus-visible{outline:4px solid var(--color-primitive-yellow-300);
+    outline-offset:1px}
+  .deck-thumb__frame{border:1px solid var(--color-neutral-solid-gray-300);
+    border-radius:.25rem}
+  .deck-thumb__label{display:block;overflow:hidden;padding:.25rem .125rem 0;
+    color:var(--color-neutral-solid-gray-600);font-size:.6875rem;
+    text-overflow:ellipsis;white-space:nowrap}
+  .deck-caption{margin:0;color:var(--color-neutral-solid-gray-600);font-size:.8125rem;
+    line-height:1.7}
   .sharing{margin-top:1.25rem;border-top:1px solid var(--color-neutral-solid-gray-200);
     padding-top:1rem;display:grid;gap:.75rem}
   .sharing__title{margin:0;font-size:1rem}
@@ -1286,6 +1424,372 @@
     };
     const surfaceEditors = {forms:formsEditor, docs:docsEditor, sheets:sheetsEditor,
                             slides:slidesEditor};
+    // ── rendered surfaces ─────────────────────────────────────────────────
+    // The editors above are the fields of the value. These are the value as
+    // the thing it is: a form as a respondent sees it, a document as a page,
+    // a workbook as a grid with A1 addresses, a deck as slides on a stage.
+    //
+    // Read-only, and the same projected payload the editors mutate — so this
+    // is a third view and not a third format. What it is not is a second
+    // renderer: `slides.pptx` and the Markdown and CSV writers are on the
+    // server, and export is what goes through them. Nothing here is offered
+    // as a substitute for what a file will look like.
+    //
+    // A text input's `type` is the same table `answerPanel` fills a real form
+    // from, declared once here because both need it and two copies of it
+    // would drift.
+    const inputTypes = {email:'email', number:'number', date:'date'};
+    // `:docs/style` on a text run is whoever-wrote-it's map, so a class is
+    // looked up per truthy key rather than assumed to be one name.
+    const docRunClasses = {bold:'doc-run--bold', italic:'doc-run--italic',
+                           underline:'doc-run--underline', strike:'doc-run--strike',
+                           code:'doc-run--code'};
+    const docRunClass = (style) => {
+      if (typeof style === 'string') return docRunClasses[style] || null;
+      if (!style || typeof style !== 'object') return null;
+      const names = Object.keys(style)
+        // `{bold: false}` is a run that says it is not bold.
+        .filter((key) => style[key])
+        .map((key) => docRunClasses[key.replace(/^docs\\//, '')])
+        .filter(Boolean);
+      return names.length ? names.join(' ') : null;
+    };
+    // A block's text with its runs applied. Rendered rather than dropped: a
+    // run that is stored and never shown is formatting the document claims to
+    // have and the page denies. Overlaps are not nested — the model gives a
+    // flat list of ranges, and a tree is not derivable from it — so a later
+    // run starts where the previous one ended.
+    const docText = (block) => {
+      const text = String(block['docs/text'] ?? '');
+      const runs = (block['docs/text-runs'] || [])
+        .filter((run) => run && typeof run === 'object')
+        .map((run) => ({from:Number(run['docs/from']), to:Number(run['docs/to']),
+                        className:docRunClass(run['docs/style'])}))
+        .filter((run) => Number.isFinite(run.from) && Number.isFinite(run.to))
+        .map((run) => ({...run, from:Math.max(0, run.from), to:Math.min(text.length, run.to)}))
+        .filter((run) => run.to > run.from)
+        .sort((a, b) => a.from - b.from);
+      if (!runs.length) return [document.createTextNode(text)];
+      const nodes = [];
+      let at = 0;
+      runs.forEach((run) => {
+        const from = Math.max(at, run.from);
+        if (run.to <= from) return;
+        if (from > at) nodes.push(document.createTextNode(text.slice(at, from)));
+        nodes.push(make('span', run.className, text.slice(from, run.to)));
+        at = run.to;
+      });
+      if (at < text.length) nodes.push(document.createTextNode(text.slice(at)));
+      return nodes;
+    };
+    const docsPreview = (payload) => {
+      const page = make('article', 'doc-page');
+      page.append(make('h1', 'doc-page__title',
+        payload['docs/title'] || '無題のドキュメント'));
+      const blocks = (payload['docs/blocks'] || []).filter((b) => b && typeof b === 'object');
+      blocks.forEach((block) => {
+        const kind = String(block['docs/kind'] ?? '');
+        if (kind === 'heading') {
+          // The title is the h1, so a level-1 heading inside the body is an
+          // h2 — otherwise the page has two first-level headings and a
+          // screen reader is told the document starts twice.
+          const level = Math.min(6, Math.max(1, Number(block['docs/level']) || 1));
+          const heading = make(`h${Math.min(6, level + 1)}`);
+          heading.append(...docText(block));
+          page.append(heading);
+        } else if (kind === 'quote') {
+          const quote = make('blockquote');
+          quote.append(...docText(block));
+          page.append(quote);
+        } else if (kind === 'code') {
+          const pre = make('pre');
+          pre.append(make('code', null, String(block['docs/text'] ?? '')));
+          page.append(pre);
+        } else if (kind === 'list') {
+          const items = block['docs/items'] || [];
+          const list = make('ul');
+          items.forEach((entry) => list.append(make('li', null, String(entry ?? ''))));
+          if (!items.length) list.append(make('li', null, '（項目なし）'));
+          page.append(list);
+        } else if (kind === 'table') {
+          const rows = (block['docs/rows'] || []).filter(Array.isArray);
+          if (!rows.length) {
+            page.append(make('p', 'surface-note', '空の表です。'));
+          } else {
+            const table = make('table', 'doc-table');
+            rows.forEach((row, index) => {
+              const tr = make('tr');
+              // First row as the header: that is what the Markdown writer
+              // does with it, so the page and the export agree.
+              row.forEach((cell) => tr.append(
+                make(index === 0 ? 'th' : 'td', null, String(cell ?? ''))));
+              table.append(tr);
+            });
+            page.append(table);
+          }
+        } else if (refKinds.includes(kind)) {
+          // Resolved against what this principal can see, which is the same
+          // list the picker offers and the same question the server answers
+          // as a save-time warning.
+          const target = block['docs/target'];
+          const hit = (driveData.items || []).find((candidate) => candidate.id === target);
+          const wrap = make('p');
+          wrap.append(make('span', `doc-ref${hit ? '' : ' doc-ref--dangling'}`,
+            hit ? `${hit.label}: ${hit.name}`
+                : `${kind} → ${target || '未設定'}（解決できません）`));
+          page.append(wrap);
+        } else {
+          const para = make('p');
+          para.append(...docText(block));
+          page.append(para);
+        }
+      });
+      if (!blocks.length) {
+        page.append(make('p', 'surface-note',
+          'まだ本文がありません。「フォーム表示」で段落を追加してください。'));
+      }
+      // Beside the page rather than in the margin: an anchored comment needs
+      // to know where its anchor landed, and this render does not lay text
+      // out well enough to point at a character.
+      const comments = (payload['docs/comments'] || []).filter((c) => c && typeof c === 'object');
+      if (comments.length) {
+        const aside = make('div', 'doc-aside');
+        aside.append(make('h2', null, `コメント ${comments.length} 件`));
+        comments.forEach((comment) => aside.append(make('p', null,
+          `${comment['docs/author'] || '不明'}: ${comment['docs/text'] ?? ''}`)));
+        page.append(aside);
+      }
+      return page;
+    };
+    const formsPreview = (payload) => {
+      const paper = make('div', 'form-paper');
+      const head = make('div', 'form-paper__head');
+      head.append(make('h2', 'form-paper__title',
+        payload['forms/title'] || '無題のフォーム'));
+      head.append(make('p', 'form-paper__lead',
+        '回答者に見える形です。実際に送信できるのは下の「このフォームに回答」で、'
+        + 'ここのコントロールは形を示すだけです。'));
+      paper.append(head);
+      const fields = (payload['forms/fields'] || []).filter((f) => f && typeof f === 'object');
+      fields.forEach((entry) => {
+        const type = String(entry['forms/field-type'] ?? 'text');
+        const card = make('div', 'form-card');
+        const label = make('p', 'form-card__label',
+          String(entry['forms/label'] ?? entry['forms/id'] ?? ''));
+        if (entry['forms/required?']) label.append(make('span', 'form-card__required', '*'));
+        card.append(label);
+        if (type === 'textarea') {
+          const area = make('textarea', 'form-control form-control--area');
+          area.disabled = true;
+          area.placeholder = '長い回答';
+          card.append(area);
+        } else if (type === 'checkbox') {
+          const row = make('span', 'form-control--check');
+          const box = make('input', 'surface-check');
+          box.type = 'checkbox';
+          box.disabled = true;
+          row.append(box, make('span', null, 'はい / いいえ'));
+          card.append(row);
+        } else if (type === 'choice') {
+          // `forms.model` gives a choice field no option list, so a deck of
+          // options is whatever the document happens to carry. Saying the
+          // list is empty beats rendering a select that looks configured.
+          const options = (entry['forms/options'] || []).map((option) => String(option));
+          const select = make('select', 'form-control');
+          select.disabled = true;
+          select.append(make('option', null,
+            options.length ? '選択してください' : '選択肢が未設定です'));
+          options.forEach((option) => select.append(make('option', null, option)));
+          card.append(select);
+        } else {
+          const input = make('input', 'form-control');
+          input.type = inputTypes[type] || 'text';
+          input.disabled = true;
+          input.placeholder = type === 'email' ? 'name@example.com'
+            : (type === 'number' ? '0' : (type === 'date' ? '年 / 月 / 日' : '回答を入力'));
+          card.append(input);
+        }
+        card.append(make('span', 'form-card__type',
+          `${type}${entry['forms/required?'] ? ' · 必須' : ''}`));
+        paper.append(card);
+      });
+      if (!fields.length) {
+        paper.append(make('p', 'empty-state',
+          'まだ質問がありません。「フォーム表示」で質問を追加してください。'));
+      }
+      return paper;
+    };
+    // A1 rather than 1行1列: the addresses are numeric in `sheets.model` and
+    // this is the notation every formula in the sheet is written in.
+    const columnName = (col) => {
+      let name = '';
+      let n = col;
+      while (n > 0) {
+        name = String.fromCharCode(65 + ((n - 1) % 26)) + name;
+        n = Math.floor((n - 1) / 26);
+      }
+      return name || String(col);
+    };
+    const sheetsPreview = (payload, _vocabulary, changed) => {
+      const paper = make('div', 'sheet-paper');
+      const tabs = payload['sheets/tabs'] || {};
+      const tabIds = Object.keys(tabs);
+      if (!tabIds.length) {
+        paper.append(make('p', 'empty-state', 'タブがありません。'));
+        return paper;
+      }
+      const current = tabIds.includes(driveEditor.tab) ? driveEditor.tab : tabIds[0];
+      driveEditor.tab = current;
+      const bar = make('div', 'sheet-tabs');
+      tabIds.forEach((id) => {
+        const button = make('button', 'sheet-tab', tabs[id]?.['sheets/title'] || id);
+        button.type = 'button';
+        button.setAttribute('aria-pressed', id === current ? 'true' : 'false');
+        // The same `driveEditor.tab` the editor uses, so switching tab in
+        // either view is switching it in both.
+        button.addEventListener('click', () => { driveEditor.tab = id; changed(true); });
+        bar.append(button);
+      });
+      paper.append(bar);
+      const cells = tabs[current]?.['sheets/cells'] || {};
+      let maxRow = 1;
+      let maxCol = 1;
+      Object.keys(cells).forEach((key) => {
+        // Doubled backslashes: this JavaScript lives inside a Clojure string.
+        const match = /^\\[(-?\\d+) (-?\\d+)\\]$/.exec(key);
+        if (match) {
+          maxRow = Math.max(maxRow, Number(match[1]));
+          maxCol = Math.max(maxCol, Number(match[2]));
+        }
+      });
+      const scroll = make('div', 'sheet-scroll');
+      const table = make('table', 'sheet-table');
+      const head = make('tr');
+      head.append(make('th', 'sheet-corner', ''));
+      for (let col = 1; col <= maxCol; col += 1) {
+        head.append(make('th', null, columnName(col)));
+      }
+      table.append(head);
+      for (let row = 1; row <= maxRow; row += 1) {
+        const tr = make('tr');
+        tr.append(make('th', 'sheet-rownum', String(row)));
+        for (let col = 1; col <= maxCol; col += 1) {
+          const cell = cells[cellKey(row, col)] || {};
+          const formula = cell['sheets/formula'];
+          const value = cell['sheets/value'];
+          const shown = formula !== undefined ? `=${formula}` : (value ?? '');
+          // Nothing is computed here. `sheets` has no evaluator on this path,
+          // and showing a made-up result would be worse than showing the
+          // formula that produces the real one.
+          const numeric = formula === undefined && shown !== ''
+            && Number.isFinite(Number(shown));
+          const td = make('td', [formula !== undefined ? 'sheet-cell--formula' : null,
+                                 numeric ? 'sheet-cell--num' : null,
+                                 row === 1 ? 'sheet-cell--head' : null]
+                                .filter(Boolean).join(' ') || null,
+                          String(shown));
+          tr.append(td);
+        }
+        table.append(tr);
+      }
+      scroll.append(table);
+      paper.append(scroll);
+      return paper;
+    };
+    // The stage `slides.pptx` writes: 10 × 5.625in, shapes in inches and font
+    // sizes in points. Restated here because this is JavaScript; the writer
+    // remains the only thing that produces a .pptx.
+    const deckWidthIn = 10;
+    const deckHeightIn = 5.625;
+    // Only a hex colour, and only base64 for media. Both come out of a stored
+    // document, and a style value is a place a document could otherwise ask
+    // the page to fetch something.
+    const hexColor = (value) => {
+      const hex = String(value ?? '').replace(/^#/, '');
+      return /^[0-9A-Fa-f]{3,8}$/.test(hex) ? `#${hex}` : null;
+    };
+    const deckShape = (shape) => {
+      const inches = (value) => (Number.isFinite(Number(value)) ? Number(value) : 0);
+      const kind = String(shape['slides/shape'] ?? '');
+      const node = (() => {
+        if (kind === 'text') {
+          const text = make('div', 'deck-shape deck-shape--text',
+            String(shape['slides/text'] ?? ''));
+          // A point is 1/72in and an inch is a tenth of the stage width, so a
+          // container query unit is the only one that survives the thumbnail.
+          const pt = Number(shape['slides/font-size']) || 18;
+          text.style.fontSize = `${(pt / 72 / deckWidthIn) * 100}cqw`;
+          const color = hexColor(shape['slides/color']);
+          if (color) text.style.color = color;
+          if (shape['slides/bold']) text.style.fontWeight = '700';
+          if (shape['slides/align'] === 'center') text.style.justifyContent = 'center';
+          if (shape['slides/align'] === 'right') text.style.justifyContent = 'flex-end';
+          return text;
+        }
+        if (kind === 'rect') {
+          const rect = make('div', 'deck-shape deck-shape--rect');
+          const fill = hexColor(shape['slides/fill']);
+          const line = hexColor(shape['slides/line']);
+          if (fill) rect.style.background = fill;
+          if (line) rect.style.borderColor = line;
+          return rect;
+        }
+        // An image is stored as base64 in the deck and would render from a
+        // data: URI — which this page's Content-Security-Policy does not
+        // allow, and widening `default-src 'none'` is a decision about what
+        // the app may load, not one to make while adding a preview. So the
+        // frame says what is there and the .pptx export carries the bytes.
+        return make('div', 'deck-shape deck-shape--placeholder',
+          kind === 'image'
+            ? `画像（${shape['slides/id'] ?? ''}）· pptx に出力されます`
+            : `${kind || '?'}（${shape['slides/id'] ?? ''}）`);
+      })();
+      node.style.left = `${(inches(shape['slides/x']) / deckWidthIn) * 100}%`;
+      node.style.top = `${(inches(shape['slides/y']) / deckHeightIn) * 100}%`;
+      node.style.width = `${(inches(shape['slides/w']) / deckWidthIn) * 100}%`;
+      node.style.height = `${(inches(shape['slides/h']) / deckHeightIn) * 100}%`;
+      return node;
+    };
+    const deckSlide = (slide, className) => {
+      const canvas = make('div', className);
+      const shapes = ((slide && slide['slides/shapes']) || [])
+        .filter((shape) => shape && typeof shape === 'object');
+      shapes.forEach((shape) => canvas.append(deckShape(shape)));
+      if (!shapes.length) canvas.append(make('div', 'deck-empty', '空のスライド'));
+      return canvas;
+    };
+    const slidesPreview = (payload, _vocabulary, changed) => {
+      const stage = make('div', 'deck-stage');
+      const slides = (payload['slides/slides'] || []).filter((s) => s && typeof s === 'object');
+      if (!slides.length) {
+        stage.append(make('p', 'empty-state',
+          'まだスライドがありません。「フォーム表示」で追加してください。'));
+        return stage;
+      }
+      const index = Math.min(Math.max(Number(driveEditor.slide) || 0, 0), slides.length - 1);
+      driveEditor.slide = index;
+      const shown = slides[index];
+      stage.append(deckSlide(shown, 'deck-canvas'));
+      stage.append(make('p', 'deck-caption',
+        `${index + 1} / ${slides.length}・${shown['slides/title'] || shown['slides/id'] || ''}`));
+      const film = make('div', 'deck-film');
+      slides.forEach((slide, n) => {
+        const thumb = make('button', 'deck-thumb');
+        thumb.type = 'button';
+        thumb.setAttribute('aria-pressed', n === index ? 'true' : 'false');
+        thumb.setAttribute('aria-label',
+          `スライド ${n + 1}: ${slide['slides/title'] || slide['slides/id'] || ''}`);
+        thumb.append(deckSlide(slide, 'deck-thumb__frame'),
+          make('span', 'deck-thumb__label',
+            `${n + 1}. ${slide['slides/title'] || slide['slides/id'] || ''}`));
+        thumb.addEventListener('click', () => { driveEditor.slide = n; changed(true); });
+        film.append(thumb);
+      });
+      stage.append(film);
+      return stage;
+    };
+    const surfacePreviews = {forms:formsPreview, docs:docsPreview, sheets:sheetsPreview,
+                             slides:slidesPreview};
     // The detail pane is rebuilt on every render — a keystroke in the search
     // box is enough — so an open editor's text cannot live in the element.
     // It lived there until this was measured: typing in search while editing
@@ -1293,11 +1797,19 @@
     // `etag` is the version the open payload came from. The server refuses a
     // save that does not carry the current one, so this is not bookkeeping —
     // it is the thing that stops one editor's save deleting another's.
-    const closedEditor = (id) => ({id, open:false, mode:'structured',
-                                   payload:null, text:'', tab:null, etag:null,
-                                   warnings:null});
+    // `mode` starts at the rendered surface, because a document that was just
+    // created is one nobody has been shown yet — opening on the field editor
+    // asks what it is instead of saying.
+    //
+    // `loading` and `failed` are what stop the automatic open from firing
+    // again on the next render. The detail pane is rebuilt on every keystroke
+    // in the search box, and a fetch per keystroke is what the guard prevents.
+    const closedEditor = (id) => ({id, open:false, mode:'preview',
+                                   payload:null, text:'', tab:null, slide:0,
+                                   etag:null, warnings:null,
+                                   loading:false, failed:false});
     let driveEditor = closedEditor(null);
-    // Two ways to edit one document: the fields for the surface it is, and
+    // Three views of one document: the surface as it is, the fields of it, and
     // the JSON underneath for everything the fields do not reach. Whichever
     // is showing, what gets saved is the same projected payload.
     const documentActions = (item) => {
@@ -1342,60 +1854,91 @@
       // only the next save.
       editor.addEventListener('input', () => { driveEditor.text = editor.value; });
       const pane = make('div', 'surface-pane');
-      const modes = make('div', 'detail-actions__row');
-      const structuredButton = make('button', 'tool-button', 'フォーム表示');
+      const modes = make('div', 'surface-modes');
+      const previewButton = make('button', null, 'プレビュー');
+      previewButton.type = 'button';
+      const structuredButton = make('button', null, 'フォーム表示');
       structuredButton.type = 'button';
-      const jsonButton = make('button', 'tool-button', 'JSON 表示');
+      const jsonButton = make('button', null, 'JSON 表示');
       jsonButton.type = 'button';
-      modes.append(structuredButton, jsonButton);
+      modes.append(previewButton, structuredButton, jsonButton);
 
-      // The one place the two views meet. Structured edits write into
-      // `payload` and the text is re-derived; JSON edits write the text and
-      // it is parsed when switching back. Neither is ever stale on save.
+      // The one place the views meet. Structured edits write into `payload`
+      // and the text is re-derived; JSON edits write the text and it is parsed
+      // when switching away. Neither is ever stale on save.
       const syncText = () => { driveEditor.text = JSON.stringify(driveEditor.payload, null, 2); };
       const renderPane = () => {
         pane.replaceChildren();
         modes.hidden = !driveEditor.open;
         if (!driveEditor.open) { editor.hidden = true; return; }
-        structuredButton.setAttribute('aria-pressed',
-          driveEditor.mode === 'structured' ? 'true' : 'false');
-        jsonButton.setAttribute('aria-pressed',
-          driveEditor.mode === 'json' ? 'true' : 'false');
+        [[previewButton, 'preview'], [structuredButton, 'structured'],
+         [jsonButton, 'json']].forEach(([button, mode]) =>
+          button.setAttribute('aria-pressed', driveEditor.mode === mode ? 'true' : 'false'));
         if (driveEditor.mode === 'json') {
           editor.hidden = false;
           editor.value = driveEditor.text;
           return;
         }
         editor.hidden = true;
-        const build = surfaceEditors[item.kind];
+        const preview = driveEditor.mode === 'preview';
+        const build = (preview ? surfacePreviews : surfaceEditors)[item.kind];
         if (!build || !driveEditor.payload) {
-          pane.append(make('p', 'empty-state', 'この種類はまだ JSON でのみ編集できます。'));
+          pane.append(make('p', 'empty-state', preview
+            ? 'この種類にはまだ表示できる形がありません。JSON 表示で確認してください。'
+            : 'この種類はまだ JSON でのみ編集できます。'));
           return;
         }
-        pane.append(build(driveEditor.payload, vocabulary, (rebuild) => {
+        // A preview never writes into the payload, but it does move which tab
+        // or slide is being looked at — and the callback is what redraws it.
+        const rendered = build(driveEditor.payload, vocabulary, (rebuild) => {
           syncText();
           if (rebuild) renderPane();
-        }));
+        });
+        if (preview) {
+          const frame = make('div', 'surface-preview');
+          frame.append(rendered);
+          pane.append(frame);
+        } else {
+          pane.append(rendered);
+        }
       };
-      structuredButton.addEventListener('click', () => {
-        if (driveEditor.mode === 'structured') return;
+      // Leaving the JSON view means the text is the truth and the payload has
+      // to catch up. Refused rather than silently discarding whichever side is
+      // wrong.
+      const adoptText = () => {
+        if (driveEditor.mode !== 'json') return true;
         try {
           driveEditor.payload = JSON.parse(driveEditor.text);
+          return true;
         } catch (error) {
-          // Refused rather than silently discarding whichever side is wrong.
-          status.textContent = `JSON として読めないのでフォームに戻せません: ${error.message}`;
-          return;
+          status.textContent = `JSON として読めないので切り替えられません: ${error.message}`;
+          return false;
         }
-        driveEditor.mode = 'structured';
+      };
+      const showMode = (mode) => {
+        if (driveEditor.mode === mode) return;
+        if (!adoptText()) return;
+        driveEditor.mode = mode;
         status.textContent = '';
         renderPane();
-      });
+      };
+      previewButton.addEventListener('click', () => showMode('preview'));
+      structuredButton.addEventListener('click', () => showMode('structured'));
       jsonButton.addEventListener('click', () => {
         if (driveEditor.mode === 'json') return;
         syncText();
         driveEditor.mode = 'json';
         renderPane();
       });
+      // One shape for every way a payload arrives — 編集, a version, a reload
+      // after a refused save, and the automatic first open. Written as a
+      // literal at each call site, a field added later is a field forgotten at
+      // three of them; `slide` and `tab` were exactly that.
+      const openedEditor = (fresh) => ({...closedEditor(item.id), open:true,
+                                        mode:driveEditor.mode, tab:driveEditor.tab,
+                                        slide:driveEditor.slide,
+                                        payload:fresh.payload, etag:fresh.etag,
+                                        warnings:fresh.warnings});
 
       const versions = make('div', 'detail-actions__row');
       const bytesDelta = (n) => (n > 0 ? `+${bytes(n)}` : (n < 0 ? `-${bytes(-n)}` : '±0'));
@@ -1469,13 +2012,12 @@
             // The etag of the *current* version, not of the one being
             // viewed: saving an old version forward is a new version on top
             // of what is there, not a rewrite of history.
-            driveEditor = {id:item.id, open:true, mode:driveEditor.mode,
-                           payload:data.payload, text:'', tab:null,
-                           etag:data.item?.etag,
-                           // Cleared, not carried over: the warnings on
-                           // screen were about the current version, and an
-                           // old version loaded into the editor is not it.
-                           warnings:data['export-warnings'] || null};
+            driveEditor = openedEditor(
+              // Warnings cleared, not carried over: the ones on screen were
+              // about the current version, and an old version loaded into the
+              // editor is not it.
+              {payload:data.payload, etag:data.item?.etag,
+               warnings:data['export-warnings'] || null});
             syncText();
             save.hidden = false;
             renderPane();
@@ -1503,9 +2045,7 @@
         open.disabled = true; status.textContent = '読み込んでいます…';
         try {
           const fresh = await load();
-          driveEditor = {id:item.id, open:true, mode:driveEditor.mode,
-                         payload:fresh.payload, text:'', tab:null,
-                         etag:fresh.etag, warnings:fresh.warnings};
+          driveEditor = openedEditor(fresh);
           syncText();
           save.hidden = false;
           renderPane();
@@ -1518,9 +2058,10 @@
       });
       save.addEventListener('click', async () => {
         let payload;
-        if (driveEditor.mode === 'structured') {
-          payload = driveEditor.payload;
-        } else {
+        // The JSON view is the only one whose text can be ahead of the
+        // payload. The fields write into the payload and the preview does not
+        // write at all, so both save what is already there.
+        if (driveEditor.mode === 'json') {
           try {
             payload = JSON.parse(driveEditor.text);
           } catch (error) {
@@ -1529,6 +2070,8 @@
             status.textContent = `JSON として読めません: ${error.message}`;
             return;
           }
+        } else {
+          payload = driveEditor.payload;
         }
         save.disabled = true; status.textContent = '保存しています…';
         try {
@@ -1552,9 +2095,7 @@
             reload.type = 'button';
             reload.addEventListener('click', async () => {
               const fresh = await load();
-              driveEditor = {id:item.id, open:true, mode:driveEditor.mode,
-                             payload:fresh.payload, text:'', tab:null,
-                             etag:fresh.etag, warnings:fresh.warnings};
+              driveEditor = openedEditor(fresh);
               syncText(); renderPane();
               status.textContent = '最新の版を読み込みました。';
             });
@@ -1623,6 +2164,45 @@
       }
       actions.append(row, status, modes, pane, editor, versions);
       renderPane();
+      // Opened without being asked. A document that was just created and a
+      // document that was just selected are both ones nobody has seen, and
+      // making the surface wait behind 編集 means the answer to 「何を作った
+      // のか」 is a button press away. The fetch is the one 編集 does.
+      //
+      // Guarded on all three of payload, loading and failed, because this runs
+      // on every render of the detail pane — a keystroke in the search box is
+      // one — and without the guard that is a request per keystroke.
+      //
+      // And on `resource-kind`, which is what `documents/item-view` carries and
+      // `documents/folder-view` deliberately does not: a folder has no bytes,
+      // and asking for its content is a request that can only fail.
+      if (item['resource-kind'] && !driveEditor.payload
+          && !driveEditor.loading && !driveEditor.failed) {
+        driveEditor.loading = true;
+        status.textContent = '読み込んでいます…';
+        (async () => {
+          try {
+            const fresh = await load();
+            // The selection may have moved while this was in flight, and the
+            // nodes this closure holds are no longer on the page if it has.
+            if (driveEditor.id !== item.id) return;
+            driveEditor = openedEditor(fresh);
+            syncText();
+            open.textContent = '再読み込み';
+            save.hidden = !item['writable?'];
+            renderPane();
+            status.textContent = '';
+          } catch (error) {
+            if (driveEditor.id !== item.id) return;
+            driveEditor.loading = false;
+            // Marked so the next render does not ask again: a document that
+            // cannot be read is not one to retry on every keystroke. 編集
+            // remains, which is the way to ask again on purpose.
+            driveEditor.failed = true;
+            status.textContent = error.message;
+          }
+        })();
+      }
       if (item.kind === 'forms') actions.append(answerPanel(item));
       // Export is a plain link, not a fetch: the browser already knows how to
       // save a response with a Content-Disposition, and routing binary
@@ -1872,8 +2452,9 @@
     // A form is the one surface with a second thing to do to it. Editing it
     // changes the questions; answering it does not, and the answers are not
     // a version of the form — so this is a panel of its own rather than
-    // another mode of the editor.
-    const inputTypes = {email:'email', number:'number', date:'date'};
+    // another mode of the editor. `inputTypes` is declared with the rendered
+    // surfaces, because the preview of a form and a real one have to agree on
+    // what a field type is.
     const answerPanel = (item) => {
       const panel = make('div', 'sharing');
       panel.append(make('h3', 'sharing__title', 'このフォームに回答'));
