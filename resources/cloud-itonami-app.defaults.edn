@@ -65,7 +65,15 @@
          ;; Pre-check arithmetic only. The issuer's own limits are the issuer's;
          ;; this is the app refusing to ask a human about something it can already
          ;; tell will exceed the funding account's recorded daily limit.
-         :default-daily-limit nil}
+         :default-daily-limit nil
+         ;; The cross-domain invariant (ADR-2607300300 D4): how long an eSIM
+         ;; ownership transfer keeps this subject's card spend and issuance
+         ;; restricted. Seven days by default -- long enough to cover the
+         ;; days-scale tail of a real account takeover, short enough that a
+         ;; legitimate device change does not restrict a subject indefinitely.
+         ;; This is only expressible because all three authorities' proposals
+         ;; share one partition; see cloud.itonami.app.authority.posture.
+         :sim-swap-window-seconds 604800}
   :voice {:enabled? false
           :endpoint nil   ; cloud-itonami/denwaban (R0: run-session raises at G7)
           ;; nil = no allowlist configured, so the pre-check does not apply one.

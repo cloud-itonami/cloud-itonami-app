@@ -23,6 +23,7 @@
   deterministic arithmetic refusal that happens BEFORE a human is asked, so a
   request that cannot proceed never becomes an approval prompt."
   (:require [cloud.itonami.app.authority :as authority]
+            [cloud.itonami.app.authority.posture :as posture]
             [kotoba.card :as card]
             [kotoba.card.lifecycle :as lifecycle]))
 
@@ -54,14 +55,32 @@
   between review and consent."
   [_configuration _session {:keys [op card-reference event state amount currency
                                    daily-limit spent-today cardholder-id
-                                   transaction-id reason]}]
+                                   transaction-id reason]
+                            posture' :posture}]
   (when-not (contains? ops op)
     (refuse :card/op-unsupported (str "未対応の op です: " op)))
+  ;; The cross-domain gate (ADR-2607300300 D4), before anything op-specific: an
+  ;; eSIM ownership transfer for this subject restricts spend and issuance.
+  ;;
+  ;; `:posture` is a REQUIRED input for the restricted ops, exactly as
+  ;; `:daily-limit` is -- an absent posture refuses rather than passing. Passing it
+  ;; in keeps this pre-check pure and testable, and making it required is what
+  ;; stops the invariant from being bypassable by simply not asking: a caller
+  ;; cannot decide an authorization without having stated the posture.
+  (when (contains? posture/restricted-ops op)
+    (when-not (:authority/posture posture')
+      (refuse :card/posture-unknown
+              "cross-domain posture が不明なままでは事前検査できません（authority.posture/subject-posture を渡すこと）"))
+    (when (posture/refuses? posture' op)
+      (refuse :card/sim-swap-hold
+              (str "同一 subject の eSIM ownership transfer によりこの操作は保留されます: "
+                   (pr-str (:authority/signals posture'))))))
   (case op
     :card/issue
     (do (when-not cardholder-id
           (refuse :card/cardholder-missing "cardholder-id が必要です"))
-        {:op op :cardholder-id cardholder-id})
+        {:op op :cardholder-id cardholder-id
+         :posture (:authority/posture posture')})
 
     :card/lifecycle
     (do (check-reference card-reference)
@@ -93,7 +112,8 @@
                   (str "日次上限を超えます: " spent-today " + " amount
                        " > " daily-limit)))
         {:op op :card-reference card-reference :amount amount
-         :currency (or currency "USD") :transaction-id transaction-id})
+         :currency (or currency "USD") :transaction-id transaction-id
+         :posture (:authority/posture posture')})
 
     :dispute/initiate
     (do (check-reference card-reference)
@@ -107,9 +127,14 @@
   eSIM adapter's `material` for why. Every field that changes what would happen
   appears here."
   [{:keys [op card-reference event from to amount currency transaction-id
-           cardholder-id reason mints-successor?]}]
+           cardholder-id reason mints-successor? posture]}]
   (str "card/v1"
        "|op=" op
+       ;; The posture is in the material because it is part of what was decided.
+       ;; If it were not, a proposal reviewed under :normal could be committed
+       ;; after a SIM swap moved the subject to :restricted, and the digest would
+       ;; still match.
+       "|posture=" posture
        "|reference=" card-reference
        "|event=" event
        "|from=" from
