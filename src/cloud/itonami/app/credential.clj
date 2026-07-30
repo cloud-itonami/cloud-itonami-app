@@ -269,6 +269,41 @@
 
 ;; ── verifying ────────────────────────────────────────────────────────────────
 
+(defn verify-frozen
+  "Verify `credential` against a status list snapshot the CALLER supplies.
+
+  `verify` below consults this app's current state, which is right for a live
+  check and wrong for evidence. A document signature made while the signer's
+  role credential was valid does not stop having been validly made because the
+  credential was revoked afterwards — so an evidence record freezes the signed
+  status list as it stood at signing time, and this is what checks against it.
+  `cloud.itonami.app.esign` is the caller.
+
+  The list's OWN proof is verified first, and a list that does not verify is a
+  refusal rather than an absence. A status list of zeros un-revokes everything,
+  so accepting an unproven one would let anyone who can hand us a document
+  un-revoke their own credential — the hazard
+  `status-list-credential` already names, arriving from the other direction."
+  [credential status-list]
+  (let [list-result (di/verify-credential status-list {:resolve-key local-resolver})]
+    (if-not (:verified list-result)
+      {:verified false :valid? false :reason :status-list-unverifiable}
+      (let [result (di/verify-credential credential {:resolve-key local-resolver})]
+        (if-not (:verified result)
+          {:verified false :valid? false :reason (:reason result)}
+          (let [entry (get credential "credentialStatus")
+                status (when entry
+                         (sl/check-status entry status-list
+                                          {:expected-purpose "revocation"}))
+                revoked? (boolean (and status (not (:valid? status))))]
+            (cond-> {:verified true
+                     :revoked? revoked?
+                     :valid? (not revoked?)
+                     :subject (get-in credential ["credentialSubject" "id"])
+                     :role (get-in credential ["credentialSubject" "role"])
+                     :verification-method (:verification-method result)}
+              status (assoc :status-index (:index status)))))))))
+
 (defn verify
   "Verify a credential this app issued, and check its revocation status.
 

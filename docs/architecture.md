@@ -551,6 +551,42 @@ The kinds table gained `:id-key`. `import!` read
 stray `:docs/id` and kept the original's `:forms/id` — a document that
 internally still said it was the one it came from.
 
+### The clock everything is ordered by
+
+Versions, comments and the document listing are all ordered by
+`store/now`'s strings, and the keyset cursor that pages the listing is built
+from one. Two properties had to hold and neither did.
+
+**No two may be equal.** Measured: `(str (Instant/now))` gave 18,848
+distinct values for 20,000 calls — one call in seventeen collided with
+another. A tie is an order nothing decides, so the same request could return
+two documents in either order, and a cursor built from one of them could
+skip a row or repeat it. `now` now steps a microsecond on a tie, so every
+ordering is total by construction within the process.
+
+**Comparing the strings must give the same answer as comparing the
+instants.** It did not. `Instant/toString` drops trailing zeros in groups of
+three, so about one timestamp in eleven hundred prints `…:00.123Z` instead
+of `…:00.123456Z` — and `Z` sorts after `4`, so that one sorts *after* every
+longer timestamp in its own second. The listing order is then the exact
+opposite of the truth, rarely and silently. Measured over 500,000 samples:
+446 printed with three fractional digits and one with none. `now` now
+formats with a fixed six digits, so width never varies and string order is
+instant order.
+
+This is the likeliest explanation for an intermittent single-test failure
+seen twice during this work and never captured — a few hundred timestamped
+things per run, one in eleven hundred printing short, is the right order of
+magnitude. It is stated as the likeliest rather than the proven cause,
+because the failing run was never caught and the fix is justified without
+it.
+
+Timestamps written before this keep their own widths and compare with each
+other exactly as badly as they always did; what stops is new ones joining
+them. `documents` also sorts by id as well as timestamp, because two
+processes do not share the atom that makes `now` monotonic — the clock is
+the answer within one process and the tiebreaker is the answer across them.
+
 ### Two editors, one document
 
 A save carries the `:etag` of the version it was made from — the object

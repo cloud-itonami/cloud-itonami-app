@@ -67,8 +67,14 @@
                          x))]
     (str "did:key:z" (base58btc payload))))
 
-(defn did-key-from-cose
-  "Derive a did:key from a base64url encoded COSE EC2/P-256 public key."
+(defn p256-coordinates
+  "The affine `{:x bytes :y bytes}` of a base64url encoded COSE EC2/P-256 key.
+
+  Separated from `did-key-from-cose` because verifying a WebAuthn signature
+  needs the coordinates themselves, not the DID derived from them
+  (`cloud.itonami.app.esign.assertion`). Two decoders of the same COSE bytes
+  would be two places for the label-type problem this namespace documents to
+  come back."
   [public-key-cose]
   (try
     (let [encoded (.decode (Base64/getUrlDecoder) ^String public-key-cose)
@@ -83,10 +89,16 @@
                      (instance? (Class/forName "[B") y))
         (throw (ex-info "Passkey は EC2/P-256 公開鍵ではありません。"
                         {:type :did/unsupported-public-key})))
-      (did-key-from-p256 x y))
+      {:x x :y y})
     (catch clojure.lang.ExceptionInfo error
       (throw error))
     (catch Exception error
-      (throw (ex-info "Passkey 公開鍵から DID を生成できません。"
+      (throw (ex-info "Passkey 公開鍵を読み取れません。"
                       {:type :did/invalid-public-key}
                       error)))))
+
+(defn did-key-from-cose
+  "Derive a did:key from a base64url encoded COSE EC2/P-256 public key."
+  [public-key-cose]
+  (let [{:keys [x y]} (p256-coordinates public-key-cose)]
+    (did-key-from-p256 x y)))

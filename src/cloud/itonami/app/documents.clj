@@ -1074,6 +1074,44 @@
           :payload (transit/write-json resource)})
        (refuse! result)))))
 
+(defn source-bytes
+  "The stored bytes of `id`'s current version, through the ACL, plus the
+  identity of the version they came from.
+
+  The only caller is `cloud.itonami.app.esign`, and it needs the bytes rather
+  than the decoded resource for a reason that is easy to miss: a signature over
+  a document has to be over bytes that can be reproduced exactly, and
+  re-serializing a resource does not reproduce anything. `pr-str` of a Clojure
+  map is not order-stable — above eight entries the map is a hash map and the
+  print order follows hashing — so a digest taken over `envelope-bytes` of a
+  decoded resource would differ between two processes holding the same
+  document.
+
+  The bytes of a version, by contrast, never change: `write-item` gives every
+  version its own `:object-ref` and nothing rewrites one. So `:object-ref` is
+  returned alongside, and it is what an evidence record names as the thing the
+  digest was taken over.
+
+  Everything about permission is `drive.object/read-item`'s answer, exactly as
+  in `content` — this is a second reader of the same bytes, not a second path
+  to them."
+  ([id actor] (source-bytes id actor (store-instance)))
+  ([id actor object-store]
+   (let [{:keys [workspace owner own?] :as found} (locate (store/snapshot) actor id)
+         _ (when-not found (refuse! {:reason :no-such-item :item-id id}))
+         result (object/read-item workspace object-store id actor)]
+     (if (:ok? result)
+       (let [item (ws/item workspace id)]
+         {:ok? true
+          :bytes (:bytes result)
+          :object-ref (:drive/object-ref item)
+          :media-type (:drive/media-type item)
+          :resource-kind (some-> (:drive/resource-kind item) str)
+          :resource (stored-payload id item (:bytes result))
+          :item (item-view item {:owner owner :own? own?
+                                 :role (ws/effective-role workspace id actor)})})
+       (refuse! result)))))
+
 (def reference-kinds
   "Which block kinds are a reference, and what each is meant to point at.
 

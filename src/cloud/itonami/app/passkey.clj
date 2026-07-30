@@ -249,19 +249,47 @@
     {:user-id user-id :credential-id credential-id
      :did user-did :verified? true}))
 
+(defn- with-challenge
+  "The same assertion request, with `challenge` in place of the random one.
+
+  Only the challenge is replaced: rpId, timeout and userVerification stay as
+  `startAssertion` built them, so this cannot drift from the ceremony's own
+  settings. `finishAssertion` compares `clientDataJSON.challenge` against
+  whatever is in the request it is given, so substituting here is what makes the
+  library enforce the substituted value rather than merely tolerate it.
+
+  Used by `start-signing!` so that a document signature's challenge is the
+  digest of what is being signed. See
+  `cloud.itonami.app.esign.commitment` for why that is not the same as binding
+  the operation server-side, which is what `start-authorization!` does."
+  [^AssertionRequest request ^bytes challenge]
+  (let [options (.getPublicKeyCredentialRequestOptions request)]
+    (-> (.toBuilder request)
+        (.publicKeyCredentialRequestOptions
+         (-> (.toBuilder options)
+             (.challenge (ByteArray. challenge))
+             .build))
+        .build)))
+
 (defn- start-assertion!
   "Begin a user-verifying assertion. `kind` distinguishes a plain sign-in
   (`:assertion`) from an operation-bound authorization (`:authorization`), and
   `transaction-data` is merged into the stored transaction so an authorization can
-  bind server-side facts a later response cannot alter."
-  [kind transaction-data rp-id origin]
+  bind server-side facts a later response cannot alter.
+
+  `challenge`, when given, replaces the library's random one — see
+  `with-challenge`."
+  ([kind transaction-data rp-id origin]
+   (start-assertion! kind transaction-data rp-id origin nil))
+  ([kind transaction-data rp-id origin challenge]
   (let [rp (relying-party rp-id origin)
-        request (.startAssertion
-                 rp
-                 (-> (StartAssertionOptions/builder)
-                     (.userVerification UserVerificationRequirement/REQUIRED)
-                     (.timeout 120000)
-                     .build))
+        request (cond-> (.startAssertion
+                         rp
+                         (-> (StartAssertionOptions/builder)
+                             (.userVerification UserVerificationRequirement/REQUIRED)
+                             (.timeout 120000)
+                             .build))
+                  challenge (with-challenge challenge))
         transaction-id (str "webauthn-" (UUID/randomUUID))
         expires-at (str (.plusSeconds (Instant/now) transaction-seconds))]
     (store/transact!
@@ -273,7 +301,7 @@
       transaction-data))
     {:transaction-id transaction-id
      :options (json/read-str (.toCredentialsGetJson request) :key-fn keyword)
-     :expires-at expires-at}))
+     :expires-at expires-at})))
 
 (defn start-authentication! [rp-id origin]
   (start-assertion! :assertion {} rp-id origin))
@@ -339,6 +367,38 @@
     (cond-> {:user-id (:id user) :credential-id credential-id :verified? true}
       (some? authorization-context)
       (assoc :authorization-context authorization-context))))
+
+(defn start-signing!
+  "Start an assertion whose challenge IS `challenge` — the digest of a document
+  signing commitment.
+
+  Distinct from `start-authorization!` in exactly one way that matters: there,
+  the operation is bound in this server's transaction record and the signed
+  bytes say nothing about it; here, the signed bytes ARE about it. That makes
+  the resulting assertion evidence a third party can check without trusting
+  this server's record, which is the whole reason a document signature exists.
+
+  A separate `:kind` so that a signing assertion cannot be presented to
+  `finish-authorization!` or `finish-authentication!`, and neither of those can
+  be presented here. `active-transaction!` enforces it."
+  [user-id ^bytes challenge context rp-id origin]
+  (when (not= 32 (alength challenge))
+    (throw (ex-info "署名 challenge は commitment の SHA-256 (32 byte) です。"
+                    {:type :esign/invalid-challenge
+                     :byte-count (alength challenge)})))
+  (start-assertion! :esign
+                    {:expected-user-id user-id
+                     :authorization-context context}
+                    rp-id origin challenge))
+
+(defn finish-signing!
+  "Complete a document signing assertion.
+
+  Returns the sign-in result plus `:authorization-context` as stored, so the
+  caller can confirm that the envelope and signer it is about to record are the
+  ones the ceremony was started for."
+  [transaction-id credential-response]
+  (finish-assertion! transaction-id credential-response :esign))
 
 (defn finish-authentication! [transaction-id credential-response]
   (finish-assertion! transaction-id credential-response :assertion))

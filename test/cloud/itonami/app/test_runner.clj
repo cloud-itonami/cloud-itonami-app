@@ -27,6 +27,7 @@
             [cloud.itonami.app.data-isolation-test]
             [cloud.itonami.app.did-test]
             [cloud.itonami.app.documents-test]
+            [cloud.itonami.app.esign-test]
             [cloud.itonami.app.filecoin-test]
             [cloud.itonami.app.fleet-test]
             [cloud.itonami.app.operator-test]
@@ -37,6 +38,7 @@
             [cloud.itonami.app.payment-tools-test]
             [cloud.itonami.app.paypay-bank-test]
             [cloud.itonami.app.storj-node-test]
+            [cloud.itonami.app.store-test]
             [cloud.itonami.app.storj-test]
             [cloud.itonami.app.worker-http-test]))
 
@@ -60,6 +62,7 @@
     cloud.itonami.app.data-isolation-test
     cloud.itonami.app.did-test
     cloud.itonami.app.documents-test
+    cloud.itonami.app.esign-test
     cloud.itonami.app.filecoin-test
     cloud.itonami.app.fleet-test
     cloud.itonami.app.operator-test
@@ -70,6 +73,7 @@
     cloud.itonami.app.payment-tools-test
     cloud.itonami.app.paypay-bank-test
     cloud.itonami.app.storj-node-test
+    cloud.itonami.app.store-test
     cloud.itonami.app.storj-test
     cloud.itonami.app.worker-http-test])
 
