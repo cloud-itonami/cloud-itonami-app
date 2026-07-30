@@ -1980,7 +1980,14 @@
                       {:id (:forms/id field)
                        :label (:forms/label field)
                        :field-type (some-> (:forms/field-type field) name)
-                       :required? (boolean (:forms/required? field))})
+                       :required? (boolean (:forms/required? field))
+                       ;; The choices, for a choice. Dropped here until now,
+                       ;; so the form a person answered rendered a question
+                       ;; with a fixed set of answers as an empty text box —
+                       ;; the preview beside it drew the list correctly from
+                       ;; the document, which made the omission look like a
+                       ;; decision rather than a hole.
+                       :options (forms/options field)})
                     (:forms/fields form))})))
 
 (defn- record-submission!

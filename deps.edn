@@ -118,7 +118,7 @@
    :git/sha "14317029457f6d661967c83e4653d773a5c0f34d"}
   io.github.kotoba-lang/forms
   {:git/url "https://github.com/kotoba-lang/forms.git"
-   :git/sha "d016884f7ae88115ad349a169de2674eb25983c7"}
+   :git/sha "142c34d76d21e982586ac6be83a274be7438bbcc"}
   ;; The fourth surface. Heavier than its siblings — it brings office, ooxml,
   ;; drawingml, presentationml, office-style, canvaskit, css, xml and the
   ;; kotoba-ui stack, because `slides` is also a Pages application and not
