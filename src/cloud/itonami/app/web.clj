@@ -48,6 +48,12 @@
   .brand__note{margin:.25rem 0 0;color:var(--color-neutral-solid-gray-600);
     font-size:.8125rem;line-height:1.6}
   .local-nav{display:flex;flex-direction:column;gap:.25rem}
+  /* The menu separates what you work ON (a business) from what you work WITH
+     (chat, drive, scheduler). Twelve flat items had both kinds in one list. */
+  .local-nav__group{margin:.75rem 0 .125rem;padding:0 .75rem;font-size:.6875rem;
+    font-weight:700;letter-spacing:.08em;
+    color:var(--color-neutral-solid-gray-600)}
+  .local-nav__group:first-child{margin-top:0}
   .local-nav__item{width:100%;border:0;border-radius:.5rem;background:transparent;
     color:var(--color-neutral-solid-gray-800);display:flex;align-items:center;gap:.75rem;
     min-height:3rem;padding:.625rem .75rem;text-align:left;cursor:pointer}
@@ -405,6 +411,9 @@
       padding:.625rem .25rem .375rem}
     .nav-label,.nav-badge{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
       overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
+    /* The labels are hidden here, so a group heading over icon-only buttons
+       would name a grouping the user cannot see. */
+    .local-nav__group{display:none}
     .nav-icon{font-size:1.25rem}
     .topbar{min-height:auto;padding:.75rem 1rem}.topbar__meta{display:none}
     .view{padding:1rem}.view-header{display:block}.view-header .dads-button{margin-top:1rem}
@@ -2619,7 +2628,11 @@
         // reveals in the ledger of a user who has not logged in yet.
         loadContracts(),
         loadFleet(),
-        loadOperator()
+        loadOperator(),
+        // Inside bootstrapApp, not beside loadFilecoin: a business belongs to an
+        // organization and the portfolio is that organization's own record, so
+        // it needs the session that loadFilecoin's public chain reads do not.
+        loadPortfolio()
       ]).then((results) => {
         const connected = results.filter(Boolean).length;
         $('#workspace-status').textContent = `${connected} / ${results.length} サービス接続`;
@@ -2696,7 +2709,7 @@
         box.append(ul);
         const ad = d.adoption;
         box.append(make('p', 'form-help', ad
-          ? `参与: ${String(ad['adoption/stage']).replace(/^:/,'')}（${ad['adoption/declared-by']} / ${ad['adoption/declared-on']}）`
+          ? `参与: ${String(ad.stage).replace(/^:/,'')}（${ad['declared-by']} / ${ad['declared-on']}）`
           : 'まだ参与を表明していません。事業者タブから表明できます。'));
       })
       .catch(() => {});
@@ -2773,17 +2786,17 @@
       const oc = $('#operator-count'); if (oc) oc.textContent = s.adoptions || 0;
       const os_ = $('#operator-source');
       if (os_) os_.textContent = d.profile
-        ? `${d.profile['operator/name']} として参与しています`
+        ? `${d.profile.name} として参与しています`
         : '事業者プロファイルが未登録です。';
       const cv = $('#operator-licence-caveat'); if (cv && d.caveat) cv.textContent = d.caveat;
 
       if (d.profile) {
         const p = d.profile;
         const setv = (id, val) => { const e = $('#' + id); if (e && !e.value) e.value = val; };
-        setv('operator-name', p['operator/name'] || '');
-        setv('operator-isic', (p['operator/isic'] || []).join(', '));
-        setv('operator-isco', (p['operator/isco'] || []).join(', '));
-        setv('operator-iso3166', (p['operator/iso3166'] || []).join(', '));
+        setv('operator-name', p.name || '');
+        setv('operator-isic', (p.isic || []).join(', '));
+        setv('operator-isco', (p.isco || []).join(', '));
+        setv('operator-iso3166', (p.iso3166 || []).join(', '));
       }
 
       const m = $('#operator-matches');
@@ -2810,13 +2823,13 @@
       if (ad) {
         ad.replaceChildren();
         (d.adoptions || []).forEach((a) => {
-          const stage = String(a['adoption/stage']).replace(/^:/, '');
-          const item = listItem(a['adoption/repo'],
-            `${a['adoption/declared-by']} · ${a['adoption/declared-on']}`,
+          const stage = String(a.stage).replace(/^:/, '');
+          const item = listItem(a.repo,
+            `${a['declared-by']} · ${a['declared-on']}`,
             stage, stage === 'withdrawn');
           item.addEventListener('click', () => {
             document.querySelector('[data-view=fleet]')?.click();
-            fleetDetail(a['adoption/repo']);
+            fleetDetail(a.repo);
           });
           ad.append(item);
         });
@@ -2833,6 +2846,216 @@
 
     const splitList = (id) => ($('#' + id)?.value || '')
       .split(',').map((x) => x.trim()).filter(Boolean);
+
+    // ── Portfolio（事業の面）──────────────────────────────────────────
+    //
+    // ADR-2607309600. The one thing this renderer must never do is draw an
+    // absent plane as an empty one. `unresolvable`（workspace checkout が未設定）
+    // と `missing`（設定済みで、その canvas / repo が無い）は別の事実で、直し方
+    // も別 — 前者は設定、後者は checkout か紐付けの誤り。両方を「0件」に畳むと、
+    // 何も測っていない状態が「測って空だった」ように読める。
+    //
+    // WIRE CONTRACT, easy to get wrong in both directions:
+    // `clojure.data.json/write-str` drops the NAMESPACE of a keyword key, so
+    // `:business/id` arrives as `id` and `:adoption/repo` as `repo`. Reading
+    // `b['business/id']` yields undefined — silently, and it renders as an empty
+    // row rather than an error. (The document panes read `d['docs/blocks']` and
+    // are fine only because those keys are STRINGS server-side and pass through
+    // untouched; never copy that shape onto a keyword-keyed payload.) Keyword
+    // VALUES lose their namespace and colon the same way, which is why `bare`
+    // strips a leading colon defensively instead of assuming either form.
+    const bare = (v) => String(v ?? '').replace(/^:/, '');
+    const faceStateLabel = {resolved:'解決', partial:'一部解決', unbound:'未紐付け',
+      unresolvable:'解析不能', missing:'不在', unreadable:'読取不能'};
+    // `missing`/`unreadable` だけが warn。`unresolvable` と `unbound` は
+    // アプリが決められないことなので、警告にはしない（operator の
+    // blocking-states と同じ線引き）。
+    const faceStateTone = {resolved:'ok', partial:'note', unbound:'note',
+      unresolvable:'note', missing:'warn', unreadable:'warn'};
+    const faceRow = (f) => {
+      const li = make('li', 'req-row');
+      const head = make('div', 'req-row__head');
+      head.append(make('strong', null, f.label || bare(f.face)));
+      const badge = make('span', 'req-row__state',
+        faceStateLabel[bare(f.state)] || bare(f.state));
+      badge.dataset.tone = faceStateTone[bare(f.state)] || 'note';
+      head.append(badge);
+      li.append(head);
+      li.append(make('p', 'req-row__detail', f.detail || ''));
+      // An unresolved face names the key it looked for and the file it looked
+      // in, so the reader can act on it instead of only knowing it failed.
+      const key = Array.isArray(f.key) ? f.key.join(' / ') : bare(f.key);
+      if (key) li.append(make('p', 'req-row__caveat', `${key} — ${f.source || ''}`));
+      return li;
+    };
+
+    let selectedBusinessId = null;
+
+    const renderBusinessDetail = (b) => {
+      const box = $('#portfolio-detail'); if (!box) return;
+      const card = $('#portfolio-bind-card');
+      if (!b) {
+        box.replaceChildren(make('div', 'empty-state', '事業を選ぶと、5面の状態を表示します。'));
+        if (card) card.hidden = true;
+        return;
+      }
+      const c = b.coverage || {};
+      box.replaceChildren();
+      box.append(make('p', 'record-detail__eyebrow', b.slug || ''));
+      box.append(make('h3', null, b.name || b.slug || ''));
+      // Two numbers, not one score: 紐付け数 is what the owner declared and
+      // 解決数 is what the workspace can confirm. A single percentage would
+      // hide which of the two is missing.
+      box.append(make('p', 'record-detail__body',
+        `${c.bound ?? 0}/${c.faces ?? 0} 面を紐付け · ${c.resolved ?? 0} 面を解決`
+        + (c.unresolvable ? ` · ${c.unresolvable} 面は workspace 未設定のため解析不能` : '')));
+      if (b.note) box.append(make('p', 'req-row__caveat', b.note));
+      const list = make('ul', 'record-list__items');
+      (b.faces || []).forEach((f) => list.append(faceRow(f)));
+      box.append(list);
+      if (card) {
+        card.hidden = false;
+        const set = (id, v) => { const e = $('#' + id); if (e) e.value = v || ''; };
+        set('portfolio-bind-canvas', bare(b.canvas));
+        set('portfolio-bind-model', b.model);
+        set('portfolio-bind-adoptions', (b.adoptions || []).join(', '));
+        set('portfolio-bind-repos', (b.repos || []).join(', '));
+        set('portfolio-bind-lei', b.lei);
+        const st = $('#portfolio-bind-status'); if (st) st.textContent = '';
+      }
+    };
+
+    const renderPortfolio = (d) => {
+      const rows = d.businesses || [];
+      const counts = d.counts || {};
+      const ws = d.workspace || {};
+
+      const stats = $('#portfolio-stats');
+      if (stats) {
+        stats.replaceChildren(
+          statTile('事業', counts.businesses || 0),
+          statTile('5面すべて解決', counts['fully-resolved'] || 0),
+          statTile('未割当の参与', counts['unassigned-adoptions'] || 0));
+      }
+      const badge = $('#portfolio-count');
+      if (badge) badge.textContent = counts.businesses || 0;
+      const src = $('#portfolio-source');
+      if (src) src.textContent = rows.length
+        ? `${rows.length} 件の事業`
+        : '事業がまだありません。';
+
+      // The workspace notice is the difference between 「測って空だった」 and
+      // 「どこを見るか誰も言っていない」, so it always states which one it is.
+      const notice = $('#portfolio-workspace');
+      if (notice) {
+        notice.replaceChildren();
+        if (bare(ws.state) === 'present') {
+          notice.append(make('strong', null, 'workspace checkout: '), ws.root || '');
+        } else {
+          notice.append(make('strong', null,
+            bare(ws.state) === 'missing' ? 'workspace checkout が見つかりません。'
+                                         : 'workspace checkout が未設定です。'));
+          notice.append(document.createTextNode(' ' + (ws.detail || '')));
+        }
+      }
+
+      const list = $('#portfolio-list');
+      if (list) {
+        list.replaceChildren();
+        rows.forEach((b) => {
+          const c = b.coverage || {};
+          const item = listItem(b.name || b.slug,
+            `${c.bound ?? 0}/${c.faces ?? 0} 面を紐付け`,
+            `解決 ${c.resolved ?? 0}`,
+            (c.resolved ?? 0) === 0);
+          item.addEventListener('click', () => {
+            selectedBusinessId = b.id;
+            renderBusinessDetail(b);
+          });
+          list.append(item);
+        });
+        if (!rows.length) {
+          list.append(make('li', 'empty-state', 'まだ事業がありません。'));
+        }
+      }
+      renderBusinessDetail(rows.find((b) => b.id === selectedBusinessId));
+
+      const un = $('#portfolio-unassigned');
+      if (un) {
+        un.replaceChildren();
+        const items = (d.unassigned && d.unassigned.adoptions) || [];
+        items.forEach((a) => {
+          un.append(listItem(a.repo,
+            `${a['declared-by'] || ''} · ${a['declared-on'] || ''}`,
+            bare(a.stage)));
+        });
+        if (!items.length) {
+          un.append(make('li', 'empty-state', '未割当の参与はありません。'));
+        }
+      }
+      const cav = $('#portfolio-unassigned-caveat');
+      if (cav && d.unassigned && d.unassigned.caveat) {
+        cav.textContent = '参与を表明したが、どの事業にも紐付いていない blueprint です。'
+          + d.unassigned.caveat;
+      }
+    };
+
+    const loadPortfolio = () => fetch('/api/business')
+      .then((r) => r.ok ? r.json() : null)
+      .then((d) => { if (d) renderPortfolio(d); return Boolean(d); })
+      .catch(() => {
+        const src = $('#portfolio-source');
+        if (src) src.textContent = '事業を読み込めません。';
+        return false;
+      });
+
+    $('#portfolio-create-form')?.addEventListener('submit', (e) => {
+      e.preventDefault();
+      const status = $('#portfolio-create-status');
+      fetch('/api/business', {
+        method: 'POST', headers: identityHeaders(),
+        body: JSON.stringify({
+          slug: ($('#portfolio-slug')?.value || '').trim(),
+          name: ($('#portfolio-name')?.value || '').trim(),
+          note: ($('#portfolio-note')?.value || '').trim()
+        })
+      }).then(async (r) => {
+        const body = await r.json().catch(() => null);
+        if (!r.ok) {
+          // The server's own refusal text, not a generic one: slug-taken and
+          // slug-invalid need different corrections.
+          if (status) status.textContent = body?.error?.message
+            || body?.error?.type || `保存できません (${r.status})`;
+          return;
+        }
+        if (status) status.textContent = '追加しました。';
+        ['portfolio-slug','portfolio-name','portfolio-note'].forEach((id) => {
+          const e2 = $('#' + id); if (e2) e2.value = '';
+        });
+        selectedBusinessId = body && body.id;
+        return loadPortfolio();
+      }).catch(() => { if (status) status.textContent = '保存できません。'; });
+    });
+
+    $('#portfolio-bind-form')?.addEventListener('submit', (e) => {
+      e.preventDefault();
+      const status = $('#portfolio-bind-status');
+      if (!selectedBusinessId) { if (status) status.textContent = '事業を選んでください。'; return; }
+      fetch(`/api/business/${encodeURIComponent(selectedBusinessId)}/bind`, {
+        method: 'POST', headers: identityHeaders(),
+        body: JSON.stringify({
+          canvas: ($('#portfolio-bind-canvas')?.value || '').trim(),
+          model: ($('#portfolio-bind-model')?.value || '').trim(),
+          lei: ($('#portfolio-bind-lei')?.value || '').trim(),
+          adoptions: splitList('portfolio-bind-adoptions'),
+          repos: splitList('portfolio-bind-repos')
+        })
+      }).then((r) => {
+        if (!r.ok) { if (status) status.textContent = `保存できません (${r.status})`; return; }
+        if (status) status.textContent = '紐付けを保存しました。';
+        return loadPortfolio();
+      }).catch(() => { if (status) status.textContent = '保存できません。'; });
+    });
 
     $('#fleet-filter-form')?.addEventListener('submit', (e) => { e.preventDefault(); searchFleet(); });
     ['fleet-role','fleet-maturity','fleet-iso3166','fleet-callable'].forEach((id) => {
@@ -3562,6 +3785,13 @@
    [:span {:class "nav-label"} title]
    (when badge-id [:span {:class "nav-badge" :id badge-id} "—"])])
 
+(defn- nav-group
+  "A heading over one run of nav items. Presentational only — the buttons keep
+  carrying their own `data-view`, so `showView` is unchanged and a group cannot
+  become a thing that has to be opened before its items work."
+  [title]
+  [:p {:class "local-nav__group" :aria-hidden "true"} title])
+
 (defn- view-header [title lead]
   [:header {:class "view-header"}
    [:div {:class "view-header__copy"}
@@ -3590,6 +3820,15 @@
         [:select {:id "organization-switcher" :disabled true}
          [:option "確認中…"]]]
        [:nav {:class "local-nav"}
+        ;; 対象（事業とその実装）と道具（chat・drive・scheduler）を分ける。
+        ;; ADR-2607309600 決定4。12 項目が平らに並んでいた状態では、事業を1つ
+        ;; 増やすことと道具を1つ増やすことが同じ操作に見えていた。
+        (nav-group "BUSINESS")
+        (nav-item "portfolio" "Portfolio" "▤" "portfolio-count")
+        (nav-item "fleet" "Fleet" "◉" "fleet-count")
+        (nav-item "operator" "\u4e8b\u696d\u8005" "◐" "operator-count")
+        (nav-item "contracts" "Contracts" "◫" "contracts-count")
+        (nav-group "WORKSPACE")
         (nav-item "chat" "Chat" "✦" nil)
         (nav-item "worker" "Worker" "◐" "worker-count")
         (nav-item "organisms" "Organisms" "◎" "organism-count")
@@ -3598,9 +3837,7 @@
         (nav-item "drive" "Drive" "◇" "drive-count")
         (nav-item "scheduler" "Scheduler" "○" "scheduler-count")
         (nav-item "storage" "Storage" "◈" "storage-count")
-        (nav-item "fleet" "Fleet" "◉" "fleet-count")
-        (nav-item "operator" "\u4e8b\u696d\u8005" "◐" "operator-count")
-        (nav-item "contracts" "Contracts" "◫" "contracts-count")
+        (nav-group "SETTINGS")
         (nav-item "settings" "Settings" "⚙" nil)]
        [:div {:class "sidebar__status"}
         [:strong "● ローカルモード"]
@@ -3710,6 +3947,85 @@
         ;; The whole catalog, 1,213 actors plus the company records, with the
         ;; facets read from the catalog rather than hardcoded — a fixed filter
         ;; list would drift from the fleet the first time it grew.
+        ;; ── Portfolio（事業の面）───────────────────────────────────
+        ;; ADR-2607309600. BMC・system dynamics・fleet の3面は互いに join でき
+        ;; ないので、Business entity が各面の鍵を1つずつ持つ。この pane は
+        ;; その面の「今どこまで解決できるか」だけを出す — 解析値は出さない。
+        ;; 未紐付け・未解決・不在・解析不能を区別して描き、無い面を空の面と
+        ;; して描かないのがこの pane の唯一の仕事。
+        [:section {:class "view" :data-view-panel "portfolio" :hidden true}
+         (view-header "Portfolio"
+                      (str "事業ごとに、Canvas(BMC)・Loops(XMILE)・参与している blueprint・"
+                           "repo・法人実体 の5面がどこまで結び付いているかを表示します。"))
+         [:p {:class "source-note"} [:span {:class "source-dot"}]
+          [:span {:id "portfolio-source"} "事業を確認中…"]]
+         [:div {:class "security-callout" :id "portfolio-workspace"
+                :role "status" :aria-live "polite"}
+          "workspace checkout の状態を確認中…"]
+         [:div {:class "stat-row" :id "portfolio-stats"}]
+         [:div {:class "local-card"}
+          (dds/heading 2 "事業を追加" {:size "24"})
+          [:p {:class "form-help"}
+           (str "slug は ADR や commit でこの事業を指す名前です。どの repo や canvas が"
+                "どの事業かは判断なので、名前から推測して自動で紐付けることはしません。")]
+          [:form {:class "settings-form" :id "portfolio-create-form"}
+           [:div {:class "field"}
+            [:label {:for "portfolio-slug"} "slug"]
+            [:input {:id "portfolio-slug" :name "slug" :required true
+                     :autocomplete "off"
+                     :pattern "[a-z0-9][a-z0-9._-]{1,62}[a-z0-9]"
+                     :placeholder "cloud-itonami-5820"}]]
+           [:div {:class "field"}
+            [:label {:for "portfolio-name"} "表示名（任意）"]
+            [:input {:id "portfolio-name" :name "name" :autocomplete "off"
+                     :placeholder "未入力なら slug を使います"}]]
+           [:div {:class "field"}
+            [:label {:for "portfolio-note"} "メモ（任意）"]
+            [:input {:id "portfolio-note" :name "note" :autocomplete "off"}]]
+           [:button {:class "primary-action" :type "submit"} "事業を追加"]]
+          [:p {:class "form-help" :id "portfolio-create-status" :aria-live "polite"}]]
+         [:div {:class "record-browser"}
+          [:div {:class "record-list"}
+           [:ul {:class "record-list__items" :id "portfolio-list"}
+            [:li {:class "skeleton"}]]]
+          [:article {:class "record-detail" :id "portfolio-detail" :aria-live "polite"}
+           [:div {:class "empty-state"} "事業を選ぶと、5面の状態を表示します。"]]]
+         [:div {:class "local-card" :id "portfolio-bind-card" :hidden true}
+          (dds/heading 2 "面を紐付ける" {:size "24"})
+          [:p {:class "form-help"}
+           (str "workspace に無い canvas や repo を指定しても保存します — "
+                "「この事業はこの canvas に属する」は事業についての真の記述で、"
+                "checkout が無いことは別の事実（:unresolvable）として表示します。")]
+          [:form {:class "settings-form" :id "portfolio-bind-form"}
+           [:div {:class "field"}
+            [:label {:for "portfolio-bind-canvas"} "Canvas — :canvas/product"]
+            [:input {:id "portfolio-bind-canvas" :autocomplete "off"
+                     :placeholder "cloud-itonami"}]]
+           [:div {:class "field"}
+            [:label {:for "portfolio-bind-model"} "Loops — XMILE モデルの相対パス"]
+            [:input {:id "portfolio-bind-model" :autocomplete "off"
+                     :placeholder "orgs/kotoba-lang/loop-system-dynamics/…"}]]
+           [:div {:class "field"}
+            [:label {:for "portfolio-bind-adoptions"} "参与している blueprint（カンマ区切り）"]
+            [:input {:id "portfolio-bind-adoptions" :autocomplete "off"
+                     :placeholder "cloud-itonami-isic-5820"}]]
+           [:div {:class "field"}
+            [:label {:for "portfolio-bind-repos"} "repo path（カンマ区切り）"]
+            [:input {:id "portfolio-bind-repos" :autocomplete "off"
+                     :placeholder "orgs/cloud-itonami/cloud-itonami-app"}]]
+           [:div {:class "field"}
+            [:label {:for "portfolio-bind-lei"} "法人実体 LEI"]
+            [:input {:id "portfolio-bind-lei" :autocomplete "off"
+                     :placeholder "ZSN2LWNPYW6ISMRUC664"}]]
+           [:button {:class "primary-action" :type "submit"} "紐付けを保存"]]
+          [:p {:class "form-help" :id "portfolio-bind-status" :aria-live "polite"}]]
+         [:div {:class "local-card"}
+          (dds/heading 2 "未割当の参与" {:size "24"})
+          [:p {:class "form-help" :id "portfolio-unassigned-caveat"}
+           "参与を表明したが、どの事業にも紐付いていない blueprint です。"]
+          [:ul {:class "record-list__items" :id "portfolio-unassigned"}
+           [:li {:class "empty-state"} "確認中…"]]]]
+
         [:section {:class "view" :data-view-panel "fleet" :hidden true}
          (view-header "Fleet"
                       "cloud-itonami の org と repo。どれも fork して運用できる OSS 事業の設計図です。")
