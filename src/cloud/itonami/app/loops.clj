@@ -127,6 +127,141 @@
     (catch Exception e
       {:state :unsimulatable :reason (.getMessage e)})))
 
+;; ---------------------------------------------------------------------------
+;; sensitivity — where intervening actually moves the outcome
+;; ---------------------------------------------------------------------------
+
+(def default-perturbation
+  "How far each parameter is nudged. 10%: large enough that a linear effect
+  clears floating-point noise, small enough to stay near the operating point the
+  measurements describe."
+  0.10)
+
+(defn- constant-eqn
+  "The number, when a variable's equation is a bare literal.
+
+  Only leaf constants are perturbed. Nudging a variable whose equation references
+  other variables would overwrite a computed value with a fixed one — that is not
+  a sensitivity, it is a different model."
+  [v]
+  (let [s (some-> (:xmile/eqn v) str str/trim)]
+    (when (seq s)
+      (try (Double/parseDouble s) (catch Exception _ nil)))))
+
+(defn- parameters
+  "Every leaf constant in the model, with the kind of thing it is.
+
+  A stock's `<eqn>` is its initial value, so stocks are parameters too — and
+  often the interesting ones, since 「もし顧客が 10% 多かったら」 is a question
+  about an initial condition."
+  [m]
+  (->> (xmodel/variables m)
+       (keep (fn [v]
+               (when-some [c (constant-eqn v)]
+                 {:name (:xmile/name v)
+                  :kind (:xmile/kind v)
+                  :units (:xmile/units v)
+                  :baseline c})))
+       (sort-by :name)
+       vec))
+
+(defn- referenced-by
+  "Every variable whose equation mentions `nm`.
+
+  An elasticity of exactly 0 is ambiguous: it can mean 「動かしても効かない」 or
+  「そもそも繋がっていない」, and those call for different responses. The second
+  is decidable from the model's own text, so it is decided rather than left to
+  the reader — `Weekly_Human_Uniques` in the cloud-itonami funnel is carried as
+  observed context and is deliberately not wired into signup, which its own
+  `<doc>` explains and a bare 0.0000 would hide.
+
+  Word-boundary matched, so `Paying_Tenants` is not read as a reference by
+  `Non_Paying_Tenants`."
+  [m nm]
+  (let [pattern (re-pattern (str "(?<![A-Za-z0-9_])" (java.util.regex.Pattern/quote nm)
+                                 "(?![A-Za-z0-9_])"))]
+    (->> (xmodel/variables m)
+         (remove #(= nm (:xmile/name %)))
+         (filter (fn [v]
+                   (or (re-find pattern (str (:xmile/eqn v)))
+                       ;; A stock names its flows structurally, not in its eqn.
+                       (contains? (:xmile/inflows v #{}) nm)
+                       (contains? (:xmile/outflows v #{}) nm))))
+         (mapv :xmile/name)
+         sort
+         vec)))
+
+(defn- final-values [m]
+  (let [{:keys [xmile/series]} (execute/run m)]
+    (into {} (map (fn [[k vs]] [k (last vs)])) series)))
+
+(defn- elasticity
+  "Percent change in the outcome per percent change in the parameter.
+
+  Dimensionless on purpose: it is the only way to compare a parameter in
+  `tenants/day` against one in `days` — the same reason the trajectory panes
+  refuse a shared y-axis for variables with different units.
+
+  `:undefined` when the baseline outcome is 0. A percent change of zero is not a
+  number, and reporting 0 there would say 「この介入は効かない」 about an outcome
+  that simply has no scale yet — which is exactly the case a funnel with no
+  paying customers is in."
+  [base-out new-out base-param delta-fraction]
+  (cond
+    (or (nil? base-out) (nil? new-out)) {:state :undefined :reason :no-outcome}
+    (zero? base-param) {:state :undefined :reason :zero-parameter}
+    (zero? base-out) {:state :undefined :reason :zero-baseline-outcome
+                      :absolute-change (- new-out base-out)}
+    :else {:state :computed
+           :value (/ (/ (- new-out base-out) base-out) delta-fraction)
+           :absolute-change (- new-out base-out)}))
+
+(defn sensitivity
+  "How much each leaf constant moves each stock's final value.
+
+  This is the honest answer to 「どこに介入すれば効くか」 for a model whose
+  intervention tractability nobody has scored: it is measured out of the model
+  itself by re-running it, not judged. `dynamics.core/leverage-score` needs a
+  tractability in [0,1] per intervention, and inventing those would put a guessed
+  number at the centre of the ranking.
+
+  Local by construction, and says so: an elasticity is the response at THIS
+  operating point to THIS perturbation, and a model with saturation or a
+  non-negative floor will answer differently elsewhere."
+  ([m] (sensitivity m default-perturbation))
+  ([m delta]
+   (try
+     (let [base (final-values m)
+           outcomes (mapv :xmile/name (filter xmodel/stock? (xmodel/variables m)))
+           params (parameters m)]
+       {:state :computed
+        :perturbation delta
+        :note (str "各定数を +" (int (* 100 delta)) "% した再実行との比較。"
+                   "弾力性はこの運転点での局所的な応答であって、全域の性質ではありません")
+        :outcomes outcomes
+        :parameters
+        (mapv (fn [{:keys [name baseline] :as p}]
+                (let [bumped (assoc-in m [:xmile/variables name :xmile/eqn]
+                                       (str (* baseline (+ 1.0 delta))))
+                      after (final-values bumped)
+                      refs (referenced-by m name)]
+                  (assoc p
+                         :referenced-by refs
+                         :connected? (boolean (seq refs))
+                         :detail (when (empty? refs)
+                                   (str name " はモデル内のどの式からも参照されていません。"
+                                        "効果 0 は「効かない」ではなく「繋がっていない」です"))
+                         :effects
+                         (mapv (fn [o]
+                                 (assoc (elasticity (get base o) (get after o)
+                                                    baseline delta)
+                                        :outcome o
+                                        :baseline-outcome (get base o)))
+                               outcomes))))
+              params)})
+     (catch Exception e
+       {:state :unsimulatable :reason (.getMessage e)}))))
+
 (defn model
   "The XMILE model bound to this business, simulated, or the reason there is none.
 
@@ -169,7 +304,8 @@
              :simulated-model (or (:xmile/name m) "(無名)")
              :sim-specs (:xmile/sim-specs m)
              :structure (structure m)
-             :trajectory (trajectory m)}))))))
+             :trajectory (trajectory m)
+             :sensitivity (sensitivity m)}))))))
 
 ;; ---------------------------------------------------------------------------
 ;; leverage

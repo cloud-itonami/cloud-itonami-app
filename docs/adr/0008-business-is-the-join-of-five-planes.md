@@ -199,6 +199,49 @@ missing from the generated plane overwrote both. `cond->` threading the same key
 twice is a quiet overwrite, not an accumulation — so the append is now a named
 function (`add-note`) rather than a habit to remember.
 
+## Sensitivity: leverage measured instead of judged
+
+The Loops pane could show a leverage ranking only by reading a ledger, and the
+ledgers rank interventions for the fleet's registration backlog, not for a
+business. Producing a business ranking the same way would mean scoring each
+intervention's tractability in [0,1] — a judgement nobody has made, and inventing
+one would put a guessed number at the centre of the answer.
+
+So the ranking is computed out of the model instead. Each leaf constant is
+nudged by 10%, the model is re-run through the same engine, and the result is an
+**elasticity**: percent change in a stock per percent change in the parameter.
+It is dimensionless, which is the only reason a `tenants/day` rate and a `days`
+window can be ordered against each other at all — the same argument that keeps
+them off a shared y-axis in the trajectory panes.
+
+Three refusals make it honest.
+
+**Only leaf constants are parameters.** Nudging a variable whose equation
+references others would replace a computed value with a fixed one; that is a
+different model, not a sensitivity.
+
+**A zero elasticity is disambiguated structurally.** 0.0000 can mean 「動かしても
+効かない」 or 「そもそも繋がっていない」, and the second is decidable from the
+model's own text — so a constant no equation references is reported as
+disconnected, with the referencing variables listed for the rest. On the shipped
+`cloud-itonami-saas-funnel.xmile` this is the whole finding:
+`Weekly_Human_Uniques` and `Agent_Runs_Per_Week` come back disconnected, which is
+the model stating that traffic cannot move the funnel while the traffic→signup
+rate is unmeasured. A bare 0 would have hidden that.
+
+**An elasticity with no scale is `:undefined`, not 0.** A parameter whose
+baseline is 0 cannot be nudged by a percentage, and a stock whose baseline
+outcome is 0 has no denominator. Both are named with their reason.
+
+Measured on the real model (10% perturbation, effect on `Paying_Tenants`):
+`Tenant_Signup` +0.58, initial `Non_Paying_Tenants` +0.42, the conversion upper
+bound +0.18, `Observation_Window_Days` −0.20, and the two traffic constants
+disconnected. The ranking is local to this operating point and says so.
+
+This does **not** close the gap that the leverage ledgers model repository
+backlog rather than business economics — it routes around it for models that
+exist, and that limit is still stated on the ledger section of the same pane.
+
 ## Consequences
 
 - A business is created and bound by hand. Nothing is derived — which repo or

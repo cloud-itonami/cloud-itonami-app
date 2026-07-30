@@ -263,6 +263,21 @@ Two things it says out loud: which model was simulated when a document declares
 several, and that today's leverage ledgers model the **fleet's own repository
 registration backlog**, not a business's economics.
 
+**Where intervening pays is measured, not judged.** `dynamics.core/leverage-score`
+wants a tractability in [0,1] per intervention, and inventing those would put a
+guessed number at the centre of the ranking — so the pane computes **elasticity**
+instead: each leaf constant is nudged 10%, the model is re-run, and the percent
+change in each stock is reported per percent change in the parameter.
+Dimensionless, so a rate in `tenants/day` and a window in `days` are comparable.
+
+An elasticity of exactly 0 is ambiguous between 「動かしても効かない」 and
+「そもそも繋がっていない」, so the second is decided structurally: a constant that
+no equation references is reported as **disconnected**, with the list of what
+does reference the others. On the shipped cloud-itonami model that distinction is
+the finding — `Weekly_Human_Uniques` and `Agent_Runs_Per_Week` are disconnected,
+which is the model saying out loud that traffic cannot move the funnel while the
+traffic→signup rate is unmeasured.
+
 The superproject now ships one real model —
 `90-docs/business/cloud-itonami-saas-funnel.xmile`, every parameter a dated
 measurement, with the unconverted funnel expressed as a 95% upper bound rather
