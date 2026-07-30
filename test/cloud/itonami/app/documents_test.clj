@@ -1673,8 +1673,10 @@
                      alice object-store)
             warnings (:export-warnings (documents/content (:id item) alice object-store))]
         ;; Keyed by format, so the pane puts the warning next to the button
-        ;; that causes it.
-        (is (= ["md"] (keys warnings)))
+        ;; that causes it. Both writers drop a style they cannot spell, so
+        ;; both answer — and a set, because the order of a map's keys is not
+        ;; something to assert.
+        (is (= #{"md" "docx"} (set (keys warnings))))
         (is (= ":markdown/style-dropped" (:code (first (get warnings "md")))))
         (is (= "info" (:severity (first (get warnings "md")))))
         (is (= "p" (:id (first (get warnings "md"))))))
@@ -1682,9 +1684,64 @@
       ;; "no warnings" — an empty map would be a thing to render.
       (let [{:keys [item]} (documents/create! :docs "普通" alice object-store)]
         (is (nil? (:export-warnings (documents/content (:id item) alice object-store)))))
-      ;; And a surface that is not docs is not asked.
+      ;; A plain workbook has nothing to lose either — asked, and silent.
       (let [{:keys [item]} (documents/create! :sheets "売上" alice object-store)]
         (is (nil? (:export-warnings (documents/content (:id item) alice object-store))))))))
+
+(deftest a-workbook-says-what-xlsx-will-drop
+  ;; The half that was missing: only Markdown could answer, and the note in
+  ;; this file said so three times before the function got written.
+  (with-state
+    (fn [_ object-store]
+      (let [{:keys [item]} (documents/create! :sheets "売上" alice object-store)
+            wb (:resource (documents/content (:id item) alice object-store))
+            _ (save! (:id item)
+                     (-> wb
+                         (assoc-in [:sheets/tabs "sheet1" :sheets/cells [1 1]]
+                                   {:sheets/value "四半期" :sheets/style {:bold true}})
+                         ;; A named range the validator accepts: it wants a
+                         ;; tab and a range, and a save with anything else
+                         ;; is refused before `unexpressed` is ever asked.
+                         (assoc :sheets/named-ranges
+                                {"総計" {:sheets/id "総計" :sheets/tab "sheet1"
+                                         :sheets/range "A1:B9"}}))
+                     alice object-store)
+            warnings (:export-warnings (documents/content (:id item) alice object-store))]
+        (is (= ["xlsx"] (keys warnings)))
+        (is (= #{":xlsx/cell-styles-dropped" ":xlsx/named-ranges-dropped"}
+               (set (map :code (get warnings "xlsx")))))
+        ;; Flattened out of `sheets.validate`'s namespaced shape into the
+        ;; app's, the same as the docs ones — the pane renders both with the
+        ;; code it already has.
+        (is (every? #(= "info" (:severity %)) (get warnings "xlsx")))
+        (is (every? :message (get warnings "xlsx")))))))
+
+(deftest a-document-says-what-docx-will-drop-separately-from-markdown
+  ;; The two lists differ, which is the reason for keying by format rather
+  ;; than reporting one set of losses per document.
+  (with-state
+    (fn [_ object-store]
+      (let [{:keys [item]} (documents/create! :docs "設計" alice object-store)
+            doc (:resource (documents/content (:id item) alice object-store))
+            _ (save! (:id item)
+                     (assoc doc :docs/blocks
+                            [{:docs/id "r" :docs/kind :deck-ref :docs/target "x"}
+                             {:docs/id "b" :docs/kind :paragraph :docs/text "太字"
+                              :docs/text-runs
+                              [{:docs/from 0 :docs/to 2 :docs/style {:bold true}}]}])
+                     alice object-store)
+            warnings (:export-warnings (documents/content (:id item) alice object-store))]
+        ;; Markdown spells bold, so it says nothing about that run; docx
+        ;; does not, so it does.
+        (is (contains? (set (map :code (get warnings "docx")))
+                       ":docx/text-runs-dropped"))
+        (is (not (contains? (set (map :code (get warnings "md")))
+                            ":markdown/style-dropped")))
+        ;; Both say the reference stops being one.
+        (is (contains? (set (map :code (get warnings "md")))
+                       ":markdown/reference-is-a-link"))
+        (is (contains? (set (map :code (get warnings "docx")))
+                       ":docx/reference-becomes-text"))))))
 
 (deftest only-a-workbook-is-offered-xlsx
   (with-state

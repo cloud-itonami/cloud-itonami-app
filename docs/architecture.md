@@ -292,10 +292,36 @@ indistinguishable from a working import of an empty file.
 more.** Block ids, comments and suggestions have nowhere to go. And the
 writer ignores `:docs/text-runs` entirely — Markdown at least spells bold and
 italic, and this does not spell any of them, so a styled run goes out plain.
-`:export-warnings` does not yet cover it: `docs.markdown/unexpressed` is the
-only one of these functions that exists, and neither `slides.pptx` nor
-`sheets.xlsx` has one either. Those are the same function waiting to be
-written, not a claim that any of them are lossless.
+
+### What every format will drop, before it drops it
+
+`export-warnings` asks a table of `[surface format] → fn`, so the formats
+that *can* answer are one line each and the ones that cannot are visible as
+absences rather than as an unstated assumption. Three answer today:
+`docs.markdown`, `docs.docx` and `sheets.xlsx`. EDN is not in the table
+because it is the stored bytes and loses nothing. CSV and PPTX are not in it
+because nobody has written the function for them, which is a gap rather than
+a claim that they are lossless.
+
+Keying by format rather than reporting one set of losses per document is not
+tidiness: the lists differ. A bold run is spelled by Markdown and dropped by
+docx, so the same paragraph produces a warning under one button and not the
+other.
+
+Each surface writes its answer in its own namespaced shape — `:docs/severity`
+here, `:sheets/severity` there — because it belongs beside the writer that
+does the dropping. The app flattens them to one shape so the pane renders all
+of them with the code it already has.
+
+Block ids are dropped by both text formats and reported by neither. Every
+export drops them on every document, so an entry would appear on everything
+and mean nothing; the docstrings say it instead, and a test pins the silence
+so it stays a decision rather than an omission.
+
+`xlsx` names three: a cell's `:sheets/style`, the workbook's
+`:sheets/named-ranges`, and its `:sheets/charts`. What it deliberately does
+*not* name is a formula written without a cached value — that is Excel
+recalculating on open, which is the format working.
 
 ### Folders, and why the trash is a question rather than a flag
 
