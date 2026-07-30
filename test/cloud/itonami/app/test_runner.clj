@@ -33,6 +33,8 @@
             [cloud.itonami.app.data-isolation-test]
             [cloud.itonami.app.did-test]
             [cloud.itonami.app.documents-test]
+            [cloud.itonami.app.drive-reachability-test]
+            [cloud.itonami.app.web-script-test]
             [cloud.itonami.app.esign-test]
             [cloud.itonami.app.esign-retention-test]
             [cloud.itonami.app.filecoin-test]
@@ -77,6 +79,8 @@
     cloud.itonami.app.data-isolation-test
     cloud.itonami.app.did-test
     cloud.itonami.app.documents-test
+    cloud.itonami.app.drive-reachability-test
+    cloud.itonami.app.web-script-test
     cloud.itonami.app.esign-test
     cloud.itonami.app.esign-retention-test
     cloud.itonami.app.filecoin-test

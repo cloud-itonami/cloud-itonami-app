@@ -2905,9 +2905,15 @@
   It lands through `create!` and then `write-resource!` — the same path a
   save takes — so quota, ACL, versioning and the surface's own validator all
   apply to it exactly as they do to anything else. An imported deck that is
-  not a deck is refused with the same code as a typed one."
-  ([format title bytes actor] (import! format title bytes actor (store-instance)))
-  ([format title bytes actor object-store]
+  not a deck is refused with the same code as a typed one.
+
+  `:folder` for the same reason `create!` and `upload!` take one: a person
+  importing is standing somewhere, and a file that lands at the root while
+  the uploaded file beside it lands in the open folder is two behaviours for
+  one gesture."
+  ([format title bytes actor] (import! format title bytes actor (store-instance) {}))
+  ([format title bytes actor object-store] (import! format title bytes actor object-store {}))
+  ([format title bytes actor object-store {:keys [folder]}]
    (when-not (contains? import-formats format)
      (throw (ex-info (str "読み込めない形式です: " (pr-str format))
                      {:type :drive/unsupported-format
@@ -2948,7 +2954,8 @@
      (create! kind (or (not-empty (str/trim (str title)))
                        (str "取り込み " (store/now)))
               actor object-store
-              {:resource-fn
+              {:folder folder
+               :resource-fn
                (fn [doc-id doc-title]
                  (cond
                    ;; CSV is the one format that builds *onto* a seed

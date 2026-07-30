@@ -1765,7 +1765,9 @@
                      (documents/import! (or (:format params) "edn")
                                         (:title params)
                                         body
-                                        (:user-id session))))
+                                        (:user-id session)
+                                        (documents/store-instance)
+                                        {:folder (:folder params)})))
 
             ;; What this document points at, and what points at it. Both
             ;; resolve through `locate`, so a reference to something the
