@@ -23,7 +23,8 @@
   "Process one stdio frame. Notifications intentionally produce no output."
   [configuration actor line]
   (let [request (json/read-str line)
-        response (mcp/dispatch configuration actor request)]
+        _ actor
+        response (mcp/respond configuration request)]
     (when (contains? request "id")
       (json/write-str response))))
 

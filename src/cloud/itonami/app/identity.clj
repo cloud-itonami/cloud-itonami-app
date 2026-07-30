@@ -3,14 +3,16 @@
 
   Public state contains metadata and Keychain references only. OAuth access
   and refresh tokens are written to macOS Keychain and never enter state.edn."
-  (:require [cloud.itonami.app.did :as did]
+  (:require [cloud.itonami.app.bitcoin :as bitcoin]
+            [cloud.itonami.app.did :as did]
             [cloud.itonami.app.store :as store]
             [cloud.itonami.app.passkey :as passkey]
             [clojure.data.json :as json]
             [clojure.string :as str]
             [identity.directory :as directory]
             [identity.model :as identity]
-            [oauth.model :as oauth])
+            [oauth.model :as oauth]
+            [wallet.siwe :as siwe])
   (:import [java.net URI URLEncoder]
            [java.net.http HttpClient HttpRequest HttpRequest$BodyPublishers
             HttpResponse$BodyHandlers]
@@ -435,6 +437,15 @@
                          (filter #(= (:organization-id session)
                                      (:organization-id %)))
                          (mapv public-connection)))
+     :wallet-links
+     (when session
+       (->> (get-in state [:wallet-bindings (:user-id session)] {})
+            vals
+            (mapv #(select-keys %
+                                [:id :schema :namespace :chain-id :account
+                                 :address :did :proof-type :capabilities
+                                 :status :sync-status :connected-at
+                                 :revoked-at]))))
      :providers
      (mapv (fn [[provider config]]
              (let [connection (some #(when (= provider (:provider %)) %)
@@ -540,6 +551,297 @@
                     :session-id (:id session)}))))
     {:organization-id (:organization-id membership)
      :membership-id (:id membership)}))
+
+(defn- ethereum-address? [value]
+  (boolean (and (string? value)
+                (re-matches #"(?i)^0x[0-9a-f]{40}$" value))))
+
+(defn start-wallet-connection!
+  "Issue a short-lived, one-use EIP-4361 message for an injected wallet."
+  [session {:keys [address chain-id]} domain origin]
+  (when-not (ethereum-address? address)
+    (throw (ex-info "Ethereum wallet address が不正です。"
+                    {:type :wallet/invalid-address})))
+  (let [chain-id (long (or chain-id 1))
+        _ (when-not (<= 1 chain-id Integer/MAX_VALUE)
+            (throw (ex-info "Ethereum chain ID が不正です。"
+                            {:type :wallet/invalid-chain})))
+        state (identity-state (store/snapshot))
+        subject-did (get-in state [:users (:user-id session) :did])
+        _ (when-not subject-did
+            (throw (ex-info "Passkey DID が発行されていません。"
+                            {:type :wallet/subject-required})))
+        transaction-id (str (UUID/randomUUID))
+        link-id (str (UUID/randomUUID))
+        nonce (random-token 16)
+        issued-at (str (Instant/now))
+        expires-at (str (.plusSeconds (Instant/now) transaction-seconds))
+        resource (str "urn:cloud-itonami:account-link:v1:"
+                      subject-did ":" link-id)
+        message (siwe/message
+                 {:domain domain :address address
+                  :statement "Connect this wallet to your Cloud Itonami account."
+                  :uri origin :version "1" :chain-id chain-id :nonce nonce
+                  :issued-at issued-at :expiration-time expires-at
+                  :request-id link-id :resources [resource]})
+        transaction
+        {:id transaction-id :kind :evm-wallet
+         :user-id (:user-id session)
+         :organization-id (:organization-id session)
+         :link-id link-id :subject-did subject-did
+         :resource resource :rp-id domain
+         :address address :chain-id chain-id :nonce nonce
+         :message message :expires-at expires-at :used? false}]
+    (store/transact! assoc-in [:identity :wallet-transactions transaction-id]
+                     transaction)
+    {:transaction-id transaction-id :link-id link-id
+     :message message :address address
+     :chain-id chain-id :expires-at expires-at}))
+
+(defn finish-wallet-connection!
+  "Verify EIP-4361 possession and bind the address to the Passkey user."
+  [session {:keys [transaction-id signature]} domain]
+  (let [state (identity-state (store/snapshot))
+        transaction (get-in state [:wallet-transactions transaction-id])
+        now (Instant/now)]
+    (when-not (and transaction
+                   (= :evm-wallet (:kind transaction))
+                   (= (:user-id session) (:user-id transaction))
+                   (= domain (:rp-id transaction))
+                   (not (:used? transaction))
+                   (pos? (compare (Instant/parse (:expires-at transaction)) now)))
+      (throw (ex-info "Wallet 接続要求が無効または期限切れです。"
+                      {:type :wallet/invalid-transaction})))
+    (when-not (and (string? signature)
+                   (re-matches #"(?i)^0x[0-9a-f]{130}$" signature))
+      (throw (ex-info "Wallet 署名の形式が不正です。"
+                      {:type :wallet/verification-failed})))
+    (let [verification
+          (siwe/verify-sign-in
+           {:message (:message transaction) :signature signature
+            :address (:address transaction)}
+           {:expected-domain domain :expected-nonce (:nonce transaction)
+            :now (str now)})]
+      (when-not (:ok? verification)
+        (throw (ex-info "Wallet 署名を検証できませんでした。"
+                        {:type :wallet/verification-failed
+                         :reason (:reason verification)})))
+      (when
+       (some
+        (fn [[user-id links]]
+          (and (not= user-id (:user-id session))
+               (some #(= (str/lower-case (:address transaction))
+                          (str/lower-case (:address %)))
+                     (vals links))))
+        (:wallet-bindings state))
+        (throw (ex-info "このWalletは別のUserに接続済みです。"
+                        {:type :wallet/already-bound})))
+      (let [link-id (:link-id transaction)
+            binding
+            {:schema "cloud.itonami.account-link.v1"
+             :id link-id :subject-did (:subject-did transaction)
+             :organization-id (:organization-id transaction)
+             :namespace "eip155" :address (:address transaction)
+             :chain-id (:chain-id transaction)
+             :account (str "eip155:" (:chain-id transaction) ":"
+                           (str/lower-case (:address transaction)))
+             :did (str "did:pkh:eip155:" (:chain-id transaction) ":"
+                       (str/lower-case (:address transaction)))
+             :rp-id (:rp-id transaction) :resource (:resource transaction)
+             :message (:message transaction) :signature signature
+             :proof-type "eip4361"
+             :capabilities ["identity/link" "wallet/watch"]
+             :status :active :sync-status :pending
+             :connected-at (store/now)}]
+        (store/transact!
+         (fn [current]
+           (-> current
+               (assoc-in
+                [:identity :wallet-transactions transaction-id :used?] true)
+               (assoc-in
+                [:identity :wallet-bindings (:user-id session) link-id]
+                binding))))
+        binding))))
+
+(defn start-bitcoin-connection!
+  "Issue a BIP-322 proof challenge; no seed or transaction authority is read."
+  [session {:keys [address]} domain]
+  (let [{:keys [network script-type] :as address-data}
+        (try
+          (bitcoin/address-info address)
+          (catch Exception _
+            (throw (ex-info "Bitcoin address が不正です。"
+                            {:type :wallet/invalid-address}))))
+        _ (when-not (contains? #{:p2wpkh :p2tr} script-type)
+            (throw (ex-info
+                    "Bitcoin Account LinkはP2WPKHまたはTaproot key-pathに対応します。"
+                    {:type :wallet/unsupported-script})))
+        state (identity-state (store/snapshot))
+        subject-did (get-in state [:users (:user-id session) :did])
+        _ (when-not subject-did
+            (throw (ex-info "Passkey DID が発行されていません。"
+                            {:type :wallet/subject-required})))
+        transaction-id (str (UUID/randomUUID))
+        link-id (str (UUID/randomUUID))
+        nonce (random-token 16)
+        issued-at (str (Instant/now))
+        expires-at (str (.plusSeconds (Instant/now) transaction-seconds))
+        resource (str "urn:cloud-itonami:account-link:v2:"
+                      subject-did ":" link-id)
+        account (bitcoin/account-id address)
+        message (bitcoin/ownership-message
+                 {:domain domain :subject-did subject-did :account account
+                  :nonce nonce :issued-at issued-at :expires-at expires-at
+                  :resource resource})
+        transaction
+        {:id transaction-id :kind :bitcoin
+         :user-id (:user-id session)
+         :organization-id (:organization-id session)
+         :link-id link-id :subject-did subject-did
+         :resource resource :rp-id domain
+         :address (:address address-data) :network network
+         :script-type script-type :account account :nonce nonce
+         :message message :expires-at expires-at :used? false}]
+    (store/transact! assoc-in [:identity :wallet-transactions transaction-id]
+                     transaction)
+    {:transaction-id transaction-id :link-id link-id
+     :proof-type "bip322-simple" :message message
+     :address (:address address-data) :network network
+     :script-type script-type :account account :expires-at expires-at}))
+
+(defn finish-bitcoin-connection!
+  "Verify BIP-322 ownership and bind a watch-only Bitcoin account."
+  [session {:keys [transaction-id signature]} domain]
+  (let [state (identity-state (store/snapshot))
+        transaction (get-in state [:wallet-transactions transaction-id])
+        now (Instant/now)]
+    (when-not (and transaction (= :bitcoin (:kind transaction))
+                   (= (:user-id session) (:user-id transaction))
+                   (= domain (:rp-id transaction))
+                   (not (:used? transaction))
+                   (pos? (compare (Instant/parse (:expires-at transaction)) now)))
+      (throw (ex-info "Bitcoin Wallet接続要求が無効または期限切れです。"
+                      {:type :wallet/invalid-transaction})))
+    (when-not (and (string? signature)
+                   (<= 16 (count signature) 16384)
+                   (bitcoin/verify-bip322-simple
+                    (:address transaction) (:message transaction) signature))
+      (throw (ex-info "BIP-322署名を検証できませんでした。"
+                      {:type :wallet/verification-failed})))
+    (when
+     (some
+      (fn [[user-id links]]
+        (and (not= user-id (:user-id session))
+             (some #(= (:account transaction) (:account %)) (vals links))))
+      (:wallet-bindings state))
+      (throw (ex-info "このBitcoin accountは別のUserに接続済みです。"
+                      {:type :wallet/already-bound})))
+    (let [link-id (:link-id transaction)
+          binding
+          {:schema "cloud.itonami.account-link.v2"
+           :id link-id :subject-did (:subject-did transaction)
+           :organization-id (:organization-id transaction)
+           :namespace "bip122" :network (:network transaction)
+           :address (:address transaction) :script-type (:script-type transaction)
+           :account (:account transaction)
+           :did (bitcoin/did-pkh (:address transaction))
+           :rp-id (:rp-id transaction) :resource (:resource transaction)
+           :message (:message transaction)
+           :proof-type "bip322-simple"
+           :proof {:type "bip322-simple" :message (:message transaction)
+                   :signature signature}
+           :signature signature
+           :capabilities ["identity/link" "bitcoin/watch"]
+           :status :active :sync-status :pending
+           :connected-at (store/now)}]
+      (store/transact!
+       (fn [current]
+         (-> current
+             (assoc-in
+              [:identity :wallet-transactions transaction-id :used?] true)
+             (assoc-in
+              [:identity :wallet-bindings (:user-id session) link-id]
+              binding))))
+      binding)))
+
+(defn wallet-links [session]
+  (vec (vals (get-in (identity-state (store/snapshot))
+                     [:wallet-bindings (:user-id session)] {}))))
+
+(defn subject-did [session]
+  (get-in (identity-state (store/snapshot))
+          [:users (:user-id session) :did]))
+
+(defn valid-wallet-link?
+  "Verify a portable Account Link before accepting a remote record."
+  [link expected-subject expected-domain]
+  (try
+    (and
+     (= expected-subject (:subject-did link))
+     (= expected-domain (:rp-id link))
+     (case (:schema link)
+       "cloud.itonami.account-link.v1"
+       (and (= (:resource link)
+               (str "urn:cloud-itonami:account-link:v1:"
+                    expected-subject ":" (:id link)))
+            (= (:address link)
+               (:address (siwe/parse-message (:message link))))
+            (= expected-domain
+               (:domain (siwe/parse-message (:message link))))
+            (siwe/verify-message (:message link) (:signature link)
+                                 (:address link)))
+       "cloud.itonami.account-link.v2"
+       (and (= "bip122" (:namespace link))
+            (= "bip322-simple" (:proof-type link))
+            (= (:resource link)
+               (str "urn:cloud-itonami:account-link:v2:"
+                    expected-subject ":" (:id link)))
+            (= (:account link) (bitcoin/account-id (:address link)))
+            (= (:did link) (bitcoin/did-pkh (:address link)))
+            (str/includes? (:message link)
+                           (str "Domain: " expected-domain "\n"))
+            (str/includes? (:message link)
+                           (str "Subject: " expected-subject "\n"))
+            (str/includes? (:message link)
+                           (str "Resource: " (:resource link)))
+            (bitcoin/verify-bip322-simple
+             (:address link) (:message link) (:signature link)))
+       false))
+    (catch Exception _ false)))
+
+(defn merge-wallet-links! [session links expected-domain]
+  (let [subject (subject-did session)
+        links (map #(cond-> %
+                      (string? (:status %)) (update :status keyword)
+                      (string? (:sync-status %)) (update :sync-status keyword))
+                   links)
+        verified (filter #(valid-wallet-link? % subject expected-domain) links)]
+    (store/transact!
+     (fn [state]
+       (reduce
+        (fn [current link]
+          (assoc-in current
+                    [:identity :wallet-bindings (:user-id session) (:id link)]
+                    (assoc link :sync-status :synced)))
+        state verified)))
+    (vec verified)))
+
+(defn mark-wallet-synced! [session link-id]
+  (store/transact!
+   assoc-in
+   [:identity :wallet-bindings (:user-id session) link-id :sync-status]
+   :synced))
+
+(defn revoke-wallet! [session link-id]
+  (let [path [:identity :wallet-bindings (:user-id session) link-id]
+        link (get-in (store/snapshot) path)]
+    (when-not link
+      (throw (ex-info "Wallet Account Link が見つかりません。"
+                      {:type :wallet/not-found})))
+    (let [revoked (assoc link :status :revoked :revoked-at (store/now)
+                         :sync-status :pending)]
+      (store/transact! assoc-in path revoked)
+      revoked)))
 
 (defn register!
   "Create a provisional local owner. Profile fields are optional because the
@@ -1100,6 +1402,74 @@
        (str (:organization-id connection) ":" (:user-id connection) ":"
             (name provider) ":access")))))
 
+(defn connected-providers []
+  (->> (:connections (identity-state (store/snapshot)))
+       vals
+       (filter #(= :connected (:status %)))
+       (map :provider)
+       set))
+
+(defn provider-access-token!
+  "Return a usable provider token, refreshing from the Keychain when expired."
+  [provider]
+  (let [state (identity-state (store/snapshot))
+        connection (->> (:connections state)
+                        vals
+                        (filter #(and (= provider (:provider %))
+                                      (= :connected (:status %))))
+                        first)
+        account-prefix (when connection
+                         (str (:organization-id connection) ":"
+                              (:user-id connection) ":" (name provider) ":"))
+        access (when account-prefix
+                 (keychain-get (str account-prefix "access")))
+        refresh (when account-prefix
+                  (keychain-get (str account-prefix "refresh")))
+        expires-at (some-> (:token-expires-at connection) Instant/parse)
+        usable? (and access
+                     (or (nil? expires-at)
+                         (pos? (compare expires-at
+                                        (.plusSeconds (Instant/now) 60)))))]
+    (cond
+      usable? access
+      (and connection refresh)
+      (let [config (provider-config provider)
+            token (request-json!
+                   (-> (HttpRequest/newBuilder
+                        (URI/create (:token-endpoint config)))
+                       (.header "Content-Type"
+                                "application/x-www-form-urlencoded")
+                       (.header "Accept" "application/json")
+                       (.POST
+                        (HttpRequest$BodyPublishers/ofString
+                         (form-body
+                          {:grant_type "refresh_token"
+                           :refresh_token refresh
+                           :client_id (:client-id config)
+                           :client_secret (:client-secret config)
+                           :scope (str/join " " (:scopes config))})))
+                       .build))
+            next-access (:access_token token)
+            next-refresh (or (:refresh_token token) refresh)
+            expires (str (.plusSeconds
+                          (Instant/now)
+                          (long (or (:expires_in token) 3600))))]
+        (when (str/blank? next-access)
+          (throw (ex-info "OAuth access token を更新できませんでした。"
+                          {:type :oauth/missing-token :provider provider})))
+        (keychain-put! (str account-prefix "access") next-access)
+        (keychain-put! (str account-prefix "refresh") next-refresh)
+        (store/transact!
+         (fn [current]
+           (-> current
+               (assoc-in [:identity :connections (:id connection)
+                          :token-expires-at] expires)
+               (assoc-in [:identity :connections (:id connection)
+                          :last-error] nil))))
+        next-access)
+      access access
+      :else nil)))
+
 (defn complete-oauth! [provider {:keys [state code error]}]
   (when error
     (throw (ex-info "接続がキャンセルされました。" {:type :oauth/cancelled})))
@@ -1147,6 +1517,9 @@
                         :user-id (:user-id transaction)
                         :provider-subject provider-subject :email email
                         :display-name display-name :scopes scopes
+                        :token-expires-at
+                        (when-let [seconds (:expires_in token)]
+                          (str (.plusSeconds (Instant/now) (long seconds))))
                         :access-token-ref access-ref :refresh-token-ref refresh-ref
                         :connected-at now})
              (update :events conj {:type :oauth/connected :at now

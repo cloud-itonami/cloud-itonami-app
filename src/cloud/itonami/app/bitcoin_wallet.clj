@@ -283,9 +283,11 @@
      {:eip155 {:ownership-proof "EIP-4361"
                :watch-balance "injected-provider"
                :transaction-signing "external-wallet"}
-      :bip122 {:ownership-proof "BIP-322 simple / P2WPKH"
+      :bip122 {:ownership-proof "BIP-322 simple / P2WPKH + Taproot key-path"
                :watch-balance "configured-explorer"
                :transaction-signing "BIP-174 PSBT / external-wallet"}
-      :taproot {:status "planned" :reason "BIP-340 verifier required"}
+      :taproot {:status "available"
+                :ownership-proof "BIP-322 simple / BIP-340"
+                :transaction-signing "BIP-174 PSBT / external-wallet"}
       :multisig {:status "planned"
                  :reason "descriptor/miniscript policy required"}}}))

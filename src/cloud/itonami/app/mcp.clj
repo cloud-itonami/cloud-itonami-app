@@ -56,11 +56,14 @@
   which is a duplication worth naming."
   (:require [clojure.data.json :as json]
             [clojure.string :as str]
+            [cloud.itonami.app.agent-control :as agent-control]
             [cloud.itonami.app.config :as config]
             [cloud.itonami.app.business-tools :as business-tools]
             [cloud.itonami.app.fleet :as fleet]
             [cloud.itonami.app.payment-tools :as payment-tools]
+            [cloud.itonami.app.scheduler :as scheduler]
             [cloud.itonami.app.store :as store]
+            [cloud.itonami.app.workspace :as workspace]
             [mcp.execute :as execute]
             [mcp.model :as model]
             [mcp.ports :as ports])
@@ -91,19 +94,51 @@
   bound a session, sees a server without those tools rather than tools that fail
   on call. Publishing a tool that is certain to refuse is a worse contract: it
   invites a client to try, and it says nothing about why."
-  [configuration]
-  (cond-> []
-    (fleet-enabled? configuration) (into fleet/tools)
-    (business-tools/available? configuration) (into business-tools/tools)
-    (payment-tools/available? configuration) (into payment-tools/tools)))
+  ([configuration] (published-tools configuration nil))
+  ([configuration actor]
+   (cond-> []
+     (fleet-enabled? configuration) (into fleet/tools)
+     (business-tools/available? configuration) (into business-tools/tools)
+     (payment-tools/available? configuration) (into payment-tools/tools)
+     actor
+     (into
+      [{:name "workspace_snapshot"
+        :description
+        "Read one local workspace surface for this authenticated actor."
+        :parameters
+        {:type "object"
+         :properties
+         {"surface" {:type "string"
+                     :enum ["inbox" "projects" "drive" "scheduler"]}}
+         :required ["surface"]}}
+       {:name "agent_runs_list"
+        :description "List this actor's bounded AgentRuns."
+        :parameters {:type "object" :properties {}}}
+       {:name "agent_run_create"
+        :description
+        "Create a bounded AgentRun; device mutations still require HIL."
+        :parameters
+        {:type "object"
+         :properties
+         {"goal" {:type "string"} "model" {:type "string"}
+          "provider" {:type "string"}
+          "mode" {:type "string" :enum ["local" "cli"]}}
+         :required ["goal"]}}
+       {:name "agent_schedules_list"
+        :description "List this actor's durable AgentRun schedules."
+        :parameters {:type "object" :properties {}}}
+       {:name "agent_watchers_list"
+        :description "List this actor's event-driven AgentRun watchers."
+        :parameters {:type "object" :properties {}}}]))))
 
 (defn manifest
-  [configuration]
-  (reduce (fn [m {:keys [name description parameters]}]
-            (model/add-tool m name {:description description
-                                    :input-schema parameters}))
-          (model/server server-name server-version)
-          (published-tools configuration)))
+  ([configuration] (manifest configuration nil))
+  ([configuration actor]
+   (reduce (fn [m {:keys [name description parameters]}]
+             (model/add-tool m name {:description description
+                                     :input-schema parameters}))
+           (model/server server-name server-version)
+           (published-tools configuration actor))))
 
 (defn- keywordize
   "JSON gives string keys; the fleet tools read keyword keys. Only the top level
@@ -112,18 +147,29 @@
   [args]
   (into {} (map (fn [[k v]] [(keyword k) v])) args))
 
+(defn- workspace-tool [surface]
+  (case surface
+    "inbox" (workspace/snapshot :inbox workspace/inbox-snapshot)
+    "projects" (workspace/snapshot :projects workspace/projects-snapshot)
+    "drive" (workspace/snapshot :drive workspace/drive-snapshot)
+    "scheduler" (workspace/snapshot :scheduler workspace/calendar-snapshot)
+    (throw (ex-info "Unknown workspace surface."
+                    {:type :mcp/invalid-arguments :surface surface}))))
+
 (defn invoke
   "Run one fleet tool. A thrown `ex-info` becomes an `{:error …}` result rather
   than escaping: `mcp.execute` marks such a result `isError` and the client sees
   the reason, whereas an exception would take down the stdio loop mid-session.
   The `:type` is kept because fleet distinguishes \"no such actor\" from \"that
   actor has no endpoint\", and a caller acts differently on each."
-  [configuration tool-name args]
-  (let [input (keywordize args)
-        payment-tool? (contains? (into #{} (map :name) payment-tools/tools)
-                                 tool-name)]
-    (try
-      (cond
+  ([configuration tool-name args]
+   (invoke configuration nil tool-name args))
+  ([configuration actor tool-name args]
+   (let [input (keywordize args)
+         payment-tool? (contains? (into #{} (map :name) payment-tools/tools)
+                                  tool-name)]
+     (try
+       (cond
         ;; Re-checked at call time, not trusted from the manifest: a session can
         ;; expire or be revoked mid-conversation, and a client that cached the
         ;; tool list would otherwise keep calling a surface that is no longer
@@ -136,21 +182,36 @@
         (if (fleet-enabled? configuration)
           (fleet/call-tool input)
           {:error "fleet capability is disabled" :type "fleet/disabled"})
-        :else {:error (str "unknown tool: " tool-name)
-               :type "mcp/unknown-tool"})
-      (catch clojure.lang.ExceptionInfo error
-        {:error (.getMessage error)
-         :type (some-> (:type (ex-data error)) str (str/replace #"^:" ""))})
-      (catch Exception error
-        {:error (or (.getMessage error) (str (class error)))
-         :type "mcp/error"}))))
+         (and actor (= "workspace_snapshot" tool-name))
+         (workspace-tool (:surface input))
+         (and actor (= "agent_runs_list" tool-name))
+         {:runs (agent-control/runs actor)}
+         (and actor (= "agent_run_create" tool-name))
+         (agent-control/create-run!
+          configuration
+          (select-keys input [:goal :model :provider :mode])
+          actor)
+         (and actor (= "agent_schedules_list" tool-name))
+         {:schedules (scheduler/schedules actor)}
+         (and actor (= "agent_watchers_list" tool-name))
+         {:watchers (scheduler/watchers actor)}
+         :else {:error (str "unknown tool: " tool-name)
+                :type "mcp/unknown-tool"})
+       (catch clojure.lang.ExceptionInfo error
+         {:error (.getMessage error)
+          :type (some-> (:type (ex-data error)) str (str/replace #"^:" ""))})
+       (catch Exception error
+         {:error (or (.getMessage error) (str (class error)))
+          :type "mcp/error"})))))
 
 (defn ports
   "ITool delegating to `invoke`. No ITransport: this server makes no outbound
   JSON-RPC calls, and `mcp.execute` only reaches for one if a tool asks it to."
-  [configuration]
-  {:tool (reify ports/ITool
-           (invoke [_ tool-name args] (invoke configuration tool-name args)))})
+  ([configuration] (ports configuration nil))
+  ([configuration actor]
+   {:tool (reify ports/ITool
+            (invoke [_ tool-name args]
+              (invoke configuration actor tool-name args)))}))
 
 (defn respond
   "The JSON-RPC response for one request, or nil when none is owed.
@@ -159,9 +220,12 @@
   MCP clients send `notifications/initialized` right after `initialize`, so a
   server that answered every message would put an unsolicited error on the wire
   during the handshake."
-  [configuration request]
-  (when (contains? request "id")
-    (execute/handle (ports configuration) (manifest configuration) request)))
+  ([configuration request] (respond configuration nil request))
+  ([configuration actor request]
+   (when (contains? request "id")
+     (execute/handle (ports configuration actor)
+                     (manifest configuration actor)
+                     request))))
 
 (defn- write-line! [writer value]
   (.write writer (json/write-str value))

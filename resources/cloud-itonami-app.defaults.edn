@@ -25,6 +25,15 @@
    :base-url "http://127.0.0.1:1234/v1"
    :local? true
    :enabled? false}
+  {:id "codex-cli" :name "Codex CLI" :kind :cli
+   :runner :codex :model "codex:default"
+   :local? true :enabled? true}
+  {:id "claude-cli" :name "Claude Code" :kind :cli
+   :runner :claude :model "claude:sonnet"
+   :local? true :enabled? true}
+  {:id "claude-zai" :name "Claude ZAI" :kind :cli
+   :runner :claude-zai :model "claude-zai:default"
+   :local? true :enabled? true}
   {:id "openai"
    :name "OpenAI"
    :kind :openai-compatible
@@ -36,14 +45,61 @@
            :allow-cloud-without-review? false}
  :cloud-relay {:base-url nil
                :access-token-env "CLOUD_ITONAMI_RELAY_ACCESS_TOKEN"}
+ :identity-sync {:base-url "https://hooks.itonami.cloud"
+                 :access-token-env "ITONAMI_IDENTITY_SYNC_TOKEN"}
+ :bitcoin
+ {:explorer-base-url "https://mempool.space/api"
+  :max-fee-sats 1000000
+  :max-fee-ratio 0.1
+  :embedded-consensus
+  {:path nil :reindex-pointer nil :network :mainnet
+   :genesis-hex nil :busy-timeout-ms 5000}
+  :core-rpc
+  {:url nil :expected-chain "main"
+   :expected-genesis-hash
+   "000000000019d6689c085ae165831e934ff763ae46a2a6c172b3f1b60a8ce26f"
+   :cookie-file nil :require-secure-cookie? true
+   :username-env "BITCOIN_CORE_RPC_USER"
+   :password-env "BITCOIN_CORE_RPC_PASSWORD"
+   :timeout-seconds 30 :allow-remote? false}}
+ :workspace {:m365-archive nil}
+ :mail-sync {:gmail-topic nil}
+ :receipt-signer
+ {:url nil :key-id nil :public-key nil
+  :access-token-env "CLOUD_ITONAMI_RECEIPT_SIGNER_TOKEN"}
+ :account-services
+ {:murakumo
+  {:id "murakumo.cloud" :name "Murakumo Cloud"
+   :base-url "https://murakumo.cloud" :plan "cloud-itonami"
+   :quota-bytes 5368709120
+   :quota-source :cloud-itonami-allocation}
+  :kotobase
+  {:id "kotobase.net" :name "Kotobase"
+   :base-url "https://kotobase.net" :plan "p2p"
+   :quota-bytes 104857600 :quota-pins 3
+   :quota-source :service-contract}}
+ :agent-control
+ {:enabled? false :max-turns 8 :max-tool-calls 12
+  :browser {:enabled? false
+            :allowed-domains ["localhost" "127.0.0.1"]
+            :headed? true}
+  :computer {:enabled? false}
+  :cli {:enabled? false :workspace nil :access :read-only}}
  :memory {:max-session-messages 40
-          :max-context-messages 20}
+          :max-context-messages 20
+          :max-memory-messages 500
+          :relevant-messages 4
+          :relevant-capsules 2
+          :distillation
+          {:enabled? false :provider "ollama" :model nil
+           :batch-size 20 :max-capsules 20}}
  ;; Background worker runs. Concurrency is deliberately small: these share the
  ;; local model with interactive chat.
  :worker {:max-concurrency 2
           :max-runs 50}
 
- ;; The stdio MCP server. Fleet tools need no session; funding and settlement
+ ;; The stdio MCP server and separately authenticated HTTP transport. Fleet
+ ;; tools need no session over stdio; funding and settlement
  ;; tools need a real one, and appear in the manifest only when this token
  ;; resolves to a live session whose user has enrolled a Passkey. Absent token =
  ;; no such tools, which is the shipped default.
@@ -55,8 +111,14 @@
  ;; differ: the agent one is minted by `auth login`, the human one has to belong
  ;; to a Passkey-enrolled user (ADR-0009). Sharing one meant enrolling the CLI
  ;; silently disabled funding and settlement.
+ ;; HTTP is disabled until both enabled? and a token in access-token-env are
+ ;; present. Its actor-user-id scopes Workspace and AgentRun tools.
  :mcp {:session-token-env "CLOUD_ITONAMI_MCP_SESSION"
-       :human-session-token-env "CLOUD_ITONAMI_MCP_HUMAN_SESSION"}
+       :human-session-token-env "CLOUD_ITONAMI_MCP_HUMAN_SESSION"
+       :enabled? false
+       :access-token-env "CLOUD_ITONAMI_MCP_ACCESS_TOKEN"
+       :actor-user-id nil
+       :clients []}
 
  ;; 事業 (ADR-2607309600). A Business holds one key from each analysis plane —
  ;; BMC canvas, XMILE model, adopted blueprints, repo paths, LEI — so that the

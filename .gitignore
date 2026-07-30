@@ -1,7 +1,6 @@
 /data/
 node_modules/
 .wrangler/
-.wrangler/
 /target/
 /.cpcache/
 /.clj-kondo/

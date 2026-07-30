@@ -443,10 +443,13 @@
                     :agent/result :agent/error :agent/approval
                     :agent/tool-count :agent/turn-count])))
 
-(defn runs []
-  (->> (vals (get-in (store/snapshot) [:agent-control :runs] {}))
-       (sort-by :agent.run/created-at >)
-       (mapv public-run)))
+(defn runs
+  ([] (runs nil))
+  ([actor]
+   (->> (vals (get-in (store/snapshot) [:agent-control :runs] {}))
+        (filter #(or (nil? actor) (= actor (:actor %))))
+        (sort-by :agent.run/created-at >)
+        (mapv public-run))))
 
 (defn run-by-id [run-id]
   (some-> (get-in (store/snapshot) [:agent-control :runs run-id]) public-run))

@@ -1,5 +1,8 @@
 (ns cloud.itonami.app.service
-  (:require [cloud.itonami.app.policy :as policy]
+  (:require [clojure.data.json :as json]
+            [clojure.string :as str]
+            [cloud.itonami.app.memory :as memory]
+            [cloud.itonami.app.policy :as policy]
             [cloud.itonami.app.provider :as provider]
             [cloud.itonami.app.store :as store]))
 
@@ -27,9 +30,35 @@
   [config request]
   (or (:model request) (get-in config [:routing :default-model])))
 
+(defn- tool-input [value]
+  (cond
+    (map? value) value
+    (string? value)
+    (try (json/read-str value :key-fn keyword)
+         (catch Exception _ {}))
+    :else {}))
+
+(defn- normalize-message [message]
+  (cond-> (-> message
+              (dissoc :tool_calls :tool_call_id)
+              (cond-> (:tool_call_id message)
+                (assoc :tool-call-id (:tool_call_id message))))
+    (seq (:tool_calls message))
+    (assoc
+     :tool-calls
+     (mapv
+      (fn [call]
+        {:id (:id call)
+         :name (get-in call [:function :name])
+         :input (tool-input (get-in call [:function :arguments]))})
+      (:tool_calls message)))))
+
+(defn- context-message [message]
+  (select-keys message [:role :content :tool-calls :tool-call-id]))
+
 (defn- prepare-chat!
   [config {:keys [messages provider-id session-id agent-id temperature
-                  response-id]
+                  response-id tools tool-choice]
            :as request}]
   (let [selected (policy/select-provider config provider-id)
         _ (when-not selected
@@ -37,25 +66,53 @@
                             {:provider-id provider-id :type :provider/denied})))
         session-id (or session-id "default")
         max-messages (get-in config [:memory :max-session-messages] 40)
+        max-memory-messages
+        (get-in config [:memory :max-memory-messages] 500)
         context-limit (get-in config [:memory :max-context-messages] 20)
+        relevant-limit (get-in config [:memory :relevant-messages] 4)
+        capsule-limit (get-in config [:memory :relevant-capsules] 2)
         current-agent (find-agent (store/snapshot) (or agent-id "local"))
-        incoming (vec messages)
+        incoming (mapv normalize-message messages)
         _ (doseq [message incoming]
-            (store/append-message! session-id message max-messages))
+            (store/append-message!
+             session-id message max-messages max-memory-messages))
         context (vec (take-last context-limit (store/session-messages session-id)))
+        recent-ids (into #{} (map :id) context)
+        query (->> incoming
+                   (filter #(= "user" (:role %)))
+                   (map :content)
+                   (remove nil?)
+                   (str/join "\n"))
+        recalled (memory/relevant
+                  (store/session-memory session-id)
+                  query recent-ids relevant-limit)
+        recalled-capsules
+        (memory/relevant-capsules session-id query capsule-limit)
         provider-messages
-        (into [{:role "system" :content (:system-prompt current-agent)}]
-              (map #(select-keys % [:role :content]) context))
+        (into
+         (cond-> [{:role "system" :content (:system-prompt current-agent)}]
+           (seq recalled-capsules)
+           (conj (memory/capsule-context-message recalled-capsules))
+           (seq recalled)
+           (conj (memory/context-message recalled)))
+         (map context-message context))
         chosen-model (chosen-model config request)]
-    {:selected selected :session-id session-id :max-messages max-messages
+    {:config config :selected selected :session-id session-id
+     :max-messages max-messages :max-memory-messages max-memory-messages
      :chosen-model chosen-model :provider-messages provider-messages
-     :temperature temperature :response-id response-id}))
+     :temperature temperature :response-id response-id
+     :tools tools :tool-choice tool-choice}))
 
 (defn- finish-chat!
-  [{:keys [selected session-id max-messages chosen-model response-id]} result]
+  [{:keys [config selected session-id max-messages max-memory-messages
+           chosen-model response-id]}
+   result]
   (let [assistant (store/append-message!
-                   session-id {:role "assistant" :content (:content result)}
-                   max-messages)
+                   session-id
+                   (cond-> {:role "assistant" :content (:content result)}
+                     (seq (:tool-calls result))
+                     (assoc :tool-calls (:tool-calls result)))
+                   max-messages max-memory-messages)
         response {:id (or response-id (store/new-id "chatcmpl"))
                   :created (quot (System/currentTimeMillis) 1000)
                   :provider (:id selected)
@@ -64,25 +121,31 @@
                   :message assistant
                   :usage (:usage result)}]
     (store/record-response! response)
+    (memory/maybe-distill! config session-id)
     response))
 
 (defn run-chat!
   [config request]
-  (let [{:keys [selected chosen-model provider-messages temperature] :as prepared}
+  (let [{:keys [selected chosen-model provider-messages temperature
+                tools tool-choice] :as prepared}
         (prepare-chat! config request)
         result (provider/chat selected {:model chosen-model
                                         :messages provider-messages
-                                        :temperature temperature})]
+                                        :temperature temperature
+                                        :tools tools
+                                        :tool-choice tool-choice})]
     (finish-chat! prepared result)))
 
 (defn run-chat-stream!
   [config request on-delta]
-  (let [{:keys [selected chosen-model provider-messages temperature] :as prepared}
+  (let [{:keys [selected chosen-model provider-messages temperature
+                tools tool-choice] :as prepared}
         (prepare-chat! config request)
         result (provider/chat-stream!
                 selected
                 {:model chosen-model :messages provider-messages
-                 :temperature temperature}
+                 :temperature temperature :tools tools
+                 :tool-choice tool-choice}
                 on-delta)]
     (finish-chat! prepared result)))
 
@@ -92,8 +155,21 @@
    :created (:created response)
    :model (:model response)
    :choices [{:index 0
-              :message (select-keys (:message response) [:role :content])
-              :finish_reason "stop"}]
+              :message
+              (cond->
+               (select-keys (:message response) [:role :content])
+                (seq (get-in response [:message :tool-calls]))
+                (assoc
+                 :tool_calls
+                 (mapv
+                  (fn [{:keys [id name input]}]
+                    {:id id :type "function"
+                     :function {:name name
+                                :arguments (json/write-str (or input {}))}})
+                  (get-in response [:message :tool-calls]))))
+              :finish_reason
+              (if (seq (get-in response [:message :tool-calls]))
+                "tool_calls" "stop")}]
    :usage (:usage response)})
 
 ;; The streamed form of the same completion. `chat.completion.chunk` repeats

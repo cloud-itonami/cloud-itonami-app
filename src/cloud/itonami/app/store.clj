@@ -8,6 +8,7 @@
            [java.util UUID]))
 
 (def schema "cloud.itonami.app.state.v1")
+(def max-state-backups 10)
 
 (defn initial-state []
   {:schema schema
@@ -18,6 +19,10 @@
    ;; the version history. The bytes those versions point at are not in here;
    ;; they are in an object store. See `cloud.itonami.app.documents`.
    :drive {:workspaces {}}
+   :agent-control {:settings {} :runs {} :schedules {} :watchers {}
+                   :watcher-sources {} :events []}
+   :memory-capsules {}
+   :memory-distillation {}
    :datoms []
    :events []
    :last-response nil})
@@ -25,25 +30,115 @@
 (defn state-file []
   (io/file (config/data-dir) "state.edn"))
 
+(defn- backup-directory []
+  (io/file (config/data-dir) "state-backups"))
+
+(defn- quarantine-directory []
+  (io/file (config/data-dir) "state-quarantine"))
+
+(defn- restrict-to-owner! [file]
+  (.setReadable file false false)
+  (.setWritable file false false)
+  (.setExecutable file false false)
+  (.setReadable file true true)
+  (.setWritable file true true)
+  (when (.isDirectory file)
+    (.setExecutable file true true))
+  file)
+
+(defn- read-state-file [file]
+  (let [value (edn/read-string (slurp file))]
+    (when-not (and (map? value) (= schema (:schema value)))
+      (throw (ex-info "State file has an unsupported schema."
+                      {:path (.getPath file) :schema (:schema value)})))
+    (merge (initial-state) value)))
+
+(defn- files-newest-first [directory]
+  (if (.isDirectory directory)
+    (->> (.listFiles directory)
+         (filter #(.isFile %))
+         (sort-by #(.lastModified %) >))
+    []))
+
+(defn- backup-files []
+  (files-newest-first (backup-directory)))
+
 (defn- load-state []
-  (let [file (state-file)]
-    (if (.isFile file)
-      (merge (initial-state) (edn/read-string (slurp file)))
-      (initial-state))))
+  (let [primary (state-file)]
+    (if-not (.isFile primary)
+      (initial-state)
+      (try
+        (read-state-file primary)
+        (catch Exception primary-error
+          (or (some (fn [backup]
+                      (try (read-state-file backup)
+                           (catch Exception _ nil)))
+                    (backup-files))
+              (throw
+               (ex-info
+                "State file is invalid and no valid backup is available."
+                {:path (.getPath primary)
+                 :backup-count (count (backup-files))}
+                primary-error))))))))
 
 (defonce state (atom (load-state)))
 
 (defn snapshot [] @state)
 
+(defn- preserve-current-state! [file]
+  (when (.isFile file)
+    (try
+      (read-state-file file)
+      (let [directory (backup-directory)
+            backup (io/file directory
+                            (str "state-" (System/currentTimeMillis) "-"
+                                 (UUID/randomUUID) ".edn"))]
+        (.mkdirs directory)
+        (restrict-to-owner! directory)
+        (Files/copy (.toPath file) (.toPath backup)
+                    (into-array StandardCopyOption
+                                [StandardCopyOption/COPY_ATTRIBUTES]))
+        (restrict-to-owner! backup))
+      (catch Exception _
+        (let [directory (quarantine-directory)
+              quarantined
+              (io/file directory
+                       (str "state-corrupt-" (System/currentTimeMillis) "-"
+                            (UUID/randomUUID) ".edn"))]
+          (.mkdirs directory)
+          (restrict-to-owner! directory)
+          (Files/copy (.toPath file) (.toPath quarantined)
+                      (make-array StandardCopyOption 0))
+          (restrict-to-owner! quarantined)
+          (doseq [old (drop 3 (files-newest-first directory))]
+            (Files/deleteIfExists (.toPath old))))))))
+
+(defn- prune-state-backups! []
+  (doseq [file (drop max-state-backups (backup-files))]
+    (Files/deleteIfExists (.toPath file))))
+
 (defn- persist! [value]
   (let [file (state-file)
-        temporary (io/file (.getParentFile file) "state.edn.tmp")]
-    (.mkdirs (.getParentFile file))
-    (spit temporary (pr-str value))
-    (Files/move (.toPath temporary) (.toPath file)
-                (into-array StandardCopyOption
-                            [StandardCopyOption/REPLACE_EXISTING
-                             StandardCopyOption/ATOMIC_MOVE])))
+        parent (.getParentFile file)]
+    (.mkdirs parent)
+    (restrict-to-owner! parent)
+    (let [temporary
+          (Files/createTempFile
+           (.toPath parent) "state-" ".edn.tmp"
+           (make-array java.nio.file.attribute.FileAttribute 0))]
+      (try
+        (spit (.toFile temporary) (pr-str value))
+        (read-state-file (.toFile temporary))
+        (restrict-to-owner! (.toFile temporary))
+        (preserve-current-state! file)
+        (Files/move temporary (.toPath file)
+                    (into-array StandardCopyOption
+                                [StandardCopyOption/REPLACE_EXISTING
+                                 StandardCopyOption/ATOMIC_MOVE]))
+        (restrict-to-owner! file)
+        (prune-state-backups!)
+        (finally
+          (Files/deleteIfExists temporary)))))
   value)
 
 (defn transact! [f & args]
@@ -110,24 +205,86 @@
 (defn session-messages [session-id]
   (get-in @state [:sessions session-id :messages] []))
 
+(defn- session-entity-ids [datoms session-id]
+  (into #{}
+        (keep (fn [[entity attribute value]]
+                (when (and (= :message/session attribute)
+                           (= session-id value))
+                  entity)))
+        datoms))
+
+(defn- entity-message [datoms entity]
+  (let [attributes
+        (into {}
+              (map (fn [[_ attribute value]] [attribute value]))
+              (kgraph/get-objects datoms entity))]
+    {:id entity
+     :role (:message/role attributes)
+     :content (:message/content attributes)
+     :at (:message/at attributes)
+     :sequence (:message/sequence attributes)}))
+
+(defn- graph-session-messages [datoms session-id]
+  (->> (session-entity-ids datoms session-id)
+       (map #(entity-message datoms %))
+       (sort-by (juxt #(or (:sequence %) -1)
+                      #(or (:at %) "")
+                      :id))
+       vec))
+
+(defn session-memory
+  "Return bounded long-term chat history reconstructed from kgraph."
+  [session-id]
+  (graph-session-messages (:datoms @state) session-id))
+
+(defn- remove-entities [datoms entities]
+  (if (empty? entities)
+    datoms
+    (vec (remove #(contains? entities (first %)) datoms))))
+
 (defn append-message!
-  [session-id {:keys [role content] :as message} max-messages]
-  (let [message-id (or (:id message) (new-id "msg"))
-        recorded (assoc message :id message-id :at (or (:at message) (now)))]
+  ([session-id message max-messages]
+   (append-message! session-id message max-messages 500))
+  ([session-id {:keys [role content] :as message}
+    max-messages max-memory-messages]
+   (when-not (and (pos-int? max-messages)
+                  (pos-int? max-memory-messages)
+                  (<= max-messages max-memory-messages))
+     (throw (ex-info "Message retention limits are invalid."
+                     {:type :memory/invalid-retention})))
+   (let [message-id (or (:id message) (new-id "msg"))
+         recorded-at (or (:at message) (now))
+         result (volatile! nil)]
     (transact!
      (fn [s]
-       (let [messages (conj (vec (get-in s [:sessions session-id :messages] []))
+       (let [sequence
+             (long (get-in s [:sessions session-id :next-sequence] 0))
+             recorded (assoc message :id message-id :at recorded-at
+                             :sequence sequence)
+             messages (conj (vec (get-in s [:sessions session-id :messages] []))
                             recorded)
              kept (vec (take-last max-messages messages))
              datoms (-> (:datoms s)
                         (kgraph/assert-datom [message-id :message/session session-id])
                         (kgraph/assert-datom [message-id :message/role role])
-                        (kgraph/assert-datom [message-id :message/content content]))]
+                        (kgraph/assert-datom [message-id :message/content content])
+                        (kgraph/assert-datom [message-id :message/at recorded-at])
+                        (kgraph/assert-datom
+                         [message-id :message/sequence sequence]))
+             expired (->> (graph-session-messages datoms session-id)
+                          (take (max 0 (- (count
+                                           (graph-session-messages datoms session-id))
+                                         max-memory-messages)))
+                          (map :id)
+                          set)
+             datoms (remove-entities datoms expired)]
+         (vreset! result recorded)
          (-> s
              (assoc-in [:sessions session-id]
-                       {:id session-id :updated-at (now) :messages kept})
+                       {:id session-id :updated-at (now) :messages kept
+                        :next-sequence (inc sequence)})
              (assoc :datoms datoms)))))
-    recorded))
+    @result)))
 
 (defn record-response! [response]
   (transact!
@@ -142,4 +299,16 @@
                                                 :model (:model response)}))))))))
 
 (defn clear-session! [session-id]
-  (transact! update :sessions dissoc session-id))
+  (transact!
+   (fn [s]
+     (let [entities (session-entity-ids (:datoms s) session-id)]
+       (-> s
+           (update :sessions dissoc session-id)
+           (update :datoms remove-entities entities)
+           (update :memory-capsules dissoc session-id)
+           (update :memory-distillation dissoc session-id))))))
+
+(defn agent-control [] (:agent-control @state))
+
+(defn update-agent-control! [f & args]
+  (apply transact! update :agent-control f args))

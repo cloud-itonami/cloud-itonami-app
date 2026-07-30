@@ -79,8 +79,9 @@ stream that carries an error a client would read as an empty answer.
 
 The non-OpenAI extensions are `provider`, `agent_id` and `session_id`: they
 select a configured provider, one of the local agents, and the stored
-conversation the turn joins. Function calling, embeddings and the Responses API
-are not implemented.
+conversation the turn joins. Function calls preserve provider-native stop
+reasons. `POST /v1/responses` and Anthropic-compatible `POST /v1/messages`
+(including Anthropic streaming) are also implemented. Embeddings are not.
 
 ## MCP server (fleet directory)
 
@@ -439,6 +440,23 @@ Without a token there are no such tools in the manifest at all — not tools tha
 fail on call. With one, the agent acts *as* that session: same organization
 scoping, same store, same refusals as `/api/*`. The session's user must have
 enrolled a Passkey.
+
+### Authenticated Streamable HTTP
+
+The app server can additionally expose `POST /mcp` for remote clients. It is
+disabled by default and requires a constant-time checked Bearer token from
+`:mcp :access-token-env`; the configured `:actor-user-id` scopes every AgentRun,
+schedule and watcher result. Stateful MCP `2025-06-18` and sessionless
+`2026-07-28` `server/discover` are both supported.
+
+Only this authenticated HTTP profile adds `workspace_snapshot`,
+`agent_runs_list`, `agent_run_create`, `agent_schedules_list`, and
+`agent_watchers_list`. The stdio manifest remains unchanged, so enabling HTTP
+does not silently widen Claude Code or another local client's authority.
+
+Official Python OpenAI/Anthropic/MCP SDKs and the official Go MCP SDK run against
+the real fixture server in CI (`test/sdk_compat.py`,
+`test/sdk_go_compat/main.go`).
 
 **An agent cannot approve.** `approve/start` and `approve/finish` have no tools
 and no dispatch branch, because consent is a WebAuthn user-verifying assertion

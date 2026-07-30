@@ -17,10 +17,79 @@
             PublicKeyCredentialDescriptor PublicKeyCredentialParameters
             RelyingPartyIdentity
             ResidentKeyRequirement UserIdentity UserVerificationRequirement]
+           [java.nio.charset StandardCharsets]
+           [java.security MessageDigest]
            [java.time Instant]
            [java.util Optional UUID]))
 
 (def transaction-seconds 300)
+(def authorization-receipt-schema
+  "cloud.itonami.passkey.authorization-receipt.v1")
+
+(defn- canonical-value [value]
+  (cond
+    (map? value)
+    (into (sorted-map)
+          (map (fn [[key nested]]
+                 [(if (keyword? key) (name key) (str key))
+                  (canonical-value nested)]))
+          value)
+    (set? value) (mapv canonical-value (sort-by str value))
+    (sequential? value) (mapv canonical-value value)
+    (keyword? value) (str value)
+    :else value))
+
+(defn authorization-receipt-digest [value]
+  (-> (MessageDigest/getInstance "SHA-256")
+      (.digest (.getBytes
+                (json/write-str (canonical-value value))
+                StandardCharsets/UTF_8))
+      (->> (.encodeToString
+            (.withoutPadding (java.util.Base64/getUrlEncoder))))))
+
+(defn authorization-receipt-valid? [receipt]
+  (and (= authorization-receipt-schema (:schema receipt))
+       (true? (:verified? receipt))
+       (= :webauthn-server (:verification receipt))
+       (every? string?
+               [(:verified-at receipt) (:transaction-id receipt)
+                (:rp-id receipt) (:origin receipt) (:challenge receipt)
+                (:user-id receipt) (:credential-id receipt)
+                (get-in receipt [:evidence :client-data-json])
+                (get-in receipt [:evidence :authenticator-data])
+                (get-in receipt [:evidence :signature])])
+       (= (:verification-digest receipt)
+          (authorization-receipt-digest
+           (dissoc receipt :verification-digest)))))
+
+(defn- assertion-evidence [credential-response]
+  (let [response (:response credential-response)]
+    {:client-data-json (:clientDataJSON response)
+     :authenticator-data (:authenticatorData response)
+     :signature (:signature response)
+     :user-handle (:userHandle response)
+     :client-extension-results (:clientExtensionResults credential-response)
+     :authenticator-attachment (:authenticatorAttachment credential-response)}))
+
+(defn- authorization-receipt
+  [{:keys [id challenge rp-id origin authorization-context]} result
+   credential-response user-id credential-id verified-at]
+  (let [receipt
+        {:schema authorization-receipt-schema
+         :verification :webauthn-server
+         :verified? true
+         :verified-at verified-at
+         :transaction-id id
+         :rp-id rp-id
+         :origin origin
+         :challenge challenge
+         :user-id user-id
+         :credential-id credential-id
+         :signature-count (.getSignatureCount result)
+         :authorization-context authorization-context
+         :evidence (assertion-evidence credential-response)}]
+    (assoc receipt :verification-digest
+           (authorization-receipt-digest receipt))))
 
 (defn- identity-state []
   (merge {:users {} :memberships {} :passkeys {} :webauthn-transactions {}}
@@ -329,7 +398,7 @@
 (defn- finish-assertion!
   [transaction-id credential-response expected-kind]
   (let [{:keys [request-json origin rp-id expected-user-id
-                authorization-context]}
+                authorization-context] :as transaction}
         (active-transaction! transaction-id expected-kind)
         request (AssertionRequest/fromJson request-json)
         response (PublicKeyCredential/parseAssertionResponseJson
@@ -366,7 +435,12 @@
                                  :credential-id credential-id}))))
     (cond-> {:user-id (:id user) :credential-id credential-id :verified? true}
       (some? authorization-context)
-      (assoc :authorization-context authorization-context))))
+      (assoc :authorization-context authorization-context)
+      (= :authorization expected-kind)
+      (assoc :authorization-receipt
+             (authorization-receipt
+              transaction result credential-response (:id user)
+              credential-id now)))))
 
 (defn start-signing!
   "Start an assertion whose challenge IS `challenge` — the digest of a document

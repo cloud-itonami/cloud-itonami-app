@@ -116,7 +116,8 @@
                                 :session-id "test"})]
           (is (= "こんにちは" (get-in response [:message :content])))
           (is (= 2 (count (store/session-messages "test"))))
-          (is (= 6 (count (:datoms (store/snapshot)))))))
+          (is (= 2 (count (store/session-memory "test"))))
+          (is (= 10 (count (:datoms (store/snapshot)))))))
       (finally
         (reset! store/state previous)))))
 
