@@ -285,6 +285,23 @@
     (catch java.io.IOException _ :unknown)
     (catch java.net.URISyntaxException _ :unknown)))
 
+(defn probe-endpoint
+  "Probe one endpoint that is not (yet) in the catalog.
+
+  `probe-health!` can only ask about actors the catalog already knows, which
+  is the wrong shape for an operator who has just deployed something: the
+  whole point of `cloud.itonami.app.operator/register-endpoint!` is to confirm
+  an address before recording it, and a catalog rebuilt from west pins will
+  not contain it for hours or days.
+
+  Exposed here rather than reimplemented there. Same three-valued result and
+  the same reason for it — :unknown is not :down."
+  ([endpoint health-path] (probe-endpoint endpoint health-path 3000))
+  ([endpoint health-path timeout-ms]
+   (if (and (string? endpoint) (string? health-path))
+     (probe* endpoint health-path timeout-ms)
+     :unknown)))
+
 (defn probe-health!
   "Probe every callable actor. Returns {repo {:endpoint ... :health ...}}.
 
