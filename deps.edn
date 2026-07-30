@@ -87,7 +87,7 @@
   ;; which is the same arrangement as the object stores above.
   io.github.kotoba-lang/sheets
   {:git/url "https://github.com/kotoba-lang/sheets.git"
-   :git/sha "fd83bad947ed1bd261fb8b8f1581b0b4ac77386c"}
+   :git/sha "d6b567ca3467ce78ef3c6b528ea671ff9f92074a"}
   io.github.kotoba-lang/docs
   {:git/url "https://github.com/kotoba-lang/docs.git"
    :git/sha "0ebb24147e272b43d84dbf542474845a1a09054d"}
@@ -102,7 +102,7 @@
   ;; not code that runs.
   io.github.kotoba-lang/slides
   {:git/url "https://github.com/kotoba-lang/slides.git"
-   :git/sha "f6a0f9cdea18519af2feb17d16d014c894ba04c5"}
+   :git/sha "79dc1a3a66048a421d18bcb7d64cb5a452a6b8d2"}
   ;; Named directly even though all three now agree on it. They agree because
   ;; sheets and docs were advanced off 77e3ce7d for the rehydrate work; before
   ;; that they pinned the last commit before the wire moved to plain JSON and

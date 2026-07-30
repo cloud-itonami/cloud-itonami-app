@@ -1040,14 +1040,20 @@
   "Which formats can say what they will drop, and how to ask.
 
   A table rather than a `cond`, so adding a writer that gains the function
-  is one line here — and so the formats that *cannot* answer are visible as
-  absences rather than as an unstated assumption. EDN is not here because it
-  is the stored bytes and loses nothing; CSV, PPTX and the office readers
-  are not here because nobody has written the function for them, which is a
-  gap and not a claim that they are lossless."
+  is one line here — and so a format that cannot answer is visible as an
+  absence rather than as an unstated assumption.
+
+  Every writer answers now. EDN is the one absence and it is not a gap: it
+  is the stored bytes, so there is nothing for it to drop."
   {[:docs "md"] docs-md/unexpressed
    [:docs "docx"] docs-docx/unexpressed
-   [:sheets "xlsx"] sheets-xlsx/unexpressed})
+   [:sheets "xlsx"] sheets-xlsx/unexpressed
+   ;; CSV needs to know *which* tab, because the tabs it is not writing are
+   ;; the loss it mostly reports. The first tab is the one `export` writes
+   ;; when none is asked for, so it is the one this answers about.
+   [:sheets "csv"] (fn [wb] (sheets-csv/unexpressed
+                             wb (first (sort (keys (:sheets/tabs wb))))))
+   [:slides "pptx"] slides-pptx/unexpressed})
 
 (defn export-warnings
   "What each export format will drop from this resource, before it drops it.

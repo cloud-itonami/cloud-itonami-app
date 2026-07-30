@@ -1709,7 +1709,9 @@
                                          :sheets/range "A1:B9"}}))
                      alice object-store)
             warnings (:export-warnings (documents/content (:id item) alice object-store))]
-        (is (= ["xlsx"] (keys warnings)))
+        ;; Both writers answer now, and they answer differently — CSV loses
+        ;; the other tabs as well, which xlsx does not.
+        (is (= #{"xlsx" "csv"} (set (keys warnings))))
         (is (= #{":xlsx/cell-styles-dropped" ":xlsx/named-ranges-dropped"}
                (set (map :code (get warnings "xlsx")))))
         ;; Flattened out of `sheets.validate`'s namespaced shape into the
@@ -3762,3 +3764,33 @@
         (is (= "2700" (get-in computed [first-id "[4 1]"])) "1200 + 1500")
         (is (= "2400" (get-in computed [first-id "[2 1]"])) "unqualified is still local")
         (is (= "#REF!" (get-in computed [first-id "[5 1]"])))))))
+
+(deftest every-writer-says-what-it-drops
+  ;; The table used to hold three of the five, and the note said the other
+  ;; two were a gap rather than a claim of losslessness. All five answer
+  ;; now; EDN is the one absence and is not a gap, because it is the stored
+  ;; bytes.
+  (with-state
+    (fn [_ object-store]
+      ;; A workbook loses different things to each of its two writers.
+      (let [{:keys [item first-id]} (two-tab-workbook object-store)
+            warnings (:export-warnings (documents/content (:id item) alice
+                                                          object-store))]
+        (is (= #{"csv"} (set (keys warnings)))
+            "two tabs and a formula: csv loses both, xlsx loses neither")
+        (is (contains? (set (map :code (get warnings "csv")))
+                       ":csv/other-tabs-dropped"))
+        (is (contains? (set (map :code (get warnings "csv")))
+                       ":csv/formulas-as-text"))
+        (is (some? first-id)))
+      ;; A deck loses its slide names and nothing else.
+      (let [{:keys [item]} (documents/create! :slides "提案" alice object-store)
+            deck (:resource (documents/content (:id item) alice object-store))
+            _ (save! (:id item)
+                     (assoc deck :slides/slides
+                            [{:slides/id "s1" :slides/title "見出し" :slides/shapes []}])
+                     alice object-store)
+            warnings (:export-warnings (documents/content (:id item) alice
+                                                          object-store))]
+        (is (= ["pptx"] (keys warnings)))
+        (is (= [":pptx/slide-title-dropped"] (mapv :code (get warnings "pptx"))))))))
