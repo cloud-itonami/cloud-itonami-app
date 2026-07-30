@@ -14,6 +14,7 @@
   The passkey gate is stubbed rather than satisfied: a real ceremony needs an
   authenticator, and what is under test here is the route layer behind that gate."
   (:require [clojure.data.json :as json]
+            [clojure.string :as str]
             [clojure.test :refer [deftest is testing]]
             [cloud.itonami.app.config :as config-loader]
             [cloud.itonami.app.credential :as credential]
@@ -244,3 +245,81 @@
           (is (= 200 (:status r)) (str "body " body " must not 500"))
           (is (false? (get-in r [:body :valid?])))
           (is (some? (get-in r [:body :reason]))))))))
+
+;; ── SD-JWT VC over HTTP ──────────────────────────────────────────────────────
+;; Added because the previous change put two routes in and covered neither, one
+;; change after the HTTP seam turned up a real bug. The same class of thing is
+;; available here: the verify route reads a compact STRING rather than a document,
+;; so it uses read-json rather than read-json-raw, and getting that backwards would
+;; keywordize nothing useful but could still mangle the field lookup.
+
+(deftest sd-jwt-vc-issue-and-verify-over-http
+  (with-server
+    (fn []
+      (let [issued (authed :post "/api/credentials/membership/sd-jwt-vc")]
+        (is (= 200 (:status issued)))
+        (is (= "cloud.itonami.app.credential-sd-jwt.v1" (get-in issued [:body :schema])))
+        (is (string? (get-in issued [:body :presentation])))
+        (is (= 1 (count (get-in issued [:body :disclosures])))
+            "exactly one disclosable claim: the subject")
+        (is (str/starts-with? (get-in issued [:body :vct]) "urn:cloud-itonami:")
+            "no organization domain configured in this fixture, so a urn")
+
+        (testing "verifying the full presentation discloses the subject"
+          (let [r (authed :post "/api/credentials/sd-jwt-vc/verify"
+                          (json/write-str
+                           {:presentation (get-in issued [:body :presentation])}))]
+            (is (= 200 (:status r)))
+            (is (true? (get-in r [:body :valid?])))
+            (is (true? (get-in r [:body :subject-disclosed?])))
+            (is (= subject-did (get-in r [:body :subject])))
+            (testing "and the response states what it does NOT prove"
+              (is (true? (get-in r [:body :bearer-presentable?]))))))
+
+        (testing "withholding the subject still proves the role — the point"
+          (let [jwt (first (str/split (get-in issued [:body :presentation]) #"~"))
+                withheld (str jwt "~")
+                r (authed :post "/api/credentials/sd-jwt-vc/verify"
+                          (json/write-str {:presentation withheld}))]
+            (is (= 200 (:status r)))
+            (is (true? (get-in r [:body :valid?])))
+            (is (false? (get-in r [:body :subject-disclosed?])))
+            (is (nil? (get-in r [:body :subject])))
+            (is (= "member" (get-in r [:body :role])))))))))
+
+(deftest sd-jwt-vc-routes-require-origin-and-csrf
+  (with-server
+    (fn []
+      (doseq [path ["/api/credentials/membership/sd-jwt-vc"
+                    "/api/credentials/sd-jwt-vc/verify"]]
+        (is (= 403 (:status (request :post path {:headers {"Origin" origin}})))
+            (str path " without CSRF"))
+        (is (= 403 (:status (request :post path
+                                     {:headers {"X-CLOUD-ITONAMI-CSRF" csrf}})))
+            (str path " without Origin"))))))
+
+(deftest sd-jwt-vc-malformed-input-is-an-answer-not-a-500
+  (with-server
+    (fn []
+      (doseq [body [(json/write-str {:presentation "nonsense"})
+                    (json/write-str {:presentation ""})
+                    (json/write-str {:presentation nil})
+                    "{}"]]
+        (let [r (authed :post "/api/credentials/sd-jwt-vc/verify" body)]
+          (is (= 200 (:status r)) (str "body " body " must not 500"))
+          (is (false? (get-in r [:body :valid?])))
+          (is (some? (get-in r [:body :reason]))))))))
+
+(deftest a-tampered-sd-jwt-vc-presentation-is-refused-over-http
+  (with-server
+    (fn []
+      (let [issued (authed :post "/api/credentials/membership/sd-jwt-vc")
+            presentation (get-in issued [:body :presentation])
+            ;; flip a character inside the signature segment
+            [jwt & rest-parts] (str/split presentation #"~")
+            [h p s] (str/split jwt #"\.")
+            forged (str/join "~" (into [(str h "." p "." (str/reverse s))] rest-parts))
+            r (authed :post "/api/credentials/sd-jwt-vc/verify"
+                      (json/write-str {:presentation forged}))]
+        (is (= 200 (:status r)))
+        (is (false? (get-in r [:body :valid?])))))))

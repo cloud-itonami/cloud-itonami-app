@@ -448,6 +448,18 @@
         (is (nil? (re-find #"class=\"form-actions\"" html))
             "form-actions is not a class this app defines"))
 
+      (testing "the SD-JWT VC format is reachable from the screen, not only over HTTP"
+        ;; The previous change added two routes and left them unreachable from the
+        ;; UI, which is the dormant-endpoint problem one layer out from the
+        ;; dormant-library one.
+        (is (re-find #"id=\"credential-issue-sd-jwt\"" html))
+        (is (re-find #"id=\"credential-verify-sd-jwt\"" html))
+        (is (re-find #"id=\"credential-sd-jwt-result\"" html))
+        (testing "and the screen states what the format does NOT prove"
+          (is (re-find #"bearer-presentable" html))
+          (is (re-find #"所持者拘束" html))
+          (is (re-find #"authenticatorData" html))))
+
       (testing "accessibility: motion is not forced on anyone (WCAG 2.3.3)"
         ;; Measured, not assumed: kotoba-lang/design-quality scored this page
         ;; 87.64 with `reduced-motion` as the ONLY finding, and 100.00 once the

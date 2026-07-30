@@ -6056,6 +6056,75 @@
         target.replaceChildren(make('p', 'data-list__meta', error.message));
       }
     };
+    // ── SD-JWT VC ────────────────────────────────────────────────────────
+    const sdJwtStatus = (message) => {
+      $('#credential-sd-jwt-status').textContent = message || '';
+    };
+    const renderSdJwtIssued = (issued) => {
+      const target = $('#credential-sd-jwt-result');
+      target.replaceChildren();
+      target.append(make('p', 'data-list__title', `vct: ${issued.vct}`));
+      // Both halves are shown because the holder's choice IS the feature: the
+      // first string discloses the subject, the second withholds it.
+      const jwt = issued.presentation.split('~')[0];
+      target.append(make('p', 'data-list__meta', '主体を開示する提示（full）:'));
+      target.append(make('p', 'form-help', issued.presentation));
+      target.append(make('p', 'data-list__meta', '主体を伏せる提示（sub を除く）:'));
+      target.append(make('p', 'form-help', `${jwt}~`));
+      target.append(make('p', 'form-help',
+        '下の検証欄に貼り付けて「SD-JWT VC として検証」を押すと、'
+        + 'どちらが何を明かすか確認できます。'));
+    };
+    $('#credential-issue-sd-jwt').addEventListener('click', async () => {
+      const button = $('#credential-issue-sd-jwt');
+      button.disabled = true;
+      sdJwtStatus('発行しています…');
+      try {
+        const issued = await postJSON('/api/credentials/membership/sd-jwt-vc', {}, true);
+        sdJwtStatus('発行しました。credential 本体は保存していないので、この結果を holder へ渡してください。');
+        renderSdJwtIssued(issued);
+        $('#credential-verify-input').value = issued.presentation;
+      } catch (error) {
+        sdJwtStatus(error.message);
+      } finally {
+        button.disabled = false;
+      }
+    });
+    $('#credential-verify-sd-jwt').addEventListener('click', async () => {
+      // An SD-JWT VC presentation is a compact tilde-separated STRING, not JSON,
+      // so this path deliberately does not JSON.parse the textarea.
+      const raw = $('#credential-verify-input').value.trim();
+      const target = $('#credential-verify-result');
+      if (!raw) {
+        target.replaceChildren(make('p', 'data-list__meta', 'presentation を貼り付けてください。'));
+        return;
+      }
+      target.replaceChildren(make('p', 'data-list__meta', '検証しています…'));
+      try {
+        const r = await postJSON('/api/credentials/sd-jwt-vc/verify', {presentation:raw}, true);
+        target.replaceChildren();
+        target.append(make('p', 'data-list__title',
+          r['valid?'] ? '有効です。' : '検証できませんでした。'));
+        if (r.reason) target.append(make('p', 'data-list__meta', `理由: ${r.reason}`));
+        if (r['valid?']) {
+          // The distinction this format exists for, said explicitly rather than
+          // left to be inferred from a missing field.
+          target.append(make('p', 'data-list__meta',
+            r['subject-disclosed?']
+              ? `主体を開示: ${r.subject}`
+              : '主体は伏せられています（role と組織のみ証明されています）'));
+          if (r.role) target.append(make('p', 'data-list__meta',
+            `役割: ${credentialRoleText[r.role] || r.role}`));
+          if (r['bearer-presentable?']) {
+            target.append(make('p', 'form-help',
+              'この形式は所持者拘束を持たないため、提示者が主体本人であることは'
+              + '証明されていません。'));
+          }
+        }
+      } catch (error) {
+        target.replaceChildren(make('p', 'data-list__meta', error.message));
+      }
+    });
     $('#credential-issue').addEventListener('click', async () => {
       const button = $('#credential-issue');
       button.disabled = true;
@@ -6918,6 +6987,29 @@
           [:p {:class "form-help" :id "credential-issue-status"
                :role "status" :aria-live "polite"}]]
          [:div {:class "local-card"}
+          (dds/heading 2 "所属だけを示す形式で発行する（SD-JWT VC）" {:size "24"})
+          [:p {:class "form-help"}
+           "上の形式は credential を見た相手に中身すべてを開示します——2 つの検証者に"
+           "提示すると、どちらも同じ did:key を受け取るので、その 2 回の提示は"
+           "互いに結び付けられます。この形式では "
+           [:strong "「この組織の誰かが auditor である」ことを、それが誰かを明かさずに"]
+           "証明できます。開示を選べるのは主体の識別子（sub）だけで、role と"
+           "organization は常に開示されます——役割を隠せる membership credential は"
+           "何も主張していないからです。"]
+          [:div {:class "security-callout"}
+           [:strong "この形式は所持者拘束（key binding）を持ちません。"]
+           "発行体がその主張をしたことは証明しますが、"
+           [:strong "提示している人が主体本人であることは証明しません"]
+           "（bearer-presentable）。これは未実装ではなく構造的な制約で、"
+           "Passkey は自分の authenticatorData ‖ clientDataHash に署名するため "
+           "holder proof を作れません。所持者拘束が必要な検証者は、自分の鍵を持つ"
+           "wallet を要求する必要があります。"]
+          [:button {:class "primary-action" :type "button" :id "credential-issue-sd-jwt"}
+           "SD-JWT VC を発行する"]
+          [:p {:class "form-help" :id "credential-sd-jwt-status"
+               :role "status" :aria-live "polite"}]
+          [:div {:id "credential-sd-jwt-result" :role "status" :aria-live "polite"}]]
+         [:div {:class "local-card"}
           (dds/heading 2 "発行済み" {:size "24"})
           [:p {:class "form-help"}
            "これは台帳で、署名済みの credential 本体は保存していません。"
@@ -6940,7 +7032,9 @@
             [:button {:class "primary-action" :type "submit"}
              "このアプリが発行したものとして検証"]
             [:button {:class "tool-button" :type "button" :id "credential-verify-external"}
-             "他組織発行として検証"]]]
+             "他組織発行として検証"]
+            [:button {:class "tool-button" :type "button" :id "credential-verify-sd-jwt"}
+             "SD-JWT VC として検証"]]]
           [:div {:id "credential-verify-result" :role "status" :aria-live "polite"}]]
          [:div {:class "local-card"}
           (dds/heading 2 "信頼している発行者" {:size "24"})
