@@ -811,7 +811,43 @@
               (send! exchange 200
                      (documents/create! (some-> (:kind request) name keyword)
                                         (:title request)
-                                        (:user-id session))))
+                                        (:user-id session)
+                                        (documents/store-instance)
+                                        {:folder (:folder request)})))
+
+            ;; Folders. Separate from documents because a folder has no
+            ;; bytes, no versions and no resource kind — routing it through
+            ;; the document endpoint would mean a request whose half the
+            ;; fields are meaningless.
+            (and (= method "POST") (= path "/api/workspace/drive/folders"))
+            (let [session (require-app-session! exchange)
+                  request (read-json exchange)]
+              (require-origin! exchange config)
+              (require-csrf! exchange session)
+              (send! exchange 200
+                     (documents/create-folder! (:title request)
+                                               (:user-id session)
+                                               (:folder request))))
+
+            (and (= method "GET") (= path "/api/workspace/drive/folders"))
+            (let [session (require-app-session! exchange)]
+              (send! exchange 200
+                     (or (documents/folders (store/snapshot) (:user-id session)
+                                            (:folder (query-params exchange)))
+                         {:error {:type "drive/not-found"
+                                  :message "そのフォルダはありません。"}})))
+
+            (and (= method "POST")
+                 (id-from-path path #"/api/workspace/drive/documents/([^/]+)/move"))
+            (let [session (require-app-session! exchange)
+                  request (read-json exchange)]
+              (require-origin! exchange config)
+              (require-csrf! exchange session)
+              (send! exchange 200
+                     (documents/move!
+                      (id-from-path path #"/api/workspace/drive/documents/([^/]+)/move")
+                      (:folder request)
+                      (:user-id session))))
 
             (and (= method "GET")
                  (id-from-path path #"/api/workspace/drive/documents/([^/]+)"))
@@ -1392,6 +1428,11 @@
                      ;; point: the client has to re-read before it can win.
                      :drive/stale-version 409
                      :drive/unsupported-format 415
+                     ;; A folder dragged into its own child. The request was
+                     ;; understood; the arrangement it asks for is not one a
+                     ;; tree can hold.
+                     :drive/invalid-move 409
+                     :drive/not-a-folder 400
                      ;; Restoring what is already current is a request that
                      ;; conflicts with the state, not a malformed one.
                      :drive/already-current 409
