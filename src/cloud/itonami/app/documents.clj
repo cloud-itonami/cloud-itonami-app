@@ -224,14 +224,24 @@
 
 ;; ── views ───────────────────────────────────────────────────────────────────
 
-(defn- latest-size [item]
-  (or (some-> (peek (:drive/versions item)) :drive.version/size-bytes)
-      0))
+(defn- latest-version [item]
+  (peek (:drive/versions item)))
+
+(defn- held-bytes
+  "What this item costs the quota: every version, not only the newest.
+
+  `add-version` adds each version's size to `:drive.workspace/used-bytes` and
+  never subtracts, so an item with six versions is holding six versions'
+  worth. Showing only the newest would make a Drive that is filling up look
+  like one that is not."
+  [item]
+  (reduce + 0 (keep :drive.version/size-bytes (:drive/versions item))))
 
 (defn item-view
   "One created document, in the shape the Drive list already renders."
   [item]
-  (let [kind (:drive/resource-kind item)]
+  (let [kind (:drive/resource-kind item)
+        newest (latest-version item)]
     {:id (:drive/id item)
      :name (:drive/title item)
      :folder "マイドライブ"
@@ -240,34 +250,73 @@
      :kind (some-> (get resource-kinds kind) name)
      :label (get-in kinds [(get resource-kinds kind) :label])
      :created-at (:drive/created-at item)
+     :updated-at (:drive.version/created-at newest)
      :versions (count (:drive/versions item))
-     :size-bytes (latest-size item)
+     :size-bytes (or (:drive.version/size-bytes newest) 0)
+     :held-bytes (held-bytes item)
+     :trashed? (boolean (:drive/trashed? item))
      :available? true
      :origin "workspace"}))
 
+(defn- readable-files
+  [workspace actor]
+  (->> (vals (:drive.workspace/items workspace))
+       (filter #(and (= :file (:drive/kind %))
+                     (ws/can-read? workspace (:drive/id %) actor)))))
+
+(defn- newest-first [items]
+  (->> items
+       (sort-by (juxt #(or (:drive.version/created-at (latest-version %)) "")
+                      :drive/created-at))
+       reverse
+       (mapv item-view)))
+
 (defn documents
-  "Every document this principal can see, newest first."
+  "Every document this principal can see, most recently written first.
+
+  By last write rather than by creation, because a list that does not move
+  when something is saved is a list that cannot be used to find what was
+  just saved."
   [state actor]
   (let [workspace (workspace-for state actor)]
-    (->> (ws/visible-items workspace actor)
-         (filter #(= :file (:drive/kind %)))
-         (sort-by :drive/created-at)
-         reverse
-         (mapv item-view))))
+    (newest-first (remove :drive/trashed? (readable-files workspace actor)))))
+
+(defn trashed
+  "Everything this principal has trashed.
+
+  A separate call rather than a flag on `documents`, because the two are
+  answers to different questions and the trash is not a place anything
+  should appear by accident."
+  [state actor]
+  (let [workspace (workspace-for state actor)]
+    (newest-first (filter :drive/trashed? (readable-files workspace actor)))))
+
+(defn quota-view [state actor]
+  (let [workspace (workspace-for state actor)]
+    {:used-bytes (:drive.workspace/used-bytes workspace)
+     :quota-bytes (:drive.workspace/quota-bytes workspace)}))
 
 (defn drive-view
   "The archive snapshot with this principal's created documents in front.
 
   Created documents lead because they are the ones that just changed; the
-  archive is eighty files that have not moved since they were exported."
+  archive is eighty files that have not moved since they were exported.
+
+  The trash rides along rather than being fetched separately: it is the only
+  place quota goes to be reclaimed, and a Drive that never shows it is one
+  where nobody finds out why it is full."
   [archive actor]
-  (let [created (documents (store/snapshot) actor)
+  (let [state (store/snapshot)
+        created (documents state actor)
+        binned (trashed state actor)
         archived (mapv #(assoc % :origin "archive") (:items archive))]
     (assoc archive
            :schema schema
            :items (into created archived)
+           :trash binned
            :count (+ (count created) (count archived))
            :documents (count created)
+           :quota (quota-view state actor)
            :kinds (mapv (fn [[k spec]]
                           {:kind (name k) :label (:label spec)
                            :resource-kind (str (:resource-kind spec))})
@@ -358,17 +407,24 @@
 (defn- spec-of-item [item]
   (get kinds (get resource-kinds (:drive/resource-kind item))))
 
-(defn errors-in
-  "The blocking problems in `resource`, in one shape rather than three.
+(defn problems-in
+  "What the surface says about `resource`, in one shape rather than three.
 
-  Warnings are dropped: `docs.validate` reports a missing title as one, and
-  refusing a save over it would make the surface unusable for a draft."
+  Split by severity rather than filtered down to errors. Only errors block a
+  save — `docs.validate` reports a missing title as a warning, and refusing
+  over it would make the surface unusable for a draft — but a warning that is
+  computed and then dropped is a warning nobody ever sees, which is the same
+  as not having run the validator at all."
   [spec resource]
-  (->> ((:problems spec) resource)
-       (filter #(= :error (get % (:severity spec))))
-       (mapv (fn [problem]
-               {:code (some-> (get problem (:code spec)) str)
-                :message (get problem (:message spec))}))))
+  (let [shape (fn [problem]
+                {:code (some-> (get problem (:code spec)) str)
+                 :message (get problem (:message spec))})
+        by-severity (group-by #(get % (:severity spec)) ((:problems spec) resource))]
+    {:errors (mapv shape (get by-severity :error))
+     :warnings (mapv shape (get by-severity :warning))}))
+
+(defn errors-in [spec resource]
+  (:errors (problems-in spec resource)))
 
 (defn- writable!
   "The workspace, item and spec for a write, or the refusal that stops it."
@@ -400,7 +456,7 @@
   replaces an earlier version's bytes while the history saying otherwise is
   still sitting in `:drive/versions`."
   [{:keys [workspace item spec]} id actor object-store resource]
-  (let [errors (errors-in spec resource)]
+  (let [{:keys [errors warnings]} (problems-in spec resource)]
     (when (seq errors)
       (throw (ex-info (str "保存できません: " (:message (first errors)))
                       {:type :drive/invalid-document :problems errors})))
@@ -419,7 +475,11 @@
         (do (store/transact! assoc-in (workspace-path actor) (:workspace written))
             {:schema schema
              :ok? true
-             :item (item-view (ws/item (:workspace written) id))})
+             :item (item-view (ws/item (:workspace written) id))
+             ;; Reported, not swallowed. The save went through; the surface
+             ;; still had something to say about what was saved.
+             :warnings warnings
+             :quota (quota-view (store/snapshot) actor)})
         (refuse! written)))))
 
 (defn update!
@@ -461,12 +521,58 @@
                              (:title-key spec) title)]
          (write-resource! target id actor object-store resource))))))
 
+(defn version-content
+  "The stored envelope of one *earlier* version of `id`.
+
+  `drive.object/read-item` only ever reads `:drive/object-ref`, which is the
+  newest — an older version's bytes are reachable only by going to the store
+  with that version's own reference. So this asks `drive.object/readable?`
+  first, which is the library's own answer to whether this principal may
+  have these bytes at all, trash included. Asking the store directly without
+  it would be the second permission answer that `drive.object` exists to
+  prevent.
+
+  `index` is 1-based and matches what `item-view` reports as `:versions`."
+  ([id index actor] (version-content id index actor (store-instance)))
+  ([id index actor object-store]
+   (let [workspace (workspace-for (store/snapshot) actor)
+         item (ws/item workspace id)
+         versions (:drive/versions item)
+         version (get versions (dec index))]
+     (cond
+       (nil? item) (refuse! {:reason :no-such-item :item-id id})
+       (not (object/readable? workspace id actor))
+       (refuse! (if (ws/can-read? workspace id actor)
+                  {:reason :item-is-trashed :item-id id}
+                  {:reason :not-permitted :item-id id :principal actor}))
+       (nil? version)
+       (throw (ex-info (str "版 " index " はありません。")
+                       {:type :drive/not-found :item-id id :index index
+                        :versions (count versions)}))
+       :else
+       (if-let [bytes (object/-get-object object-store
+                                          (:drive.version/object-ref version))]
+         (let [kind (get resource-kinds (:drive/resource-kind item))
+               body (json/read-str (bytes->string bytes))]
+           {:schema schema
+            :ok? true
+            :item (item-view item)
+            :index index
+            :created-at (:drive.version/created-at version)
+            :resource-kind (some-> (:drive/resource-kind item) str)
+            :payload (if-let [read-envelope (get-in kinds [kind :read])]
+                       (read-envelope body)
+                       body)})
+         (refuse! {:reason :object-missing-from-store :item-id id
+                   :object-ref (:drive.version/object-ref version)}))))))
+
 (defn trash!
   "Move a document to the trash.
 
   Trash, not `forget-item`: trashing is reversible and forgetting is not,
   and `drive.object/forget-item` says in as many words that wiring the two
-  together makes deletion silent and permanent."
+  together makes deletion silent and permanent. `purge!` is where the
+  irreversible one lives, and it refuses anything that is not here first."
   [id actor]
   (locking write-lock
     (let [workspace (workspace-for (store/snapshot) actor)]
@@ -477,4 +583,82 @@
         :else
         (let [trashed (ws/trash workspace id)]
           (store/transact! assoc-in (workspace-path actor) trashed)
-          {:schema schema :ok? true :id id})))))
+          {:schema schema :ok? true :id id
+           :item (item-view (ws/item trashed id))})))))
+
+(defn restore!
+  "Take a document back out of the trash.
+
+  The half of trashing that makes it reversible, and therefore the half that
+  has to exist before trashing is honest. Without it the trash is a sink and
+  `trash!` is a delete button that says otherwise."
+  [id actor]
+  (locking write-lock
+    (let [workspace (workspace-for (store/snapshot) actor)
+          item (ws/item workspace id)]
+      (cond
+        (nil? item) (refuse! {:reason :no-such-item :item-id id})
+        (not (ws/can-write? workspace id actor))
+        (refuse! {:reason :not-permitted :item-id id :principal actor})
+        :else
+        (let [restored (ws/restore workspace id)]
+          (store/transact! assoc-in (workspace-path actor) restored)
+          {:schema schema :ok? true :id id
+           :item (item-view (ws/item restored id))})))))
+
+(defn purge!
+  "Delete a trashed document's bytes for good, and give the quota back.
+
+  Two things `trash!` deliberately does not do. `drive.workspace/trash` only
+  sets a flag: the versions stay, the objects stay, and every one of them is
+  still counted in `:drive.workspace/used-bytes` — `add-version` adds and
+  nothing ever subtracts. So a Drive whose trash is never emptied fills up
+  and cannot say why.
+
+  Refuses anything not already trashed. `drive.object/forget-item` names the
+  hazard exactly — a caller that wires it to the trash button has made
+  deletion silent and permanent — so the trash is the gate rather than a
+  suggestion, and emptying it is a second, separate act."
+  ([id actor] (purge! id actor (store-instance)))
+  ([id actor object-store]
+   (locking write-lock
+     (let [workspace (workspace-for (store/snapshot) actor)
+           item (ws/item workspace id)]
+       (cond
+         (nil? item) (refuse! {:reason :no-such-item :item-id id})
+         (not (:drive/trashed? item))
+         (throw (ex-info "先にゴミ箱へ移動してください。"
+                         {:type :drive/not-trashed :item-id id}))
+         :else
+         (let [forgotten (object/forget-item workspace object-store id actor)]
+           (if (:ok? forgotten)
+             ;; forget-item empties the item and returns the quota; the item
+             ;; itself is what is dropped here, because an entry with no
+             ;; versions and no bytes is a row that can only confuse a list.
+             (let [without (-> (:workspace forgotten)
+                               (update :drive.workspace/items dissoc id)
+                               (update-in [:drive.workspace/items
+                                           (:drive.workspace/root-id workspace)
+                                           :drive/children]
+                                          (fn [children]
+                                            (vec (remove #{id} children)))))]
+               (store/transact! assoc-in (workspace-path actor) without)
+               {:schema schema :ok? true :id id
+                :freed-bytes (:freed-bytes forgotten)
+                :quota (quota-view (store/snapshot) actor)})
+             (refuse! forgotten))))))))
+
+(defn empty-trash!
+  "Purge everything in the trash, and report what came back.
+
+  One call because emptying a trash one document at a time is how a trash
+  stays full."
+  ([actor] (empty-trash! actor (store-instance)))
+  ([actor object-store]
+   (locking write-lock
+     (let [ids (mapv :id (trashed (store/snapshot) actor))
+           results (mapv #(purge! % actor object-store) ids)]
+       {:schema schema :ok? true
+        :purged (count results)
+        :freed-bytes (reduce + 0 (map :freed-bytes results))
+        :quota (quota-view (store/snapshot) actor)}))))
