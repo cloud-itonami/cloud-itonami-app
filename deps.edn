@@ -27,6 +27,28 @@
   io.github.kotoba-lang/drive
   {:git/url "https://github.com/kotoba-lang/drive.git"
    :git/sha "af096f28367b3f651980750f2f5256d887fc9db4"}
+
+  ;; The three document surfaces the Drive can create. Each is a portable
+  ;; model plus an office-envelope wire namespace, and nothing in any of them
+  ;; knows about drive — `cloud.itonami.app.documents` is where they meet,
+  ;; which is the same arrangement as the object stores above.
+  io.github.kotoba-lang/sheets
+  {:git/url "https://github.com/kotoba-lang/sheets.git"
+   :git/sha "b2270bb7b5fb74e968eb40427c31d66f17a571dc"}
+  io.github.kotoba-lang/docs
+  {:git/url "https://github.com/kotoba-lang/docs.git"
+   :git/sha "1e8b8f7768a6b242ba269a27f4a64742b99c507c"}
+  io.github.kotoba-lang/forms
+  {:git/url "https://github.com/kotoba-lang/forms.git"
+   :git/sha "40bfc84fe39455a00543fd35d12d5b61f19ffbe3"}
+  ;; Named directly, and deliberately, because sheets and docs pin 77e3ce7d —
+  ;; the last commit before the wire moved from Transit-tagged JSON to plain
+  ;; JSON — while forms needs the current one for :forms/form. Resolution
+  ;; would pick a winner on its own here; saying which means the answer does
+  ;; not change when one of the three advances its own pin.
+  io.github.kotoba-lang/transit
+  {:git/url "https://github.com/kotoba-lang/transit.git"
+   :git/sha "ab5d9d956e088d77d7f91357f36a4a0c6bdfcadc"}
   ;; Storj as an IObjectStore. Its store-fns produce exactly the four-function
   ;; map drive.object/store-of takes, and neither library depends on the other
   ;; — this app depends on both, which is the arrangement both docstrings name.
@@ -74,6 +96,10 @@
     io.github.kotoba-lang/calendar {:local/root "../../kotoba-lang/calendar"}
     io.github.kotoba-lang/mail {:local/root "../../kotoba-lang/mail"}
     io.github.kotoba-lang/drive {:local/root "../../kotoba-lang/drive"}
+    io.github.kotoba-lang/sheets {:local/root "../../kotoba-lang/sheets"}
+    io.github.kotoba-lang/docs {:local/root "../../kotoba-lang/docs"}
+    io.github.kotoba-lang/forms {:local/root "../../kotoba-lang/forms"}
+    io.github.kotoba-lang/transit {:local/root "../../kotoba-lang/transit"}
     io.github.kotoba-lang/identity {:local/root "../../kotoba-lang/identity"}
     io.github.kotoba-lang/oauth {:local/root "../../kotoba-lang/oauth"}
     io.github.kotoba-lang/com-github {:local/root "../../kotoba-lang/com-github"}

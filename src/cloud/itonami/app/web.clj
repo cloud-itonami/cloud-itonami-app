@@ -171,6 +171,18 @@
     color:var(--color-neutral-solid-gray-600);font-size:.875rem;line-height:1.6}
   .calendar-list .data-list__item{grid-template-columns:7rem minmax(0,1fr)}
   .calendar-time{color:var(--color-key-900);font-weight:700;font-size:.875rem;line-height:1.5}
+  .drive-create-bar{display:flex;align-items:center;flex-wrap:wrap;gap:.5rem .75rem;
+    margin:1rem 0 0}
+  .drive-create{display:flex;flex-wrap:wrap;gap:.5rem}
+  .drive-create__status{margin:0;color:var(--color-neutral-solid-gray-600);
+    font-size:.8125rem;line-height:1.5}
+  .detail-actions{display:flex;flex-direction:column;align-items:flex-start;gap:.75rem;
+    margin-top:1.25rem}
+  .document-preview{max-height:18rem;width:100%;box-sizing:border-box;overflow:auto;margin:0;
+    border:1px solid var(--color-neutral-solid-gray-200);border-radius:.5rem;
+    background:var(--color-neutral-solid-gray-50);padding:.75rem;
+    color:var(--color-neutral-solid-gray-800);font-size:.75rem;line-height:1.6;
+    white-space:pre-wrap;word-break:break-all}
   .workspace-toolbar{display:flex;align-items:center;justify-content:space-between;gap:.75rem;
     margin:1rem 0}
   .workspace-search{width:min(100%,24rem);min-height:2.75rem;box-sizing:border-box;
@@ -672,18 +684,86 @@
       const list = $('#drive-list'); list.replaceChildren();
       const select = (item) => { selectedDrive = item; renderDrive(driveData); };
       items.forEach((item) => list.append(recordButton(item, item.id === selectedDrive?.id, select, {
-        title:item.name, time:bytes(item['size-bytes']), meta:item.folder,
+        title:item.name, time:bytes(item['size-bytes']),
+        meta:item.origin === 'workspace' ? `${item.label} · ${item.folder}` : item.folder,
         snippet:item['media-type']})));
       if (!items.length) list.append(make('li', 'empty-state', '条件に一致するファイルはありません。'));
-      if (selectedDrive) setDetail($('#drive-detail'), selectedDrive.folder,
-        selectedDrive.name, 'OneDrive アーカイブに保存されているファイルです。',
-        [['種類', selectedDrive['media-type']], ['サイズ', bytes(selectedDrive['size-bytes'])],
-         ['保管状態', selectedDrive['available?'] ? '利用可能' : 'アーカイブ参照'],
-         ['相対位置', selectedDrive.id]]);
-      else $('#drive-detail').replaceChildren(make('div', 'empty-state', 'ファイルを選択してください。'));
+      if (selectedDrive && selectedDrive.origin === 'workspace') {
+        setDetail($('#drive-detail'), selectedDrive.label,
+          selectedDrive.name, 'この Drive で作成した Kotoba ドキュメントです。',
+          [['種類', selectedDrive['resource-kind']],
+           ['形式', selectedDrive['media-type']],
+           ['サイズ', bytes(selectedDrive['size-bytes'])],
+           ['版数', String(selectedDrive.versions ?? 1)],
+           ['作成', selectedDrive['created-at'] || '—']]);
+        $('#drive-detail').append(documentActions(selectedDrive));
+      } else if (selectedDrive) {
+        setDetail($('#drive-detail'), selectedDrive.folder,
+          selectedDrive.name, 'OneDrive アーカイブに保存されているファイルです。',
+          [['種類', selectedDrive['media-type']], ['サイズ', bytes(selectedDrive['size-bytes'])],
+           ['保管状態', selectedDrive['available?'] ? '利用可能' : 'アーカイブ参照'],
+           ['相対位置', selectedDrive.id]]);
+      } else {
+        $('#drive-detail').replaceChildren(make('div', 'empty-state', 'ファイルを選択してください。'));
+      }
+      renderDriveCreateBar(data.kinds || []);
       $('#drive-visible-count').textContent = `${items.length} 件を表示`;
       $('#drive-count').textContent = data.count || data.items.length;
       $('#drive-source').textContent = data.source;
+    };
+    // The create bar is rendered from the server's `kinds`, not from a list
+    // written out here: the three surfaces are a closed table in
+    // `cloud.itonami.app.documents`, and a second copy in the UI is a second
+    // thing to keep in step.
+    const renderDriveCreateBar = (kinds) => {
+      const bar = $('#drive-create'); if (!bar) return;
+      if (bar.dataset.rendered === String(kinds.length) && kinds.length) return;
+      bar.replaceChildren();
+      kinds.forEach((kind) => {
+        const button = make('button', 'tool-button', `${kind.label}を作成`);
+        button.type = 'button';
+        button.addEventListener('click', () => createDocument(kind));
+        bar.append(button);
+      });
+      bar.dataset.rendered = String(kinds.length);
+    };
+    const createDocument = async (kind) => {
+      const status = $('#drive-create-status');
+      status.textContent = `${kind.label}を作成しています…`;
+      try {
+        const created = await postJSON('/api/workspace/drive/documents',
+          {kind:kind.kind}, true);
+        status.textContent = `${created.item.name} を作成しました。`;
+        selectedDrive = created.item;
+        await loadWorkspace('drive', renderDrive);
+      } catch (error) {
+        status.textContent = error.message;
+      }
+    };
+    const documentActions = (item) => {
+      const actions = make('div', 'detail-actions');
+      const show = make('button', 'tool-button', '内容を表示');
+      show.type = 'button';
+      const preview = make('pre', 'document-preview', '');
+      preview.hidden = true;
+      show.addEventListener('click', async () => {
+        show.disabled = true;
+        try {
+          const request = await fetch(
+            `/api/workspace/drive/documents/${encodeURIComponent(item.id)}`);
+          const data = await request.json();
+          if (!request.ok) throw new Error(data?.error?.message || '内容を取得できませんでした。');
+          preview.textContent = JSON.stringify(data.payload, null, 2);
+          preview.hidden = false;
+        } catch (error) {
+          preview.textContent = error.message;
+          preview.hidden = false;
+        } finally {
+          show.disabled = false;
+        }
+      });
+      actions.append(show, preview);
+      return actions;
     };
     const renderFilecoin = (data) => {
       const list = $('#storage-list'); list.replaceChildren();
@@ -1908,9 +1988,15 @@
            [:button {:type "button" :aria-pressed "false"} "Roadmap"]]
           [:ul {:class "data-list" :id "project-list"} [:li {:class "skeleton"}]]]]
         [:section {:class "view" :data-view-panel "drive" :hidden true}
-         (view-header "Drive" "kotoba-lang/drive のファイルモデルで、OneDrive アーカイブを検索・確認します。")
+         (view-header "Drive"
+                      (str "kotoba-lang/drive のファイルモデルで、OneDrive アーカイブを"
+                           "検索・確認し、Sheets / Docs / Forms を作成します。"))
          [:p {:class "source-note"} [:span {:class "source-dot"}]
           [:span {:id "drive-source"} "m365-archive を読み込み中…"]]
+         [:div {:class "drive-create-bar"}
+          [:div {:class "drive-create" :id "drive-create"
+                 :role "group" :aria-label "新しいドキュメントを作成"}]
+          [:p {:class "drive-create__status" :id "drive-create-status" :aria-live "polite"}]]
          [:div {:class "workspace-toolbar"}
           [:label {:class "visually-hidden" :for "drive-search"} "ファイルを検索"]
           [:input {:class "workspace-search" :id "drive-search" :type "search"

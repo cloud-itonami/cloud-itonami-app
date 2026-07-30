@@ -9,6 +9,7 @@
             [clojure.string :as str]
             [clojure.test :as test]
             [cloud.itonami.app.core-test]
+            [cloud.itonami.app.documents-test]
             [cloud.itonami.app.filecoin-test]
             [cloud.itonami.app.fleet-test]
             [cloud.itonami.app.storj-test]
@@ -16,6 +17,7 @@
 
 (def ^:private namespaces
   '[cloud.itonami.app.core-test
+    cloud.itonami.app.documents-test
     cloud.itonami.app.filecoin-test
     cloud.itonami.app.fleet-test
     cloud.itonami.app.storj-test

@@ -14,6 +14,10 @@
    :agents [{:id "local" :name "Local" :system-prompt
              "You are a private, local-first assistant. Be concise and useful."}]
    :sessions {}
+   ;; One `drive.workspace` per principal — the tree, the ACL, the quota and
+   ;; the version history. The bytes those versions point at are not in here;
+   ;; they are in an object store. See `cloud.itonami.app.documents`.
+   :drive {:workspaces {}}
    :datoms []
    :events []
    :last-response nil})
