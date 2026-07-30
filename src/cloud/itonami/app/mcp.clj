@@ -15,14 +15,29 @@
   client is a process the operator launched, so the trust boundary is the one
   they already established, and nothing new listens.
 
-  Scope: the fleet capability only. Browser and computer tools are not exposed,
-  and that is a boundary rather than an omission — they take a screenshot of
-  whatever the operator is looking at, and their approval path in agent-control
-  checks the frontmost application between approval and action. Neither survives
-  translation to a protocol whose consent model belongs to the client. Mail,
-  calendar, drive and chat are not exposed either: those sit behind the Passkey
-  session on `/api/*`, and reaching around that from a surface with no session
-  would weaken a gate the app means.
+  Scope: the fleet capability, plus funding and settlement when — and only when —
+  a real app session resolves. Browser and computer tools are not exposed, and
+  that is a boundary rather than an omission — they take a screenshot of whatever
+  the operator is looking at, and their approval path in agent-control checks the
+  frontmost application between approval and action. Neither survives translation
+  to a protocol whose consent model belongs to the client. Mail, calendar, drive
+  and chat are not exposed either: those sit behind the Passkey session on
+  `/api/*`, and reaching around that from a surface with no session would weaken
+  a gate the app means.
+
+  Funding and settlement are the exception that proves that rule rather than
+  breaking it. `cloud.itonami.app.payment-tools` does not reach around the
+  session — it RESOLVES one from a token the operator placed in the environment
+  or the Keychain, requires that its user has enrolled a Passkey, and then acts
+  as that session with the same organization scoping and the same refusals as
+  the HTTP surface. With no such token there are no funding or payment tools in
+  the manifest at all.
+
+  And the gate itself is never exposed: `approve/start` and `approve/finish`
+  have no tools, because consent is a WebAuthn user-verifying assertion and
+  there is none an agent could produce. An agent may ask (`payment_review`, which
+  runs every deterministic refusal), record, carry out what a human already
+  approved (`payment_commit`), or record a decline. It cannot approve.
 
   `agent-control` is not required here even though it owns the same capability
   gate, because it requires `agent.run` and `hil.core`, which resolve only under
@@ -34,6 +49,7 @@
             [clojure.string :as str]
             [cloud.itonami.app.config :as config]
             [cloud.itonami.app.fleet :as fleet]
+            [cloud.itonami.app.payment-tools :as payment-tools]
             [cloud.itonami.app.store :as store]
             [mcp.execute :as execute]
             [mcp.model :as model]
@@ -57,19 +73,26 @@
       (true? saved)
       (true? (get-in configuration [:agent-control :fleet :enabled?])))))
 
-(defn manifest
-  "`fleet/tools` as an MCP manifest, or an empty one when the fleet capability
-  is off — an operator who has not enabled it sees a server with no tools
-  rather than tools that fail on call."
+(defn published-tools
+  "The tool descriptors this server currently offers.
+
+  Each group is gated by its own precondition and contributes nothing when that
+  precondition is unmet — an operator who has not enabled the fleet, or has not
+  bound a session, sees a server without those tools rather than tools that fail
+  on call. Publishing a tool that is certain to refuse is a worse contract: it
+  invites a client to try, and it says nothing about why."
   [configuration]
-  (let [base (model/server server-name server-version)]
-    (if-not (fleet-enabled? configuration)
-      base
-      (reduce (fn [m {:keys [name description parameters]}]
-                (model/add-tool m name {:description description
-                                        :input-schema parameters}))
-              base
-              fleet/tools))))
+  (cond-> []
+    (fleet-enabled? configuration) (into fleet/tools)
+    (payment-tools/available? configuration) (into payment-tools/tools)))
+
+(defn manifest
+  [configuration]
+  (reduce (fn [m {:keys [name description parameters]}]
+            (model/add-tool m name {:description description
+                                    :input-schema parameters}))
+          (model/server server-name server-version)
+          (published-tools configuration)))
 
 (defn- keywordize
   "JSON gives string keys; the fleet tools read keyword keys. Only the top level
@@ -85,15 +108,23 @@
   The `:type` is kept because fleet distinguishes \"no such actor\" from \"that
   actor has no endpoint\", and a caller acts differently on each."
   [configuration tool-name args]
-  (let [input (keywordize args)]
+  (let [input (keywordize args)
+        payment-tool? (contains? (into #{} (map :name) payment-tools/tools)
+                                 tool-name)]
     (try
-      (case tool-name
-        "fleet_search" (fleet/search-tool input)
-        "fleet_call" (if (fleet-enabled? configuration)
-                       (fleet/call-tool input)
-                       {:error "fleet capability is disabled"
-                        :type "fleet/disabled"})
-        {:error (str "unknown tool: " tool-name) :type "mcp/unknown-tool"})
+      (cond
+        ;; Re-checked at call time, not trusted from the manifest: a session can
+        ;; expire or be revoked mid-conversation, and a client that cached the
+        ;; tool list would otherwise keep calling a surface that is no longer
+        ;; bound to anyone.
+        payment-tool? (payment-tools/call-tool configuration tool-name input)
+        (= "fleet_search" tool-name) (fleet/search-tool input)
+        (= "fleet_call" tool-name)
+        (if (fleet-enabled? configuration)
+          (fleet/call-tool input)
+          {:error "fleet capability is disabled" :type "fleet/disabled"})
+        :else {:error (str "unknown tool: " tool-name)
+               :type "mcp/unknown-tool"})
       (catch clojure.lang.ExceptionInfo error
         {:error (.getMessage error)
          :type (some-> (:type (ex-data error)) str (str/replace #"^:" ""))})

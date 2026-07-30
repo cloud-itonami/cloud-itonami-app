@@ -153,6 +153,36 @@ disabled authority read as "this server is broken" rather than "this surface is
 deliberately off". `:authority/*`, `:funding/*` and `:payment/*` are now mapped;
 notably `:payment/insufficient-funds` is `402`, which is what `402` is for.
 
+### 6. The agent surface resolves a session; it does not reach around one
+
+`cloud.itonami.app.mcp` states why mail, calendar, drive and chat are not on the
+MCP surface: they sit behind the Passkey session on `/api/*`, and reaching around
+that from a surface with no session would weaken a gate the app means. Money is
+a stronger version of that objection, not a weaker one.
+
+So `cloud.itonami.app.payment-tools` resolves a real session — an app session
+token from `CLOUD_ITONAMI_MCP_SESSION` or the login Keychain, required to be
+live, unrevoked, and belonging to a Passkey-enrolled user — and acts as it. With
+no such token the funding and payment tools are **absent from the manifest**,
+not merely certain to fail. Publishing a tool that will always refuse invites a
+client to try and says nothing about why.
+
+The token is memoized for the process; the **session is not**. `identity/session`
+re-resolves it on every call, so expiry and revocation take effect immediately.
+
+**No tool can approve.** `approve/start` and `approve/finish` have no descriptor
+and no dispatch branch. This is structural rather than policy: consent is a
+WebAuthn user-verifying assertion from an authenticator the operator holds, and
+there is no assertion an agent could produce. `payment_commit` is exposed because
+it acts on a proposal whose exact digest a human already signed — carrying an
+approved thing to the authority is errand-running, not deciding — and the spine
+refuses anything not in `:approved`, so it cannot step over the consent stage.
+
+Verified end to end over real stdio JSON-RPC, not only in unit tests: an
+unaffordable review refuses with `payment/insufficient-funds`, an affordable one
+returns `awaiting-passkey` with a digest, and committing an unapproved proposal
+refuses with `authority/proposal-not-found`.
+
 ## Alternatives considered
 
 **Fetch the balance from the bank.** No API is available to this app, and

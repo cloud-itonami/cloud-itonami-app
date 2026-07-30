@@ -220,6 +220,42 @@ app holds no banking credential and moves no money; a human makes the transfer
 in their bank. `:payment` ships disabled, like every other authority. See
 [ADR-0005](docs/adr/0005-payment-settlement-authority.md).
 
+### Driving it from an agent (MCP)
+
+The stdio MCP server publishes these as tools — but only when it can resolve a
+**real app session**. Export a session token, or put one in the login Keychain:
+
+```bash
+security add-generic-password -s cloud-itonami-app.mcp -a session-token -w
+export CLOUD_ITONAMI_MCP_SESSION=…   # takes precedence over the Keychain
+clojure -M:mcp
+```
+
+| tool | |
+|---|---|
+| `funding_accounts` | accounts, balances, freshness |
+| `funding_link_account` | number is fingerprinted, never stored |
+| `funding_record_balance` | `as-of` is the instant the **bank** stated |
+| `payment_review` | runs every deterministic refusal; records a proposal **awaiting a human** |
+| `payment_proposals` | statuses |
+| `payment_commit` | only for a proposal a human **already** approved |
+| `payment_reject` | records that a human declined |
+
+Without a token there are no such tools in the manifest at all — not tools that
+fail on call. With one, the agent acts *as* that session: same organization
+scoping, same store, same refusals as `/api/*`. The session's user must have
+enrolled a Passkey.
+
+**An agent cannot approve.** `approve/start` and `approve/finish` have no tools
+and no dispatch branch, because consent is a WebAuthn user-verifying assertion
+and there is none an agent could produce. Verified end to end over real stdio:
+
+```text
+review ¥38,500 against a ¥10,000 balance  -> REFUSED payment/insufficient-funds
+review ¥38,500 against a ¥120,000 balance -> ok, status=awaiting-passkey
+commit a proposal no human approved       -> REFUSED authority/proposal-not-found
+```
+
 ## Distribution profiles
 
 Set a named profile or an EDN file path:
