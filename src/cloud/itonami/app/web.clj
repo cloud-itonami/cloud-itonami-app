@@ -1512,16 +1512,52 @@
         throw new Error('このブラウザは Passkey / WebAuthn に対応していません。');
       }
     };
+    const setPasskeyStatus = (message) => {
+      $('#identity-status').textContent = message;
+      const visibleStatus = $('#passkey-gate-status');
+      if (visibleStatus) visibleStatus.textContent = ` ${message}`;
+    };
+    const passkeyErrorMessage = (error) => {
+      if (error?.name === 'NotAllowedError') {
+        return 'Passkey確認がキャンセルされたか時間切れになりました。Touch ID、端末の画面ロック、またはセキュリティキーを確認して再試行してください。';
+      }
+      if (error?.name === 'InvalidStateError') {
+        return 'このPasskeyは既に登録されています。Passkeyでサインインしてください。';
+      }
+      if (error?.name === 'SecurityError') {
+        return 'Passkeyを開始できません。http://localhost:1338 を開いていることを確認してください。';
+      }
+      return error?.message || 'Passkey確認を完了できませんでした。';
+    };
     const registerCurrentPasskey = async () => {
       requireWebAuthn();
+      setPasskeyStatus('Passkeyの準備をしています…');
       const started = await postJSON('/api/passkeys/register/start', {}, true);
-      const credential = await navigator.credentials.create(creationOptions(started));
+      let platformAvailable = null;
+      if (PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable) {
+        platformAvailable =
+          await PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable()
+            .catch(() => null);
+      }
+      setPasskeyStatus(platformAvailable === false
+        ? 'Passkey確認待ちです。セキュリティキーまたは別端末のPasskeyを選択してください。'
+        : 'Passkey確認待ちです。Touch IDまたはブラウザのPasskey画面を完了してください。');
+      let credential;
+      try {
+        credential =
+          await navigator.credentials.create(creationOptions(started));
+      } catch (error) {
+        throw new Error(passkeyErrorMessage(error));
+      }
+      if (!credential) {
+        throw new Error('Passkey確認が完了しませんでした。再試行してください。');
+      }
       await postJSON('/api/passkeys/register/finish', {
         'transaction-id':started['transaction-id'],
         credential:credentialJSON(credential)
       }, true);
       await loadIdentity();
-      $('#identity-status').textContent = 'Passkey を登録しました。';
+      setPasskeyStatus('Passkey を登録しました。');
     };
     const renderMembers = (organization) => {
       const list = $('#member-list'); list.replaceChildren();
@@ -1705,8 +1741,11 @@
         $('#identity-status').textContent = 'Passkey を登録します。';
         try { await registerCurrentPasskey(); }
         catch (passkeyError) {
-          $('#identity-status').textContent =
-            `アカウントは登録済みです。Passkey 登録: ${passkeyError.message}`;
+          setPasskeyStatus(
+            `アカウントは登録済みです。Passkey 登録: ${passkeyError.message}`);
+        } finally {
+          button.disabled = false;
+          button.textContent = 'Passkey 登録を再試行';
         }
       } catch (error) {
         $('#identity-status').textContent = error.message;
@@ -1815,10 +1854,15 @@
     });
     $('#passkey-register').addEventListener('click', async () => {
       const button = $('#passkey-register');
-      button.disabled = true;
+      const label = button.textContent;
+      button.disabled = true; button.textContent = 'Passkey 確認待ち…';
       try { await registerCurrentPasskey(); }
-      catch (error) { $('#identity-status').textContent = error.message; }
-      finally { button.disabled = false; }
+      catch (error) { setPasskeyStatus(error.message); }
+      finally {
+        button.disabled = false;
+        button.textContent = identityState?.user?.['passkey-enrolled?']
+          ? '別の Passkey を追加' : label;
+      }
     });
     $('#cloud-alias-reserve').addEventListener('click', async () => {
       const button = $('#cloud-alias-reserve');
@@ -2370,7 +2414,8 @@
          [:div {:class "security-callout" :id "passkey-gate-notice"
                 :role "status" :aria-live "polite"}
           [:strong "Passkey 登録が必須です。"]
-          " 登録が完了するまで、この端末ではワークスペースとチャットを利用できません。"]
+          [:span {:id "passkey-gate-status"}
+           " 登録が完了するまで、この端末ではワークスペースとチャットを利用できません。"]]
          [:div {:class "local-card" :id "identity-onboarding"}
          (dds/heading 2 "Passkey で利用登録" {:size "24"
                                              :id "registration-title"})
