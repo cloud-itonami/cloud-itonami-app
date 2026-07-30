@@ -88,6 +88,10 @@
         environment (.environment builder)
         _ (doseq [key unset-env] (.remove environment key))
         process (.start builder)
+        ;; Both Codex and Claude accept an argv prompt but will also append
+        ;; piped stdin. ProcessBuilder creates a pipe by default, so leaving it
+        ;; open makes the CLI wait forever for more prompt bytes.
+        _ (.close (.getOutputStream process))
         stdout (future (bounded-read (.getInputStream process)))
         stderr (future (bounded-read (.getErrorStream process)))
         completed? (.waitFor process (long (or timeout-seconds
@@ -119,26 +123,36 @@
 
 (defn argv
   "Build a safe argv for :chat or :agent mode."
-  [{:keys [runner binary]} {:keys [mode prompt cwd model access]}]
+  [{:keys [runner binary]}
+   {:keys [mode prompt cwd model access runner-session-id new-session-id]}]
   (case runner
     :codex
-    (cond-> [binary "exec" "--json" "--color" "never"
-             "--sandbox" (if (= access :workspace-write)
-                           "workspace-write" "read-only")
-             "--ephemeral" "--skip-git-repo-check" "-C" cwd]
-      (and model (not (str/ends-with? model ":default")))
-      (into ["--model" (last (str/split model #":" 2))])
-      true (conj prompt))
+    (if runner-session-id
+      (cond-> [binary "exec" "resume" "--json" "--skip-git-repo-check"]
+        (and model (not (str/ends-with? model ":default")))
+        (into ["--model" (last (str/split model #":" 2))])
+        true (into [runner-session-id prompt]))
+      (cond-> [binary "exec" "--json" "--color" "never"
+               "--sandbox" (if (= access :workspace-write)
+                             "workspace-write" "read-only")
+               "--skip-git-repo-check" "-C" cwd]
+        (not= mode :chat) (conj "--ephemeral")
+        (and model (not (str/ends-with? model ":default")))
+        (into ["--model" (last (str/split model #":" 2))])
+        true (conj prompt)))
 
     (:claude :claude-zai)
     (cond-> [binary "-p" "--output-format" "json"
-             "--no-session-persistence"
              "--permission-mode" (if (= mode :chat) "plan" "dontAsk")
              "--tools" (if (= mode :chat)
                          ""
                          (if (= access :workspace-write)
                            "Read,Glob,Grep,Edit,Write"
                            "Read,Glob,Grep"))]
+      (not= mode :chat) (conj "--no-session-persistence")
+      runner-session-id (into ["--resume" runner-session-id])
+      (and (not runner-session-id) new-session-id)
+      (into ["--session-id" new-session-id])
       (and model (not (str/ends-with? model ":default")))
       (into ["--model" (last (str/split model #":" 2))])
       true (conj prompt))))
@@ -154,25 +168,35 @@
                            (get-in event [:item :text])))
                        events)
         usage (some #(when (= "turn.completed" (:type %)) (:usage %))
-                    (reverse events))]
+                    (reverse events))
+        runner-session-id
+        (some #(when (= "thread.started" (:type %))
+                 (or (:thread_id %) (:thread-id %)))
+              events)]
     {:content (or (last messages)
                   (throw (ex-info "Codex CLI から応答本文を取得できませんでした。"
                                   {:type :cli-agent/invalid-output})))
-     :usage usage}))
+     :usage usage
+     :runner-session-id runner-session-id}))
 
-(defn- parse-claude [output]
+(defn- parse-claude [output fallback-session-id]
   (let [result (json/read-str output :key-fn keyword)]
     {:content (or (:result result)
                   (throw (ex-info "Claude CLI から応答本文を取得できませんでした。"
                                   {:type :cli-agent/invalid-output})))
      :usage (cond-> (:usage result)
               (:total_cost_usd result)
-              (assoc :total_cost_usd (:total_cost_usd result)))}))
+              (assoc :total_cost_usd (:total_cost_usd result)))
+     :runner-session-id (or (:session_id result)
+                            (:session-id result)
+                            fallback-session-id)}))
 
-(defn parse-result [runner output]
-  (case runner
-    :codex (parse-codex output)
-    (:claude :claude-zai) (parse-claude output)))
+(defn parse-result
+  ([runner output] (parse-result runner output nil))
+  ([runner output fallback-session-id]
+   (case runner
+     :codex (parse-codex output)
+     (:claude :claude-zai) (parse-claude output fallback-session-id))))
 
 (defn- ensure-profile! [provider]
   (let [resolved (profile (:runner provider))]
@@ -194,7 +218,8 @@
       [])))
 
 (defn run-cli!
-  [provider {:keys [mode messages prompt model cwd access timeout-seconds]}]
+  [provider {:keys [mode messages prompt model cwd access timeout-seconds
+                    runner-session-id]}]
   (let [resolved (ensure-profile! provider)
         chat? (= :chat mode)
         cwd (if chat?
@@ -202,13 +227,25 @@
                 (.mkdirs dir)
                 (.getCanonicalPath dir))
               (.getCanonicalPath (io/file cwd)))
-        prompt (if chat? (conversation-prompt messages) prompt)
+        prompt (if chat?
+                 (if runner-session-id
+                   (or (:content (last (filter #(= "user" (:role %)) messages)))
+                       (conversation-prompt messages))
+                   (conversation-prompt messages))
+                 prompt)
+        new-session-id (when (and chat?
+                                  (#{:claude :claude-zai}
+                                    (:runner resolved))
+                                  (not runner-session-id))
+                         (str (java.util.UUID/randomUUID)))
         command (argv resolved {:mode mode :prompt prompt :cwd cwd
-                                :model model :access access})
+                                :model model :access access
+                                :runner-session-id runner-session-id
+                                :new-session-id new-session-id})
         result (execute! {:argv command :cwd cwd
                           :unset-env (:unset-env resolved)
                           :timeout-seconds timeout-seconds})]
-    (assoc (parse-result (:runner resolved) (:stdout result))
+    (assoc (parse-result (:runner resolved) (:stdout result) new-session-id)
            :runner (:runner resolved))))
 
 (defn chat [provider request]

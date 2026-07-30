@@ -4,6 +4,7 @@
             [clojure.set :as set]
             [clojure.string :as str]
             [cloud.itonami.app.app :as app]
+            [cloud.itonami.app.cli-runner :as cli-runner]
             [cloud.itonami.app.config :as config-loader]
             [cloud.itonami.app.did :as did]
             [cloud.itonami.app.identity :as local-identity]
@@ -145,6 +146,96 @@
       (finally
         (reset! store/state previous)))))
 
+(deftest cli-chat-session-is-recorded-and-resumed-per-provider
+  (let [temporary (java.nio.file.Files/createTempDirectory
+                   "cloud-itonami-cli-session-test"
+                   (make-array java.nio.file.attribute.FileAttribute 0))
+        previous @store/state
+        requests (atom [])
+        cli-config
+        {:routing {:default-provider "codex-cli"
+                   :default-model "codex:default"
+                   :cloud-enabled? false}
+         :privacy {:allow-cloud-without-review? false}
+         :memory {:max-session-messages 10 :max-context-messages 10}
+         :providers [{:id "codex-cli" :kind :cli :runner :codex
+                      :model "codex:default" :local? true :enabled? true}]}]
+    (try
+      (reset! store/state (store/initial-state))
+      (with-redefs [config-loader/data-dir (fn [] (.toFile temporary))
+                    provider/chat
+                    (fn [_ request]
+                      (swap! requests conj request)
+                      {:content "ok"
+                       :runner-session-id "codex-thread-1"})]
+        (service/run-chat!
+         cli-config {:messages [{:role "user" :content "first"}]
+                     :session-id "cloud-chat"})
+        (service/run-chat!
+         cli-config {:messages [{:role "user" :content "second"}]
+                     :session-id "cloud-chat"})
+        (is (nil? (:runner-session-id (first @requests))))
+        (is (= "codex-thread-1" (:runner-session-id (second @requests))))
+        (is (= "codex-thread-1"
+               (:id (store/runner-session "cloud-chat" "codex-cli"))))
+        (store/clear-session! "cloud-chat")
+        (is (nil? (store/runner-session "cloud-chat" "codex-cli"))))
+      (finally
+        (reset! store/state previous)))))
+
+(deftest cli-runner-builds-persistent-and-resumed-commands
+  (let [codex {:runner :codex :binary "/usr/local/bin/codex"}
+        claude {:runner :claude :binary "/usr/local/bin/claude"}
+        base {:mode :chat :prompt "hello" :cwd "/tmp/chat"
+              :model "codex:default" :access :read-only}
+        codex-new (cli-runner/argv codex base)
+        codex-resumed
+        (cli-runner/argv
+         codex (assoc base :runner-session-id "thread-1"))
+        codex-agent (cli-runner/argv codex (assoc base :mode :agent))
+        claude-new
+        (cli-runner/argv
+         claude (assoc base :model "claude:sonnet"
+                       :new-session-id "00000000-0000-0000-0000-000000000001"))
+        claude-resumed
+        (cli-runner/argv
+         claude (assoc base :model "claude:sonnet"
+                       :runner-session-id
+                       "00000000-0000-0000-0000-000000000001"))
+        claude-agent
+        (cli-runner/argv claude (assoc base :mode :agent
+                                      :model "claude:sonnet"))]
+    (is (not-any? #{"--ephemeral"} codex-new))
+    (is (some #{"--ephemeral"} codex-agent))
+    (is (= ["exec" "resume"] (subvec codex-resumed 1 3)))
+    (is (= ["thread-1" "hello"] (subvec codex-resumed
+                                        (- (count codex-resumed) 2))))
+    (is (some #{"--session-id"} claude-new))
+    (is (not-any? #{"--no-session-persistence"} claude-new))
+    (is (some #{"--no-session-persistence"} claude-agent))
+    (is (some #{"--resume"} claude-resumed))
+    (is (= "thread-1"
+           (:runner-session-id
+            (cli-runner/parse-result
+             :codex
+             (str "{\"type\":\"thread.started\",\"thread_id\":\"thread-1\"}\n"
+                  "{\"type\":\"item.completed\",\"item\":"
+                  "{\"type\":\"agent_message\",\"text\":\"ok\"}}\n")))))
+    (is (= "claude-1"
+           (:runner-session-id
+            (cli-runner/parse-result
+             :claude
+             "{\"result\":\"ok\",\"session_id\":\"claude-1\"}"))))))
+
+(deftest cli-runner-closes-stdin-after-passing-an-argv-prompt
+  (let [result
+        (cli-runner/execute!
+         {:argv ["/bin/sh" "-c"
+                 "if read line; then exit 9; else printf stdin-closed; fi"]
+          :timeout-seconds 2})]
+    (is (= 0 (:exit result)))
+    (is (= "stdin-closed" (:stdout result)))))
+
 (deftest shell-surface-is-a-local-kotoba-dom-program
   (with-redefs [config-loader/load-config (constantly config)
                 store/snapshot (constantly (store/initial-state))]
@@ -166,6 +257,8 @@
       (is (re-find #"id=\"stop-button\"" html))
       (is (re-find #"id=\"new-chat-button\"" html))
       (is (re-find #"id=\"model-select\"" html))
+      (is (re-find #"option.dataset.provider = model.provider" html))
+      (is (re-find #"provider:modelSelect.selectedOptions" html))
       (is (re-find #"id=\"inbox-search\"" html))
       (is (re-find #"id=\"inbox-detail\"" html))
       (is (re-find #"id=\"drive-search\"" html))

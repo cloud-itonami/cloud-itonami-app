@@ -19,6 +19,7 @@
    :agents [{:id "local" :name "Local" :system-prompt
              "You are a private, local-first assistant. Be concise and useful."}]
    :sessions {}
+   :runner-sessions {}
    ;; One `drive.workspace` per principal — the tree, the ACL, the quota and
    ;; the version history. The bytes those versions point at are not in here;
    ;; they are in an object store. See `cloud.itonami.app.documents`.
@@ -77,6 +78,16 @@
 (defn session-messages [session-id]
   (get-in @state [:sessions session-id :messages] []))
 
+(defn runner-session [session-id provider-id]
+  (get-in @state [:runner-sessions session-id provider-id]))
+
+(defn record-runner-session! [session-id provider-id runner-session-id]
+  (when (and session-id provider-id runner-session-id)
+    (transact! assoc-in
+               [:runner-sessions session-id provider-id]
+               {:id runner-session-id :updated-at (now)}))
+  runner-session-id)
+
 (defn append-message!
   [session-id {:keys [role content] :as message} max-messages]
   (let [message-id (or (:id message) (new-id "msg"))
@@ -109,4 +120,8 @@
                                                 :model (:model response)}))))))))
 
 (defn clear-session! [session-id]
-  (transact! update :sessions dissoc session-id))
+  (transact!
+   (fn [state]
+     (-> state
+         (update :sessions dissoc session-id)
+         (update :runner-sessions dissoc session-id)))))

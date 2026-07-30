@@ -19,6 +19,20 @@
    :base-url "http://127.0.0.1:11434"
    :local? true
    :enabled? true}
+  {:id "codex-cli"
+   :name "Codex CLI"
+   :kind :cli
+   :runner :codex
+   :model "codex:default"
+   :local? true
+   :enabled? true}
+  {:id "claude-cli"
+   :name "Claude Code"
+   :kind :cli
+   :runner :claude
+   :model "claude:sonnet"
+   :local? true
+   :enabled? true}
   {:id "lm-studio"
    :name "LM Studio"
    :kind :openai-compatible

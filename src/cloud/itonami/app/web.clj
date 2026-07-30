@@ -422,6 +422,7 @@
     let currentController = null;
     let lastPrompt = '';
     let generating = false;
+    let modelsReady = false;
     const announce = (message) => {
       status.textContent = message;
       $('#chat-agent-state').textContent = message;
@@ -432,7 +433,7 @@
     const resizePrompt = () => {
       prompt.style.height = 'auto';
       prompt.style.height = `${Math.min(prompt.scrollHeight, 192)}px`;
-      send.disabled = !prompt.value.trim() || generating;
+      send.disabled = !prompt.value.trim() || generating || !modelsReady;
     };
     const setGenerating = (value) => {
       generating = value;
@@ -560,7 +561,8 @@
           method:'POST', headers:{'Content-Type':'application/json'},
           signal:currentController.signal,
           body:JSON.stringify({prompt:value, session:sessionId, agent:'local',
-            model:modelSelect.value})
+            model:modelSelect.value,
+            provider:modelSelect.selectedOptions[0]?.dataset.provider})
         });
         await parseStream(request, assistant, value);
       } catch (error) {
@@ -602,7 +604,12 @@
       announce('新しいチャットを開始しました。');
     });
     modelSelect.addEventListener('change', () => {
-      $('#active-model-label').textContent = `${modelSelect.dataset.provider} / ${modelSelect.value}`;
+      const selectedOption = modelSelect.selectedOptions[0];
+      const provider = selectedOption?.dataset.provider || 'unknown';
+      modelSelect.dataset.provider = provider;
+      $('#active-model-label').textContent = `${provider} / ${modelSelect.value}`;
+      $('#model-boundary').textContent =
+        selectedOption?.dataset.kind === 'cli' ? 'CLI account' : 'Local model';
       announce(`${modelSelect.value} を選択しました。`);
     });
     fetch('/v1/models').then((request) => request.json()).then((data) => {
@@ -613,9 +620,24 @@
         models.forEach((model) => {
           const option = make('option', null, model.id);
           option.value = model.id;
+          option.dataset.provider = model.provider;
+          option.dataset.kind = model['provider_kind'] || 'local';
           option.selected = model.id === selected;
           modelSelect.append(option);
         });
+        if (!models.some((model) => model.id === selected)) {
+          modelSelect.selectedIndex = 0;
+        }
+        modelSelect.dataset.provider =
+          modelSelect.selectedOptions[0]?.dataset.provider || '';
+        $('#active-model-label').textContent =
+          `${modelSelect.dataset.provider} / ${modelSelect.value}`;
+        $('#model-boundary').textContent =
+          modelSelect.selectedOptions[0]?.dataset.kind === 'cli'
+            ? 'CLI account' : 'Local model';
+        modelsReady = true;
+        modelSelect.disabled = false;
+        resizePrompt();
         const workerModel = $('#worker-model');
         const workerSelected = workerModel.value;
         workerModel.replaceChildren();
@@ -625,11 +647,22 @@
         models.forEach((model) => {
           const option = make('option', null, model.id);
           option.value = model.id;
+          option.dataset.provider = model.provider;
           option.selected = model.id === workerSelected;
           workerModel.append(option);
         });
+      } else {
+        modelsReady = false;
+        modelSelect.disabled = true;
+        send.disabled = true;
+        announce('利用できるモデルがありません。CLI認証またはローカルモデルを確認してください。');
       }
-    }).catch(() => {});
+    }).catch((error) => {
+      modelsReady = false;
+      modelSelect.disabled = true;
+      send.disabled = true;
+      announce(`モデル一覧を取得できませんでした: ${error.message}`);
+    });
     chatShell.dataset.session = sessionId;
     resizePrompt();
 
@@ -1388,6 +1421,8 @@
       event.preventDefault();
       const button = $('#organism-intent-submit');
       const fields = Object.fromEntries(new FormData(event.currentTarget));
+      fields.provider =
+        $('#worker-model').selectedOptions[0]?.dataset.provider || '';
       button.disabled = true; button.textContent = 'admit中…';
       try {
         const receipt = await sendOrganismIntent({
@@ -2227,7 +2262,8 @@
               [:select {:class "model-pill" :id "model-select" :aria-label "モデル"
                         :data-provider provider}
                [:option {:value model} model]]
-              [:span {:class "state-chip"} (if cloud? "接続先を確認" "Local only")]]
+              [:span {:class "state-chip" :id "model-boundary"}
+               (if cloud? "接続先を確認" "Local model")]]
              [:div
               [:button {:class "composer-button" :id "send-button" :type "submit"
                         :aria-label "送信" :title "送信（Enter）"} "↑"]

@@ -46,13 +46,18 @@
         provider-messages
         (into [{:role "system" :content (:system-prompt current-agent)}]
               (map #(select-keys % [:role :content]) context))
-        chosen-model (chosen-model config request)]
+        chosen-model (chosen-model config request)
+        runner-session-id (store/runner-session session-id (:id selected))]
     {:selected selected :session-id session-id :max-messages max-messages
      :chosen-model chosen-model :provider-messages provider-messages
-     :temperature temperature :response-id response-id}))
+     :temperature temperature :response-id response-id
+     :runner-session-id (:id runner-session-id)}))
 
 (defn- finish-chat!
   [{:keys [selected session-id max-messages chosen-model response-id]} result]
+  (when-let [runner-session-id (:runner-session-id result)]
+    (store/record-runner-session!
+     session-id (:id selected) runner-session-id))
   (let [assistant (store/append-message!
                    session-id {:role "assistant" :content (:content result)}
                    max-messages)
@@ -68,21 +73,29 @@
 
 (defn run-chat!
   [config request]
-  (let [{:keys [selected chosen-model provider-messages temperature] :as prepared}
+  (let [{:keys [selected chosen-model provider-messages temperature
+                session-id runner-session-id]
+         :as prepared}
         (prepare-chat! config request)
         result (provider/chat selected {:model chosen-model
                                         :messages provider-messages
-                                        :temperature temperature})]
+                                        :temperature temperature
+                                        :session-id session-id
+                                        :runner-session-id runner-session-id})]
     (finish-chat! prepared result)))
 
 (defn run-chat-stream!
   [config request on-delta]
-  (let [{:keys [selected chosen-model provider-messages temperature] :as prepared}
+  (let [{:keys [selected chosen-model provider-messages temperature
+                session-id runner-session-id]
+         :as prepared}
         (prepare-chat! config request)
         result (provider/chat-stream!
                 selected
                 {:model chosen-model :messages provider-messages
-                 :temperature temperature}
+                 :temperature temperature
+                 :session-id session-id
+                 :runner-session-id runner-session-id}
                 on-delta)]
     (finish-chat! prepared result)))
 

@@ -25,7 +25,7 @@ remain separate deployment responsibilities.
 - Java 21+
 - Clojure CLI
 - `jq` and `curl`
-- Ollama or another configured OpenAI-compatible provider
+- Ollama, an OpenAI-compatible provider, Codex CLI, or Claude Code
 
 Pure tests and the loopback web surface also run on Linux.
 
@@ -76,6 +76,15 @@ The non-OpenAI extensions are `provider`, `agent_id` and `session_id`: they
 select a configured provider, one of the local agents, and the stored
 conversation the turn joins. Function calling, embeddings and the Responses API
 are not implemented.
+
+Codex CLI and Claude Code are discovered only at fixed absolute paths (or their
+named `CLOUD_ITONAMI_*_BIN` override), never through ambient `PATH`. Interactive
+chat creates a persistent runner session on the first turn and records its ID
+under the Cloud Itonami chat session. Later turns use `codex exec resume` or
+`claude -p --resume`. Starting a new Cloud chat creates a new runner session;
+clearing it removes the local mapping. Coding-agent/worker runs remain ephemeral.
+The subprocess is local, but prompts still leave the machine according to the
+selected CLI account's own provider and authentication settings.
 
 ## Background worker runs
 

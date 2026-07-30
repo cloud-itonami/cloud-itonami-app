@@ -1,6 +1,7 @@
 (ns cloud.itonami.app.provider
   (:require [clojure.data.json :as json]
             [clojure.string :as str]
+            [cloud.itonami.app.cli-runner :as cli-runner]
             [cloud.itonami.app.config :as config])
   (:import [java.io BufferedReader InputStreamReader]
            [java.net URI]
@@ -51,10 +52,12 @@
           (:data (request-json :get (str (str/replace (:base-url provider) #"/$" "")
                                          "/models")
                                nil (config/env-secret provider))))
+    :cli
+    (cli-runner/list-models provider)
     []))
 
 (defn chat
-  [provider {:keys [model messages temperature]}]
+  [provider {:keys [model messages temperature session-id runner-session-id]}]
   (case (:kind provider)
     :ollama
     (let [result (request-json
@@ -76,6 +79,13 @@
                   (config/env-secret provider))]
       {:content (get-in result [:choices 0 :message :content])
        :usage (:usage result)})
+
+    :cli
+    (cli-runner/chat provider
+                     {:messages messages
+                      :model model
+                      :session-id session-id
+                      :runner-session-id runner-session-id})
 
     (throw (ex-info "unsupported provider kind" {:provider provider}))))
 
@@ -103,9 +113,11 @@
 
 (defn chat-stream!
   "Stream provider deltas to `on-delta` and return the complete result."
-  [provider {:keys [model messages temperature]} on-delta]
+  [provider {:keys [model messages temperature session-id runner-session-id]}
+   on-delta]
   (let [content (StringBuilder.)
-        usage (volatile! nil)]
+        usage (volatile! nil)
+        cli-session (volatile! nil)]
     (case (:kind provider)
       :ollama
       (let [response
@@ -151,5 +163,19 @@
               (when-let [chunk-usage (:usage chunk)]
                 (vreset! usage chunk-usage))))))
 
+      :cli
+      (let [result (cli-runner/chat
+                    provider
+                    {:messages messages
+                     :model model
+                     :session-id session-id
+                     :runner-session-id runner-session-id})]
+        (when-let [emitted (emit! on-delta (:content result))]
+          (.append content emitted))
+        (vreset! usage (:usage result))
+        (when-let [runner-session-id (:runner-session-id result)]
+          (vreset! cli-session runner-session-id)))
+
       (throw (ex-info "unsupported provider kind" {:provider provider})))
-    {:content (.toString content) :usage @usage}))
+    (cond-> {:content (.toString content) :usage @usage}
+      @cli-session (assoc :runner-session-id @cli-session))))

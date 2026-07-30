@@ -157,6 +157,7 @@
                             config
                             {:messages [{:role "user" :content (:prompt run)}]
                              :model (:model run)
+                             :provider-id (:provider-id run)
                              :session-id session-id
                              :agent-id (:agent-id run)}
                             (fn [delta]
@@ -187,7 +188,7 @@
 
 (defn enqueue!
   "Register a background run and return its public view."
-  [config {:keys [title prompt model agent]}]
+  [config {:keys [title prompt model provider agent]}]
   (when (str/blank? prompt)
     (throw (ex-info "worker には実行する指示が必要です。"
                     {:type :worker/invalid-request})))
@@ -199,6 +200,7 @@
              :prompt prompt
              :agent-id (or (not-empty (str/trim (str (or agent "")))) "local")
              :model (not-empty (str/trim (str (or model ""))))
+             :provider-id (not-empty (str/trim (str (or provider ""))))
              :status :queued
              :output ""
              :truncated? false

@@ -16,7 +16,7 @@ its Swift implementation.
 | Desktop lifecycle and input | `kotoba-lang/shell` native host |
 | UI semantics | pure `kotoba:dom` surface program |
 | Provider selection | safe `.kotoba` policy + host-side mirror |
-| Local/cloud model transport | localhost service adapters |
+| Model transport | localhost adapters plus explicit Codex/Claude CLI runners |
 | Session memory | `kotoba.kgraph` EAV datoms + durable EDN |
 | Compatible client access | OpenAI-compatible loopback HTTP API |
 | Secret access | named environment variables at provider boundary |
@@ -144,8 +144,11 @@ membership to be an Organization owner or admin.
 The desktop process cannot call arbitrary remote URLs. It emits typed action
 events to `bin/cloud-itonami-app-action`, which only calls the fixed loopback API.
 The server selects a provider after policy evaluation. The default
-configuration binds only to `127.0.0.1`, enables only Ollama, and denies cloud
-egress.
+configuration binds only to `127.0.0.1`. Ollama remains the configured default,
+but a model that is not installed is not offered by the UI. Locally installed
+Codex and Claude executables are offered as explicit CLI-backed choices. Their
+subprocess boundary is local; their model traffic is governed by the CLI
+account, so they are not described as local inference.
 
 ```text
 native window ── action event ──> fixed action adapter
@@ -154,9 +157,23 @@ native window ── action event ──> fixed action adapter
  pure app entry <── durable state <── loopback server
                                           │
                                    provider policy
-                                     │          │
-                                  local      cloud gate
+                                ┌────┼──────────┐
+                             Ollama CLI account cloud gate
 ```
+
+### CLI conversation continuity
+
+The CLI runner never invokes a shell and resolves only configured or fixed
+absolute executable paths. Its stdin is closed immediately after launch because
+both CLIs otherwise treat an open pipe as additional prompt input and wait for
+EOF indefinitely.
+
+For chat, the first successful result records the Codex thread ID or Claude
+session ID at `[:runner-sessions cloud-session-id provider-id]`. A later turn
+passes only the newest user message to `codex exec resume` or
+`claude -p --resume`; the runner owns its earlier context. Each provider has a
+separate mapping, so changing from Codex to Claude does not cross their histories.
+Worker/coding-agent invocations retain their prior ephemeral posture.
 
 The `.kotoba` policy compiles to a portable Wasm artifact. The Clojure host
 mirror is intentionally small and covered by the same truth table. Moving the
