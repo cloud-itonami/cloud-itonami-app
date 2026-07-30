@@ -369,7 +369,19 @@ it, because nothing pointed at the font.
 
 What is left of a style — a colour, a border, a font family — is reported
 **by key** rather than as "the style is dropped", so the report says what is
-actually lost. Charts are still dropped whole. What it deliberately does
+actually lost. Charts are still dropped whole.
+
+**And there is a way to set one.** The style bar acts on the cell the cursor
+is in, which is what a spreadsheet does; there is no multi-cell selection
+here, so it names the cell rather than leaving that to be guessed. It offers
+exactly the five things that reach Excel and says so.
+
+Two things it exposed. The grid replaced a cell's whole map on every
+keystroke, so **a bold header stopped being bold the moment somebody
+corrected a typo in it** — the style is the cell's, not the value's.
+And emptying a styled cell now leaves the formatting, because formatting is
+applied to the box and not to what was in it; a style-only cell is
+storable, writable and readable, which it was not before the last change. What it deliberately does
 *not* name is a formula written without a cached value — that is Excel
 recalculating on open, which is the format working.
 

@@ -1606,16 +1606,30 @@
               if (input.value === `=${formula}`) input.value = shown;
             });
           }
+          // Which cell the style bar below acts on. A spreadsheet applies
+          // formatting to what you have selected, and this grid's notion of
+          // selected is the box the cursor is in.
+          input.addEventListener('focus', () => { driveEditor.cell = [row, col]; });
           input.addEventListener('change', () => {
             tab['sheets/cells'] = tab['sheets/cells'] || {};
             const key = cellKey(row, col);
             const text = input.value;
-            if (text === '') delete tab['sheets/cells'][key];
+            // The style is the cell's, not the value's. Replacing the whole
+            // map on every keystroke threw it away — a bold header stopped
+            // being bold the moment somebody corrected a typo in it.
+            const style = tab['sheets/cells'][key]?.['sheets/style'];
+            const keep = (next) => (style ? {...next, 'sheets/style':style} : next);
+            if (text === '') {
+              // Emptying a styled cell leaves the formatting: it is applied
+              // to the box, not to what was in it.
+              if (style) tab['sheets/cells'][key] = {'sheets/style':style};
+              else delete tab['sheets/cells'][key];
+            }
             // A leading = is a formula, which is the convention every
             // spreadsheet uses and the distinction `sheets.model` draws
             // between :sheets/value and :sheets/formula.
-            else if (text.startsWith('=')) tab['sheets/cells'][key] = {'sheets/formula': text.slice(1)};
-            else tab['sheets/cells'][key] = {'sheets/value': text};
+            else if (text.startsWith('=')) tab['sheets/cells'][key] = keep({'sheets/formula': text.slice(1)});
+            else tab['sheets/cells'][key] = keep({'sheets/value': text});
             changed(false);
           });
           td.append(input);
@@ -1624,6 +1638,57 @@
         grid.append(tr);
       }
       root.append(grid);
+
+      // The style bar. It acts on the cell the cursor is in, which is what
+      // a spreadsheet does — there is no multi-cell selection here, so it
+      // says which one it is rather than leaving that to be guessed.
+      const at = driveEditor.cell;
+      const styleBar = make('div', 'detail-actions__row');
+      const styleOf = () => (at && tab['sheets/cells']?.[cellKey(at[0], at[1])]
+                             ?.['sheets/style']) || {};
+      const setStyle = (change) => {
+        if (!at) return;
+        tab['sheets/cells'] = tab['sheets/cells'] || {};
+        const key = cellKey(at[0], at[1]);
+        const cell = tab['sheets/cells'][key] || {};
+        const style = {...(cell['sheets/style'] || {}), ...change};
+        // A style with nothing in it is not a style. Dropping the key keeps
+        // an untouched cell out of `distinct-styles` and out of styles.xml.
+        Object.keys(style).forEach((k) => {
+          if (style[k] === false || style[k] === '' || style[k] === null) delete style[k];
+        });
+        if (Object.keys(style).length) tab['sheets/cells'][key] = {...cell, 'sheets/style':style};
+        else {
+          const {['sheets/style']:_drop, ...rest} = cell;
+          if (Object.keys(rest).length) tab['sheets/cells'][key] = rest;
+          else delete tab['sheets/cells'][key];
+        }
+        changed(true);
+      };
+      if (!at) {
+        styleBar.append(make('span', 'surface-note', 'セルを選ぶと書式を設定できます。'));
+      } else {
+        const style = styleOf();
+        styleBar.append(make('span', 'surface-note',
+          `${columnName(at[1])}${at[0]} の書式`));
+        [['太字', 'bold'], ['斜体', 'italic'], ['下線', 'underline']].forEach(([label, key]) => {
+          const button = make('button', 'tool-button', label);
+          button.type = 'button';
+          button.setAttribute('aria-pressed', style[key] ? 'true' : 'false');
+          button.addEventListener('click', () => setStyle({[key]: !style[key]}));
+          styleBar.append(button);
+        });
+        styleBar.append(field('揃え', selectInput(style.align || '',
+          ['', 'left', 'center', 'right'],
+          (value) => setStyle({align: value}))));
+        styleBar.append(field('表示形式', textInput(style['number-format'] || '',
+          (value) => setStyle({'number-format': value}))));
+        // Said rather than left to be found: these five travel to Excel and
+        // anything else in a style does not.
+        styleBar.append(make('span', 'surface-note',
+          'これらは .xlsx に書き出されます。'));
+      }
+      root.append(styleBar);
 
       // Named ranges. `=SUM(売上)` resolves and the .xlsx carries it, and
       // until now the only way to define one was the JSON editor — which
@@ -2136,7 +2201,7 @@
     // in the search box, and a fetch per keystroke is what the guard prevents.
     const closedEditor = (id) => ({id, open:false, mode:'preview',
                                    payload:null, text:'', tab:null, slide:0,
-                                   etag:null, warnings:null, computed:null,
+                                   etag:null, warnings:null, computed:null, cell:null,
                                    loading:false, failed:false});
     let driveEditor = closedEditor(null);
     // Three views of one document: the surface as it is, the fields of it, and

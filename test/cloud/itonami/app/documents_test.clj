@@ -3848,3 +3848,73 @@
                (mapv :code (get warnings "xlsx"))))
         (is (str/includes? (:message (first (get warnings "xlsx"))) "color"))
         (is (not (str/includes? (:message (first (get warnings "xlsx"))) "bold")))))))
+
+;; ── setting a style ─────────────────────────────────────────────────────────
+
+(defn- save-cells [item cells object-store]
+  (let [before (documents/content (:id item) alice object-store)
+        tab-id (first (keys (:sheets/tabs (:resource before))))]
+    (documents/update! (:id item)
+                       (assoc-in (:payload before) ["sheets/tabs" tab-id "sheets/cells"]
+                                 cells)
+                       alice (:etag (:item before)) object-store)
+    [tab-id (fn [] (get-in (:resource (documents/content (:id item) alice object-store))
+                           [:sheets/tabs tab-id :sheets/cells]))]))
+
+(deftest a-style-and-a-value-live-on-one-cell
+  ;; What the style bar writes: the style beside the value rather than
+  ;; instead of it. The editor used to replace the whole cell map on every
+  ;; keystroke, so a bold header stopped being bold the moment somebody
+  ;; corrected a typo in it — a payload-level bug, which is why this is
+  ;; tested at the payload.
+  (with-state
+    (fn [_ object-store]
+      (let [{:keys [item]} (documents/create! :sheets "売上" alice object-store)
+            [_ cells] (save-cells item
+                                  {"[1 1]" {"sheets/value" "四半期"
+                                            "sheets/style" {"bold" true}}}
+                                  object-store)]
+        (is (= "四半期" (:sheets/value (get (cells) [1 1]))))
+        (is (= {:bold true} (:sheets/style (get (cells) [1 1]))))))))
+
+(deftest a-styled-cell-with-nothing-in-it-is-kept
+  ;; Formatting is applied to the box, not to what was in it — so emptying a
+  ;; styled cell leaves the formatting. The writer and reader both carry one
+  ;; now, so this is storable rather than a shape nothing downstream accepts.
+  (with-state
+    (fn [_ object-store]
+      (let [{:keys [item]} (documents/create! :sheets "売上" alice object-store)
+            [tab-id cells] (save-cells item
+                                       {"[1 1]" {"sheets/style" {"bold" true}}}
+                                       object-store)]
+        (is (= {:bold true} (:sheets/style (get (cells) [1 1]))))
+        (is (nil? (:sheets/value (get (cells) [1 1]))))
+        ;; And it survives a trip to Excel and back.
+        (let [xlsx (:bytes (documents/export (:id item) "xlsx" alice object-store))
+              back (:item (documents/import! "xlsx" "往復" xlsx alice object-store))
+              re (:sheets/cells (first (vals (:sheets/tabs
+                                              (:resource (documents/content
+                                                          (:id back) alice object-store))))))]
+          (is (= {:bold true} (:sheets/style (get re [1 1])))))
+        (is (some? tab-id))))))
+
+(deftest every-style-the-bar-offers-reaches-excel
+  ;; The bar says these travel; this is that claim, checked.
+  (with-state
+    (fn [_ object-store]
+      (let [{:keys [item]} (documents/create! :sheets "売上" alice object-store)
+            _ (save-cells item
+                          {"[1 1]" {"sheets/value" "a"
+                                    "sheets/style" {"bold" true "italic" true
+                                                    "underline" true
+                                                    "align" "center"
+                                                    "number-format" "#,##0"}}}
+                          object-store)
+            xlsx (:bytes (documents/export (:id item) "xlsx" alice object-store))
+            back (:item (documents/import! "xlsx" "往復" xlsx alice object-store))
+            re (:sheets/cells (first (vals (:sheets/tabs
+                                            (:resource (documents/content
+                                                        (:id back) alice object-store))))))]
+        (is (= {:bold true :italic true :underline true
+                :align :center :number-format "#,##0"}
+               (:sheets/style (get re [1 1]))))))))
