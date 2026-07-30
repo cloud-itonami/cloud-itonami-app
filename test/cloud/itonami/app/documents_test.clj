@@ -3918,3 +3918,78 @@
         (is (= {:bold true :italic true :underline true
                 :align :center :number-format "#,##0"}
                (:sheets/style (get re [1 1]))))))))
+
+;; ── charts ──────────────────────────────────────────────────────────────────
+
+(deftest a-workbook-carries-its-charts-drawn
+  ;; Drawn on the server, beside the resource. The payload is what a save
+  ;; sends back, and an SVG in there would return as part of the document.
+  (with-state
+    (fn [_ object-store]
+      (let [{:keys [item]} (documents/create! :sheets "売上" alice object-store)
+            before (documents/content (:id item) alice object-store)
+            wb (:resource before)
+            tab-id (first (keys (:sheets/tabs wb)))
+            title (get-in wb [:sheets/tabs tab-id :sheets/title])
+            _ (save! (:id item)
+                     (-> wb
+                         (assoc-in [:sheets/tabs tab-id :sheets/cells]
+                                   {[1 1] {:sheets/value "Q1"} [1 2] {:sheets/value "1200"}
+                                    [2 1] {:sheets/value "Q2"} [2 2] {:sheets/value "800"}
+                                    [3 1] {:sheets/value "合計"}
+                                    [3 2] {:sheets/formula "SUM(B1:B2)"}})
+                         (assoc :sheets/charts
+                                [{:sheets/id "c1" :sheets/title "四半期"
+                                  :sheets/tab title :sheets/data-range "A1:B3"
+                                  :sheets/chart-type :bar}]))
+                     alice object-store)
+            back (documents/content (:id item) alice object-store)
+            [drawn] (get-in back [:charts tab-id])]
+        (is (= "c1" (:id drawn)))
+        (is (str/includes? (:svg drawn) "<svg"))
+        (is (str/includes? (:svg drawn) "<rect"))
+        ;; The formula's total is plotted, not nothing — reading
+        ;; :sheets/value would give a formula cell no value at all.
+        (is (str/includes? (:svg drawn) "合計: 2000"))
+        ;; And the stored resource still holds the chart, not the picture.
+        (is (= 1 (count (:sheets/charts (:resource back)))))
+        (is (nil? (:svg (first (:sheets/charts (:resource back))))))))))
+
+(deftest a-chart-over-nothing-is-listed-and-not-drawn
+  ;; A chart somebody defined and cannot see is a thing to say rather than
+  ;; to hide — the pane says why instead of drawing empty axes.
+  (with-state
+    (fn [_ object-store]
+      (let [{:keys [item]} (documents/create! :sheets "売上" alice object-store)
+            wb (:resource (documents/content (:id item) alice object-store))
+            tab-id (first (keys (:sheets/tabs wb)))
+            _ (save! (:id item)
+                     (assoc wb :sheets/charts
+                            [{:sheets/id "c1" :sheets/data-range "Z1:Z9"}])
+                     alice object-store)
+            [drawn] (get-in (documents/content (:id item) alice object-store)
+                            [:charts tab-id])]
+        (is (= "c1" (:id drawn)))
+        (is (nil? (:svg drawn)))))))
+
+(deftest only-a-workbook-is-asked-for-charts
+  (with-state
+    (fn [_ object-store]
+      (let [{:keys [item]} (documents/create! :docs "設計" alice object-store)]
+        (is (nil? (:charts (documents/content (:id item) alice object-store))))))))
+
+(deftest a-chart-is-still-reported-as-not-reaching-excel
+  ;; Drawing one here does not put one in the .xlsx, and the warning has to
+  ;; keep saying so.
+  (with-state
+    (fn [_ object-store]
+      (let [{:keys [item]} (documents/create! :sheets "売上" alice object-store)
+            wb (:resource (documents/content (:id item) alice object-store))
+            _ (save! (:id item)
+                     (assoc wb :sheets/charts
+                            [{:sheets/id "c1" :sheets/data-range "A1:B3"}])
+                     alice object-store)
+            warnings (:export-warnings (documents/content (:id item) alice
+                                                          object-store))]
+        (is (contains? (set (map :code (get warnings "xlsx")))
+                       ":xlsx/charts-dropped"))))))

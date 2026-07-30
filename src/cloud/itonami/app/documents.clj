@@ -65,6 +65,7 @@
             [docs.docx :as docs-docx]
             [docs.markdown :as docs-md]
             [forms.responses :as forms-responses]
+            [sheets.chart :as sheets-chart]
             [sheets.csv :as sheets-csv]
             [sheets.formula :as sheets-formula]
             [sheets.xlsx :as sheets-xlsx]
@@ -1131,6 +1132,14 @@
                                                  (map (fn [[k v]] [(pr-str k) v]))
                                                  cells)]))
                             (sheets-formula/workbook-values resource)))
+          ;; Drawn on the server, beside the resource, for the same reason
+          ;; the computed values are: the payload is what a save sends back,
+          ;; and an SVG in there would return as part of the document.
+          :charts (when (= :sheets/workbook (:drive/resource-kind item))
+                    (into {}
+                          (map (fn [[tab-id _]]
+                                 [tab-id (sheets-chart/charts-of resource tab-id)]))
+                          (:sheets/tabs resource)))
           :payload (transit/write-json resource)})
        (refuse! result)))))
 
