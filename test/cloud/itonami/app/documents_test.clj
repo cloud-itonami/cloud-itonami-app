@@ -4092,3 +4092,88 @@
               slide (first (for [[k v] entries
                                  :when (str/includes? k "slides/slide1")] v))]
           (is (str/includes? slide "00FF00")))))))
+
+;; ── a page the browser can print ────────────────────────────────────────────
+
+(deftest every-surface-is-printable
+  (with-state
+    (fn [_ object-store]
+      ;; A document: its blocks as the elements they are.
+      (let [{:keys [item]} (documents/create! :docs "議事録" alice object-store)
+            doc (:resource (documents/content (:id item) alice object-store))
+            _ (save! (:id item)
+                     (assoc doc :docs/blocks
+                            [{:docs/id "h" :docs/kind :heading :docs/level 1
+                              :docs/text "議事録"}
+                             {:docs/id "t" :docs/kind :table
+                              :docs/rows [["項目" "状態"] ["設計" "完了"]]}])
+                     alice object-store)
+            out (documents/printable (:id item) alice object-store)]
+        (is (= "議事録" (:title out)))
+        (is (str/includes? (:html out) "<h1>議事録</h1>"))
+        (is (str/includes? (:html out) "<thead>")))
+      ;; A workbook: what the formulas come to, not the formulas. A printed
+      ;; sheet showing =SUM(B2:B9) is a printout of a spreadsheet rather
+      ;; than of its numbers.
+      (let [{:keys [item]} (documents/create! :sheets "売上" alice object-store)
+            wb (:resource (documents/content (:id item) alice object-store))
+            tab-id (first (keys (:sheets/tabs wb)))
+            _ (save! (:id item)
+                     (assoc-in wb [:sheets/tabs tab-id :sheets/cells]
+                               {[1 1] {:sheets/value "1200"}
+                                [2 1] {:sheets/formula "A1*2"}})
+                     alice object-store)
+            out (documents/printable (:id item) alice object-store)]
+        (is (str/includes? (:html out) "<td>2400</td>"))
+        (is (not (str/includes? (:html out) "A1*2"))))
+      ;; A deck: one drawn slide per section.
+      (let [{:keys [item]} (documents/create! :slides "提案" alice object-store)
+            out (documents/printable (:id item) alice object-store)]
+        (is (str/includes? (:html out) "class=\"slide\""))
+        (is (str/includes? (:html out) "<svg")))
+      ;; A form: its questions, with somewhere to write.
+      (let [{:keys [item]} (documents/create! :forms "問い合わせ" alice object-store)
+            form (:resource (documents/content (:id item) alice object-store))
+            _ (save! (:id item)
+                     (assoc form :forms/fields
+                            [{:forms/id "name" :forms/label "お名前"
+                              :forms/field-type :text :forms/required? true}])
+                     alice object-store)
+            out (documents/printable (:id item) alice object-store)]
+        (is (str/includes? (:html out) "お名前"))
+        (is (str/includes? (:html out) "（必須）"))
+        (is (str/includes? (:html out) "answer-line"))))))
+
+(deftest a-file-is-not-printable
+  ;; It is bytes, and the browser can already open the ones it knows.
+  (with-state
+    (fn [_ object-store]
+      (let [{:keys [item]} (documents/upload! "見積.pdf" "application/pdf"
+                                              (pdf-bytes "q") alice object-store)]
+        (is (= :drive/not-a-document
+               (:type (try (documents/printable (:id item) alice object-store)
+                           (catch clojure.lang.ExceptionInfo e (ex-data e))))))))))
+
+(deftest printing-goes-through-the-same-acl-as-reading
+  (with-state
+    (fn [_ object-store]
+      (let [{:keys [item]} (documents/create! :docs "設計" alice object-store)]
+        (is (= :drive/not-found
+               (:type (try (documents/printable (:id item) bob object-store)
+                           (catch clojure.lang.ExceptionInfo e (ex-data e))))))
+        (documents/grant! (:id item) bob "viewer" alice)
+        (is (:ok? (documents/printable (:id item) bob object-store)))))))
+
+(deftest a-printed-document-escapes-what-it-prints
+  (with-state
+    (fn [_ object-store]
+      (let [{:keys [item]} (documents/create! :docs "設計" alice object-store)
+            doc (:resource (documents/content (:id item) alice object-store))
+            _ (save! (:id item)
+                     (assoc doc :docs/blocks
+                            [{:docs/id "p" :docs/kind :paragraph
+                              :docs/text "<script>alert(1)</script>"}])
+                     alice object-store)
+            out (documents/printable (:id item) alice object-store)]
+        (is (str/includes? (:html out) "&lt;script&gt;"))
+        (is (not (str/includes? (:html out) "<script>")))))))

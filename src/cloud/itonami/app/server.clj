@@ -12,6 +12,7 @@
             [cloud.itonami.app.presentation-request :as presentation-request]
             [cloud.itonami.app.credential-assurance :as credential-assurance]
             [cloud.itonami.app.documents :as documents]
+            [docs.html :as docs-html]
             [cloud.itonami.app.esign :as esign]
             [cloud.itonami.app.esign.retention :as esign-retention]
             [cloud.itonami.app.executor :as executor]
@@ -1659,6 +1660,52 @@
                                         (:user-id session)
                                         (documents/store-instance)
                                         {:folder (:folder params)})))
+
+            ;; A page the browser can print. Not a PDF: one of a Japanese
+            ;; document needs a CJK font embedded, and the browser already
+            ;; has one — so the reader's own "print to PDF" is the export,
+            ;; with their fonts, paper size and margins.
+            (and (= method "GET")
+                 (id-from-path path #"/api/workspace/drive/documents/([^/]+)/print"))
+            (let [session (require-app-session! exchange)
+                  out (documents/printable
+                       (id-from-path path
+                                     #"/api/workspace/drive/documents/([^/]+)/print")
+                       (:user-id session))
+                  page (str "<!doctype html><html lang=\"ja\"><head>"
+                            "<meta charset=\"utf-8\">"
+                            "<title>" (docs-html/esc (:title out)) "</title>"
+                            "<style>"
+                            ;; No web fonts and no colours: a printed page
+                            ;; uses the reader's own fonts, and a colour
+                            ;; background is ink somebody pays for.
+                            "body{font-family:system-ui,sans-serif;line-height:1.7;"
+                            "max-width:44rem;margin:2rem auto;padding:0 1rem;color:#000}"
+                            "table{border-collapse:collapse;width:100%}"
+                            "td,th{border:1px solid #999;padding:.3rem .5rem;"
+                            "text-align:left;vertical-align:top}"
+                            "pre{white-space:pre-wrap;border:1px solid #ccc;padding:.5rem}"
+                            "blockquote{border-left:3px solid #ccc;margin-left:0;"
+                            "padding-left:1rem}"
+                            ".docs-ref{color:#555;font-size:.9em}"
+                            ".answer-line{border-bottom:1px solid #999;height:1.6rem}"
+                            ".slide svg{width:100%;height:auto;border:1px solid #ccc}"
+                            ;; One slide per page, and never a heading left
+                            ;; alone at the bottom of one.
+                            "@media print{body{margin:0;max-width:none}"
+                            ".slide{break-after:page}"
+                            "h1,h2,h3{break-after:avoid}"
+                            "table,pre,blockquote,.question{break-inside:avoid}}"
+                            "</style></head><body>"
+                            (:html out)
+                            "</body></html>")]
+              (doto (.getResponseHeaders exchange)
+                (.set "Content-Type" "text/html; charset=utf-8")
+                (.set "Cache-Control" "no-store")
+                (.set "X-Content-Type-Options" "nosniff"))
+              (let [bytes (.getBytes ^String page StandardCharsets/UTF_8)]
+                (.sendResponseHeaders exchange 200 (alength bytes))
+                (with-open [o (.getResponseBody exchange)] (.write o bytes))))
 
             ;; Inline, and only for the few types that cannot carry script.
             ;; A separate route rather than a flag on the download, so the

@@ -550,6 +550,28 @@ so the quoting is `sheets.csv`'s one implementation of it — an answer
 containing a comma or a newline is ordinary, and a second escaping routine is
 a second place to get it wrong.
 
+### A page the browser can print
+
+There is no PDF export here, and the reason is fonts: a PDF of a Japanese
+document has to carry a CJK font inside it, and embedding one means shipping
+a font file and a subsetter. **The browser already has the font.** So the
+answer is a page it can print, and the reader's own *print to PDF* is the
+export — with their fonts, their paper size and their margins, all of which
+a writer here would have to guess.
+
+`printable` renders every surface, because every surface is worth printing:
+a document as its blocks, a workbook as **what its formulas come to** (a
+printed sheet showing `=SUM(B2:B9)` is a printout of a spreadsheet rather
+than of its numbers), a deck as one drawn slide per page, and a form as its
+questions with a line to write on.
+
+A file is not printable. It is bytes, and the browser can already open the
+ones it knows.
+
+The print CSS carries no web fonts and no colour: a printed page uses the
+reader's own fonts, and a coloured background is ink somebody pays for. One
+slide per page, and a heading is never left alone at the bottom of one.
+
 ### Files that are not documents
 
 A Drive that could only hold the four surfaces could not hold a PDF, a
