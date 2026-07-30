@@ -363,6 +363,14 @@
     (store/transact! assoc-in (proposal-path proposal-id) final)
     (dissoc final :user-id :organization-id)))
 
+(def unreachable-rules
+  "Refusal rules this app produces itself when it could not get an answer at all.
+
+  None of these came from an authority: they are `cloud.itonami.app.authority.transport`
+  reporting that it did not ask, or could not. A proposal that meets one of them has not
+  been decided by anybody and must stay pending."
+  #{:transport-failed :authority-disabled :endpoint-not-configured})
+
 (defn refresh!
   "Ask the authority what became of a pending proposal, and record what it says.
 
@@ -385,6 +393,9 @@
     `:authority-refused` for one would put a refusal on the ledger that no
     governor issued. That we asked and it did not know is recorded instead,
     as `:authority-unknown-since`.
+  - **we could not ask at all** (unreachable, disabled, no endpoint) → it stays
+    pending too, with `:authority-unreachable-since`. Same reasoning: those
+    refusals are this app's own, and no governor issued them.
 
   A domain with no `:authority/status` refuses here rather than everywhere:
   `valid-domain?` deliberately does not require one, because
@@ -406,6 +417,20 @@
                 (assoc p :status :committed
                        :resolved-at (store/now)
                        :authority-record (:authority/record outcome))
+
+                ;; WE COULD NOT ASK is not AN ANSWER. A transport failure, a
+                ;; disabled authority and a missing endpoint are all this app's own
+                ;; refusals -- no governor issued them. Recording them as
+                ;; :authority-refused would put a refusal on the ledger that nobody
+                ;; made, which is the same mistake the unknown-reference branch above
+                ;; exists to avoid, and transport.clj says so in as many words: "an
+                ;; authority that cannot be reached is not the same as one that said
+                ;; no, and the ledger should be able to tell them apart."
+                ;;
+                ;; Found when a sweep over pending proposals reported an unreachable
+                ;; actor as having decided.
+                (contains? unreachable-rules (get-in outcome [:authority/refusal :rule]))
+                (assoc p :authority-unreachable-since (store/now))
 
                 :else
                 (assoc p :status :authority-refused

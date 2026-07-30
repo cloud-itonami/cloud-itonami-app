@@ -932,6 +932,16 @@
             ;; Read-only against the authority: it hits the actor's consent
             ;; surface, which cannot decide -- the decision lives on a listener
             ;; this app has no route to, which is the point.
+            ;; Resolve everything at once. The per-proposal refresh below is still
+            ;; there, but nothing ever called it -- which is why an :authority-pending
+            ;; proposal used to sit forever. A caller that opens the authority panel can
+            ;; hit this once instead of knowing which proposals to chase.
+            (and (= method "POST") (= path "/api/authority/resolve-pending"))
+            (let [session (require-app-session! exchange)]
+              (require-origin! exchange config)
+              (require-csrf! exchange session)
+              (send! exchange 200 (authority-api/resolve-pending! config session)))
+
             (and (= method "POST")
                  (authority+id-from-path
                   path #"/api/authority/([^/]+)/proposals/([^/]+)/refresh"))

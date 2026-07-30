@@ -476,3 +476,101 @@
                   (assoc-in [:authorities :esim :endpoint] "http://127.0.0.1:1"))]
       (is (= :reference-missing
              (get-in ((transport/status-fn :esim) cfg nil) [:authority/refusal :rule]))))))
+
+;; ---------------------------------------------------------------------------
+;; resolving what is pending
+;; ---------------------------------------------------------------------------
+
+(deftest resolve-pending-asks-nothing-when-nothing-is-pending
+  (reset-proposals!)
+  (let [out (api/resolve-pending! (on :esim) session)]
+    (is (= 0 (:asked out)))
+    (is (= 0 (:skipped-disabled out)))
+    (is (= [] (:results out)))))
+
+(deftest resolve-pending-skips-authorities-the-deployment-switched-off
+  (testing "counted separately so a caller can tell 'nothing was pending' from
+            'everything pending belongs to an authority that is off' -- refusals for
+            disabled authorities would bury the answers that matter"
+    (reset-proposals!)
+    (let [cfg (on :esim)
+          p (api/review! cfg session :esim lifecycle-request)]
+      (store/transact! assoc-in [:authority :proposals (:id p) :status]
+                       :authority-pending)
+      (let [out (api/resolve-pending! all-off session)]
+        (is (= 0 (:asked out)))
+        (is (= 1 (:skipped-disabled out)))))))
+
+(deftest resolve-pending-reports-what-moved
+  (testing "an unreachable authority leaves the proposal pending and says so, rather
+            than reporting a resolution that did not happen"
+    (reset-proposals!)
+    (let [cfg (-> (on :esim)
+                  ;; port 1 on loopback: refused immediately, no network wait
+                  (assoc-in [:authorities :esim :endpoint] "http://127.0.0.1:1"))
+          p (api/review! cfg session :esim lifecycle-request)]
+      (store/transact! assoc-in [:authority :proposals (:id p) :status]
+                       :authority-pending)
+      (store/transact! assoc-in [:authority :proposals (:id p) :authority-reference]
+                       "ref-1")
+      (let [out (api/resolve-pending! cfg session)
+            r (first (:results out))]
+        (is (= 1 (:asked out)))
+        (is (= (:id p) (:id r)))
+        (is (= :authority-pending (:was r)))
+        (is (or (false? (:moved? r)) (some? (:error r)))
+            "an unreachable actor does not move the proposal")))))
+
+(deftest one-unreachable-authority-does-not-stop-the-others
+  (testing "the sweep must not abort on the first failure, or a single misconfigured
+            actor would keep every other proposal pending forever"
+    (reset-proposals!)
+    (let [cfg (-> (on :esim)
+                  (assoc-in [:authorities :esim :endpoint] "http://127.0.0.1:1"))]
+      (doseq [_ (range 3)]
+        (let [p (api/review! cfg session :esim lifecycle-request)]
+          (store/transact! assoc-in [:authority :proposals (:id p) :status]
+                           :authority-pending)))
+      (let [out (api/resolve-pending! cfg session)]
+        (is (= 3 (:asked out)))
+        (is (= 3 (count (:results out))) "every one was attempted")))))
+
+(deftest an-unreachable-authority-is-not-recorded-as-a-refusal
+  (testing "no governor issued that refusal. transport.clj says it in as many words --
+            'an authority that cannot be reached is not the same as one that said no,
+            and the ledger should be able to tell them apart' -- and refresh! was
+            recording :authority-refused for a connection error, which is a refusal on
+            the ledger that nobody made."
+    (reset-proposals!)
+    (let [cfg (-> (on :esim)
+                  (assoc-in [:authorities :esim :endpoint] "http://127.0.0.1:1"))
+          p (api/review! cfg session :esim lifecycle-request)]
+      (store/transact! assoc-in [:authority :proposals (:id p) :status]
+                       :authority-pending)
+      (store/transact! assoc-in [:authority :proposals (:id p) :authority-reference]
+                       "ref-1")
+      (let [out (api/refresh! cfg session :esim (:id p))]
+        (is (= :authority-pending (:status out))
+            "still pending -- nobody decided anything")
+        (is (nil? (:authority-refusal out)))
+        (is (nil? (:resolved-at out)))
+        (is (some? (:authority-unreachable-since out))
+            "and it records that we tried and could not ask")))))
+
+(deftest a-governor-refusal-is-still-a-refusal
+  (testing "the fix must not swallow real refusals: a rule that came FROM the actor
+            resolves the proposal, as before"
+    (reset-proposals!)
+    (let [cfg (on :esim)
+          p (api/review! cfg session :esim lifecycle-request)]
+      (store/transact! assoc-in [:authority :proposals (:id p) :status]
+                       :authority-pending)
+      (store/transact! assoc-in [:authority :proposals (:id p) :authority-reference]
+                       "ref-1")
+      (with-redefs [cloud.itonami.app.authority.transport/status-fn
+                    (fn [_] (fn [_ _] {:authority/ok? false
+                                       :authority/refusal {:rule :kyc-incomplete}}))]
+        (let [out (api/refresh! cfg session :esim (:id p))]
+          (is (= :authority-refused (:status out)))
+          (is (= :kyc-incomplete (get-in out [:authority-refusal :rule])))
+          (is (some? (:resolved-at out))))))))
