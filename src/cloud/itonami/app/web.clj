@@ -1662,8 +1662,13 @@
       });
       paper.append(bar);
       const cells = tabs[current]?.['sheets/cells'] || {};
-      let maxRow = 1;
-      let maxCol = 1;
+      // A floor, not just the used extent. A workbook that has just been
+      // created has no cells at all, and the honest 1 × 1 answer draws a single
+      // empty box that reads as a broken grid rather than as an empty sheet —
+      // measured on a real just-created spreadsheet. Five is enough rows and
+      // columns to be recognisable as one.
+      let maxRow = 5;
+      let maxCol = 5;
       Object.keys(cells).forEach((key) => {
         // Doubled backslashes: this JavaScript lives inside a Clojure string.
         const match = /^\\[(-?\\d+) (-?\\d+)\\]$/.exec(key);
