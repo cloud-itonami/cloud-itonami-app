@@ -68,6 +68,37 @@ nothing. `documents/purge!` is the one call that does, it refuses anything not
 already in the trash, and the Drive shows the trash and the quota together
 because otherwise a Drive that fills up cannot say why.
 
+### EDN at rest, JSON on the wire
+
+The object store holds EDN. `documents/stored-envelope` is the same
+four-key shape the office envelope has — family, version, resource kind,
+payload — written with `pr-str`, so the bytes are still self-describing and a
+reader still does not have to know in advance which surface it is holding.
+
+The reason is what plain JSON cannot carry. `:sheets/type` left as
+`"workbook"` and a cell address `[1 1]` left as the string `"[1 1]"`, so
+every reader had to put them back — which is why there are four
+`rehydrate-*` functions and why each had to learn not to throw on input it
+could not convert. None of that is needed at rest: EDN is what the models
+already are, what every validator reads, and what `store.clj` already writes
+for the rest of this app's state.
+
+**Rehydration did not go away; it moved to the one place it belongs.** A
+payload arriving over HTTP is JSON because HTTP is, and `update!` converts it
+on the way in. Nothing converts on the way out.
+
+The client contract did not move with the storage. `content` returns
+`:payload` as the same plain-JSON projection the editor has always been
+given — `transit.core/write-json` of the EDN — alongside `:resource`, the
+EDN itself, for callers inside this process.
+
+Documents written before this are JSON. `decode-stored` tells the two apart
+by their first character and rehydrates a JSON one on read, so an old
+document reads as it always did and the next save rewrites it in EDN.
+**Migration is what the Drive does as it is used, not something anyone runs.**
+An item's `:drive/media-type` is corrected by that same save, so it says
+`application/edn` once it is.
+
 ### Editing
 
 Two views of one value. The Drive detail pane offers fields for the surface a

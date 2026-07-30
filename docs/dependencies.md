@@ -38,6 +38,11 @@ stack. This app requires three of its namespaces — `slides.model`,
 `slides.wire`, `slides.validate` — and none of the rest. The cost is fetch
 time and classpath length, not code that runs.
 
+`transit` is now used for one thing only: projecting EDN onto the wire.
+Storage is EDN (see the architecture note), so the `rehydrate-*` functions in
+`sheets`, `docs`, `forms` and `slides` are reached on the way *in* — a
+payload arriving over HTTP — and never on the way out.
+
 A payload read back from an envelope is plain JSON — string keys, `"text"`
 where `:text` went in — which is what `transit.core/read-office-envelope-body`
 documents. Each surface now ships a `rehydrate-*` that undoes it, and this app

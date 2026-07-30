@@ -45,6 +45,7 @@
   different answers on either side and a merged list that did not say so
   would be inviting the wrong one."
   (:require [clojure.data.json :as json]
+            [clojure.edn :as edn]
             [clojure.java.io :as io]
             [clojure.string :as str]
             [cloud.itonami.app.config :as config]
@@ -64,7 +65,11 @@
             [sheets.wire :as sheets-wire]
             [slides.model :as slides]
             [slides.validate :as slides-validate]
-            [slides.wire :as slides-wire])
+            [slides.wire :as slides-wire]
+            ;; Only to project EDN onto the wire. What is at rest is EDN; what
+            ;; goes over HTTP is the same plain-JSON shape the editor has
+            ;; always been given, so the client contract does not move.
+            [transit.core :as transit])
   (:import [java.nio.charset StandardCharsets]
            [java.util UUID]))
 
@@ -259,30 +264,80 @@
 
 ;; ── bytes ───────────────────────────────────────────────────────────────────
 
+(def stored-media-type
+  "What the object store now holds. The wire is still JSON; this is not it."
+  "application/edn")
+
+(defn stored-envelope
+  "The self-describing thing that goes into the object store, in EDN.
+
+  ## Why not the office envelope's JSON
+
+  `transit.core/office-envelope` builds a plain-JSON projection, and plain
+  JSON cannot carry what these models are made of: `:sheets/type` leaves as
+  `\"workbook\"` and a cell address `[1 1]` leaves as the string `\"[1 1]\"`.
+  Storing that meant every reader had to put it back, which is why there are
+  four `rehydrate-*` functions and why each of them had to learn not to throw
+  on input it could not convert.
+
+  None of that is needed at rest. EDN is what the models already are, what
+  every validator reads, and what `store.clj` already writes for the rest of
+  this app's state. So the bytes are `pr-str` of a map with the envelope's
+  own shape — the same four protocol keys, so a reader still does not have to
+  know in advance which surface it is holding — and reading is `edn/read` and
+  nothing else.
+
+  Rehydration does not disappear; it moves to the one place it belongs. A
+  payload arriving over HTTP is JSON, because HTTP is, and `update!` converts
+  it on the way in. What changes is that nothing has to convert on the way
+  *out*."
+  [spec resource]
+  {:kotoba.protocol/family :kotoba.protocol/office
+   :kotoba.protocol/version 1
+   :kotoba.resource/kind (:resource-kind spec)
+   :kotoba.resource/payload resource})
+
 (defn envelope-bytes
-  "The JSON of an office envelope, as the vector of unsigned ints `drive`
-  wants.
+  "`stored-envelope` as the vector of unsigned ints `drive` wants.
 
   Explicitly rather than by handing `write-item` a string: `count` on a
   string is characters, and the docstring on `write-item` is about exactly
   that drift — a title in Japanese would be charged three bytes against the
-  quota and store nine.
-
-  `:escape-unicode false` because the bytes are UTF-8 and saying so once is
-  cheaper than saying `\\u554f` three times. `data.json` escapes by default,
-  which is the safe choice for a wire whose encoding is unknown and the
-  wrong one for a store where it is decided here. `:escape-slash false` for
-  the same reason and not the same risk: the default exists so JSON can sit
-  inside a `<script>` element, and these bytes go to an object store. What
-  the HTTP layer sends is re-serialized by `send!` with the defaults intact."
+  quota and store nine."
   [envelope]
   (mapv #(bit-and (int %) 0xff)
-        (.getBytes (json/write-str (:body envelope)
-                                   :escape-unicode false :escape-slash false)
-                   StandardCharsets/UTF_8)))
+        (.getBytes ^String (pr-str envelope) StandardCharsets/UTF_8)))
 
 (defn- bytes->string [bytes]
   (String. (byte-array (map unchecked-byte bytes)) StandardCharsets/UTF_8))
+
+(defn decode-stored
+  "Stored bytes back into `{:kind k :payload resource}`, as EDN.
+
+  Two formats, because documents written before this change are JSON and
+  rewriting somebody's object store on a deploy is not a migration anyone
+  asked for. They are told apart by their first character — EDN opens
+  `{:kotoba.protocol/family`, JSON opens `{\"kotoba.protocol/family\"` — and a
+  JSON one is rehydrated on read exactly as it always was.
+
+  So an old document reads as it did, and the first save rewrites it in EDN.
+  Migration is something the Drive does as it is used rather than something
+  anyone runs."
+  [bytes]
+  (let [text (bytes->string bytes)]
+    (if (str/starts-with? (str/triml text) "{:")
+      (let [envelope (edn/read-string text)]
+        {:kind (:kotoba.resource/kind envelope)
+         :payload (:kotoba.resource/payload envelope)
+         :format :edn})
+      (let [body (json/read-str text)
+            kind (some-> (get body "kotoba.resource/kind") keyword)
+            spec (get kinds (get resource-kinds kind))]
+        {:kind kind
+         :payload (if-let [rehydrate (:rehydrate spec)]
+                    (rehydrate ((:read spec) body))
+                    (get body "kotoba.resource/payload"))
+         :format :json}))))
 
 ;; ── views ───────────────────────────────────────────────────────────────────
 
@@ -464,10 +519,10 @@
              id (store/new-id "doc")
              title (or (not-empty (str/trim (str title))) (:default-title spec))
              created-at (store/now)
-             envelope ((:envelope spec) ((:seed spec) id title))
+             envelope (stored-envelope spec ((:seed spec) id title))
              staged (ws/create-file workspace id (:drive.workspace/root-id workspace)
                                     {:drive/title title
-                                     :drive/media-type (:content-type envelope)
+                                     :drive/media-type stored-media-type
                                      :drive/resource-kind (:resource-kind spec)
                                      :drive/created-at created-at}
                                     actor)
@@ -483,12 +538,38 @@
                                  {:owner actor :own? true :role :owner})})
            (refuse! written)))))))
 
+(defn- stored-kind-mismatch!
+  "Refuse bytes whose discriminant disagrees with the item that points at them.
+
+  What `(:read spec)` used to do for free by checking the envelope kind. It
+  still has to be done — an object reference pointing at the wrong document
+  is a broken node, not a rendering quirk — so it is done here rather than
+  lost with the JSON reader."
+  [id expected found]
+  (when-not (= expected found)
+    (throw (ex-info "保管されている内容がこのドキュメントの種類と一致しません。"
+                    {:type :drive/object-missing :item-id id
+                     :expected (str expected) :found (str found)}))))
+
+(defn- stored-payload
+  "The EDN resource behind `id`'s current bytes, discriminant checked."
+  [id item bytes]
+  (let [{:keys [kind payload]} (decode-stored bytes)]
+    (stored-kind-mismatch! id (:drive/resource-kind item) kind)
+    payload))
+
 (defn content
-  "The stored envelope of one document, read back through the ACL.
+  "The stored resource of one document, read back through the ACL.
 
   `drive.object/read-item` is what answers whether this principal may have
   the bytes; nothing here consults the store directly, which is the whole
-  reason that boundary is in `drive` rather than in each application."
+  reason that boundary is in `drive` rather than in each application.
+
+  `:payload` is the plain-JSON projection, not the EDN that is stored. That
+  is deliberate and is the one place the two formats meet: HTTP is JSON, the
+  editor has always been given this shape, and moving storage to EDN was not
+  a reason to move the client contract with it. `:resource` is the EDN, for
+  callers inside this process that would otherwise convert it straight back."
   ([id actor] (content id actor (store-instance)))
   ([id actor object-store]
    (let [{:keys [workspace owner own?] :as found} (locate (store/snapshot) actor id)
@@ -496,19 +577,14 @@
          result (object/read-item workspace object-store id actor)]
      (if (:ok? result)
        (let [item (ws/item workspace id)
-             kind (get resource-kinds (:drive/resource-kind item))
-             body (json/read-str (bytes->string (:bytes result)))]
+             resource (stored-payload id item (:bytes result))]
          {:schema schema
           :ok? true
           :item (item-view item {:owner owner :own? own?
                                  :role (ws/effective-role workspace id actor)})
           :resource-kind (some-> (:drive/resource-kind item) str)
-          ;; Read through the surface's own reader, so a body whose
-          ;; discriminant disagrees with the item's recorded kind is refused
-          ;; here rather than surfacing as a confusing render later.
-          :payload (if-let [read-envelope (get-in kinds [kind :read])]
-                     (read-envelope body)
-                     body)})
+          :resource resource
+          :payload (transit/write-json resource)})
        (refuse! result)))))
 
 (def reference-kinds
@@ -534,11 +610,13 @@
        (filter #(contains? reference-kinds (:docs/kind %)))))
 
 (defn- resource-of
-  "The rehydrated resource behind an item, read through the ACL."
+  "The resource behind an item, read through the ACL.
+
+  No conversion: `content` returns the EDN it read. This function used to
+  project and immediately rehydrate, which is the round trip that storing
+  EDN removes."
   [id actor object-store]
-  (let [current (content id actor object-store)
-        rehydrate (get-in kinds [(keyword (:kind (:item current))) :rehydrate])]
-    (when rehydrate (rehydrate (:payload current)))))
+  (:resource (content id actor object-store)))
 
 (defn- reference-warnings
   "Dangling and mistyped references, as save-time warnings.
@@ -635,13 +713,19 @@
     (when (seq errors)
       (throw (ex-info (str "保存できません: " (:message (first errors)))
                       {:type :drive/invalid-document :problems errors})))
-    (let [envelope ((:envelope spec) resource)
+    (let [envelope (stored-envelope spec resource)
           title (or (not-empty (str/trim (str (get resource (:title-key spec)))))
                     (:drive/title item))
           ;; The resource's title and the Drive item's title are two places
           ;; for one fact, so a save keeps them together rather than letting
           ;; the list disagree with what is open.
-          retitled (assoc-in workspace [:drive.workspace/items id :drive/title] title)
+          retitled (-> workspace
+                       (assoc-in [:drive.workspace/items id :drive/title] title)
+                       ;; A document written before EDN at rest still says
+                       ;; application/json; the save that rewrites its bytes
+                       ;; is the save that corrects what it claims to be.
+                       (assoc-in [:drive.workspace/items id :drive/media-type]
+                                 stored-media-type))
           written (object/write-item retitled object-store id actor
                                      (envelope-bytes envelope)
                                      {:object-ref (object-ref)
@@ -734,8 +818,10 @@
        :else
        (if-let [bytes (object/-get-object object-store
                                           (:drive.version/object-ref version))]
-         (let [kind (get resource-kinds (:drive/resource-kind item))
-               body (json/read-str (bytes->string bytes))]
+         ;; An old version may still be JSON while the newest is EDN, which
+         ;; is exactly what `decode-stored` is for — a Drive migrating as it
+         ;; is used has both in the same item's history.
+         (let [resource (stored-payload id item bytes)]
            {:schema schema
             :ok? true
             :item (item-view item {:owner owner :own? own?
@@ -744,9 +830,8 @@
             :created-at (:drive.version/created-at version)
             :author (:drive.version/author version)
             :resource-kind (some-> (:drive/resource-kind item) str)
-            :payload (if-let [read-envelope (get-in kinds [kind :read])]
-                       (read-envelope body)
-                       body)})
+            :resource resource
+            :payload (transit/write-json resource)})
          (refuse! {:reason :object-missing-from-store :item-id id
                    :object-ref (:drive.version/object-ref version)}))))))
 
@@ -1026,17 +1111,15 @@
          (if (:ok? result)
            (let [link (ws/resolve-share-link workspace token now-ms)
                  item (ws/item workspace (:drive.share/item-id link))
-                 kind (get resource-kinds (:drive/resource-kind item))
-                 body (json/read-str (bytes->string (:bytes result)))]
+                 resource (stored-payload (:drive.share/item-id link) item (:bytes result))]
              {:schema schema
               :ok? true
               :item (item-view item {:owner owner :own? (= owner actor)
                                      :role (:drive.share/role link)})
               :role (name (:role result))
               :resource-kind (some-> (:drive/resource-kind item) str)
-              :payload (if-let [read-envelope (get-in kinds [kind :read])]
-                         (read-envelope body)
-                         body)})
+              :resource resource
+              :payload (transit/write-json resource)})
            (refuse! result)))))))
 
 ;; ── form submissions ────────────────────────────────────────────────────────
@@ -1061,10 +1144,11 @@
                       {:type :drive/unknown-kind
                        :resource-kind (:drive/resource-kind item)}))
       :else
-      (let [current (content id actor object-store)]
-        {:owner owner
-         :item item
-         :form (forms-wire/rehydrate-form (:payload current))}))))
+      ;; The EDN as stored. This used to project and rehydrate straight back,
+      ;; which is the round trip EDN at rest removes.
+      {:owner owner
+       :item item
+       :form (:resource (content id actor object-store))})))
 
 (defn form-for-answering
   "A form as something to fill in, rather than as a document to edit.
@@ -1143,9 +1227,7 @@
        ;; The owner comes off the item the link resolved to, so the answers
        ;; are filed against the Drive that actually holds the form rather
        ;; than against whoever happened to follow the link.
-       (record-submission! id (:owner (:item read))
-                           (forms-wire/rehydrate-form (:payload read))
-                           answers actor)))))
+       (record-submission! id (:owner (:item read)) (:resource read) answers actor)))))
 
 (defn submissions
   "Every answer to this form. Owner only — the responses are theirs."
