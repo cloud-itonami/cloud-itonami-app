@@ -13,6 +13,33 @@
   .sidebar{position:sticky;top:0;height:100vh;box-sizing:border-box;padding:1.5rem 1rem;
     background:var(--color-neutral-white);border-right:1px solid var(--color-neutral-solid-gray-200);
     display:flex;flex-direction:column;gap:1.5rem}
+  .req-row{padding:.75rem 0;border-bottom:1px solid var(--color-neutral-solid-gray-200)}
+  .req-row__head{display:flex;align-items:center;justify-content:space-between;gap:1rem}
+  .req-row__detail{margin:.375rem 0 0;font-size:.875rem;line-height:1.7;
+    color:var(--color-neutral-solid-gray-700);overflow-wrap:anywhere}
+  .req-row__state{flex:0 0 auto;font-size:.8125rem;font-weight:700;white-space:nowrap;
+    padding:.125rem .5rem;border-radius:999px;
+    background:var(--color-neutral-solid-gray-100);
+    color:var(--color-neutral-solid-gray-700)}
+  /* jp-go-dds defines -1 and -2 for each semantic colour and nothing else;
+     core-test asserts app-css invents no token, which caught a -4 here. */
+  .req-row__state[data-tone='warn']{color:var(--color-semantic-error-1);
+    border:1px solid var(--color-semantic-error-2)}
+  .req-row__state[data-tone='ok']{color:var(--color-semantic-success-1);
+    border:1px solid var(--color-semantic-success-2)}
+  .req-row__caveat{margin:.25rem 0 0;font-size:.8125rem;
+    color:var(--color-neutral-solid-gray-600)}
+  .stat-row{display:grid;grid-template-columns:repeat(auto-fill,minmax(9rem,1fr));
+    gap:.75rem;margin:0 0 1rem}
+  .stat-tile{min-width:0;padding:.75rem 1rem;border-radius:8px;
+    background:var(--color-neutral-white);
+    border:1px solid var(--color-neutral-solid-gray-200)}
+  .stat-tile__label{display:block;font-size:.75rem;
+    color:var(--color-neutral-solid-gray-600)}
+  .stat-tile__value{display:block;font-size:1.5rem;line-height:1.4}
+  .nav-badge[data-tone='warn']{color:var(--color-semantic-error-1)}
+  .nav-badge[data-tone='ok']{color:var(--color-semantic-success-1)}
+  .field--checkbox label{font-weight:400}
   .brand{padding:.25rem .75rem}
   .brand__eyebrow{margin:0 0 .25rem;color:var(--color-key-900);font-size:.75rem;
     font-weight:700;letter-spacing:.08em}
@@ -2464,12 +2491,258 @@
         // items behind a session, and every reveal writes a line into kagi's
         // audit ledger. Loading it before a Passkey exists would put unattributed
         // reveals in the ledger of a user who has not logged in yet.
-        loadContracts()
+        loadContracts(),
+        loadFleet(),
+        loadOperator()
       ]).then((results) => {
         const connected = results.filter(Boolean).length;
         $('#workspace-status').textContent = `${connected} / ${results.length} サービス接続`;
       });
     };
+
+    // ── Fleet directory + 事業者としての参与 ──────────────────────────
+    //
+    // Two rules this code exists to hold, both of which are easy to violate
+    // by accident in a renderer:
+    //   1. a licence is 自己表明 and is never drawn as verified;
+    //   2. a blueprint without :deploy-config gets no deploy affordance —
+    //      the text says the operator builds it, and there is no button.
+    const reqLabel = {maturity:'成熟度', governor:'governor', licence:'許認可',
+      technologies:'必要技術', 'deploy-path':'deploy 経路'};
+    const stateLabel = {met:'充足', unmet:'未充足', attested:'自己表明',
+      absent:'同梱なし', none:'宣言なし', unknown:'不明'};
+    const stateTone = {met:'ok', unmet:'warn', attested:'note',
+      absent:'note', none:'note', unknown:'note'};
+    let fleetFacets = null;
+
+    const fillSelect = (id, pairs) => {
+      const el = $('#' + id); if (!el || !pairs) return;
+      const keep = el.value;
+      el.replaceChildren(make('option', null, 'すべて'));
+      el.firstChild.value = '';
+      pairs.forEach(([v, n]) => {
+        const o = make('option', null, `${v} (${n})`);
+        o.value = String(v).replace(/^:/, '');
+        el.append(o);
+      });
+      el.value = keep;
+    };
+
+    // Its own class rather than .data-list__item: that grid is
+    // minmax(0,1fr) auto for a two-child row, and a requirement carries four
+    // things (label, state, reason, and sometimes a caveat that must never be
+    // dropped). Reusing the grid put the reason on top of the label.
+    const requirementRow = (r) => {
+      const li = make('li', 'req-row');
+      const head = make('div', 'req-row__head');
+      head.append(make('strong', null, reqLabel[String(r.requirement).replace(/^:/,'')]
+        || String(r.requirement)));
+      // Not .nav-badge: that class is sized for the sidebar counter and
+      // squeezes a word like 「同梱なし」 to 24px.
+      const badge = make('span', 'req-row__state',
+        stateLabel[String(r.state).replace(/^:/,'')] || String(r.state));
+      badge.dataset.tone = stateTone[String(r.state).replace(/^:/,'')] || 'note';
+      head.append(badge);
+      li.append(head);
+      li.append(make('p', 'req-row__detail', r.detail || ''));
+      // The caveat rides with the requirement, so a licence row cannot be
+      // rendered anywhere without it.
+      if (r.caveat) li.append(make('p', 'req-row__caveat', r.caveat));
+      return li;
+    };
+
+    const fleetDetail = (repo) => fetch('/api/operator/readiness/' + encodeURIComponent(repo))
+      .then((r) => r.ok ? r.json() : null)
+      .then((d) => {
+        const box = $('#fleet-detail'); if (!box) return;
+        if (!d) { box.replaceChildren(make('div', 'empty-state', '読み込めません。')); return; }
+        const a = d.actor || {};
+        box.replaceChildren();
+        box.append(make('h3', null, a.name || a.repo));
+        box.append(make('p', 'data-list__meta',
+          [a.repo, a.domain, a.role, a.maturity].filter(Boolean).join(' · ')));
+        if (a.endpoint) {
+          box.append(make('p', 'data-list__meta', '稼働中: ' + a.endpoint));
+        }
+        box.append(make('h4', null, '運用に必要なもの'));
+        const ul = make('ul', 'record-list__items');
+        (d.requirements || []).forEach((r) => ul.append(requirementRow(r)));
+        box.append(ul);
+        const ad = d.adoption;
+        box.append(make('p', 'form-help', ad
+          ? `参与: ${String(ad['adoption/stage']).replace(/^:/,'')}（${ad['adoption/declared-by']} / ${ad['adoption/declared-on']}）`
+          : 'まだ参与を表明していません。事業者タブから表明できます。'));
+      })
+      .catch(() => {});
+
+    const renderFleet = (data) => {
+      const list = $('#fleet-list'); if (!list) return;
+      list.replaceChildren();
+      (data.actors || []).forEach((a) => {
+        const fit = a.fit && a.fit.score ? ` · 適合 ${a.fit.score}` : '';
+        const item = listItem(a.name || a.repo,
+          [a.role, a.domain, a.maturity].filter(Boolean).join(' · ') + fit,
+          a.endpoint ? '稼働' : (a['deploy-config'] ? 'deploy可' : ''));
+        item.addEventListener('click', () => fleetDetail(a.repo));
+        list.append(item);
+      });
+      if (!(data.actors || []).length) {
+        list.append(make('li', 'empty-state', '該当する blueprint がありません。'));
+      }
+      // Say the truncation out loud. A directory that quietly shows 200 of
+      // 1,213 reads as a complete answer.
+      const fs = $('#fleet-source');
+      if (fs) fs.textContent = data.total > data.shown
+        ? `${data.total} 件中 ${data.shown} 件を表示`
+        : `${data.total} 件`;
+      // Guarded like every other lookup in these two renderers: the badge
+      // lives in the sidebar, and a renderer that assumes its own chrome is
+      // present cannot be reused anywhere the chrome is not.
+      const fc = $('#fleet-count'); if (fc) fc.textContent = data.total;
+    };
+
+    const searchFleet = () => {
+      const q = new URLSearchParams();
+      const v = (id) => ($('#' + id)?.value || '').trim();
+      if (v('fleet-text')) q.set('text', v('fleet-text'));
+      if (v('fleet-role')) q.set('role', v('fleet-role'));
+      if (v('fleet-maturity')) q.set('maturity', v('fleet-maturity'));
+      if (v('fleet-iso3166')) q.set('iso3166', v('fleet-iso3166'));
+      if ($('#fleet-callable')?.checked) q.set('callable', 'true');
+      return fetch('/api/fleet/search?' + q.toString())
+        .then((r) => r.ok ? r.json() : null)
+        .then((d) => { if (d) renderFleet(d); return Boolean(d); })
+        .catch(() => { $('#fleet-source').textContent = 'catalog を読み込めません。'; return false; });
+    };
+
+    const loadFleet = () => fetch('/api/fleet')
+      .then((r) => r.ok ? r.json() : null)
+      .then((d) => {
+        if (!d) return false;
+        fleetFacets = d.facets;
+        fillSelect('fleet-role', d.facets.role);
+        fillSelect('fleet-maturity', d.facets.maturity);
+        fillSelect('fleet-iso3166', d.facets.iso3166);
+        return searchFleet();
+      })
+      .catch(() => false);
+
+    const statTile = (label, value) => {
+      const d = make('div', 'stat-tile');
+      d.append(make('span', 'stat-tile__label', label));
+      d.append(make('strong', 'stat-tile__value', String(value)));
+      return d;
+    };
+
+    const renderOperator = (d) => {
+      const s = d.summary || {};
+      const stats = $('#operator-stats');
+      if (stats) {
+        stats.replaceChildren(
+          statTile('参与', s.adoptions || 0),
+          statTile('稼働', s.deployed || 0),
+          statTile('fleet 全体', (s.fleet && s.fleet.actors) || 0),
+          statTile('fleet の稼働', (s.fleet && s.fleet.callable) || 0));
+      }
+      const oc = $('#operator-count'); if (oc) oc.textContent = s.adoptions || 0;
+      const os_ = $('#operator-source');
+      if (os_) os_.textContent = d.profile
+        ? `${d.profile['operator/name']} として参与しています`
+        : '事業者プロファイルが未登録です。';
+      const cv = $('#operator-licence-caveat'); if (cv && d.caveat) cv.textContent = d.caveat;
+
+      if (d.profile) {
+        const p = d.profile;
+        const setv = (id, val) => { const e = $('#' + id); if (e && !e.value) e.value = val; };
+        setv('operator-name', p['operator/name'] || '');
+        setv('operator-isic', (p['operator/isic'] || []).join(', '));
+        setv('operator-isco', (p['operator/isco'] || []).join(', '));
+        setv('operator-iso3166', (p['operator/iso3166'] || []).join(', '));
+      }
+
+      const m = $('#operator-matches');
+      if (m) {
+        m.replaceChildren();
+        (d.matches || []).forEach((a) => {
+          const item = listItem(a.name || a.repo,
+            [a.role, a.domain, a.maturity].filter(Boolean).join(' · '),
+            `適合 ${a.fit?.score ?? 0}`);
+          item.addEventListener('click', () => {
+            document.querySelector('[data-view=fleet]')?.click();
+            fleetDetail(a.repo);
+          });
+          m.append(item);
+        });
+        if (!(d.matches || []).length) {
+          m.append(make('li', 'empty-state',
+            d.profile ? '適合する blueprint がありません。業種・職種・管轄を確認してください。'
+                      : 'プロファイルを保存すると表示します。'));
+        }
+      }
+
+      const ad = $('#operator-adoptions');
+      if (ad) {
+        ad.replaceChildren();
+        (d.adoptions || []).forEach((a) => {
+          const stage = String(a['adoption/stage']).replace(/^:/, '');
+          const item = listItem(a['adoption/repo'],
+            `${a['adoption/declared-by']} · ${a['adoption/declared-on']}`,
+            stage, stage === 'withdrawn');
+          item.addEventListener('click', () => {
+            document.querySelector('[data-view=fleet]')?.click();
+            fleetDetail(a['adoption/repo']);
+          });
+          ad.append(item);
+        });
+        if (!(d.adoptions || []).length) {
+          ad.append(make('li', 'empty-state', 'まだ参与を表明していません。'));
+        }
+      }
+    };
+
+    const loadOperator = () => fetch('/api/operator')
+      .then((r) => r.ok ? r.json() : null)
+      .then((d) => { if (d) renderOperator(d); return Boolean(d); })
+      .catch(() => { $('#operator-source').textContent = '事業者プロファイルを読み込めません。'; return false; });
+
+    const splitList = (id) => ($('#' + id)?.value || '')
+      .split(',').map((x) => x.trim()).filter(Boolean);
+
+    $('#fleet-filter-form')?.addEventListener('submit', (e) => { e.preventDefault(); searchFleet(); });
+    ['fleet-role','fleet-maturity','fleet-iso3166','fleet-callable'].forEach((id) => {
+      $('#' + id)?.addEventListener('change', searchFleet);
+    });
+    $('#fleet-text')?.addEventListener('input', () => {
+      clearTimeout(window.__fleetDebounce);
+      window.__fleetDebounce = setTimeout(searchFleet, 250);
+    });
+
+    $('#operator-profile-form')?.addEventListener('submit', (e) => {
+      e.preventDefault();
+      const kind = ($('#operator-licence-kind')?.value || '').trim();
+      const by = ($('#operator-licence-by')?.value || '').trim();
+      // A licence with no attester is not an attestation, so it is not sent.
+      const licences = (kind && by) ? [{
+        'licence/kind': kind,
+        'licence/authority': ($('#operator-licence-authority')?.value || '').trim(),
+        'licence/number': ($('#operator-licence-number')?.value || '').trim(),
+        'licence/attested-by': by,
+        'licence/attested-on': new Date().toISOString().slice(0, 10)
+      }] : [];
+      fetch('/api/operator/profile', {
+        method: 'POST', headers: identityHeaders(),
+        body: JSON.stringify({
+          name: ($('#operator-name')?.value || '').trim(),
+          isic: splitList('operator-isic'),
+          isco: splitList('operator-isco'),
+          iso3166: splitList('operator-iso3166'),
+          technologies: splitList('operator-tech'),
+          licences: licences
+        })
+      }).then(() => loadOperator())
+        .catch(() => { $('#operator-source').textContent = 'プロファイルを保存できません。'; });
+    });
+
     $('#inbox-search').addEventListener('input', () => renderInbox(inboxData));
     // The box filters the list as you type, which is instant and local, and
     // separately asks the server what is inside the documents, which is not.
@@ -3199,6 +3472,8 @@
         (nav-item "drive" "Drive" "◇" "drive-count")
         (nav-item "scheduler" "Scheduler" "○" "scheduler-count")
         (nav-item "storage" "Storage" "◈" "storage-count")
+        (nav-item "fleet" "Fleet" "◉" "fleet-count")
+        (nav-item "operator" "\u4e8b\u696d\u8005" "◐" "operator-count")
         (nav-item "contracts" "Contracts" "◫" "contracts-count")
         (nav-item "settings" "Settings" "⚙" nil)]
        [:div {:class "sidebar__status"}
@@ -3305,6 +3580,104 @@
             [:li {:class "skeleton"}]]]
           [:article {:class "record-detail" :id "worker-detail" :aria-live "polite"}
            [:div {:class "empty-state"} "ジョブを読み込んでいます。"]]]]
+        ;; ── Fleet directory ────────────────────────────────────────
+        ;; The whole catalog, 1,213 actors plus the company records, with the
+        ;; facets read from the catalog rather than hardcoded — a fixed filter
+        ;; list would drift from the fleet the first time it grew.
+        [:section {:class "view" :data-view-panel "fleet" :hidden true}
+         (view-header "Fleet"
+                      "cloud-itonami の org と repo。どれも fork して運用できる OSS 事業の設計図です。")
+         [:p {:class "source-note"} [:span {:class "source-dot"}]
+          [:span {:id "fleet-source"} "catalog を読み込み中…"]]
+         [:div {:class "local-card"}
+          [:form {:class "settings-form" :id "fleet-filter-form"}
+           [:div {:class "field"}
+            [:label {:for "fleet-text"} "検索"]
+            [:input {:id "fleet-text" :name "text" :type "search"
+                     :placeholder "id・名称・ドメイン"}]]
+           [:div {:class "field"}
+            [:label {:for "fleet-role"} "族"]
+            [:select {:id "fleet-role" :name "role"}
+             [:option {:value ""} "すべて"]]]
+           [:div {:class "field"}
+            [:label {:for "fleet-maturity"} "成熟度"]
+            [:select {:id "fleet-maturity" :name "maturity"}
+             [:option {:value ""} "すべて"]]]
+           [:div {:class "field"}
+            [:label {:for "fleet-iso3166"} "管轄"]
+            [:select {:id "fleet-iso3166" :name "iso3166"}
+             [:option {:value ""} "すべて"]]]
+           [:div {:class "field field--checkbox"}
+            [:label {:for "fleet-callable"}
+             [:input {:id "fleet-callable" :name "callable" :type "checkbox"}]
+             " 稼働しているものだけ"]]]]
+         [:div {:class "record-browser"}
+          [:div {:class "record-list"}
+           [:ul {:class "record-list__items" :id "fleet-list"}
+            [:li {:class "skeleton"}]]]
+          [:article {:class "record-detail" :id "fleet-detail" :aria-live "polite"}
+           [:div {:class "empty-state"} "blueprint を選ぶと、運用に何が要るかを表示します。"]]]]
+
+        ;; ── 事業者としての参与 ─────────────────────────────────────
+        ;; ① 発見 → ② 適合 → ③ 要件 → ④ 表明 → ⑤ 稼働。
+        ;; The two things the pane must never imply: that the app verified a
+        ;; licence (it cannot), and that a blueprint has a deploy path when it
+        ;; does not. Both are rendered as their own state with the reason.
+        [:section {:class "view" :data-view-panel "operator" :hidden true}
+         (view-header "事業者として参与する"
+                      "自分の業種・職種・管轄を登録すると、運用できる blueprint と、運用に必要なものが分かります。")
+         [:p {:class "source-note"} [:span {:class "source-dot"}]
+          [:span {:id "operator-source"} "事業者プロファイルを確認中…"]]
+         [:div {:class "stat-row" :id "operator-stats"}]
+         [:div {:class "local-card"}
+          (dds/heading 2 "① 事業者プロファイル" {:size "24"})
+          [:p {:class "form-help"}
+           "業種(ISIC)・職種(ISCO)・管轄(ISO 3166)は、適合する blueprint を絞るためだけに使います。"]
+          [:form {:class "settings-form" :id "operator-profile-form"}
+           [:div {:class "field"}
+            [:label {:for "operator-name"} "事業者名"]
+            [:input {:id "operator-name" :name "name" :required true}]]
+           [:div {:class "field"}
+            [:label {:for "operator-isic"} "業種 ISIC（カンマ区切り）"]
+            [:input {:id "operator-isic" :name "isic" :placeholder "6910, 6920"}]]
+           [:div {:class "field"}
+            [:label {:for "operator-isco"} "職種 ISCO-08（カンマ区切り）"]
+            [:input {:id "operator-isco" :name "isco" :placeholder "2611"}]]
+           [:div {:class "field"}
+            [:label {:for "operator-iso3166"} "管轄 ISO 3166（カンマ区切り）"]
+            [:input {:id "operator-iso3166" :name "iso3166" :placeholder "JPN"}]]
+           [:div {:class "field"}
+            [:label {:for "operator-tech"} "保有技術（カンマ区切り）"]
+            [:input {:id "operator-tech" :name "technologies"
+                     :placeholder "identity, forms, audit-ledger"}]]
+           [:fieldset {:class "field"}
+            [:legend "許認可"]
+            [:p {:class "form-help" :id "operator-licence-caveat"}
+             "自己表明です。このアプリは許認可の実在を検証していません。"]
+            [:div {:class "field"}
+             [:label {:for "operator-licence-kind"} "種別"]
+             [:input {:id "operator-licence-kind" :placeholder "bengoshi"}]]
+            [:div {:class "field"}
+             [:label {:for "operator-licence-authority"} "登録先"]
+             [:input {:id "operator-licence-authority" :placeholder "東京弁護士会"}]]
+            [:div {:class "field"}
+             [:label {:for "operator-licence-number"} "登録番号"]
+             [:input {:id "operator-licence-number" :placeholder "第12345号"}]]
+            [:div {:class "field"}
+             [:label {:for "operator-licence-by"} "表明者"]
+             [:input {:id "operator-licence-by" :placeholder "山田 太郎"}]]]
+           [:button {:class "tool-button" :type "submit"} "プロファイルを保存"]]]
+         [:div {:class "local-card"}
+          (dds/heading 2 "② 適合する blueprint" {:size "24"})
+          [:p {:class "form-help"}
+           "適合度は 業種3点・職種3点・管轄1点 の単純な加算です。0点のものは出しません。"]
+          [:ul {:class "record-list__items" :id "operator-matches"}
+           [:li {:class "empty-state"} "プロファイルを保存すると表示します。"]]]
+         [:div {:class "local-card"}
+          (dds/heading 2 "③〜⑤ 参与している blueprint" {:size "24"})
+          [:ul {:class "record-list__items" :id "operator-adoptions"}
+           [:li {:class "empty-state"} "まだ参与を表明していません。"]]]]
+
         [:section {:class "view" :data-view-panel "organisms" :hidden true}
          (view-header "Artificial organisms"
                       "active organization に所属するAO workerと、Tamakiの実活動を確認します。")
