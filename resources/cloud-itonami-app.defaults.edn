@@ -95,7 +95,17 @@
                :max-document-bytes 65536
                ;; Cached per verificationMethod rather than per domain, so a key
                ;; rotation is not answered from a stale entry for a sibling key.
-               :cache-seconds 3600}
+               :cache-seconds 3600
+               ;; Status lists cache for far less time than keys: a key rotates
+               ;; rarely, a revocation is the thing being asked about. The list's
+               ;; own `ttl` wins when it is shorter, because the issuer knows how
+               ;; often it republishes.
+               ;;
+               ;; Revocation is checked, and FAILS CLOSED: a list that cannot be
+               ;; fetched, does not verify, or is signed by someone other than the
+               ;; credential's own issuer comes back :unchecked and the credential
+               ;; is not treated as valid. "Could not ask" is not "not revoked".
+               :status-cache-seconds 300}
 
  ;; Governed outward authorities (ADR-2607300300). Each rides the
  ;; `cloud.itonami.app.authority` spine: deterministic pre-check -> Passkey
