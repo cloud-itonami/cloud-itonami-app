@@ -259,6 +259,22 @@
     border-top:1px solid var(--color-neutral-solid-gray-200)}
   .member-list strong,.member-list span{display:block}.member-list span{
     color:var(--color-neutral-solid-gray-600);font-size:.8125rem}
+  .state-chip--run{background:var(--color-key-50);color:var(--color-key-900);font-weight:700}
+  .state-chip--done{background:var(--color-success-50);color:var(--color-success-700)}
+  .state-chip--fail{background:var(--color-error-50);color:var(--color-error-700)}
+  .worker-form{display:grid;grid-template-columns:minmax(0,1fr) minmax(13rem,.5fr);
+    gap:1rem;align-items:start}
+  .worker-form textarea{min-height:6rem;box-sizing:border-box;width:100%;resize:vertical;
+    border:1px solid var(--color-neutral-solid-gray-300);border-radius:.5rem;
+    padding:.625rem .75rem;background:var(--color-neutral-white);font:inherit;line-height:1.65}
+  .worker-form textarea:focus{outline:4px solid var(--color-focus-yellow);
+    outline-offset:1px;border-color:var(--color-key-600)}
+  .worker-summary{display:flex;flex-wrap:wrap;gap:.5rem;min-width:0}
+  .worker-output{margin:1.25rem 0 0;padding:1rem;max-height:24rem;overflow:auto;
+    border:1px solid var(--color-neutral-solid-gray-200);border-radius:.5rem;
+    background:var(--color-neutral-solid-gray-50);white-space:pre-wrap;
+    overflow-wrap:anywhere;line-height:1.8}
+  .worker-actions{display:flex;justify-content:flex-end;margin-top:1rem}
   .skeleton{height:4.5rem;margin:.5rem 0;border-radius:.5rem;
     background:linear-gradient(90deg,var(--color-neutral-solid-gray-50),var(--color-neutral-solid-gray-100),var(--color-neutral-solid-gray-50));
     background-size:200% 100%;animation:pulse 1.4s infinite}
@@ -293,6 +309,8 @@
       border-bottom:1px solid var(--color-neutral-solid-gray-200)}
     .record-list__items{max-height:19rem}.record-detail{min-height:16rem}
     .workspace-toolbar{align-items:stretch}.workspace-search{width:100%}
+    .worker-form{grid-template-columns:1fr}.worker-form .primary-action{width:100%}
+    .worker-output{max-height:16rem}
     .form-grid{grid-template-columns:1fr}.connector-card{grid-template-columns:2.75rem 1fr}
     .connector-card .tool-button{grid-column:1/-1;width:100%}
     .local-actions{justify-content:stretch}.local-actions .dads-button{width:100%}
@@ -314,6 +332,10 @@
     const requestedView = location.hash.slice(1) || 'chat';
     let appUnlocked = false;
     let appBootstrapped = false;
+    let currentView = 'settings';
+    // Assigned once the worker surface is defined further down; showView runs
+    // before that, so it must not name the worker helpers directly.
+    let onViewChange = () => {};
     const formatDate = (value, timeOnly = false) => {
       if (!value) return '日時不明';
       const date = new Date(value);
@@ -333,6 +355,8 @@
       history.replaceState(null, '', `#${name}`);
       const brand = document.querySelector('.workspace')?.dataset.brand || 'Cloud Itonami';
       document.title = `${active?.dataset.title || 'Chat'} | ${brand}`;
+      currentView = name;
+      onViewChange(name);
     };
     $$('.local-nav__item').forEach((item) =>
       item.addEventListener('click', () => showView(item.dataset.view)));
@@ -546,6 +570,18 @@
           option.selected = model.id === selected;
           modelSelect.append(option);
         });
+        const workerModel = $('#worker-model');
+        const workerSelected = workerModel.value;
+        workerModel.replaceChildren();
+        const inherited = make('option', null, '既定のモデル');
+        inherited.value = '';
+        workerModel.append(inherited);
+        models.forEach((model) => {
+          const option = make('option', null, model.id);
+          option.value = model.id;
+          option.selected = model.id === workerSelected;
+          workerModel.append(option);
+        });
       }
     }).catch(() => {});
     chatShell.dataset.session = sessionId;
@@ -717,6 +753,7 @@
       if (appBootstrapped) return;
       appBootstrapped = true;
       loadSession();
+      loadWorkspace('worker', renderWorker);
       Promise.all([
         loadWorkspace('inbox', renderInbox),
         loadWorkspace('projects', renderProjects),
@@ -1086,6 +1123,176 @@
         $('#identity-status').textContent = error.message;
       } finally { button.disabled = false; }
     });
+    const workerLabels = {queued:'待機中', running:'実行中', done:'完了',
+      failed:'失敗', cancelled:'中止'};
+    const workerChipClass = {queued:'', running:' state-chip--run',
+      done:' state-chip--done', failed:' state-chip--fail', cancelled:''};
+    let workerData = {items:[], counts:{}, active:0};
+    let selectedWorker = null;
+    let workerTimer = null;
+    const workerHelp = (message) => {
+      $('#worker-form-help').textContent = message;
+    };
+    const renderWorkerDetail = () => {
+      const target = $('#worker-detail');
+      const previous = target.querySelector('.worker-output');
+      const follow = !previous || (previous.scrollTop + previous.clientHeight
+        >= previous.scrollHeight - 8);
+      target.replaceChildren();
+      const run = selectedWorker;
+      if (!run) {
+        target.append(make('div', 'empty-state', 'ジョブを選択してください。'));
+        return;
+      }
+      target.append(
+        make('p', 'record-detail__eyebrow',
+          `${workerLabels[run.status] || run.status} · ${run.agent}`),
+        make('h2', null, run.title),
+        make('p', 'record-detail__body', run.prompt));
+      if (run.error) {
+        target.append(make('p', 'settings-notice settings-notice--error', run.error));
+      }
+      const output = make('div', 'worker-output', run.output
+        || (run.status === 'queued' ? 'まだ実行を開始していません。' : '出力はまだありません。'));
+      output.setAttribute('aria-live', 'polite');
+      target.append(output);
+      if (run['truncated?']) {
+        target.append(make('p', 'form-help',
+          '出力が上限に達したため、以降は保存していません。'));
+      }
+      const meta = make('dl', 'local-meta record-detail__meta');
+      [['状態', workerLabels[run.status] || run.status],
+       ['モデル', run.model || '既定のモデル'],
+       ['プロバイダ', run.provider],
+       ['登録', formatDate(run['created-at'])],
+       ['開始', run['started-at'] ? formatDate(run['started-at']) : null],
+       ['終了', run['finished-at'] ? formatDate(run['finished-at']) : null],
+       ['トークン', run.usage?.total_tokens]
+      ].forEach(([label, value]) => {
+        meta.append(make('dt', null, label), make('dd', null,
+          value === null || value === undefined || value === '' ? '—' : String(value)));
+      });
+      target.append(meta);
+      if (run.status === 'queued' || run.status === 'running') {
+        const cancel = make('button', 'tool-button', 'このジョブを中止');
+        cancel.type = 'button';
+        cancel.addEventListener('click', async () => {
+          cancel.disabled = true;
+          try {
+            const request = await fetch(
+              `/api/workers/${encodeURIComponent(run.id)}/cancel`,
+              {method:'POST', headers:identityHeaders(), body:'{}'});
+            const data = await request.json();
+            if (!request.ok) {
+              throw new Error(data?.error?.message || 'ジョブを中止できませんでした。');
+            }
+            renderWorker(data);
+          } catch (error) {
+            cancel.disabled = false;
+            workerHelp(error.message);
+          }
+        });
+        const actions = make('div', 'worker-actions');
+        actions.append(cancel);
+        target.append(actions);
+      }
+      if (follow) output.scrollTop = output.scrollHeight;
+    };
+    const renderWorker = (data) => {
+      workerData = data;
+      const items = data.items || [];
+      const previousId = selectedWorker?.id;
+      selectedWorker = items.find((item) => item.id === previousId)
+        || items[0] || null;
+      const list = $('#worker-list');
+      list.replaceChildren();
+      const select = (run) => { selectedWorker = run; renderWorker(workerData); };
+      items.forEach((item) => list.append(recordButton(
+        item, item.id === selectedWorker?.id, select, {
+          title:item.title,
+          time:workerLabels[item.status] || item.status,
+          meta:`${item.agent} · ${item.model || '既定のモデル'}`,
+          snippet:String(item.output || item.error || '出力はまだありません').slice(0, 140)
+        })));
+      if (!items.length) {
+        list.append(make('li', 'empty-state',
+          'まだジョブはありません。指示を登録すると背後で実行します。'));
+      }
+      renderWorkerDetail();
+      const summary = $('#worker-summary');
+      summary.replaceChildren();
+      ['running', 'queued', 'done', 'failed', 'cancelled'].forEach((key) => {
+        const count = data.counts?.[key] || 0;
+        if (!count) return;
+        summary.append(make('span', `state-chip${workerChipClass[key]}`,
+          `${workerLabels[key]} ${count}`));
+      });
+      if (!summary.childElementCount) {
+        summary.append(make('span', 'state-chip', 'ジョブなし'));
+      }
+      $('#worker-count').textContent = data.active || 0;
+      $('#worker-source').textContent = `${data.source} · 同時実行 ${data['max-concurrency']}`
+        + ` · 保持 ${items.length} / ${data['max-runs']} 件`;
+      $('#worker-clear').disabled = items.length === (data.active || 0);
+      scheduleWorkerPoll();
+    };
+    const scheduleWorkerPoll = () => {
+      if (workerTimer) { clearTimeout(workerTimer); workerTimer = null; }
+      const active = (workerData.active || 0) > 0;
+      if (!appUnlocked || (!active && currentView !== 'worker')) return;
+      workerTimer = setTimeout(() => loadWorkspace('worker', renderWorker),
+        active ? 1500 : 5000);
+    };
+    onViewChange = () => scheduleWorkerPoll();
+    $('#worker-form').addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const button = $('#worker-submit');
+      const fields = Object.fromEntries(new FormData(event.currentTarget));
+      if (!String(fields.prompt || '').trim()) {
+        workerHelp('実行する指示を入力してください。');
+        return;
+      }
+      const label = button.textContent;
+      button.disabled = true;
+      button.textContent = '登録中…';
+      try {
+        const request = await fetch('/api/workers', {
+          method:'POST', headers:identityHeaders(), body:JSON.stringify(fields)
+        });
+        const data = await request.json();
+        if (!request.ok) {
+          throw new Error(data?.error?.message || 'ジョブを登録できませんでした。');
+        }
+        $('#worker-prompt').value = '';
+        $('#worker-title').value = '';
+        selectedWorker = data;
+        workerHelp(`${data.title} をバックグラウンドで実行しています。`);
+        await loadWorkspace('worker', renderWorker);
+      } catch (error) {
+        workerHelp(error.message);
+      } finally {
+        button.disabled = false;
+        button.textContent = label;
+      }
+    });
+    $('#worker-clear').addEventListener('click', async () => {
+      const button = $('#worker-clear');
+      button.disabled = true;
+      try {
+        const request = await fetch('/api/workers/clear', {
+          method:'POST', headers:identityHeaders(), body:'{}'
+        });
+        const data = await request.json();
+        if (!request.ok) {
+          throw new Error(data?.error?.message || '完了したジョブを整理できませんでした。');
+        }
+        selectedWorker = null;
+        renderWorker(data);
+      } catch (error) {
+        button.disabled = false;
+        workerHelp(error.message);
+      }
+    });
     if (initialParams.get('connection')) {
       const notice = $('#connection-notice');
       const connected = initialParams.get('connection') === 'connected';
@@ -1136,6 +1343,7 @@
         [:p {:class "brand__note"} "Kotoba でつながる、手元の仕事場"]]
        [:nav {:class "local-nav"}
         (nav-item "chat" "Chat" "✦" nil)
+        (nav-item "worker" "Worker" "◐" "worker-count")
         (nav-item "inbox" "Inbox" "□" "inbox-count")
         (nav-item "projects" "Projects" "▦" "projects-count")
         (nav-item "drive" "Drive" "◇" "drive-count")
@@ -1207,6 +1415,44 @@
            [:p {:class "visually-hidden" :id "request-status"
                 :role "status" :aria-live "polite"}
             "ローカルモデルを準備中です。"]]]]
+        [:section {:class "view" :data-view-panel "worker" :hidden true}
+         (view-header "Worker"
+                      "時間のかかる指示をキューに積み、チャットを離れても手元のモデルが順番に処理します。")
+         [:p {:class "source-note"} [:span {:class "source-dot"}]
+          [:span {:id "worker-source"} "worker キューを確認中…"]]
+         [:div {:class "local-card"}
+          (dds/heading 2 "ジョブを登録" {:size "24"})
+          [:form {:class "settings-form" :id "worker-form"}
+           [:div {:class "worker-form"}
+            [:div {:class "field"}
+             [:label {:for "worker-prompt"} "指示"]
+             [:textarea {:id "worker-prompt" :name "prompt" :rows 3 :required true
+                         :placeholder "例: 今週の受信メールを要約して、返信が必要なものを挙げる"
+                         :aria-describedby "worker-form-help"}]]
+            [:div {:class "settings-stack"}
+             [:div {:class "field"}
+              [:label {:for "worker-title"} "タイトル（任意）"]
+              [:input {:id "worker-title" :name "title" :autocomplete "off"
+                       :placeholder "未入力なら指示の先頭を使います"}]]
+             [:div {:class "field"}
+              [:label {:for "worker-model"} "モデル"]
+              [:select {:id "worker-model" :name "model"}
+               [:option {:value ""} "既定のモデル"]]]
+             [:button {:class "primary-action" :id "worker-submit" :type "submit"}
+              "バックグラウンドで実行"]]]
+           [:p {:class "form-help" :id "worker-form-help"}
+            "実行はローカル優先のプロバイダ選択に従います。結果はこの端末の中だけに残り、再起動すると消えます。"]]]
+         [:div {:class "workspace-toolbar"}
+          [:div {:class "worker-summary" :id "worker-summary"}
+           [:span {:class "state-chip"} "確認中"]]
+          [:button {:class "tool-button" :id "worker-clear" :type "button"}
+           "完了したジョブを整理"]]
+         [:div {:class "record-browser"}
+          [:div {:class "record-list"}
+           [:ul {:class "record-list__items" :id "worker-list"}
+            [:li {:class "skeleton"}]]]
+          [:article {:class "record-detail" :id "worker-detail" :aria-live "polite"}
+           [:div {:class "empty-state"} "ジョブを読み込んでいます。"]]]]
         [:section {:class "view" :data-view-panel "inbox" :hidden true}
          (view-header "Inbox" "kotoba-lang/mail のメールボックスモデルで、受信履歴を安全に検索・確認します。")
          [:p {:class "source-note"} [:span {:class "source-dot"}]

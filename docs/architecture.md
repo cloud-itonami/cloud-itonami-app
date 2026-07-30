@@ -34,6 +34,10 @@ projects, or events.
 | Drive | `m365-archive` OneDrive snapshot | Lists file state without silently materializing git-annex objects |
 | Scheduler | `kotoba-lang/shell` EventKit + `kotoba-lang/calendar` | Reads seven days under the explicit `calendar/read` capability |
 
+`GET /api/workspace/worker` is served next to these but is not one of them: it
+reports live queue state rather than reading an external authority, so it
+bypasses the read cache.
+
 The combined read is cached for 60 seconds. It is intentionally separate from
 model context: viewing a calendar or mailbox does not send its data to an AI
 provider. Mutation adapters require a later capability and approval design.
@@ -79,6 +83,34 @@ management endpoint. Provider deltas are forwarded as they arrive; only a
 completed assistant turn is persisted. A client disconnect or Stop action
 therefore leaves the submitted user turn but does not record a partial
 assistant message.
+
+## Background worker runs
+
+The Worker surface queues prompts that should outlive a single interactive turn.
+A run is admitted by a fair semaphore (`:worker :max-concurrency`, default 2) so
+background work cannot starve interactive chat of the local model, then streamed
+through the same `service` path as chat — which means the fail-closed provider
+policy applies to worker runs identically. There is no separate egress route.
+
+| Endpoint | Purpose |
+|---|---|
+| `GET /api/workspace/worker` | Live queue: counts, per-run status, streamed output |
+| `POST /api/workers` | Enqueue a run |
+| `POST /api/workers/{id}/cancel` | Ask a queued or running run to stop |
+| `POST /api/workers/clear` | Drop finished runs, keep active ones |
+
+Runs are held in memory only, and this is a deliberate limit rather than an
+oversight: `store/transact!` rewrites the whole state file on every change, so
+streaming deltas through durable state would rewrite `state.edn` once per token.
+The durable store instead receives one bounded `:worker/finished` event per run,
+and each run's scratch chat session is dropped on completion — the run record
+already carries its prompt and output, so keeping the session would only grow
+`state.edn`. **Runs therefore do not survive a restart, and the UI says so.**
+
+Cancellation is cooperative: the flag is observed at the next streamed delta, so
+a provider that has stopped emitting can keep an in-flight HTTP request open
+until its own timeout. Output is capped at 16,000 characters per run and marked
+`truncated?` rather than silently trimmed.
 
 ## Persistence
 

@@ -13,9 +13,9 @@ by a fork of the application.
 ## Status
 
 This is an early public development release. The loopback server, local model
-adapters, chat UI, read-only workspace integrations, Passkey registration,
-User `did:key`, organization membership, OAuth/PKCE connections, and optional
-private email relay client are implemented. Production multi-tenant hosting,
+adapters, chat UI, background worker runs, read-only workspace integrations,
+Passkey registration, User `did:key`, organization membership, OAuth/PKCE
+connections, and optional private email relay client are implemented. Production multi-tenant hosting,
 domain verification, DID document publication, and signed desktop packages
 remain separate deployment responsibilities.
 
@@ -47,6 +47,19 @@ bin/cloud-itonami-app
 The server binds to `127.0.0.1` by default. The browser intentionally uses
 `http://localhost:1338`, which is required for the WebAuthn localhost
 development exception.
+
+## Background worker runs
+
+The Worker tab queues prompts that take longer than an interactive turn. Runs
+share the local model with chat under a small concurrency limit (default 2,
+`:worker :max-concurrency`) and go through the same fail-closed provider policy,
+so a background run cannot reach a cloud provider that chat could not.
+
+Runs are kept in memory and **are lost when the server restarts** — the durable
+store keeps only a bounded completion event per run, because persisting streamed
+output would rewrite the whole state file on every token. Output is capped at
+16,000 characters per run. Cancellation takes effect at the next streamed
+chunk, so a stalled provider request can stay open until it times out.
 
 ## Identity and organizations
 
