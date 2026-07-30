@@ -1139,8 +1139,11 @@
     // box is enough — so an open editor's text cannot live in the element.
     // It lived there until this was measured: typing in search while editing
     // destroyed the edit with no warning and no way back.
+    // `etag` is the version the open payload came from. The server refuses a
+    // save that does not carry the current one, so this is not bookkeeping —
+    // it is the thing that stops one editor's save deleting another's.
     const closedEditor = (id) => ({id, open:false, mode:'structured',
-                                   payload:null, text:'', tab:null});
+                                   payload:null, text:'', tab:null, etag:null});
     let driveEditor = closedEditor(null);
     // Two ways to edit one document: the fields for the surface it is, and
     // the JSON underneath for everything the fields do not reach. Whichever
@@ -1257,8 +1260,12 @@
               `/api/workspace/drive/documents/${encodeURIComponent(item.id)}/versions/${n}`);
             const data = await request.json();
             if (!request.ok) throw new Error(data?.error?.message || '版を取得できませんでした。');
+            // The etag of the *current* version, not of the one being
+            // viewed: saving an old version forward is a new version on top
+            // of what is there, not a rewrite of history.
             driveEditor = {id:item.id, open:true, mode:driveEditor.mode,
-                           payload:data.payload, text:'', tab:null};
+                           payload:data.payload, text:'', tab:null,
+                           etag:data.item?.etag};
             syncText();
             save.hidden = false;
             renderPane();
@@ -1279,13 +1286,15 @@
           `/api/workspace/drive/documents/${encodeURIComponent(item.id)}`);
         const data = await request.json();
         if (!request.ok) throw new Error(data?.error?.message || '内容を取得できませんでした。');
-        return data.payload;
+        return {payload:data.payload, etag:data.item?.etag};
       };
       open.addEventListener('click', async () => {
         open.disabled = true; status.textContent = '読み込んでいます…';
         try {
+          const fresh = await load();
           driveEditor = {id:item.id, open:true, mode:driveEditor.mode,
-                         payload:await load(), text:'', tab:null};
+                         payload:fresh.payload, text:'', tab:null,
+                         etag:fresh.etag};
           syncText();
           save.hidden = false;
           renderPane();
@@ -1314,7 +1323,7 @@
         try {
           const saved = await postJSON(
             `/api/workspace/drive/documents/${encodeURIComponent(item.id)}/versions`,
-            {payload}, true);
+            {payload, etag:driveEditor.etag}, true);
           const warnings = (saved.warnings || []).map((w) => w.message).join(' / ');
           // The save went through and the surface still had something to say.
           driveEditor = closedEditor(item.id);
@@ -1324,7 +1333,22 @@
             ? `保存しました（版 ${saved.item.versions}）。注意: ${warnings}`
             : `保存しました（版 ${saved.item.versions}）。`;
         } catch (error) {
+          // A refused save keeps the editor open with the text intact. The
+          // work is not lost and not applied; the person decides.
           status.textContent = error.message;
+          if (/更新しました/.test(error.message)) {
+            const reload = make('button', 'tool-button', '相手の版を読み込む（自分の編集は破棄）');
+            reload.type = 'button';
+            reload.addEventListener('click', async () => {
+              const fresh = await load();
+              driveEditor = {id:item.id, open:true, mode:driveEditor.mode,
+                             payload:fresh.payload, text:'', tab:null,
+                             etag:fresh.etag};
+              syncText(); renderPane();
+              status.textContent = '最新の版を読み込みました。';
+            });
+            status.append(' ', reload);
+          }
         } finally {
           save.disabled = false;
         }

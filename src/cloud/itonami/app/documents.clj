@@ -372,6 +372,10 @@
       :kind (some-> (get resource-kinds kind) name)
       :label (get-in kinds [(get resource-kinds kind) :label])
       :created-at (:drive/created-at item)
+      ;; What a save has to echo back. The object reference of the current
+      ;; version, which `write-item` guarantees is unique per version, so it
+      ;; is an ETag in every sense but the header it is not sent in.
+      :etag (:drive/object-ref item)
       :updated-at (:drive.version/created-at newest)
       ;; Who last wrote it, which is only a question worth asking because a
       ;; document can now have more than one writer.
@@ -703,7 +707,19 @@
   reused one, and the reason is the one that matters — reusing a reference
   replaces an earlier version's bytes while the history saying otherwise is
   still sitting in `:drive/versions`."
-  [{:keys [workspace item spec owner own?]} id actor object-store resource]
+  [{:keys [workspace item spec owner own?]} id actor object-store resource expected-etag]
+  (when-not (= expected-etag (:drive/object-ref item))
+    ;; The lost update this exists to stop. Two editors open version 1, both
+    ;; save, and the second write silently discards the first — measured
+    ;; before this check existed: alice's paragraph was simply gone and the
+    ;; UI said "saved". The bytes were still in the history, which is not the
+    ;; same as anybody knowing to look.
+    (throw (ex-info "他の人がこのドキュメントを更新しました。読み込み直してください。"
+                    {:type :drive/stale-version
+                     :item-id id
+                     :etag (:drive/object-ref item)
+                     :versions (count (:drive/versions item))
+                     :updated-by (:drive.version/author (peek (:drive/versions item)))})))
   (let [{:keys [errors warnings]} (problems-in spec resource)
         ;; Reference checks are the app's, not a surface's: `docs.validate`
         ;; sees a `:docs/target` string and has no way to know whether it
@@ -758,12 +774,23 @@
   keys and a projected payload has none: `sheets.validate/problems` on a
   string-keyed map finds no tabs, reports no problems, and waves anything
   through. That failure is silent in the direction that matters, which is
-  why the rehydrate step is not an optimisation."
-  ([id payload actor] (update! id payload actor (store-instance)))
-  ([id payload actor object-store]
+  why the rehydrate step is not an optimisation.
+
+  `expected-etag` is the `:etag` the caller was given when it read the
+  document — the object reference of the version it edited. A save whose
+  etag is not the current one is refused rather than applied, because a
+  document can now have two editors and the alternative is that the second
+  save silently deletes the first one's work.
+
+  Not optional, and not defaulted to the current value. A nil that meant
+  \"whatever is there now\" would be the old behaviour under a new name."
+  ([id payload actor expected-etag]
+   (update! id payload actor expected-etag (store-instance)))
+  ([id payload actor expected-etag object-store]
    (locking write-lock
      (let [{:keys [spec] :as target} (writable! actor id)]
-       (write-resource! target id actor object-store ((:rehydrate spec) payload))))))
+       (write-resource! target id actor object-store ((:rehydrate spec) payload)
+                        expected-etag)))))
 
 (defn rename!
   "Change a document's title.
@@ -771,21 +798,25 @@
   This does record a new version, because the title is not only Drive
   metadata — it is inside the stored resource as `:sheets/title` and its
   siblings. Renaming only the Drive item would leave the two disagreeing,
-  and the one that travels with the bytes is the one another reader sees."
+  and the one that travels with the bytes is the one another reader sees.
+
+  No etag from the caller: this reads the current resource itself, inside the
+  lock, so what it writes is by construction based on what is there. A rename
+  cannot be a lost update because it never carries a stale copy."
   ([id title actor] (rename! id title actor (store-instance)))
   ([id title actor object-store]
    (locking write-lock
-     (let [{:keys [spec] :as target} (writable! actor id)
+     (let [{:keys [item spec] :as target} (writable! actor id)
            title (not-empty (str/trim (str title)))]
        (when-not title
          (throw (ex-info "名前を空にはできません。"
                          {:type :drive/invalid-document
                           :problems [{:code ":title/blank"
                                       :message "名前を空にはできません。"}]})))
-       (let [current (content id actor object-store)
-             resource (assoc ((:rehydrate spec) (:payload current))
+       (let [resource (assoc (:resource (content id actor object-store))
                              (:title-key spec) title)]
-         (write-resource! target id actor object-store resource))))))
+         (write-resource! target id actor object-store resource
+                          (:drive/object-ref item)))))))
 
 (defn version-content
   "The stored envelope of one *earlier* version of `id`.

@@ -68,6 +68,30 @@ nothing. `documents/purge!` is the one call that does, it refuses anything not
 already in the trash, and the Drive shows the trash and the quota together
 because otherwise a Drive that fills up cannot say why.
 
+### Two editors, one document
+
+A save carries the `:etag` of the version it was made from — the object
+reference of that version, which `drive.object/write-item` guarantees is
+unique per version. A save whose etag is not the current one is refused with
+`:drive/stale-version` and a 409, naming who moved it.
+
+This is a defect fix rather than a feature. Measured before the check
+existed: alice and bob open version 1, both add a paragraph, both save — and
+alice's paragraph is gone with the UI saying "saved". The bytes were still in
+the history, which is not the same as anybody knowing to look.
+
+A missing etag is refused too. A nil that meant "whatever is there now" would
+be the old behaviour under a new name.
+
+`rename!` carries no etag because it cannot be stale: it reads the current
+resource itself, inside the lock, so what it writes is by construction based
+on what is there.
+
+**This is optimistic concurrency, not co-editing.** The second editor is told
+to re-read and re-apply; nothing merges their work for them. Real
+simultaneous editing means operations rather than whole-document saves, and
+that is a different design, not more of this one.
+
 ### EDN at rest, JSON on the wire
 
 The object store holds EDN. `documents/stored-envelope` is the same
