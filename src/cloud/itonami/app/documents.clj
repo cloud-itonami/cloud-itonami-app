@@ -61,6 +61,7 @@
             [forms.model :as forms]
             [forms.validate :as forms-validate]
             [forms.wire :as forms-wire]
+            [docs.docx :as docs-docx]
             [docs.markdown :as docs-md]
             [forms.responses :as forms-responses]
             [sheets.csv :as sheets-csv]
@@ -108,6 +109,7 @@
             :label "スプレッドシート"
             :default-title "無題のスプレッドシート"
             :title-key :sheets/title
+           :id-key :sheets/id
             :seed (fn [id title]
                     (-> (sheets/workbook id {:sheets/title title})
                         ;; A workbook with no tabs has nowhere to put a cell,
@@ -133,6 +135,7 @@
           :label "ドキュメント"
           :default-title "無題のドキュメント"
           :title-key :docs/title
+           :id-key :docs/id
           :seed (fn [id title]
                   (-> (docs/document id {:docs/title title})
                       (docs/add-block (docs/heading "title" 1 title))))
@@ -156,6 +159,7 @@
            :label "フォーム"
            :default-title "無題のフォーム"
            :title-key :forms/title
+           :id-key :forms/id
            ;; No seed field: an empty form is valid, and a placeholder
            ;; question is one the author has to notice and delete.
            :seed (fn [id title] (forms/form id {:forms/title title}))
@@ -170,6 +174,7 @@
             :label "スライド"
             :default-title "無題のスライド"
             :title-key :slides/title
+           :id-key :slides/id
             :seed (fn [id title]
                     (-> (slides/deck id {:slides/title title})
                         (slides/add-slide
@@ -207,7 +212,11 @@
                     "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                     :extension "xlsx"}
             "edn" {:media-type "application/edn" :extension "edn"}}
-   :docs {"md" {:media-type "text/markdown; charset=utf-8" :extension "md"}
+   :docs {"docx" {:media-type
+                  (str "application/vnd.openxmlformats-officedocument."
+                       "wordprocessingml.document")
+                  :extension "docx"}
+          "md" {:media-type "text/markdown; charset=utf-8" :extension "md"}
           "edn" {:media-type "application/edn" :extension "edn"}}
    :forms {"csv" {:media-type "text/csv; charset=utf-8" :extension "csv"
                   ;; Not the questions — the answers. Every other format on
@@ -226,6 +235,7 @@
   {"csv" :sheets
    "xlsx" :sheets
    "pptx" :slides
+   "docx" :docs
    "md" :docs
    "edn" nil})
 
@@ -483,12 +493,18 @@
   sharing those are not the same question. `:role` is the asker's effective
   role, which is what the UI has to know before it offers a save button."
   ([item] (item-view item {}))
-  ([item {:keys [owner role own?] :or {own? true}}]
+  ([item {:keys [owner role own? trashed?] :or {own? true}}]
    (let [kind (:drive/resource-kind item)
          newest (latest-version item)]
      {:id (:drive/id item)
       :name (:drive/title item)
       :folder (if own? "マイドライブ" "共有アイテム")
+      ;; Which folder it is in, so a listing can be scoped to one without
+      ;; asking the server per item. Nil for a document in somebody else's
+      ;; Drive: the folder it sits in there is not one this principal can
+      ;; navigate to, and naming it would put an id in a breadcrumb that
+      ;; goes nowhere.
+      :parent-id (when own? (:drive/parent-id item))
       :media-type (:drive/media-type item)
       :resource-kind (some-> kind str)
       :kind (some-> (get resource-kinds kind) name)
@@ -510,7 +526,12 @@
                      (:drive/versions item))
       :size-bytes (or (:drive.version/size-bytes newest) 0)
       :held-bytes (held-bytes item)
-      :trashed? (boolean (:drive/trashed? item))
+      ;; Given by the caller, which has the workspace, rather than read off
+      ;; the item: a file inside a trashed folder is in the trash, and an
+      ;; item view that said otherwise would put it back in the listing.
+      ;; The item's own flag is the fallback for a caller with no tree to
+      ;; ask, which is the answer that was always given before folders.
+      :trashed? (boolean (if (some? trashed?) trashed? (:drive/trashed? item)))
       :own? own?
       :owner owner
       :role (some-> role name)
@@ -521,6 +542,23 @@
       :available? true
       :origin "workspace"})))
 
+(defn folder-view
+  "One folder, in the shape the list renders.
+
+  Deliberately not `item-view`: a folder has no versions, no resource kind
+  and no size, and half of that view would be zeros standing for questions a
+  folder cannot be asked."
+  [workspace item actor]
+  {:id (:drive/id item)
+   :name (:drive/title item)
+   :kind "folder"
+   :label "フォルダ"
+   :parent-id (:drive/parent-id item)
+   :trashed? (ws/trashed? workspace (:drive/id item))
+   :role (some-> (ws/effective-role workspace (:drive/id item) actor) name)
+   :count (count (ws/children workspace (:drive/id item) actor))})
+
+
 (defn- viewable-files
   "Every file in `workspace` this principal may read, with their role."
   [workspace actor owner]
@@ -528,12 +566,31 @@
        (filter #(= :file (:drive/kind %)))
        (keep (fn [item]
                (when-let [role (ws/effective-role workspace (:drive/id item) actor)]
-                 {:item item :role role :owner owner :own? (= owner actor)})))))
+                 {:item item :role role :owner owner :own? (= owner actor)
+                  ;; Answered here because this is where the tree is. Every
+                  ;; listing flows through `newest-first`, which passes the
+                  ;; entry straight to `item-view`.
+                  :trashed? (ws/trashed? workspace (:drive/id item))})))))
 
-(defn- newest-first [entries]
+(defn- newest-first
+  "Entries as item views, most recently written first.
+
+  The id is part of the sort key, and it is not decoration. `cursor-of`
+  builds a cursor from `updated-at` *and* the id, so paging compares on a
+  total order; a sort that stopped at the timestamps would leave documents
+  written in the same millisecond in whatever order they came out of a hash
+  map. The two orders would then disagree, and `after-cursor` — which drops
+  everything up to the cursor — would skip one document and repeat another.
+
+  Found as a flaky test rather than as a bug report: five documents created
+  in a loop shared a timestamp, and one run in some number came out
+  interleaved. Anything that can page in a different order between two
+  requests can lose a row between two pages."
+  [entries]
   (->> entries
        (sort-by (juxt #(or (:drive.version/created-at (latest-version (:item %))) "")
-                      #(:drive/created-at (:item %))))
+                      #(:drive/created-at (:item %))
+                      #(:drive/id (:item %))))
        reverse
        (mapv (fn [entry] (item-view (:item entry) entry)))))
 
@@ -592,7 +649,7 @@
   that would fix search."
   ([state actor] (documents state actor {}))
   ([state actor {:keys [limit cursor]}]
-   (let [views (-> (remove #(:drive/trashed? (:item %)) (visible-entries state actor))
+   (let [views (-> (remove :trashed? (visible-entries state actor))
                    newest-first
                    (after-cursor cursor))
          limit (or limit (count views))]
@@ -621,9 +678,24 @@
   answers to different questions and the trash is not a place anything
   should appear by accident."
   [state actor]
-  (let [workspace (workspace-for state actor)]
-    (newest-first (filter #(:drive/trashed? (:item %))
-                          (viewable-files workspace actor actor)))))
+  (let [workspace (workspace-for state actor)
+        own-flag? #(:drive/trashed? (ws/item workspace %))]
+    (into
+     ;; Folders first, and only those trashed in their own right — a folder
+     ;; inside a trashed folder is not a second thing to restore. Without
+     ;; them the trash could never be emptied of a folder at all, and the
+     ;; bytes of everything inside it would stay charged to the quota with
+     ;; nothing listing them.
+     (->> (vals (:drive.workspace/items workspace))
+          (filter #(and (= :folder (:drive/kind %))
+                        (:drive/trashed? %)
+                        (not (some own-flag? (ws/ancestors workspace (:drive/id %))))))
+          (mapv #(folder-view workspace % actor)))
+     (newest-first (filter #(and (:drive/trashed? (:item %))
+                                 (not (some own-flag?
+                                            (ws/ancestors workspace
+                                                          (:drive/id (:item %))))))
+                           (viewable-files workspace actor actor))))))
 
 (defn quota-view [state actor]
   (let [workspace (workspace-for state actor)]
@@ -690,50 +762,209 @@
   ;; stays inside its alphabet on purpose.
   (str "obj-" (UUID/randomUUID)))
 
-(defn create!
-  "Create a document of `kind` in `actor`'s Drive and return its item view.
+(defn- locate-folder!
+  "Which Drive a new item belongs in, and where in it.
 
-  The order is `drive.object`'s: the item exists in the model, then the
-  bytes are written, then the version is recorded — so a store failure
-  leaves nothing behind claiming bytes that are not there. State is only
-  persisted once `write-item` has said yes.
+  `folder-parent!` looks in one workspace, which is right for `move!` —
+  `ws/move` rewrites one tree and a destination in another Drive would leave
+  a parent id pointing outside it. Creating is different: a folder shared
+  with you is somewhere you may put things, and that folder lives in the
+  granter's Drive.
 
-  The read-then-write is inside a lock rather than inside `store/transact!`
-  because the write is IO: `transact!` is a `swap!`, and a `swap!` that
-  retries would put the object twice under two references, the second of
-  which nothing would ever reference again."
-  ([kind title actor] (create! kind title actor (store-instance)))
-  ([kind title actor object-store]
-   (let [spec (get kinds kind)]
-     (when-not spec
-       (throw (ex-info "作成できるのはスプレッドシート・ドキュメント・フォームだけです。"
-                       {:type :drive/unknown-kind :kind kind
-                        :known (vec (keys kinds))})))
-     (when (str/blank? (str actor))
-       (throw (ex-info "作成者を特定できません。" {:type :identity/unauthenticated})))
-     (locking write-lock
-       (let [workspace (workspace-for (store/snapshot) actor)
-             id (store/new-id "doc")
-             title (or (not-empty (str/trim (str title))) (:default-title spec))
-             created-at (store/now)
-             envelope (stored-envelope spec ((:seed spec) id title))
-             staged (ws/create-file workspace id (:drive.workspace/root-id workspace)
-                                    {:drive/title title
-                                     :drive/media-type stored-media-type
-                                     :drive/resource-kind (:resource-kind spec)
-                                     :drive/created-at created-at}
-                                    actor)
-             written (object/write-item staged object-store id actor
-                                        (envelope-bytes envelope)
-                                        {:object-ref (object-ref)
-                                         :created-at created-at})]
-         (if (:ok? written)
-           (do (store/transact! assoc-in (workspace-path actor) (:workspace written))
-               {:schema schema
-                :ok? true
-                :item (item-view (ws/item (:workspace written) id)
-                                 {:owner actor :own? true :role :owner})})
-           (refuse! written)))))))
+  **What is created there belongs to that Drive.** The workspace is this
+  application's ownership boundary: the bytes are in it, the quota is its
+  owner's, and trash, purge and re-sharing are all owner-only. A document
+  created in alice's folder that bob owned would be a document alice cannot
+  remove from her own Drive. So the Drive's owner owns it and the creator is
+  recorded as an editor, which is what they need to go on working on it.
+
+  The cost is real and is the same one an editor already has: someone you
+  gave write access to can consume your quota. That was already true of
+  saving a shared document — every version is charged to the owner — so this
+  widens who can start one rather than introducing the hazard."
+  [state actor folder]
+  (if (str/blank? (str folder))
+    (let [own (workspace-for state actor)]
+      {:workspace own :owner actor :parent (:drive.workspace/root-id own)})
+    (let [{:keys [workspace owner]} (locate state actor folder)
+          item (when workspace (ws/item workspace folder))]
+      (cond
+        (nil? item)
+        (throw (ex-info "そのフォルダはありません。"
+                        {:type :drive/not-found :folder folder}))
+        (not= :folder (:drive/kind item))
+        (throw (ex-info "フォルダではありません。"
+                        {:type :drive/not-a-folder :folder folder}))
+        (ws/trashed? workspace folder)
+        (throw (ex-info "ゴミ箱の中のフォルダには作成できません。"
+                        {:type :drive/item-is-trashed :folder folder}))
+        (not (ws/can-write? workspace folder actor))
+        (refuse! {:reason :not-permitted :item-id folder :principal actor})
+        :else {:workspace workspace :owner owner :parent folder}))))
+
+(defn- folder-parent!
+  "A destination folder inside `workspace`, checked.
+
+  Nil means that workspace's root. Used by `move!`, which must stay inside
+  one Drive: `ws/move` rewrites one tree, so a destination in another would
+  leave a parent id pointing at an item that tree does not contain — a
+  breadcrumb that walks up out of the workspace and a listing that never
+  shows it again. Creating uses `locate-folder!` instead, which may cross.
+
+  A folder that is not a folder, is not there, or is not this principal's to
+  write into is refused here rather than by `ws/create-file`, whose message
+  is about a parent and not about a Drive."
+  [workspace folder actor]
+  (let [root (:drive.workspace/root-id workspace)]
+    (if (str/blank? (str folder))
+      root
+      (let [item (ws/item workspace folder)]
+        (cond
+          ;; Looked up in *this* workspace, which for `create!` is the
+          ;; creator's own. A folder shared from someone else's Drive is not
+          ;; here, and that is a limitation rather than a permission answer:
+          ;; creating into it would mean writing into the owner's workspace
+          ;; and against the owner's quota, which is what saving a shared
+          ;; document already does but not what creating one does yet.
+          (nil? item)
+          (throw (ex-info "そのフォルダはあなたのドライブにありません。"
+                          {:type :drive/not-found :folder folder}))
+          (not= :folder (:drive/kind item))
+          (throw (ex-info "フォルダではありません。"
+                          {:type :drive/not-a-folder :folder folder}))
+          (ws/trashed? workspace folder)
+          (throw (ex-info "ゴミ箱の中のフォルダには作成できません。"
+                          {:type :drive/item-is-trashed :folder folder}))
+          (not (ws/can-write? workspace folder actor))
+          (refuse! {:reason :not-permitted :item-id folder :principal actor})
+          :else folder)))))
+
+(defn create-folder!
+  "A folder in `actor`'s Drive.
+
+  No object and no version: a folder holds nothing, so there is nothing to
+  write to the store and nothing to charge against the quota. That is why
+  this does not go through `object/write-item` like every other creation
+  here."
+  ([title actor] (create-folder! title actor nil))
+  ([title actor folder]
+   (when (str/blank? (str actor))
+     (throw (ex-info "作成者を特定できません。" {:type :identity/unauthenticated})))
+   (locking write-lock
+     (let [workspace (workspace-for (store/snapshot) actor)
+           parent (folder-parent! workspace folder actor)
+           id (store/new-id "fld")
+           title (or (not-empty (str/trim (str title))) "無題のフォルダ")
+           made (ws/create-folder workspace id parent title actor)]
+       (store/transact! assoc-in (workspace-path actor) made)
+       {:schema schema :ok? true :item (folder-view made (ws/item made id) actor)}))))
+
+(defn move!
+  "Put a document or folder inside another folder.
+
+  Owner only. Moving into a shared folder shares what was moved — that falls
+  out of `effective-role` walking up the parents — so a mover who was merely
+  an editor could widen the access the owner granted, which is the same
+  reason re-sharing is owner-only."
+  [id folder actor]
+  (locking write-lock
+    (let [{:keys [workspace owner]} (locate (store/snapshot) actor id)
+          item (when workspace (ws/item workspace id))]
+      (cond
+        (nil? item) (refuse! {:reason :no-such-item :item-id id})
+        (not= :owner (ws/effective-role workspace id actor))
+        (refuse! {:reason :not-permitted :item-id id :principal actor})
+        :else
+        (let [parent (folder-parent! workspace folder actor)
+              ;; `ws/move` refuses a cycle, and refuses in the library's
+              ;; vocabulary — an ex-info with no `:type`, which the server's
+              ;; status table cannot see and would answer 502 for. A folder
+              ;; dragged onto its own child is an ordinary mistake and
+              ;; deserves to be told so, not to look like a broken server.
+              moved (try (ws/move workspace id parent)
+                         (catch clojure.lang.ExceptionInfo e
+                           (throw (ex-info "そのフォルダの中には移動できません。"
+                                           (assoc (ex-data e)
+                                                  :type :drive/invalid-move)))))]
+          (store/transact! assoc-in (workspace-path owner) moved)
+          {:schema schema :ok? true :id id :folder parent
+           :path (mapv :drive/title (ws/path moved id))})))))
+
+(defn folders
+  "The folders inside `folder` — the root when it is not given — and the
+  breadcrumb that leads there.
+
+  Folders are listed separately from documents because they are a different
+  kind of thing with a different view, and because `documents` is ordered by
+  last write, which a folder does not have."
+  [state actor folder]
+  (let [own (workspace-for state actor)
+        ;; Resolved rather than assumed to be here. A folder shared from
+        ;; another Drive is somewhere this principal can now create, so it
+        ;; has to be somewhere they can navigate into — otherwise the
+        ;; capability exists and nothing can reach it.
+        located (when (not-empty (str folder)) (locate state actor folder))
+        workspace (or (:workspace located) own)
+        here (or (not-empty (str folder)) (:drive.workspace/root-id own))]
+    (when (ws/item workspace here)
+      {:folder here
+       ;; Whose Drive this is, and who is asking — so the pane can say that
+       ;; what you create here lands in somebody else's Drive, which is the
+       ;; one consequence of this feature a person should not discover
+       ;; afterwards.
+       :owner (or (:owner located) actor)
+       :you actor
+       :path (mapv (fn [item] {:id (:drive/id item) :name (:drive/title item)})
+                   (ws/path workspace here))
+       :folders (->> (ws/children workspace here actor)
+                     (filter #(= :folder (:drive/kind %)))
+                     (mapv #(folder-view workspace % actor)))
+       ;; Every folder, with where it is, for a *move* — which is a choice
+       ;; among all of them and not among the ones you happen to be standing
+       ;; in. Named by path rather than by title, because two folders called
+       ;; Q1 are an ordinary thing to have and a picker showing both as "Q1"
+       ;; would be asking an unanswerable question.
+       ;; The asker's own Drive is merged in rather than taken from the
+       ;; store: `workspace-for` creates one on demand, so somebody who has
+       ;; never created anything has no entry there — and the picker would
+       ;; offer them nowhere at all, including their own root, while `:path`
+       ;; above happily said "My Drive".
+       :all (->> (assoc (all-workspaces state) actor own)
+                 (mapcat
+                  (fn [[owner ws]]
+                    (->> (vals (:drive.workspace/items ws))
+                         (filter #(and (= :folder (:drive/kind %))
+                                       (not (ws/trashed? ws (:drive/id %)))
+                                       (ws/can-write? ws (:drive/id %) actor)))
+                         (map (fn [item]
+                                {:id (:drive/id item)
+                                 :owner owner
+                                 :own? (= owner actor)
+                                 :name (str/join " / "
+                                                 (map :drive/title
+                                                      (ws/path ws (:drive/id item))))})))))
+                 (sort-by (juxt (complement :own?) :name))
+                 vec)
+       ;; Folders from other Drives, at the top level only: they are not
+       ;; inside anything here, so there is no folder they could appear
+       ;; under. Shown beside your own the way shared documents are shown
+       ;; beside yours in the list.
+       :shared (when (str/blank? (str folder))
+                 (->> (all-workspaces state)
+                      (remove #(= (first %) actor))
+                      (mapcat
+                       (fn [[_ ws]]
+                         (->> (vals (:drive.workspace/items ws))
+                              (filter #(and (= :folder (:drive/kind %))
+                                            (not (ws/trashed? ws (:drive/id %)))
+                                            ;; Shared *to this principal*
+                                            ;; rather than inherited from a
+                                            ;; folder already listed — a
+                                            ;; subfolder of a shared folder
+                                            ;; is reached by opening it.
+                                            (get (:drive/permissions %) actor)))
+                              (map #(folder-view ws % actor)))))
+                      vec))})))
 
 (defn- stored-kind-mismatch!
   "Refuse bytes whose discriminant disagrees with the item that points at them.
@@ -755,28 +986,43 @@
     (stored-kind-mismatch! id (:drive/resource-kind item) kind)
     payload))
 
+(def ^:private format-losses
+  "Which formats can say what they will drop, and how to ask.
+
+  A table rather than a `cond`, so adding a writer that gains the function
+  is one line here — and so the formats that *cannot* answer are visible as
+  absences rather than as an unstated assumption. EDN is not here because it
+  is the stored bytes and loses nothing; CSV, PPTX and the office readers
+  are not here because nobody has written the function for them, which is a
+  gap and not a claim that they are lossless."
+  {[:docs "md"] docs-md/unexpressed
+   [:docs "docx"] docs-docx/unexpressed
+   [:sheets "xlsx"] sheets-xlsx/unexpressed})
+
 (defn export-warnings
   "What each export format will drop from this resource, before it drops it.
 
   Keyed by format, so the pane can put the warning next to the button that
-  causes it rather than in a place nobody reads. Only Markdown answers
-  anything today: EDN is the stored bytes and loses nothing, and the office
-  formats lose plenty but neither `slides.pptx` nor `sheets.xlsx` can yet say
-  what — those are the same function waiting to be written, not a claim that
-  they are lossless.
+  causes it rather than in a place nobody reads.
 
-  Entries are `docs.markdown/unexpressed`'s shape, which is
-  `docs.validate/problems`'s shape, so the pane renders them with the code it
+  Every surface writes its own answer in its own namespaced shape —
+  `:docs/severity` here, `:sheets/severity` there — because each belongs
+  beside the writer that does the dropping. Flattened to one shape here,
+  which is the app's, so the pane renders all of them with the code it
   already has."
   [kind resource]
-  (when (= :docs kind)
-    (let [entries (docs-md/unexpressed resource)]
-      (when (seq entries)
-        {"md" (mapv (fn [e] {:severity (some-> (:docs/severity e) name)
-                             :code (str (:docs/code e))
-                             :id (:docs/id e)
-                             :message (:docs/msg e)})
-                    entries)}))))
+  (let [flatten-entry (fn [e]
+                        (let [get* (fn [n] (some (fn [[k v]] (when (= n (name k)) v)) e))]
+                          {:severity (some-> (get* "severity") name)
+                           :code (str (get* "code"))
+                           :id (get* "id")
+                           :message (get* "msg")}))
+        answered (keep (fn [[[k format] ask]]
+                         (when (= k kind)
+                           (let [entries (ask resource)]
+                             (when (seq entries) [format (mapv flatten-entry entries)]))))
+                       format-losses)]
+    (when (seq answered) (into {} answered))))
 
 (defn content
   "The stored resource of one document, read back through the ACL.
@@ -801,6 +1047,7 @@
          {:schema schema
           :ok? true
           :item (item-view item {:owner owner :own? own?
+                                 :trashed? (ws/trashed? workspace id)
                                  :role (ws/effective-role workspace id actor)})
           :resource-kind (some-> (:drive/resource-kind item) str)
           :resource resource
@@ -926,6 +1173,89 @@
 (defn errors-in [spec resource]
   (:errors (problems-in spec resource)))
 
+(defn create!
+  "Create a document of `kind` in `actor`'s Drive and return its item view.
+
+  The order is `drive.object`'s: the item exists in the model, then the
+  bytes are written, then the version is recorded — so a store failure
+  leaves nothing behind claiming bytes that are not there. State is only
+  persisted once `write-item` has said yes.
+
+  The read-then-write is inside a lock rather than inside `store/transact!`
+  because the write is IO: `transact!` is a `swap!`, and a `swap!` that
+  retries would put the object twice under two references, the second of
+  which nothing would ever reference again."
+  ([kind title actor] (create! kind title actor (store-instance) {}))
+  ([kind title actor object-store] (create! kind title actor object-store {}))
+  ([kind title actor object-store {:keys [folder resource-fn]}]
+   (let [spec (get kinds kind)]
+     (when-not spec
+       (throw (ex-info "作成できるのはスプレッドシート・ドキュメント・フォームだけです。"
+                       {:type :drive/unknown-kind :kind kind
+                        :known (vec (keys kinds))})))
+     (when (str/blank? (str actor))
+       (throw (ex-info "作成者を特定できません。" {:type :identity/unauthenticated})))
+     (locking write-lock
+       (let [{:keys [workspace owner parent]}
+             (locate-folder! (store/snapshot) actor folder)
+             id (store/new-id "doc")
+             title (or (not-empty (str/trim (str title))) (:default-title spec))
+             created-at (store/now)
+             ;; `resource-fn` rather than a resource, because the id is
+             ;; minted here and the contents have to carry it. Copying and
+             ;; importing both used to create a seeded document and then
+             ;; write over it, which left every one of them with a first
+             ;; version that was an empty document nobody ever made —
+             ;; offered by the history pane and restorable.
+             resource ((or resource-fn (:seed spec)) id title)
+             ;; The same check `write-resource!` makes, because this is now
+             ;; the same act. Before `resource-fn` existed, creating always
+             ;; produced a seed and validating one would have been checking
+             ;; this file against itself; now a copy or an import arrives
+             ;; here whole, and a document that cannot be saved must not be
+             ;; creatable either. Leaving it out let a broken .edn import
+             ;; succeed — silent in the direction that looks like success.
+             errors (:errors (problems-in spec resource))
+             _ (when (seq errors)
+                 (throw (ex-info (str "作成できません: " (:message (first errors)))
+                                 {:type :drive/invalid-document :problems errors})))
+             envelope (stored-envelope spec resource)
+             staged (ws/create-file workspace id parent
+                                    {:drive/title title
+                                     :drive/media-type stored-media-type
+                                     :drive/resource-kind (:resource-kind spec)
+                                     :drive/created-at created-at}
+                                    actor)
+             ;; A document belongs to the Drive it is in. `ws/create-file`
+             ;; makes the creator the owner, which is right in your own
+             ;; Drive and wrong in somebody else's: alice would be unable to
+             ;; trash, purge or re-share something sitting in her own
+             ;; folder, all of which are owner-only. So the Drive's owner
+             ;; owns it and the creator is recorded as an editor — enough to
+             ;; go on working on what they just made.
+             staged (cond-> staged
+                      (not= owner actor)
+                      (assoc-in [:drive.workspace/items id :drive/permissions]
+                                {owner :owner actor :editor}))
+             written (object/write-item staged object-store id actor
+                                        (envelope-bytes envelope)
+                                        {:object-ref (object-ref)
+                                         :created-at created-at})]
+         (if (:ok? written)
+           ;; Persisted under the *folder owner*, because that is whose
+           ;; workspace was rewritten. Writing it back under the creator
+           ;; would put a copy in their Drive and leave the folder owner's
+           ;; unchanged — the document would appear to exist twice and be
+           ;; the same document neither time.
+           (do (store/transact! assoc-in (workspace-path owner) (:workspace written))
+               {:schema schema
+                :ok? true
+                :item (item-view (ws/item (:workspace written) id)
+                                 {:owner owner :own? (= owner actor)
+                                  :role (ws/effective-role (:workspace written) id actor)})})
+           (refuse! written)))))))
+
+
 (defn- writable!
   "The workspace, item and spec for a write, or the refusal that stops it.
 
@@ -940,7 +1270,7 @@
         item (when found (ws/item workspace id))]
     (cond
       (nil? item) (refuse! {:reason :no-such-item :item-id id})
-      (:drive/trashed? item) (refuse! {:reason :item-is-trashed :item-id id})
+      (ws/trashed? workspace id) (refuse! {:reason :item-is-trashed :item-id id})
       (not (ws/can-write? workspace id actor))
       (refuse! {:reason :not-permitted :item-id id :principal actor})
       :else
@@ -1112,6 +1442,7 @@
            {:schema schema
             :ok? true
             :item (item-view item {:owner owner :own? own?
+                                   :trashed? (ws/trashed? workspace id)
                                    :role (ws/effective-role workspace id actor)})
             :index index
             :created-at (:drive.version/created-at version)
@@ -1182,7 +1513,12 @@
   Refuses anything not already trashed. `drive.object/forget-item` names the
   hazard exactly — a caller that wires it to the trash button has made
   deletion silent and permanent — so the trash is the gate rather than a
-  suggestion, and emptying it is a second, separate act."
+  suggestion, and emptying it is a second, separate act.
+
+  Purging a folder purges what is inside it, deepest first, and `:purged`
+  says how many items that was. There is no other way for those bytes to be
+  reclaimed: they are in the trash because their folder is, so nothing ever
+  lists them on their own."
   ([id actor] (purge! id actor (store-instance)))
   ([id actor object-store]
    (locking write-lock
@@ -1194,27 +1530,53 @@
          ;; grantee is told they may not rather than told to trash it first.
          (not= :owner (ws/effective-role workspace id actor))
          (refuse! {:reason :not-permitted :item-id id :principal actor})
-         (not (:drive/trashed? item))
+         (not (ws/trashed? workspace id))
          (throw (ex-info "先にゴミ箱へ移動してください。"
                          {:type :drive/not-trashed :item-id id}))
          :else
-         (let [forgotten (object/forget-item workspace object-store id actor)]
-           (if (:ok? forgotten)
-             ;; forget-item empties the item and returns the quota; the item
-             ;; itself is what is dropped here, because an entry with no
-             ;; versions and no bytes is a row that can only confuse a list.
-             (let [without (-> (:workspace forgotten)
-                               (update :drive.workspace/items dissoc id)
-                               (update-in [:drive.workspace/items
-                                           (:drive.workspace/root-id workspace)
-                                           :drive/children]
-                                          (fn [children]
-                                            (vec (remove #{id} children)))))]
-               (store/transact! assoc-in (workspace-path owner) without)
-               {:schema schema :ok? true :id id
-                :freed-bytes (:freed-bytes forgotten)
-                :quota (quota-view (store/snapshot) owner)})
-             (refuse! forgotten))))))))
+         (let [;; Deepest first, then the item itself. A folder purged before
+               ;; what is inside it would leave those files pointing at a
+               ;; parent that no longer exists — and `trashed?` walks
+               ;; upwards, so the walk would end at a missing item and answer
+               ;; "not in the trash". They would come back into the listing,
+               ;; unreachable and undeletable, having been resurrected by the
+               ;; deletion of their folder.
+               order (conj (vec (reverse (ws/descendants workspace id))) id)
+               result
+               (reduce
+                (fn [{:keys [ws freed] :as acc} target]
+                  (let [child (ws/item ws target)
+                        ;; A folder holds no bytes, so there is nothing for
+                        ;; `forget-item` to forget and no quota to return.
+                        forgotten (if (= :folder (:drive/kind child))
+                                    {:ok? true :workspace ws :freed-bytes 0}
+                                    (object/forget-item ws object-store target actor))]
+                    (if (:ok? forgotten)
+                      (let [parent (or (:drive/parent-id child)
+                                       (:drive.workspace/root-id ws))]
+                        {:ws (-> (:workspace forgotten)
+                                 (update :drive.workspace/items dissoc target)
+                                 ;; Its own parent, not the root. Everything
+                                 ;; lived at the root until folders existed,
+                                 ;; so this read correctly and meant the
+                                 ;; wrong thing — a purged file would have
+                                 ;; stayed listed in its folder for ever,
+                                 ;; pointing at an item that is gone.
+                                 (update-in [:drive.workspace/items parent
+                                             :drive/children]
+                                            (fn [children]
+                                              (vec (remove #{target} children)))))
+                         :freed (+ freed (or (:freed-bytes forgotten) 0))})
+                      (reduced (assoc acc :failed forgotten)))))
+                {:ws workspace :freed 0}
+                order)]
+           (if-let [failed (:failed result)]
+             (refuse! failed)
+             (do (store/transact! assoc-in (workspace-path owner) (:ws result))
+                 {:schema schema :ok? true :id id
+                  :purged (count order)
+                  :freed-bytes (:freed result)
+                  :quota (quota-view (store/snapshot) owner)}))))))))
 
 (defn empty-trash!
   "Purge everything in the trash, and report what came back.
@@ -1227,7 +1589,11 @@
      (let [ids (mapv :id (trashed (store/snapshot) actor))
            results (mapv #(purge! % actor object-store) ids)]
        {:schema schema :ok? true
-        :purged (count results)
+        ;; What was removed, not how many things were listed. Purging a
+        ;; folder purges what is inside it, so the two stopped being the
+        ;; same number the moment folders existed — and the one worth
+        ;; reporting is the one that says how much is gone.
+        :purged (reduce + 0 (map #(or (:purged %) 1) results))
         :freed-bytes (reduce + 0 (map :freed-bytes results))
         :quota (quota-view (store/snapshot) actor)}))))
 
@@ -1588,7 +1954,7 @@
         item (when workspace (ws/item workspace id))]
     (cond
       (nil? item) (refuse! {:reason :no-such-item :item-id id})
-      (:drive/trashed? item) (refuse! {:reason :item-is-trashed :item-id id})
+      (ws/trashed? workspace id) (refuse! {:reason :item-is-trashed :item-id id})
       :else {:owner owner :item item
              :role (ws/effective-role workspace id actor)})))
 
@@ -1860,6 +2226,58 @@
                 (sheets/tab "回答" {:sheets/title "回答"})
                 (vec rows)))))
 
+(defn copy!
+  "A new document with this one's contents, in `actor`'s Drive.
+
+  What every Drive calls *make a copy*, and the one operation a reader of a
+  shared document actually needs: until now the only way to get an editable
+  version of something shared read-only was to export it and import it back,
+  which is two steps, goes through bytes, and loses the kind on the way if
+  the surface has no office format.
+
+  So `readable!` and not `writable!` — a viewer may copy, and that is the
+  point rather than an oversight.
+
+  **Four things are deliberately left behind, and each would be a bug if it
+  came along.**
+
+  *The grants.* Copying a document shared with five people must not share
+  the copy with them. It is a new document created by `create!`, which gives
+  the creator `:owner` and nobody anything, so this falls out — and is
+  asserted anyway, because getting it wrong is a silent access leak rather
+  than a visible fault.
+
+  *The comments and the responses.* They are about the document somebody
+  said them about. A copy carrying its original's comment threads would put
+  words in a conversation that did not happen.
+
+  *The history.* The copy has one version, which is this one. A copy is not
+  a fork of the past; the original still has all of it.
+
+  *The quota.* Charged to whoever made the copy, unlike editing a shared
+  document — which is charged to the owner, because the bytes stay in their
+  Drive. Here the bytes are new and they are in the copier's Drive."
+  ([id actor] (copy! id actor (store-instance) {}))
+  ([id actor object-store] (copy! id actor object-store {}))
+  ([id actor object-store {:keys [title folder]}]
+   (let [{:keys [item]} (readable! actor id)
+         kind (get resource-kinds (:drive/resource-kind item))
+         source (:resource (content id actor object-store))
+         ;; Google's convention, and a name that says what it is: two
+         ;; documents called 議事録 in one listing is a choice nobody made.
+         name (or (not-empty (str/trim (str title)))
+                  (str (:drive/title item) " のコピー"))
+         spec (get kinds kind)]
+     (create! kind name actor object-store
+              {:folder folder
+               ;; One version, which is this one. The document arrives with
+               ;; its contents rather than being seeded empty and written
+               ;; over — see `create!`.
+               :resource-fn (fn [copy-id copy-title]
+                              (assoc source
+                                     (:title-key spec) copy-title
+                                     (:id-key spec) copy-id))}))))
+
 (defn export
   "One document in `format`, as bytes plus what to call them.
 
@@ -1909,6 +2327,7 @@
                  ;; built as text above.
                  "pptx" (slides-pptx/pptx-bytes resource)
                  "xlsx" (sheets-xlsx/xlsx-bytes resource)
+                 "docx" (docs-docx/docx-bytes resource)
                  (.getBytes ^String text StandardCharsets/UTF_8))}))))
 
 (defn responses-sheet!
@@ -1970,7 +2389,7 @@
   produced a one-slide deck, and as xlsx a workbook with no tabs, both
   reported as successes."
   [format ^bytes bytes]
-  (let [prefix (case format "pptx" "ppt/" "xlsx" "xl/" nil)]
+  (let [prefix (case format "pptx" "ppt/" "xlsx" "xl/" "docx" "word/" nil)]
     (when prefix
       (let [names (office-parts bytes)]
         (when-not (some #(str/starts-with? % prefix) (or names []))
@@ -2002,6 +2421,7 @@
            "md" [:docs (docs-md/read @text)]
            "xlsx" [:sheets (sheets-xlsx/workbook-from-bytes bytes)]
            "pptx" [:slides (slides-office/deck-from-office-bytes bytes)]
+           "docx" [:docs (docs-docx/document-from-bytes bytes)]
            "edn" (let [envelope (edn/read-string @text)
                        k (get resource-kinds (:kotoba.resource/kind envelope))]
                    (when-not k
@@ -2021,32 +2441,43 @@
          _ (when (and (= "pptx" format) (nil? imported))
              (throw (ex-info (str (str/upper-case format) " として読めませんでした。")
                              {:type :drive/unsupported-format :format format})))
-         created (create! kind (or (not-empty (str/trim (str title)))
-                                   (str "取り込み " (store/now)))
-                          actor object-store)
-         doc-id (:id (:item created))
-         seeded (:resource (content doc-id actor object-store))
-         resource (cond
-                    (= "csv" format)
-                    (sheets-csv/import-csv seeded "imported" @text)
+         spec (get kinds kind)]
+     ;; One version, which is the file. This used to create a seeded
+     ;; document and write over it, so every imported document had a first
+     ;; version that was an empty one nobody ever had — offered by the
+     ;; history pane and restorable.
+     (create! kind (or (not-empty (str/trim (str title)))
+                       (str "取り込み " (store/now)))
+              actor object-store
+              {:resource-fn
+               (fn [doc-id doc-title]
+                 (cond
+                   ;; CSV is the one format that builds *onto* a seed
+                   ;; rather than replacing it: it is one tab's cells and
+                   ;; not a workbook.
+                   (= "csv" format)
+                   (sheets-csv/import-csv ((:seed spec) doc-id doc-title)
+                                          "imported" @text)
 
-                    ;; A workbook arrives whole, tabs and all, so it
-                    ;; replaces the seeded one rather than being added
-                    ;; beside it — importing a five-tab file should not
-                    ;; leave an empty "sheet1" in front of them.
-                    (= "xlsx" format)
-                    (assoc imported :sheets/id doc-id
-                           :sheets/title (:name (:item created)))
+                   ;; A workbook arrives whole, tabs and all, so it
+                   ;; replaces the seeded one rather than being added
+                   ;; beside it — importing a five-tab file should not
+                   ;; leave an empty "sheet1" in front of them.
+                   (= "xlsx" format)
+                   (assoc imported :sheets/id doc-id :sheets/title doc-title)
 
-                    :else
-                    ;; Keep the ids the Drive just minted and the title the
-                    ;; caller asked for; take everything else from the file.
-                    (assoc imported
-                           (:title-key (get kinds kind)) (:name (:item created))
-                           (if (= kind :slides) :slides/id :docs/id) doc-id))
-         target (writable! actor doc-id)]
-     (write-resource! target doc-id actor object-store resource
-                      (:drive/object-ref (:item target))))))
+                   :else
+                   ;; Keep the ids the Drive just minted and the title the
+                   ;; caller asked for; take everything else from the file.
+                   (assoc imported
+                          (:title-key spec) doc-title
+                          ;; From the kinds table rather than from a guess.
+                          ;; This read `(if (= kind :slides) :slides/id
+                          ;; :docs/id)`, so an EDN-imported form gained a
+                          ;; stray `:docs/id` and kept the original's
+                          ;; `:forms/id` — a document that internally still
+                          ;; said it was the one it came from.
+                          (:id-key spec) doc-id)))}))))
 
 ;; ── searching inside documents ──────────────────────────────────────────────
 ;;

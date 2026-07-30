@@ -9,6 +9,9 @@
             [clojure.string :as str]
             [clojure.test :as test]
             [cloud.itonami.app.authority-test]
+            [cloud.itonami.app.business-test]
+            [cloud.itonami.app.business-http-test]
+            [cloud.itonami.app.canvas-test]
             [cloud.itonami.app.authority.adapters-test]
             [cloud.itonami.app.authority.api-test]
             [cloud.itonami.app.authority.payment-test]
@@ -24,6 +27,7 @@
             [cloud.itonami.app.esign-test]
             [cloud.itonami.app.filecoin-test]
             [cloud.itonami.app.fleet-test]
+            [cloud.itonami.app.operator-test]
             [cloud.itonami.app.funding-test]
             [cloud.itonami.app.mcp-test]
             [cloud.itonami.app.fleet-tools-test]
@@ -36,6 +40,9 @@
 
 (def ^:private namespaces
   '[cloud.itonami.app.authority-test
+    cloud.itonami.app.business-test
+    cloud.itonami.app.business-http-test
+    cloud.itonami.app.canvas-test
     cloud.itonami.app.authority.adapters-test
     cloud.itonami.app.authority.api-test
     cloud.itonami.app.authority.payment-test
@@ -51,6 +58,7 @@
     cloud.itonami.app.esign-test
     cloud.itonami.app.filecoin-test
     cloud.itonami.app.fleet-test
+    cloud.itonami.app.operator-test
     cloud.itonami.app.funding-test
     cloud.itonami.app.mcp-test
     cloud.itonami.app.fleet-tools-test

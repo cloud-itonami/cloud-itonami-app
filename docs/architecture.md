@@ -268,9 +268,158 @@ the parser does here by never throwing — junk becomes the nearest blocks and
 the validator is what reports the document, because a parser that threw
 would turn a bad paste into a 500.
 
-Neither `slides.pptx` nor `sheets.xlsx` can yet say what *they* drop —
-those are the same function waiting to be written, not a claim that they are
-lossless.
+### Word
+
+`docs.docx` writes a document Word opens, and reads one back. It is one
+namespace on top of `ooxml`, the same as `slides.pptx` and `sheets.xlsx` —
+`ooxml/package-kind` already returned `:docx` for a `word/` prefix.
+
+**Structure rather than appearance.** A heading is a paragraph carrying
+`w:pStyle Heading1`, not bold 18pt text; a list is `w:numPr`, not a line
+beginning with a hyphen; a table is `w:tbl`, not aligned spaces. Word renders
+both the same way and only one of them can be read back as a heading,
+collapsed into an outline, or restyled by whoever receives it. That is why
+`styles.xml` and `numbering.xml` are written: a style id referring to nothing
+is a paragraph with no style, and a `numId` with no entry is a list Word shows
+with no marker at all.
+
+Junk bytes are refused by `require-office-package!` looking for a `word/`
+part, for the same reason as pptx and xlsx: the reader answers an empty
+document for anything it cannot parse, which is right for a reader and
+indistinguishable from a working import of an empty file.
+
+**What docx does not carry is the same list Markdown does not, plus one
+more.** Block ids, comments and suggestions have nowhere to go. And the
+writer ignores `:docs/text-runs` entirely — Markdown at least spells bold and
+italic, and this does not spell any of them, so a styled run goes out plain.
+
+### What every format will drop, before it drops it
+
+`export-warnings` asks a table of `[surface format] → fn`, so the formats
+that *can* answer are one line each and the ones that cannot are visible as
+absences rather than as an unstated assumption. Three answer today:
+`docs.markdown`, `docs.docx` and `sheets.xlsx`. EDN is not in the table
+because it is the stored bytes and loses nothing. CSV and PPTX are not in it
+because nobody has written the function for them, which is a gap rather than
+a claim that they are lossless.
+
+Keying by format rather than reporting one set of losses per document is not
+tidiness: the lists differ. A bold run is spelled by Markdown and dropped by
+docx, so the same paragraph produces a warning under one button and not the
+other.
+
+Each surface writes its answer in its own namespaced shape — `:docs/severity`
+here, `:sheets/severity` there — because it belongs beside the writer that
+does the dropping. The app flattens them to one shape so the pane renders all
+of them with the code it already has.
+
+Block ids are dropped by both text formats and reported by neither. Every
+export drops them on every document, so an entry would appear on everything
+and mean nothing; the docstrings say it instead, and a test pins the silence
+so it stays a decision rather than an omission.
+
+`xlsx` names three: a cell's `:sheets/style`, the workbook's
+`:sheets/named-ranges`, and its `:sheets/charts`. What it deliberately does
+*not* name is a formula written without a cached value — that is Excel
+recalculating on open, which is the format working.
+
+### Folders, and why the trash is a question rather than a flag
+
+`drive.workspace` had `create-folder`, `:drive/parent-id`, and an
+`effective-role` that walked up the parents — so sharing a folder always
+shared what was in it. What was missing was everything that reads the tree
+back, and an application that ever called any of it. Every document lived at
+the root.
+
+**Trashing is derived, not cascaded.** Writing the flag onto every descendant
+means restoring has to know which ones it wrote: a file already in the trash
+before its folder went there would come back out, restored by a fact about
+its parent. `trashed?` asks instead — is this item, or anything above it, in
+the trash — so trashing a folder hides its contents because the answer
+changes for all of them at once, and restoring reveals exactly what was
+visible before because nothing else was ever touched.
+
+The trash *listing* deliberately still reads the item's own flag. What was
+put in the trash is one thing and restoring it is one act; listing every file
+under a trashed folder separately would offer to restore each of them out of
+a folder that is still in the trash.
+
+**`purge!` used to remove the id from the root's children.** Everything lived
+at the root, so it was right by accident. In a folder it would have left a
+listing pointing at an item that is gone.
+
+**An editor of a shared folder may create in it, and what they create
+belongs to that Drive.** `ws/create-file` makes the creator the owner, which
+is right in your own Drive and wrong in somebody else's: trash, purge and
+re-sharing are owner-only, so a document bob owned inside alice's folder
+would be one alice cannot remove from her own Drive. The Drive's owner owns
+it; the creator is recorded as an editor, which is what they need to go on
+working on what they just made.
+
+The cost is stated rather than discovered: someone you gave write access to
+can consume your quota. That was already true of *saving* a shared document —
+every version is charged to the owner — so this widens who can start one
+rather than introducing the hazard.
+
+**Creating may cross Drives; moving may not.** `ws/move` rewrites one tree,
+so a destination in another workspace would leave a parent id pointing at an
+item that tree does not contain — a breadcrumb walking up out of the
+workspace and a listing that never shows it again. `locate-folder!` resolves
+across Drives for `create!`; `folder-parent!` stays inside one for `move!`,
+and the two exist separately for that reason.
+
+`move` refuses a folder into itself or its own descendant — a drag lands
+where it lands, so an interface will ask, and the result would be a subtree
+detached from the root, invisible walking down and unreachable walking up.
+The library refuses in its own vocabulary, an ex-info with no `:type`, which
+the server's status table cannot see and would answer 502 for; `move!`
+translates it to `:drive/invalid-move` and 409, because an ordinary mistake
+should not look like a broken server.
+
+Moving a file into a shared folder shares it. That falls out of inheritance
+rather than being implemented, and it is tested because it is a permission
+change nobody performed.
+
+**Purging a folder purges what is inside it, deepest first.** The order is
+not tidiness: `trashed?` walks upwards, so a folder dropped before its
+contents would leave them pointing at a parent that is not there, the walk
+would end at a missing item, and the answer would be *not in the trash*.
+They would come back into the listing — resurrected by the deletion of their
+folder, and impossible to get rid of.
+
+**The trash lists folders as well as files, or their contents can never be
+reclaimed.** A file inside a trashed folder has its own flag clear, so
+nothing lists it on its own; before this, a trashed folder appeared nowhere
+and everything under it stayed charged against the quota for ever.
+`empty-trash!` reports what was removed rather than how many things were
+listed — purging a folder purges its subtree, so the two stopped being the
+same number.
+
+**Searching looks everywhere; browsing does not.** A search scoped to the
+folder you happen to be standing in cannot find what you are looking for,
+which is the only reason to search. So the folder strip says so while a
+query is present, and the breadcrumb — which would be describing a place the
+results are not from — is replaced by that sentence.
+
+A document shared from somebody else's Drive has no folder in this one, and
+`:parent-id` is nil rather than theirs: naming a folder this principal
+cannot open would put an id in a breadcrumb that goes nowhere. Those
+documents stay at the top rather than disappearing into a folder nobody can
+reach.
+
+The move picker offers every folder by path — `My Drive / 営業 / Q1` — because
+two folders called Q1 are an ordinary thing to have and a picker showing both
+as `Q1` asks an unanswerable question.
+
+**The listing sorts by timestamp *and* id.** `cursor-of` builds a cursor from
+both, so paging compares on a total order; a sort that stopped at the
+timestamps left documents written in the same millisecond in whatever order
+they came out of a hash map, and the two orders disagreeing means
+`after-cursor` skips one document and repeats another. This surfaced as a
+flaky test rather than a bug report — five documents created in a loop shared
+a timestamp and one run in some number interleaved them. Anything that can
+page in a different order between two requests can lose a row between two
+pages.
 
 ### Responses are a table, and the table is not the document
 
@@ -310,6 +459,44 @@ The CSV goes through a `sheets` workbook rather than joining strings,
 so the quoting is `sheets.csv`'s one implementation of it — an answer
 containing a comma or a newline is ordinary, and a second escaping routine is
 a second place to get it wrong.
+
+### Make a copy
+
+The operation a reader of a shared document actually needs. Until now the
+only way to get an editable version of something shared read-only was to
+export it and import it back — two steps, through bytes, losing the kind if
+the surface had no office format. `copy!` takes `readable!` and not
+`writable!`: a viewer may copy, and that is the point rather than an
+oversight.
+
+**Four things are deliberately left behind, and each would be a bug if it
+came along.** The *grants*, because copying a document shared with five
+people must not share the copy with them — it falls out of `create!` giving
+the creator `:owner` and nobody anything, and is asserted anyway, since
+getting it wrong is a silent access leak rather than a visible fault. The
+*comments and responses*, because they are about the document somebody said
+them about. The *history*, because a copy is not a fork of the past. And the
+*quota*, which is the copier's: unlike editing a shared document, where the
+bytes stay in the owner's Drive, these bytes are new and in the copier's.
+
+**A copy has one version, and so does an import.** Both used to create a
+seeded document and write over it, so every copied or imported document had
+a first version that was an empty one nobody ever had — offered by the
+history pane and restorable. `create!` now takes a `resource-fn` and
+produces the document with its contents.
+
+That change moved validation with it. `write-resource!` refuses a document
+the surface rejects; `create!` did not, because it only ever produced a seed
+and validating one would have been checking this file against itself. With
+contents arriving at creation, leaving the check out let a broken `.edn`
+import succeed — silent in the direction that looks like success, which is
+how it was found. `create!` now runs the same check, and a refused import
+leaves nothing behind at all rather than a seeded document.
+
+The kinds table gained `:id-key`. `import!` read
+`(if (= kind :slides) :slides/id :docs/id)`, so an EDN-imported form gained a
+stray `:docs/id` and kept the original's `:forms/id` — a document that
+internally still said it was the one it came from.
 
 ### Two editors, one document
 

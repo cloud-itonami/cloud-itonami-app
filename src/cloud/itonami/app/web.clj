@@ -13,6 +13,52 @@
   .sidebar{position:sticky;top:0;height:100vh;box-sizing:border-box;padding:1.5rem 1rem;
     background:var(--color-neutral-white);border-right:1px solid var(--color-neutral-solid-gray-200);
     display:flex;flex-direction:column;gap:1.5rem}
+  .req-row{padding:.75rem 0;border-bottom:1px solid var(--color-neutral-solid-gray-200)}
+  .req-row__head{display:flex;align-items:center;justify-content:space-between;gap:1rem}
+  .req-row__detail{margin:.375rem 0 0;font-size:.875rem;line-height:1.7;
+    color:var(--color-neutral-solid-gray-700);overflow-wrap:anywhere}
+  .req-row__state{flex:0 0 auto;font-size:.8125rem;font-weight:700;white-space:nowrap;
+    padding:.125rem .5rem;border-radius:999px;
+    background:var(--color-neutral-solid-gray-100);
+    color:var(--color-neutral-solid-gray-700)}
+  /* jp-go-dds defines -1 and -2 for each semantic colour and nothing else;
+     core-test asserts app-css invents no token, which caught a -4 here. */
+  .req-row__state[data-tone='warn']{color:var(--color-semantic-error-1);
+    border:1px solid var(--color-semantic-error-2)}
+  .req-row__state[data-tone='ok']{color:var(--color-semantic-success-1);
+    border:1px solid var(--color-semantic-success-2)}
+  .req-row__caveat{margin:.25rem 0 0;font-size:.8125rem;
+    color:var(--color-neutral-solid-gray-600)}
+  /* The lean canvas is a grid because the nine blocks' arrangement carries
+     meaning; a list would render the same data and lose it. Not .record-browser:
+     that is a list+detail for picking one of many, and a canvas is read whole. */
+  .canvas-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(15rem,1fr));
+    gap:.75rem;margin:0 0 1rem}
+  .canvas-block{min-width:0;padding:.75rem 1rem;border-radius:8px;
+    background:var(--color-neutral-white);
+    border:1px solid var(--color-neutral-solid-gray-200)}
+  .canvas-block__label{margin:0 0 .5rem;font-size:.8125rem;font-weight:700;
+    color:var(--color-neutral-solid-gray-700)}
+  .canvas-block__items{margin:0;padding-left:1.1rem;font-size:.875rem;
+    line-height:1.7;color:var(--color-neutral-solid-gray-800);overflow-wrap:anywhere}
+  .canvas-block__note{margin:.5rem 0 0;font-size:.8125rem;
+    color:var(--color-neutral-solid-gray-600);overflow-wrap:anywhere}
+  .canvas-block__empty{margin:0;font-size:.875rem;
+    color:var(--color-neutral-solid-gray-600)}
+  /* The riskiest hypothesis is marked in the datoms (:hyp/risk :riskiest), so
+     the highlight follows the data. A canvas that never marked one gets none. */
+  .req-row--risk{border-left:4px solid var(--color-key-900);padding-left:.5rem}
+  .stat-row{display:grid;grid-template-columns:repeat(auto-fill,minmax(9rem,1fr));
+    gap:.75rem;margin:0 0 1rem}
+  .stat-tile{min-width:0;padding:.75rem 1rem;border-radius:8px;
+    background:var(--color-neutral-white);
+    border:1px solid var(--color-neutral-solid-gray-200)}
+  .stat-tile__label{display:block;font-size:.75rem;
+    color:var(--color-neutral-solid-gray-600)}
+  .stat-tile__value{display:block;font-size:1.5rem;line-height:1.4}
+  .nav-badge[data-tone='warn']{color:var(--color-semantic-error-1)}
+  .nav-badge[data-tone='ok']{color:var(--color-semantic-success-1)}
+  .field--checkbox label{font-weight:400}
   .brand{padding:.25rem .75rem}
   .brand__eyebrow{margin:0 0 .25rem;color:var(--color-key-900);font-size:.75rem;
     font-weight:700;letter-spacing:.08em}
@@ -21,6 +67,12 @@
   .brand__note{margin:.25rem 0 0;color:var(--color-neutral-solid-gray-600);
     font-size:.8125rem;line-height:1.6}
   .local-nav{display:flex;flex-direction:column;gap:.25rem}
+  /* The menu separates what you work ON (a business) from what you work WITH
+     (chat, drive, scheduler). Twelve flat items had both kinds in one list. */
+  .local-nav__group{margin:.75rem 0 .125rem;padding:0 .75rem;font-size:.6875rem;
+    font-weight:700;letter-spacing:.08em;
+    color:var(--color-neutral-solid-gray-600)}
+  .local-nav__group:first-child{margin-top:0}
   .local-nav__item{width:100%;border:0;border-radius:.5rem;background:transparent;
     color:var(--color-neutral-solid-gray-800);display:flex;align-items:center;gap:.75rem;
     min-height:3rem;padding:.625rem .75rem;text-align:left;cursor:pointer}
@@ -174,6 +226,14 @@
   .drive-create-bar{display:flex;align-items:center;flex-wrap:wrap;gap:.5rem .75rem;
     margin:1rem 0 0}
   .drive-create{display:flex;flex-wrap:wrap;gap:.5rem}
+  .drive-folders{display:flex;align-items:center;flex-wrap:wrap;gap:.375rem .5rem;
+    margin:.5rem 0}
+  .drive-crumb{display:flex;align-items:center;flex-wrap:wrap;gap:.25rem}
+  .drive-crumb__sep{color:var(--color-neutral-solid-gray-600);font-size:.8125rem}
+  .drive-folder{display:inline-flex;align-items:center;gap:.375rem}
+  /* The one place a folder is not a document: it is a destination, so it
+     reads as a chip rather than as a row in the list below. */
+  .drive-folder--chip{border-radius:999px;padding:.25rem .75rem}
   .drive-create__status{margin:0;color:var(--color-neutral-solid-gray-600);
     font-size:.8125rem;line-height:1.5}
   .drive-trash{margin-top:1.5rem;border:1px solid var(--color-neutral-solid-gray-200);
@@ -215,6 +275,144 @@
     background:var(--color-neutral-white);font:inherit;font-size:.8125rem}
   .surface-cell:focus{outline:4px solid var(--color-primitive-yellow-300);outline-offset:-1px;
     border-color:var(--color-key-600)}
+  /* ── one surface per kind ─────────────────────────────────────────────
+     A form should look like a form and a deck like a deck. The fields above
+     edit the same value; these render it as the artifact it is, which is the
+     view that answers what was just created without reading JSON. */
+  .surface-modes{display:flex;gap:.25rem;padding:.25rem;width:fit-content;
+    border-radius:.625rem;background:var(--color-neutral-solid-gray-100)}
+  .surface-modes button{min-height:2.25rem;border:0;border-radius:.375rem;
+    background:transparent;padding:.35rem .875rem;
+    color:var(--color-neutral-solid-gray-700);font-size:.8125rem;cursor:pointer}
+  .surface-modes button[aria-pressed='true']{background:var(--color-neutral-white);
+    color:var(--color-key-900);font-weight:700;box-shadow:0 1px 3px rgba(0,0,0,.12)}
+  .surface-modes button:focus-visible{outline:4px solid var(--color-primitive-yellow-300);
+    outline-offset:1px}
+  .surface-preview{padding:1.25rem;border:1px solid var(--color-neutral-solid-gray-200);
+    border-radius:.75rem;background:var(--color-neutral-solid-gray-100);overflow:auto}
+  .doc-page{max-width:40rem;margin:0 auto;box-sizing:border-box;
+    padding:2.5rem clamp(1.25rem,4vw,3rem);background:var(--color-neutral-white);
+    border:1px solid var(--color-neutral-solid-gray-200);border-radius:.25rem;
+    box-shadow:0 1px 3px rgba(0,0,0,.08);color:var(--color-neutral-solid-gray-900);
+    line-height:1.9}
+  .doc-page__title{margin:0 0 1.5rem;padding-bottom:.75rem;font-size:1.75rem;
+    line-height:1.45;border-bottom:1px solid var(--color-neutral-solid-gray-200)}
+  .doc-page h2,.doc-page h3,.doc-page h4,.doc-page h5,.doc-page h6{
+    margin:1.75rem 0 .5rem;line-height:1.5}
+  .doc-page h2{font-size:1.5rem}.doc-page h3{font-size:1.25rem}
+  .doc-page h4{font-size:1.0625rem}.doc-page h5,.doc-page h6{font-size:1rem}
+  .doc-page>*:first-child{margin-top:0}
+  .doc-page p{margin:0 0 1rem;overflow-wrap:anywhere}
+  .doc-page blockquote{margin:0 0 1rem;padding:.25rem 0 .25rem 1rem;
+    border-left:4px solid var(--color-key-600);color:var(--color-neutral-solid-gray-700)}
+  .doc-page pre{margin:0 0 1rem;padding:.875rem 1rem;overflow-x:auto;border-radius:.5rem;
+    background:var(--color-neutral-solid-gray-900);color:var(--color-neutral-white);
+    font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.8125rem;line-height:1.7}
+  .doc-page ul{margin:0 0 1rem;padding-left:1.5rem}
+  .doc-page li{margin:.25rem 0}
+  .doc-table{border-collapse:collapse;width:100%;margin:0 0 1rem;font-size:.9375rem}
+  .doc-table th,.doc-table td{padding:.5rem .625rem;text-align:left;vertical-align:top;
+    border:1px solid var(--color-neutral-solid-gray-300)}
+  .doc-table th{background:var(--color-neutral-solid-gray-50);font-weight:700}
+  .doc-ref{display:inline-flex;align-items:center;gap:.375rem;padding:.375rem .75rem;
+    border-radius:999px;background:var(--color-key-50);color:var(--color-key-900);
+    font-size:.8125rem;font-weight:700}
+  .doc-ref--dangling{background:var(--color-primitive-yellow-200);
+    color:var(--color-neutral-black)}
+  .doc-aside{margin:2rem 0 0;padding-top:1rem;
+    border-top:1px solid var(--color-neutral-solid-gray-200)}
+  .doc-aside h2{margin:0 0 .5rem;font-size:.875rem;font-weight:700;
+    color:var(--color-neutral-solid-gray-600)}
+  .doc-aside p{margin:0 0 .5rem;color:var(--color-neutral-solid-gray-700);
+    font-size:.8125rem;line-height:1.7}
+  .doc-run--bold{font-weight:700}.doc-run--italic{font-style:italic}
+  .doc-run--underline{text-decoration:underline}
+  .doc-run--strike{text-decoration:line-through}
+  .doc-run--code{padding:.05rem .3rem;border-radius:.25rem;
+    background:var(--color-neutral-solid-gray-100);
+    font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.9em}
+  .form-paper{max-width:40rem;margin:0 auto;display:grid;gap:.75rem}
+  .form-paper__head{padding:1.5rem;border:1px solid var(--color-neutral-solid-gray-200);
+    border-top:.5rem solid var(--color-key-900);border-radius:.5rem;
+    background:var(--color-neutral-white)}
+  .form-paper__title{margin:0;font-size:1.5rem;line-height:1.5;overflow-wrap:anywhere}
+  .form-paper__lead{margin:.5rem 0 0;color:var(--color-neutral-solid-gray-600);
+    font-size:.875rem;line-height:1.7}
+  .form-card{display:grid;gap:.5rem;padding:1.25rem;
+    border:1px solid var(--color-neutral-solid-gray-200);border-radius:.5rem;
+    background:var(--color-neutral-white)}
+  .form-card__label{margin:0;font-weight:700;line-height:1.6;overflow-wrap:anywhere}
+  .form-card__required{margin-left:.25rem;color:var(--color-semantic-error-2)}
+  .form-card__type{color:var(--color-neutral-solid-gray-500);font-size:.75rem}
+  .form-control{box-sizing:border-box;width:100%;min-height:2.75rem;border:0;
+    border-bottom:1px solid var(--color-neutral-solid-gray-300);padding:.5rem 0;
+    background:transparent;color:var(--color-neutral-solid-gray-600);font:inherit}
+  .form-control--area{min-height:5rem;padding:.5rem .75rem;resize:vertical;
+    border:1px solid var(--color-neutral-solid-gray-300);border-radius:.5rem}
+  .form-control--check{display:flex;align-items:center;gap:.5rem;min-height:2.75rem;
+    color:var(--color-neutral-solid-gray-600);font-size:.875rem}
+  .sheet-paper{border:1px solid var(--color-neutral-solid-gray-200);border-radius:.5rem;
+    background:var(--color-neutral-white);overflow:hidden}
+  .sheet-tabs{display:flex;gap:.25rem;padding:.5rem .5rem 0;overflow-x:auto;
+    background:var(--color-neutral-solid-gray-50);
+    border-bottom:1px solid var(--color-neutral-solid-gray-200)}
+  .sheet-tab{min-height:2.25rem;border:1px solid transparent;border-bottom:0;
+    border-radius:.375rem .375rem 0 0;background:transparent;padding:.35rem .875rem;
+    color:var(--color-neutral-solid-gray-700);font-size:.8125rem;white-space:nowrap;
+    cursor:pointer}
+  .sheet-tab[aria-pressed='true']{background:var(--color-neutral-white);
+    border-color:var(--color-neutral-solid-gray-200);color:var(--color-key-900);
+    font-weight:700}
+  .sheet-tab:focus-visible{outline:4px solid var(--color-primitive-yellow-300);
+    outline-offset:-2px}
+  .sheet-scroll{max-height:26rem;overflow:auto}
+  .sheet-table{border-collapse:separate;border-spacing:0;font-size:.8125rem;
+    font-variant-numeric:tabular-nums}
+  .sheet-table th{position:sticky;top:0;z-index:2;min-width:6rem;padding:.3rem .5rem;
+    background:var(--color-neutral-solid-gray-100);
+    color:var(--color-neutral-solid-gray-600);font-size:.6875rem;font-weight:400;
+    border-right:1px solid var(--color-neutral-solid-gray-200);
+    border-bottom:1px solid var(--color-neutral-solid-gray-300)}
+  .sheet-table th.sheet-corner{left:0;z-index:3;min-width:2.75rem}
+  .sheet-table th.sheet-rownum{position:sticky;top:auto;left:0;z-index:1;
+    min-width:2.75rem;text-align:center}
+  .sheet-table td{padding:.3rem .5rem;background:var(--color-neutral-white);
+    white-space:nowrap;border-right:1px solid var(--color-neutral-solid-gray-200);
+    border-bottom:1px solid var(--color-neutral-solid-gray-200)}
+  .sheet-cell--num{text-align:right}
+  .sheet-cell--head{background:var(--color-neutral-solid-gray-50);font-weight:700}
+  .sheet-cell--formula{color:var(--color-key-900);
+    font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+  .deck-stage{display:grid;gap:.75rem}
+  /* Inches on a 10 × 5.625in stage, as percentages, so one builder makes both
+     the stage and the thumbnail. `container-type` is what lets a point-sized
+     font survive the scale change: 1pt is 1/72in and 1in is 10cqw. */
+  .deck-canvas,.deck-thumb__frame{position:relative;width:100%;aspect-ratio:16/9;
+    container-type:inline-size;overflow:hidden;background:var(--color-neutral-white)}
+  .deck-canvas{border:1px solid var(--color-neutral-solid-gray-300);border-radius:.375rem;
+    box-shadow:0 2px 8px rgba(0,0,0,.1)}
+  .deck-shape{position:absolute;box-sizing:border-box;overflow:hidden}
+  .deck-shape--text{display:flex;align-items:flex-start;line-height:1.35;
+    color:var(--color-neutral-solid-gray-900);white-space:pre-wrap;overflow-wrap:anywhere}
+  .deck-shape--rect{border:1px solid transparent}
+  .deck-shape--placeholder{display:grid;place-items:center;text-align:center;
+    border:1px dashed var(--color-neutral-solid-gray-400);
+    color:var(--color-neutral-solid-gray-500);font-size:3cqw;line-height:1.4}
+  .deck-empty{position:absolute;inset:0;display:grid;place-items:center;
+    color:var(--color-neutral-solid-gray-500);font-size:3cqw}
+  .deck-film{display:flex;gap:.5rem;padding:.25rem 0;overflow-x:auto}
+  .deck-thumb{flex:0 0 9rem;border:2px solid transparent;border-radius:.375rem;
+    background:transparent;padding:0;text-align:left;cursor:pointer}
+  .deck-thumb[aria-pressed='true']{border-color:var(--color-key-900)}
+  .deck-thumb:focus-visible{outline:4px solid var(--color-primitive-yellow-300);
+    outline-offset:1px}
+  .deck-thumb__frame{border:1px solid var(--color-neutral-solid-gray-300);
+    border-radius:.25rem}
+  .deck-thumb__label{display:block;overflow:hidden;padding:.25rem .125rem 0;
+    color:var(--color-neutral-solid-gray-600);font-size:.6875rem;
+    text-overflow:ellipsis;white-space:nowrap}
+  .deck-caption{margin:0;color:var(--color-neutral-solid-gray-600);font-size:.8125rem;
+    line-height:1.7}
   .sharing{margin-top:1.25rem;border-top:1px solid var(--color-neutral-solid-gray-200);
     padding-top:1rem;display:grid;gap:.75rem}
   .sharing__title{margin:0;font-size:1rem}
@@ -370,6 +568,9 @@
       padding:.625rem .25rem .375rem}
     .nav-label,.nav-badge{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
       overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
+    /* The labels are hidden here, so a group heading over icon-only buttons
+       would name a grouping the user cannot see. */
+    .local-nav__group{display:none}
     .nav-icon{font-size:1.25rem}
     .topbar{min-height:auto;padding:.75rem 1rem}.topbar__meta{display:none}
     .view{padding:1rem}.view-header{display:block}.view-header .dads-button{margin-top:1rem}
@@ -732,12 +933,104 @@
     };
     let driveData = {items:[]};
     let selectedDrive = null;
+    // Where in the tree the list is looking. Null is the root, which is
+    // where everything was before folders existed and where a first visit
+    // starts.
+    let driveFolder = null;
+    let folderData = {folders:[], path:[], all:[]};
+    const loadFolders = async () => {
+      const url = '/api/workspace/drive/folders'
+        + (driveFolder ? `?folder=${encodeURIComponent(driveFolder)}` : '');
+      const request = await fetch(url);
+      const data = await request.json();
+      // A folder that is gone — purged by another session, or trashed —
+      // puts the listing back at the root rather than leaving it pointing
+      // at nothing.
+      if (!request.ok || data.error) { driveFolder = null; return; }
+      folderData = data;
+    };
+    const goToFolder = async (id) => {
+      driveFolder = id;
+      await loadFolders();
+      renderDrive(driveData);
+    };
+    const renderFolders = (query) => {
+      const nav = $('#drive-folders'); if (!nav) return;
+      nav.replaceChildren();
+      if (query) {
+        // Searching looks everywhere, so a breadcrumb saying where you are
+        // standing would be describing a place the results are not from.
+        nav.append(make('span', 'surface-note', '検索中はすべてのフォルダから探します。'));
+        return;
+      }
+      const crumb = make('div', 'drive-crumb');
+      (folderData.path || []).forEach((step, index) => {
+        if (index) crumb.append(make('span', 'drive-crumb__sep', '›'));
+        const button = make('button', 'tool-button drive-folder--chip', step.name);
+        button.type = 'button';
+        button.disabled = index === (folderData.path || []).length - 1;
+        button.addEventListener('click', () => goToFolder(index === 0 ? null : step.id));
+        crumb.append(button);
+      });
+      nav.append(crumb);
+      if (folderData.owner && folderData.owner !== folderData.you) {
+        nav.append(make('span', 'surface-note',
+          `${folderData.owner} のドライブです。ここで作成したものはその人のドライブに入ります。`));
+      }
+      const openable = (folder, shared) => {
+        const button = make('button', 'tool-button drive-folder',
+          `${shared ? '共有 · ' : ''}${folder.name}（${folder.count}）`);
+        button.type = 'button';
+        button.addEventListener('click', () => goToFolder(folder.id));
+        return button;
+      };
+      (folderData.folders || []).forEach((folder) => nav.append(openable(folder, false)));
+      // Folders from another Drive, at the top level only: they are not
+      // inside anything here, so there is nowhere else they could appear.
+      // Marked, because creating in one puts the document in somebody
+      // else's Drive and against their quota.
+      (folderData.shared || []).forEach((folder) => nav.append(openable(folder, true)));
+      const add = make('button', 'tool-button', 'フォルダを作成');
+      add.type = 'button';
+      add.addEventListener('click', createFolder);
+      nav.append(add);
+    };
+    const createFolder = async () => {
+      const status = $('#drive-create-status');
+      const name = ($('#drive-folder-name')?.value || '').trim();
+      status.textContent = 'フォルダを作成しています…';
+      try {
+        const made = await postJSON('/api/workspace/drive/folders',
+          {title:name || '無題のフォルダ', folder:driveFolder}, true);
+        status.textContent = `${made.item.name} を作成しました。`;
+        // Cleared, or the next folder silently gets the same name.
+        if ($('#drive-folder-name')) $('#drive-folder-name').value = '';
+        await loadFolders();
+        await loadWorkspace('drive', renderDrive);
+      } catch (error) {
+        status.textContent = error.message;
+      }
+    };
     const renderDrive = (data) => {
       driveData = data;
       const query = ($('#drive-search').value || '').trim().toLocaleLowerCase('ja');
-      const items = data.items.filter((item) =>
+      const matches = data.items.filter((item) =>
         [item.name, item.folder, item['media-type']]
           .some((value) => String(value || '').toLocaleLowerCase('ja').includes(query)));
+      // Searching looks everywhere. A search scoped to the folder you happen
+      // to be standing in is a search that cannot find what you are looking
+      // for, which is the only reason to search. Shared items are not in
+      // this tree at all — they have no reachable parent here — so they stay
+      // visible at the root rather than disappearing into a folder nobody
+      // can open.
+      const here = folderData.folder || null;
+      const items = query ? matches : matches.filter((item) => {
+        // A document shared from somebody else's Drive sits in their tree,
+        // so it has no folder in this one. It belongs at the top rather
+        // than nowhere.
+        if (!item['parent-id']) return !driveFolder;
+        return item['parent-id'] === here;
+      });
       if (!items.some((item) => item.id === selectedDrive?.id)) selectedDrive = items[0] || null;
       const list = $('#drive-list'); list.replaceChildren();
       const select = (item) => { selectedDrive = item; renderDrive(driveData); };
@@ -745,7 +1038,12 @@
         title:item.name, time:bytes(item['size-bytes']),
         meta:item.origin === 'workspace' ? `${item.label} · ${item.folder}` : item.folder,
         snippet:item['media-type']})));
-      if (!items.length) list.append(make('li', 'empty-state', '条件に一致するファイルはありません。'));
+      if (!items.length) {
+        list.append(make('li', 'empty-state',
+          query ? '条件に一致するファイルはありません。'
+                : 'このフォルダにはまだ何もありません。'));
+      }
+      renderFolders(query);
       if (selectedDrive && selectedDrive.origin === 'workspace') {
         setDetail($('#drive-detail'), selectedDrive.label,
           selectedDrive.name, selectedDrive['trashed?']
@@ -849,7 +1147,7 @@
       status.textContent = `${kind.label}を作成しています…`;
       try {
         const created = await postJSON('/api/workspace/drive/documents',
-          {kind:kind.kind}, true);
+          {kind:kind.kind, folder:driveFolder}, true);
         status.textContent = `${created.item.name} を作成しました。`;
         selectedDrive = created.item;
         await loadWorkspace('drive', renderDrive);
@@ -1155,6 +1453,377 @@
     };
     const surfaceEditors = {forms:formsEditor, docs:docsEditor, sheets:sheetsEditor,
                             slides:slidesEditor};
+    // ── rendered surfaces ─────────────────────────────────────────────────
+    // The editors above are the fields of the value. These are the value as
+    // the thing it is: a form as a respondent sees it, a document as a page,
+    // a workbook as a grid with A1 addresses, a deck as slides on a stage.
+    //
+    // Read-only, and the same projected payload the editors mutate — so this
+    // is a third view and not a third format. What it is not is a second
+    // renderer: `slides.pptx` and the Markdown and CSV writers are on the
+    // server, and export is what goes through them. Nothing here is offered
+    // as a substitute for what a file will look like.
+    //
+    // A text input's `type` is the same table `answerPanel` fills a real form
+    // from, declared once here because both need it and two copies of it
+    // would drift.
+    const inputTypes = {email:'email', number:'number', date:'date'};
+    // `:docs/style` on a text run is whoever-wrote-it's map, so a class is
+    // looked up per truthy key rather than assumed to be one name.
+    const docRunClasses = {bold:'doc-run--bold', italic:'doc-run--italic',
+                           underline:'doc-run--underline', strike:'doc-run--strike',
+                           code:'doc-run--code'};
+    const docRunClass = (style) => {
+      if (typeof style === 'string') return docRunClasses[style] || null;
+      if (!style || typeof style !== 'object') return null;
+      const names = Object.keys(style)
+        // `{bold: false}` is a run that says it is not bold.
+        .filter((key) => style[key])
+        .map((key) => docRunClasses[key.replace(/^docs\\//, '')])
+        .filter(Boolean);
+      return names.length ? names.join(' ') : null;
+    };
+    // A block's text with its runs applied. Rendered rather than dropped: a
+    // run that is stored and never shown is formatting the document claims to
+    // have and the page denies. Overlaps are not nested — the model gives a
+    // flat list of ranges, and a tree is not derivable from it — so a later
+    // run starts where the previous one ended.
+    const docText = (block) => {
+      const text = String(block['docs/text'] ?? '');
+      const runs = (block['docs/text-runs'] || [])
+        .filter((run) => run && typeof run === 'object')
+        .map((run) => ({from:Number(run['docs/from']), to:Number(run['docs/to']),
+                        className:docRunClass(run['docs/style'])}))
+        .filter((run) => Number.isFinite(run.from) && Number.isFinite(run.to))
+        .map((run) => ({...run, from:Math.max(0, run.from), to:Math.min(text.length, run.to)}))
+        .filter((run) => run.to > run.from)
+        .sort((a, b) => a.from - b.from);
+      if (!runs.length) return [document.createTextNode(text)];
+      const nodes = [];
+      let at = 0;
+      runs.forEach((run) => {
+        const from = Math.max(at, run.from);
+        if (run.to <= from) return;
+        if (from > at) nodes.push(document.createTextNode(text.slice(at, from)));
+        nodes.push(make('span', run.className, text.slice(from, run.to)));
+        at = run.to;
+      });
+      if (at < text.length) nodes.push(document.createTextNode(text.slice(at)));
+      return nodes;
+    };
+    const docsPreview = (payload) => {
+      const page = make('article', 'doc-page');
+      page.append(make('h1', 'doc-page__title',
+        payload['docs/title'] || '無題のドキュメント'));
+      const blocks = (payload['docs/blocks'] || []).filter((b) => b && typeof b === 'object');
+      blocks.forEach((block) => {
+        const kind = String(block['docs/kind'] ?? '');
+        if (kind === 'heading') {
+          // The title is the h1, so a level-1 heading inside the body is an
+          // h2 — otherwise the page has two first-level headings and a
+          // screen reader is told the document starts twice.
+          const level = Math.min(6, Math.max(1, Number(block['docs/level']) || 1));
+          const heading = make(`h${Math.min(6, level + 1)}`);
+          heading.append(...docText(block));
+          page.append(heading);
+        } else if (kind === 'quote') {
+          const quote = make('blockquote');
+          quote.append(...docText(block));
+          page.append(quote);
+        } else if (kind === 'code') {
+          const pre = make('pre');
+          pre.append(make('code', null, String(block['docs/text'] ?? '')));
+          page.append(pre);
+        } else if (kind === 'list') {
+          const items = block['docs/items'] || [];
+          const list = make('ul');
+          items.forEach((entry) => list.append(make('li', null, String(entry ?? ''))));
+          if (!items.length) list.append(make('li', null, '（項目なし）'));
+          page.append(list);
+        } else if (kind === 'table') {
+          const rows = (block['docs/rows'] || []).filter(Array.isArray);
+          if (!rows.length) {
+            page.append(make('p', 'surface-note', '空の表です。'));
+          } else {
+            const table = make('table', 'doc-table');
+            rows.forEach((row, index) => {
+              const tr = make('tr');
+              // First row as the header: that is what the Markdown writer
+              // does with it, so the page and the export agree.
+              row.forEach((cell) => tr.append(
+                make(index === 0 ? 'th' : 'td', null, String(cell ?? ''))));
+              table.append(tr);
+            });
+            page.append(table);
+          }
+        } else if (refKinds.includes(kind)) {
+          // Resolved against what this principal can see, which is the same
+          // list the picker offers and the same question the server answers
+          // as a save-time warning.
+          const target = block['docs/target'];
+          const hit = (driveData.items || []).find((candidate) => candidate.id === target);
+          const wrap = make('p');
+          wrap.append(make('span', `doc-ref${hit ? '' : ' doc-ref--dangling'}`,
+            hit ? `${hit.label}: ${hit.name}`
+                : `${kind} → ${target || '未設定'}（解決できません）`));
+          page.append(wrap);
+        } else {
+          const para = make('p');
+          para.append(...docText(block));
+          page.append(para);
+        }
+      });
+      if (!blocks.length) {
+        page.append(make('p', 'surface-note',
+          'まだ本文がありません。「フォーム表示」で段落を追加してください。'));
+      }
+      // Beside the page rather than in the margin: an anchored comment needs
+      // to know where its anchor landed, and this render does not lay text
+      // out well enough to point at a character.
+      const comments = (payload['docs/comments'] || []).filter((c) => c && typeof c === 'object');
+      if (comments.length) {
+        const aside = make('div', 'doc-aside');
+        aside.append(make('h2', null, `コメント ${comments.length} 件`));
+        comments.forEach((comment) => aside.append(make('p', null,
+          `${comment['docs/author'] || '不明'}: ${comment['docs/text'] ?? ''}`)));
+        page.append(aside);
+      }
+      return page;
+    };
+    const formsPreview = (payload) => {
+      const paper = make('div', 'form-paper');
+      const head = make('div', 'form-paper__head');
+      head.append(make('h2', 'form-paper__title',
+        payload['forms/title'] || '無題のフォーム'));
+      head.append(make('p', 'form-paper__lead',
+        '回答者に見える形です。実際に送信できるのは下の「このフォームに回答」で、'
+        + 'ここのコントロールは形を示すだけです。'));
+      paper.append(head);
+      const fields = (payload['forms/fields'] || []).filter((f) => f && typeof f === 'object');
+      fields.forEach((entry) => {
+        const type = String(entry['forms/field-type'] ?? 'text');
+        const card = make('div', 'form-card');
+        const label = make('p', 'form-card__label',
+          String(entry['forms/label'] ?? entry['forms/id'] ?? ''));
+        if (entry['forms/required?']) label.append(make('span', 'form-card__required', '*'));
+        card.append(label);
+        if (type === 'textarea') {
+          const area = make('textarea', 'form-control form-control--area');
+          area.disabled = true;
+          area.placeholder = '長い回答';
+          card.append(area);
+        } else if (type === 'checkbox') {
+          const row = make('span', 'form-control--check');
+          const box = make('input', 'surface-check');
+          box.type = 'checkbox';
+          box.disabled = true;
+          row.append(box, make('span', null, 'はい / いいえ'));
+          card.append(row);
+        } else if (type === 'choice') {
+          // `forms.model` gives a choice field no option list, so a deck of
+          // options is whatever the document happens to carry. Saying the
+          // list is empty beats rendering a select that looks configured.
+          const options = (entry['forms/options'] || []).map((option) => String(option));
+          const select = make('select', 'form-control');
+          select.disabled = true;
+          select.append(make('option', null,
+            options.length ? '選択してください' : '選択肢が未設定です'));
+          options.forEach((option) => select.append(make('option', null, option)));
+          card.append(select);
+        } else {
+          const input = make('input', 'form-control');
+          input.type = inputTypes[type] || 'text';
+          input.disabled = true;
+          input.placeholder = type === 'email' ? 'name@example.com'
+            : (type === 'number' ? '0' : (type === 'date' ? '年 / 月 / 日' : '回答を入力'));
+          card.append(input);
+        }
+        card.append(make('span', 'form-card__type',
+          `${type}${entry['forms/required?'] ? ' · 必須' : ''}`));
+        paper.append(card);
+      });
+      if (!fields.length) {
+        paper.append(make('p', 'empty-state',
+          'まだ質問がありません。「フォーム表示」で質問を追加してください。'));
+      }
+      return paper;
+    };
+    // A1 rather than 1行1列: the addresses are numeric in `sheets.model` and
+    // this is the notation every formula in the sheet is written in.
+    const columnName = (col) => {
+      let name = '';
+      let n = col;
+      while (n > 0) {
+        name = String.fromCharCode(65 + ((n - 1) % 26)) + name;
+        n = Math.floor((n - 1) / 26);
+      }
+      return name || String(col);
+    };
+    const sheetsPreview = (payload, _vocabulary, changed) => {
+      const paper = make('div', 'sheet-paper');
+      const tabs = payload['sheets/tabs'] || {};
+      const tabIds = Object.keys(tabs);
+      if (!tabIds.length) {
+        paper.append(make('p', 'empty-state', 'タブがありません。'));
+        return paper;
+      }
+      const current = tabIds.includes(driveEditor.tab) ? driveEditor.tab : tabIds[0];
+      driveEditor.tab = current;
+      const bar = make('div', 'sheet-tabs');
+      tabIds.forEach((id) => {
+        const button = make('button', 'sheet-tab', tabs[id]?.['sheets/title'] || id);
+        button.type = 'button';
+        button.setAttribute('aria-pressed', id === current ? 'true' : 'false');
+        // The same `driveEditor.tab` the editor uses, so switching tab in
+        // either view is switching it in both.
+        button.addEventListener('click', () => { driveEditor.tab = id; changed(true); });
+        bar.append(button);
+      });
+      paper.append(bar);
+      const cells = tabs[current]?.['sheets/cells'] || {};
+      // A floor, not just the used extent. A workbook that has just been
+      // created has no cells at all, and the honest 1 × 1 answer draws a single
+      // empty box that reads as a broken grid rather than as an empty sheet —
+      // measured on a real just-created spreadsheet. Five is enough rows and
+      // columns to be recognisable as one.
+      let maxRow = 5;
+      let maxCol = 5;
+      Object.keys(cells).forEach((key) => {
+        // Doubled backslashes: this JavaScript lives inside a Clojure string.
+        const match = /^\\[(-?\\d+) (-?\\d+)\\]$/.exec(key);
+        if (match) {
+          maxRow = Math.max(maxRow, Number(match[1]));
+          maxCol = Math.max(maxCol, Number(match[2]));
+        }
+      });
+      const scroll = make('div', 'sheet-scroll');
+      const table = make('table', 'sheet-table');
+      const head = make('tr');
+      head.append(make('th', 'sheet-corner', ''));
+      for (let col = 1; col <= maxCol; col += 1) {
+        head.append(make('th', null, columnName(col)));
+      }
+      table.append(head);
+      for (let row = 1; row <= maxRow; row += 1) {
+        const tr = make('tr');
+        tr.append(make('th', 'sheet-rownum', String(row)));
+        for (let col = 1; col <= maxCol; col += 1) {
+          const cell = cells[cellKey(row, col)] || {};
+          const formula = cell['sheets/formula'];
+          const value = cell['sheets/value'];
+          const shown = formula !== undefined ? `=${formula}` : (value ?? '');
+          // Nothing is computed here. `sheets` has no evaluator on this path,
+          // and showing a made-up result would be worse than showing the
+          // formula that produces the real one.
+          const numeric = formula === undefined && shown !== ''
+            && Number.isFinite(Number(shown));
+          const td = make('td', [formula !== undefined ? 'sheet-cell--formula' : null,
+                                 numeric ? 'sheet-cell--num' : null,
+                                 row === 1 ? 'sheet-cell--head' : null]
+                                .filter(Boolean).join(' ') || null,
+                          String(shown));
+          tr.append(td);
+        }
+        table.append(tr);
+      }
+      scroll.append(table);
+      paper.append(scroll);
+      return paper;
+    };
+    // The stage `slides.pptx` writes: 10 × 5.625in, shapes in inches and font
+    // sizes in points. Restated here because this is JavaScript; the writer
+    // remains the only thing that produces a .pptx.
+    const deckWidthIn = 10;
+    const deckHeightIn = 5.625;
+    // Only a hex colour, and only base64 for media. Both come out of a stored
+    // document, and a style value is a place a document could otherwise ask
+    // the page to fetch something.
+    const hexColor = (value) => {
+      const hex = String(value ?? '').replace(/^#/, '');
+      return /^[0-9A-Fa-f]{3,8}$/.test(hex) ? `#${hex}` : null;
+    };
+    const deckShape = (shape) => {
+      const inches = (value) => (Number.isFinite(Number(value)) ? Number(value) : 0);
+      const kind = String(shape['slides/shape'] ?? '');
+      const node = (() => {
+        if (kind === 'text') {
+          const text = make('div', 'deck-shape deck-shape--text',
+            String(shape['slides/text'] ?? ''));
+          // A point is 1/72in and an inch is a tenth of the stage width, so a
+          // container query unit is the only one that survives the thumbnail.
+          const pt = Number(shape['slides/font-size']) || 18;
+          text.style.fontSize = `${(pt / 72 / deckWidthIn) * 100}cqw`;
+          const color = hexColor(shape['slides/color']);
+          if (color) text.style.color = color;
+          if (shape['slides/bold']) text.style.fontWeight = '700';
+          if (shape['slides/align'] === 'center') text.style.justifyContent = 'center';
+          if (shape['slides/align'] === 'right') text.style.justifyContent = 'flex-end';
+          return text;
+        }
+        if (kind === 'rect') {
+          const rect = make('div', 'deck-shape deck-shape--rect');
+          const fill = hexColor(shape['slides/fill']);
+          const line = hexColor(shape['slides/line']);
+          if (fill) rect.style.background = fill;
+          if (line) rect.style.borderColor = line;
+          return rect;
+        }
+        // An image is stored as base64 in the deck and would render from a
+        // data: URI — which this page's Content-Security-Policy does not
+        // allow, and widening `default-src 'none'` is a decision about what
+        // the app may load, not one to make while adding a preview. So the
+        // frame says what is there and the .pptx export carries the bytes.
+        return make('div', 'deck-shape deck-shape--placeholder',
+          kind === 'image'
+            ? `画像（${shape['slides/id'] ?? ''}）· pptx に出力されます`
+            : `${kind || '?'}（${shape['slides/id'] ?? ''}）`);
+      })();
+      node.style.left = `${(inches(shape['slides/x']) / deckWidthIn) * 100}%`;
+      node.style.top = `${(inches(shape['slides/y']) / deckHeightIn) * 100}%`;
+      node.style.width = `${(inches(shape['slides/w']) / deckWidthIn) * 100}%`;
+      node.style.height = `${(inches(shape['slides/h']) / deckHeightIn) * 100}%`;
+      return node;
+    };
+    const deckSlide = (slide, className) => {
+      const canvas = make('div', className);
+      const shapes = ((slide && slide['slides/shapes']) || [])
+        .filter((shape) => shape && typeof shape === 'object');
+      shapes.forEach((shape) => canvas.append(deckShape(shape)));
+      if (!shapes.length) canvas.append(make('div', 'deck-empty', '空のスライド'));
+      return canvas;
+    };
+    const slidesPreview = (payload, _vocabulary, changed) => {
+      const stage = make('div', 'deck-stage');
+      const slides = (payload['slides/slides'] || []).filter((s) => s && typeof s === 'object');
+      if (!slides.length) {
+        stage.append(make('p', 'empty-state',
+          'まだスライドがありません。「フォーム表示」で追加してください。'));
+        return stage;
+      }
+      const index = Math.min(Math.max(Number(driveEditor.slide) || 0, 0), slides.length - 1);
+      driveEditor.slide = index;
+      const shown = slides[index];
+      stage.append(deckSlide(shown, 'deck-canvas'));
+      stage.append(make('p', 'deck-caption',
+        `${index + 1} / ${slides.length}・${shown['slides/title'] || shown['slides/id'] || ''}`));
+      const film = make('div', 'deck-film');
+      slides.forEach((slide, n) => {
+        const thumb = make('button', 'deck-thumb');
+        thumb.type = 'button';
+        thumb.setAttribute('aria-pressed', n === index ? 'true' : 'false');
+        thumb.setAttribute('aria-label',
+          `スライド ${n + 1}: ${slide['slides/title'] || slide['slides/id'] || ''}`);
+        thumb.append(deckSlide(slide, 'deck-thumb__frame'),
+          make('span', 'deck-thumb__label',
+            `${n + 1}. ${slide['slides/title'] || slide['slides/id'] || ''}`));
+        thumb.addEventListener('click', () => { driveEditor.slide = n; changed(true); });
+        film.append(thumb);
+      });
+      stage.append(film);
+      return stage;
+    };
+    const surfacePreviews = {forms:formsPreview, docs:docsPreview, sheets:sheetsPreview,
+                             slides:slidesPreview};
     // The detail pane is rebuilt on every render — a keystroke in the search
     // box is enough — so an open editor's text cannot live in the element.
     // It lived there until this was measured: typing in search while editing
@@ -1162,11 +1831,19 @@
     // `etag` is the version the open payload came from. The server refuses a
     // save that does not carry the current one, so this is not bookkeeping —
     // it is the thing that stops one editor's save deleting another's.
-    const closedEditor = (id) => ({id, open:false, mode:'structured',
-                                   payload:null, text:'', tab:null, etag:null,
-                                   warnings:null});
+    // `mode` starts at the rendered surface, because a document that was just
+    // created is one nobody has been shown yet — opening on the field editor
+    // asks what it is instead of saying.
+    //
+    // `loading` and `failed` are what stop the automatic open from firing
+    // again on the next render. The detail pane is rebuilt on every keystroke
+    // in the search box, and a fetch per keystroke is what the guard prevents.
+    const closedEditor = (id) => ({id, open:false, mode:'preview',
+                                   payload:null, text:'', tab:null, slide:0,
+                                   etag:null, warnings:null,
+                                   loading:false, failed:false});
     let driveEditor = closedEditor(null);
-    // Two ways to edit one document: the fields for the surface it is, and
+    // Three views of one document: the surface as it is, the fields of it, and
     // the JSON underneath for everything the fields do not reach. Whichever
     // is showing, what gets saved is the same projected payload.
     const documentActions = (item) => {
@@ -1211,60 +1888,91 @@
       // only the next save.
       editor.addEventListener('input', () => { driveEditor.text = editor.value; });
       const pane = make('div', 'surface-pane');
-      const modes = make('div', 'detail-actions__row');
-      const structuredButton = make('button', 'tool-button', 'フォーム表示');
+      const modes = make('div', 'surface-modes');
+      const previewButton = make('button', null, 'プレビュー');
+      previewButton.type = 'button';
+      const structuredButton = make('button', null, 'フォーム表示');
       structuredButton.type = 'button';
-      const jsonButton = make('button', 'tool-button', 'JSON 表示');
+      const jsonButton = make('button', null, 'JSON 表示');
       jsonButton.type = 'button';
-      modes.append(structuredButton, jsonButton);
+      modes.append(previewButton, structuredButton, jsonButton);
 
-      // The one place the two views meet. Structured edits write into
-      // `payload` and the text is re-derived; JSON edits write the text and
-      // it is parsed when switching back. Neither is ever stale on save.
+      // The one place the views meet. Structured edits write into `payload`
+      // and the text is re-derived; JSON edits write the text and it is parsed
+      // when switching away. Neither is ever stale on save.
       const syncText = () => { driveEditor.text = JSON.stringify(driveEditor.payload, null, 2); };
       const renderPane = () => {
         pane.replaceChildren();
         modes.hidden = !driveEditor.open;
         if (!driveEditor.open) { editor.hidden = true; return; }
-        structuredButton.setAttribute('aria-pressed',
-          driveEditor.mode === 'structured' ? 'true' : 'false');
-        jsonButton.setAttribute('aria-pressed',
-          driveEditor.mode === 'json' ? 'true' : 'false');
+        [[previewButton, 'preview'], [structuredButton, 'structured'],
+         [jsonButton, 'json']].forEach(([button, mode]) =>
+          button.setAttribute('aria-pressed', driveEditor.mode === mode ? 'true' : 'false'));
         if (driveEditor.mode === 'json') {
           editor.hidden = false;
           editor.value = driveEditor.text;
           return;
         }
         editor.hidden = true;
-        const build = surfaceEditors[item.kind];
+        const preview = driveEditor.mode === 'preview';
+        const build = (preview ? surfacePreviews : surfaceEditors)[item.kind];
         if (!build || !driveEditor.payload) {
-          pane.append(make('p', 'empty-state', 'この種類はまだ JSON でのみ編集できます。'));
+          pane.append(make('p', 'empty-state', preview
+            ? 'この種類にはまだ表示できる形がありません。JSON 表示で確認してください。'
+            : 'この種類はまだ JSON でのみ編集できます。'));
           return;
         }
-        pane.append(build(driveEditor.payload, vocabulary, (rebuild) => {
+        // A preview never writes into the payload, but it does move which tab
+        // or slide is being looked at — and the callback is what redraws it.
+        const rendered = build(driveEditor.payload, vocabulary, (rebuild) => {
           syncText();
           if (rebuild) renderPane();
-        }));
+        });
+        if (preview) {
+          const frame = make('div', 'surface-preview');
+          frame.append(rendered);
+          pane.append(frame);
+        } else {
+          pane.append(rendered);
+        }
       };
-      structuredButton.addEventListener('click', () => {
-        if (driveEditor.mode === 'structured') return;
+      // Leaving the JSON view means the text is the truth and the payload has
+      // to catch up. Refused rather than silently discarding whichever side is
+      // wrong.
+      const adoptText = () => {
+        if (driveEditor.mode !== 'json') return true;
         try {
           driveEditor.payload = JSON.parse(driveEditor.text);
+          return true;
         } catch (error) {
-          // Refused rather than silently discarding whichever side is wrong.
-          status.textContent = `JSON として読めないのでフォームに戻せません: ${error.message}`;
-          return;
+          status.textContent = `JSON として読めないので切り替えられません: ${error.message}`;
+          return false;
         }
-        driveEditor.mode = 'structured';
+      };
+      const showMode = (mode) => {
+        if (driveEditor.mode === mode) return;
+        if (!adoptText()) return;
+        driveEditor.mode = mode;
         status.textContent = '';
         renderPane();
-      });
+      };
+      previewButton.addEventListener('click', () => showMode('preview'));
+      structuredButton.addEventListener('click', () => showMode('structured'));
       jsonButton.addEventListener('click', () => {
         if (driveEditor.mode === 'json') return;
         syncText();
         driveEditor.mode = 'json';
         renderPane();
       });
+      // One shape for every way a payload arrives — 編集, a version, a reload
+      // after a refused save, and the automatic first open. Written as a
+      // literal at each call site, a field added later is a field forgotten at
+      // three of them; `slide` and `tab` were exactly that.
+      const openedEditor = (fresh) => ({...closedEditor(item.id), open:true,
+                                        mode:driveEditor.mode, tab:driveEditor.tab,
+                                        slide:driveEditor.slide,
+                                        payload:fresh.payload, etag:fresh.etag,
+                                        warnings:fresh.warnings});
 
       const versions = make('div', 'detail-actions__row');
       const bytesDelta = (n) => (n > 0 ? `+${bytes(n)}` : (n < 0 ? `-${bytes(-n)}` : '±0'));
@@ -1338,13 +2046,12 @@
             // The etag of the *current* version, not of the one being
             // viewed: saving an old version forward is a new version on top
             // of what is there, not a rewrite of history.
-            driveEditor = {id:item.id, open:true, mode:driveEditor.mode,
-                           payload:data.payload, text:'', tab:null,
-                           etag:data.item?.etag,
-                           // Cleared, not carried over: the warnings on
-                           // screen were about the current version, and an
-                           // old version loaded into the editor is not it.
-                           warnings:data['export-warnings'] || null};
+            driveEditor = openedEditor(
+              // Warnings cleared, not carried over: the ones on screen were
+              // about the current version, and an old version loaded into the
+              // editor is not it.
+              {payload:data.payload, etag:data.item?.etag,
+               warnings:data['export-warnings'] || null});
             syncText();
             save.hidden = false;
             renderPane();
@@ -1372,9 +2079,7 @@
         open.disabled = true; status.textContent = '読み込んでいます…';
         try {
           const fresh = await load();
-          driveEditor = {id:item.id, open:true, mode:driveEditor.mode,
-                         payload:fresh.payload, text:'', tab:null,
-                         etag:fresh.etag, warnings:fresh.warnings};
+          driveEditor = openedEditor(fresh);
           syncText();
           save.hidden = false;
           renderPane();
@@ -1387,9 +2092,10 @@
       });
       save.addEventListener('click', async () => {
         let payload;
-        if (driveEditor.mode === 'structured') {
-          payload = driveEditor.payload;
-        } else {
+        // The JSON view is the only one whose text can be ahead of the
+        // payload. The fields write into the payload and the preview does not
+        // write at all, so both save what is already there.
+        if (driveEditor.mode === 'json') {
           try {
             payload = JSON.parse(driveEditor.text);
           } catch (error) {
@@ -1398,6 +2104,8 @@
             status.textContent = `JSON として読めません: ${error.message}`;
             return;
           }
+        } else {
+          payload = driveEditor.payload;
         }
         save.disabled = true; status.textContent = '保存しています…';
         try {
@@ -1421,9 +2129,7 @@
             reload.type = 'button';
             reload.addEventListener('click', async () => {
               const fresh = await load();
-              driveEditor = {id:item.id, open:true, mode:driveEditor.mode,
-                             payload:fresh.payload, text:'', tab:null,
-                             etag:fresh.etag, warnings:fresh.warnings};
+              driveEditor = openedEditor(fresh);
               syncText(); renderPane();
               status.textContent = '最新の版を読み込みました。';
             });
@@ -1462,9 +2168,83 @@
       if (item['writable?']) row.append(rename);
       row.append(open);
       if (item['writable?']) row.append(save);
-      if (item.role === 'owner') row.append(trash);
+      // Offered to anyone who can see the document, including a viewer of
+      // one shared read-only — which is the case the operation exists for.
+      const copy = make('button', 'tool-button', 'コピーを作成');
+      copy.type = 'button';
+      copy.addEventListener('click', () => driveAction(
+        `/api/workspace/drive/documents/${encodeURIComponent(item.id)}/copy`,
+        {folder:driveFolder}, `${item.name} のコピーを作成しました。`));
+      row.append(copy);
+      if (item.role === 'owner') {
+        // Owner only, because moving into a shared folder shares what was
+        // moved — an editor who could move could widen the access the owner
+        // granted, the same reason re-sharing is owner-only.
+        const destinations = (folderData.all || [])
+          .filter((folder) => folder.id !== item.id);
+        const picker = selectInput(item['parent-id'] || '',
+          destinations.map((folder) => folder.id),
+          async (value) => {
+            const status = $('#drive-create-status');
+            try {
+              await postJSON(
+                `/api/workspace/drive/documents/${encodeURIComponent(item.id)}/move`,
+                {folder:value}, true);
+              status.textContent = `${item.name} を移動しました。`;
+              await loadFolders();
+              await loadWorkspace('drive', renderDrive);
+            } catch (error) { status.textContent = error.message; }
+          });
+        // Labelled by path, valued by id: two folders called Q1 are ordinary
+        // and a picker showing both as Q1 asks an unanswerable question.
+        Array.from(picker.options).forEach((option) => {
+          const hit = destinations.find((folder) => folder.id === option.value);
+          if (hit) option.textContent = hit.name;
+        });
+        row.append(field('フォルダ', picker));
+        row.append(trash);
+      }
       actions.append(row, status, modes, pane, editor, versions);
       renderPane();
+      // Opened without being asked. A document that was just created and a
+      // document that was just selected are both ones nobody has seen, and
+      // making the surface wait behind 編集 means the answer to 「何を作った
+      // のか」 is a button press away. The fetch is the one 編集 does.
+      //
+      // Guarded on all three of payload, loading and failed, because this runs
+      // on every render of the detail pane — a keystroke in the search box is
+      // one — and without the guard that is a request per keystroke.
+      //
+      // And on `resource-kind`, which is what `documents/item-view` carries and
+      // `documents/folder-view` deliberately does not: a folder has no bytes,
+      // and asking for its content is a request that can only fail.
+      if (item['resource-kind'] && !driveEditor.payload
+          && !driveEditor.loading && !driveEditor.failed) {
+        driveEditor.loading = true;
+        status.textContent = '読み込んでいます…';
+        (async () => {
+          try {
+            const fresh = await load();
+            // The selection may have moved while this was in flight, and the
+            // nodes this closure holds are no longer on the page if it has.
+            if (driveEditor.id !== item.id) return;
+            driveEditor = openedEditor(fresh);
+            syncText();
+            open.textContent = '再読み込み';
+            save.hidden = !item['writable?'];
+            renderPane();
+            status.textContent = '';
+          } catch (error) {
+            if (driveEditor.id !== item.id) return;
+            driveEditor.loading = false;
+            // Marked so the next render does not ask again: a document that
+            // cannot be read is not one to retry on every keystroke. 編集
+            // remains, which is the way to ask again on purpose.
+            driveEditor.failed = true;
+            status.textContent = error.message;
+          }
+        })();
+      }
       if (item.kind === 'forms') actions.append(answerPanel(item));
       // Export is a plain link, not a fetch: the browser already knows how to
       // save a response with a Content-Disposition, and routing binary
@@ -1714,8 +2494,9 @@
     // A form is the one surface with a second thing to do to it. Editing it
     // changes the questions; answering it does not, and the answers are not
     // a version of the form — so this is a panel of its own rather than
-    // another mode of the editor.
-    const inputTypes = {email:'email', number:'number', date:'date'};
+    // another mode of the editor. `inputTypes` is declared with the rendered
+    // surfaces, because the preview of a form and a real one have to agree on
+    // what a field type is.
     const answerPanel = (item) => {
       const panel = make('div', 'sharing');
       panel.append(make('h3', 'sharing__title', 'このフォームに回答'));
@@ -2403,6 +3184,10 @@
         const request = await fetch(`/api/workspace/${name}`);
         const data = await request.json();
         if (!request.ok) throw new Error(data?.error?.message || `${name} を読み込めませんでした。`);
+        // The tree the Drive list is scoped by. Fetched here rather than
+        // inside renderDrive, which runs on every keystroke in the search
+        // box — that would be a request per character.
+        if (name === 'drive' && !(folderData.path || []).length) await loadFolders();
         renderer(data);
         return true;
       } catch (error) {
@@ -2655,7 +3440,13 @@
         // document list is built from what that loaded. Promise.all does not
         // order these, so `refreshEsignDocuments` is also called on every
         // subsequent `loadEsign` rather than only here.
-        loadEsign()
+        loadEsign(),
+        loadFleet(),
+        loadOperator(),
+        // Inside bootstrapApp, not beside loadFilecoin: a business belongs to an
+        // organization and the portfolio is that organization's own record, so
+        // it needs the session that loadFilecoin's public chain reads do not.
+        loadPortfolio()
       ]).then((results) => {
         const connected = results.filter(Boolean).length;
         $('#workspace-status').textContent = `${connected} / ${results.length} サービス接続`;
@@ -2685,6 +3476,703 @@
         button.disabled = false; button.textContent = '署名を依頼する';
       }
     });
+
+    // ── Fleet directory + 事業者としての参与 ──────────────────────────
+    //
+    // Two rules this code exists to hold, both of which are easy to violate
+    // by accident in a renderer:
+    //   1. a licence is 自己表明 and is never drawn as verified;
+    //   2. a blueprint without :deploy-config gets no deploy affordance —
+    //      the text says the operator builds it, and there is no button.
+    const reqLabel = {maturity:'成熟度', governor:'governor', licence:'許認可',
+      technologies:'必要技術', 'deploy-path':'deploy 経路'};
+    const stateLabel = {met:'充足', unmet:'未充足', attested:'自己表明',
+      absent:'同梱なし', none:'宣言なし', unknown:'不明'};
+    const stateTone = {met:'ok', unmet:'warn', attested:'note',
+      absent:'note', none:'note', unknown:'note'};
+    let fleetFacets = null;
+
+    const fillSelect = (id, pairs) => {
+      const el = $('#' + id); if (!el || !pairs) return;
+      const keep = el.value;
+      el.replaceChildren(make('option', null, 'すべて'));
+      el.firstChild.value = '';
+      pairs.forEach(([v, n]) => {
+        const o = make('option', null, `${v} (${n})`);
+        o.value = String(v).replace(/^:/, '');
+        el.append(o);
+      });
+      el.value = keep;
+    };
+
+    // Its own class rather than .data-list__item: that grid is
+    // minmax(0,1fr) auto for a two-child row, and a requirement carries four
+    // things (label, state, reason, and sometimes a caveat that must never be
+    // dropped). Reusing the grid put the reason on top of the label.
+    const requirementRow = (r) => {
+      const li = make('li', 'req-row');
+      const head = make('div', 'req-row__head');
+      head.append(make('strong', null, reqLabel[String(r.requirement).replace(/^:/,'')]
+        || String(r.requirement)));
+      // Not .nav-badge: that class is sized for the sidebar counter and
+      // squeezes a word like 「同梱なし」 to 24px.
+      const badge = make('span', 'req-row__state',
+        stateLabel[String(r.state).replace(/^:/,'')] || String(r.state));
+      badge.dataset.tone = stateTone[String(r.state).replace(/^:/,'')] || 'note';
+      head.append(badge);
+      li.append(head);
+      li.append(make('p', 'req-row__detail', r.detail || ''));
+      // The caveat rides with the requirement, so a licence row cannot be
+      // rendered anywhere without it.
+      if (r.caveat) li.append(make('p', 'req-row__caveat', r.caveat));
+      return li;
+    };
+
+    const fleetDetail = (repo) => fetch('/api/operator/readiness/' + encodeURIComponent(repo))
+      .then((r) => r.ok ? r.json() : null)
+      .then((d) => {
+        const box = $('#fleet-detail'); if (!box) return;
+        if (!d) { box.replaceChildren(make('div', 'empty-state', '読み込めません。')); return; }
+        const a = d.actor || {};
+        box.replaceChildren();
+        box.append(make('h3', null, a.name || a.repo));
+        box.append(make('p', 'data-list__meta',
+          [a.repo, a.domain, a.role, a.maturity].filter(Boolean).join(' · ')));
+        if (a.endpoint) {
+          box.append(make('p', 'data-list__meta', '稼働中: ' + a.endpoint));
+        }
+        box.append(make('h4', null, '運用に必要なもの'));
+        const ul = make('ul', 'record-list__items');
+        (d.requirements || []).forEach((r) => ul.append(requirementRow(r)));
+        box.append(ul);
+        const ad = d.adoption;
+        box.append(make('p', 'form-help', ad
+          ? `参与: ${String(ad.stage).replace(/^:/,'')}（${ad['declared-by']} / ${ad['declared-on']}）`
+          : 'まだ参与を表明していません。事業者タブから表明できます。'));
+      })
+      .catch(() => {});
+
+    const renderFleet = (data) => {
+      const list = $('#fleet-list'); if (!list) return;
+      list.replaceChildren();
+      (data.actors || []).forEach((a) => {
+        const fit = a.fit && a.fit.score ? ` · 適合 ${a.fit.score}` : '';
+        const item = listItem(a.name || a.repo,
+          [a.role, a.domain, a.maturity].filter(Boolean).join(' · ') + fit,
+          a.endpoint ? '稼働' : (a['deploy-config'] ? 'deploy可' : ''));
+        item.addEventListener('click', () => fleetDetail(a.repo));
+        list.append(item);
+      });
+      if (!(data.actors || []).length) {
+        list.append(make('li', 'empty-state', '該当する blueprint がありません。'));
+      }
+      // Say the truncation out loud. A directory that quietly shows 200 of
+      // 1,213 reads as a complete answer.
+      const fs = $('#fleet-source');
+      if (fs) fs.textContent = data.total > data.shown
+        ? `${data.total} 件中 ${data.shown} 件を表示`
+        : `${data.total} 件`;
+      // Guarded like every other lookup in these two renderers: the badge
+      // lives in the sidebar, and a renderer that assumes its own chrome is
+      // present cannot be reused anywhere the chrome is not.
+      const fc = $('#fleet-count'); if (fc) fc.textContent = data.total;
+    };
+
+    const searchFleet = () => {
+      const q = new URLSearchParams();
+      const v = (id) => ($('#' + id)?.value || '').trim();
+      if (v('fleet-text')) q.set('text', v('fleet-text'));
+      if (v('fleet-role')) q.set('role', v('fleet-role'));
+      if (v('fleet-maturity')) q.set('maturity', v('fleet-maturity'));
+      if (v('fleet-iso3166')) q.set('iso3166', v('fleet-iso3166'));
+      if ($('#fleet-callable')?.checked) q.set('callable', 'true');
+      return fetch('/api/fleet/search?' + q.toString())
+        .then((r) => r.ok ? r.json() : null)
+        .then((d) => { if (d) renderFleet(d); return Boolean(d); })
+        .catch(() => { $('#fleet-source').textContent = 'catalog を読み込めません。'; return false; });
+    };
+
+    const loadFleet = () => fetch('/api/fleet')
+      .then((r) => r.ok ? r.json() : null)
+      .then((d) => {
+        if (!d) return false;
+        fleetFacets = d.facets;
+        fillSelect('fleet-role', d.facets.role);
+        fillSelect('fleet-maturity', d.facets.maturity);
+        fillSelect('fleet-iso3166', d.facets.iso3166);
+        return searchFleet();
+      })
+      .catch(() => false);
+
+    const statTile = (label, value) => {
+      const d = make('div', 'stat-tile');
+      d.append(make('span', 'stat-tile__label', label));
+      d.append(make('strong', 'stat-tile__value', String(value)));
+      return d;
+    };
+
+    const renderOperator = (d) => {
+      const s = d.summary || {};
+      const stats = $('#operator-stats');
+      if (stats) {
+        stats.replaceChildren(
+          statTile('参与', s.adoptions || 0),
+          statTile('稼働', s.deployed || 0),
+          statTile('fleet 全体', (s.fleet && s.fleet.actors) || 0),
+          statTile('fleet の稼働', (s.fleet && s.fleet.callable) || 0));
+      }
+      const oc = $('#operator-count'); if (oc) oc.textContent = s.adoptions || 0;
+      const os_ = $('#operator-source');
+      if (os_) os_.textContent = d.profile
+        ? `${d.profile.name} として参与しています`
+        : '事業者プロファイルが未登録です。';
+      const cv = $('#operator-licence-caveat'); if (cv && d.caveat) cv.textContent = d.caveat;
+
+      if (d.profile) {
+        const p = d.profile;
+        const setv = (id, val) => { const e = $('#' + id); if (e && !e.value) e.value = val; };
+        setv('operator-name', p.name || '');
+        setv('operator-isic', (p.isic || []).join(', '));
+        setv('operator-isco', (p.isco || []).join(', '));
+        setv('operator-iso3166', (p.iso3166 || []).join(', '));
+      }
+
+      const m = $('#operator-matches');
+      if (m) {
+        m.replaceChildren();
+        (d.matches || []).forEach((a) => {
+          const item = listItem(a.name || a.repo,
+            [a.role, a.domain, a.maturity].filter(Boolean).join(' · '),
+            `適合 ${a.fit?.score ?? 0}`);
+          item.addEventListener('click', () => {
+            document.querySelector('[data-view=fleet]')?.click();
+            fleetDetail(a.repo);
+          });
+          m.append(item);
+        });
+        if (!(d.matches || []).length) {
+          m.append(make('li', 'empty-state',
+            d.profile ? '適合する blueprint がありません。業種・職種・管轄を確認してください。'
+                      : 'プロファイルを保存すると表示します。'));
+        }
+      }
+
+      const ad = $('#operator-adoptions');
+      if (ad) {
+        ad.replaceChildren();
+        (d.adoptions || []).forEach((a) => {
+          const stage = String(a.stage).replace(/^:/, '');
+          const item = listItem(a.repo,
+            `${a['declared-by']} · ${a['declared-on']}`,
+            stage, stage === 'withdrawn');
+          item.addEventListener('click', () => {
+            document.querySelector('[data-view=fleet]')?.click();
+            fleetDetail(a.repo);
+          });
+          ad.append(item);
+        });
+        if (!(d.adoptions || []).length) {
+          ad.append(make('li', 'empty-state', 'まだ参与を表明していません。'));
+        }
+      }
+    };
+
+    const loadOperator = () => fetch('/api/operator')
+      .then((r) => r.ok ? r.json() : null)
+      .then((d) => { if (d) renderOperator(d); return Boolean(d); })
+      .catch(() => { $('#operator-source').textContent = '事業者プロファイルを読み込めません。'; return false; });
+
+    const splitList = (id) => ($('#' + id)?.value || '')
+      .split(',').map((x) => x.trim()).filter(Boolean);
+
+    // ── Portfolio（事業の面）──────────────────────────────────────────
+    //
+    // ADR-2607309600. The one thing this renderer must never do is draw an
+    // absent plane as an empty one. `unresolvable`（workspace checkout が未設定）
+    // と `missing`（設定済みで、その canvas / repo が無い）は別の事実で、直し方
+    // も別 — 前者は設定、後者は checkout か紐付けの誤り。両方を「0件」に畳むと、
+    // 何も測っていない状態が「測って空だった」ように読める。
+    //
+    // WIRE CONTRACT, easy to get wrong in both directions:
+    // `clojure.data.json/write-str` drops the NAMESPACE of a keyword key, so
+    // `:business/id` arrives as `id` and `:adoption/repo` as `repo`. Reading
+    // `b['business/id']` yields undefined — silently, and it renders as an empty
+    // row rather than an error. (The document panes read `d['docs/blocks']` and
+    // are fine only because those keys are STRINGS server-side and pass through
+    // untouched; never copy that shape onto a keyword-keyed payload.) Keyword
+    // VALUES lose their namespace and colon the same way, which is why `bare`
+    // strips a leading colon defensively instead of assuming either form.
+    const bare = (v) => String(v ?? '').replace(/^:/, '');
+    const faceStateLabel = {resolved:'解決', partial:'一部解決', unbound:'未紐付け',
+      unresolvable:'解析不能', missing:'不在', unreadable:'読取不能'};
+    // `missing`/`unreadable` だけが warn。`unresolvable` と `unbound` は
+    // アプリが決められないことなので、警告にはしない（operator の
+    // blocking-states と同じ線引き）。
+    const faceStateTone = {resolved:'ok', partial:'note', unbound:'note',
+      unresolvable:'note', missing:'warn', unreadable:'warn'};
+    const faceRow = (f) => {
+      const li = make('li', 'req-row');
+      const head = make('div', 'req-row__head');
+      head.append(make('strong', null, f.label || bare(f.face)));
+      const badge = make('span', 'req-row__state',
+        faceStateLabel[bare(f.state)] || bare(f.state));
+      badge.dataset.tone = faceStateTone[bare(f.state)] || 'note';
+      head.append(badge);
+      li.append(head);
+      li.append(make('p', 'req-row__detail', f.detail || ''));
+      // An unresolved face names the key it looked for and the file it looked
+      // in, so the reader can act on it instead of only knowing it failed.
+      const key = Array.isArray(f.key) ? f.key.join(' / ') : bare(f.key);
+      if (key) li.append(make('p', 'req-row__caveat', `${key} — ${f.source || ''}`));
+      return li;
+    };
+
+    let selectedBusinessId = null;
+
+    const renderBusinessDetail = (b) => {
+      const box = $('#portfolio-detail'); if (!box) return;
+      const card = $('#portfolio-bind-card');
+      if (!b) {
+        box.replaceChildren(make('div', 'empty-state', '事業を選ぶと、5面の状態を表示します。'));
+        if (card) card.hidden = true;
+        return;
+      }
+      const c = b.coverage || {};
+      box.replaceChildren();
+      box.append(make('p', 'record-detail__eyebrow', b.slug || ''));
+      box.append(make('h3', null, b.name || b.slug || ''));
+      // Two numbers, not one score: 紐付け数 is what the owner declared and
+      // 解決数 is what the workspace can confirm. A single percentage would
+      // hide which of the two is missing.
+      box.append(make('p', 'record-detail__body',
+        `${c.bound ?? 0}/${c.faces ?? 0} 面を紐付け · ${c.resolved ?? 0} 面を解決`
+        + (c.unresolvable ? ` · ${c.unresolvable} 面は workspace 未設定のため解析不能` : '')));
+      if (b.note) box.append(make('p', 'req-row__caveat', b.note));
+      const list = make('ul', 'record-list__items');
+      (b.faces || []).forEach((f) => list.append(faceRow(f)));
+      box.append(list);
+      if (card) {
+        card.hidden = false;
+        const set = (id, v) => { const e = $('#' + id); if (e) e.value = v || ''; };
+        set('portfolio-bind-canvas', bare(b.canvas));
+        set('portfolio-bind-model', b.model);
+        set('portfolio-bind-adoptions', (b.adoptions || []).join(', '));
+        set('portfolio-bind-repos', (b.repos || []).join(', '));
+        set('portfolio-bind-lei', b.lei);
+        const st = $('#portfolio-bind-status'); if (st) st.textContent = '';
+      }
+    };
+
+    const renderPortfolio = (d) => {
+      const rows = d.businesses || [];
+      const counts = d.counts || {};
+      const ws = d.workspace || {};
+
+      const stats = $('#portfolio-stats');
+      if (stats) {
+        stats.replaceChildren(
+          statTile('事業', counts.businesses || 0),
+          statTile('5面すべて解決', counts['fully-resolved'] || 0),
+          statTile('未割当の参与', counts['unassigned-adoptions'] || 0));
+      }
+      const badge = $('#portfolio-count');
+      if (badge) badge.textContent = counts.businesses || 0;
+      const src = $('#portfolio-source');
+      if (src) src.textContent = rows.length
+        ? `${rows.length} 件の事業`
+        : '事業がまだありません。';
+
+      // The workspace notice is the difference between 「測って空だった」 and
+      // 「どこを見るか誰も言っていない」, so it always states which one it is.
+      const notice = $('#portfolio-workspace');
+      if (notice) {
+        notice.replaceChildren();
+        if (bare(ws.state) === 'present') {
+          notice.append(make('strong', null, 'workspace checkout: '), ws.root || '');
+        } else {
+          notice.append(make('strong', null,
+            bare(ws.state) === 'missing' ? 'workspace checkout が見つかりません。'
+                                         : 'workspace checkout が未設定です。'));
+          notice.append(document.createTextNode(' ' + (ws.detail || '')));
+        }
+      }
+
+      const list = $('#portfolio-list');
+      if (list) {
+        list.replaceChildren();
+        rows.forEach((b) => {
+          const c = b.coverage || {};
+          const item = listItem(b.name || b.slug,
+            `${c.bound ?? 0}/${c.faces ?? 0} 面を紐付け`,
+            `解決 ${c.resolved ?? 0}`,
+            (c.resolved ?? 0) === 0);
+          item.addEventListener('click', () => {
+            selectedBusinessId = b.id;
+            renderBusinessDetail(b);
+          });
+          list.append(item);
+        });
+        if (!rows.length) {
+          list.append(make('li', 'empty-state', 'まだ事業がありません。'));
+        }
+      }
+      renderBusinessDetail(rows.find((b) => b.id === selectedBusinessId));
+      fillCanvasBusinesses(rows);
+
+      const un = $('#portfolio-unassigned');
+      if (un) {
+        un.replaceChildren();
+        const items = (d.unassigned && d.unassigned.adoptions) || [];
+        items.forEach((a) => {
+          un.append(listItem(a.repo,
+            `${a['declared-by'] || ''} · ${a['declared-on'] || ''}`,
+            bare(a.stage)));
+        });
+        if (!items.length) {
+          un.append(make('li', 'empty-state', '未割当の参与はありません。'));
+        }
+      }
+      const cav = $('#portfolio-unassigned-caveat');
+      if (cav && d.unassigned && d.unassigned.caveat) {
+        cav.textContent = '参与を表明したが、どの事業にも紐付いていない blueprint です。'
+          + d.unassigned.caveat;
+      }
+    };
+
+    const loadPortfolio = () => fetch('/api/business')
+      .then((r) => r.ok ? r.json() : null)
+      .then((d) => { if (d) renderPortfolio(d); return Boolean(d); })
+      .catch(() => {
+        const src = $('#portfolio-source');
+        if (src) src.textContent = '事業を読み込めません。';
+        return false;
+      });
+
+    $('#portfolio-create-form')?.addEventListener('submit', (e) => {
+      e.preventDefault();
+      const status = $('#portfolio-create-status');
+      fetch('/api/business', {
+        method: 'POST', headers: identityHeaders(),
+        body: JSON.stringify({
+          slug: ($('#portfolio-slug')?.value || '').trim(),
+          name: ($('#portfolio-name')?.value || '').trim(),
+          note: ($('#portfolio-note')?.value || '').trim()
+        })
+      }).then(async (r) => {
+        const body = await r.json().catch(() => null);
+        if (!r.ok) {
+          // The server's own refusal text, not a generic one: slug-taken and
+          // slug-invalid need different corrections.
+          if (status) status.textContent = body?.error?.message
+            || body?.error?.type || `保存できません (${r.status})`;
+          return;
+        }
+        if (status) status.textContent = '追加しました。';
+        ['portfolio-slug','portfolio-name','portfolio-note'].forEach((id) => {
+          const e2 = $('#' + id); if (e2) e2.value = '';
+        });
+        selectedBusinessId = body && body.id;
+        return loadPortfolio();
+      }).catch(() => { if (status) status.textContent = '保存できません。'; });
+    });
+
+    // ── Canvas（事業の仮説）────────────────────────────────────────────
+    //
+    // Two things this renderer must not do. It must not draw a canvas it could
+    // not read as an empty canvas — `unresolvable` / `missing` / `unreadable`
+    // each say what to fix. And it must not draw a proposal as landed on the
+    // strength of having recorded it: the state comes back from the server,
+    // which derived it by reading the projection.
+    const canvasStateLabel = {resolved:'読み込み済み', unbound:'canvas 未紐付け',
+      unresolvable:'解析不能', missing:'投影が無い', unreadable:'読取不能'};
+    const proposalStateLabel = {'awaiting-governor':'governor 待ち', landed:'着地',
+      unverifiable:'判定不能', withdrawn:'取り下げ'};
+    const proposalStateTone = {'awaiting-governor':'note', landed:'ok',
+      unverifiable:'note', withdrawn:'note'};
+    let canvasData = null;
+
+    const canvasBlockCard = (b) => {
+      const d = make('div', 'canvas-block');
+      d.append(make('p', 'canvas-block__label', b.label || bare(b.block)));
+      const items = b.items || [];
+      if (items.length) {
+        const ul = make('ul', 'canvas-block__items');
+        items.forEach((i) => ul.append(make('li', null, i)));
+        d.append(ul);
+      } else {
+        // An empty block is a real state in a lean canvas — say so rather than
+        // rendering a card with nothing in it.
+        d.append(make('p', 'canvas-block__empty', 'item がありません'));
+      }
+      if (b.note) d.append(make('p', 'canvas-block__note', b.note));
+      return d;
+    };
+
+    const hypothesisRow = (h, riskiest) => {
+      const li = make('li', 'req-row');
+      if (bare(h.id) === bare(riskiest)) li.classList.add('req-row--risk');
+      const head = make('div', 'req-row__head');
+      head.append(make('strong', null, bare(h.id)
+        + (bare(h.risk) === 'riskiest' ? '  最も危険な仮説' : '')));
+      // Two chips on purpose: :hyp/status is what the ledger says, :gate/status
+      // is what the metrics say, and one of them moving without the other is
+      // the interesting case.
+      const badge = make('span', 'req-row__state', bare(h.status));
+      badge.dataset.tone = bare(h.status) === 'validated' ? 'ok'
+        : (bare(h.status) === 'refuted' ? 'warn' : 'note');
+      head.append(badge);
+      li.append(head);
+      li.append(make('p', 'req-row__detail', h.claim || ''));
+      if (h.gate) li.append(make('p', 'req-row__caveat', 'gate: ' + h.gate));
+      const gs = bare(h['gate-status'] ?? '');
+      if (gs) {
+        const line = make('p', 'req-row__caveat',
+          `測定: ${gs}` + (h['gate-distance'] ? ` — ${h['gate-distance']}` : '')
+          + (h['gate-evidence'] ? ` — ${h['gate-evidence']}` : ''));
+        li.append(line);
+      } else {
+        li.append(make('p', 'req-row__caveat', '測定: 未測定（gate spec か metrics がありません）'));
+      }
+      if (h.evidence) li.append(make('p', 'req-row__caveat', '根拠: ' + h.evidence));
+      return li;
+    };
+
+    const renderCanvas = (d) => {
+      canvasData = d;
+      const c = (d && d.canvas) || {};
+      const state = bare(c.state);
+      const note = $('#canvas-state');
+      if (note) {
+        note.replaceChildren();
+        note.append(make('strong', null, (canvasStateLabel[state] || state) + ' '));
+        if (c.detail) note.append(document.createTextNode(c.detail));
+        if (state === 'resolved') {
+          note.append(document.createTextNode(
+            `投影 ${c.source || ''}（as-of ${c['as-of'] || '不明'}）`));
+          // A projection whose file disagrees with its own header is truncated;
+          // saying so beats rendering eight of nine blocks as the canvas.
+          if (c.counts && c.counts['complete?'] === false) {
+            note.append(make('strong', null,
+              ` 投影が宣言した件数と一致しません（block ${c.counts.blocks}/${c.counts['declared-blocks']}）`));
+          }
+        }
+      }
+      const meta = $('#canvas-meta');
+      if (meta) meta.textContent = state === 'resolved'
+        ? `${(c.blocks || []).length} block · ${(c.hypotheses || []).length} 仮説`
+        : '';
+      const src = $('#canvas-source');
+      if (src) src.textContent = d && d.business
+        ? `${d.business.name || d.business.slug}${c.product ? ' → ' + bare(c.product) : ''}`
+        : '事業を選択してください。';
+      const auth = $('#canvas-authority');
+      if (auth && d && d.authority) auth.textContent = d.authority;
+
+      const grid = $('#canvas-blocks');
+      if (grid) {
+        grid.replaceChildren();
+        (c.blocks || []).forEach((b) => grid.append(canvasBlockCard(b)));
+      }
+
+      const hs = $('#canvas-hypotheses');
+      if (hs) {
+        hs.replaceChildren();
+        (c.hypotheses || []).forEach((h) => hs.append(hypothesisRow(h, c['riskiest-hyp'])));
+        if (!(c.hypotheses || []).length) {
+          hs.append(make('li', 'empty-state',
+            state === 'resolved' ? '仮説が登録されていません。' : 'canvas を読み込めていません。'));
+        }
+      }
+
+      // The block select is filled from the projection, so a proposal cannot
+      // name a block that does not exist. With no projection there is nothing
+      // honest to offer, and the form stays hidden.
+      const card = $('#canvas-propose-card');
+      const blockSelect = $('#canvas-propose-block');
+      if (blockSelect) {
+        const keep = blockSelect.value;
+        blockSelect.replaceChildren(make('option', null, 'block を選択…'));
+        blockSelect.firstChild.value = '';
+        (c.blocks || []).forEach((b) => {
+          const o = make('option', null, `${b.label || bare(b.block)} (${bare(b.id)})`);
+          o.value = bare(b.id);
+          blockSelect.append(o);
+        });
+        blockSelect.value = keep;
+      }
+      if (card) card.hidden = state !== 'resolved';
+
+      const list = $('#canvas-proposals');
+      if (list) {
+        list.replaceChildren();
+        (d?.proposals || []).forEach((p) => {
+          const st = bare(p.state);
+          const li = make('li', 'req-row');
+          const head = make('div', 'req-row__head');
+          head.append(make('strong', null,
+            `${bare(p.action)} ${bare(p['canvas-id'])}`));
+          const badge = make('span', 'req-row__state', proposalStateLabel[st] || st);
+          badge.dataset.tone = proposalStateTone[st] || 'note';
+          head.append(badge);
+          li.append(head);
+          li.append(make('p', 'req-row__detail', p.value || ''));
+          li.append(make('p', 'req-row__caveat',
+            `${p['proposed-by'] || ''} · ${p['proposed-at'] || ''}`
+            + (p.reason ? ` · ${p.reason}` : '')));
+          // The exact command, because there is no Apply button this app could
+          // honestly offer.
+          if (st !== 'landed' && st !== 'withdrawn' && p.command) {
+            li.append(make('p', 'req-row__caveat', p.command));
+            const drop = make('button', 'tool-button', '取り下げる');
+            drop.type = 'button';
+            drop.addEventListener('click', () => withdrawProposal(p.id));
+            li.append(drop);
+          }
+          list.append(li);
+        });
+        if (!(d?.proposals || []).length) {
+          list.append(make('li', 'empty-state', 'まだ提案はありません。'));
+        }
+      }
+      const badge = $('#canvas-count');
+      if (badge) {
+        const awaiting = (d?.proposals || [])
+          .filter((p) => bare(p.state) === 'awaiting-governor').length;
+        badge.textContent = awaiting;
+      }
+    };
+
+    const loadCanvas = (businessId) => {
+      if (!businessId) { renderCanvas(null); return Promise.resolve(false); }
+      return fetch(`/api/business/${encodeURIComponent(businessId)}/canvas`)
+        .then((r) => r.ok ? r.json() : null)
+        .then((d) => { renderCanvas(d); return Boolean(d); })
+        .catch(() => {
+          const src = $('#canvas-source');
+          if (src) src.textContent = 'canvas を読み込めません。';
+          return false;
+        });
+    };
+
+    const withdrawProposal = (proposalId) => {
+      const businessId = $('#canvas-business')?.value;
+      if (!businessId || !proposalId) return;
+      fetch(`/api/business/${encodeURIComponent(businessId)}/canvas/proposals/`
+            + `${encodeURIComponent(proposalId)}/withdraw`, {
+        method: 'POST', headers: identityHeaders(),
+        body: JSON.stringify({by: ($('#canvas-propose-by')?.value || '').trim()})
+      }).then(() => loadCanvas(businessId))
+        .catch(() => {
+          const st = $('#canvas-propose-status');
+          if (st) st.textContent = '取り下げられません。';
+        });
+    };
+
+    // Filled from the portfolio, so the two panes cannot disagree about which
+    // businesses exist.
+    const fillCanvasBusinesses = (rows) => {
+      const sel = $('#canvas-business'); if (!sel) return;
+      const keep = sel.value || selectedBusinessId || '';
+      sel.replaceChildren(make('option', null, '事業を選択…'));
+      sel.firstChild.value = '';
+      (rows || []).forEach((b) => {
+        const o = make('option', null, b.name || b.slug);
+        o.value = b.id;
+        sel.append(o);
+      });
+      const next = (rows || []).some((b) => b.id === keep) ? keep : '';
+      sel.value = next;
+      if (next && next !== canvasData?.business?.id) loadCanvas(next);
+      if (!next) renderCanvas(null);
+    };
+
+    $('#canvas-business')?.addEventListener('change', (e) => {
+      selectedBusinessId = e.currentTarget.value || selectedBusinessId;
+      loadCanvas(e.currentTarget.value);
+    });
+
+    $('#canvas-propose-form')?.addEventListener('submit', (e) => {
+      e.preventDefault();
+      const status = $('#canvas-propose-status');
+      const businessId = $('#canvas-business')?.value;
+      if (!businessId) { if (status) status.textContent = '事業を選んでください。'; return; }
+      fetch(`/api/business/${encodeURIComponent(businessId)}/canvas/propose`, {
+        method: 'POST', headers: identityHeaders(),
+        body: JSON.stringify({
+          action: ($('#canvas-propose-action')?.value || '').trim(),
+          'canvas-id': ($('#canvas-propose-block')?.value || '').trim(),
+          value: ($('#canvas-propose-value')?.value || '').trim(),
+          reason: ($('#canvas-propose-reason')?.value || '').trim(),
+          by: ($('#canvas-propose-by')?.value || '').trim()
+        })
+      }).then(async (r) => {
+        const body = await r.json().catch(() => null);
+        if (!r.ok) {
+          if (status) status.textContent = body?.error?.message
+            || body?.error?.type || `記録できません (${r.status})`;
+          return;
+        }
+        if (status) status.textContent = '提案を記録しました。ledger へは governor が入れます。';
+        const v = $('#canvas-propose-value'); if (v) v.value = '';
+        return loadCanvas(businessId);
+      }).catch(() => { if (status) status.textContent = '記録できません。'; });
+    });
+
+    $('#portfolio-bind-form')?.addEventListener('submit', (e) => {
+      e.preventDefault();
+      const status = $('#portfolio-bind-status');
+      if (!selectedBusinessId) { if (status) status.textContent = '事業を選んでください。'; return; }
+      fetch(`/api/business/${encodeURIComponent(selectedBusinessId)}/bind`, {
+        method: 'POST', headers: identityHeaders(),
+        body: JSON.stringify({
+          canvas: ($('#portfolio-bind-canvas')?.value || '').trim(),
+          model: ($('#portfolio-bind-model')?.value || '').trim(),
+          lei: ($('#portfolio-bind-lei')?.value || '').trim(),
+          adoptions: splitList('portfolio-bind-adoptions'),
+          repos: splitList('portfolio-bind-repos')
+        })
+      }).then((r) => {
+        if (!r.ok) { if (status) status.textContent = `保存できません (${r.status})`; return; }
+        if (status) status.textContent = '紐付けを保存しました。';
+        return loadPortfolio();
+      }).catch(() => { if (status) status.textContent = '保存できません。'; });
+    });
+
+    $('#fleet-filter-form')?.addEventListener('submit', (e) => { e.preventDefault(); searchFleet(); });
+    ['fleet-role','fleet-maturity','fleet-iso3166','fleet-callable'].forEach((id) => {
+      $('#' + id)?.addEventListener('change', searchFleet);
+    });
+    $('#fleet-text')?.addEventListener('input', () => {
+      clearTimeout(window.__fleetDebounce);
+      window.__fleetDebounce = setTimeout(searchFleet, 250);
+    });
+
+    $('#operator-profile-form')?.addEventListener('submit', (e) => {
+      e.preventDefault();
+      const kind = ($('#operator-licence-kind')?.value || '').trim();
+      const by = ($('#operator-licence-by')?.value || '').trim();
+      // A licence with no attester is not an attestation, so it is not sent.
+      const licences = (kind && by) ? [{
+        'licence/kind': kind,
+        'licence/authority': ($('#operator-licence-authority')?.value || '').trim(),
+        'licence/number': ($('#operator-licence-number')?.value || '').trim(),
+        'licence/attested-by': by,
+        'licence/attested-on': new Date().toISOString().slice(0, 10)
+      }] : [];
+      fetch('/api/operator/profile', {
+        method: 'POST', headers: identityHeaders(),
+        body: JSON.stringify({
+          name: ($('#operator-name')?.value || '').trim(),
+          isic: splitList('operator-isic'),
+          isco: splitList('operator-isco'),
+          iso3166: splitList('operator-iso3166'),
+          technologies: splitList('operator-tech'),
+          licences: licences
+        })
+      }).then(() => loadOperator())
+        .catch(() => { $('#operator-source').textContent = 'プロファイルを保存できません。'; });
+    });
+
     $('#inbox-search').addEventListener('input', () => renderInbox(inboxData));
     // The box filters the list as you type, which is instant and local, and
     // separately asks the server what is inside the documents, which is not.
@@ -3378,6 +4866,13 @@
    [:span {:class "nav-label"} title]
    (when badge-id [:span {:class "nav-badge" :id badge-id} "—"])])
 
+(defn- nav-group
+  "A heading over one run of nav items. Presentational only — the buttons keep
+  carrying their own `data-view`, so `showView` is unchanged and a group cannot
+  become a thing that has to be opened before its items work."
+  [title]
+  [:p {:class "local-nav__group" :aria-hidden "true"} title])
+
 (defn- view-header [title lead]
   [:header {:class "view-header"}
    [:div {:class "view-header__copy"}
@@ -3406,16 +4901,26 @@
         [:select {:id "organization-switcher" :disabled true}
          [:option "確認中…"]]]
        [:nav {:class "local-nav"}
+        ;; 対象（事業とその実装）と道具（chat・drive・scheduler）を分ける。
+        ;; ADR-2607309600 決定4。12 項目が平らに並んでいた状態では、事業を1つ
+        ;; 増やすことと道具を1つ増やすことが同じ操作に見えていた。
+        (nav-group "BUSINESS")
+        (nav-item "portfolio" "Portfolio" "▤" "portfolio-count")
+        (nav-item "canvas" "Canvas" "◱" "canvas-count")
+        (nav-item "fleet" "Fleet" "◉" "fleet-count")
+        (nav-item "operator" "\u4e8b\u696d\u8005" "◐" "operator-count")
+        (nav-item "contracts" "Contracts" "◫" "contracts-count")
+        (nav-group "WORKSPACE")
         (nav-item "chat" "Chat" "✦" nil)
         (nav-item "worker" "Worker" "◐" "worker-count")
         (nav-item "organisms" "Organisms" "◎" "organism-count")
         (nav-item "inbox" "Inbox" "□" "inbox-count")
         (nav-item "projects" "Projects" "▦" "projects-count")
         (nav-item "drive" "Drive" "◇" "drive-count")
+        (nav-item "esign" "eSign" "✍" "esign-count")
         (nav-item "scheduler" "Scheduler" "○" "scheduler-count")
         (nav-item "storage" "Storage" "◈" "storage-count")
-        (nav-item "esign" "eSign" "✍" "esign-count")
-        (nav-item "contracts" "Contracts" "◫" "contracts-count")
+        (nav-group "SETTINGS")
         (nav-item "settings" "Settings" "⚙" nil)]
        [:div {:class "sidebar__status"}
         [:strong "● ローカルモード"]
@@ -3521,6 +5026,245 @@
             [:li {:class "skeleton"}]]]
           [:article {:class "record-detail" :id "worker-detail" :aria-live "polite"}
            [:div {:class "empty-state"} "ジョブを読み込んでいます。"]]]]
+        ;; ── Fleet directory ────────────────────────────────────────
+        ;; The whole catalog, 1,213 actors plus the company records, with the
+        ;; facets read from the catalog rather than hardcoded — a fixed filter
+        ;; list would drift from the fleet the first time it grew.
+        ;; ── Portfolio（事業の面）───────────────────────────────────
+        ;; ADR-2607309600. BMC・system dynamics・fleet の3面は互いに join でき
+        ;; ないので、Business entity が各面の鍵を1つずつ持つ。この pane は
+        ;; その面の「今どこまで解決できるか」だけを出す — 解析値は出さない。
+        ;; 未紐付け・未解決・不在・解析不能を区別して描き、無い面を空の面と
+        ;; して描かないのがこの pane の唯一の仕事。
+        [:section {:class "view" :data-view-panel "portfolio" :hidden true}
+         (view-header "Portfolio"
+                      (str "事業ごとに、Canvas(BMC)・Loops(XMILE)・参与している blueprint・"
+                           "repo・法人実体 の5面がどこまで結び付いているかを表示します。"))
+         [:p {:class "source-note"} [:span {:class "source-dot"}]
+          [:span {:id "portfolio-source"} "事業を確認中…"]]
+         [:div {:class "security-callout" :id "portfolio-workspace"
+                :role "status" :aria-live "polite"}
+          "workspace checkout の状態を確認中…"]
+         [:div {:class "stat-row" :id "portfolio-stats"}]
+         [:div {:class "local-card"}
+          (dds/heading 2 "事業を追加" {:size "24"})
+          [:p {:class "form-help"}
+           (str "slug は ADR や commit でこの事業を指す名前です。どの repo や canvas が"
+                "どの事業かは判断なので、名前から推測して自動で紐付けることはしません。")]
+          [:form {:class "settings-form" :id "portfolio-create-form"}
+           [:div {:class "field"}
+            [:label {:for "portfolio-slug"} "slug"]
+            [:input {:id "portfolio-slug" :name "slug" :required true
+                     :autocomplete "off"
+                     :pattern "[a-z0-9][a-z0-9._-]{1,62}[a-z0-9]"
+                     :placeholder "cloud-itonami-5820"}]]
+           [:div {:class "field"}
+            [:label {:for "portfolio-name"} "表示名（任意）"]
+            [:input {:id "portfolio-name" :name "name" :autocomplete "off"
+                     :placeholder "未入力なら slug を使います"}]]
+           [:div {:class "field"}
+            [:label {:for "portfolio-note"} "メモ（任意）"]
+            [:input {:id "portfolio-note" :name "note" :autocomplete "off"}]]
+           [:button {:class "primary-action" :type "submit"} "事業を追加"]]
+          [:p {:class "form-help" :id "portfolio-create-status" :aria-live "polite"}]]
+         [:div {:class "record-browser"}
+          [:div {:class "record-list"}
+           [:ul {:class "record-list__items" :id "portfolio-list"}
+            [:li {:class "skeleton"}]]]
+          [:article {:class "record-detail" :id "portfolio-detail" :aria-live "polite"}
+           [:div {:class "empty-state"} "事業を選ぶと、5面の状態を表示します。"]]]
+         [:div {:class "local-card" :id "portfolio-bind-card" :hidden true}
+          (dds/heading 2 "面を紐付ける" {:size "24"})
+          [:p {:class "form-help"}
+           (str "workspace に無い canvas や repo を指定しても保存します — "
+                "「この事業はこの canvas に属する」は事業についての真の記述で、"
+                "checkout が無いことは別の事実（:unresolvable）として表示します。")]
+          [:form {:class "settings-form" :id "portfolio-bind-form"}
+           [:div {:class "field"}
+            [:label {:for "portfolio-bind-canvas"} "Canvas — :canvas/product"]
+            [:input {:id "portfolio-bind-canvas" :autocomplete "off"
+                     :placeholder "cloud-itonami"}]]
+           [:div {:class "field"}
+            [:label {:for "portfolio-bind-model"} "Loops — XMILE モデルの相対パス"]
+            [:input {:id "portfolio-bind-model" :autocomplete "off"
+                     :placeholder "orgs/kotoba-lang/loop-system-dynamics/…"}]]
+           [:div {:class "field"}
+            [:label {:for "portfolio-bind-adoptions"} "参与している blueprint（カンマ区切り）"]
+            [:input {:id "portfolio-bind-adoptions" :autocomplete "off"
+                     :placeholder "cloud-itonami-isic-5820"}]]
+           [:div {:class "field"}
+            [:label {:for "portfolio-bind-repos"} "repo path（カンマ区切り）"]
+            [:input {:id "portfolio-bind-repos" :autocomplete "off"
+                     :placeholder "orgs/cloud-itonami/cloud-itonami-app"}]]
+           [:div {:class "field"}
+            [:label {:for "portfolio-bind-lei"} "法人実体 LEI"]
+            [:input {:id "portfolio-bind-lei" :autocomplete "off"
+                     :placeholder "ZSN2LWNPYW6ISMRUC664"}]]
+           [:button {:class "primary-action" :type "submit"} "紐付けを保存"]]
+          [:p {:class "form-help" :id "portfolio-bind-status" :aria-live "polite"}]]
+         [:div {:class "local-card"}
+          (dds/heading 2 "未割当の参与" {:size "24"})
+          [:p {:class "form-help" :id "portfolio-unassigned-caveat"}
+           "参与を表明したが、どの事業にも紐付いていない blueprint です。"]
+          [:ul {:class "record-list__items" :id "portfolio-unassigned"}
+           [:li {:class "empty-state"} "確認中…"]]]]
+
+        ;; ── Canvas（事業の仮説）─────────────────────────────────────
+        ;; 読みは fold 済み投影（superproject の `gftd canvas datoms` が生成）、
+        ;; 書きは提案。canvas-ledger は governed append-only で、このアプリに
+        ;; governor は無い。だから ledger へ書く経路は「失敗する route」ではなく
+        ;; 「存在しない」。提案が着地したかは投影を読み直して判定する（保存しない）。
+        [:section {:class "view" :data-view-panel "canvas" :hidden true}
+         (view-header "Canvas"
+                      (str "事業に紐付いた lean canvas（BMC）と仮説。"
+                           "変更はこのアプリからは提案までで、ledger へは governor が入れます。"))
+         [:p {:class "source-note"} [:span {:class "source-dot"}]
+          [:span {:id "canvas-source"} "事業を確認中…"]]
+         [:div {:class "workspace-toolbar"}
+          [:label {:class "visually-hidden" :for "canvas-business"} "事業"]
+          [:select {:id "canvas-business"}
+           [:option {:value ""} "事業を選択…"]]
+          [:span {:class "result-count" :id "canvas-meta"}]]
+         [:div {:class "security-callout" :id "canvas-state"
+                :role "status" :aria-live "polite"}
+          "canvas を確認中…"]
+         [:div {:class "canvas-grid" :id "canvas-blocks"}]
+         [:div {:class "local-card"}
+          (dds/heading 2 "仮説と gate" {:size "24"})
+          [:p {:class "form-help"}
+           (str "gate は metrics が在るときだけ付きます。測っていない仮説に gate の"
+                "状態は表示しません — それは失敗ではなく未測定です。")]
+          [:ul {:class "record-list__items" :id "canvas-hypotheses"}
+           [:li {:class "empty-state"} "事業を選ぶと表示します。"]]]
+         [:div {:class "local-card" :id "canvas-propose-card" :hidden true}
+          (dds/heading 2 "変更を提案する" {:size "24"})
+          [:p {:class "form-help" :id "canvas-authority"}
+           "このアプリは canvas-ledger に書きません。"]
+          [:form {:class "settings-form" :id "canvas-propose-form"}
+           [:div {:class "field"}
+            [:label {:for "canvas-propose-action"} "操作"]
+            [:select {:id "canvas-propose-action"}
+             [:option {:value "add-item"} "item を追加 (canvas add)"]
+             [:option {:value "retract-item"} "item を撤回 (canvas retract)"]
+             [:option {:value "note"} "note を差替 (canvas note)"]]]
+           [:div {:class "field"}
+            [:label {:for "canvas-propose-block"} "block"]
+            [:select {:id "canvas-propose-block"}
+             [:option {:value ""} "block を選択…"]]]
+           [:div {:class "field"}
+            [:label {:for "canvas-propose-value"} "内容"]
+            [:textarea {:id "canvas-propose-value" :rows 2 :required true}]]
+           [:div {:class "field"}
+            [:label {:for "canvas-propose-reason"} "理由（任意）"]
+            [:input {:id "canvas-propose-reason" :autocomplete "off"}]]
+           [:div {:class "field"}
+            [:label {:for "canvas-propose-by"} "提案者"]
+            [:input {:id "canvas-propose-by" :required true :autocomplete "off"
+                     :placeholder "山田 太郎"}]]
+           [:button {:class "primary-action" :type "submit"} "提案を記録"]]
+          [:p {:class "form-help" :id "canvas-propose-status" :aria-live "polite"}]]
+         [:div {:class "local-card"}
+          (dds/heading 2 "提案の状態" {:size "24"})
+          [:p {:class "form-help"}
+           (str "着地したかは投影を読み直して判定します（保存された値ではありません）。"
+                "workspace checkout が無いときは landed とも awaiting とも言えません。")]
+          [:ul {:class "record-list__items" :id "canvas-proposals"}
+           [:li {:class "empty-state"} "まだ提案はありません。"]]]]
+
+        [:section {:class "view" :data-view-panel "fleet" :hidden true}
+         (view-header "Fleet"
+                      "cloud-itonami の org と repo。どれも fork して運用できる OSS 事業の設計図です。")
+         [:p {:class "source-note"} [:span {:class "source-dot"}]
+          [:span {:id "fleet-source"} "catalog を読み込み中…"]]
+         [:div {:class "local-card"}
+          [:form {:class "settings-form" :id "fleet-filter-form"}
+           [:div {:class "field"}
+            [:label {:for "fleet-text"} "検索"]
+            [:input {:id "fleet-text" :name "text" :type "search"
+                     :placeholder "id・名称・ドメイン"}]]
+           [:div {:class "field"}
+            [:label {:for "fleet-role"} "族"]
+            [:select {:id "fleet-role" :name "role"}
+             [:option {:value ""} "すべて"]]]
+           [:div {:class "field"}
+            [:label {:for "fleet-maturity"} "成熟度"]
+            [:select {:id "fleet-maturity" :name "maturity"}
+             [:option {:value ""} "すべて"]]]
+           [:div {:class "field"}
+            [:label {:for "fleet-iso3166"} "管轄"]
+            [:select {:id "fleet-iso3166" :name "iso3166"}
+             [:option {:value ""} "すべて"]]]
+           [:div {:class "field field--checkbox"}
+            [:label {:for "fleet-callable"}
+             [:input {:id "fleet-callable" :name "callable" :type "checkbox"}]
+             " 稼働しているものだけ"]]]]
+         [:div {:class "record-browser"}
+          [:div {:class "record-list"}
+           [:ul {:class "record-list__items" :id "fleet-list"}
+            [:li {:class "skeleton"}]]]
+          [:article {:class "record-detail" :id "fleet-detail" :aria-live "polite"}
+           [:div {:class "empty-state"} "blueprint を選ぶと、運用に何が要るかを表示します。"]]]]
+
+        ;; ── 事業者としての参与 ─────────────────────────────────────
+        ;; ① 発見 → ② 適合 → ③ 要件 → ④ 表明 → ⑤ 稼働。
+        ;; The two things the pane must never imply: that the app verified a
+        ;; licence (it cannot), and that a blueprint has a deploy path when it
+        ;; does not. Both are rendered as their own state with the reason.
+        [:section {:class "view" :data-view-panel "operator" :hidden true}
+         (view-header "事業者として参与する"
+                      "自分の業種・職種・管轄を登録すると、運用できる blueprint と、運用に必要なものが分かります。")
+         [:p {:class "source-note"} [:span {:class "source-dot"}]
+          [:span {:id "operator-source"} "事業者プロファイルを確認中…"]]
+         [:div {:class "stat-row" :id "operator-stats"}]
+         [:div {:class "local-card"}
+          (dds/heading 2 "① 事業者プロファイル" {:size "24"})
+          [:p {:class "form-help"}
+           "業種(ISIC)・職種(ISCO)・管轄(ISO 3166)は、適合する blueprint を絞るためだけに使います。"]
+          [:form {:class "settings-form" :id "operator-profile-form"}
+           [:div {:class "field"}
+            [:label {:for "operator-name"} "事業者名"]
+            [:input {:id "operator-name" :name "name" :required true}]]
+           [:div {:class "field"}
+            [:label {:for "operator-isic"} "業種 ISIC（カンマ区切り）"]
+            [:input {:id "operator-isic" :name "isic" :placeholder "6910, 6920"}]]
+           [:div {:class "field"}
+            [:label {:for "operator-isco"} "職種 ISCO-08（カンマ区切り）"]
+            [:input {:id "operator-isco" :name "isco" :placeholder "2611"}]]
+           [:div {:class "field"}
+            [:label {:for "operator-iso3166"} "管轄 ISO 3166（カンマ区切り）"]
+            [:input {:id "operator-iso3166" :name "iso3166" :placeholder "JPN"}]]
+           [:div {:class "field"}
+            [:label {:for "operator-tech"} "保有技術（カンマ区切り）"]
+            [:input {:id "operator-tech" :name "technologies"
+                     :placeholder "identity, forms, audit-ledger"}]]
+           [:fieldset {:class "field"}
+            [:legend "許認可"]
+            [:p {:class "form-help" :id "operator-licence-caveat"}
+             "自己表明です。このアプリは許認可の実在を検証していません。"]
+            [:div {:class "field"}
+             [:label {:for "operator-licence-kind"} "種別"]
+             [:input {:id "operator-licence-kind" :placeholder "bengoshi"}]]
+            [:div {:class "field"}
+             [:label {:for "operator-licence-authority"} "登録先"]
+             [:input {:id "operator-licence-authority" :placeholder "東京弁護士会"}]]
+            [:div {:class "field"}
+             [:label {:for "operator-licence-number"} "登録番号"]
+             [:input {:id "operator-licence-number" :placeholder "第12345号"}]]
+            [:div {:class "field"}
+             [:label {:for "operator-licence-by"} "表明者"]
+             [:input {:id "operator-licence-by" :placeholder "山田 太郎"}]]]
+           [:button {:class "tool-button" :type "submit"} "プロファイルを保存"]]]
+         [:div {:class "local-card"}
+          (dds/heading 2 "② 適合する blueprint" {:size "24"})
+          [:p {:class "form-help"}
+           "適合度は 業種3点・職種3点・管轄1点 の単純な加算です。0点のものは出しません。"]
+          [:ul {:class "record-list__items" :id "operator-matches"}
+           [:li {:class "empty-state"} "プロファイルを保存すると表示します。"]]]
+         [:div {:class "local-card"}
+          (dds/heading 2 "③〜⑤ 参与している blueprint" {:size "24"})
+          [:ul {:class "record-list__items" :id "operator-adoptions"}
+           [:li {:class "empty-state"} "まだ参与を表明していません。"]]]]
+
         [:section {:class "view" :data-view-panel "organisms" :hidden true}
          (view-header "Artificial organisms"
                       "active organization に所属するAO workerと、Tamakiの実活動を確認します。")
@@ -3605,6 +5349,14 @@
                  :role "group" :aria-label "新しいドキュメントを作成"}]
           [:span {:class "result-count" :id "drive-quota"}]
           [:p {:class "drive-create__status" :id "drive-create-status" :aria-live "polite"}]]
+         [:nav {:class "drive-folders" :id "drive-folders" :aria-label "フォルダ"}]
+         [:div {:class "drive-folders"}
+          [:label {:class "visually-hidden" :for "drive-folder-name"} "新しいフォルダの名前"]
+          ;; An inline field rather than window.prompt, for the same reason
+          ;; renaming uses one: a modal blocks the page to collect a single
+          ;; string this bar already has room for.
+          [:input {:class "workspace-search" :id "drive-folder-name" :type "text"
+                   :placeholder "新しいフォルダの名前" :autocomplete "off"}]]
          [:div {:class "workspace-toolbar"}
           [:label {:class "visually-hidden" :for "drive-search"} "ファイルを検索"]
           [:input {:class "workspace-search" :id "drive-search" :type "search"

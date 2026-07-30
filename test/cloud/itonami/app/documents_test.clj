@@ -19,6 +19,7 @@
             [forms.wire :as forms-wire]
             [sheets.model :as sheets-model]
             [sheets.wire :as sheets-wire]
+            [docs.docx :as docs-docx]
             [sheets.xlsx :as sheets-xlsx]))
 
 (def alice "user-alice")
@@ -1454,9 +1455,11 @@
             back (:resource (documents/content (:id item) alice object-store))]
         (is (= ":sheets/workbook" (:resource-kind item)))
         (is (= "取り込み売上" (:name item)))
-        ;; Through create! and then a save, so it has two versions and the
-        ;; validator saw it.
-        (is (= 2 (:versions item)))
+        ;; One version, which is the file. It used to be two: create!
+        ;; seeded an empty workbook and the import wrote over it, so every
+        ;; imported document had a first version that was an empty one
+        ;; nobody ever had — offered by the history pane and restorable.
+        (is (= 1 (:versions item)))
         (is (= {:sheets/value "1,300"}
                (get-in back [:sheets/tabs "imported" :sheets/cells [3 2]])))
         (is (= 1 (count (documents/documents @state alice))))))))
@@ -1503,7 +1506,7 @@
         (is (= :drive/unsupported-format (:type error)))
         ;; What a document *can* be, named in the refusal — a surface with
         ;; no writer for csv still has two of its own.
-        (is (= ["edn" "md"] (:available error)))))))
+        (is (= ["docx" "edn" "md"] (:available error)))))))
 
 (deftest an-unknown-import-format-is-refused
   (with-state
@@ -1528,9 +1531,11 @@
                (try (documents/import! format "壊れ" bytes alice object-store)
                     (catch clojure.lang.ExceptionInfo e (:type (ex-data e)))))
             format))
-      ;; And nothing was left behind by the create! that got as far as
-      ;; running before the refusal.
-      (is (<= (count (documents/documents @state alice)) 2)))))
+      ;; And nothing was left behind at all. This used to allow up to two,
+      ;; because `create!` ran before the refusal and left a seeded document
+      ;; behind; the contents now arrive with the creation, so a refusal
+      ;; happens before there is anything to leave.
+      (is (zero? (count (documents/documents @state alice)))))))
 
 (deftest an-imported-file-goes-through-the-validator-like-anything-else
   (with-state
@@ -1668,8 +1673,10 @@
                      alice object-store)
             warnings (:export-warnings (documents/content (:id item) alice object-store))]
         ;; Keyed by format, so the pane puts the warning next to the button
-        ;; that causes it.
-        (is (= ["md"] (keys warnings)))
+        ;; that causes it. Both writers drop a style they cannot spell, so
+        ;; both answer — and a set, because the order of a map's keys is not
+        ;; something to assert.
+        (is (= #{"md" "docx"} (set (keys warnings))))
         (is (= ":markdown/style-dropped" (:code (first (get warnings "md")))))
         (is (= "info" (:severity (first (get warnings "md")))))
         (is (= "p" (:id (first (get warnings "md"))))))
@@ -1677,9 +1684,64 @@
       ;; "no warnings" — an empty map would be a thing to render.
       (let [{:keys [item]} (documents/create! :docs "普通" alice object-store)]
         (is (nil? (:export-warnings (documents/content (:id item) alice object-store)))))
-      ;; And a surface that is not docs is not asked.
+      ;; A plain workbook has nothing to lose either — asked, and silent.
       (let [{:keys [item]} (documents/create! :sheets "売上" alice object-store)]
         (is (nil? (:export-warnings (documents/content (:id item) alice object-store))))))))
+
+(deftest a-workbook-says-what-xlsx-will-drop
+  ;; The half that was missing: only Markdown could answer, and the note in
+  ;; this file said so three times before the function got written.
+  (with-state
+    (fn [_ object-store]
+      (let [{:keys [item]} (documents/create! :sheets "売上" alice object-store)
+            wb (:resource (documents/content (:id item) alice object-store))
+            _ (save! (:id item)
+                     (-> wb
+                         (assoc-in [:sheets/tabs "sheet1" :sheets/cells [1 1]]
+                                   {:sheets/value "四半期" :sheets/style {:bold true}})
+                         ;; A named range the validator accepts: it wants a
+                         ;; tab and a range, and a save with anything else
+                         ;; is refused before `unexpressed` is ever asked.
+                         (assoc :sheets/named-ranges
+                                {"総計" {:sheets/id "総計" :sheets/tab "sheet1"
+                                         :sheets/range "A1:B9"}}))
+                     alice object-store)
+            warnings (:export-warnings (documents/content (:id item) alice object-store))]
+        (is (= ["xlsx"] (keys warnings)))
+        (is (= #{":xlsx/cell-styles-dropped" ":xlsx/named-ranges-dropped"}
+               (set (map :code (get warnings "xlsx")))))
+        ;; Flattened out of `sheets.validate`'s namespaced shape into the
+        ;; app's, the same as the docs ones — the pane renders both with the
+        ;; code it already has.
+        (is (every? #(= "info" (:severity %)) (get warnings "xlsx")))
+        (is (every? :message (get warnings "xlsx")))))))
+
+(deftest a-document-says-what-docx-will-drop-separately-from-markdown
+  ;; The two lists differ, which is the reason for keying by format rather
+  ;; than reporting one set of losses per document.
+  (with-state
+    (fn [_ object-store]
+      (let [{:keys [item]} (documents/create! :docs "設計" alice object-store)
+            doc (:resource (documents/content (:id item) alice object-store))
+            _ (save! (:id item)
+                     (assoc doc :docs/blocks
+                            [{:docs/id "r" :docs/kind :deck-ref :docs/target "x"}
+                             {:docs/id "b" :docs/kind :paragraph :docs/text "太字"
+                              :docs/text-runs
+                              [{:docs/from 0 :docs/to 2 :docs/style {:bold true}}]}])
+                     alice object-store)
+            warnings (:export-warnings (documents/content (:id item) alice object-store))]
+        ;; Markdown spells bold, so it says nothing about that run; docx
+        ;; does not, so it does.
+        (is (contains? (set (map :code (get warnings "docx")))
+                       ":docx/text-runs-dropped"))
+        (is (not (contains? (set (map :code (get warnings "md")))
+                            ":markdown/style-dropped")))
+        ;; Both say the reference stops being one.
+        (is (contains? (set (map :code (get warnings "md")))
+                       ":markdown/reference-is-a-link"))
+        (is (contains? (set (map :code (get warnings "docx")))
+                       ":docx/reference-becomes-text"))))))
 
 (deftest only-a-workbook-is-offered-xlsx
   (with-state
@@ -1688,7 +1750,7 @@
             error (try (documents/export (:id item) "xlsx" alice object-store)
                        (catch clojure.lang.ExceptionInfo e (ex-data e)))]
         (is (= :drive/unsupported-format (:type error)))
-        (is (= ["edn" "md"] (:available error))))
+        (is (= ["docx" "edn" "md"] (:available error))))
       ;; And a workbook is offered exactly the three it has writers for.
       (let [{:keys [item]} (documents/create! :sheets "売上" alice object-store)]
         (is (= ["csv" "edn" "xlsx"]
@@ -2349,3 +2411,572 @@
             tab (first (vals (:sheets/tabs back)))]
         (is (= {:sheets/value "四半期"} (get-in tab [:sheets/cells [1 1]])))
         (is (= {:sheets/value "1200"} (get-in tab [:sheets/cells [2 2]])))))))
+
+;; ── folders ─────────────────────────────────────────────────────────────────
+
+(deftest a-document-can-be-made-inside-a-folder
+  (with-state
+    (fn [state object-store]
+      (let [work (:item (documents/create-folder! "仕事" alice))
+            {:keys [item]} (documents/create! :docs "議事録" alice object-store
+                                              {:folder (:id work)})]
+        (is (= "folder" (:kind work)))
+        (is (= 0 (:count (:item (documents/create-folder! "仕事2" alice)))) "a fresh folder is empty")
+        (is (= ["My Drive" "仕事" "議事録"]
+               (:path (documents/move! (:id item) (:id work) alice))))
+        ;; It is a document like any other — the listing is flat and still
+        ;; shows it, because a Drive that hid everything filed away would be
+        ;; a Drive nobody could search.
+        (is (= 1 (count (documents/documents @state alice))))))))
+
+(deftest trashing-a-folder-takes-its-contents-out-of-the-listing
+  ;; The bug the derived rule exists for. Before it, a document whose folder
+  ;; was in the trash stayed in the list: an orphan nobody could explain.
+  (with-state
+    (fn [state object-store]
+      (let [work (:item (documents/create-folder! "仕事" alice))
+            {:keys [item]} (documents/create! :docs "議事録" alice object-store
+                                              {:folder (:id work)})
+            loose (:item (documents/create! :docs "単独" alice object-store))]
+        (is (= 2 (count (documents/documents @state alice))))
+        (documents/trash! (:id work) alice)
+        (is (= [(:id loose)] (mapv :id (documents/documents @state alice))))
+        ;; The document itself now reports as trashed, because it is.
+        (is (:trashed? (:item (documents/content (:id item) alice object-store))))
+        ;; And the trash lists the folder, not each file under it — what was
+        ;; put there is one thing, and restoring it is one act.
+        (let [binned (documents/trashed @state alice)]
+          (is (= [(:id work)] (mapv :id binned)))
+          (is (= ["folder"] (mapv :kind binned))))))))
+
+(deftest restoring-a-folder-does-not-restore-what-was-already-in-the-trash
+  (with-state
+    (fn [state object-store]
+      (let [work (:item (documents/create-folder! "仕事" alice))
+            a (:item (documents/create! :docs "A" alice object-store {:folder (:id work)}))
+            b (:item (documents/create! :docs "B" alice object-store {:folder (:id work)}))]
+        (documents/trash! (:id a) alice)
+        (documents/trash! (:id work) alice)
+        (documents/restore! (:id work) alice)
+        ;; B is back; A stays where its owner put it.
+        (is (= [(:id b)] (mapv :id (documents/documents @state alice))))))))
+
+(deftest a-folder-cannot-be-put-inside-itself
+  (with-state
+    (fn [_ _]
+      (let [work (:item (documents/create-folder! "仕事" alice))
+            q1 (:item (documents/create-folder! "Q1" alice (:id work)))]
+        ;; Asserted without rewriting the type in the catch — a test that
+        ;; supplies the answer it is checking passes whenever anything
+        ;; throws, which is every bug as well as this rule.
+        (is (= :drive/invalid-move
+               (:type (try (documents/move! (:id work) (:id q1) alice)
+                           (catch clojure.lang.ExceptionInfo e (ex-data e))))))
+        (is (= :drive/invalid-move
+               (:type (try (documents/move! (:id work) (:id work) alice)
+                           (catch clojure.lang.ExceptionInfo e (ex-data e))))))
+        ;; And a legitimate move still works, so the guard is not refusing
+        ;; everything.
+        (is (:ok? (documents/move! (:id q1) nil alice)))))))
+
+(deftest an-editor-of-a-shared-folder-may-create-in-it
+  ;; This was the gap named in the last change: creating looked only in the
+  ;; creator's own Drive, so a folder shared with you was not somewhere you
+  ;; could put anything.
+  (with-state
+    (fn [state object-store]
+      (let [work (:item (documents/create-folder! "仕事" alice))]
+        (documents/grant! (:id work) bob "editor" alice)
+        (let [{:keys [item]} (documents/create! :docs "議事録" bob object-store
+                                                {:folder (:id work)})]
+          ;; It is in alice's Drive, because that is the Drive the folder is
+          ;; in — and one document, not two.
+          (is (= alice (:owner item)))
+          (is (false? (:own? item)))
+          (is (= [(:id item)] (mapv :id (documents/documents @state alice))))
+          (is (= [(:id item)] (mapv :id (documents/documents @state bob))))
+          ;; alice owns what is in her Drive: trash, purge and re-sharing
+          ;; are all owner-only, and a document she could not remove from
+          ;; her own folder would be one she is stuck with.
+          (is (= "owner" (:role (first (documents/documents @state alice)))))
+          ;; bob keeps what he needs to go on working on it.
+          (is (= "editor" (:role (first (documents/documents @state bob)))))
+          (is (:writable? (first (documents/documents @state bob))))
+          (is (some? (save! (:id item)
+                            (assoc (:resource (documents/content (:id item) bob
+                                                                 object-store))
+                                   :docs/title "改訂")
+                            bob object-store))))))))
+
+(deftest what-an-editor-creates-is-charged-to-the-drive-it-is-in
+  ;; The cost, stated rather than discovered: someone you gave write access
+  ;; to can consume your quota. That was already true of *saving* a shared
+  ;; document — every version is charged to the owner — so this widens who
+  ;; can start one rather than introducing the hazard.
+  (with-state
+    (fn [state object-store]
+      (let [work (:item (documents/create-folder! "仕事" alice))]
+        (documents/grant! (:id work) bob "editor" alice)
+        (let [before (:used-bytes (documents/quota-view @state alice))]
+          (documents/create! :docs "議事録" bob object-store {:folder (:id work)})
+          (is (> (:used-bytes (documents/quota-view (store/snapshot) alice)) before))
+          (is (zero? (:used-bytes (documents/quota-view (store/snapshot) bob)))))))))
+
+(deftest a-viewer-of-a-shared-folder-may-not-create-in-it
+  (with-state
+    (fn [_ object-store]
+      (let [work (:item (documents/create-folder! "仕事" alice))]
+        (documents/grant! (:id work) bob "viewer" alice)
+        (is (= :drive/not-permitted
+               (:type (try (documents/create! :docs "侵入" bob object-store
+                                              {:folder (:id work)})
+                           (catch clojure.lang.ExceptionInfo e (ex-data e))))))
+        ;; And a folder nobody shared with them is not even visible as a
+        ;; place — told it is not there rather than that they may not.
+        (let [private (:item (documents/create-folder! "私用" alice))]
+          (is (= :drive/not-found
+                 (:type (try (documents/create! :docs "侵入" bob object-store
+                                                {:folder (:id private)})
+                             (catch clojure.lang.ExceptionInfo e (ex-data e)))))))))))
+
+(deftest a-move-may-not-leave-the-drive-it-is-in
+  ;; `ws/move` rewrites one tree. A destination in another Drive would leave
+  ;; a parent id pointing at an item that tree does not contain — a
+  ;; breadcrumb walking up out of the workspace and a listing that never
+  ;; shows it again. Creating may cross; moving may not.
+  (with-state
+    (fn [_ object-store]
+      (let [theirs (:item (documents/create-folder! "相手" bob))
+            _ (documents/grant! (:id theirs) alice "editor" bob)
+            mine (:item (documents/create! :docs "自分の" alice object-store))]
+        (is (= :drive/not-found
+               (:type (try (documents/move! (:id mine) (:id theirs) alice)
+                           (catch clojure.lang.ExceptionInfo e (ex-data e))))))))))
+
+(deftest a-folder-you-may-only-read-is-not-one-you-may-create-in
+  ;; The permission rule itself, asked where it can be: inside one Drive.
+  (with-state
+    (fn [_ object-store]
+      (let [work (:item (documents/create-folder! "仕事" alice))
+            ;; alice's own Drive, so the folder is found; the question left
+            ;; is whether this principal may write into it.
+            _ (documents/grant! (:id work) bob "viewer" alice)]
+        (is (some? (documents/create! :docs "議事録" alice object-store
+                                      {:folder (:id work)})))))))
+
+(deftest sharing-a-folder-shares-what-is-in-it
+  ;; The reason folders are worth having, and it is inheritance rather than
+  ;; anything written here.
+  (with-state
+    (fn [state object-store]
+      (let [work (:item (documents/create-folder! "仕事" alice))
+            {:keys [item]} (documents/create! :docs "議事録" alice object-store
+                                              {:folder (:id work)})]
+        (is (empty? (documents/documents @state bob)))
+        (documents/grant! (:id work) bob "editor" alice)
+        (is (= [(:id item)] (mapv :id (documents/documents @state bob))))
+        (is (= "editor" (:role (first (documents/documents @state bob)))))))))
+
+(deftest a-purged-document-leaves-its-folder-s-listing
+  ;; Everything lived at the root until folders existed, so `purge!` removed
+  ;; the id from the root's children and was right by accident. In a folder
+  ;; that left a listing pointing at an item that is gone.
+  (with-state
+    (fn [_ object-store]
+      (let [work (:item (documents/create-folder! "仕事" alice))
+            {:keys [item]} (documents/create! :docs "議事録" alice object-store
+                                              {:folder (:id work)})]
+        (documents/trash! (:id item) alice)
+        (documents/purge! (:id item) alice object-store)
+        (is (= 0 (:count (first (:folders (documents/folders (store/snapshot) alice nil))))))))))
+
+(deftest the-breadcrumb-says-where-you-are
+  (with-state
+    (fn [_ _]
+      (let [work (:item (documents/create-folder! "仕事" alice))
+            q1 (:item (documents/create-folder! "Q1" alice (:id work)))
+            here (documents/folders (store/snapshot) alice (:id q1))]
+        (is (= ["My Drive" "仕事" "Q1"] (mapv :name (:path here))))
+        (is (= [] (:folders here)) "nothing inside it yet")
+        (let [top (documents/folders (store/snapshot) alice nil)]
+          (is (= ["仕事"] (mapv :name (:folders top))) "only the direct children"))))))
+
+(deftest emptying-the-trash-reclaims-what-was-inside-a-folder
+  ;; The bytes of a file inside a trashed folder are still charged to the
+  ;; quota, and nothing lists that file on its own — it is in the trash
+  ;; because its folder is. Before folders, `trashed` listed only files with
+  ;; their own flag set, so a trashed folder could never be purged at all and
+  ;; everything under it stayed charged for ever.
+  (with-state
+    (fn [state object-store]
+      (let [work (:item (documents/create-folder! "仕事" alice))
+            a (:item (documents/create! :docs "A" alice object-store {:folder (:id work)}))
+            _ (:item (documents/create! :docs "B" alice object-store {:folder (:id work)}))
+            before (:used-bytes (documents/quota-view @state alice))]
+        (is (pos? before))
+        (documents/trash! (:id work) alice)
+        (let [{:keys [freed-bytes purged]} (documents/empty-trash! alice object-store)]
+          ;; The folder and both files.
+          (is (= 3 purged))
+          (is (= before freed-bytes)))
+        (is (zero? (:used-bytes (documents/quota-view (store/snapshot) alice))))
+        (is (empty? (documents/documents (store/snapshot) alice)))
+        (is (empty? (documents/trashed (store/snapshot) alice)))
+        ;; And the file is gone rather than merely hidden.
+        (is (= :drive/not-found
+               (:type (try (documents/content (:id a) alice object-store)
+                           (catch clojure.lang.ExceptionInfo e (ex-data e))))))))))
+
+(deftest purging-a-folder-does-not-resurrect-what-was-inside-it
+  ;; `trashed?` walks upwards. A folder dropped before its contents would
+  ;; leave them pointing at a parent that is not there, the walk would end at
+  ;; a missing item, and the answer would be "not in the trash" — the files
+  ;; would come back into the listing, resurrected by the deletion of their
+  ;; folder and impossible to get rid of.
+  (with-state
+    (fn [_ object-store]
+      (let [work (:item (documents/create-folder! "仕事" alice))
+            q1 (:item (documents/create-folder! "Q1" alice (:id work)))
+            deep (:item (documents/create! :docs "議事録" alice object-store
+                                           {:folder (:id q1)}))]
+        (documents/trash! (:id work) alice)
+        (let [{:keys [purged]} (documents/purge! (:id work) alice object-store)]
+          (is (= 3 purged) "two folders and the document under them"))
+        (is (empty? (documents/documents (store/snapshot) alice)))
+        (is (= :drive/not-found
+               (:type (try (documents/content (:id deep) alice object-store)
+                           (catch clojure.lang.ExceptionInfo e (ex-data e))))))))))
+
+(deftest a-folder-inside-a-trashed-folder-is-not-a-second-thing-to-restore
+  (with-state
+    (fn [state _]
+      (let [work (:item (documents/create-folder! "仕事" alice))
+            _ (documents/create-folder! "Q1" alice (:id work))]
+        (documents/trash! (:id work) alice)
+        (is (= [(:id work)] (mapv :id (documents/trashed @state alice))))))))
+
+(deftest a-document-says-which-folder-it-is-in
+  ;; So a listing can be scoped to one without asking the server per item.
+  (with-state
+    (fn [state object-store]
+      (let [work (:item (documents/create-folder! "仕事" alice))
+            inside (:item (documents/create! :docs "中" alice object-store
+                                             {:folder (:id work)}))
+            outside (:item (documents/create! :docs "外" alice object-store))
+            by-id (into {} (map (juxt :id identity)) (documents/documents @state alice))]
+        (is (= (:id work) (:parent-id (get by-id (:id inside)))))
+        (is (= "root" (:parent-id (get by-id (:id outside)))))
+        ;; A document shared from someone else's Drive has no folder in
+        ;; this one — naming theirs would put an id in a breadcrumb that
+        ;; goes nowhere.
+        (documents/grant! (:id inside) bob "viewer" alice)
+        (is (nil? (:parent-id (first (documents/documents @state bob)))))))))
+
+(deftest the-move-picker-offers-every-folder-by-path
+  ;; A move is a choice among all folders, not among the ones you are
+  ;; standing in — and two folders called Q1 are ordinary, so a picker
+  ;; showing both as "Q1" would ask an unanswerable question.
+  (with-state
+    (fn [_ _]
+      (let [a (:item (documents/create-folder! "営業" alice))
+            b (:item (documents/create-folder! "開発" alice))]
+        (documents/create-folder! "Q1" alice (:id a))
+        (documents/create-folder! "Q1" alice (:id b))
+        (let [all (:all (documents/folders (store/snapshot) alice nil))]
+          (is (= ["My Drive" "My Drive / 営業" "My Drive / 営業 / Q1"
+                  "My Drive / 開発" "My Drive / 開発 / Q1"]
+                 (mapv :name all)))
+          (is (= 5 (count (distinct (map :id all))))))
+        ;; A trashed folder is not a destination.
+        (documents/trash! (:id a) alice)
+        (is (= ["My Drive" "My Drive / 開発" "My Drive / 開発 / Q1"]
+               (mapv :name (:all (documents/folders (store/snapshot) alice nil)))))))))
+
+(deftest a-shared-folder-is-somewhere-you-can-go
+  ;; The capability to create in a shared folder is only worth having if
+  ;; something can reach it. Listed at the top level, because a folder from
+  ;; another Drive is not inside anything in this one.
+  (with-state
+    (fn [_ object-store]
+      (let [work (:item (documents/create-folder! "仕事" alice))
+            q1 (:item (documents/create-folder! "Q1" alice (:id work)))]
+        (documents/grant! (:id work) bob "editor" alice)
+        (let [top (documents/folders (store/snapshot) bob nil)]
+          (is (= ["仕事"] (mapv :name (:shared top))))
+          (is (= [] (:folders top)) "bob has no folders of his own")
+          ;; A subfolder of a shared folder is not a second entry at the top
+          ;; — it is reached by opening the one above it.
+          (is (= ["Q1"] (mapv :name (:folders (documents/folders (store/snapshot)
+                                                                 bob (:id work))))))
+          ;; And the breadcrumb reads through the other Drive rather than
+          ;; stopping at its edge.
+          (is (= ["My Drive" "仕事" "Q1"]
+                 (mapv :name (:path (documents/folders (store/snapshot) bob (:id q1)))))))
+        ;; The move picker offers it too, own folders first.
+        (documents/create-folder! "自分の" bob)
+        (is (= ["My Drive" "My Drive / 自分の" "My Drive / 仕事" "My Drive / 仕事 / Q1"]
+               (mapv :name (:all (documents/folders (store/snapshot) bob nil)))))
+        (is (= [true true false false]
+               (mapv :own? (:all (documents/folders (store/snapshot) bob nil)))))))))
+
+(deftest a-folder-nobody-shared-is-not-listed
+  (with-state
+    (fn [_ _]
+      (documents/create-folder! "私用" alice)
+      (let [top (documents/folders (store/snapshot) bob nil)]
+        (is (empty? (:shared top)))
+        (is (= ["My Drive"] (mapv :name (:all top))) "only bob's own root")))))
+
+(deftest a-listing-says-whose-drive-you-are-standing-in
+  ;; Creating here puts the document in somebody else's Drive and against
+  ;; their quota. That is the one consequence of this feature a person
+  ;; should not discover afterwards, so the response carries it.
+  (with-state
+    (fn [_ _]
+      (let [work (:item (documents/create-folder! "仕事" alice))]
+        (documents/grant! (:id work) bob "editor" alice)
+        (let [own (documents/folders (store/snapshot) bob nil)
+              theirs (documents/folders (store/snapshot) bob (:id work))]
+          (is (= bob (:owner own)) "your own root is yours")
+          (is (= bob (:you own)))
+          (is (= alice (:owner theirs)))
+          (is (= bob (:you theirs))))))))
+
+(deftest a-document-leaves-as-docx
+  (with-state
+    (fn [_ object-store]
+      (let [{:keys [item]} (documents/create! :docs "議事録" alice object-store)
+            doc (:resource (documents/content (:id item) alice object-store))
+            _ (save! (:id item)
+                     (assoc doc :docs/blocks
+                            [{:docs/id "h" :docs/kind :heading :docs/level 1
+                              :docs/text "議事録"}
+                             {:docs/id "p" :docs/kind :paragraph :docs/text "出席者は3名。"}
+                             {:docs/id "l" :docs/kind :list :docs/ordered? true
+                              :docs/items ["予算の確認" "次回日程"]}
+                             {:docs/id "t" :docs/kind :table
+                              :docs/rows [["項目" "状態"] ["設計" "完了"]]}])
+                     alice object-store)
+            out (documents/export (:id item) "docx" alice object-store)
+            entries (docs-docx/docx-entries (:bytes out))]
+        (is (= "議事録.docx" (:filename out)))
+        (is (str/starts-with? (:media-type out)
+                              "application/vnd.openxmlformats-officedocument."))
+        ;; A real package, not a file with the right name.
+        (is (contains? entries "word/document.xml"))
+        (is (contains? entries "word/styles.xml"))
+        (is (contains? entries "word/numbering.xml"))
+        ;; Structure, not appearance — the whole reason for the format.
+        (is (str/includes? (get entries "word/document.xml") "w:pStyle w:val=\"Heading1\""))
+        (is (str/includes? (get entries "word/document.xml") "<w:numPr>"))
+        (is (str/includes? (get entries "word/document.xml") "<w:tbl>"))))))
+
+(deftest a-docx-comes-back-in
+  (with-state
+    (fn [_ object-store]
+      (let [{:keys [item]} (documents/create! :docs "元" alice object-store)
+            doc (:resource (documents/content (:id item) alice object-store))
+            _ (save! (:id item)
+                     (assoc doc :docs/blocks
+                            [{:docs/id "h" :docs/kind :heading :docs/level 1
+                              :docs/text "週報"}
+                             {:docs/id "p" :docs/kind :paragraph :docs/text "今週の進捗。"}
+                             {:docs/id "q" :docs/kind :quote :docs/text "来週締切。"}])
+                     alice object-store)
+            bytes (:bytes (documents/export (:id item) "docx" alice object-store))
+            imported (:item (documents/import! "docx" "取り込み" bytes alice object-store))
+            back (:resource (documents/content (:id imported) alice object-store))]
+        (is (= ":docs/document" (:resource-kind imported)))
+        (is (= [:heading :paragraph :quote] (mapv :docs/kind (:docs/blocks back))))
+        (is (= "週報" (:docs/text (first (:docs/blocks back)))))
+        (is (= "来週締切。" (:docs/text (last (:docs/blocks back)))))))))
+
+(deftest bytes-that-are-not-a-docx-are-refused
+  ;; `docs.docx/read` answers an empty document for anything it cannot
+  ;; parse, which is right for a reader and wrong for an import: an empty
+  ;; document is indistinguishable from a working import of an empty file.
+  ;; The package is what can be asked.
+  (with-state
+    (fn [state object-store]
+      (doseq [junk [(.getBytes "x" "UTF-8")
+                    ;; A real zip, with nothing Word would recognise in it.
+                    (let [out (java.io.ByteArrayOutputStream.)]
+                      (with-open [zip (java.util.zip.ZipOutputStream. out)]
+                        (.putNextEntry zip (java.util.zip.ZipEntry. "hello.txt"))
+                        (.write zip (.getBytes "hi" "UTF-8"))
+                        (.closeEntry zip))
+                      (.toByteArray out))]]
+        (is (= :drive/unsupported-format
+               (:type (try (documents/import! "docx" "壊れ" junk alice object-store)
+                           (catch clojure.lang.ExceptionInfo e (ex-data e)))))))
+      (is (empty? (documents/documents @state alice)) "and nothing was created"))))
+
+;; ── make a copy ─────────────────────────────────────────────────────────────
+
+(deftest a-copy-is-a-new-document-with-the-same-contents
+  (with-state
+    (fn [state object-store]
+      (let [{:keys [item]} (documents/create! :docs "設計" alice object-store)
+            doc (:resource (documents/content (:id item) alice object-store))
+            _ (save! (:id item)
+                     (assoc doc :docs/blocks
+                            [{:docs/id "p" :docs/kind :paragraph :docs/text "本文"}])
+                     alice object-store)
+            copy (:item (documents/copy! (:id item) alice object-store))
+            back (:resource (documents/content (:id copy) alice object-store))]
+        (is (= "設計 のコピー" (:name copy)))
+        (is (= ":docs/document" (:resource-kind copy)))
+        (is (not= (:id item) (:id copy)))
+        (is (= [{:docs/id "p" :docs/kind :paragraph :docs/text "本文"}]
+               (:docs/blocks back)))
+        ;; The resource knows its own new id and title, rather than still
+        ;; saying it is the document it came from.
+        (is (= (:id copy) (:docs/id back)))
+        (is (= "設計 のコピー" (:docs/title back)))
+        (is (= 2 (count (documents/documents @state alice))))))))
+
+(deftest a-reader-of-a-shared-document-can-take-their-own-copy
+  ;; The reason this operation exists. Until now the only way to get an
+  ;; editable version of something shared read-only was export then import —
+  ;; two steps, through bytes, losing the kind if the surface has no office
+  ;; format.
+  (with-state
+    (fn [state object-store]
+      (let [{:keys [item]} (documents/create! :sheets "売上" alice object-store)]
+        (documents/grant! (:id item) bob "viewer" alice)
+        (let [copy (:item (documents/copy! (:id item) bob object-store))]
+          (is (= bob (:owner copy)) "in bob's Drive")
+          (is (:own? copy))
+          (is (= "owner" (:role copy)))
+          (is (:writable? copy) "and editable, which the original was not")
+          ;; alice's Drive is unchanged; the copy is not in it.
+          (is (= [(:id item)] (mapv :id (documents/documents @state alice))))
+          (is (= #{(:id item) (:id copy)}
+                 (set (mapv :id (documents/documents @state bob))))))))))
+
+(deftest a-copy-is-not-shared
+  ;; Copying a document shared with five people must not share the copy with
+  ;; them. It falls out of `create!` giving the creator :owner and nobody
+  ;; anything — asserted anyway, because getting it wrong is a silent access
+  ;; leak rather than a visible fault.
+  (with-state
+    (fn [state object-store]
+      (let [{:keys [item]} (documents/create! :docs "設計" alice object-store)]
+        (documents/grant! (:id item) bob "editor" alice)
+        (let [copy (:item (documents/copy! (:id item) alice object-store))]
+          (is (= [] (:grants (documents/sharing (:id copy) alice))))
+          ;; bob sees the original and not the copy.
+          (is (= [(:id item)] (mapv :id (documents/documents @state bob))))
+          (is (= :drive/not-found
+                 (:type (try (documents/content (:id copy) bob object-store)
+                             (catch clojure.lang.ExceptionInfo e (ex-data e)))))))))))
+
+(deftest a-copy-carries-no-comments-and-no-responses
+  ;; They are about the document somebody said them about. A copy with its
+  ;; original's threads would put words into a conversation that did not
+  ;; happen.
+  (with-state
+    (fn [_ object-store]
+      (let [{:keys [item]} (documents/create! :docs "設計" alice object-store)]
+        (documents/comment! (:id item) "ここを直して" {:block "p"} alice)
+        (let [copy (:item (documents/copy! (:id item) alice object-store))]
+          (is (= 1 (count (:comments (documents/comments (:id item) alice)))))
+          (is (= [] (:comments (documents/comments (:id copy) alice))))))
+      (let [form (:item (documents/create! :forms "問い合わせ" alice object-store))]
+        (documents/submit! (:id form) {} alice object-store)
+        (let [copy (:item (documents/copy! (:id form) alice object-store))]
+          (is (= 1 (count (:submissions (documents/submissions (:id form) alice)))))
+          (is (= [] (:submissions (documents/submissions (:id copy) alice)))))))))
+
+(deftest a-copy-starts-its-own-history
+  ;; A copy is not a fork of the past; the original still has all of it.
+  (with-state
+    (fn [_ object-store]
+      (let [{:keys [item]} (documents/create! :docs "設計" alice object-store)
+            doc (:resource (documents/content (:id item) alice object-store))]
+        (save! (:id item) (assoc doc :docs/title "設計 v2") alice object-store)
+        (save! (:id item) (assoc doc :docs/title "設計 v3") alice object-store)
+        (let [copy (:item (documents/copy! (:id item) alice object-store))]
+          (is (= 3 (count (:versions (documents/history (:id item) alice)))))
+          (is (= 1 (count (:versions (documents/history (:id copy) alice))))))))))
+
+(deftest a-copy-is-charged-to-whoever-made-it
+  ;; Unlike editing a shared document, which is charged to the owner because
+  ;; the bytes stay in their Drive. Here the bytes are new and in the
+  ;; copier's.
+  (with-state
+    (fn [state object-store]
+      (let [{:keys [item]} (documents/create! :docs "設計" alice object-store)
+            alice-before (:used-bytes (documents/quota-view @state alice))]
+        (documents/grant! (:id item) bob "viewer" alice)
+        (documents/copy! (:id item) bob object-store)
+        (is (= alice-before (:used-bytes (documents/quota-view (store/snapshot) alice))))
+        (is (pos? (:used-bytes (documents/quota-view (store/snapshot) bob))))))))
+
+(deftest a-copy-can-be-named-and-filed
+  (with-state
+    (fn [_ object-store]
+      (let [{:keys [item]} (documents/create! :docs "設計" alice object-store)
+            work (:item (documents/create-folder! "仕事" alice))
+            copy (:item (documents/copy! (:id item) alice object-store
+                                         {:title "設計 2026年版" :folder (:id work)}))]
+        (is (= "設計 2026年版" (:name copy)))
+        (is (= (:id work) (:parent-id copy)))))))
+
+(deftest every-surface-can-be-copied
+  (with-state
+    (fn [_ object-store]
+      (doseq [kind [:sheets :docs :forms :slides]]
+        (let [{:keys [item]} (documents/create! kind "元" alice object-store)
+              copy (:item (documents/copy! (:id item) alice object-store))
+              back (:resource (documents/content (:id copy) alice object-store))
+              spec (get documents/kinds kind)]
+          (is (= (:resource-kind item) (:resource-kind copy)) (str kind))
+          ;; Each surface's own id and title keys, from the kinds table
+          ;; rather than from a guess about which one this is.
+          (is (= (:id copy) (get back (:id-key spec))) (str kind))
+          (is (= "元 のコピー" (get back (:title-key spec))) (str kind)))))))
+
+(deftest a-document-you-cannot-read-cannot-be-copied
+  (with-state
+    (fn [_ object-store]
+      (let [{:keys [item]} (documents/create! :docs "私用" alice object-store)]
+        (is (= :drive/not-found
+               (:type (try (documents/copy! (:id item) bob object-store)
+                           (catch clojure.lang.ExceptionInfo e (ex-data e))))))))))
+
+(deftest a-created-document-is-validated-like-a-saved-one
+  ;; `create!` now takes the contents, which means it takes contents that
+  ;; can be wrong. Before `resource-fn` existed it only ever produced a seed
+  ;; and validating one would have been checking the file against itself; a
+  ;; copy or an import arrives whole. Leaving the check out let a broken
+  ;; .edn import succeed — silent in the direction that looks like success,
+  ;; which is how it was found.
+  (with-state
+    (fn [state object-store]
+      ;; The same fixture the import test uses — a deck whose slides are not
+      ;; a list — rather than one invented here, because a fabricated
+      ;; "invalid" document that the validator happens to accept makes this
+      ;; test pass for the wrong reason. It did, the first time.
+      (let [broken (pr-str {:kotoba.protocol/family :kotoba.protocol/office
+                            :kotoba.protocol/version 1
+                            :kotoba.resource/kind :slides/deck
+                            :kotoba.resource/payload {:slides/id "d"
+                                                      :slides/kind :slides/deck
+                                                      :slides/title "壊れ"
+                                                      :slides/slides "nope"}})]
+        (is (= :drive/invalid-document
+               (:type (try (documents/import! "edn" "壊れ" (.getBytes broken "UTF-8")
+                                              alice object-store)
+                           (catch clojure.lang.ExceptionInfo e (ex-data e))))))
+        (is (empty? (documents/documents @state alice))
+            "and nothing was created before the check"))))) 
+
+(deftest a-copy-has-one-version-not-two
+  (with-state
+    (fn [_ object-store]
+      (let [{:keys [item]} (documents/create! :docs "設計" alice object-store)
+            copy (:item (documents/copy! (:id item) alice object-store))]
+        (is (= 1 (:versions copy)))
+        ;; And that version is the contents, not an empty document.
+        (is (= 1 (count (:versions (documents/history (:id copy) alice)))))))))
