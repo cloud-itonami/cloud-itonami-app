@@ -9,6 +9,7 @@
             [cloud.itonami.app.credential :as credential]
             [cloud.itonami.app.credential-assurance :as credential-assurance]
             [cloud.itonami.app.documents :as documents]
+            [cloud.itonami.app.esign :as esign]
             [cloud.itonami.app.executor :as executor]
             [cloud.itonami.app.filecoin :as filecoin]
             [cloud.itonami.app.fleet :as fleet]
@@ -171,6 +172,14 @@
 (defn- authority+id-from-path [path pattern]
   (when-let [[_ a i] (re-matches pattern path)]
     [(keyword a) i]))
+
+;; A signer is named by DID, not by user id: a commitment names the key that
+;; will sign and a user with two Passkeys has two DIDs. `:principal` is still the
+;; user id, because that is what the Drive's ACL is keyed on — `cloud.itonami.app.esign`
+;; needs both and neither substitutes for the other.
+(defn- esign-who [session]
+  {:principal (:user-id session)
+   :did (get-in (store/snapshot) [:identity :users (:user-id session) :did])})
 
 (defn- public-session [session-id]
   {:schema "cloud.itonami.app.session.v1"
@@ -993,6 +1002,153 @@
                       ;; A page of created documents; the archive half is
                       ;; already capped by `drive-snapshot`.
                       {:cursor (:cursor (query-params exchange))})))
+
+            ;; ── esign ───────────────────────────────────────────────────────
+            ;; A signature is not a share and not a credential: see
+            ;; `cloud.itonami.app.esign`. Every one of these needs the session's
+            ;; DID as well as its user id, because a commitment names the signer
+            ;; by DID and a user with two Passkeys has two of them.
+
+            (and (= method "GET") (= path "/api/esign"))
+            (let [session (require-app-session! exchange)
+                  who (esign-who session)]
+              (send! exchange 200
+                     {:schema esign/schema
+                      ;; The asker's own DID, so the pane can tell which signer
+                      ;; row is theirs. A pane that guessed from the user id
+                      ;; would guess wrong for a user with two Passkeys.
+                      :my-did (:did who)
+                      :envelopes (esign/envelopes (store/snapshot) who)}))
+
+            (and (= method "POST") (= path "/api/esign/envelopes"))
+            (let [session (require-app-session! exchange)
+                  request (read-json exchange)]
+              (require-origin! exchange config)
+              (require-csrf! exchange session)
+              (send! exchange 200
+                     (esign/envelope-view
+                      (esign/create!
+                       {:document-id (:document-id request)
+                        :purpose (some-> (:purpose request) keyword)
+                        :intent (:intent request)
+                        :signer-dids (vec (:signer-dids request))
+                        :actor (:user-id session)
+                        :organization-did (identity/session-organization-did session)})
+                      (esign-who session))))
+
+            (and (= method "GET")
+                 (id-from-path path #"/api/esign/envelopes/([^/]+)"))
+            (let [session (require-app-session! exchange)]
+              (send! exchange 200
+                     (esign/envelope! (store/snapshot)
+                                      (id-from-path path #"/api/esign/envelopes/([^/]+)")
+                                      (esign-who session))))
+
+            ;; The response carries the commitment and the outline, so the
+            ;; signing UI can show exactly what the challenge was computed over
+            ;; rather than asking the signer to trust that it was the right
+            ;; thing.
+            (and (= method "POST")
+                 (id-from-path path #"/api/esign/envelopes/([^/]+)/sign/start"))
+            (let [session (require-app-session! exchange)]
+              (require-origin! exchange config)
+              (require-csrf! exchange session)
+              (send! exchange 200
+                     (esign/start-signature!
+                      {:envelope-id (id-from-path
+                                     path #"/api/esign/envelopes/([^/]+)/sign/start")
+                       :did (:did (esign-who session))
+                       :user-id (:user-id session)
+                       :rp-id (rp-id config)
+                       :origin (origin config)})))
+
+            (and (= method "POST")
+                 (id-from-path path #"/api/esign/envelopes/([^/]+)/sign/finish"))
+            (let [session (require-app-session! exchange)
+                  request (read-json exchange)]
+              (require-origin! exchange config)
+              (require-csrf! exchange session)
+              (send! exchange 200
+                     (let [result (esign/finish-signature!
+                                   {:transaction-id (:transaction-id request)
+                                    :response (:credential request)
+                                    :user-id (:user-id session)
+                                    :rp-id (rp-id config)})]
+                       {:schema esign/schema
+                        :envelope (esign/envelope-view (:envelope result)
+                                                       (esign-who session))
+                        :verification (select-keys (:verification result)
+                                                   [:verified :user-verified?
+                                                    :sign-count])})))
+
+            (and (= method "POST")
+                 (id-from-path path #"/api/esign/envelopes/([^/]+)/decline"))
+            (let [session (require-app-session! exchange)
+                  request (read-json exchange)]
+              (require-origin! exchange config)
+              (require-csrf! exchange session)
+              (send! exchange 200
+                     (esign/envelope-view
+                      (esign/decline!
+                       {:envelope-id (id-from-path
+                                      path #"/api/esign/envelopes/([^/]+)/decline")
+                        :did (:did (esign-who session))
+                        :user-id (:user-id session)
+                        :reason (:reason request)})
+                      (esign-who session))))
+
+            ;; Downloaded and handed to a counterparty. Digests, DIDs, public
+            ;; keys and signed credentials — no document bytes and no outline,
+            ;; which is what makes `forget-content` possible at all.
+            (and (= method "GET")
+                 (id-from-path path #"/api/esign/envelopes/([^/]+)/evidence"))
+            (let [session (require-app-session! exchange)
+                  id (id-from-path path #"/api/esign/envelopes/([^/]+)/evidence")
+                  ;; Through `envelope!` for the permission check, then the
+                  ;; stored envelope for the record: the view is for a UI and
+                  ;; the evidence is not a projection of it.
+                  _ (esign/envelope! (store/snapshot) id (esign-who session))]
+              (send! exchange 200
+                     (esign/evidence
+                      (get-in (store/snapshot) [:esign :envelopes id]))))
+
+            ;; The erasure path. Destroys the outline a signer read; keeps the
+            ;; proof that a document with that digest was signed. Does NOT
+            ;; remove the document from the Drive — that is `purge!`.
+            (and (= method "POST")
+                 (id-from-path path #"/api/esign/envelopes/([^/]+)/forget-content"))
+            (let [session (require-app-session! exchange)
+                  id (id-from-path
+                      path #"/api/esign/envelopes/([^/]+)/forget-content")]
+              (require-origin! exchange config)
+              (require-csrf! exchange session)
+              (esign/envelope! (store/snapshot) id (esign-who session))
+              (send! exchange 200
+                     (esign/envelope-view (esign/forget-content! id)
+                                          (esign-who session))))
+
+            ;; Verifying a record this app may not have issued. Behind the
+            ;; session like everything else: the verification itself is pure and
+            ;; fetches nothing, but this process binds loopback, so an
+            ;; unauthenticated endpoint would add parsing surface without being
+            ;; reachable by the counterparty it would be for. A counterparty
+            ;; runs `esign/verify-evidence` themselves — that it needs no
+            ;; session, no network and no clock is the point of it.
+            (and (= method "POST") (= path "/api/esign/verify"))
+            (let [session (require-app-session! exchange)
+                  ;; `read-json-raw`, not `read-json`: an evidence record's
+                  ;; `commitment` is RFC 8785 JSON and its keys MUST stay
+                  ;; strings. Keywordizing them and printing them back produces
+                  ;; different canonical bytes, so every signature would fail to
+                  ;; verify for a reason that had nothing to do with the
+                  ;; signature. This is why the record is string-keyed
+                  ;; end to end — see `esign/signature-entry`.
+                  request (read-json-raw exchange)]
+              (require-origin! exchange config)
+              (require-csrf! exchange session)
+              (send! exchange 200
+                     (esign/verify-evidence (get request "evidence")
+                                            {:rp-id (rp-id config)})))
 
             (and (= method "POST") (= path "/api/workspace/drive/documents"))
             (let [session (require-app-session! exchange)
