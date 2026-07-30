@@ -1,5 +1,6 @@
 (ns cloud.itonami.app.fleet-test
   (:require [clojure.test :refer [deftest is testing]]
+            [clojure.set]
             [clojure.string]
             [cloud.itonami.app.fleet :as fleet]))
 
@@ -136,13 +137,27 @@
       (is (every? #(clojure.string/starts-with? (:repo %) "cloud-itonami-isic-") sector))))
 
   (testing "on-demand is broader than the sector agents"
-    ;; It also covers the GitHub action adapter and the skill package, which
-    ;; the authority classifies as on-demand for the same reason: they run when
-    ;; something asks, and hold no loop. An earlier version of this test
-    ;; asserted every on-demand actor was a :sector-agent, which was only true
-    ;; while the catalog could not see beyond orgs/cloud-itonami.
-    (is (= #{:sector-agent :github-action-adapter :agent-instruction-package}
-           (set (map :role (fleet/by-execution :on-demand))))))
+    ;; It spans every family the authority now classifies — occupation,
+    ;; jurisdiction, municipal, association and the code systems, plus the
+    ;; action adapter and skill package. Asserting a fixed set here has broken
+    ;; twice as the vocabulary grew, so this asserts the property that matters:
+    ;; on-demand is many roles, and none of them is a resident one.
+    (let [od-roles (set (map :role (fleet/by-execution :on-demand)))]
+      (is (< 5 (count od-roles)))
+      (is (contains? od-roles :sector-agent))
+      (is (empty? (clojure.set/intersection
+                   od-roles
+                   #{:continuous-orchestrator :artificial-organism-actor})))))
+
+  (testing "resident is exactly the two roles that carry a loop"
+    (is (= #{:continuous-orchestrator :artificial-organism-actor}
+           (set (map :role (fleet/by-execution :resident))))))
+
+  (testing "the vocabulary now reaches every actor"
+    ;; It reached 452 of 1,183 when execution was first introduced. The
+    ;; remaining families were classified on the same evidence: code-keyed,
+    ;; carrying a governor, holding no loop.
+    (is (empty? (fleet/by-execution :unclassified))))
 
   (testing "resident actors are present, by reference"
     ;; They were absent while the catalog only read blueprint.edn from
@@ -162,7 +177,10 @@
     ;; mirror. If a field from inside one of those repositories ever appears
     ;; here, this fails.
     (let [allowed #{:repo :repo-name :remote :revision :path :role :execution
-                    :reference-only :id :authority-library}]
+                    :reference-only :id :authority-library
+                    ;; the pin's own commit date — metadata about the hash,
+                    ;; still nothing read from inside the repository
+                    :revision-committed-at}]
       (doseq [e (fleet/reference-only)]
         (is (empty? (remove allowed (keys e)))
             (str (:repo e) " leaked a field beyond its pin")))))
@@ -181,13 +199,14 @@
     ;; does not carry — so it is not probeable, not unhealthy.
     (is (every? (complement fleet/probeable?) (fleet/by-execution :resident))))
 
-  (testing "unclassified is reported, not defaulted"
-    ;; marketplace, assoc, municipality and others match no prefix rule yet.
-    ;; Defaulting them to :on-demand because they happen to be reachable would
-    ;; turn an unfinished vocabulary into a confident answer.
+  (testing "unclassified stays queryable even now that it is empty"
+    ;; It held 731 when execution was introduced and holds none today. The
+    ;; query is kept rather than deleted: the next family added to the fleet
+    ;; lands here until the authority classifies it, and the alternative — a
+    ;; nil execution that no query surfaces — is how an unfinished vocabulary
+    ;; becomes invisible instead of merely incomplete.
     (let [u (fleet/by-execution :unclassified)]
-      (is (seq u))
-      (is (every? #(nil? (:execution %)) u))
+      (is (empty? u))
       (is (= (count (fleet/actors))
              (+ (count u)
                 (count (fleet/by-execution :on-demand))
@@ -196,4 +215,28 @@
   (testing "counts expose the split"
     (let [{:keys [by-execution]} (fleet/counts)]
       (is (pos? (:on-demand by-execution)))
-      (is (pos? (:unclassified by-execution))))))
+      (is (pos? (:resident by-execution)))
+      (is (nil? (:unclassified by-execution))))))
+
+(deftest pin-age-is-pin-age-not-liveness
+  (testing "every resident actor carries a pin date"
+    ;; They are all :reference-only, which is the set the generator fetches
+    ;; commit dates for. Without one, stale-pins would silently skip them.
+    (let [r (fleet/by-execution :resident)]
+      (is (seq r))
+      (is (every? :revision-committed-at r))
+      (is (every? #(nat-int? (fleet/pin-age-days %)) r))))
+
+  (testing "an actor with no recorded date yields nil, not zero"
+    ;; Zero would read as "pinned today" — the same collapse of unmeasured into
+    ;; a value that :unknown avoids on the health side.
+    (is (nil? (fleet/pin-age-days {:repo "x"}))))
+
+  (testing "the threshold selects, and the result is ordered oldest first"
+    (is (empty? (fleet/stale-pins 100000)))
+    (let [all (fleet/stale-pins 0)]
+      (is (seq all))
+      (is (every? :pin-age-days all))
+      (is (apply >= (map :pin-age-days all)))
+      ;; only entries that carry a date can appear
+      (is (every? :revision-committed-at all)))))
