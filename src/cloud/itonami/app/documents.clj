@@ -61,6 +61,7 @@
             [forms.model :as forms]
             [forms.validate :as forms-validate]
             [forms.wire :as forms-wire]
+            [docs.docx :as docs-docx]
             [docs.markdown :as docs-md]
             [forms.responses :as forms-responses]
             [sheets.csv :as sheets-csv]
@@ -207,7 +208,11 @@
                     "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                     :extension "xlsx"}
             "edn" {:media-type "application/edn" :extension "edn"}}
-   :docs {"md" {:media-type "text/markdown; charset=utf-8" :extension "md"}
+   :docs {"docx" {:media-type
+                  (str "application/vnd.openxmlformats-officedocument."
+                       "wordprocessingml.document")
+                  :extension "docx"}
+          "md" {:media-type "text/markdown; charset=utf-8" :extension "md"}
           "edn" {:media-type "application/edn" :extension "edn"}}
    :forms {"csv" {:media-type "text/csv; charset=utf-8" :extension "csv"
                   ;; Not the questions — the answers. Every other format on
@@ -226,6 +231,7 @@
   {"csv" :sheets
    "xlsx" :sheets
    "pptx" :slides
+   "docx" :docs
    "md" :docs
    "edn" nil})
 
@@ -2193,6 +2199,7 @@
                  ;; built as text above.
                  "pptx" (slides-pptx/pptx-bytes resource)
                  "xlsx" (sheets-xlsx/xlsx-bytes resource)
+                 "docx" (docs-docx/docx-bytes resource)
                  (.getBytes ^String text StandardCharsets/UTF_8))}))))
 
 (defn responses-sheet!
@@ -2254,7 +2261,7 @@
   produced a one-slide deck, and as xlsx a workbook with no tabs, both
   reported as successes."
   [format ^bytes bytes]
-  (let [prefix (case format "pptx" "ppt/" "xlsx" "xl/" nil)]
+  (let [prefix (case format "pptx" "ppt/" "xlsx" "xl/" "docx" "word/" nil)]
     (when prefix
       (let [names (office-parts bytes)]
         (when-not (some #(str/starts-with? % prefix) (or names []))
@@ -2286,6 +2293,7 @@
            "md" [:docs (docs-md/read @text)]
            "xlsx" [:sheets (sheets-xlsx/workbook-from-bytes bytes)]
            "pptx" [:slides (slides-office/deck-from-office-bytes bytes)]
+           "docx" [:docs (docs-docx/document-from-bytes bytes)]
            "edn" (let [envelope (edn/read-string @text)
                        k (get resource-kinds (:kotoba.resource/kind envelope))]
                    (when-not k
