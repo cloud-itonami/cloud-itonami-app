@@ -68,6 +68,33 @@ nothing. `documents/purge!` is the one call that does, it refuses anything not
 already in the trash, and the Drive shows the trash and the quota together
 because otherwise a Drive that fills up cannot say why.
 
+### Sharing
+
+Each principal has their own `drive.workspace`, and a grant is recorded on the
+item — which lives in the granter's workspace. So a grantee looking only at
+their own Drive would be told the document does not exist, and a grant nobody
+can act on is a button that does nothing. `documents/locate` is what closes
+that: own Drive first, then a scan of the others for an item this principal
+has a role on.
+
+- **The owner's Drive is where the bytes stay.** An editor saving a shared
+  document writes into the owner's workspace and is charged against the
+  owner's quota. Writing it back under the editor would fork it into a second
+  copy the owner never sees; charging the editor would let anyone fill someone
+  else's Drive by accepting a share.
+- **Editing and disposing are different rights.** `can-write?` does not
+  distinguish them, so the app does: trash, restore, purge, and all sharing
+  changes are owner-only. An editor who could re-share could widen the access
+  the owner granted narrowly.
+- **`:owner` is not grantable.** `drive.workspace/grant` would accept it, and
+  two owners either of whom can purge is a transfer dressed as a share.
+- **A link may read and never write.** `create-share-link` refuses any role
+  but `:viewer` and `:commenter`, and `drive.object/read-via-share-link`
+  checks trash and expiry itself. Redeeming a link still requires an app
+  session: the server binds loopback-only, so an unauthenticated route would
+  be the only one in the app and would serve nobody who could not already
+  reach the port.
+
 ## Artificial-organism workers
 
 An organization can include an independently running artificial organism

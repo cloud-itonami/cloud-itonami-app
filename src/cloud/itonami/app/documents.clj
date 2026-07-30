@@ -169,6 +169,32 @@
   (or (get-in state (workspace-path actor))
       (ws/workspace (str "drive-" actor) actor quota-bytes)))
 
+(defn- all-workspaces [state]
+  (get-in state [:drive :workspaces] {}))
+
+(defn locate
+  "Which Drive holds `id`, and whether this principal may read it.
+
+  Everything before sharing looked in `workspace-for` and stopped, which was
+  correct while an item could only ever be in the asker's own Drive. A grant
+  breaks that: the permission is recorded on the item, and the item lives in
+  the *granter's* workspace, so a grantee looking only at their own would be
+  told the document does not exist — and a grant nobody can act on is a
+  button that does nothing.
+
+  Own Drive first, so the common case does not pay for the scan, and so an
+  id that somehow exists in two places resolves to the asker's."
+  [state actor id]
+  (let [own (workspace-for state actor)]
+    (if (ws/item own id)
+      {:owner actor :workspace own :own? true}
+      (some (fn [[owner workspace]]
+              (when (and (not= owner actor)
+                         (ws/item workspace id)
+                         (ws/can-read? workspace id actor))
+                {:owner owner :workspace workspace :own? false}))
+            (all-workspaces state)))))
+
 (defn- refuse!
   "Turn a `drive.object` refusal into the app's HTTP error shape.
 
@@ -184,6 +210,8 @@
             :no-content "このドキュメントにはまだ内容がありません。"
             :object-missing-from-store "保管されているはずの内容が見つかりません。"
             :quota-exceeded "Drive の容量が上限に達しています。"
+            ;; Expired, revoked, and never-existed are one answer on purpose.
+            :no-such-link "この共有リンクは無効です。"
             "ドキュメントを操作できませんでした。")
           (assoc refusal
                  :type (case reason
@@ -193,6 +221,7 @@
                          :no-content :drive/no-content
                          :object-missing-from-store :drive/object-missing
                          :quota-exceeded :drive/quota-exceeded
+                         :no-such-link :drive/not-found
                          :drive/refused)))))
 
 ;; ── bytes ───────────────────────────────────────────────────────────────────
@@ -238,38 +267,68 @@
   (reduce + 0 (keep :drive.version/size-bytes (:drive/versions item))))
 
 (defn item-view
-  "One created document, in the shape the Drive list already renders."
-  [item]
-  (let [kind (:drive/resource-kind item)
-        newest (latest-version item)]
-    {:id (:drive/id item)
-     :name (:drive/title item)
-     :folder "マイドライブ"
-     :media-type (:drive/media-type item)
-     :resource-kind (some-> kind str)
-     :kind (some-> (get resource-kinds kind) name)
-     :label (get-in kinds [(get resource-kinds kind) :label])
-     :created-at (:drive/created-at item)
-     :updated-at (:drive.version/created-at newest)
-     :versions (count (:drive/versions item))
-     :size-bytes (or (:drive.version/size-bytes newest) 0)
-     :held-bytes (held-bytes item)
-     :trashed? (boolean (:drive/trashed? item))
-     :available? true
-     :origin "workspace"}))
+  "One created document, in the shape the Drive list already renders.
 
-(defn- readable-files
-  [workspace actor]
+  `context` carries who is asking and whose Drive it is in, because after
+  sharing those are not the same question. `:role` is the asker's effective
+  role, which is what the UI has to know before it offers a save button."
+  ([item] (item-view item {}))
+  ([item {:keys [owner role own?] :or {own? true}}]
+   (let [kind (:drive/resource-kind item)
+         newest (latest-version item)]
+     {:id (:drive/id item)
+      :name (:drive/title item)
+      :folder (if own? "マイドライブ" "共有アイテム")
+      :media-type (:drive/media-type item)
+      :resource-kind (some-> kind str)
+      :kind (some-> (get resource-kinds kind) name)
+      :label (get-in kinds [(get resource-kinds kind) :label])
+      :created-at (:drive/created-at item)
+      :updated-at (:drive.version/created-at newest)
+      :versions (count (:drive/versions item))
+      :size-bytes (or (:drive.version/size-bytes newest) 0)
+      :held-bytes (held-bytes item)
+      :trashed? (boolean (:drive/trashed? item))
+      :own? own?
+      :owner owner
+      :role (some-> role name)
+      ;; Whether this asker may write, rather than the role alone: the rule
+      ;; is `drive.workspace/can-write?`'s and a UI re-deriving it from the
+      ;; role string is a second copy of it.
+      :writable? (contains? #{:owner :editor} role)
+      :available? true
+      :origin "workspace"})))
+
+(defn- viewable-files
+  "Every file in `workspace` this principal may read, with their role."
+  [workspace actor owner]
   (->> (vals (:drive.workspace/items workspace))
-       (filter #(and (= :file (:drive/kind %))
-                     (ws/can-read? workspace (:drive/id %) actor)))))
+       (filter #(= :file (:drive/kind %)))
+       (keep (fn [item]
+               (when-let [role (ws/effective-role workspace (:drive/id item) actor)]
+                 {:item item :role role :owner owner :own? (= owner actor)})))))
 
-(defn- newest-first [items]
-  (->> items
-       (sort-by (juxt #(or (:drive.version/created-at (latest-version %)) "")
-                      :drive/created-at))
+(defn- newest-first [entries]
+  (->> entries
+       (sort-by (juxt #(or (:drive.version/created-at (latest-version (:item %))) "")
+                      #(:drive/created-at (:item %))))
        reverse
-       (mapv item-view)))
+       (mapv (fn [entry] (item-view (:item entry) entry)))))
+
+(defn- visible-entries
+  "Everything this principal can see: their own Drive, and every item shared
+  with them from someone else's.
+
+  The scan is over every workspace because a grant is recorded on the item
+  rather than anywhere central. That is the cost of per-user workspaces, and
+  it is paid here rather than by making the grant invisible."
+  [state actor]
+  (let [own (viewable-files (workspace-for state actor) actor actor)
+        shared (mapcat (fn [[owner workspace]]
+                         (when (not= owner actor)
+                           (viewable-files workspace actor owner)))
+                       (all-workspaces state))]
+    (concat own shared)))
 
 (defn documents
   "Every document this principal can see, most recently written first.
@@ -278,18 +337,21 @@
   when something is saved is a list that cannot be used to find what was
   just saved."
   [state actor]
-  (let [workspace (workspace-for state actor)]
-    (newest-first (remove :drive/trashed? (readable-files workspace actor)))))
+  (newest-first (remove #(:drive/trashed? (:item %)) (visible-entries state actor))))
 
 (defn trashed
   "Everything this principal has trashed.
+
+  Their own only. Someone else's trash is their business, and an item that
+  appeared in two people's trash would be purgeable twice.
 
   A separate call rather than a flag on `documents`, because the two are
   answers to different questions and the trash is not a place anything
   should appear by accident."
   [state actor]
   (let [workspace (workspace-for state actor)]
-    (newest-first (filter :drive/trashed? (readable-files workspace actor)))))
+    (newest-first (filter #(:drive/trashed? (:item %))
+                          (viewable-files workspace actor actor)))))
 
 (defn quota-view [state actor]
   (let [workspace (workspace-for state actor)]
@@ -373,7 +435,8 @@
            (do (store/transact! assoc-in (workspace-path actor) (:workspace written))
                {:schema schema
                 :ok? true
-                :item (item-view (ws/item (:workspace written) id))})
+                :item (item-view (ws/item (:workspace written) id)
+                                 {:owner actor :own? true :role :owner})})
            (refuse! written)))))))
 
 (defn content
@@ -384,7 +447,8 @@
   reason that boundary is in `drive` rather than in each application."
   ([id actor] (content id actor (store-instance)))
   ([id actor object-store]
-   (let [workspace (workspace-for (store/snapshot) actor)
+   (let [{:keys [workspace owner own?] :as found} (locate (store/snapshot) actor id)
+         _ (when-not found (refuse! {:reason :no-such-item :item-id id}))
          result (object/read-item workspace object-store id actor)]
      (if (:ok? result)
        (let [item (ws/item workspace id)
@@ -392,7 +456,8 @@
              body (json/read-str (bytes->string (:bytes result)))]
          {:schema schema
           :ok? true
-          :item (item-view item)
+          :item (item-view item {:owner owner :own? own?
+                                 :role (ws/effective-role workspace id actor)})
           :resource-kind (some-> (:drive/resource-kind item) str)
           ;; Read through the surface's own reader, so a body whose
           ;; discriminant disagrees with the item's recorded kind is refused
@@ -427,10 +492,17 @@
   (:errors (problems-in spec resource)))
 
 (defn- writable!
-  "The workspace, item and spec for a write, or the refusal that stops it."
+  "The workspace, item and spec for a write, or the refusal that stops it.
+
+  The workspace is whichever one holds the item, not the actor's — an editor
+  writing to a document shared with them is writing into the owner's Drive,
+  and the version they add is charged against the owner's quota. That is the
+  right place for it: the bytes are the owner's, and a grant that moved the
+  cost to the grantee would let anyone fill someone else's Drive by
+  accepting a share."
   [actor id]
-  (let [workspace (workspace-for (store/snapshot) actor)
-        item (ws/item workspace id)]
+  (let [{:keys [workspace owner] :as found} (locate (store/snapshot) actor id)
+        item (when found (ws/item workspace id))]
     (cond
       (nil? item) (refuse! {:reason :no-such-item :item-id id})
       (:drive/trashed? item) (refuse! {:reason :item-is-trashed :item-id id})
@@ -438,9 +510,10 @@
       (refuse! {:reason :not-permitted :item-id id :principal actor})
       :else
       (if-let [spec (spec-of-item item)]
-        {:workspace workspace :item item :spec spec}
+        (assoc found :item item :spec spec)
         (throw (ex-info "このドキュメントの種類を判別できません。"
                         {:type :drive/unknown-kind
+                         :owner owner
                          :resource-kind (:drive/resource-kind item)}))))))
 
 (defn- write-resource!
@@ -455,7 +528,7 @@
   reused one, and the reason is the one that matters — reusing a reference
   replaces an earlier version's bytes while the history saying otherwise is
   still sitting in `:drive/versions`."
-  [{:keys [workspace item spec]} id actor object-store resource]
+  [{:keys [workspace item spec owner own?]} id actor object-store resource]
   (let [{:keys [errors warnings]} (problems-in spec resource)]
     (when (seq errors)
       (throw (ex-info (str "保存できません: " (:message (first errors)))
@@ -472,14 +545,21 @@
                                      {:object-ref (object-ref)
                                       :created-at (store/now)})]
       (if (:ok? written)
-        (do (store/transact! assoc-in (workspace-path actor) (:workspace written))
+        ;; Under the owner's path, not the actor's. Writing it back under the
+        ;; actor would fork the document into a second copy the owner never
+        ;; sees, which is the failure mode a shared editor has to not have.
+        (do (store/transact! assoc-in (workspace-path owner) (:workspace written))
             {:schema schema
              :ok? true
-             :item (item-view (ws/item (:workspace written) id))
+             :item (item-view (ws/item (:workspace written) id)
+                              {:owner owner :own? own?
+                               :role (ws/effective-role (:workspace written) id actor)})
              ;; Reported, not swallowed. The save went through; the surface
              ;; still had something to say about what was saved.
              :warnings warnings
-             :quota (quota-view (store/snapshot) actor)})
+             ;; The owner's quota, because that is the one the version was
+             ;; charged to.
+             :quota (quota-view (store/snapshot) owner)})
         (refuse! written)))))
 
 (defn update!
@@ -535,8 +615,8 @@
   `index` is 1-based and matches what `item-view` reports as `:versions`."
   ([id index actor] (version-content id index actor (store-instance)))
   ([id index actor object-store]
-   (let [workspace (workspace-for (store/snapshot) actor)
-         item (ws/item workspace id)
+   (let [{:keys [workspace owner own?]} (locate (store/snapshot) actor id)
+         item (when workspace (ws/item workspace id))
          versions (:drive/versions item)
          version (get versions (dec index))]
      (cond
@@ -556,7 +636,8 @@
                body (json/read-str (bytes->string bytes))]
            {:schema schema
             :ok? true
-            :item (item-view item)
+            :item (item-view item {:owner owner :own? own?
+                                   :role (ws/effective-role workspace id actor)})
             :index index
             :created-at (:drive.version/created-at version)
             :resource-kind (some-> (:drive/resource-kind item) str)
@@ -572,39 +653,47 @@
   Trash, not `forget-item`: trashing is reversible and forgetting is not,
   and `drive.object/forget-item` says in as many words that wiring the two
   together makes deletion silent and permanent. `purge!` is where the
-  irreversible one lives, and it refuses anything that is not here first."
+  irreversible one lives, and it refuses anything that is not here first.
+
+  Owner only. An editor a document was shared with may change it, which is
+  what editing means; making it disappear from the owner's Drive is not, and
+  `can-write?` does not distinguish the two."
   [id actor]
   (locking write-lock
-    (let [workspace (workspace-for (store/snapshot) actor)]
+    (let [{:keys [workspace owner]} (locate (store/snapshot) actor id)
+          item (when workspace (ws/item workspace id))]
       (cond
-        (nil? (ws/item workspace id)) (refuse! {:reason :no-such-item :item-id id})
-        (not (ws/can-write? workspace id actor))
+        (nil? item) (refuse! {:reason :no-such-item :item-id id})
+        (not= :owner (ws/effective-role workspace id actor))
         (refuse! {:reason :not-permitted :item-id id :principal actor})
         :else
         (let [trashed (ws/trash workspace id)]
-          (store/transact! assoc-in (workspace-path actor) trashed)
+          (store/transact! assoc-in (workspace-path owner) trashed)
           {:schema schema :ok? true :id id
-           :item (item-view (ws/item trashed id))})))))
+           :item (item-view (ws/item trashed id)
+                            {:owner owner :own? (= owner actor) :role :owner})})))))
 
 (defn restore!
   "Take a document back out of the trash.
 
   The half of trashing that makes it reversible, and therefore the half that
   has to exist before trashing is honest. Without it the trash is a sink and
-  `trash!` is a delete button that says otherwise."
+  `trash!` is a delete button that says otherwise. Owner only, for the same
+  reason `trash!` is."
   [id actor]
   (locking write-lock
-    (let [workspace (workspace-for (store/snapshot) actor)
-          item (ws/item workspace id)]
+    (let [{:keys [workspace owner]} (locate (store/snapshot) actor id)
+          item (when workspace (ws/item workspace id))]
       (cond
         (nil? item) (refuse! {:reason :no-such-item :item-id id})
-        (not (ws/can-write? workspace id actor))
+        (not= :owner (ws/effective-role workspace id actor))
         (refuse! {:reason :not-permitted :item-id id :principal actor})
         :else
         (let [restored (ws/restore workspace id)]
-          (store/transact! assoc-in (workspace-path actor) restored)
+          (store/transact! assoc-in (workspace-path owner) restored)
           {:schema schema :ok? true :id id
-           :item (item-view (ws/item restored id))})))))
+           :item (item-view (ws/item restored id)
+                            {:owner owner :own? (= owner actor) :role :owner})})))))
 
 (defn purge!
   "Delete a trashed document's bytes for good, and give the quota back.
@@ -622,10 +711,14 @@
   ([id actor] (purge! id actor (store-instance)))
   ([id actor object-store]
    (locking write-lock
-     (let [workspace (workspace-for (store/snapshot) actor)
-           item (ws/item workspace id)]
+     (let [{:keys [workspace owner]} (locate (store/snapshot) actor id)
+           item (when workspace (ws/item workspace id))]
        (cond
          (nil? item) (refuse! {:reason :no-such-item :item-id id})
+         ;; Owner only, and checked before the trashed test so that a
+         ;; grantee is told they may not rather than told to trash it first.
+         (not= :owner (ws/effective-role workspace id actor))
+         (refuse! {:reason :not-permitted :item-id id :principal actor})
          (not (:drive/trashed? item))
          (throw (ex-info "先にゴミ箱へ移動してください。"
                          {:type :drive/not-trashed :item-id id}))
@@ -642,10 +735,10 @@
                                            :drive/children]
                                           (fn [children]
                                             (vec (remove #{id} children)))))]
-               (store/transact! assoc-in (workspace-path actor) without)
+               (store/transact! assoc-in (workspace-path owner) without)
                {:schema schema :ok? true :id id
                 :freed-bytes (:freed-bytes forgotten)
-                :quota (quota-view (store/snapshot) actor)})
+                :quota (quota-view (store/snapshot) owner)})
              (refuse! forgotten))))))))
 
 (defn empty-trash!
@@ -662,3 +755,183 @@
         :purged (count results)
         :freed-bytes (reduce + 0 (map :freed-bytes results))
         :quota (quota-view (store/snapshot) actor)}))))
+
+;; ── sharing ─────────────────────────────────────────────────────────────────
+
+(def grantable-roles
+  "What one principal may give another.
+
+  `:owner` is not in it. `drive.workspace/grant` would accept it, and the
+  result would be a document with two owners either of whom can purge it out
+  from under the other — a transfer dressed as a share. Transferring
+  ownership is a different operation and this is not it."
+  {"editor" :editor "commenter" :commenter "viewer" :viewer})
+
+(def ^:private link-roles
+  ;; `create-share-link` refuses anything else, and says why: a link may read
+  ;; and never write. Restated as data so the UI can offer exactly these.
+  {"viewer" :viewer "commenter" :commenter})
+
+(defn- owned!
+  "The workspace holding `id`, if `actor` owns it.
+
+  Sharing, unsharing and links are all owner-only: an editor who could
+  re-share would be able to widen access the owner granted them narrowly,
+  which makes the owner's grant not mean what it said."
+  [actor id]
+  (let [{:keys [workspace] :as found} (locate (store/snapshot) actor id)
+        item (when found (ws/item workspace id))]
+    (cond
+      (nil? item) (refuse! {:reason :no-such-item :item-id id})
+      (not= :owner (ws/effective-role workspace id actor))
+      (refuse! {:reason :not-permitted :item-id id :principal actor})
+      :else (assoc found :item item))))
+
+(defn sharing
+  "Who this document is shared with, and by what links.
+
+  Owner-only, because it is the only view that lists other principals."
+  [id actor]
+  (let [{:keys [workspace item]} (owned! actor id)
+        links (->> (vals (:drive.workspace/share-links workspace))
+                   (filter #(= id (:drive.share/item-id %)))
+                   (mapv (fn [link]
+                           {:token (:drive.share/token link)
+                            :role (name (:drive.share/role link))
+                            :expires-at (:drive.share/expires-at link)})))]
+    {:schema schema
+     :ok? true
+     :id id
+     :grants (->> (:drive/permissions item)
+                  (remove (fn [[principal _]] (= principal actor)))
+                  (mapv (fn [[principal role]]
+                          {:principal principal :role (name role)})))
+     :links links
+     :roles (vec (keys grantable-roles))
+     :link-roles (vec (keys link-roles))}))
+
+(defn grant!
+  "Give `principal` a role on this document.
+
+  Recorded on the item, in the owner's workspace, which is why `locate`
+  exists: the grantee's own Drive has no idea this happened, and looking
+  only there is what would make the grant invisible."
+  [id principal role-name actor]
+  (locking write-lock
+    (let [{:keys [workspace owner]} (owned! actor id)
+          principal (not-empty (str/trim (str principal)))
+          role (get grantable-roles (some-> role-name str/trim))]
+      (cond
+        (nil? principal)
+        (throw (ex-info "共有相手を指定してください。"
+                        {:type :drive/invalid-share :field :principal}))
+        (= principal actor)
+        (throw (ex-info "自分自身には共有できません。"
+                        {:type :drive/invalid-share :field :principal}))
+        (nil? role)
+        (throw (ex-info "権限は editor / commenter / viewer のいずれかです。"
+                        {:type :drive/invalid-share :field :role
+                         :given role-name :known (vec (keys grantable-roles))}))
+        :else
+        (let [granted (ws/grant workspace id principal role)]
+          (store/transact! assoc-in (workspace-path owner) granted)
+          (sharing id actor))))))
+
+(defn revoke-grant!
+  "Take a role away again.
+
+  `drive.workspace` has no `revoke`, so this removes the entry directly —
+  which is what `grant` writes, and the only thing it writes."
+  [id principal actor]
+  (locking write-lock
+    (let [{:keys [workspace owner]} (owned! actor id)]
+      (when (= principal actor)
+        (throw (ex-info "所有者の権限は取り消せません。"
+                        {:type :drive/invalid-share :field :principal})))
+      (let [revoked (update-in workspace
+                               [:drive.workspace/items id :drive/permissions]
+                               dissoc principal)]
+        (store/transact! assoc-in (workspace-path owner) revoked)
+        (sharing id actor)))))
+
+(defn create-link!
+  "A token that reads this document without a role on it.
+
+  `expires-in-hours` is optional; nil is a link with no expiry, which
+  `resolve-share-link` treats as permanent. The token is a uuid rather than
+  anything derived from the document, because a token that could be guessed
+  from what it points at is not a token.
+
+  Redeeming one still requires an app session — see `link-content`."
+  [id role-name expires-in-hours actor now-ms]
+  (locking write-lock
+    (let [{:keys [workspace owner]} (owned! actor id)
+          role (get link-roles (some-> role-name str/trim))
+          hours (when expires-in-hours (long expires-in-hours))]
+      (cond
+        (nil? role)
+        (throw (ex-info "リンクの権限は viewer / commenter のいずれかです。"
+                        {:type :drive/invalid-share :field :role
+                         :given role-name :known (vec (keys link-roles))}))
+        (and hours (not (pos? hours)))
+        (throw (ex-info "有効期限は1時間以上で指定してください。"
+                        {:type :drive/invalid-share :field :expires-in-hours}))
+        :else
+        (let [token (str (UUID/randomUUID))
+              ;; Epoch millis, because `resolve-share-link` compares with `<`.
+              ;; `store/now` is an ISO string and would compare as nonsense.
+              expires-at (when hours (+ now-ms (* hours 60 60 1000)))
+              linked (ws/create-share-link workspace token id role expires-at)]
+          (store/transact! assoc-in (workspace-path owner) linked)
+          (assoc (sharing id actor) :token token))))))
+
+(defn revoke-link! [id token actor]
+  (locking write-lock
+    (let [{:keys [workspace owner]} (owned! actor id)]
+      (store/transact! assoc-in (workspace-path owner)
+                       (ws/revoke-share-link workspace token))
+      (sharing id actor))))
+
+(defn link-content
+  "Read a document by share-link token.
+
+  ## Still behind the app session, deliberately
+
+  A share link exists so someone without a role can read. It does not exist
+  here so someone without an *account* can, and the difference matters
+  because this server binds loopback-only under
+  `:privacy/bind-loopback-only?`. An unauthenticated route would be the only
+  one in the app, and the person it would serve — someone off this machine —
+  cannot reach the port at all. So it buys nothing and opens the one hole.
+
+  `drive.object/read-via-share-link` is what answers; it consults the link
+  rather than the ACL, and an expired or revoked token is indistinguishable
+  from one that never existed, which is the point of a token."
+  ([token actor now-ms] (link-content token actor now-ms (store-instance)))
+  ([token actor now-ms object-store]
+   (when (str/blank? (str actor))
+     (throw (ex-info "認証が必要です。" {:type :identity/unauthenticated})))
+   (let [state (store/snapshot)
+         hit (some (fn [[owner workspace]]
+                     (when (ws/resolve-share-link workspace token now-ms)
+                       {:owner owner :workspace workspace}))
+                   (all-workspaces state))]
+     (if-not hit
+       (refuse! {:reason :no-such-link})
+       (let [{:keys [workspace owner]} hit
+             result (object/read-via-share-link workspace object-store token now-ms)]
+         (if (:ok? result)
+           (let [link (ws/resolve-share-link workspace token now-ms)
+                 item (ws/item workspace (:drive.share/item-id link))
+                 kind (get resource-kinds (:drive/resource-kind item))
+                 body (json/read-str (bytes->string (:bytes result)))]
+             {:schema schema
+              :ok? true
+              :item (item-view item {:owner owner :own? (= owner actor)
+                                     :role (:drive.share/role link)})
+              :role (name (:role result))
+              :resource-kind (some-> (:drive/resource-kind item) str)
+              :payload (if-let [read-envelope (get-in kinds [kind :read])]
+                         (read-envelope body)
+                         body)})
+           (refuse! result)))))))

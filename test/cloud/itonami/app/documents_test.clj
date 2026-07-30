@@ -429,6 +429,181 @@
         (is (= [(:id first-doc) (:id second-doc)]
                (mapv :id (documents/documents @state alice))))))))
 
+;; ── sharing ─────────────────────────────────────────────────────────────────
+
+(deftest a-grant-makes-the-document-appear-in-the-grantees-list
+  (with-state
+    (fn [state object-store]
+      (let [{:keys [item]} (documents/create! :docs "共同設計" alice object-store)]
+        (is (empty? (documents/documents @state bob))
+            "before the grant, bob's Drive knows nothing about it")
+        (documents/grant! (:id item) bob "editor" alice)
+        ;; The permission is written on the item, in alice's workspace. bob
+        ;; looking only at his own would still see nothing — this is the
+        ;; assertion that `locate` closed that gap.
+        (let [[shared] (documents/documents @state bob)]
+          (is (= (:id item) (:id shared)))
+          (is (= "editor" (:role shared)))
+          (is (false? (:own? shared)))
+          (is (= alice (:owner shared)))
+          (is (:writable? shared))
+          (is (= "共有アイテム" (:folder shared))))
+        ;; And it is still alice's, in her own Drive.
+        (is (= [true] (mapv :own? (documents/documents @state alice))))))))
+
+(deftest an-editor-writes-into-the-owners-drive-not-a-copy
+  (with-state
+    (fn [state object-store]
+      (let [{:keys [item]} (documents/create! :docs "共同設計" alice object-store)
+            _ (documents/grant! (:id item) bob "editor" alice)
+            payload (:payload (documents/content (:id item) bob object-store))
+            saved (documents/update! (:id item) (assoc payload "docs/title" "bob の編集")
+                                     bob object-store)]
+        (is (:ok? saved))
+        ;; One document, two versions, in alice's workspace — not a second
+        ;; document in bob's.
+        (is (= 1 (count (documents/documents @state alice))))
+        (is (= 2 (:versions (first (documents/documents @state alice)))))
+        (is (empty? (get-in @state [:drive :workspaces bob :drive.workspace/items])))
+        (is (= "bob の編集" (:name (first (documents/documents @state alice)))))
+        ;; Charged to the owner's quota, because the bytes are the owner's.
+        (is (pos? (:used-bytes (documents/quota-view @state alice))))
+        (is (zero? (:used-bytes (documents/quota-view @state bob))))))))
+
+(deftest a-viewer-may-read-and-not-write
+  (with-state
+    (fn [state object-store]
+      (let [{:keys [item]} (documents/create! :sheets "計画" alice object-store)
+            _ (documents/grant! (:id item) bob "viewer" alice)
+            [shared] (documents/documents @state bob)
+            payload (:payload (documents/content (:id item) bob object-store))]
+        (is (= "viewer" (:role shared)))
+        (is (false? (:writable? shared)))
+        (is (some? payload) "reading is what a viewer is for")
+        (is (= :drive/not-permitted
+               (try (documents/update! (:id item) payload bob object-store)
+                    (catch clojure.lang.ExceptionInfo e (:type (ex-data e))))))))))
+
+(deftest only-the-owner-may-trash-purge-or-re-share
+  (with-state
+    (fn [_ object-store]
+      (let [{:keys [item]} (documents/create! :docs "設計" alice object-store)
+            _ (documents/grant! (:id item) bob "editor" alice)
+            type-of (fn [f] (try (f) nil (catch clojure.lang.ExceptionInfo e
+                                           (:type (ex-data e)))))]
+        ;; An editor may change it — that is what editing means — but not make
+        ;; it disappear from the owner's Drive, and not widen the access the
+        ;; owner granted narrowly.
+        (is (= :drive/not-permitted (type-of #(documents/trash! (:id item) bob))))
+        (is (= :drive/not-permitted (type-of #(documents/restore! (:id item) bob))))
+        (is (= :drive/not-permitted (type-of #(documents/purge! (:id item) bob object-store))))
+        (is (= :drive/not-permitted (type-of #(documents/sharing (:id item) bob))))
+        (is (= :drive/not-permitted
+               (type-of #(documents/grant! (:id item) "user-carol" "editor" bob))))))))
+
+(deftest ownership-is-not-grantable
+  (with-state
+    (fn [_ object-store]
+      (let [{:keys [item]} (documents/create! :docs "設計" alice object-store)]
+        ;; `drive.workspace/grant` would accept :owner. Two owners either of
+        ;; whom can purge it is a transfer dressed as a share.
+        (is (= :drive/invalid-share
+               (try (documents/grant! (:id item) bob "owner" alice)
+                    (catch clojure.lang.ExceptionInfo e (:type (ex-data e))))))
+        (is (= :drive/invalid-share
+               (try (documents/grant! (:id item) alice "editor" alice)
+                    (catch clojure.lang.ExceptionInfo e (:type (ex-data e))))))
+        (is (= ["editor" "commenter" "viewer"] (:roles (documents/sharing (:id item) alice))))))))
+
+(deftest revoking-takes-the-document-away-again
+  (with-state
+    (fn [state object-store]
+      (let [{:keys [item]} (documents/create! :docs "設計" alice object-store)]
+        (documents/grant! (:id item) bob "editor" alice)
+        (is (= 1 (count (documents/documents @state bob))))
+        (let [after (documents/revoke-grant! (:id item) bob alice)]
+          (is (empty? (:grants after)))
+          (is (empty? (documents/documents @state bob)))
+          ;; Refused as not-found rather than not-permitted: without a role,
+          ;; bob cannot locate it at all, and "it is not there" is the honest
+          ;; answer as well as the one that leaks least.
+          (is (= :drive/not-found
+                 (try (documents/content (:id item) bob object-store)
+                      (catch clojure.lang.ExceptionInfo e (:type (ex-data e)))))))))))
+
+;; ── share links ─────────────────────────────────────────────────────────────
+
+(def ^:private now-ms 1800000000000)
+
+(deftest a-link-reads-without-a-role
+  (with-state
+    (fn [_ object-store]
+      (let [{:keys [item]} (documents/create! :docs "配布資料" alice object-store)
+            {:keys [token links]} (documents/create-link! (:id item) "viewer" nil
+                                                          alice now-ms)]
+        (is (string? token))
+        (is (= [{:token token :role "viewer" :expires-at nil}] links))
+        (let [read (documents/link-content token bob now-ms object-store)]
+          (is (:ok? read))
+          (is (= "viewer" (:role read)))
+          (is (= "配布資料" (get (:payload read) "docs/title")))
+          (is (false? (:writable? (:item read)))))))))
+
+(deftest a-link-cannot-be-made-writable
+  (with-state
+    (fn [_ object-store]
+      (let [{:keys [item]} (documents/create! :docs "配布資料" alice object-store)]
+        ;; `create-share-link` refuses anything but viewer/commenter and says
+        ;; why: a link may read and never write.
+        (is (= :drive/invalid-share
+               (try (documents/create-link! (:id item) "editor" nil alice now-ms)
+                    (catch clojure.lang.ExceptionInfo e (:type (ex-data e))))))
+        (is (= ["viewer" "commenter"]
+               (:link-roles (documents/sharing (:id item) alice))))))))
+
+(deftest an-expired-link-is-indistinguishable-from-one-that-never-existed
+  (with-state
+    (fn [_ object-store]
+      (let [{:keys [item]} (documents/create! :docs "期限つき" alice object-store)
+            {:keys [token]} (documents/create-link! (:id item) "viewer" 24 alice now-ms)
+            type-of (fn [f] (try (f) nil (catch clojure.lang.ExceptionInfo e
+                                           (:type (ex-data e)))))]
+        (is (:ok? (documents/link-content token bob (+ now-ms 1000) object-store)))
+        (is (= :drive/not-found
+               (type-of #(documents/link-content token bob
+                                                 (+ now-ms (* 25 60 60 1000))
+                                                 object-store))))
+        (is (= :drive/not-found
+               (type-of #(documents/link-content "never-issued" bob now-ms object-store))))
+        ;; Revoked reads the same way.
+        (documents/revoke-link! (:id item) token alice)
+        (is (= :drive/not-found
+               (type-of #(documents/link-content token bob now-ms object-store))))))))
+
+(deftest a-link-needs-a-session-all-the-same
+  (with-state
+    (fn [_ object-store]
+      (let [{:keys [item]} (documents/create! :docs "配布資料" alice object-store)
+            {:keys [token]} (documents/create-link! (:id item) "viewer" nil alice now-ms)]
+        ;; The server binds loopback-only; an unauthenticated route would be
+        ;; the only one in the app and would serve nobody who could not
+        ;; already reach the port.
+        (is (= :identity/unauthenticated
+               (try (documents/link-content token "" now-ms object-store)
+                    (catch clojure.lang.ExceptionInfo e (:type (ex-data e))))))))))
+
+(deftest a-link-to-a-trashed-document-does-not-read-it
+  (with-state
+    (fn [_ object-store]
+      (let [{:keys [item]} (documents/create! :docs "取り下げ" alice object-store)
+            {:keys [token]} (documents/create-link! (:id item) "viewer" nil alice now-ms)]
+        (documents/trash! (:id item) alice)
+        ;; `read-via-share-link` checks trash itself. A link that outlived the
+        ;; document it points at hands out deleted content otherwise.
+        (is (= :drive/not-found
+               (try (documents/link-content token bob now-ms object-store)
+                    (catch clojure.lang.ExceptionInfo e (:type (ex-data e))))))))))
+
 (deftest the-drive-view-keeps-the-archive-and-labels-both-sides
   (with-state
     (fn [_ object-store]

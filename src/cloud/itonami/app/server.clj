@@ -621,6 +621,46 @@
                       (id-from-path path #"/api/workspace/drive/documents/([^/]+)/purge")
                       (:user-id session))))
 
+            (and (= method "GET")
+                 (id-from-path path #"/api/workspace/drive/documents/([^/]+)/sharing"))
+            (let [session (require-app-session! exchange)]
+              (send! exchange 200
+                     (documents/sharing
+                      (id-from-path path #"/api/workspace/drive/documents/([^/]+)/sharing")
+                      (:user-id session))))
+
+            (and (= method "POST")
+                 (id-from-path path #"/api/workspace/drive/documents/([^/]+)/sharing"))
+            (let [session (require-app-session! exchange)
+                  request (read-json exchange)
+                  id (id-from-path path
+                                   #"/api/workspace/drive/documents/([^/]+)/sharing")]
+              (require-origin! exchange config)
+              (require-csrf! exchange session)
+              (send! exchange 200
+                     (case (:action request)
+                       "revoke" (documents/revoke-grant! id (:principal request)
+                                                        (:user-id session))
+                       "link" (documents/create-link! id (:role request)
+                                                      (:expires-in-hours request)
+                                                      (:user-id session)
+                                                      (System/currentTimeMillis))
+                       "revoke-link" (documents/revoke-link! id (:token request)
+                                                            (:user-id session))
+                       (documents/grant! id (:principal request) (:role request)
+                                         (:user-id session)))))
+
+            ;; Behind the app session like everything else — see
+            ;; `documents/link-content` for why a token is not a way around it.
+            (and (= method "GET")
+                 (id-from-path path #"/api/workspace/drive/shared/([^/]+)"))
+            (let [session (require-app-session! exchange)]
+              (send! exchange 200
+                     (documents/link-content
+                      (id-from-path path #"/api/workspace/drive/shared/([^/]+)")
+                      (:user-id session)
+                      (System/currentTimeMillis))))
+
             (and (= method "POST") (= path "/api/workspace/drive/trash/empty"))
             (let [session (require-app-session! exchange)]
               (require-origin! exchange config)
@@ -870,6 +910,7 @@
                      ;; Purging something that is not in the trash yet is a
                      ;; conflict with its current state, not a bad request.
                      :drive/not-trashed 409
+                     :drive/invalid-share 400
                      :drive/not-found 404
                      :drive/not-permitted 403
                      :drive/no-content 409

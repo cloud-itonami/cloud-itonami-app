@@ -186,6 +186,14 @@
   .trash-row__name{flex:1 1 12rem;min-width:0;overflow:hidden;text-overflow:ellipsis;
     white-space:nowrap}
   .trash-row__size{color:var(--color-neutral-solid-gray-600);font-size:.8125rem}
+  .sharing{margin-top:1.25rem;border-top:1px solid var(--color-neutral-solid-gray-200);
+    padding-top:1rem;display:grid;gap:.75rem}
+  .sharing__title{margin:0;font-size:1rem}
+  .sharing__list{list-style:none;margin:0;padding:0;display:grid;gap:.5rem}
+  .sharing__entry{display:flex;align-items:center;flex-wrap:wrap;gap:.5rem}
+  .sharing__who{color:var(--color-neutral-solid-gray-600);font-size:.8125rem}
+  .sharing__token{flex:1 1 16rem;min-width:0;min-height:2.25rem;padding:.35rem .75rem;
+    border-radius:.5rem;font-size:.75rem}
   .detail-actions{display:flex;flex-direction:column;align-items:stretch;gap:.75rem;
     margin-top:1.25rem}
   .detail-actions__row{display:flex;flex-wrap:wrap;align-items:center;gap:.5rem}
@@ -710,6 +718,8 @@
             ? 'ゴミ箱にあります。復元するまで編集できません。'
             : 'この Drive で作成した Kotoba ドキュメントです。',
           [['種類', selectedDrive['resource-kind']],
+           ['権限', selectedDrive['own?'] ? '所有者'
+             : `${selectedDrive.role || '—'}（${selectedDrive.owner || '不明'} から共有）`],
            ['形式', selectedDrive['media-type']],
            ['サイズ', bytes(selectedDrive['size-bytes'])],
            ['全版の合計', bytes(selectedDrive['held-bytes'])],
@@ -951,9 +961,118 @@
         driveAction(`/api/workspace/drive/documents/${encodeURIComponent(item.id)}/trash`, {},
           `${item.name} をゴミ箱へ移動しました。`);
       });
-      row.append(titleField, rename, open, save, trash);
+      // A viewer or commenter gets the document and not the verbs. The
+      // server refuses them anyway — `writable?` is `can-write?`'s answer,
+      // not a second copy of the rule — but offering a button that always
+      // fails is its own kind of lie.
+      if (!item['writable?']) { save.hidden = true; }
+      row.append(titleField);
+      if (item['writable?']) row.append(rename);
+      row.append(open);
+      if (item['writable?']) row.append(save);
+      if (item.role === 'owner') row.append(trash);
       actions.append(row, status, editor, versions);
+      if (item.role === 'owner') actions.append(sharingPanel(item, status));
       return actions;
+    };
+    // Sharing is owner-only, and the panel says who has what rather than
+    // only offering to add: a share you cannot see is one you cannot undo.
+    const sharingPanel = (item, status) => {
+      const panel = make('div', 'sharing');
+      const heading = make('h3', 'sharing__title', '共有');
+      const current = make('ul', 'sharing__list');
+      const form = make('div', 'detail-actions__row');
+      const who = make('input', 'workspace-search document-title');
+      who.type = 'text';
+      who.placeholder = '共有相手の User ID';
+      who.setAttribute('aria-label', '共有相手の User ID');
+      const role = make('select', 'model-pill');
+      role.setAttribute('aria-label', '権限');
+      const share = make('button', 'tool-button', '共有する');
+      share.type = 'button';
+      const linkRole = make('select', 'model-pill');
+      linkRole.setAttribute('aria-label', 'リンクの権限');
+      const expiry = make('select', 'model-pill');
+      expiry.setAttribute('aria-label', 'リンクの有効期限');
+      [['', '期限なし'], ['24', '24時間'], ['168', '7日間']].forEach(([value, label]) => {
+        const option = make('option', null, label); option.value = value; expiry.append(option);
+      });
+      const makeLink = make('button', 'tool-button', 'リンクを作成');
+      makeLink.type = 'button';
+
+      // Options come from the server's own lists, so `:owner` never appears
+      // among them — `documents/grantable-roles` leaves it out on purpose.
+      const fillOnce = (select, names) => {
+        if (select.options.length || !names) return;
+        names.forEach((name) => {
+          const option = make('option', null, name); option.value = name; select.append(option);
+        });
+      };
+      const render = (data) => {
+        fillOnce(role, data.roles);
+        fillOnce(linkRole, data['link-roles']);
+        current.replaceChildren();
+        (data.grants || []).forEach((grant) => {
+          const entry = make('li', 'sharing__entry');
+          entry.append(make('span', 'sharing__who', `${grant.principal}（${grant.role}）`));
+          const revoke = make('button', 'tool-button', '解除');
+          revoke.type = 'button';
+          revoke.addEventListener('click', () => submit(
+            {action:'revoke', principal:grant.principal}, `${grant.principal} の共有を解除しました。`));
+          entry.append(revoke);
+          current.append(entry);
+        });
+        (data.links || []).forEach((link) => {
+          const entry = make('li', 'sharing__entry');
+          const url = `${window.location.origin}/api/workspace/drive/shared/${encodeURIComponent(link.token)}`;
+          const field = make('input', 'workspace-search sharing__token');
+          field.type = 'text'; field.readOnly = true; field.value = url;
+          field.setAttribute('aria-label', `共有リンク（${link.role}）`);
+          entry.append(make('span', 'sharing__who',
+            `リンク（${link.role}・${link['expires-at'] ? '期限あり' : '期限なし'}）`), field);
+          const revoke = make('button', 'tool-button', '無効化');
+          revoke.type = 'button';
+          revoke.addEventListener('click', () => submit(
+            {action:'revoke-link', token:link.token}, 'リンクを無効化しました。'));
+          entry.append(revoke);
+          current.append(entry);
+        });
+        if (!(data.grants || []).length && !(data.links || []).length) {
+          current.append(make('li', 'empty-state', 'まだ誰とも共有していません。'));
+        }
+      };
+      const submit = async (body, done) => {
+        status.textContent = '共有設定を更新しています…';
+        try {
+          const data = await postJSON(
+            `/api/workspace/drive/documents/${encodeURIComponent(item.id)}/sharing`,
+            body, true);
+          render(data);
+          status.textContent = done;
+        } catch (error) {
+          status.textContent = error.message;
+        }
+      };
+      share.addEventListener('click', () => submit(
+        {principal:who.value, role:role.value}, `${who.value} と共有しました。`));
+      makeLink.addEventListener('click', () => submit(
+        {action:'link', role:linkRole.value,
+         'expires-in-hours':expiry.value ? Number(expiry.value) : null},
+        'リンクを作成しました。'));
+
+      form.append(who, role, share);
+      const linkForm = make('div', 'detail-actions__row');
+      linkForm.append(make('span', 'sharing__who', '共有リンク'), linkRole, expiry, makeLink);
+      panel.append(heading, current, form, linkForm);
+      (async () => {
+        try {
+          const request = await fetch(
+            `/api/workspace/drive/documents/${encodeURIComponent(item.id)}/sharing`);
+          const data = await request.json();
+          if (request.ok) render(data);
+        } catch (error) { /* the panel simply stays empty */ }
+      })();
+      return panel;
     };
     const renderFilecoin = (data) => {
       const list = $('#storage-list'); list.replaceChildren();
