@@ -1642,6 +1642,52 @@
                                     #"/api/workspace/drive/documents/([^/]+)/responses-sheet")
                       (:user-id session))))
 
+            ;; Suggestions. A commenter may propose; a writer may accept.
+            (and (= method "GET")
+                 (id-from-path path #"/api/workspace/drive/documents/([^/]+)/suggestions"))
+            (let [session (require-app-session! exchange)]
+              (send! exchange 200
+                     (documents/suggestions
+                      (id-from-path path
+                                    #"/api/workspace/drive/documents/([^/]+)/suggestions")
+                      (:user-id session))))
+
+            (and (= method "POST")
+                 (id-from-path path #"/api/workspace/drive/documents/([^/]+)/suggestions"))
+            (let [session (require-app-session! exchange)
+                  request (read-json exchange)]
+              (require-origin! exchange config)
+              (require-csrf! exchange session)
+              (send! exchange 200
+                     (documents/suggest!
+                      (id-from-path path
+                                    #"/api/workspace/drive/documents/([^/]+)/suggestions")
+                      (:block request) (:text request) (:user-id session))))
+
+            (and (= method "POST")
+                 (id-from-path path
+                               #"/api/workspace/drive/documents/([^/]+)/suggestions/[^/]+/accept"))
+            (let [session (require-app-session! exchange)]
+              (require-origin! exchange config)
+              (require-csrf! exchange session)
+              (send! exchange 200
+                     (documents/accept-suggestion!
+                      (id-from-path path #"/api/workspace/drive/documents/([^/]+)/")
+                      (second (re-find #"/suggestions/([^/]+)/accept" path))
+                      (:user-id session))))
+
+            (and (= method "POST")
+                 (id-from-path path
+                               #"/api/workspace/drive/documents/([^/]+)/suggestions/[^/]+/reject"))
+            (let [session (require-app-session! exchange)]
+              (require-origin! exchange config)
+              (require-csrf! exchange session)
+              (send! exchange 200
+                     (documents/reject-suggestion!
+                      (id-from-path path #"/api/workspace/drive/documents/([^/]+)/")
+                      (second (re-find #"/suggestions/([^/]+)/reject" path))
+                      (:user-id session))))
+
             ;; Owner only — the responses are theirs.
             (and (= method "GET")
                  (id-from-path path #"/api/workspace/drive/documents/([^/]+)/submissions"))
@@ -1964,6 +2010,12 @@
                      :drive/not-a-document 409
                      :drive/not-a-file 409
                      :drive/not-previewable 415
+                     ;; The paragraph moved under the proposal. 409 for the
+                     ;; same reason a stale save is: the client has to
+                     ;; re-read before it can win.
+                     :drive/suggestion-stale 409
+                     :drive/suggestion-settled 409
+                     :drive/invalid-suggestion 422
                      ;; Restoring what is already current is a request that
                      ;; conflicts with the state, not a malformed one.
                      :drive/already-current 409
