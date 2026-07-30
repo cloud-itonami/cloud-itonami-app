@@ -24,6 +24,17 @@
   (let [body (slurp (.getRequestBody exchange))]
     (if (str/blank? body) {} (json/read-str body :key-fn keyword))))
 
+(defn- read-json-raw
+  "The request body with its keys left alone.
+
+  `read-json` keywordizes every key at every depth, which is right for the
+  fixed-shape requests around it and destroys a document payload: a Sheets
+  tab is keyed by its id and a cell by `\"[1 1]\"`, and turning those into
+  `:plan` and `:[1 1]` loses the only thing that made them addressable."
+  [^HttpExchange exchange]
+  (let [body (slurp (.getRequestBody exchange))]
+    (if (str/blank? body) {} (json/read-str body))))
+
 (defn- send!
   ([exchange status body] (send! exchange status body {}))
   ([^HttpExchange exchange status body headers]
@@ -484,6 +495,33 @@
                       (id-from-path path #"/api/workspace/drive/documents/([^/]+)")
                       (:user-id session))))
 
+            ;; The payload only, never a whole envelope: the resource kind is
+            ;; rebuilt from what the item already records, so an edit cannot
+            ;; rewrite its own discriminant.
+            (and (= method "POST")
+                 (id-from-path path #"/api/workspace/drive/documents/([^/]+)/versions"))
+            (let [session (require-app-session! exchange)
+                  request (read-json-raw exchange)]
+              (require-origin! exchange config)
+              (require-csrf! exchange session)
+              (send! exchange 200
+                     (documents/update!
+                      (id-from-path path #"/api/workspace/drive/documents/([^/]+)/versions")
+                      (get request "payload")
+                      (:user-id session))))
+
+            (and (= method "POST")
+                 (id-from-path path #"/api/workspace/drive/documents/([^/]+)/rename"))
+            (let [session (require-app-session! exchange)
+                  request (read-json exchange)]
+              (require-origin! exchange config)
+              (require-csrf! exchange session)
+              (send! exchange 200
+                     (documents/rename!
+                      (id-from-path path #"/api/workspace/drive/documents/([^/]+)/rename")
+                      (:title request)
+                      (:user-id session))))
+
             (and (= method "POST")
                  (id-from-path path #"/api/workspace/drive/documents/([^/]+)/trash"))
             (let [session (require-app-session! exchange)]
@@ -717,6 +755,9 @@
                      :worker/not-found 404
                      :worker/not-cancellable 409
                      :drive/unknown-kind 400
+                     ;; The request was understood and the document it carries
+                     ;; is not one the model accepts — which is 422, not 400.
+                     :drive/invalid-document 422
                      :drive/not-found 404
                      :drive/not-permitted 403
                      :drive/no-content 409

@@ -131,6 +131,134 @@
                   (catch clojure.lang.ExceptionInfo error (:type (ex-data error))))))
       (is (empty? (documents/documents @state alice))))))
 
+;; ── editing ─────────────────────────────────────────────────────────────────
+
+(deftest saving-an-edit-records-a-new-version-under-a-new-reference
+  (with-state
+    (fn [state object-store]
+      (let [{:keys [item]} (documents/create! :sheets "計画" alice object-store)
+            payload (:payload (documents/content (:id item) alice object-store))
+            edited (assoc-in payload ["sheets/tabs" "sheet1" "sheets/cells"]
+                             {"[1 1]" {"sheets/value" "Q1"}
+                              "[1 2]" {"sheets/value" "Q2"}})
+            saved (documents/update! (:id item) edited alice object-store)
+            workspace (documents/workspace-for @state alice)
+            versions (:drive/versions (ws/item workspace (:id item)))]
+        (is (:ok? saved))
+        (is (= 2 (:versions (:item saved))))
+        ;; A new reference, not the old one. Reusing it would replace the
+        ;; first version's bytes while the history saying otherwise stayed.
+        (is (= 2 (count (distinct (map :drive.version/object-ref versions)))))
+        ;; Both versions are still counted against the quota, which is what
+        ;; keeping them means.
+        (is (= (reduce + (map :drive.version/size-bytes versions))
+               (:drive.workspace/used-bytes workspace)))
+        (let [back (:payload (documents/content (:id item) alice object-store))]
+          (is (= {"[1 1]" {"sheets/value" "Q1"} "[1 2]" {"sheets/value" "Q2"}}
+                 (get-in back ["sheets/tabs" "sheet1" "sheets/cells"]))))))))
+
+(deftest an-edit-that-stops-being-a-workbook-is-refused
+  (with-state
+    (fn [state object-store]
+      (let [{:keys [item]} (documents/create! :sheets "計画" alice object-store)
+            payload (:payload (documents/content (:id item) alice object-store))
+            ;; Row 0 is not an address — `sheets.validate` says cells start
+            ;; at 1 — and this is the assertion that the app asks it.
+            broken (assoc-in payload ["sheets/tabs" "sheet1" "sheets/cells"]
+                             {"[0 1]" {"sheets/value" "x"}})
+            error (try (documents/update! (:id item) broken alice object-store)
+                       (catch clojure.lang.ExceptionInfo e (ex-data e)))]
+        (is (= :drive/invalid-document (:type error)))
+        (is (= [":cell/invalid"] (mapv :code (:problems error))))
+        ;; Nothing was written: still one version, and the bytes are the ones
+        ;; from before.
+        (is (= 1 (count (:drive/versions
+                         (ws/item (documents/workspace-for @state alice) (:id item))))))))))
+
+(deftest a-form-whose-field-type-is-not-one-is-refused
+  ;; The case that would pass silently without rehydration: on a projected
+  ;; payload `forms.validate` sees no fields at all and reports no problems.
+  (with-state
+    (fn [_ object-store]
+      (let [{:keys [item]} (documents/create! :forms "問い合わせ" alice object-store)
+            payload (:payload (documents/content (:id item) alice object-store))
+            broken (assoc payload "forms/fields"
+                          [{"forms/id" "name" "forms/field-type" "telepathy"
+                            "forms/label" "name" "forms/required?" false}])
+            error (try (documents/update! (:id item) broken alice object-store)
+                       (catch clojure.lang.ExceptionInfo e (ex-data e)))]
+        (is (= :drive/invalid-document (:type error)))
+        (is (= [":field/unknown-type"] (mapv :code (:problems error))))))))
+
+(deftest a-docs-warning-does-not-block-a-save
+  ;; `docs.validate` reports a missing title as a warning. Refusing over it
+  ;; would make the surface unusable for a draft.
+  (with-state
+    (fn [_ object-store]
+      (let [{:keys [item]} (documents/create! :docs "下書き" alice object-store)
+            payload (:payload (documents/content (:id item) alice object-store))
+            untitled (assoc payload "docs/title" "")]
+        (is (:ok? (documents/update! (:id item) untitled alice object-store)))))))
+
+(deftest an-edit-cannot-change-what-kind-of-document-it-is
+  (with-state
+    (fn [_ object-store]
+      (let [{:keys [item]} (documents/create! :docs "設計" alice object-store)
+            payload (:payload (documents/content (:id item) alice object-store))
+            ;; A payload trying to smuggle in another discriminant. The
+            ;; envelope is rebuilt from the item's recorded kind, so the
+            ;; stray key is carried as data and the kind does not move.
+            sneaky (assoc payload "kotoba.resource/kind" "sheets/workbook")
+            saved (documents/update! (:id item) sneaky alice object-store)]
+        (is (= ":docs/document" (:resource-kind (:item saved))))
+        (is (= ":docs/document"
+               (:resource-kind (documents/content (:id item) alice object-store))))))))
+
+(deftest the-title-moves-in-both-places-at-once
+  (with-state
+    (fn [_ object-store]
+      (let [{:keys [item]} (documents/create! :docs "旧題" alice object-store)
+            renamed (documents/rename! (:id item) "  新題  " alice object-store)
+            back (documents/content (:id item) alice object-store)]
+        (is (= "新題" (:name (:item renamed))) "trimmed, and on the Drive item")
+        (is (= "新題" (get (:payload back) "docs/title")) "and inside the bytes")
+        ;; A rename is a new version, because the title is in the resource.
+        (is (= 2 (:versions (:item renamed))))))))
+
+(deftest a-blank-rename-is-refused
+  (with-state
+    (fn [_ object-store]
+      (let [{:keys [item]} (documents/create! :forms "問い合わせ" alice object-store)]
+        (is (= :drive/invalid-document
+               (try (documents/rename! (:id item) "   " alice object-store)
+                    (catch clojure.lang.ExceptionInfo e (:type (ex-data e))))))
+        (is (= "問い合わせ"
+               (:name (first (documents/documents (store/snapshot) alice)))))))))
+
+(deftest editing-someone-elses-document-is-refused
+  (with-state
+    (fn [state object-store]
+      (let [{:keys [item]} (documents/create! :docs "私信" alice object-store)
+            payload (:payload (documents/content (:id item) alice object-store))]
+        (swap! state assoc-in [:drive :workspaces bob]
+               (get-in @state [:drive :workspaces alice]))
+        (is (= :drive/not-permitted
+               (try (documents/update! (:id item) payload bob object-store)
+                    (catch clojure.lang.ExceptionInfo e (:type (ex-data e))))))
+        (is (= :drive/not-permitted
+               (try (documents/rename! (:id item) "改題" bob object-store)
+                    (catch clojure.lang.ExceptionInfo e (:type (ex-data e))))))))))
+
+(deftest a-trashed-document-cannot-be-edited
+  (with-state
+    (fn [_ object-store]
+      (let [{:keys [item]} (documents/create! :sheets "旧" alice object-store)
+            payload (:payload (documents/content (:id item) alice object-store))]
+        (documents/trash! (:id item) alice)
+        (is (= :drive/not-found
+               (try (documents/update! (:id item) payload alice object-store)
+                    (catch clojure.lang.ExceptionInfo e (:type (ex-data e))))))))))
+
 (deftest trashing-hides-it-and-refuses-its-bytes
   (with-state
     (fn [state object-store]
