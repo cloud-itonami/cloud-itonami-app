@@ -316,6 +316,37 @@ Moving a file into a shared folder shares it. That falls out of inheritance
 rather than being implemented, and it is tested because it is a permission
 change nobody performed.
 
+**Purging a folder purges what is inside it, deepest first.** The order is
+not tidiness: `trashed?` walks upwards, so a folder dropped before its
+contents would leave them pointing at a parent that is not there, the walk
+would end at a missing item, and the answer would be *not in the trash*.
+They would come back into the listing — resurrected by the deletion of their
+folder, and impossible to get rid of.
+
+**The trash lists folders as well as files, or their contents can never be
+reclaimed.** A file inside a trashed folder has its own flag clear, so
+nothing lists it on its own; before this, a trashed folder appeared nowhere
+and everything under it stayed charged against the quota for ever.
+`empty-trash!` reports what was removed rather than how many things were
+listed — purging a folder purges its subtree, so the two stopped being the
+same number.
+
+**Searching looks everywhere; browsing does not.** A search scoped to the
+folder you happen to be standing in cannot find what you are looking for,
+which is the only reason to search. So the folder strip says so while a
+query is present, and the breadcrumb — which would be describing a place the
+results are not from — is replaced by that sentence.
+
+A document shared from somebody else's Drive has no folder in this one, and
+`:parent-id` is nil rather than theirs: naming a folder this principal
+cannot open would put an id in a breadcrumb that goes nowhere. Those
+documents stay at the top rather than disappearing into a folder nobody can
+reach.
+
+The move picker offers every folder by path — `My Drive / 営業 / Q1` — because
+two folders called Q1 are an ordinary thing to have and a picker showing both
+as `Q1` asks an unanswerable question.
+
 ### Responses are a table, and the table is not the document
 
 A form collects a map per response, keyed by field id. Nobody reads them

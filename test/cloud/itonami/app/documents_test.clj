@@ -2383,7 +2383,9 @@
         (is (:trashed? (:item (documents/content (:id item) alice object-store))))
         ;; And the trash lists the folder, not each file under it — what was
         ;; put there is one thing, and restoring it is one act.
-        (is (= [] (mapv :id (documents/trashed @state alice))))))))
+        (let [binned (documents/trashed @state alice)]
+          (is (= [(:id work)] (mapv :id binned)))
+          (is (= ["folder"] (mapv :kind binned))))))))
 
 (deftest restoring-a-folder-does-not-restore-what-was-already-in-the-trash
   (with-state
@@ -2480,3 +2482,94 @@
         (is (= [] (:folders here)) "nothing inside it yet")
         (let [top (documents/folders (store/snapshot) alice nil)]
           (is (= ["仕事"] (mapv :name (:folders top))) "only the direct children"))))))
+
+(deftest emptying-the-trash-reclaims-what-was-inside-a-folder
+  ;; The bytes of a file inside a trashed folder are still charged to the
+  ;; quota, and nothing lists that file on its own — it is in the trash
+  ;; because its folder is. Before folders, `trashed` listed only files with
+  ;; their own flag set, so a trashed folder could never be purged at all and
+  ;; everything under it stayed charged for ever.
+  (with-state
+    (fn [state object-store]
+      (let [work (:item (documents/create-folder! "仕事" alice))
+            a (:item (documents/create! :docs "A" alice object-store {:folder (:id work)}))
+            _ (:item (documents/create! :docs "B" alice object-store {:folder (:id work)}))
+            before (:used-bytes (documents/quota-view @state alice))]
+        (is (pos? before))
+        (documents/trash! (:id work) alice)
+        (let [{:keys [freed-bytes purged]} (documents/empty-trash! alice object-store)]
+          ;; The folder and both files.
+          (is (= 3 purged))
+          (is (= before freed-bytes)))
+        (is (zero? (:used-bytes (documents/quota-view (store/snapshot) alice))))
+        (is (empty? (documents/documents (store/snapshot) alice)))
+        (is (empty? (documents/trashed (store/snapshot) alice)))
+        ;; And the file is gone rather than merely hidden.
+        (is (= :drive/not-found
+               (:type (try (documents/content (:id a) alice object-store)
+                           (catch clojure.lang.ExceptionInfo e (ex-data e))))))))))
+
+(deftest purging-a-folder-does-not-resurrect-what-was-inside-it
+  ;; `trashed?` walks upwards. A folder dropped before its contents would
+  ;; leave them pointing at a parent that is not there, the walk would end at
+  ;; a missing item, and the answer would be "not in the trash" — the files
+  ;; would come back into the listing, resurrected by the deletion of their
+  ;; folder and impossible to get rid of.
+  (with-state
+    (fn [_ object-store]
+      (let [work (:item (documents/create-folder! "仕事" alice))
+            q1 (:item (documents/create-folder! "Q1" alice (:id work)))
+            deep (:item (documents/create! :docs "議事録" alice object-store
+                                           {:folder (:id q1)}))]
+        (documents/trash! (:id work) alice)
+        (let [{:keys [purged]} (documents/purge! (:id work) alice object-store)]
+          (is (= 3 purged) "two folders and the document under them"))
+        (is (empty? (documents/documents (store/snapshot) alice)))
+        (is (= :drive/not-found
+               (:type (try (documents/content (:id deep) alice object-store)
+                           (catch clojure.lang.ExceptionInfo e (ex-data e))))))))))
+
+(deftest a-folder-inside-a-trashed-folder-is-not-a-second-thing-to-restore
+  (with-state
+    (fn [state _]
+      (let [work (:item (documents/create-folder! "仕事" alice))
+            _ (documents/create-folder! "Q1" alice (:id work))]
+        (documents/trash! (:id work) alice)
+        (is (= [(:id work)] (mapv :id (documents/trashed @state alice))))))))
+
+(deftest a-document-says-which-folder-it-is-in
+  ;; So a listing can be scoped to one without asking the server per item.
+  (with-state
+    (fn [state object-store]
+      (let [work (:item (documents/create-folder! "仕事" alice))
+            inside (:item (documents/create! :docs "中" alice object-store
+                                             {:folder (:id work)}))
+            outside (:item (documents/create! :docs "外" alice object-store))
+            by-id (into {} (map (juxt :id identity)) (documents/documents @state alice))]
+        (is (= (:id work) (:parent-id (get by-id (:id inside)))))
+        (is (= "root" (:parent-id (get by-id (:id outside)))))
+        ;; A document shared from someone else's Drive has no folder in
+        ;; this one — naming theirs would put an id in a breadcrumb that
+        ;; goes nowhere.
+        (documents/grant! (:id inside) bob "viewer" alice)
+        (is (nil? (:parent-id (first (documents/documents @state bob)))))))))
+
+(deftest the-move-picker-offers-every-folder-by-path
+  ;; A move is a choice among all folders, not among the ones you are
+  ;; standing in — and two folders called Q1 are ordinary, so a picker
+  ;; showing both as "Q1" would ask an unanswerable question.
+  (with-state
+    (fn [_ _]
+      (let [a (:item (documents/create-folder! "営業" alice))
+            b (:item (documents/create-folder! "開発" alice))]
+        (documents/create-folder! "Q1" alice (:id a))
+        (documents/create-folder! "Q1" alice (:id b))
+        (let [all (:all (documents/folders (store/snapshot) alice nil))]
+          (is (= ["My Drive" "My Drive / 営業" "My Drive / 営業 / Q1"
+                  "My Drive / 開発" "My Drive / 開発 / Q1"]
+                 (mapv :name all)))
+          (is (= 5 (count (distinct (map :id all))))))
+        ;; A trashed folder is not a destination.
+        (documents/trash! (:id a) alice)
+        (is (= ["My Drive" "My Drive / 開発" "My Drive / 開発 / Q1"]
+               (mapv :name (:all (documents/folders (store/snapshot) alice nil)))))))))
