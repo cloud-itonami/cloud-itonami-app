@@ -3,7 +3,8 @@
   live chain surface is exercised by hand and recorded in the PR, because a
   test that depends on mainnet being reachable fails for reasons that have
   nothing to do with this code."
-  (:require [clojure.test :refer [deftest is testing]]
+  (:require [clojure.string :as str]
+            [clojure.test :refer [deftest is testing]]
             [cloud.itonami.app.filecoin :as filecoin]
             [drive.object :as object]))
 
@@ -61,3 +62,51 @@
     (is (re-find #"^bafkzcib" (:cid s)))
     (testing "and a different text gives a different cid"
       (is (not= (:cid s) (:cid (filecoin/sample "abd")))))))
+
+;; ── retrieval URLs ───────────────────────────────────────────────────────────
+
+(deftest with-nothing-configured-there-is-nowhere-to-read-from
+  ;; An empty list is the honest answer. The version this replaced built
+  ;; https://<domain>/piece/<cid> unconditionally, which resolves, 404s, and
+  ;; so reads as a missing piece rather than a wrong URL.
+  (is (= [] (filecoin/retrieval-urls "bafkzcibtest" {:provider-url nil
+                                                    :client-address nil}))))
+
+(deftest a-provider-serves-pieces-under-its-own-path
+  (is (= [{:kind "provider" :url "https://main2.ezpdpz.net/piece/bafkzcibtest"}]
+         (filecoin/retrieval-urls "bafkzcibtest"
+                                  {:provider-url "https://main2.ezpdpz.net"
+                                   :client-address nil}))))
+
+(deftest the-cdn-gives-each-client-its-own-subdomain
+  (let [[u] (filecoin/retrieval-urls "bafkzcibtest" {:provider-url nil
+                                                     :client-address "0xABC"})]
+    (is (= "cdn" (:kind u)))
+    (is (str/starts-with? (:url u) "https://0xabc."))
+    (is (str/ends-with? (:url u) "/bafkzcibtest"))
+    (is (not (str/includes? (:url u) "/piece/")))))
+
+;; ── read-through verifies ────────────────────────────────────────────────────
+
+(deftest read-through-returns-bytes-that-hash-back-to-the-reference
+  (let [payload (byte-array (map #(unchecked-byte (mod % 251)) (range 300)))
+        ref (filecoin/piece-ref payload)
+        store (filecoin/store {:provider-url "https://sp.example"
+                               :fetch (fn [_] {:status 200 :bytes payload})})]
+    (is (= (seq payload) (seq (object/-get-object store ref))))))
+
+(deftest read-through-discards-bytes-that-do-not
+  ;; The measured mainnet case: 11 of 13 providers reporting they held a live
+  ;; piece served bytes that were not it — one of them a 27-byte nginx
+  ;; placeholder — every one with status 200. Handing those to `drive` under a
+  ;; PieceCID they do not hash to is the one failure a content-addressed store
+  ;; must not have.
+  (doseq [[label wrong]
+          [["nginx placeholder" (.getBytes "Server is ready for certbot" "UTF-8")]
+           ["truncation" (byte-array (map #(unchecked-byte (mod % 251)) (range 200)))]]]
+    (testing label
+      (let [payload (byte-array (map #(unchecked-byte (mod % 251)) (range 300)))
+            ref (filecoin/piece-ref payload)
+            store (filecoin/store {:provider-url "https://sp.example"
+                                   :fetch (fn [_] {:status 200 :bytes wrong})})]
+        (is (nil? (object/-get-object store ref)))))))

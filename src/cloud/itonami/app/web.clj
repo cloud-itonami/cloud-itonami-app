@@ -688,10 +688,13 @@
         ['PDP data sets', val(data['pdp-next-data-set-id']), 'live'],
         ['Challenge finality', `${val(data['pdp-challenge-finality'])} epochs`, 'live'],
         ['Staged pieces', String((data['staged-pieces'] || []).length), 'local'],
+        ['Read-through', (data['retrieval-urls'] || []).length
+          ? `${(data['retrieval-urls'] || []).join(' · ')} · PieceCID 検証あり`
+          : '未設定', (data['retrieval-urls'] || []).length ? 'local' : 'warn'],
         ['Deals', '未実装', 'warn']
       ];
       rows.forEach(([title, meta, kind]) =>
-        list.append(listItem(title, meta, kind === 'warn' ? '未実装' : kind, kind === 'warn')));
+        list.append(listItem(title, meta, kind === 'warn' ? '未対応' : kind, kind === 'warn')));
       const sample = data.sample || {};
       setDetail($('#storage-detail'), 'PieceCID v2 · FRC-0069',
         sample.cid || 'PieceCID 未計算',
@@ -705,7 +708,13 @@
          ['PDPVerifier (f4)', data['pdp-verifier-f4']],
          ['Warm Storage', data['warm-storage']],
          ['Filecoin Pay', data['filecoin-pay']],
-         ['Retrieval', data['retrieval-domain']]]);
+         ['Retrieval', data['retrieval-domain']],
+         ['Read-through', (data['retrieval-urls'] || []).length
+           ? '応答ごとに PieceCID を再計算して照合し、一致しない bytes は破棄します。'
+             + ' 参照元: ' + (data['retrieval-urls'] || []).join(' · ')
+           : 'FILECOIN_PROVIDER_URL（provider の serviceURL）か'
+             + ' FILECOIN_CLIENT_ADDRESS（FilBeam は client ごとに subdomain が違う）'
+             + 'を設定すると有効になります。既定値は推測しません。']]);
       $('#storage-count').textContent = rows.filter(([, , k]) => k === 'live').length;
       $('#storage-source').textContent =
         `${val(data['chain-network-name'])} · height ${val(data['chain-height'])} · StateCall (無料・オンチェーン書き込みなし)`;
@@ -1570,7 +1579,10 @@
           [:strong "書き込みは未実装です。"]
           " このアプリは内容の PieceCID を計算して待機領域に保管し、"
           "チェーン上の状態を読みますが、ストレージ取引は作成しません。"
-          "provider の転送 API と資金が必要です。"]
+          "provider への転送 API は cloud-filecoin に実装済みですが、"
+          "アップロードだけでは bytes は預かられるだけで、"
+          "オンチェーンの addPieces で data set に入って初めて永続化されます"
+          "（資金と鍵が必要）。"]
          [:div {:class "record-browser"}
           [:div {:class "record-list"}
            [:ul {:class "record-list__items" :id "storage-list"}
