@@ -3472,3 +3472,36 @@
                            (catch clojure.lang.ExceptionInfo e (ex-data e))))))
         ;; And they can still read it and what has been proposed for it.
         (is (some? (documents/suggestions (:id item) bob object-store)))))))
+
+(deftest a-workbook-says-what-its-formulas-come-to
+  ;; Alongside the resource rather than inside it: the payload is what a
+  ;; save sends back, and a computed value in there would return as
+  ;; something somebody typed.
+  (with-state
+    (fn [_ object-store]
+      (let [{:keys [item]} (documents/create! :sheets "売上" alice object-store)
+            wb (:resource (documents/content (:id item) alice object-store))
+            tab-id (first (keys (:sheets/tabs wb)))
+            _ (save! (:id item)
+                     (assoc-in wb [:sheets/tabs tab-id :sheets/cells]
+                               {[1 1] {:sheets/value "1200"}
+                                [2 1] {:sheets/value "1300"}
+                                [3 1] {:sheets/formula "SUM(A1:A2)"}
+                                [4 1] {:sheets/formula "A1/0"}})
+                     alice object-store)
+            back (documents/content (:id item) alice object-store)]
+        (is (= "2500" (get-in back [:computed tab-id "[3 1]"])))
+        (is (= "#DIV/0!" (get-in back [:computed tab-id "[4 1]"])))
+        (is (= "1200" (get-in back [:computed tab-id "[1 1]"])))
+        ;; And the stored resource still holds the formula, not the answer.
+        (is (= "SUM(A1:A2)"
+               (get-in (:resource back) [:sheets/tabs tab-id :sheets/cells [3 1]
+                                         :sheets/formula])))
+        (is (nil? (get-in (:resource back) [:sheets/tabs tab-id :sheets/cells [3 1]
+                                            :sheets/value])))))))
+
+(deftest only-a-workbook-is-asked-what-it-comes-to
+  (with-state
+    (fn [_ object-store]
+      (let [{:keys [item]} (documents/create! :docs "設計" alice object-store)]
+        (is (nil? (:computed (documents/content (:id item) alice object-store))))))))

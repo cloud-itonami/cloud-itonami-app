@@ -66,6 +66,7 @@
             [docs.markdown :as docs-md]
             [forms.responses :as forms-responses]
             [sheets.csv :as sheets-csv]
+            [sheets.formula :as sheets-formula]
             [sheets.xlsx :as sheets-xlsx]
             [sheets.model :as sheets]
             [sheets.validate :as sheets-validate]
@@ -1109,6 +1110,17 @@
           :resource resource
           :export-warnings (export-warnings (get resource-kinds (:drive/resource-kind item))
                                             resource)
+          ;; What the formulas come to. Alongside the resource rather than
+          ;; inside it: the payload is what a save sends back, and a
+          ;; computed value in there would come back as something somebody
+          ;; typed. Keyed as the cells are, per tab.
+          :computed (when (= :sheets/workbook (:drive/resource-kind item))
+                      (into {}
+                            (map (fn [[tab-id tab]]
+                                   [tab-id (into {}
+                                                 (map (fn [[k v]] [(pr-str k) v]))
+                                                 (sheets-formula/values tab))]))
+                            (:sheets/tabs resource)))
           :payload (transit/write-json resource)})
        (refuse! result)))))
 
