@@ -231,6 +231,28 @@
   .trash-row__name{flex:1 1 12rem;min-width:0;overflow:hidden;text-overflow:ellipsis;
     white-space:nowrap}
   .trash-row__size{color:var(--color-neutral-solid-gray-600);font-size:.8125rem}
+  .surface-pane{display:grid;gap:.75rem}
+  .surface-editor{display:grid;gap:.75rem}
+  .surface-list{display:grid;gap:.5rem}
+  .surface-row{display:flex;flex-wrap:wrap;align-items:flex-end;gap:.5rem .75rem;
+    border:1px solid var(--color-neutral-solid-gray-200);border-radius:.5rem;padding:.75rem}
+  .surface-field{display:grid;gap:.25rem}
+  .surface-field__label{color:var(--color-neutral-solid-gray-600);font-size:.75rem}
+  .surface-input{width:min(100%,11rem);min-height:2.25rem;padding:.35rem .75rem;
+    border-radius:.5rem;font-size:.875rem}
+  .surface-input--wide{width:min(100%,22rem)}
+  .surface-check{width:1.25rem;height:1.25rem;margin:.5rem 0}
+  .surface-note{color:var(--color-neutral-solid-gray-600);font-size:.8125rem;
+    align-self:center}
+  .surface-grid{border-collapse:collapse;display:block;overflow-x:auto;max-width:100%}
+  .surface-grid th{color:var(--color-neutral-solid-gray-600);font-size:.75rem;
+    font-weight:400;padding:.25rem}
+  .surface-grid td{padding:1px}
+  .surface-cell{width:8rem;min-height:2rem;box-sizing:border-box;padding:.25rem .5rem;
+    border:1px solid var(--color-neutral-solid-gray-200);border-radius:.25rem;
+    background:var(--color-neutral-white);font:inherit;font-size:.8125rem}
+  .surface-cell:focus{outline:4px solid var(--color-primitive-yellow-300);outline-offset:-1px;
+    border-color:var(--color-key-600)}
   .sharing{margin-top:1.25rem;border-top:1px solid var(--color-neutral-solid-gray-200);
     padding-top:1rem;display:grid;gap:.75rem}
   .sharing__title{margin:0;font-size:1rem}
@@ -1004,7 +1026,8 @@
            ['全版の合計', bytes(selectedDrive['held-bytes'])],
            ['版数', String(selectedDrive.versions ?? 1)],
            ['作成', selectedDrive['created-at'] || '—'],
-           ['最終更新', selectedDrive['updated-at'] || '—']]);
+           ['最終更新', selectedDrive['updated-at'] || '—'],
+           ['最終更新者', selectedDrive['updated-by'] || '—']]);
         $('#drive-detail').append(documentActions(selectedDrive));
       } else if (selectedDrive) {
         setDetail($('#drive-detail'), selectedDrive.folder,
@@ -1093,21 +1116,324 @@
         status.textContent = error.message;
       }
     };
+    // ── structured editors ────────────────────────────────────────────────
+    // Two views of one value. Both the fields below and the JSON textarea
+    // mutate the projected payload — the same object the versions endpoint
+    // accepts — so a save does not care which one produced it, and neither
+    // is a parallel format that can drift from the other.
+    //
+    // These are not app-sheets / app-docs / app-forms, which are separate
+    // applications on their own origin. Reaching those would mean widening
+    // `connect-src 'self'` in the page CSP, which is a decision about what
+    // this app is allowed to talk to and not one to make while adding an
+    // editor. What is here needs no such change.
+    const field = (label, control) => {
+      const wrap = make('label', 'surface-field');
+      wrap.append(make('span', 'surface-field__label', label), control);
+      return wrap;
+    };
+    const textInput = (value, onInput, className) => {
+      const input = make('input', `workspace-search ${className || 'surface-input'}`);
+      input.type = 'text';
+      input.value = value ?? '';
+      input.addEventListener('input', () => onInput(input.value));
+      return input;
+    };
+    const selectInput = (value, options, onChange) => {
+      const select = make('select', 'model-pill');
+      (options || []).forEach((name) => {
+        const option = make('option', null, name);
+        option.value = name;
+        select.append(option);
+      });
+      if (value !== undefined && value !== null) select.value = value;
+      select.addEventListener('change', () => onChange(select.value));
+      return select;
+    };
+    const removeButton = (onClick) => {
+      const button = make('button', 'tool-button', '削除');
+      button.type = 'button';
+      button.addEventListener('click', onClick);
+      return button;
+    };
+    const formsEditor = (payload, vocabulary, changed) => {
+      const root = make('div', 'surface-editor');
+      root.append(field('タイトル', textInput(payload['forms/title'],
+        (value) => { payload['forms/title'] = value; changed(false); })));
+      const list = make('div', 'surface-list');
+      (payload['forms/fields'] || []).forEach((entry, index) => {
+        const row = make('div', 'surface-row');
+        row.append(
+          field('ID', textInput(entry['forms/id'],
+            (value) => { entry['forms/id'] = value; changed(false); })),
+          field('ラベル', textInput(entry['forms/label'],
+            (value) => { entry['forms/label'] = value; changed(false); })),
+          field('種類', selectInput(entry['forms/field-type'], vocabulary,
+            (value) => { entry['forms/field-type'] = value; changed(false); })));
+        const required = make('input', 'surface-check');
+        required.type = 'checkbox';
+        required.checked = Boolean(entry['forms/required?']);
+        required.addEventListener('change', () => {
+          entry['forms/required?'] = required.checked; changed(false);
+        });
+        row.append(field('必須', required));
+        row.append(removeButton(() => {
+          payload['forms/fields'].splice(index, 1); changed(true);
+        }));
+        list.append(row);
+      });
+      if (!(payload['forms/fields'] || []).length) {
+        list.append(make('p', 'empty-state', 'まだ質問がありません。'));
+      }
+      const add = make('button', 'tool-button', '質問を追加');
+      add.type = 'button';
+      add.addEventListener('click', () => {
+        payload['forms/fields'] = payload['forms/fields'] || [];
+        // The shape the model produces, so a field added here is one
+        // `forms.validate` recognises rather than one it reports.
+        payload['forms/fields'].push({
+          'forms/id': `q${payload['forms/fields'].length + 1}`,
+          'forms/label': '新しい質問',
+          'forms/field-type': (vocabulary && vocabulary.includes('text')) ? 'text' : (vocabulary || ['text'])[0],
+          'forms/required?': false
+        });
+        changed(true);
+      });
+      root.append(list, add);
+      return root;
+    };
+    // The block kinds that name another document. Kept beside the editor
+    // because it is the editor that has to offer a picker for them; the
+    // server's `documents/reference-kinds` is what decides whether one
+    // resolves.
+    const refKinds = ['table-ref', 'file-ref', 'deck-ref'];
+    const docsEditor = (payload, vocabulary, changed) => {
+      const root = make('div', 'surface-editor');
+      root.append(field('タイトル', textInput(payload['docs/title'],
+        (value) => { payload['docs/title'] = value; changed(false); })));
+      const list = make('div', 'surface-list');
+      (payload['docs/blocks'] || []).forEach((block, index) => {
+        const row = make('div', 'surface-row');
+        row.append(
+          field('ID', textInput(block['docs/id'],
+            (value) => { block['docs/id'] = value; changed(false); })),
+          field('種類', selectInput(block['docs/kind'], vocabulary,
+            (value) => { block['docs/kind'] = value; changed(true); })));
+        if (block['docs/kind'] === 'heading') {
+          row.append(field('レベル', selectInput(String(block['docs/level'] ?? 1),
+            ['1', '2', '3', '4', '5', '6'],
+            (value) => { block['docs/level'] = Number(value); changed(false); })));
+        }
+        if (refKinds.includes(block['docs/kind'])) {
+          // A reference names another document by its Drive id, so the field
+          // is a picker over the ones this principal can see rather than a
+          // box to type an id into. Free text stays: a draft may name
+          // something that is about to be shared, which the server reports
+          // as a warning rather than refusing.
+          const targets = (driveData.items || [])
+            .filter((candidate) => candidate.origin === 'workspace'
+                                   && candidate.id !== driveEditor.id);
+          const picker = selectInput(block['docs/target'],
+            [''].concat(targets.map((t) => t.id)),
+            (value) => { if (value) { block['docs/target'] = value; changed(true); } });
+          // Labelled by name, valued by id — nobody navigates by uuid.
+          Array.from(picker.options).forEach((option) => {
+            const hit = targets.find((t) => t.id === option.value);
+            option.textContent = hit ? `${hit.name}（${hit.label}）` : '選択してください';
+          });
+          row.append(field('参照先', picker));
+          const hit = targets.find((t) => t.id === block['docs/target']);
+          row.append(make('span', 'surface-note',
+            hit ? `→ ${hit.name}` : `→ ${block['docs/target'] || '未設定'}（解決できません）`));
+          row.append(field('ID を直接指定', textInput(block['docs/target'],
+            (value) => { block['docs/target'] = value; changed(false); })));
+        } else if ('docs/text' in block || block['docs/kind'] === 'heading'
+            || block['docs/kind'] === 'paragraph' || block['docs/kind'] === 'quote'
+            || block['docs/kind'] === 'code') {
+          row.append(field('本文', textInput(block['docs/text'],
+            (value) => { block['docs/text'] = value; changed(false); }, 'surface-input--wide')));
+        } else {
+          // A table or a list. Editing those structurally is a bigger surface
+          // than this pane; saying so beats a field that silently edits only
+          // part of one.
+          row.append(make('span', 'surface-note', 'この種類は JSON で編集してください。'));
+        }
+        row.append(removeButton(() => {
+          payload['docs/blocks'].splice(index, 1); changed(true);
+        }));
+        list.append(row);
+      });
+      if (!(payload['docs/blocks'] || []).length) {
+        list.append(make('p', 'empty-state', 'まだブロックがありません。'));
+      }
+      const add = make('button', 'tool-button', '段落を追加');
+      add.type = 'button';
+      add.addEventListener('click', () => {
+        payload['docs/blocks'] = payload['docs/blocks'] || [];
+        payload['docs/blocks'].push({
+          'docs/id': `b${payload['docs/blocks'].length + 1}`,
+          'docs/kind': 'paragraph',
+          'docs/text': ''
+        });
+        changed(true);
+      });
+      root.append(list, add);
+      return root;
+    };
+    // The string form [1 1] is what `transit.core/write-json` makes of the
+    // vector key, and what `sheets.wire/cell-address` parses back. The format
+    // is duplicated here because this is JavaScript; the round trip through
+    // it is asserted server-side in documents_test.
+    const cellKey = (row, col) => `[${row} ${col}]`;
+    const sheetsEditor = (payload, _vocabulary, changed) => {
+      const root = make('div', 'surface-editor');
+      const tabs = payload['sheets/tabs'] || {};
+      const tabIds = Object.keys(tabs);
+      if (!tabIds.length) {
+        root.append(make('p', 'empty-state', 'タブがありません。JSON で編集してください。'));
+        return root;
+      }
+      const current = tabIds.includes(driveEditor.tab) ? driveEditor.tab : tabIds[0];
+      driveEditor.tab = current;
+      root.append(field('タブ', selectInput(current, tabIds, (value) => {
+        driveEditor.tab = value; changed(true);
+      })));
+      const tab = tabs[current];
+      root.append(field('タブ名', textInput(tab['sheets/title'],
+        (value) => { tab['sheets/title'] = value; changed(false); })));
+      const cells = tab['sheets/cells'] || {};
+      // Two beyond whatever is used, so there is always somewhere to type.
+      let maxRow = 3; let maxCol = 3;
+      Object.keys(cells).forEach((key) => {
+        // Doubled backslashes: this JavaScript lives inside a Clojure string,
+        // so the reader sees them first.
+        const match = /^\\[(-?\\d+) (-?\\d+)\\]$/.exec(key);
+        if (match) {
+          maxRow = Math.max(maxRow, Number(match[1]) + 2);
+          maxCol = Math.max(maxCol, Number(match[2]) + 2);
+        }
+      });
+      const grid = make('table', 'surface-grid');
+      const head = make('tr');
+      head.append(make('th', null, ''));
+      for (let col = 1; col <= maxCol; col += 1) head.append(make('th', null, String(col)));
+      grid.append(head);
+      for (let row = 1; row <= maxRow; row += 1) {
+        const tr = make('tr');
+        tr.append(make('th', null, String(row)));
+        for (let col = 1; col <= maxCol; col += 1) {
+          const td = make('td');
+          const cell = cells[cellKey(row, col)] || {};
+          const shown = cell['sheets/formula'] !== undefined
+            ? `=${cell['sheets/formula']}` : (cell['sheets/value'] ?? '');
+          const input = make('input', 'surface-cell');
+          input.type = 'text';
+          input.value = shown;
+          input.setAttribute('aria-label', `${row}行${col}列`);
+          input.addEventListener('change', () => {
+            tab['sheets/cells'] = tab['sheets/cells'] || {};
+            const key = cellKey(row, col);
+            const text = input.value;
+            if (text === '') delete tab['sheets/cells'][key];
+            // A leading = is a formula, which is the convention every
+            // spreadsheet uses and the distinction `sheets.model` draws
+            // between :sheets/value and :sheets/formula.
+            else if (text.startsWith('=')) tab['sheets/cells'][key] = {'sheets/formula': text.slice(1)};
+            else tab['sheets/cells'][key] = {'sheets/value': text};
+            changed(false);
+          });
+          td.append(input);
+          tr.append(td);
+        }
+        grid.append(tr);
+      }
+      root.append(grid);
+      return root;
+    };
+    const slidesEditor = (payload, vocabulary, changed) => {
+      const root = make('div', 'surface-editor');
+      root.append(field('タイトル', textInput(payload['slides/title'],
+        (value) => { payload['slides/title'] = value; changed(false); })));
+      const list = make('div', 'surface-list');
+      (payload['slides/slides'] || []).forEach((slide, index) => {
+        const card = make('div', 'surface-row');
+        card.append(
+          field('ID', textInput(slide['slides/id'],
+            (value) => { slide['slides/id'] = value; changed(false); })),
+          field('見出し', textInput(slide['slides/title'],
+            (value) => { slide['slides/title'] = value; changed(false); },
+            'surface-input--wide')));
+        (slide['slides/shapes'] || []).forEach((shape) => {
+          if (shape['slides/shape'] === 'text') {
+            card.append(field(`テキスト（${shape['slides/id']}）`,
+              textInput(shape['slides/text'],
+                (value) => { shape['slides/text'] = value; changed(false); },
+                'surface-input--wide')));
+          } else {
+            // A rect, an image, a component. Position, fill and image data
+            // are a canvas's job, not this pane's, and half-editing a shape
+            // is worse than handing it over.
+            card.append(make('span', 'surface-note',
+              `${shape['slides/shape'] || '?'}（${shape['slides/id']}）は JSON で編集してください。`));
+          }
+        });
+        const addText = make('button', 'tool-button', 'テキストを追加');
+        addText.type = 'button';
+        addText.addEventListener('click', () => {
+          slide['slides/shapes'] = slide['slides/shapes'] || [];
+          // The shape `slides.model/text-box` produces, defaults included —
+          // a text box without a box is one the renderer has to guess at.
+          slide['slides/shapes'].push({
+            'slides/id': `t${slide['slides/shapes'].length + 1}`,
+            'slides/shape': 'text', 'slides/text': '',
+            'slides/x': 0.8, 'slides/y': 0.8, 'slides/w': 8.4, 'slides/h': 1.0,
+            'slides/font-size': 28
+          });
+          changed(true);
+        });
+        card.append(addText, removeButton(() => {
+          payload['slides/slides'].splice(index, 1); changed(true);
+        }));
+        list.append(card);
+      });
+      if (!(payload['slides/slides'] || []).length) {
+        list.append(make('p', 'empty-state', 'まだスライドがありません。'));
+      }
+      const add = make('button', 'tool-button', 'スライドを追加');
+      add.type = 'button';
+      add.addEventListener('click', () => {
+        payload['slides/slides'] = payload['slides/slides'] || [];
+        const n = payload['slides/slides'].length + 1;
+        payload['slides/slides'].push({
+          'slides/id': `slide${n}`, 'slides/title': `スライド ${n}`, 'slides/shapes': []
+        });
+        changed(true);
+      });
+      root.append(list, add);
+      return root;
+    };
+    const surfaceEditors = {forms:formsEditor, docs:docsEditor, sheets:sheetsEditor,
+                            slides:slidesEditor};
     // The detail pane is rebuilt on every render — a keystroke in the search
     // box is enough — so an open editor's text cannot live in the element.
     // It lived there until this was measured: typing in search while editing
     // destroyed the edit with no warning and no way back.
-    let driveEditor = {id:null, open:false, value:''};
-    // The editor is the payload itself. Three real editors are three
-    // applications — app-sheets, app-docs and app-forms exist and are not
-    // this app. What is offered here is the thing the API can actually
-    // promise: the stored resource, editable, refused by the surface's own
-    // validator if it stops being one.
+    // `etag` is the version the open payload came from. The server refuses a
+    // save that does not carry the current one, so this is not bookkeeping —
+    // it is the thing that stops one editor's save deleting another's.
+    const closedEditor = (id) => ({id, open:false, mode:'structured',
+                                   payload:null, text:'', tab:null, etag:null});
+    let driveEditor = closedEditor(null);
+    // Two ways to edit one document: the fields for the surface it is, and
+    // the JSON underneath for everything the fields do not reach. Whichever
+    // is showing, what gets saved is the same projected payload.
     const documentActions = (item) => {
       const actions = make('div', 'detail-actions');
       const row = make('div', 'detail-actions__row');
       const status = make('p', 'drive-create__status', '');
-      if (driveEditor.id !== item.id) driveEditor = {id:item.id, open:false, value:''};
+      if (driveEditor.id !== item.id) driveEditor = closedEditor(item.id);
+      const vocabulary = (driveData.kinds || [])
+        .find((k) => k.kind === item.kind)?.vocabulary;
 
       if (item['trashed?']) {
         const restore = make('button', 'tool-button', '復元');
@@ -1137,17 +1463,74 @@
       titleField.value = item.name;
       titleField.setAttribute('aria-label', '名前');
       const editor = make('textarea', 'document-preview');
-      editor.hidden = !driveEditor.open;
-      editor.value = driveEditor.value;
       editor.spellcheck = false;
-      editor.setAttribute('aria-label', `${item.name} の内容`);
+      editor.setAttribute('aria-label', `${item.name} の内容（JSON）`);
       // Every keystroke, so the text survives the next render rather than
       // only the next save.
-      editor.addEventListener('input', () => { driveEditor.value = editor.value; });
+      editor.addEventListener('input', () => { driveEditor.text = editor.value; });
+      const pane = make('div', 'surface-pane');
+      const modes = make('div', 'detail-actions__row');
+      const structuredButton = make('button', 'tool-button', 'フォーム表示');
+      structuredButton.type = 'button';
+      const jsonButton = make('button', 'tool-button', 'JSON 表示');
+      jsonButton.type = 'button';
+      modes.append(structuredButton, jsonButton);
+
+      // The one place the two views meet. Structured edits write into
+      // `payload` and the text is re-derived; JSON edits write the text and
+      // it is parsed when switching back. Neither is ever stale on save.
+      const syncText = () => { driveEditor.text = JSON.stringify(driveEditor.payload, null, 2); };
+      const renderPane = () => {
+        pane.replaceChildren();
+        modes.hidden = !driveEditor.open;
+        if (!driveEditor.open) { editor.hidden = true; return; }
+        structuredButton.setAttribute('aria-pressed',
+          driveEditor.mode === 'structured' ? 'true' : 'false');
+        jsonButton.setAttribute('aria-pressed',
+          driveEditor.mode === 'json' ? 'true' : 'false');
+        if (driveEditor.mode === 'json') {
+          editor.hidden = false;
+          editor.value = driveEditor.text;
+          return;
+        }
+        editor.hidden = true;
+        const build = surfaceEditors[item.kind];
+        if (!build || !driveEditor.payload) {
+          pane.append(make('p', 'empty-state', 'この種類はまだ JSON でのみ編集できます。'));
+          return;
+        }
+        pane.append(build(driveEditor.payload, vocabulary, (rebuild) => {
+          syncText();
+          if (rebuild) renderPane();
+        }));
+      };
+      structuredButton.addEventListener('click', () => {
+        if (driveEditor.mode === 'structured') return;
+        try {
+          driveEditor.payload = JSON.parse(driveEditor.text);
+        } catch (error) {
+          // Refused rather than silently discarding whichever side is wrong.
+          status.textContent = `JSON として読めないのでフォームに戻せません: ${error.message}`;
+          return;
+        }
+        driveEditor.mode = 'structured';
+        status.textContent = '';
+        renderPane();
+      });
+      jsonButton.addEventListener('click', () => {
+        if (driveEditor.mode === 'json') return;
+        syncText();
+        driveEditor.mode = 'json';
+        renderPane();
+      });
 
       const versions = make('div', 'detail-actions__row');
       for (let n = 1; n <= (item.versions || 0); n += 1) {
-        const version = make('button', 'tool-button', `版 ${n}`);
+        // Labelled with who wrote it. On a shared document the version
+        // number alone does not tell you whose change you are about to open.
+        const wrote = (item.history || [])[n - 1];
+        const version = make('button', 'tool-button',
+          wrote?.author ? `版 ${n}・${wrote.author}` : `版 ${n}`);
         version.type = 'button';
         version.addEventListener('click', async () => {
           status.textContent = `版 ${n} を読み込んでいます…`;
@@ -1156,9 +1539,15 @@
               `/api/workspace/drive/documents/${encodeURIComponent(item.id)}/versions/${n}`);
             const data = await request.json();
             if (!request.ok) throw new Error(data?.error?.message || '版を取得できませんでした。');
-            driveEditor = {id:item.id, open:true, value:JSON.stringify(data.payload, null, 2)};
-            editor.value = driveEditor.value;
-            editor.hidden = false; save.hidden = false;
+            // The etag of the *current* version, not of the one being
+            // viewed: saving an old version forward is a new version on top
+            // of what is there, not a rewrite of history.
+            driveEditor = {id:item.id, open:true, mode:driveEditor.mode,
+                           payload:data.payload, text:'', tab:null,
+                           etag:data.item?.etag};
+            syncText();
+            save.hidden = false;
+            renderPane();
             // Loaded into the editor rather than restored behind the user's
             // back: saving it is what makes it current, and that is a new
             // version like any other.
@@ -1176,14 +1565,18 @@
           `/api/workspace/drive/documents/${encodeURIComponent(item.id)}`);
         const data = await request.json();
         if (!request.ok) throw new Error(data?.error?.message || '内容を取得できませんでした。');
-        return data.payload;
+        return {payload:data.payload, etag:data.item?.etag};
       };
       open.addEventListener('click', async () => {
         open.disabled = true; status.textContent = '読み込んでいます…';
         try {
-          driveEditor = {id:item.id, open:true, value:JSON.stringify(await load(), null, 2)};
-          editor.value = driveEditor.value;
-          editor.hidden = false; save.hidden = false;
+          const fresh = await load();
+          driveEditor = {id:item.id, open:true, mode:driveEditor.mode,
+                         payload:fresh.payload, text:'', tab:null,
+                         etag:fresh.etag};
+          syncText();
+          save.hidden = false;
+          renderPane();
           status.textContent = '';
         } catch (error) {
           status.textContent = error.message;
@@ -1193,29 +1586,48 @@
       });
       save.addEventListener('click', async () => {
         let payload;
-        try {
-          payload = JSON.parse(editor.value);
-        } catch (error) {
-          // Refused here rather than sent: a body that is not JSON is not a
-          // document the server can say anything useful about.
-          status.textContent = `JSON として読めません: ${error.message}`;
-          return;
+        if (driveEditor.mode === 'structured') {
+          payload = driveEditor.payload;
+        } else {
+          try {
+            payload = JSON.parse(driveEditor.text);
+          } catch (error) {
+            // Refused here rather than sent: a body that is not JSON is not a
+            // document the server can say anything useful about.
+            status.textContent = `JSON として読めません: ${error.message}`;
+            return;
+          }
         }
         save.disabled = true; status.textContent = '保存しています…';
         try {
           const saved = await postJSON(
             `/api/workspace/drive/documents/${encodeURIComponent(item.id)}/versions`,
-            {payload}, true);
+            {payload, etag:driveEditor.etag}, true);
           const warnings = (saved.warnings || []).map((w) => w.message).join(' / ');
           // The save went through and the surface still had something to say.
-          driveEditor = {id:item.id, open:false, value:''};
+          driveEditor = closedEditor(item.id);
           selectedDrive = saved.item;
           await loadWorkspace('drive', renderDrive);
           $('#drive-create-status').textContent = warnings
             ? `保存しました（版 ${saved.item.versions}）。注意: ${warnings}`
             : `保存しました（版 ${saved.item.versions}）。`;
         } catch (error) {
+          // A refused save keeps the editor open with the text intact. The
+          // work is not lost and not applied; the person decides.
           status.textContent = error.message;
+          if (/更新しました/.test(error.message)) {
+            const reload = make('button', 'tool-button', '相手の版を読み込む（自分の編集は破棄）');
+            reload.type = 'button';
+            reload.addEventListener('click', async () => {
+              const fresh = await load();
+              driveEditor = {id:item.id, open:true, mode:driveEditor.mode,
+                             payload:fresh.payload, text:'', tab:null,
+                             etag:fresh.etag};
+              syncText(); renderPane();
+              status.textContent = '最新の版を読み込みました。';
+            });
+            status.append(' ', reload);
+          }
         } finally {
           save.disabled = false;
         }
@@ -1236,7 +1648,7 @@
         }
       });
       trash.addEventListener('click', () => {
-        driveEditor = {id:null, open:false, value:''};
+        driveEditor = closedEditor(null);
         driveAction(`/api/workspace/drive/documents/${encodeURIComponent(item.id)}/trash`, {},
           `${item.name} をゴミ箱へ移動しました。`);
       });
@@ -1250,9 +1662,249 @@
       row.append(open);
       if (item['writable?']) row.append(save);
       if (item.role === 'owner') row.append(trash);
-      actions.append(row, status, editor, versions);
+      actions.append(row, status, modes, pane, editor, versions);
+      renderPane();
+      if (item.kind === 'forms') actions.append(answerPanel(item));
+      // Export is a plain link, not a fetch: the browser already knows how to
+      // save a response with a Content-Disposition, and routing binary
+      // through JavaScript to hand it back to the browser is work that only
+      // adds a place to get it wrong.
+      const exports = make('div', 'detail-actions__row');
+      ((driveData.kinds || []).find((k) => k.kind === item.kind)?.exports || []).forEach((format) => {
+        const link = make('a', 'tool-button', `${format.toUpperCase()} で書き出す`);
+        link.href = `/api/workspace/drive/documents/${encodeURIComponent(item.id)}`
+          + `/export?format=${encodeURIComponent(format)}`;
+        link.setAttribute('download', '');
+        exports.append(link);
+      });
+      actions.append(exports, referencePanel(item), commentPanel(item));
       if (item.role === 'owner') actions.append(sharingPanel(item, status));
       return actions;
+    };
+    // Both directions. Outgoing is what this document names; incoming is
+    // which documents name it — and the second is the half that makes the
+    // first worth resolving, because a workbook that cannot say which memo
+    // depends on it is a workbook nobody dares change.
+    const referencePanel = (item) => {
+      const panel = make('div', 'sharing');
+      panel.hidden = true;
+      const out = make('ul', 'sharing__list');
+      const back = make('ul', 'sharing__list');
+      const jump = (id, name) => {
+        const button = make('button', 'tool-button', name || id);
+        button.type = 'button';
+        button.addEventListener('click', () => {
+          const hit = (driveData.items || []).find((candidate) => candidate.id === id);
+          if (!hit) return;
+          driveEditor = closedEditor(hit.id);
+          selectedDrive = hit;
+          renderDrive(driveData);
+        });
+        return button;
+      };
+      (async () => {
+        try {
+          const request = await fetch(
+            `/api/workspace/drive/documents/${encodeURIComponent(item.id)}/references`);
+          const data = await request.json();
+          if (!request.ok) return;
+          const refs = data.references || [];
+          const incoming = data['referenced-by'] || [];
+          if (!refs.length && !incoming.length) return;
+          panel.hidden = false;
+          panel.append(make('h3', 'sharing__title', '参照'));
+          refs.forEach((ref) => {
+            const row = make('li', 'sharing__entry');
+            row.append(make('span', 'sharing__who', `${ref.kind}（${ref.block}）→`));
+            if (ref['resolved?']) {
+              row.append(jump(ref.target, ref.name));
+              if (ref['expected?'] === false) {
+                row.append(make('span', 'surface-note',
+                  `${ref.label} は ${ref.kind} の想定と異なります`));
+              }
+            } else {
+              row.append(make('span', 'surface-note',
+                `${ref.target || '未設定'} は見つかりません`));
+            }
+            out.append(row);
+          });
+          if (refs.length) panel.append(out);
+          if (incoming.length) {
+            panel.append(make('h3', 'sharing__title', '参照元'));
+            incoming.forEach((from) => {
+              const row = make('li', 'sharing__entry');
+              row.append(jump(from.id, from.name),
+                make('span', 'sharing__who', `${from.kind}（${from.block}）`));
+              back.append(row);
+            });
+            panel.append(back);
+          }
+        } catch (error) { /* the panel simply stays hidden */ }
+      })();
+      return panel;
+    };
+    // Comments are shown to anyone who may read the document and written by
+    // anyone above :viewer, which is what makes :commenter a role rather
+    // than a word. They are not part of the stored bytes — see the comments
+    // section in `cloud.itonami.app.documents` for why not.
+    const commentRoles = ['owner', 'editor', 'commenter'];
+    const commentPanel = (item) => {
+      const panel = make('div', 'sharing');
+      panel.append(make('h3', 'sharing__title', 'コメント'));
+      const list = make('ul', 'sharing__list');
+      const status = make('p', 'drive-create__status', '');
+      const form = make('div', 'detail-actions__row');
+      const text = make('input', 'workspace-search surface-input--wide');
+      text.type = 'text';
+      text.placeholder = 'コメント';
+      text.setAttribute('aria-label', 'コメント');
+      const anchor = make('input', 'workspace-search document-title');
+      anchor.type = 'text';
+      anchor.placeholder = '位置（任意）';
+      anchor.setAttribute('aria-label', 'コメントの位置（任意）');
+      const add = make('button', 'tool-button', '投稿');
+      add.type = 'button';
+
+      const render = (entries) => {
+        list.replaceChildren();
+        if (!entries.length) {
+          list.append(make('li', 'empty-state', 'まだコメントはありません。'));
+          return;
+        }
+        entries.forEach((entry) => {
+          const row = make('li', 'sharing__entry');
+          row.append(make('span', 'sharing__who',
+            `${entry.author}${entry.anchor ? ` · ${entry.anchor}` : ''} · ${entry['created-at']}`));
+          row.append(make('span', 'surface-note', entry.text));
+          // Its author or the document's owner — the same rule the server
+          // applies, rather than a button that always fails for everyone else.
+          if (entry.author === currentUserId() || item.role === 'owner') {
+            const remove = make('button', 'tool-button', '削除');
+            remove.type = 'button';
+            remove.addEventListener('click', () => submit(
+              `/comments/${encodeURIComponent(entry.id)}/delete`, {}, 'コメントを削除しました。'));
+            row.append(remove);
+          }
+          list.append(row);
+        });
+      };
+      const reload = async () => {
+        try {
+          const request = await fetch(
+            `/api/workspace/drive/documents/${encodeURIComponent(item.id)}/comments`);
+          const data = await request.json();
+          if (request.ok) render(data.comments || []);
+        } catch (error) { /* the panel simply stays empty */ }
+      };
+      const submit = async (suffix, body, done) => {
+        status.textContent = '送信しています…';
+        try {
+          await postJSON(
+            `/api/workspace/drive/documents/${encodeURIComponent(item.id)}${suffix}`,
+            body, true);
+          status.textContent = done;
+          text.value = ''; anchor.value = '';
+          await reload();
+        } catch (error) {
+          status.textContent = error.message;
+        }
+      };
+      add.addEventListener('click', () => submit(
+        '/comments', {text:text.value, anchor:anchor.value}, 'コメントしました。'));
+
+      form.append(text, anchor, add);
+      panel.append(list);
+      if (commentRoles.includes(item.role)) panel.append(form);
+      panel.append(status);
+      reload();
+      return panel;
+    };
+    // A form is the one surface with a second thing to do to it. Editing it
+    // changes the questions; answering it does not, and the answers are not
+    // a version of the form — so this is a panel of its own rather than
+    // another mode of the editor.
+    const inputTypes = {email:'email', number:'number', date:'date'};
+    const answerPanel = (item) => {
+      const panel = make('div', 'sharing');
+      panel.append(make('h3', 'sharing__title', 'このフォームに回答'));
+      const body = make('div', 'surface-editor');
+      const status = make('p', 'drive-create__status', '');
+      const answers = {};
+      const send = make('button', 'tool-button', '送信');
+      send.type = 'button';
+      send.disabled = true;
+      const responses = make('div', 'surface-editor');
+
+      const loadResponses = async () => {
+        if (item.role !== 'owner') return;
+        try {
+          const request = await fetch(
+            `/api/workspace/drive/documents/${encodeURIComponent(item.id)}/submissions`);
+          const data = await request.json();
+          if (!request.ok) return;
+          responses.replaceChildren(make('h3', 'sharing__title',
+            `回答 ${(data.submissions || []).length} 件`));
+          (data.submissions || []).forEach((entry) => {
+            const row = make('div', 'surface-row');
+            row.append(make('span', 'surface-note',
+              `${entry.author || '不明'} · ${entry['submitted-at'] || ''}`));
+            Object.entries(entry.answers || {}).forEach(([key, value]) => {
+              row.append(make('span', 'sharing__who', `${key}: ${value}`));
+            });
+            responses.append(row);
+          });
+        } catch (error) { /* the panel simply stays empty */ }
+      };
+      send.addEventListener('click', async () => {
+        send.disabled = true; status.textContent = '送信しています…';
+        try {
+          const sent = await postJSON(
+            `/api/workspace/drive/documents/${encodeURIComponent(item.id)}/submissions`,
+            {answers}, true);
+          status.textContent = `送信しました（${sent.submission['submitted-at']}）。`;
+          await loadResponses();
+        } catch (error) {
+          // The surface's own validator answered — a missing required field
+          // or an address that is not one — so the message is its message.
+          status.textContent = error.message;
+        } finally {
+          send.disabled = false;
+        }
+      });
+      (async () => {
+        try {
+          const request = await fetch(
+            `/api/workspace/drive/documents/${encodeURIComponent(item.id)}/form`);
+          const data = await request.json();
+          if (!request.ok) throw new Error(data?.error?.message || 'フォームを読み込めませんでした。');
+          body.replaceChildren();
+          if (!(data.fields || []).length) {
+            body.append(make('p', 'empty-state', 'まだ質問がありません。'));
+          }
+          (data.fields || []).forEach((entry) => {
+            const control = entry['field-type'] === 'textarea'
+              ? make('textarea', 'document-preview')
+              : make('input', 'workspace-search surface-input--wide');
+            if (control.tagName === 'INPUT') {
+              control.type = inputTypes[entry['field-type']] || 'text';
+            }
+            if (entry['field-type'] === 'checkbox') {
+              control.type = 'checkbox';
+              control.className = 'surface-check';
+              control.addEventListener('change', () => { answers[entry.id] = control.checked; });
+            } else {
+              control.addEventListener('input', () => { answers[entry.id] = control.value; });
+            }
+            body.append(field(`${entry.label}${entry['required?'] ? ' *' : ''}`, control));
+          });
+          send.disabled = false;
+        } catch (error) {
+          body.replaceChildren(make('p', 'empty-state', error.message));
+        }
+      })();
+      panel.append(body, send, status, responses);
+      loadResponses();
+      return panel;
     };
     // Sharing is owner-only, and the panel says who has what rather than
     // only offering to add: a share you cannot see is one you cannot undo.
@@ -1261,10 +1913,19 @@
       const heading = make('h3', 'sharing__title', '共有');
       const current = make('ul', 'sharing__list');
       const form = make('div', 'detail-actions__row');
+      // A picker over the organization's other members, with the free-text
+      // field kept: the server accepts any principal, so a name that is not
+      // in the directory is still one that works, and removing the field
+      // would make that untrue in the UI only.
+      const whoPicker = make('select', 'model-pill');
+      whoPicker.setAttribute('aria-label', '共有相手');
       const who = make('input', 'workspace-search document-title');
       who.type = 'text';
       who.placeholder = '共有相手の User ID';
       who.setAttribute('aria-label', '共有相手の User ID');
+      whoPicker.addEventListener('change', () => {
+        if (whoPicker.value) who.value = whoPicker.value;
+      });
       const role = make('select', 'model-pill');
       role.setAttribute('aria-label', '権限');
       const share = make('button', 'tool-button', '共有する');
@@ -1290,6 +1951,17 @@
       const render = (data) => {
         fillOnce(role, data.roles);
         fillOnce(linkRole, data['link-roles']);
+        if (!whoPicker.options.length && (data.candidates || []).length) {
+          const blank = make('option', null, 'Organization から選ぶ');
+          blank.value = ''; whoPicker.append(blank);
+          data.candidates.forEach((candidate) => {
+            const option = make('option', null,
+              candidate['display-name'] || candidate.email || candidate.id);
+            option.value = candidate.id;
+            whoPicker.append(option);
+          });
+        }
+        whoPicker.hidden = !whoPicker.options.length;
         current.replaceChildren();
         (data.grants || []).forEach((grant) => {
           const entry = make('li', 'sharing__entry');
@@ -1339,7 +2011,7 @@
          'expires-in-hours':expiry.value ? Number(expiry.value) : null},
         'リンクを作成しました。'));
 
-      form.append(who, role, share);
+      form.append(whoPicker, who, role, share);
       const linkForm = make('div', 'detail-actions__row');
       linkForm.append(make('span', 'sharing__who', '共有リンク'), linkRole, expiry, makeLink);
       panel.append(heading, current, form, linkForm);
@@ -1722,10 +2394,55 @@
       });
     };
     $('#inbox-search').addEventListener('input', () => renderInbox(inboxData));
-    $('#drive-search').addEventListener('input', () => renderDrive(driveData));
+    // The box filters the list as you type, which is instant and local, and
+    // separately asks the server what is inside the documents, which is not.
+    // Debounced because the server read is every readable document's bytes —
+    // a request per keystroke would be a scan per keystroke.
+    let contentSearchTimer = null;
+    const runContentSearch = async (query) => {
+      const panel = $('#drive-found');
+      if (!query) { panel.hidden = true; panel.replaceChildren(); return; }
+      try {
+        const request = await fetch(
+          `/api/workspace/drive/search?q=${encodeURIComponent(query)}`);
+        const data = await request.json();
+        if (!request.ok) return;
+        const inside = (data.results || []).filter((r) => r.where === 'content');
+        panel.replaceChildren();
+        if (!inside.length) { panel.hidden = true; return; }
+        panel.hidden = false;
+        panel.append(make('h3', 'sharing__title', `本文に一致 ${inside.length} 件`));
+        const list = make('ul', 'sharing__list');
+        inside.forEach((hit) => {
+          const row = make('li', 'sharing__entry');
+          const open = make('button', 'tool-button', `${hit.name}（${hit.label}）`);
+          open.type = 'button';
+          open.addEventListener('click', () => {
+            const item = (driveData.items || []).find((i) => i.id === hit.id);
+            if (!item) return;
+            driveEditor = closedEditor(item.id);
+            selectedDrive = item;
+            $('#drive-search').value = '';
+            renderDrive(driveData);
+          });
+          row.append(open, make('span', 'surface-note', hit.snippet));
+          list.append(row);
+        });
+        panel.append(list);
+      } catch (error) { panel.hidden = true; }
+    };
+    $('#drive-search').addEventListener('input', () => {
+      renderDrive(driveData);
+      const query = ($('#drive-search').value || '').trim();
+      window.clearTimeout(contentSearchTimer);
+      contentSearchTimer = window.setTimeout(() => runContentSearch(query), 300);
+    });
     $('#drive-trash-empty').addEventListener('click', () => driveAction(
       '/api/workspace/drive/trash/empty', {}, 'ゴミ箱を空にしました。'));
     let identityState = null;
+    // The same value the server sees as the actor: a user record is stored
+    // under its own id, so `user.id` is `(:user-id session)`.
+    const currentUserId = () => identityState?.user?.id;
     const connectorMarks = {github:'GH', google:'G', microsoft:'M'};
     const identityHeaders = () => ({
       'Content-Type':'application/json',
@@ -2663,7 +3380,7 @@
         [:section {:class "view" :data-view-panel "drive" :hidden true}
          (view-header "Drive"
                       (str "kotoba-lang/drive のファイルモデルで、OneDrive アーカイブを"
-                           "検索・確認し、Sheets / Docs / Forms を作成します。"))
+                           "検索・確認し、Sheets / Docs / Forms / Slides を作成します。"))
          [:p {:class "source-note"} [:span {:class "source-dot"}]
           [:span {:id "drive-source"} "m365-archive を読み込み中…"]]
          [:div {:class "drive-create-bar"}
@@ -2674,6 +3391,7 @@
          [:div {:class "workspace-toolbar"}
           [:label {:class "visually-hidden" :for "drive-search"} "ファイルを検索"]
           [:input {:class "workspace-search" :id "drive-search" :type "search"
+                   :aria-describedby "drive-found"
                    :placeholder "ファイル名、フォルダー、種類を検索" :autocomplete "off"}]
           [:span {:class "result-count" :id "drive-visible-count"} "読み込み中…"]]
          [:div {:class "record-browser"}
@@ -2681,6 +3399,8 @@
            [:ul {:class "record-list__items" :id "drive-list"} [:li {:class "skeleton"}]]]
           [:article {:class "record-detail" :id "drive-detail" :aria-live "polite"}
            [:div {:class "empty-state"} "ファイルを読み込んでいます。"]]]
+         [:section {:class "sharing" :id "drive-found" :hidden true
+                    :aria-live "polite"}]
          [:section {:class "drive-trash" :id "drive-trash" :hidden true}
           [:div {:class "drive-trash__head"}
            (dds/heading 2 "ゴミ箱" {:size "20"})

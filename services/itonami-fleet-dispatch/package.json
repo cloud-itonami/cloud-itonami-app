@@ -1,0 +1,13 @@
+{
+  "name": "itonami-fleet-dispatch",
+  "private": true,
+  "comment": "The dispatch Worker for the itonami actor fleet. Routes /{repo}/{path} to the user Worker of that name in ai-gftd-repository-dispatch.",
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20250109.0",
+    "typescript": "^5.6.0",
+    "wrangler": "^4.0.0"
+  }
+}

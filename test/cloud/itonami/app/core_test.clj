@@ -903,7 +903,8 @@
     (spit (io/file organisms "family.edn") (pr-str {:family/id :not-a-worker}))
     (spit events (str (pr-str (event "1" 1000 :run/started)) "\n"
                       (pr-str (event "2" 2000 :run/succeeded)) "\n"))
-    (with-redefs [organism-gateway/tamaki-root (constantly root)]
+    (with-redefs [organism-gateway/tamaki-root (constantly root)
+                  organism-gateway/tamaki-state-root (constantly state-dir)]
       (is (= 1 (count (:items (organism-gateway/directory "etzhayyim")))))
       (is (= ["ao:other:worker"]
              (mapv :ao.worker/id

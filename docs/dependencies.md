@@ -16,6 +16,7 @@ entries belong only in the `:dev` override.
 | kotoba-lang/sheets | workbook model and office envelope | immutable SHA |
 | kotoba-lang/docs | document model and office envelope | immutable SHA |
 | kotoba-lang/forms | form model and office envelope | immutable SHA |
+| kotoba-lang/slides | deck model and office envelope | immutable SHA |
 | kotoba-lang/transit | the office envelope itself | immutable SHA |
 | kotoba-lang/identity | directory and identity model | immutable SHA |
 | kotoba-lang/oauth | OAuth request model | immutable SHA |
@@ -29,6 +30,18 @@ moved from Transit-tagged JSON to plain JSON, while forms pinned the current
 one because `:forms/form` is only an admitted resource kind there. Resolution
 picked a winner without being asked. Naming it here means that does not happen
 again silently.
+
+`slides` is much heavier than the other three: it is a Pages application as
+well as a model, so it brings `office`, `ooxml`, `drawingml`,
+`presentationml`, `office-style`, `canvaskit`, `css`, `xml` and the kotoba-ui
+stack. This app requires three of its namespaces — `slides.model`,
+`slides.wire`, `slides.validate` — and none of the rest. The cost is fetch
+time and classpath length, not code that runs.
+
+`transit` is now used for one thing only: projecting EDN onto the wire.
+Storage is EDN (see the architecture note), so the `rehydrate-*` functions in
+`sheets`, `docs`, `forms` and `slides` are reached on the way *in* — a
+payload arriving over HTTP — and never on the way out.
 
 A payload read back from an envelope is plain JSON — string keys, `"text"`
 where `:text` went in — which is what `transit.core/read-office-envelope-body`

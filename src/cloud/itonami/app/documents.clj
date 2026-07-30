@@ -45,6 +45,7 @@
   different answers on either side and a merged list that did not say so
   would be inviting the wrong one."
   (:require [clojure.data.json :as json]
+            [clojure.edn :as edn]
             [clojure.java.io :as io]
             [clojure.string :as str]
             [cloud.itonami.app.config :as config]
@@ -59,9 +60,19 @@
             [forms.model :as forms]
             [forms.validate :as forms-validate]
             [forms.wire :as forms-wire]
+            [sheets.csv :as sheets-csv]
             [sheets.model :as sheets]
             [sheets.validate :as sheets-validate]
-            [sheets.wire :as sheets-wire])
+            [sheets.wire :as sheets-wire]
+            [slides.model :as slides]
+            [slides.office :as slides-office]
+            [slides.pptx :as slides-pptx]
+            [slides.validate :as slides-validate]
+            [slides.wire :as slides-wire]
+            ;; Only to project EDN onto the wire. What is at rest is EDN; what
+            ;; goes over HTTP is the same plain-JSON shape the editor has
+            ;; always been given, so the client contract does not move.
+            [transit.core :as transit])
   (:import [java.nio.charset StandardCharsets]
            [java.util UUID]))
 
@@ -103,7 +114,17 @@
             :read sheets-wire/read-workbook-envelope
             :rehydrate sheets-wire/rehydrate-workbook
             :problems sheets-validate/problems
-            :severity :sheets/severity :code :sheets/code :message :sheets/msg}
+            :severity :sheets/severity :code :sheets/code :message :sheets/msg
+            :text (fn [wb]
+                    (concat (keep :sheets/title (vals (:sheets/tabs wb)))
+                            (for [tab (vals (:sheets/tabs wb))
+                                  cell (vals (:sheets/cells tab))
+                                  text [(:sheets/value cell) (:sheets/formula cell)]
+                                  :when (some? text)]
+                              text)))
+            ;; A workbook has no closed vocabulary an editor has to offer —
+            ;; a cell holds whatever it holds.
+            :vocabulary nil}
    :docs {:resource-kind :docs/document
           :label "ドキュメント"
           :default-title "無題のドキュメント"
@@ -115,7 +136,18 @@
           :read docs-wire/read-document-envelope
           :rehydrate docs-wire/rehydrate-document
           :problems docs-validate/problems
-          :severity :docs/severity :code :docs/code :message :docs/msg}
+          :severity :docs/severity :code :docs/code :message :docs/msg
+          :text (fn [doc]
+                  (concat (keep :docs/text (:docs/blocks doc))
+                          (mapcat :docs/items (:docs/blocks doc))
+                          (for [block (:docs/blocks doc)
+                                row (:docs/rows block)
+                                cell row]
+                            cell)
+                          (keep :docs/text (:docs/comments doc))))
+          ;; From `docs.model` rather than restated: the editor offers the
+          ;; kinds the validator will accept, and there is one list of them.
+          :vocabulary docs/block-kinds}
    :forms {:resource-kind :forms/form
            :label "フォーム"
            :default-title "無題のフォーム"
@@ -127,7 +159,59 @@
            :read forms-wire/read-form-envelope
            :rehydrate forms-wire/rehydrate-form
            :problems forms-validate/form-problems
-           :severity :forms/severity :code :forms/code :message :forms/msg}})
+           :severity :forms/severity :code :forms/code :message :forms/msg
+           :text (fn [form] (keep :forms/label (:forms/fields form)))
+           :vocabulary forms/field-types}
+   :slides {:resource-kind :slides/deck
+            :label "スライド"
+            :default-title "無題のスライド"
+            :title-key :slides/title
+            :seed (fn [id title]
+                    (-> (slides/deck id {:slides/title title})
+                        (slides/add-slide
+                         (-> (slides/slide "slide1" {:slides/title title})
+                             (slides/add-shape (slides/text-box "title" title))))))
+            :envelope slides-wire/deck-envelope
+            :read slides-wire/read-deck-envelope
+            :rehydrate slides-wire/rehydrate-deck
+            ;; `slides.validate/problems` takes a workspace, not a deck: it
+            ;; looks for items whose kind is `:slides/deck` and it also runs
+            ;; `route-problems`, which asks whether four Pages hosts are
+            ;; configured — a question about the slides site, not about this
+            ;; document. So the deck is wrapped in a workspace of its own and
+            ;; only the deck checks are asked for.
+            :problems (fn [deck]
+                        (slides-validate/deck-problems
+                         (slides/add-item (slides/workspace "cloud-itonami") deck)))
+            :severity :slides/severity :code :slides/code :message :slides/msg
+            :text (fn [deck]
+                    (concat (keep :slides/title (:slides/slides deck))
+                            (for [slide (:slides/slides deck)
+                                  shape (:slides/shapes slide)
+                                  :let [text (:slides/text shape)]
+                                  :when (some? text)]
+                              text)))
+            :vocabulary slides-validate/shape-kinds}})
+
+(def export-formats
+  "What each surface can be asked for, and what that produces.
+
+  Keyed by surface so a request for a format a surface has no writer for is
+  refused by name rather than by producing something empty."
+  {:sheets {"csv" {:media-type "text/csv; charset=utf-8" :extension "csv"}
+            "edn" {:media-type "application/edn" :extension "edn"}}
+   :docs {"edn" {:media-type "application/edn" :extension "edn"}}
+   :forms {"edn" {:media-type "application/edn" :extension "edn"}}
+   :slides {"pptx" {:media-type
+                    "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+                    :extension "pptx"}
+            "edn" {:media-type "application/edn" :extension "edn"}}})
+
+(def import-formats
+  "What a new document can be made from."
+  {"csv" :sheets
+   "pptx" :slides
+   "edn" nil})
 
 (def ^:private resource-kinds
   (into {} (map (juxt (comp :resource-kind val) key)) kinds))
@@ -226,30 +310,80 @@
 
 ;; ── bytes ───────────────────────────────────────────────────────────────────
 
+(def stored-media-type
+  "What the object store now holds. The wire is still JSON; this is not it."
+  "application/edn")
+
+(defn stored-envelope
+  "The self-describing thing that goes into the object store, in EDN.
+
+  ## Why not the office envelope's JSON
+
+  `transit.core/office-envelope` builds a plain-JSON projection, and plain
+  JSON cannot carry what these models are made of: `:sheets/type` leaves as
+  `\"workbook\"` and a cell address `[1 1]` leaves as the string `\"[1 1]\"`.
+  Storing that meant every reader had to put it back, which is why there are
+  four `rehydrate-*` functions and why each of them had to learn not to throw
+  on input it could not convert.
+
+  None of that is needed at rest. EDN is what the models already are, what
+  every validator reads, and what `store.clj` already writes for the rest of
+  this app's state. So the bytes are `pr-str` of a map with the envelope's
+  own shape — the same four protocol keys, so a reader still does not have to
+  know in advance which surface it is holding — and reading is `edn/read` and
+  nothing else.
+
+  Rehydration does not disappear; it moves to the one place it belongs. A
+  payload arriving over HTTP is JSON, because HTTP is, and `update!` converts
+  it on the way in. What changes is that nothing has to convert on the way
+  *out*."
+  [spec resource]
+  {:kotoba.protocol/family :kotoba.protocol/office
+   :kotoba.protocol/version 1
+   :kotoba.resource/kind (:resource-kind spec)
+   :kotoba.resource/payload resource})
+
 (defn envelope-bytes
-  "The JSON of an office envelope, as the vector of unsigned ints `drive`
-  wants.
+  "`stored-envelope` as the vector of unsigned ints `drive` wants.
 
   Explicitly rather than by handing `write-item` a string: `count` on a
   string is characters, and the docstring on `write-item` is about exactly
   that drift — a title in Japanese would be charged three bytes against the
-  quota and store nine.
-
-  `:escape-unicode false` because the bytes are UTF-8 and saying so once is
-  cheaper than saying `\\u554f` three times. `data.json` escapes by default,
-  which is the safe choice for a wire whose encoding is unknown and the
-  wrong one for a store where it is decided here. `:escape-slash false` for
-  the same reason and not the same risk: the default exists so JSON can sit
-  inside a `<script>` element, and these bytes go to an object store. What
-  the HTTP layer sends is re-serialized by `send!` with the defaults intact."
+  quota and store nine."
   [envelope]
   (mapv #(bit-and (int %) 0xff)
-        (.getBytes (json/write-str (:body envelope)
-                                   :escape-unicode false :escape-slash false)
-                   StandardCharsets/UTF_8)))
+        (.getBytes ^String (pr-str envelope) StandardCharsets/UTF_8)))
 
 (defn- bytes->string [bytes]
   (String. (byte-array (map unchecked-byte bytes)) StandardCharsets/UTF_8))
+
+(defn decode-stored
+  "Stored bytes back into `{:kind k :payload resource}`, as EDN.
+
+  Two formats, because documents written before this change are JSON and
+  rewriting somebody's object store on a deploy is not a migration anyone
+  asked for. They are told apart by their first character — EDN opens
+  `{:kotoba.protocol/family`, JSON opens `{\"kotoba.protocol/family\"` — and a
+  JSON one is rehydrated on read exactly as it always was.
+
+  So an old document reads as it did, and the first save rewrites it in EDN.
+  Migration is something the Drive does as it is used rather than something
+  anyone runs."
+  [bytes]
+  (let [text (bytes->string bytes)]
+    (if (str/starts-with? (str/triml text) "{:")
+      (let [envelope (edn/read-string text)]
+        {:kind (:kotoba.resource/kind envelope)
+         :payload (:kotoba.resource/payload envelope)
+         :format :edn})
+      (let [body (json/read-str text)
+            kind (some-> (get body "kotoba.resource/kind") keyword)
+            spec (get kinds (get resource-kinds kind))]
+        {:kind kind
+         :payload (if-let [rehydrate (:rehydrate spec)]
+                    (rehydrate ((:read spec) body))
+                    (get body "kotoba.resource/payload"))
+         :format :json}))))
 
 ;; ── views ───────────────────────────────────────────────────────────────────
 
@@ -284,8 +418,20 @@
       :kind (some-> (get resource-kinds kind) name)
       :label (get-in kinds [(get resource-kinds kind) :label])
       :created-at (:drive/created-at item)
+      ;; What a save has to echo back. The object reference of the current
+      ;; version, which `write-item` guarantees is unique per version, so it
+      ;; is an ETag in every sense but the header it is not sent in.
+      :etag (:drive/object-ref item)
       :updated-at (:drive.version/created-at newest)
+      ;; Who last wrote it, which is only a question worth asking because a
+      ;; document can now have more than one writer.
+      :updated-by (:drive.version/author newest)
       :versions (count (:drive/versions item))
+      :history (mapv (fn [version]
+                       {:author (:drive.version/author version)
+                        :created-at (:drive.version/created-at version)
+                        :size-bytes (:drive.version/size-bytes version)})
+                     (:drive/versions item))
       :size-bytes (or (:drive.version/size-bytes newest) 0)
       :held-bytes (held-bytes item)
       :trashed? (boolean (:drive/trashed? item))
@@ -381,7 +527,14 @@
            :quota (quota-view state actor)
            :kinds (mapv (fn [[k spec]]
                           {:kind (name k) :label (:label spec)
-                           :resource-kind (str (:resource-kind spec))})
+                           :resource-kind (str (:resource-kind spec))
+                           ;; So the editor offers exactly what the validator
+                           ;; accepts, from the one place that defines it.
+                           :vocabulary (some->> (:vocabulary spec) (mapv name) sort vec)
+                           ;; So the pane offers exactly the formats this
+                           ;; surface has a writer for, from the one table
+                           ;; that decides.
+                           :exports (vec (sort (keys (get export-formats k))))})
                         kinds)
            :source (str (:source archive) " · 作成済み " (count created) " 件"))))
 
@@ -420,10 +573,10 @@
              id (store/new-id "doc")
              title (or (not-empty (str/trim (str title))) (:default-title spec))
              created-at (store/now)
-             envelope ((:envelope spec) ((:seed spec) id title))
+             envelope (stored-envelope spec ((:seed spec) id title))
              staged (ws/create-file workspace id (:drive.workspace/root-id workspace)
                                     {:drive/title title
-                                     :drive/media-type (:content-type envelope)
+                                     :drive/media-type stored-media-type
                                      :drive/resource-kind (:resource-kind spec)
                                      :drive/created-at created-at}
                                     actor)
@@ -439,12 +592,38 @@
                                  {:owner actor :own? true :role :owner})})
            (refuse! written)))))))
 
+(defn- stored-kind-mismatch!
+  "Refuse bytes whose discriminant disagrees with the item that points at them.
+
+  What `(:read spec)` used to do for free by checking the envelope kind. It
+  still has to be done — an object reference pointing at the wrong document
+  is a broken node, not a rendering quirk — so it is done here rather than
+  lost with the JSON reader."
+  [id expected found]
+  (when-not (= expected found)
+    (throw (ex-info "保管されている内容がこのドキュメントの種類と一致しません。"
+                    {:type :drive/object-missing :item-id id
+                     :expected (str expected) :found (str found)}))))
+
+(defn- stored-payload
+  "The EDN resource behind `id`'s current bytes, discriminant checked."
+  [id item bytes]
+  (let [{:keys [kind payload]} (decode-stored bytes)]
+    (stored-kind-mismatch! id (:drive/resource-kind item) kind)
+    payload))
+
 (defn content
-  "The stored envelope of one document, read back through the ACL.
+  "The stored resource of one document, read back through the ACL.
 
   `drive.object/read-item` is what answers whether this principal may have
   the bytes; nothing here consults the store directly, which is the whole
-  reason that boundary is in `drive` rather than in each application."
+  reason that boundary is in `drive` rather than in each application.
+
+  `:payload` is the plain-JSON projection, not the EDN that is stored. That
+  is deliberate and is the one place the two formats meet: HTTP is JSON, the
+  editor has always been given this shape, and moving storage to EDN was not
+  a reason to move the client contract with it. `:resource` is the EDN, for
+  callers inside this process that would otherwise convert it straight back."
   ([id actor] (content id actor (store-instance)))
   ([id actor object-store]
    (let [{:keys [workspace owner own?] :as found} (locate (store/snapshot) actor id)
@@ -452,20 +631,70 @@
          result (object/read-item workspace object-store id actor)]
      (if (:ok? result)
        (let [item (ws/item workspace id)
-             kind (get resource-kinds (:drive/resource-kind item))
-             body (json/read-str (bytes->string (:bytes result)))]
+             resource (stored-payload id item (:bytes result))]
          {:schema schema
           :ok? true
           :item (item-view item {:owner owner :own? own?
                                  :role (ws/effective-role workspace id actor)})
           :resource-kind (some-> (:drive/resource-kind item) str)
-          ;; Read through the surface's own reader, so a body whose
-          ;; discriminant disagrees with the item's recorded kind is refused
-          ;; here rather than surfacing as a confusing render later.
-          :payload (if-let [read-envelope (get-in kinds [kind :read])]
-                     (read-envelope body)
-                     body)})
+          :resource resource
+          :payload (transit/write-json resource)})
        (refuse! result)))))
+
+(def reference-kinds
+  "Which block kinds are a reference, and what each is meant to point at.
+
+  The expectation is advisory: `docs.model` names the kinds and does not say
+  a `:table-ref` must be a workbook, so pointing one at a deck is reported
+  and not refused. What is refused is a save whose reference goes nowhere at
+  all — that is a warning too, because a draft may name something that is
+  about to be shared."
+  {:table-ref :sheets/workbook
+   :file-ref nil
+   :deck-ref :slides/deck})
+
+(defn- reference-blocks
+  "The reference blocks of a *rehydrated* document.
+
+  Rehydrated, because `:docs/kind` is a keyword there and a bare string on
+  the projection — the same reason validation cannot run on a payload."
+  [document]
+  (->> (:docs/blocks document)
+       (filter map?)
+       (filter #(contains? reference-kinds (:docs/kind %)))))
+
+(defn- resource-of
+  "The resource behind an item, read through the ACL.
+
+  No conversion: `content` returns the EDN it read. This function used to
+  project and immediately rehydrate, which is the round trip that storing
+  EDN removes."
+  [id actor object-store]
+  (:resource (content id actor object-store)))
+
+(defn- reference-warnings
+  "Dangling and mistyped references, as save-time warnings.
+
+  Warnings rather than errors, for the same reason `docs.validate` treats a
+  missing title as one: a document being written may name something that is
+  about to exist, and refusing the save would make writing it impossible."
+  [document actor]
+  (let [visible (into {} (map (juxt :id identity)) (documents (store/snapshot) actor))]
+    (vec
+     (for [block (reference-blocks document)
+           :let [target (:docs/target block)
+                 kind (:docs/kind block)
+                 hit (get visible target)
+                 expect (get reference-kinds kind)]
+           :when (or (nil? hit)
+                     (and expect (not= (str expect) (:resource-kind hit))))]
+       (if hit
+         {:code ":reference/unexpected-kind"
+          :message (str "「" (:docs/id block) "」の参照先は "
+                        (:label hit) " です（" (name kind) " が想定するものと異なります）。")}
+         {:code ":reference/dangling"
+          :message (str "「" (:docs/id block) "」の参照先 " (pr-str target)
+                        " は見つかりません。")})))))
 
 ;; ── editing ─────────────────────────────────────────────────────────────────
 
@@ -528,18 +757,41 @@
   reused one, and the reason is the one that matters — reusing a reference
   replaces an earlier version's bytes while the history saying otherwise is
   still sitting in `:drive/versions`."
-  [{:keys [workspace item spec owner own?]} id actor object-store resource]
-  (let [{:keys [errors warnings]} (problems-in spec resource)]
+  [{:keys [workspace item spec owner own?]} id actor object-store resource expected-etag]
+  (when-not (= expected-etag (:drive/object-ref item))
+    ;; The lost update this exists to stop. Two editors open version 1, both
+    ;; save, and the second write silently discards the first — measured
+    ;; before this check existed: alice's paragraph was simply gone and the
+    ;; UI said "saved". The bytes were still in the history, which is not the
+    ;; same as anybody knowing to look.
+    (throw (ex-info "他の人がこのドキュメントを更新しました。読み込み直してください。"
+                    {:type :drive/stale-version
+                     :item-id id
+                     :etag (:drive/object-ref item)
+                     :versions (count (:drive/versions item))
+                     :updated-by (:drive.version/author (peek (:drive/versions item)))})))
+  (let [{:keys [errors warnings]} (problems-in spec resource)
+        ;; Reference checks are the app's, not a surface's: `docs.validate`
+        ;; sees a `:docs/target` string and has no way to know whether it
+        ;; names anything, because what it could name lives in a Drive it
+        ;; does not know about.
+        warnings (into (vec warnings) (reference-warnings resource actor))]
     (when (seq errors)
       (throw (ex-info (str "保存できません: " (:message (first errors)))
                       {:type :drive/invalid-document :problems errors})))
-    (let [envelope ((:envelope spec) resource)
+    (let [envelope (stored-envelope spec resource)
           title (or (not-empty (str/trim (str (get resource (:title-key spec)))))
                     (:drive/title item))
           ;; The resource's title and the Drive item's title are two places
           ;; for one fact, so a save keeps them together rather than letting
           ;; the list disagree with what is open.
-          retitled (assoc-in workspace [:drive.workspace/items id :drive/title] title)
+          retitled (-> workspace
+                       (assoc-in [:drive.workspace/items id :drive/title] title)
+                       ;; A document written before EDN at rest still says
+                       ;; application/json; the save that rewrites its bytes
+                       ;; is the save that corrects what it claims to be.
+                       (assoc-in [:drive.workspace/items id :drive/media-type]
+                                 stored-media-type))
           written (object/write-item retitled object-store id actor
                                      (envelope-bytes envelope)
                                      {:object-ref (object-ref)
@@ -572,12 +824,23 @@
   keys and a projected payload has none: `sheets.validate/problems` on a
   string-keyed map finds no tabs, reports no problems, and waves anything
   through. That failure is silent in the direction that matters, which is
-  why the rehydrate step is not an optimisation."
-  ([id payload actor] (update! id payload actor (store-instance)))
-  ([id payload actor object-store]
+  why the rehydrate step is not an optimisation.
+
+  `expected-etag` is the `:etag` the caller was given when it read the
+  document — the object reference of the version it edited. A save whose
+  etag is not the current one is refused rather than applied, because a
+  document can now have two editors and the alternative is that the second
+  save silently deletes the first one's work.
+
+  Not optional, and not defaulted to the current value. A nil that meant
+  \"whatever is there now\" would be the old behaviour under a new name."
+  ([id payload actor expected-etag]
+   (update! id payload actor expected-etag (store-instance)))
+  ([id payload actor expected-etag object-store]
    (locking write-lock
      (let [{:keys [spec] :as target} (writable! actor id)]
-       (write-resource! target id actor object-store ((:rehydrate spec) payload))))))
+       (write-resource! target id actor object-store ((:rehydrate spec) payload)
+                        expected-etag)))))
 
 (defn rename!
   "Change a document's title.
@@ -585,21 +848,25 @@
   This does record a new version, because the title is not only Drive
   metadata — it is inside the stored resource as `:sheets/title` and its
   siblings. Renaming only the Drive item would leave the two disagreeing,
-  and the one that travels with the bytes is the one another reader sees."
+  and the one that travels with the bytes is the one another reader sees.
+
+  No etag from the caller: this reads the current resource itself, inside the
+  lock, so what it writes is by construction based on what is there. A rename
+  cannot be a lost update because it never carries a stale copy."
   ([id title actor] (rename! id title actor (store-instance)))
   ([id title actor object-store]
    (locking write-lock
-     (let [{:keys [spec] :as target} (writable! actor id)
+     (let [{:keys [item spec] :as target} (writable! actor id)
            title (not-empty (str/trim (str title)))]
        (when-not title
          (throw (ex-info "名前を空にはできません。"
                          {:type :drive/invalid-document
                           :problems [{:code ":title/blank"
                                       :message "名前を空にはできません。"}]})))
-       (let [current (content id actor object-store)
-             resource (assoc ((:rehydrate spec) (:payload current))
+       (let [resource (assoc (:resource (content id actor object-store))
                              (:title-key spec) title)]
-         (write-resource! target id actor object-store resource))))))
+         (write-resource! target id actor object-store resource
+                          (:drive/object-ref item)))))))
 
 (defn version-content
   "The stored envelope of one *earlier* version of `id`.
@@ -632,18 +899,20 @@
        :else
        (if-let [bytes (object/-get-object object-store
                                           (:drive.version/object-ref version))]
-         (let [kind (get resource-kinds (:drive/resource-kind item))
-               body (json/read-str (bytes->string bytes))]
+         ;; An old version may still be JSON while the newest is EDN, which
+         ;; is exactly what `decode-stored` is for — a Drive migrating as it
+         ;; is used has both in the same item's history.
+         (let [resource (stored-payload id item bytes)]
            {:schema schema
             :ok? true
             :item (item-view item {:owner owner :own? own?
                                    :role (ws/effective-role workspace id actor)})
             :index index
             :created-at (:drive.version/created-at version)
+            :author (:drive.version/author version)
             :resource-kind (some-> (:drive/resource-kind item) str)
-            :payload (if-let [read-envelope (get-in kinds [kind :read])]
-                       (read-envelope body)
-                       body)})
+            :resource resource
+            :payload (transit/write-json resource)})
          (refuse! {:reason :object-missing-from-store :item-id id
                    :object-ref (:drive.version/object-ref version)}))))))
 
@@ -923,15 +1192,508 @@
          (if (:ok? result)
            (let [link (ws/resolve-share-link workspace token now-ms)
                  item (ws/item workspace (:drive.share/item-id link))
-                 kind (get resource-kinds (:drive/resource-kind item))
-                 body (json/read-str (bytes->string (:bytes result)))]
+                 resource (stored-payload (:drive.share/item-id link) item (:bytes result))]
              {:schema schema
               :ok? true
               :item (item-view item {:owner owner :own? (= owner actor)
                                      :role (:drive.share/role link)})
               :role (name (:role result))
               :resource-kind (some-> (:drive/resource-kind item) str)
-              :payload (if-let [read-envelope (get-in kinds [kind :read])]
-                         (read-envelope body)
-                         body)})
+              :resource resource
+              :payload (transit/write-json resource)})
            (refuse! result)))))))
+
+;; ── form submissions ────────────────────────────────────────────────────────
+
+(defn- submissions-path [id] [:drive :submissions id])
+
+(defn- readable-form!
+  "The rehydrated form behind `id`, if this principal may read it.
+
+  Rehydrated, because `forms.model/missing-required` reads `:forms/fields`
+  and `forms.validate/submission-problems` matches on `:email` — a projected
+  payload has neither, so a submission checked against one would be told
+  every answer is fine and no field is required. The same failure that made
+  rehydration mandatory for saving makes it mandatory here."
+  [id actor object-store]
+  (let [{:keys [workspace owner]} (locate (store/snapshot) actor id)
+        item (when workspace (ws/item workspace id))]
+    (cond
+      (nil? item) (refuse! {:reason :no-such-item :item-id id})
+      (not= :forms/form (:drive/resource-kind item))
+      (throw (ex-info "回答できるのはフォームだけです。"
+                      {:type :drive/unknown-kind
+                       :resource-kind (:drive/resource-kind item)}))
+      :else
+      ;; The EDN as stored. This used to project and rehydrate straight back,
+      ;; which is the round trip EDN at rest removes.
+      {:owner owner
+       :item item
+       :form (:resource (content id actor object-store))})))
+
+(defn form-for-answering
+  "A form as something to fill in, rather than as a document to edit.
+
+  Whoever may read the form may answer it: a form shared read-only is a form
+  meant to be answered, and requiring write access to submit would make
+  every respondent an editor of the questions."
+  ([id actor] (form-for-answering id actor (store-instance)))
+  ([id actor object-store]
+   (let [{:keys [form item]} (readable-form! id actor object-store)]
+     {:schema schema
+      :ok? true
+      :id id
+      :title (:forms/title form)
+      :name (:drive/title item)
+      :fields (mapv (fn [field]
+                      {:id (:forms/id field)
+                       :label (:forms/label field)
+                       :field-type (some-> (:forms/field-type field) name)
+                       :required? (boolean (:forms/required? field))})
+                    (:forms/fields form))})))
+
+(defn- record-submission!
+  "Validate `answers` against `form` and keep them.
+
+  Beside the document rather than inside it. A submission is not a version of
+  the questions: writing one into the stored envelope would make every
+  response a new version of the form, charged to the owner's quota and
+  changing the document every respondent is reading from."
+  [id owner form answers author]
+  (let [answers (into {} (map (fn [[k v]] [(name k) v])) (or answers {}))
+        submission (forms/submission id answers)
+        errors (->> (forms-validate/submission-problems form submission)
+                    (filter #(= :error (:forms/severity %)))
+                    (mapv (fn [problem]
+                            {:code (some-> (:forms/code problem) str)
+                             :field (:forms/id problem)
+                             :message (:forms/msg problem)})))]
+    (when (seq errors)
+      (throw (ex-info (str "送信できません: " (:message (first errors)))
+                      {:type :drive/invalid-submission :problems errors})))
+    (let [record {:id (store/new-id "sub")
+                  :form-id id
+                  :owner owner
+                  :author author
+                  :answers answers
+                  :submitted-at (store/now)}]
+      (store/transact! update-in (submissions-path id) (fnil conj []) record)
+      {:schema schema :ok? true :submission (dissoc record :owner)})))
+
+(defn submit!
+  "Answer a form."
+  ([id answers actor] (submit! id answers actor (store-instance)))
+  ([id answers actor object-store]
+   (locking write-lock
+     (let [{:keys [form owner]} (readable-form! id actor object-store)]
+       (record-submission! id owner form answers actor)))))
+
+(defn submit-via-link!
+  "Answer a form reached by share link.
+
+  The link is what distributing a form looks like, so this exists for the
+  same reason `link-content` does. `read-via-share-link` is still what
+  decides — expiry and trash included — and a `:viewer` link is enough:
+  answering is not writing the questions."
+  ([token answers actor now-ms] (submit-via-link! token answers actor now-ms
+                                                  (store-instance)))
+  ([token answers actor now-ms object-store]
+   (locking write-lock
+     (let [read (link-content token actor now-ms object-store)
+           id (:id (:item read))]
+       (when-not (= ":forms/form" (:resource-kind read))
+         (throw (ex-info "回答できるのはフォームだけです。"
+                         {:type :drive/unknown-kind
+                          :resource-kind (:resource-kind read)})))
+       ;; The owner comes off the item the link resolved to, so the answers
+       ;; are filed against the Drive that actually holds the form rather
+       ;; than against whoever happened to follow the link.
+       (record-submission! id (:owner (:item read)) (:resource read) answers actor)))))
+
+(defn submissions
+  "Every answer to this form. Owner only — the responses are theirs."
+  [id actor]
+  (let [_ (owned! actor id)]
+    {:schema schema
+     :ok? true
+     :id id
+     :submissions (mapv #(dissoc % :owner)
+                        (get-in (store/snapshot) (submissions-path id) []))}))
+
+;; ── comments ────────────────────────────────────────────────────────────────
+;;
+;; ## Beside the document, and why not inside it
+;;
+;; `docs.model` puts comments in `:docs/comments`, inside the resource. That
+;; is the natural place for them and it is not reachable from here, because a
+;; comment written there is a write to the document — and `drive.workspace`
+;; says a `:commenter` may not write one. `can-write?` is `#{:owner :editor}`
+;; and it is right to be: a commenter who could rewrite the content would be
+;; an editor under a quieter name.
+;;
+;; The alternative is to perform that write as somebody who may — the owner,
+;; or the app itself. That was merely distasteful before versions had
+;; authors. Now it would file a comment under the wrong name in the one
+;; record that says who changed what. A history that can be made to lie is
+;; worse than a comment that lives somewhere else.
+;;
+;; So comments are kept beside the document, keyed by its id, like form
+;; submissions and for the same reason: they are about the document rather
+;; than part of it. The costs are real and named — a comment does not travel
+;; with the exported envelope, and `docs.validate`'s comment checks never see
+;; it. If comments must travel with the bytes, the fix is a constrained-write
+;; operation in `drive` that a commenter may reach, not a louder version of
+;; this.
+
+(def comment-roles
+  "Who may leave one. Read is not enough — a viewer is someone shown the
+  document, and `drive.workspace` already draws that line."
+  #{:owner :editor :commenter})
+
+(defn- comments-path [id] [:drive :comments id])
+
+(defn- readable!
+  "The item and this principal's role on it, if they may read it at all."
+  [actor id]
+  (let [{:keys [workspace owner]} (locate (store/snapshot) actor id)
+        item (when workspace (ws/item workspace id))]
+    (cond
+      (nil? item) (refuse! {:reason :no-such-item :item-id id})
+      (:drive/trashed? item) (refuse! {:reason :item-is-trashed :item-id id})
+      :else {:owner owner :item item
+             :role (ws/effective-role workspace id actor)})))
+
+(defn comments
+  "Every comment on this document, oldest first.
+
+  Visible to anyone who may read the document, including a viewer: being
+  shown a document and not what has been said about it is a strange half of
+  a thing to be shown."
+  [id actor]
+  (readable! actor id)
+  {:schema schema
+   :ok? true
+   :id id
+   :comments (mapv #(dissoc % :owner) (get-in (store/snapshot) (comments-path id) []))})
+
+(defn comment!
+  "Leave a comment.
+
+  `anchor` is free text and optional — a block id for a document, a cell
+  address for a workbook, nothing at all for a remark about the whole thing.
+  Deliberately not interpreted here: the moment this parsed one it would owe
+  every surface a different parser, and the surfaces are where that knowledge
+  lives."
+  [id text anchor actor]
+  (locking write-lock
+    (let [{:keys [owner role]} (readable! actor id)
+          text (not-empty (str/trim (str text)))]
+      (cond
+        (not (contains? comment-roles role))
+        (refuse! {:reason :not-permitted :item-id id :principal actor})
+        (nil? text)
+        (throw (ex-info "コメントを入力してください。"
+                        {:type :drive/invalid-comment :field :text}))
+        :else
+        (let [record {:id (store/new-id "cmt")
+                      :document-id id
+                      :owner owner
+                      :author actor
+                      :text text
+                      :anchor (not-empty (str/trim (str anchor)))
+                      :created-at (store/now)}]
+          (store/transact! update-in (comments-path id) (fnil conj []) record)
+          {:schema schema :ok? true :comment (dissoc record :owner)})))))
+
+(defn delete-comment!
+  "Remove one.
+
+  Its author or the document's owner. An editor may rewrite the document and
+  still not delete what somebody said about it — those are different things
+  and only one of them is the content."
+  [id comment-id actor]
+  (locking write-lock
+    (let [{:keys [role]} (readable! actor id)
+          existing (get-in (store/snapshot) (comments-path id) [])
+          target (some #(when (= comment-id (:id %)) %) existing)]
+      (cond
+        (nil? target)
+        (throw (ex-info "コメントが見つかりません。"
+                        {:type :drive/not-found :comment-id comment-id}))
+        (not (or (= actor (:author target)) (= :owner role)))
+        (refuse! {:reason :not-permitted :item-id id :principal actor})
+        :else
+        (do (store/transact! assoc-in (comments-path id)
+                             (vec (remove #(= comment-id (:id %)) existing)))
+            {:schema schema :ok? true :id comment-id})))))
+
+;; ── references between documents ────────────────────────────────────────────
+;;
+;; `docs.model` has had `:table-ref`, `:file-ref` and `:deck-ref` blocks since
+;; before any of this, each carrying a `:docs/target` string, and nothing has
+;; ever resolved one. A document that can name a workbook but never reach it
+;; is four surfaces sharing a pane rather than four surfaces that know about
+;; each other.
+;;
+;; A target is a Drive item id. Not a URL and not a `slides:intro-deck`-style
+;; scheme — the seed document in `docs.model` uses one of those, and it is a
+;; placeholder rather than a format anything parses. An id is what `locate`
+;; already resolves, which means a reference obeys the same permission answer
+;; as everything else: you can follow a link to a document you may read, and
+;; a link to one you may not is indistinguishable from a link to nothing.
+
+(defn references
+  "What this document points at, and whether each target is reachable.
+
+  Only `docs` documents carry references today. A workbook has no block that
+  names another document, and a deck's links live on a `slides` workspace
+  rather than in the deck itself — the envelope carries one deck, so there is
+  nowhere in it for a link to sit."
+  ([id actor] (references id actor (store-instance)))
+  ([id actor object-store]
+   (let [{:keys [item]} (readable! actor id)
+         document (when (= :docs/document (:drive/resource-kind item))
+                    (resource-of id actor object-store))
+         visible (into {} (map (juxt :id identity)) (documents (store/snapshot) actor))]
+     {:schema schema
+      :ok? true
+      :id id
+      :references
+      (mapv (fn [block]
+              (let [target (:docs/target block)
+                    kind (:docs/kind block)
+                    hit (get visible target)]
+                (cond-> {:block (:docs/id block)
+                         :kind (name kind)
+                         :target target
+                         :resolved? (some? hit)}
+                  hit (assoc :name (:name hit)
+                             :label (:label hit)
+                             :resource-kind (:resource-kind hit)
+                             :expected? (let [expect (get reference-kinds kind)]
+                                          (or (nil? expect)
+                                              (= (str expect) (:resource-kind hit))))))))
+            (reference-blocks document))})))
+
+(defn referenced-by
+  "Which of the documents this principal can see point at `id`.
+
+  Backlinks, and the reason references are worth resolving at all: a workbook
+  that cannot say which memo depends on it is a workbook nobody dares
+  change."
+  ([id actor] (referenced-by id actor (store-instance)))
+  ([id actor object-store]
+   (readable! actor id)
+   (let [state (store/snapshot)]
+     {:schema schema
+      :ok? true
+      :id id
+      :referenced-by
+      (vec
+       (for [candidate (documents state actor)
+             :when (= ":docs/document" (:resource-kind candidate))
+             :let [document (try (resource-of (:id candidate) actor object-store)
+                                 ;; A document whose bytes are gone should not
+                                 ;; make the backlinks of a different one fail.
+                                 (catch clojure.lang.ExceptionInfo _ nil))]
+             block (reference-blocks document)
+             :when (= id (:docs/target block))]
+         {:id (:id candidate)
+          :name (:name candidate)
+          :label (:label candidate)
+          :block (:docs/id block)
+          :kind (name (:docs/kind block))}))})))
+
+
+;; ── import and export ───────────────────────────────────────────────────────
+;;
+;; Two formats that already existed somewhere and were not reachable from
+;; here: CSV, which `sheets.csv` gained for this, and PPTX, which `slides`
+;; has had all along in `slides.pptx` and `slides.office` without the Drive
+;; ever offering it.
+;;
+;; EDN is the third, and it is free: the stored bytes are already the EDN
+;; envelope, so exporting one is handing over what is on disk. That makes
+;; every surface exportable, including the two with no office format at all.
+
+(defn- safe-filename
+  "A title as a filename. Refuses to become a path, for the same reason
+  `drive.store.fs` refuses an object reference that could be one."
+  [title extension]
+  (let [base (-> (str title)
+                 (str/replace #"[^\p{L}\p{N}_.-]" "_")
+                 (str/replace #"^[.]+" "_"))]
+    (str (if (str/blank? base) "document" base) "." extension)))
+
+(defn export
+  "One document in `format`, as bytes plus what to call them.
+
+  Returns `{:media-type :filename :bytes}` where `:bytes` is a JVM byte
+  array, because that is what an HTTP response wants and what
+  `slides.pptx/pptx-bytes` produces."
+  ([id format actor] (export id format actor (store-instance) {}))
+  ([id format actor object-store] (export id format actor object-store {}))
+  ([id format actor object-store {:keys [tab]}]
+   (let [{:keys [item]} (readable! actor id)
+         kind (get resource-kinds (:drive/resource-kind item))
+         available (get export-formats kind)
+         shape (get available format)]
+     (when-not shape
+       (throw (ex-info (str "この種類は " (pr-str format) " で書き出せません。")
+                       {:type :drive/unsupported-format
+                        :format format
+                        :available (vec (sort (keys available)))})))
+     (let [resource (:resource (content id actor object-store))
+           text (case format
+                  "edn" (pr-str (stored-envelope (get kinds kind) resource))
+                  "csv" (let [tab-id (or tab (first (sort (keys (:sheets/tabs resource)))))]
+                          (or (sheets-csv/workbook->csv resource tab-id)
+                              (throw (ex-info (str "タブ " (pr-str tab-id) " はありません。")
+                                              {:type :drive/not-found :tab tab-id
+                                               :tabs (vec (sort (keys (:sheets/tabs resource))))}))))
+                  nil)]
+       {:media-type (:media-type shape)
+        :filename (safe-filename (:drive/title item) (:extension shape))
+        :bytes (if (= "pptx" format)
+                 (slides-pptx/pptx-bytes resource)
+                 (.getBytes ^String text StandardCharsets/UTF_8))}))))
+
+(defn import!
+  "A new document from `bytes` in `format`.
+
+  Creates rather than replaces. Importing into an existing document would be
+  a save, and a save has an etag; an import has a file and no idea what it is
+  landing on top of.
+
+  It lands through `create!` and then `write-resource!` — the same path a
+  save takes — so quota, ACL, versioning and the surface's own validator all
+  apply to it exactly as they do to anything else. An imported deck that is
+  not a deck is refused with the same code as a typed one."
+  ([format title bytes actor] (import! format title bytes actor (store-instance)))
+  ([format title bytes actor object-store]
+   (when-not (contains? import-formats format)
+     (throw (ex-info (str "読み込めない形式です: " (pr-str format))
+                     {:type :drive/unsupported-format
+                      :available (vec (sort (keys import-formats)))})))
+   (let [text (delay (String. ^bytes bytes StandardCharsets/UTF_8))
+         [kind imported]
+         (case format
+           "csv" [:sheets nil]
+           "pptx" [:slides (slides-office/deck-from-office-bytes bytes)]
+           "edn" (let [envelope (edn/read-string @text)
+                       k (get resource-kinds (:kotoba.resource/kind envelope))]
+                   (when-not k
+                     (throw (ex-info "この EDN はこの Drive の資源ではありません。"
+                                     {:type :drive/unsupported-format
+                                      :kind (str (:kotoba.resource/kind envelope))})))
+                   [k (:kotoba.resource/payload envelope)]))
+         _ (when (and (= "pptx" format) (nil? imported))
+             (throw (ex-info "PPTX として読めませんでした。"
+                             {:type :drive/unsupported-format :format format})))
+         created (create! kind (or (not-empty (str/trim (str title)))
+                                   (str "取り込み " (store/now)))
+                          actor object-store)
+         doc-id (:id (:item created))
+         seeded (:resource (content doc-id actor object-store))
+         resource (if (= "csv" format)
+                    (sheets-csv/import-csv seeded "imported" @text)
+                    ;; Keep the ids the Drive just minted and the title the
+                    ;; caller asked for; take everything else from the file.
+                    (assoc imported
+                           (:title-key (get kinds kind)) (:name (:item created))
+                           (if (= kind :slides) :slides/id :docs/id) doc-id))
+         target (writable! actor doc-id)]
+     (write-resource! target doc-id actor object-store resource
+                      (:drive/object-ref (:item target))))))
+
+;; ── searching inside documents ──────────────────────────────────────────────
+;;
+;; The Drive could filter a list of names. Everything else about a document —
+;; what a cell says, what a paragraph says, what is written on a slide — was
+;; unreachable except by opening it.
+;;
+;; What counts as text is the model's business and lives with each surface as
+;; `:text`, next to `:vocabulary` and `:problems`. Searching is the app's,
+;; because only the app knows which documents this principal may read.
+;;
+;; ## It reads everything, and that is the honest version of this
+;;
+;; Every readable document's bytes, on every search. No index, so nothing can
+;; be stale and nothing has to be rebuilt — and it is linear in the size of
+;; the Drive. That is the right trade at a scale where a Drive is one
+;; household's documents, and the wrong one at an organisation's. When it
+;; stops being right, the fix is an index keyed on the version, invalidated
+;; by the object reference that already changes on every save.
+
+(def ^:private snippet-radius
+  "Characters either side of a match. Enough to see which occurrence it is."
+  40)
+
+(defn- snippet
+  "The matching text, cut to a window around the match.
+
+  Case-folded for finding and *not* for showing: a result that echoed back
+  the query's casing rather than the document's would be quoting something
+  the document does not say."
+  [text needle]
+  (let [text (str text)
+        at (str/index-of (str/lower-case text) needle)]
+    (if (nil? at)
+      text
+      (let [from (max 0 (- at snippet-radius))
+            to (min (count text) (+ at (count needle) snippet-radius))]
+        (str (when (pos? from) "…")
+             (subs text from to)
+             (when (< to (count text)) "…"))))))
+
+(defn- text-of
+  "Every piece of text in `resource`, per its surface. Empty for a surface
+  with no extractor rather than an error — a new surface should be findable
+  by name before it is findable by content."
+  [kind resource]
+  (if-let [extract (get-in kinds [kind :text])]
+    (->> (extract resource) (keep identity) (map str) (remove str/blank?))
+    []))
+
+(defn search
+  "Documents whose title or contents contain `query`, for this principal.
+
+  Returns each match once, with where it was found and a snippet. A title
+  match wins over a content match: it is the stronger signal and showing
+  both for one document is noise."
+  ([query actor] (search query actor (store-instance)))
+  ([query actor object-store]
+   (let [needle (str/lower-case (str/trim (str query)))]
+     (if (str/blank? needle)
+       {:schema schema :ok? true :query "" :count 0 :results []}
+       (let [results
+             (vec
+              (for [candidate (documents (store/snapshot) actor)
+                    :let [in-title? (str/includes? (str/lower-case (str (:name candidate)))
+                                                   needle)
+                          ;; Read once per document, and only when the title
+                          ;; did not already answer.
+                          hit (when-not in-title?
+                                (let [resource (try
+                                                 (:resource (content (:id candidate) actor
+                                                                     object-store))
+                                                 ;; A document whose bytes are
+                                                 ;; gone must not fail the
+                                                 ;; whole search.
+                                                 (catch clojure.lang.ExceptionInfo _ nil))]
+                                  (some #(when (str/includes? (str/lower-case %) needle) %)
+                                        (text-of (keyword (:kind candidate)) resource))))]
+                    :when (or in-title? hit)]
+                {:id (:id candidate)
+                 :name (:name candidate)
+                 :label (:label candidate)
+                 :kind (:kind candidate)
+                 :own? (:own? candidate)
+                 :owner (:owner candidate)
+                 :where (if in-title? "title" "content")
+                 :snippet (if in-title? (:name candidate) (snippet hit needle))}))]
+         {:schema schema
+          :ok? true
+          :query (str/trim (str query))
+          :count (count results)
+          :results results})))))

@@ -11,7 +11,8 @@
   (:import [com.yubico.webauthn AssertionRequest CredentialRepository
             FinishAssertionOptions FinishRegistrationOptions RegisteredCredential
             RelyingParty StartAssertionOptions StartRegistrationOptions]
-           [com.yubico.webauthn.data AuthenticatorSelectionCriteria ByteArray
+           [com.yubico.webauthn.data AttestationConveyancePreference
+            AuthenticatorAttachment AuthenticatorSelectionCriteria ByteArray
             PublicKeyCredential PublicKeyCredentialCreationOptions
             PublicKeyCredentialDescriptor PublicKeyCredentialParameters
             RelyingPartyIdentity
@@ -91,6 +92,16 @@
         (.origins #{origin})
         (.allowOriginPort false)
         (.allowOriginSubdomain false)
+        ;; DIRECT rather than NONE, for one reason: under `none` a browser
+        ;; zeroes the AAGUID for privacy, and the AAGUID is the only model
+        ;; identifier that lives inside SIGNED authenticator data. Without it
+        ;; the strongest grade available is the client's own unsigned word.
+        ;; See cloud.itonami.app.credential-assurance.
+        (.attestationConveyancePreference AttestationConveyancePreference/DIRECT)
+        ;; Still true: no attestation trust source is configured, so requiring
+        ;; a trusted chain would refuse every enrolment. `isAttestationTrusted`
+        ;; is recorded as false and graded accordingly, rather than the
+        ;; enrolment being blocked on a root nobody has installed.
         (.allowUntrustedAttestation true)
         (.validateSignatureCounter true)
         .build)))
@@ -168,7 +179,13 @@
                  (.displayName display-name)
                  (.id (webauthn-bytes user-handle))
                  .build)
+        ;; PLATFORM: the authenticator built into this machine -- on macOS the
+        ;; Secure Enclave behind Touch ID. This ASKS; it does not enforce, and
+        ;; the client is the thing being constrained. What the response actually
+        ;; proves is graded afterwards by `credential-assurance`, and that
+        ;; grading is what a payment policy stands on.
         selection (-> (AuthenticatorSelectionCriteria/builder)
+                      (.authenticatorAttachment AuthenticatorAttachment/PLATFORM)
                       (.residentKey ResidentKeyRequirement/REQUIRED)
                       (.userVerification UserVerificationRequirement/REQUIRED)
                       .build)
@@ -190,6 +207,32 @@
      :options (json/read-str (.toCredentialsCreateJson options)
                              :key-fn keyword)
      :expires-at expires-at}))
+
+(defn- aaguid->string
+  "The AAGUID as a canonical lowercase UUID string, or nil.
+
+  A STRING rather than a ByteArray so a stored credential stays plain EDN:
+  `credential-assurance` reads it back to grade the credential, and that
+  namespace is pure and must not need the WebAuthn classes on its classpath."
+  [^ByteArray aaguid]
+  (when aaguid
+    (let [bytes (.getBytes aaguid)]
+      (when (= 16 (alength bytes))
+        (let [halve (fn [from to]
+                      (reduce (fn [acc i]
+                                (bit-or (bit-shift-left acc 8)
+                                        (bit-and (aget bytes i) 0xff)))
+                              0 (range from to)))]
+          (str (java.util.UUID. (halve 0 8) (halve 8 16))))))))
+
+(defn- attachment->string
+  "The client-reported attachment, or nil when the client said nothing.
+
+  nil is meaningful and is not folded into \"cross-platform\": a client that
+  declined to say and one that said cross-platform are different facts, and only
+  the second is a statement we can hold against it."
+  [^java.util.Optional attachment]
+  (some-> ^AuthenticatorAttachment (.orElse attachment nil) .getValue))
 
 (defn finish-registration!
   [transaction-id credential-response expected-user-id]
@@ -229,6 +272,14 @@
                           :signature-count (.getSignatureCount result)
                           :backup-eligible? (.isBackupEligible result)
                           :backed-up? (.isBackedUp result)
+                          ;; Assurance evidence captured once at enrollment.
+                          :user-verified? (.isUserVerified result)
+                          :aaguid (aaguid->string (.getAaguid result))
+                          :attestation-trusted? (.isAttestationTrusted result)
+                          :attestation-type (str (.getAttestationType result))
+                          :discoverable? (.orElse (.isDiscoverable result) nil)
+                          :attachment (attachment->string
+                                       (.getAuthenticatorAttachment result))
                           :created-at now :last-used-at nil})
                (assoc-in [:identity :users user-id :did] user-did)
                (assoc-in [:identity :users user-id :subject]

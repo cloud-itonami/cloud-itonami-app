@@ -10,29 +10,45 @@
             [clojure.test :as test]
             [cloud.itonami.app.authority-test]
             [cloud.itonami.app.authority.adapters-test]
+            [cloud.itonami.app.authority.api-test]
+            [cloud.itonami.app.authority.payment-test]
             [cloud.itonami.app.authority.posture-test]
             [cloud.itonami.app.core-test]
+            [cloud.itonami.app.credential-assurance-test]
             [cloud.itonami.app.documents-test]
             [cloud.itonami.app.filecoin-test]
             [cloud.itonami.app.fleet-test]
+            [cloud.itonami.app.funding-test]
+            [cloud.itonami.app.mcp-test]
             [cloud.itonami.app.fleet-tools-test]
             [cloud.itonami.app.installation-test]
             [cloud.itonami.app.openai-compat-test]
+            [cloud.itonami.app.payment-tools-test]
+            [cloud.itonami.app.paypay-bank-test]
             [cloud.itonami.app.recovery :as recovery]
+            [cloud.itonami.app.storj-node-test]
             [cloud.itonami.app.storj-test]
             [cloud.itonami.app.worker-http-test]))
 
 (def ^:private namespaces
   '[cloud.itonami.app.authority-test
     cloud.itonami.app.authority.adapters-test
+    cloud.itonami.app.authority.api-test
+    cloud.itonami.app.authority.payment-test
     cloud.itonami.app.authority.posture-test
     cloud.itonami.app.core-test
+    cloud.itonami.app.credential-assurance-test
     cloud.itonami.app.documents-test
     cloud.itonami.app.filecoin-test
     cloud.itonami.app.fleet-test
+    cloud.itonami.app.funding-test
+    cloud.itonami.app.mcp-test
     cloud.itonami.app.fleet-tools-test
     cloud.itonami.app.installation-test
     cloud.itonami.app.openai-compat-test
+    cloud.itonami.app.payment-tools-test
+    cloud.itonami.app.paypay-bank-test
+    cloud.itonami.app.storj-node-test
     cloud.itonami.app.storj-test
     cloud.itonami.app.worker-http-test])
 

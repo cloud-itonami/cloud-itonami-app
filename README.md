@@ -86,6 +86,51 @@ clearing it removes the local mapping. Coding-agent/worker runs remain ephemeral
 The subprocess is local, but prompts still leave the machine according to the
 selected CLI account's own provider and authentication settings.
 
+## MCP server (fleet directory)
+
+The actor fleet is also served over the Model Context Protocol, so an MCP client
+— Claude Code, Claude Desktop, an editor — can query the directory directly.
+Transport is stdio, so nothing new listens on the network.
+
+```json
+{
+  "mcpServers": {
+    "cloud-itonami-fleet": {
+      "command": "clojure",
+      "args": ["-M:mcp"],
+      "cwd": "/path/to/cloud-itonami-app"
+    }
+  }
+}
+```
+
+There is no wrapper script on purpose: MCP clients launch a command directly, and
+putting another process in the middle of a stdio protocol stream only risks its
+framing.
+
+Two tools, the same ones the in-app agent uses — the descriptors and behaviour
+live in `cloud.itonami.app.fleet`, and `cloud.itonami.app.mcp` is an adapter over
+them rather than a second implementation:
+
+| Tool | What it does |
+|---|---|
+| `fleet_search` | Query the bundled catalog of ~1,200 actors by text, domain, ISIC, ISO-3166, maturity, execution, or whether they have an address. No network. |
+| `fleet_call` | `GET` a path on a deployed actor. The actor is named by repository, never by URL, so the host comes from the catalog and cannot be chosen by the caller. Read-only. |
+
+Both require the fleet capability to be enabled; until then `tools/list` is
+empty, which is the same fail-closed default the agent capabilities have:
+
+```clojure
+;; data/config.edn
+{:agent-control {:fleet {:enabled? true}}}
+```
+
+Browser, computer, mail, calendar, drive and chat are deliberately **not**
+exposed. The device tools verify the frontmost application between approval and
+action, which does not survive translation to a protocol whose consent model
+belongs to the client; the workspace reads sit behind the Passkey session on
+`/api/*`, and a surface with no session must not reach around it.
+
 ## Background worker runs
 
 The Worker tab queues prompts that take longer than an interactive turn. Runs
@@ -133,6 +178,92 @@ memory, lifecycle, and repository authority while Cloud Itonami provides the
 organization directory, redacted activity projection, and human intent and
 approval surface. See
 [ADR-0002](docs/adr/0002-external-artificial-organism-workers.md).
+
+## Funding accounts and payment settlement
+
+An Organization may link the bank accounts it pays from, and record what they
+held. Both are Tenant-scoped: a company account outlives whichever member linked
+it.
+
+```bash
+# link an account (the number is fingerprinted, never stored)
+POST /api/funding/accounts
+     {"institution":"PayPay銀行","account-type":"current",
+      "holder":"JK株式会社","number":"1234567","currency":"JPY"}
+
+# record what the bank said, and WHEN it said it
+POST /api/funding/accounts/{id}/balance
+     {"amount-minor":120000,"currency":"JPY",
+      "as-of":"2026-07-30T09:00:00Z","source":"owner-attested"}
+
+GET  /api/funding
+```
+
+There is **no bank connector**. A balance is recorded because a human read it,
+and `as-of` is the instant the *bank* stated — not the instant it was typed in.
+Amounts are integers in the currency's minor unit (JPY has exponent 0, so
+`38500` is ¥38,500). A balance older than `:balance-max-age-seconds` (24h by
+default) is `:stale` and refuses; one that was never recorded is
+`:never-recorded` and also refuses. **An unknown balance is never rendered as
+¥0** — that would state a fact nobody established.
+
+Settling a payable rides the same spine as the other authorities:
+
+```bash
+POST /api/authority/payment/review                        # deterministic pre-check
+POST /api/authority/payment/proposals/{id}/approve/start  # Passkey
+POST /api/authority/payment/proposals/{id}/approve/finish
+POST /api/authority/payment/proposals/{id}/commit
+```
+
+The pre-check refuses **before a human is asked** when the recorded balance does
+not cover the amount (`402`), when it is unknown or stale (`409`), when the
+reference is already settled by anyone in the Organization (`409`), or when an
+eSIM ownership transfer for the same subject currently holds spend (`423`). The
+balance, its freshness, the funding account and the settlement history are all
+computed server-side and overwrite anything the client sends — otherwise the
+funds gate would be a suggestion.
+
+A committed proposal is a **governed settlement record, not a transfer.** This
+app holds no banking credential and moves no money; a human makes the transfer
+in their bank. `:payment` ships disabled, like every other authority. See
+[ADR-0005](docs/adr/0005-payment-settlement-authority.md).
+
+### Driving it from an agent (MCP)
+
+The stdio MCP server publishes these as tools — but only when it can resolve a
+**real app session**. Export a session token, or put one in the login Keychain:
+
+```bash
+security add-generic-password -s cloud-itonami-app.mcp -a session-token -w
+export CLOUD_ITONAMI_MCP_SESSION=…   # takes precedence over the Keychain
+clojure -M:mcp
+```
+
+| tool | |
+|---|---|
+| `funding_accounts` | accounts, balances, freshness |
+| `funding_link_account` | number is fingerprinted, never stored |
+| `funding_record_balance` | `as-of` is the instant the **bank** stated |
+| `payment_review` | runs every deterministic refusal; records a proposal **awaiting a human** |
+| `payment_proposals` | statuses |
+| `payment_commit` | only for a proposal a human **already** approved |
+| `payment_reject` | records that a human declined |
+
+Without a token there are no such tools in the manifest at all — not tools that
+fail on call. With one, the agent acts *as* that session: same organization
+scoping, same store, same refusals as `/api/*`. The session's user must have
+enrolled a Passkey.
+
+**An agent cannot approve.** `approve/start` and `approve/finish` have no tools
+and no dispatch branch, because consent is a WebAuthn user-verifying assertion
+and there is none an agent could produce. Verified end to end over real stdio:
+
+```text
+review ¥38,500 against a ¥10,000 balance  -> REFUSED payment/insufficient-funds
+review ¥38,500 against a ¥120,000 balance -> ok, status=awaiting-passkey
+commit a proposal no human approved       -> REFUSED authority/proposal-not-found
+```
 
 ## Distribution profiles
 

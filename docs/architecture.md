@@ -18,7 +18,7 @@ its Swift implementation.
 | Provider selection | safe `.kotoba` policy + host-side mirror |
 | Model transport | localhost adapters plus explicit Codex/Claude CLI runners |
 | Session memory | `kotoba.kgraph` EAV datoms + durable EDN |
-| Compatible client access | OpenAI-compatible loopback HTTP API |
+| Compatible client access | OpenAI-compatible loopback HTTP API; MCP over stdio for the fleet |
 | Secret access | named environment variables at provider boundary |
 
 ## Workspace integrations
@@ -32,7 +32,7 @@ projects, or events.
 | Inbox | `m365-archive` and `net-kotobase/mail-worker` | Lists archive metadata; sealed reception remains recipient-key controlled |
 | Projects | `kotoba-lang/com-github` | Reads GitHub Projects v2; shows `permission-required` without `read:project` |
 | Drive (archive) | `m365-archive` OneDrive snapshot | Lists file state without silently materializing git-annex objects |
-| Drive (documents) | `kotoba-lang/drive` workspace + an object store | Creates and edits Sheets / Docs / Forms as office envelopes; per-user ACL, quota, versions and a reversible trash; a save the surface's own validator rejects is refused |
+| Drive (documents) | `kotoba-lang/drive` workspace + an object store | Creates and edits Sheets / Docs / Forms / Slides as office envelopes; per-user ACL, quota, versions and a reversible trash; a save the surface's own validator rejects is refused |
 | Scheduler | `kotoba-lang/shell` EventKit + `kotoba-lang/calendar` | Reads seven days under the explicit `calendar/read` capability |
 
 `GET /api/workspace/worker` is served next to these but is not one of them: it
@@ -68,6 +68,215 @@ nothing. `documents/purge!` is the one call that does, it refuses anything not
 already in the trash, and the Drive shows the trash and the quota together
 because otherwise a Drive that fills up cannot say why.
 
+### Searching inside documents
+
+The Drive could filter a list of names. What a cell says, what a paragraph
+says, what is written on a slide — none of it was reachable except by
+opening the document.
+
+What counts as text is the model's business and lives with each surface as
+`:text` in `documents/kinds`, next to `:vocabulary` and `:problems`.
+Searching is the app's, because only the app knows which documents this
+principal may read — and a search reaches exactly as far as a listing does,
+so it cannot be used to learn that a document exists.
+
+A title match wins over a content match and a document appears once. The
+snippet is cut to a window around the hit and quotes the *document's* casing,
+not the query's: echoing the query back would be quoting something the
+document does not say.
+
+**It reads every readable document's bytes on every search.** No index, so
+nothing can be stale and nothing has to be rebuilt — linear in the size of
+the Drive, which is the right trade for one household's documents and the
+wrong one for an organisation's. When it stops being right, the fix is an
+index keyed on the object reference, which already changes on every save.
+The UI debounces at 300 ms for the same reason: a request per keystroke
+would be a scan per keystroke.
+
+### Import and export
+
+Three formats, and only one of them is new code here.
+
+- **CSV**, from `sheets.csv`, which gained it for this. One tab in or out,
+  because that is what the format can carry.
+- **PPTX**, from `slides.pptx` and `slides.office`, which have had it all
+  along without the Drive ever offering it.
+- **EDN**, which is free: the stored bytes already are the EDN envelope, so
+  exporting one is handing over what is on disk. That makes every surface
+  exportable, including the two with no office format at all.
+
+`documents/export-formats` is keyed by surface, so asking a document for a
+format it has no writer for is refused by name (415) with the list of what it
+does have, rather than producing something empty. The Drive offers exactly
+those buttons, from the same table.
+
+An import **creates** rather than replaces. Importing into an existing
+document would be a save, and a save has an etag; an import has a file and no
+idea what it is landing on top of. It lands through `create!` and then
+`write-resource!` — the same path a save takes — so quota, ACL, versioning
+and the surface's own validator all apply to it. An imported deck that is not
+a deck is refused with the same code as a typed one.
+
+There is no xlsx and no docx. `spreadsheetml` and `wordprocessingml` do not
+exist in this workspace; `presentationml` does, which is why slides is the
+one surface with an office format.
+
+### Two editors, one document
+
+A save carries the `:etag` of the version it was made from — the object
+reference of that version, which `drive.object/write-item` guarantees is
+unique per version. A save whose etag is not the current one is refused with
+`:drive/stale-version` and a 409, naming who moved it.
+
+This is a defect fix rather than a feature. Measured before the check
+existed: alice and bob open version 1, both add a paragraph, both save — and
+alice's paragraph is gone with the UI saying "saved". The bytes were still in
+the history, which is not the same as anybody knowing to look.
+
+A missing etag is refused too. A nil that meant "whatever is there now" would
+be the old behaviour under a new name.
+
+`rename!` carries no etag because it cannot be stale: it reads the current
+resource itself, inside the lock, so what it writes is by construction based
+on what is there.
+
+**This is optimistic concurrency, not co-editing.** The second editor is told
+to re-read and re-apply; nothing merges their work for them. Real
+simultaneous editing means operations rather than whole-document saves, and
+that is a different design, not more of this one.
+
+### EDN at rest, JSON on the wire
+
+The object store holds EDN. `documents/stored-envelope` is the same
+four-key shape the office envelope has — family, version, resource kind,
+payload — written with `pr-str`, so the bytes are still self-describing and a
+reader still does not have to know in advance which surface it is holding.
+
+The reason is what plain JSON cannot carry. `:sheets/type` left as
+`"workbook"` and a cell address `[1 1]` left as the string `"[1 1]"`, so
+every reader had to put them back — which is why there are four
+`rehydrate-*` functions and why each had to learn not to throw on input it
+could not convert. None of that is needed at rest: EDN is what the models
+already are, what every validator reads, and what `store.clj` already writes
+for the rest of this app's state.
+
+**Rehydration did not go away; it moved to the one place it belongs.** A
+payload arriving over HTTP is JSON because HTTP is, and `update!` converts it
+on the way in. Nothing converts on the way out.
+
+The client contract did not move with the storage. `content` returns
+`:payload` as the same plain-JSON projection the editor has always been
+given — `transit.core/write-json` of the EDN — alongside `:resource`, the
+EDN itself, for callers inside this process.
+
+Documents written before this are JSON. `decode-stored` tells the two apart
+by their first character and rehydrates a JSON one on read, so an old
+document reads as it always did and the next save rewrites it in EDN.
+**Migration is what the Drive does as it is used, not something anyone runs.**
+An item's `:drive/media-type` is corrected by that same save, so it says
+`application/edn` once it is.
+
+### Editing
+
+Two views of one value. The Drive detail pane offers fields for the surface a
+document is — questions for a form, blocks for a document, a cell grid for a
+workbook — and the JSON underneath for everything the fields do not reach.
+Both mutate the same projected payload, which is the object the versions
+endpoint accepts, so a save does not care which produced it and neither is a
+parallel format that can drift.
+
+The vocabularies those fields offer (`forms.model/field-types`,
+`docs.model/block-kinds`, `slides.validate/shape-kinds`) travel from the
+libraries through `documents/kinds` to the page, so the editor offers
+exactly what the validator accepts.
+
+Slides is the one surface whose validator does not take the resource.
+`slides.validate/problems` takes a *workspace* — it looks for items whose
+kind is `:slides/deck` — and it also runs `route-problems`, which reports an
+error for each of four Pages hosts it cannot find. That is a question about
+the slides website, not about this document, and asking it here would refuse
+every save. So the deck is wrapped in a workspace of its own and only
+`deck-problems` is asked. Two things it cannot reach — a `docs` table or list, a
+workbook with no tabs — say so and hand over to the JSON view rather than
+editing part of a structure and leaving the rest.
+
+These are not `app-sheets`, `app-docs` and `app-slides`, which are separate
+applications on their own origin. Reaching those would mean widening
+`connect-src 'self'` in the page CSP, which is a decision about what this app
+may talk to and not one to make as a side effect of adding an editor.
+
+### References between documents
+
+`docs.model` has had `:table-ref`, `:file-ref` and `:deck-ref` blocks all
+along, each carrying a `:docs/target` string, and nothing ever resolved one.
+Four surfaces sharing a pane is not the same as four surfaces that know about
+each other; this is the difference.
+
+A target is a Drive item id — not a URL and not the `slides:intro-deck`-style
+scheme the seed document in `docs.model` uses, which is a placeholder rather
+than a format anything parses. An id is what `documents/locate` already
+resolves, so **a reference obeys the same permission answer as everything
+else**: a link to a document you may read resolves, and a link to one you may
+not is indistinguishable from a link to nothing. Backlinks are filtered the
+same way, so an incoming reference never tells you a document exists that you
+were not shown.
+
+Dangling and mistyped references are save-time **warnings**, not errors. A
+document being written may name something that is about to be shared, and
+`docs.model` names the kinds without saying a `:table-ref` must be a
+workbook, so pointing one at a deck is reported and not refused.
+
+The check belongs to the app rather than to `docs.validate`: the validator
+sees a target string and has no way to know whether it names anything,
+because what it could name lives in a Drive it does not know about.
+
+Only `docs` documents carry references today. A workbook has no block that
+names another document, and a deck's links live on a `slides` *workspace*
+rather than in the deck — the envelope carries one deck, so there is nowhere
+in it for a link to sit.
+
+### Comments
+
+`:commenter` was a grantable role backed by nothing — `can-write?` excludes
+it, so a commenter could read and do nothing else, which is `:viewer` with a
+longer name. Comments are what it means.
+
+They are kept beside the document rather than in `docs.model`'s
+`:docs/comments`, and the reason is a boundary rather than a convenience. A
+comment written into the resource is a write to the document, and
+`drive.workspace` says a commenter may not make one — correctly, since a
+commenter who could rewrite content would be an editor under a quieter name.
+The alternative is to perform that write as somebody who may, and since
+`:drive.version/author` now records who wrote each version, that would file a
+comment under the wrong name in the one record that says who changed what.
+
+The costs are real: a comment does not travel with the exported envelope, and
+`docs.validate`'s comment checks never see it. If comments must travel with
+the bytes, the fix is a constrained-write operation in `drive` that a
+commenter may reach — not a workaround here.
+
+Anyone who may read a document sees its comments; anyone above `:viewer` may
+leave one; its author or the document's owner may delete it. An editor may
+rewrite the document and still not delete what somebody said about it.
+
+### Answering a form
+
+A form is the one surface with a second thing to do to it. Editing changes
+the questions; answering does not, and an answer is not a version of the
+form — writing one into the stored envelope would charge every response to
+the owner's quota and change the document every respondent is reading from.
+So submissions are kept beside the document, in app state, keyed by its id.
+
+Whoever may read a form may answer it, including through a share link:
+requiring write access to submit would make every respondent an editor of
+the questions. The answers belong to the owner, and only the owner reads
+them — an editor may change the questions and still not see the responses.
+
+`forms.validate/submission-problems` is what refuses one, on a **rehydrated**
+form. Against a projected payload `missing-required` reads `:forms/fields`,
+finds nil, and reports that nothing is required, so an empty submission would
+pass. There is a test asserting exactly that difference.
+
 ### Sharing
 
 Each principal has their own `drive.workspace`, and a grant is recorded on the
@@ -77,6 +286,11 @@ can act on is a button that does nothing. `documents/locate` is what closes
 that: own Drive first, then a scan of the others for an item this principal
 has a role on.
 
+- **A version says who wrote it.** `:drive.version/author` is the principal
+  `drive.object/write-item` checked against the ACL, not a value this app
+  passes in — an author the caller names is a history the caller can write.
+  Before sharing this was redundant; with two possible writers a history that
+  cannot distinguish them is a history of nothing.
 - **The owner's Drive is where the bytes stay.** An editor saving a shared
   document writes into the owner's workspace and is charged against the
   owner's quota. Writing it back under the editor would fork it into a second
@@ -204,6 +418,27 @@ mirror is intentionally small and covered by the same truth table. Moving the
 actual server decision into a tendered Wasm component is the next hardening
 step; the current host mirror is not described as if it were already tendered.
 
+## MCP surface
+
+`cloud.itonami.app.mcp` serves the fleet capability's two tools — `fleet_search`
+and `fleet_call` — over MCP on **stdio**, launched as `clojure -M:mcp`. It is an
+adapter: `cloud.itonami.app.fleet` already owns the descriptors and behaviour for
+the in-app agent loop, and this translates them for a client that is not that
+loop. `mcp.model` holds the manifest, `mcp.execute` does the JSON-RPC dispatch,
+and an `ITool` port calls the same two functions.
+
+Stdio rather than a route on the loopback server: `/v1/*` is already the one
+unauthenticated exception the loopback bind exists to protect, and an MCP route
+would be a second. Over stdio the client is a process the operator launched, so
+nothing new listens and the trust boundary is one they already set.
+
+The fleet capability gate is honoured, so `tools/list` is empty until it is
+enabled — the same fail-closed default as the other agent capabilities. Browser
+and computer tools are excluded because their approval path verifies the
+frontmost application between approval and action, which cannot survive a
+protocol whose consent model belongs to the client; the workspace reads are
+excluded because they sit behind the Passkey session. See ADR-0004.
+
 ## API profile
 
 The public compatibility slice is:
@@ -309,7 +544,8 @@ relevance queries. Writes replace the state file atomically.
 1. Tender the provider policy Wasm in the live request path.
 2. Add tool manifests with per-working-folder capabilities and approval
    receipts.
-3. Add MCP server/client profiles.
+3. Add an MCP **client** profile. (The server half exists for the fleet
+   capability: `cloud.itonami.app.mcp` on stdio — see below and ADR-0004.)
 4. Add memory distillation and relevance retrieval over kgraph.
 5. Add schedules/watchers after tool isolation is available.
 6. Add a function-call compatibility suite. (Streaming has one:

@@ -1,0 +1,4 @@
+# Not committed, matching services/itonami-cloud-webhooks. The install pulls a
+# ~109 MB workerd binary, which exceeds GitHub's per-file limit outright — the
+# first push of this directory was rejected for exactly that.
+node_modules/

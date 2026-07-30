@@ -29,6 +29,11 @@
    (or (System/getenv "CLOUD_ITONAMI_TAMAKI_ROOT")
        (io/file (workspace-root) "orgs/etzhayyim/tamaki"))))
 
+(defn tamaki-state-root []
+  (io/file
+   (or (System/getenv "CLOUD_ITONAMI_TAMAKI_STATE_DIR")
+       (io/file (tamaki-root) ".tamaki"))))
+
 (defn- assignment-files []
   (let [directory (io/file (tamaki-root) "organisms")]
     (->> (or (.listFiles directory) (make-array java.io.File 0))
@@ -48,9 +53,7 @@
   (->> (assignment-files) (keep read-assignment) vec))
 
 (defn- events-file []
-  (io/file (or (System/getenv "CLOUD_ITONAMI_TAMAKI_STATE_DIR")
-               (io/file (tamaki-root) ".tamaki"))
-           "events.edn"))
+  (io/file (tamaki-state-root) "events.edn"))
 
 (defn assignment
   ([] (first (assignments)))
@@ -171,9 +174,7 @@
 (def max-intent-summary-characters 4000)
 
 (defn- workplace-root []
-  (io/file (or (System/getenv "CLOUD_ITONAMI_TAMAKI_STATE_DIR")
-               (io/file (tamaki-root) ".tamaki"))
-           "workplace"))
+  (io/file (tamaki-state-root) "workplace"))
 
 (defn- private-directory [kind]
   (io/file (workplace-root) (name kind)))

@@ -43,7 +43,8 @@
   section), so a committed proposal here means a governed proposal was recorded --
   NOT that a card was issued, a profile downloaded, or a call answered. Callers
   and UI must not present it as more than that."
-  (:require [cloud.itonami.app.passkey :as passkey]
+  (:require [cloud.itonami.app.credential-assurance :as assurance]
+            [cloud.itonami.app.passkey :as passkey]
             [cloud.itonami.app.store :as store])
   (:import [java.nio.charset StandardCharsets]
            [java.security MessageDigest]
@@ -233,14 +234,42 @@
     (nil? (:digest context))
     (conj {:authority/issue :context/digest-absent})))
 
+(defn credential-policy-issues
+  "Why the credential that produced this assertion may not authorize for this
+  authority. Empty when it may.
+
+  This is a THIRD gate, and it answers a question the other two do not.
+  `approval-match-issues` asks 'is this assertion for this proposal?'. The
+  authority's Governor asks 'is this admissible?'. Neither asks **what kind of
+  authenticator signed it** -- and for a decision made specifically so that an
+  agent cannot approve on a human's behalf, that is the question that matters.
+
+  A Passkey assertion is equally valid whether it came from a Secure Enclave
+  requiring Touch ID or from a browser's virtual authenticator signing
+  programmatically with no human present. Both verify. Only one of them means
+  a person agreed. `cloud.itonami.app.credential-assurance` grades the
+  difference from what was recorded at enrolment, and this is where that grade
+  is enforced.
+
+  Looked up from the STORE by credential id rather than taken from the
+  assertion result, for the same reason the posture is computed server-side:
+  the enrolment-time evidence is ours, and re-deriving it from the response
+  would let the response describe itself."
+  [configuration authority-key credential-id]
+  (let [record (get-in (store/snapshot) [:identity :passkeys credential-id])]
+    (if-not record
+      [{:passkey/issue :credential/not-found}]
+      (assurance/policy-issues record
+                               (assurance/policy-for configuration authority-key)))))
+
 (defn finish-approval!
   "Complete the assertion and mark the proposal approved.
 
   Verifies, all of them: the session, the assertion's own user, the proposal's
-  owner, the context type, the authority, the proposal id, AND the digest -- see
-  `approval-match-issues`, which is where those comparisons live so they can be
-  tested directly."
-  [domain session proposal-id transaction-id credential]
+  owner, the context type, the authority, the proposal id, the digest -- see
+  `approval-match-issues` -- AND that the credential which signed it is one this
+  authority accepts, see `credential-policy-issues`."
+  [domain configuration session proposal-id transaction-id credential]
   (let [result  (passkey/finish-authorization! transaction-id credential)
         context (:authorization-context result)
         p       (owned-proposal! session proposal-id :awaiting-passkey)
@@ -257,10 +286,28 @@
       (throw (ex-info "Passkey approval does not match this proposal"
                       {:type :authority/approval-mismatch
                        :issues (mapv :authority/issue issues)})))
+    ;; After the match, before the approval is recorded: an assertion that is
+    ;; genuinely for this proposal but came from an authenticator this authority
+    ;; does not accept is a REFUSAL, not an approval.
+    (let [credential-issues (credential-policy-issues
+                             configuration (:authority/key domain)
+                             (:credential-id result))]
+      (when (seq credential-issues)
+        (throw (ex-info "この authenticator ではこの authority を承認できません"
+                        {:type :authority/credential-not-accepted
+                         :issues credential-issues}))))
     (let [approved (assoc p
                           :status :approved
                           :approved-at (store/now)
-                          :passkey-credential-id (:credential-id result))]
+                          :passkey-credential-id (:credential-id result)
+                          ;; Recorded on the proposal so a reader can see what
+                          ;; kind of authenticator approved it, without having
+                          ;; to go and re-grade the credential later.
+                          :passkey-assurance
+                          (:passkey/assurance
+                           (assurance/assurance
+                            (get-in (store/snapshot)
+                                    [:identity :passkeys (:credential-id result)]))))]
       (store/transact! assoc-in (proposal-path proposal-id) approved)
       (dissoc approved :user-id :organization-id))))
 
@@ -290,12 +337,80 @@
   [domain configuration session proposal-id]
   (let [p (owned-proposal! session proposal-id :approved)
         outcome ((require-fn domain :authority/commit!) configuration session p)
-        ok? (true? (:authority/ok? outcome))
-        final (assoc p
-                     :status (if ok? :committed :authority-refused)
-                     :committed-at (store/now)
-                     :authority-record (:authority/record outcome)
-                     :authority-refusal (:authority/refusal outcome))]
+        final (assoc p :committed-at (store/now))
+        final (cond
+                ;; Before `ok?`, and this order is the whole point: a pending
+                ;; outcome carries `:authority/ok? false` and no refusal, so
+                ;; testing ok? first files it as :authority-refused — a
+                ;; decision the operator has not made. The subject consented
+                ;; and the operator has not answered; two states could not say
+                ;; that, which is why there is a third.
+                (true? (:authority/pending? outcome))
+                (assoc final :status :authority-pending
+                       :authority-reference (:authority/reference outcome)
+                       :authority-record nil
+                       :authority-refusal nil)
+
+                (true? (:authority/ok? outcome))
+                (assoc final :status :committed
+                       :authority-record (:authority/record outcome)
+                       :authority-refusal nil)
+
+                :else
+                (assoc final :status :authority-refused
+                       :authority-record nil
+                       :authority-refusal (:authority/refusal outcome)))]
+    (store/transact! assoc-in (proposal-path proposal-id) final)
+    (dissoc final :user-id :organization-id)))
+
+(defn refresh!
+  "Ask the authority what became of a pending proposal, and record what it says.
+
+  Read-only against the authority: it consults the consent surface, which
+  cannot decide. Learning an outcome and causing one are different
+  authorities.
+
+  Only an `:authority-pending` proposal can be refreshed — that is the one
+  state that has a reference to ask about. An awaiting-passkey proposal has
+  no reference and a resolved one is done, and both refuse as
+  `:authority/proposal-not-found` rather than being quietly skipped.
+
+  Four answers, and the fourth is why this is not just `commit!` again:
+
+  - still pending → nothing changes and nothing is dated
+  - cleared → `:committed` with the record
+  - refused → `:authority-refused` with the refusal
+  - **the authority does not recognise the reference** → it stays pending. A
+    reference the actor forgot is not a decision anybody made, and writing
+    `:authority-refused` for one would put a refusal on the ledger that no
+    governor issued. That we asked and it did not know is recorded instead,
+    as `:authority-unknown-since`.
+
+  A domain with no `:authority/status` refuses here rather than everywhere:
+  `valid-domain?` deliberately does not require one, because
+  `cloud.itonami.app.authority.posture` has none and making it invalid
+  wholesale would take away the operations it can still do."
+  [domain configuration session proposal-id]
+  (let [p (owned-proposal! session proposal-id :authority-pending)
+        outcome ((require-fn domain :authority/status)
+                 configuration (:authority-reference p))
+        final (cond
+                (true? (:authority/pending? outcome)) p
+
+                ;; Before the ok?/refused split, because an unknown reference
+                ;; arrives as `:authority/ok? false` and is not a refusal.
+                (true? (:authority/unknown? outcome))
+                (assoc p :authority-unknown-since (store/now))
+
+                (true? (:authority/ok? outcome))
+                (assoc p :status :committed
+                       :resolved-at (store/now)
+                       :authority-record (:authority/record outcome))
+
+                :else
+                (assoc p :status :authority-refused
+                       :resolved-at (store/now)
+                       :authority-refusal (:authority/refusal outcome)))]
     (store/transact! assoc-in (proposal-path proposal-id) final)
     (dissoc final :user-id :organization-id)))
 
@@ -323,3 +438,11 @@
   "True when nothing further will happen to this proposal."
   [p]
   (contains? #{:committed :authority-refused :rejected} (:status p)))
+
+(defn pending-with-authority?
+  "True when the human has consented and the authority has not yet decided.
+
+  Distinct from `pending?`, which is waiting on the person. Two states that
+  one predicate could not tell apart, which is why there are two."
+  [p]
+  (= :authority-pending (:status p)))

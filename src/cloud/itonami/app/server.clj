@@ -4,10 +4,13 @@
             [cloud.itonami.app.approval-broker :as approval-broker]
             [cloud.itonami.app.agent-event :as agent-event]
             [cloud.itonami.app.agent-workspace :as agent-workspace]
+            [cloud.itonami.app.authority.api :as authority-api]
             [cloud.itonami.app.config :as config]
+            [cloud.itonami.app.credential-assurance :as credential-assurance]
             [cloud.itonami.app.documents :as documents]
             [cloud.itonami.app.executor :as executor]
             [cloud.itonami.app.filecoin :as filecoin]
+            [cloud.itonami.app.funding :as funding]
             [cloud.itonami.app.identity :as identity]
             [cloud.itonami.app.organism-gateway :as organism-gateway]
             [cloud.itonami.app.relay :as relay]
@@ -50,6 +53,32 @@
     (.sendResponseHeaders exchange status (alength bytes))
     (with-open [out (.getResponseBody exchange)]
       (.write out bytes)))))
+
+(defn- read-body-bytes
+  "The request body as a byte array.
+
+  Every other reader here slurps into a string, which is right for JSON and
+  wrong for a PPTX: decoding a zip as UTF-8 and encoding it back does not
+  give you the zip."
+  ^bytes [^HttpExchange exchange]
+  (.readAllBytes (.getRequestBody exchange)))
+
+(defn- send-bytes!
+  "A binary response with a filename.
+
+  `filename*=UTF-8''…` as well as the plain form: a Japanese title in a
+  Content-Disposition header is not ASCII, and RFC 5987 is how that is said."
+  [^HttpExchange exchange media-type filename ^bytes body]
+  (doto (.getResponseHeaders exchange)
+    (.set "Content-Type" media-type)
+    (.set "Cache-Control" "no-store")
+    (.set "Content-Disposition"
+          (str "attachment; filename*=UTF-8''"
+               (-> (java.net.URLEncoder/encode ^String filename StandardCharsets/UTF_8)
+                   (str/replace "+" "%20")))))
+  (.sendResponseHeaders exchange 200 (alength body))
+  (with-open [out (.getResponseBody exchange)]
+    (.write out body)))
 
 (defn- session-cookie [token]
   (str identity/cookie-name "=" token
@@ -128,6 +157,17 @@
 (defn- id-from-path [path pattern]
   (some-> (re-matches pattern path) second))
 
+;; /api/authority/<authority>/... -- the authority key is a path segment so a
+;; disabled or unknown authority is refused by name rather than by inspecting a
+;; body. `authority-api/review!` etc. refuse an unknown key rather than
+;; defaulting, so a typo cannot reach a different authority.
+(defn- authority-from-path [path pattern]
+  (some-> (re-matches pattern path) second keyword))
+
+(defn- authority+id-from-path [path pattern]
+  (when-let [[_ a i] (re-matches pattern path)]
+    [(keyword a) i]))
+
 (defn- public-session [session-id]
   {:schema "cloud.itonami.app.session.v1"
    :id session-id
@@ -164,6 +204,19 @@
 
 (defn- identity-context [exchange]
   (identity/public-state (cookie-value exchange identity/cookie-name)))
+
+(defn share-candidates
+  "Who this actor could share a document with: the other members of their
+  active organization.
+
+  A convenience for the picker, not a permission boundary — `documents/grant!`
+  takes any principal string, and a name that is not in this list is still a
+  name it will accept. The list exists so the common case is a click rather
+  than a user id typed from memory, and typing one is still allowed."
+  [exchange actor]
+  (->> (get-in (identity-context exchange) [:organization :users])
+       (remove #(= actor (:id %)))
+       (mapv #(select-keys % [:id :display-name :email]))))
 
 (defn- active-organization-slug [exchange]
   (get-in (identity-context exchange) [:organization :organization-id]))
@@ -362,6 +415,166 @@
             (and (= method "GET") (= path "/api/filecoin"))
             (send! exchange 200 (assoc (filecoin/status)
                                        :sample (filecoin/sample)))
+
+            ;; What each enrolled authenticator actually proves, and whether it
+            ;; clears each authority's floor. This is the read that closes the
+            ;; loop on `:credential-policy`: the shipped floor is the strongest
+            ;; one known to be reachable, and raising it should follow from what
+            ;; this reports on real hardware rather than from a guess.
+            (and (= method "GET") (= path "/api/passkeys/assurance"))
+            (let [session (require-app-session! exchange)
+                  state (store/snapshot)
+                  credentials (->> (vals (get-in state [:identity :passkeys] {}))
+                                   (filter #(= (:user-id session) (:user-id %)))
+                                   (sort-by :created-at))]
+              (send! exchange 200
+                     {:schema "cloud.itonami.app.passkeys.assurance.v1"
+                      :credentials (mapv credential-assurance/report credentials)
+                      :authorities
+                      (into {}
+                            (for [k (sort (keys authority-api/adapters))]
+                              [k {:policy (credential-assurance/policy-for config k)
+                                  :accepted
+                                  (mapv :credential-id
+                                        (filter #(empty?
+                                                  (credential-assurance/policy-issues
+                                                   % (credential-assurance/policy-for config k)))
+                                                credentials))}]))}))
+
+            ;; ---- funding accounts (what the payment authority stands on) ----
+            ;; These are reads and writes of the organization's own record, not
+            ;; an outward authority, so they are not behind an `:authorities`
+            ;; switch. They still require the session, the origin check and the
+            ;; CSRF token: linking an account changes which account a settlement
+            ;; would be drawn on, and recording a balance changes whether the
+            ;; funds gate opens.
+
+            (and (= method "GET") (= path "/api/funding"))
+            (let [session (require-app-session! exchange)]
+              (send! exchange 200 (funding/snapshot config session)))
+
+            (and (= method "POST") (= path "/api/funding/accounts"))
+            (let [session (require-app-session! exchange)]
+              (require-origin! exchange config)
+              (require-csrf! exchange session)
+              (send! exchange 200
+                     (funding/link-account! session (read-json exchange))))
+
+            ;; A balance is RECORDED, never fetched: this app has no bank
+            ;; connector, and the `:as-of` in the body is the instant the bank
+            ;; stated, not the instant of this request. See
+            ;; `cloud.itonami.app.funding` for why that distinction is load-bearing.
+            (and (= method "POST")
+                 (re-matches #"/api/funding/accounts/([^/]+)/balance" path))
+            (let [session (require-app-session! exchange)
+                  [_ account-id] (re-matches
+                                  #"/api/funding/accounts/([^/]+)/balance" path)]
+              (require-origin! exchange config)
+              (require-csrf! exchange session)
+              (send! exchange 200
+                     (funding/record-balance! session account-id
+                                              (read-json exchange))))
+
+            (and (= method "POST")
+                 (re-matches #"/api/funding/accounts/([^/]+)/close" path))
+            (let [session (require-app-session! exchange)
+                  [_ account-id] (re-matches
+                                  #"/api/funding/accounts/([^/]+)/close" path)]
+              (require-origin! exchange config)
+              (require-csrf! exchange session)
+              (send! exchange 200 (funding/close-account! session account-id)))
+
+            ;; ---- governed outward authorities (ADR-2607300300) ----
+            ;; Every stage requires an app session, the origin check and the CSRF
+            ;; token, exactly as the other write surfaces do. `authority-api`
+            ;; refuses a disabled authority, and computes the cross-domain posture
+            ;; server-side rather than accepting one from the client.
+
+            (and (= method "GET") (= path "/api/authority"))
+            (let [session (require-app-session! exchange)]
+              (send! exchange 200 (authority-api/overview config session)))
+
+            (and (= method "GET")
+                 (authority-from-path path #"/api/authority/([^/]+)"))
+            (let [session (require-app-session! exchange)
+                  a (authority-from-path path #"/api/authority/([^/]+)")]
+              (send! exchange 200 (authority-api/proposals config session a)))
+
+            (and (= method "POST")
+                 (authority-from-path path #"/api/authority/([^/]+)/review"))
+            (let [session (require-app-session! exchange)
+                  a (authority-from-path path #"/api/authority/([^/]+)/review")]
+              (require-origin! exchange config)
+              (require-csrf! exchange session)
+              (send! exchange 200
+                     (authority-api/review! config session a
+                                            (read-json exchange))))
+
+            (and (= method "POST")
+                 (authority+id-from-path
+                  path #"/api/authority/([^/]+)/proposals/([^/]+)/approve/start"))
+            (let [session (require-app-session! exchange)
+                  [a id] (authority+id-from-path
+                          path #"/api/authority/([^/]+)/proposals/([^/]+)/approve/start")]
+              (require-origin! exchange config)
+              (require-csrf! exchange session)
+              (send! exchange 200
+                     (authority-api/start-approval!
+                      config session a id
+                      (get-in config [:server :webauthn-rp-id])
+                      (get-in config [:server :public-origin]))))
+
+            (and (= method "POST")
+                 (authority+id-from-path
+                  path #"/api/authority/([^/]+)/proposals/([^/]+)/approve/finish"))
+            (let [session (require-app-session! exchange)
+                  [a id] (authority+id-from-path
+                          path #"/api/authority/([^/]+)/proposals/([^/]+)/approve/finish")
+                  body (read-json exchange)]
+              (require-origin! exchange config)
+              (require-csrf! exchange session)
+              (send! exchange 200
+                     (authority-api/finish-approval!
+                      config session a id
+                      (:transaction-id body) (:credential body))))
+
+            (and (= method "POST")
+                 (authority+id-from-path
+                  path #"/api/authority/([^/]+)/proposals/([^/]+)/reject"))
+            (let [session (require-app-session! exchange)
+                  [a id] (authority+id-from-path
+                          path #"/api/authority/([^/]+)/proposals/([^/]+)/reject")]
+              (require-origin! exchange config)
+              (require-csrf! exchange session)
+              (send! exchange 200 (authority-api/reject! config session a id)))
+
+            ;; Refresh asks the authority what became of a PENDING proposal.
+            ;; Read-only against the authority: it hits the actor's consent
+            ;; surface, which cannot decide -- the decision lives on a listener
+            ;; this app has no route to, which is the point.
+            (and (= method "POST")
+                 (authority+id-from-path
+                  path #"/api/authority/([^/]+)/proposals/([^/]+)/refresh"))
+            (let [session (require-app-session! exchange)
+                  [a id] (authority+id-from-path
+                          path #"/api/authority/([^/]+)/proposals/([^/]+)/refresh")]
+              (require-origin! exchange config)
+              (require-csrf! exchange session)
+              (send! exchange 200 (authority-api/refresh! config session a id)))
+
+            ;; Commit is a separate call from finish-approval! on purpose: the
+            ;; hand-off to the actor can refuse (governor, transport), and that
+            ;; refusal is an outcome to record and show, not a failure of the
+            ;; consent that already happened.
+            (and (= method "POST")
+                 (authority+id-from-path
+                  path #"/api/authority/([^/]+)/proposals/([^/]+)/commit"))
+            (let [session (require-app-session! exchange)
+                  [a id] (authority+id-from-path
+                          path #"/api/authority/([^/]+)/proposals/([^/]+)/commit")]
+              (require-origin! exchange config)
+              (require-csrf! exchange session)
+              (send! exchange 200 (authority-api/commit! config session a id)))
 
             (and (= method "GET") (= path "/api/state"))
             (send! exchange 200 (public-state config))
@@ -614,7 +827,11 @@
                      (documents/update!
                       (id-from-path path #"/api/workspace/drive/documents/([^/]+)/versions")
                       (get request "payload")
-                      (:user-id session))))
+                      (:user-id session)
+                      ;; The version this edit was made from. A save that
+                      ;; does not say is refused, not applied — see
+                      ;; `documents/update!`.
+                      (get request "etag"))))
 
             (and (= method "POST")
                  (id-from-path path #"/api/workspace/drive/documents/([^/]+)/rename"))
@@ -659,13 +876,19 @@
                       (id-from-path path #"/api/workspace/drive/documents/([^/]+)/purge")
                       (:user-id session))))
 
+            ;; The candidates come from identity rather than from documents:
+            ;; who exists is the directory's question, and `documents` stays
+            ;; able to grant to any principal string without knowing where
+            ;; the name came from.
             (and (= method "GET")
                  (id-from-path path #"/api/workspace/drive/documents/([^/]+)/sharing"))
             (let [session (require-app-session! exchange)]
               (send! exchange 200
-                     (documents/sharing
-                      (id-from-path path #"/api/workspace/drive/documents/([^/]+)/sharing")
-                      (:user-id session))))
+                     (assoc (documents/sharing
+                             (id-from-path path
+                                           #"/api/workspace/drive/documents/([^/]+)/sharing")
+                             (:user-id session))
+                            :candidates (share-candidates exchange (:user-id session)))))
 
             (and (= method "POST")
                  (id-from-path path #"/api/workspace/drive/documents/([^/]+)/sharing"))
@@ -687,6 +910,138 @@
                                                             (:user-id session))
                        (documents/grant! id (:principal request) (:role request)
                                          (:user-id session)))))
+
+            ;; Inside the documents, not only across their names. Separate
+            ;; from the Drive listing because it reads every readable
+            ;; document's bytes and the listing must not.
+            (and (= method "GET") (= path "/api/workspace/drive/search"))
+            (let [session (require-app-session! exchange)]
+              (send! exchange 200
+                     (documents/search (:q (query-params exchange))
+                                       (:user-id session))))
+
+            ;; Binary out. Not `send!` — a PPTX is a zip, and a CSV that has
+            ;; been through a JSON string is a CSV with quotes in it.
+            (and (= method "GET")
+                 (id-from-path path #"/api/workspace/drive/documents/([^/]+)/export"))
+            (let [session (require-app-session! exchange)
+                  params (query-params exchange)
+                  {:keys [media-type filename bytes]}
+                  (documents/export
+                   (id-from-path path #"/api/workspace/drive/documents/([^/]+)/export")
+                   (or (:format params) "edn")
+                   (:user-id session)
+                   (documents/store-instance)
+                   {:tab (:tab params)})]
+              (send-bytes! exchange media-type filename bytes))
+
+            ;; The body is the file. No multipart: one file per request with
+            ;; the name in the query is the whole of what this needs, and a
+            ;; multipart parser is a lot of surface to add for a boundary
+            ;; string.
+            (and (= method "POST") (= path "/api/workspace/drive/import"))
+            (let [session (require-app-session! exchange)
+                  params (query-params exchange)
+                  body (read-body-bytes exchange)]
+              (require-origin! exchange config)
+              (require-csrf! exchange session)
+              (send! exchange 200
+                     (documents/import! (or (:format params) "edn")
+                                        (:title params)
+                                        body
+                                        (:user-id session))))
+
+            ;; What this document points at, and what points at it. Both
+            ;; resolve through `locate`, so a reference to something the
+            ;; asker may not read is reported as unresolved rather than
+            ;; leaking that it exists.
+            (and (= method "GET")
+                 (id-from-path path #"/api/workspace/drive/documents/([^/]+)/references"))
+            (let [session (require-app-session! exchange)
+                  id (id-from-path path
+                                   #"/api/workspace/drive/documents/([^/]+)/references")]
+              (send! exchange 200
+                     (merge (documents/references id (:user-id session))
+                            (documents/referenced-by id (:user-id session)))))
+
+            (and (= method "GET")
+                 (id-from-path path #"/api/workspace/drive/documents/([^/]+)/comments"))
+            (let [session (require-app-session! exchange)]
+              (send! exchange 200
+                     (documents/comments
+                      (id-from-path path #"/api/workspace/drive/documents/([^/]+)/comments")
+                      (:user-id session))))
+
+            (and (= method "POST")
+                 (id-from-path path #"/api/workspace/drive/documents/([^/]+)/comments"))
+            (let [session (require-app-session! exchange)
+                  request (read-json exchange)]
+              (require-origin! exchange config)
+              (require-csrf! exchange session)
+              (send! exchange 200
+                     (documents/comment!
+                      (id-from-path path #"/api/workspace/drive/documents/([^/]+)/comments")
+                      (:text request) (:anchor request) (:user-id session))))
+
+            (and (= method "POST")
+                 (re-matches #"/api/workspace/drive/documents/([^/]+)/comments/([^/]+)/delete"
+                             path))
+            (let [session (require-app-session! exchange)
+                  [_ id comment-id]
+                  (re-matches #"/api/workspace/drive/documents/([^/]+)/comments/([^/]+)/delete"
+                              path)]
+              (require-origin! exchange config)
+              (require-csrf! exchange session)
+              (send! exchange 200
+                     (documents/delete-comment! id comment-id (:user-id session))))
+
+            ;; The form as something to fill in. Readable by anyone who may
+            ;; read the document, because a form shared read-only is a form
+            ;; meant to be answered.
+            (and (= method "GET")
+                 (id-from-path path #"/api/workspace/drive/documents/([^/]+)/form"))
+            (let [session (require-app-session! exchange)]
+              (send! exchange 200
+                     (documents/form-for-answering
+                      (id-from-path path #"/api/workspace/drive/documents/([^/]+)/form")
+                      (:user-id session))))
+
+            (and (= method "POST")
+                 (id-from-path path #"/api/workspace/drive/documents/([^/]+)/submissions"))
+            (let [session (require-app-session! exchange)
+                  request (read-json-raw exchange)]
+              (require-origin! exchange config)
+              (require-csrf! exchange session)
+              (send! exchange 200
+                     (documents/submit!
+                      (id-from-path path
+                                    #"/api/workspace/drive/documents/([^/]+)/submissions")
+                      (get request "answers")
+                      (:user-id session))))
+
+            ;; Owner only — the responses are theirs.
+            (and (= method "GET")
+                 (id-from-path path #"/api/workspace/drive/documents/([^/]+)/submissions"))
+            (let [session (require-app-session! exchange)]
+              (send! exchange 200
+                     (documents/submissions
+                      (id-from-path path
+                                    #"/api/workspace/drive/documents/([^/]+)/submissions")
+                      (:user-id session))))
+
+            (and (= method "POST")
+                 (id-from-path path #"/api/workspace/drive/shared/([^/]+)/submissions"))
+            (let [session (require-app-session! exchange)
+                  request (read-json-raw exchange)]
+              (require-origin! exchange config)
+              (require-csrf! exchange session)
+              (send! exchange 200
+                     (documents/submit-via-link!
+                      (id-from-path path
+                                    #"/api/workspace/drive/shared/([^/]+)/submissions")
+                      (get request "answers")
+                      (:user-id session)
+                      (System/currentTimeMillis))))
 
             ;; Behind the app session like everything else — see
             ;; `documents/link-content` for why a token is not a way around it.
@@ -973,7 +1328,13 @@
                      ;; Purging something that is not in the trash yet is a
                      ;; conflict with its current state, not a bad request.
                      :drive/not-trashed 409
+                     ;; The document moved under the editor. 409 is the whole
+                     ;; point: the client has to re-read before it can win.
+                     :drive/stale-version 409
+                     :drive/unsupported-format 415
                      :drive/invalid-share 400
+                     :drive/invalid-submission 422
+                     :drive/invalid-comment 400
                      :drive/not-found 404
                      :drive/not-permitted 403
                      :drive/no-content 409
@@ -991,6 +1352,60 @@
                      :relay/invalid-destination 400
                      :relay/request-failed
                      (or (:status (ex-data error)) 502)
+
+                     ;; ---- authority spine ----
+                     ;; Without these an authority that is simply switched off
+                     ;; answers 502, which reads as "this server is broken" when
+                     ;; the truth is "this surface is deliberately not on".
+                     :authority/disabled 501
+                     :authority/unknown-authority 404
+                     :authority/proposal-not-found 404
+                     ;; The Passkey assertion did not authorise THIS proposal.
+                     :authority/approval-mismatch 403
+                     ;; The assertion was genuine and for this proposal, but the
+                     ;; authenticator behind it is not one this authority
+                     ;; accepts. Distinct from a mismatch on purpose: the fix is
+                     ;; to enrol a platform authenticator, not to retry.
+                     :authority/credential-not-accepted 403
+                     :authority/domain-invalid 500
+                     :authority/material-invalid 500
+
+                     ;; ---- funding accounts ----
+                     :funding/institution-missing 400
+                     :funding/currency-unsupported 400
+                     :funding/account-type-invalid 400
+                     :funding/amount-invalid 400
+                     :funding/as-of-invalid 400
+                     :funding/source-invalid 400
+                     :funding/account-not-found 404
+                     ;; Understood, but at odds with what the account already
+                     ;; says it is — a conflict, not a malformed request.
+                     :funding/currency-mismatch 409
+                     :funding/account-inactive 409
+
+                     ;; ---- payment settlement ----
+                     :payment/op-unsupported 400
+                     :payment/payee-missing 400
+                     :payment/reference-missing 400
+                     :payment/amount-invalid 400
+                     :payment/currency-mismatch 409
+                     :payment/account-not-linked 409
+                     :payment/account-inactive 409
+                     :payment/duplicate-settlement 409
+                     ;; The balance is missing or too old to answer "will this
+                     ;; clear?". The request is well-formed; the precondition is
+                     ;; not met, and recording a balance resolves it.
+                     :payment/balance-unknown 409
+                     ;; Exactly what 402 is for.
+                     :payment/insufficient-funds 402
+                     ;; Held by the cross-domain SIM-swap invariant, not by
+                     ;; anything wrong with the request.
+                     :payment/spend-hold 423
+                     ;; Only reachable if the server failed to compute a fact it
+                     ;; owns — `authority.api` injects both on every review.
+                     :payment/posture-unknown 500
+                     :payment/settlement-history-unknown 500
+
                      502)
                    {:error {:type (name (or (:type (ex-data error))
                                            :provider/error))
