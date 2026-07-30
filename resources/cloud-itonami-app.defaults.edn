@@ -70,10 +70,31 @@
  ;; Only the actor's CONSENT surface belongs here. The operator surface -- where a
  ;; pending proposal is actually decided -- is a different listener on purpose, and
  ;; this app must not be given its address: holding both would mean holding both
- ;; gates. Every actor behind these is
- ;; propose-only today (see the ADR's ceiling section): a committed proposal
- ;; records a governed proposal, NOT an issued card, a downloaded profile or an
- ;; answered call. A UI that reads :committed as "done" is lying.
+ ;; gates.
+ ;;
+ ;; The consent surfaces, as the actors ship them (all loopback, `clojure -M:serve`):
+ ;;
+ ;;   esim   http://127.0.0.1:1339   cloud-itonami-esim          (operator :1340)
+ ;;   card   http://127.0.0.1:1341   cloud-itonami-card-issuing  (operator :1342)
+ ;;   voice  http://127.0.0.1:1343   denwaban                    (no operator port)
+ ;;
+ ;; denwaban has no operator port on purpose: its outward gate G7 is shut, so an
+ ;; approval there could not answer a call, and every op comes back `held`.
+ ;;
+ ;; CARD IS NOW THE EXCEPTION to "propose-only". The other two actors cannot perform
+ ;; an outward act at all, so a :committed proposal there records a governed proposal
+ ;; and NOT a downloaded profile or an answered call -- a UI that reads it as "done"
+ ;; is lying. cloud-itonami-card-issuing CAN issue a real card, through Stripe
+ ;; Issuing, when its operator approves AND its deployment injects the provider
+ ;; (CARD_ACTUATOR=1; CARD_ACTUATOR_MODE=live for real money, test mode otherwise).
+ ;; That is why the transport now understands a fourth answer,
+ ;; "approved-not-actuated": the operator's approval and the provider's call are
+ ;; separate events that fail separately, and collapsing them would either lose an
+ ;; approval that happened or claim a card exists when Stripe declined.
+ ;;
+ ;; Nothing in THIS app holds a Stripe key. The provider reads it from an
+ ;; environment variable named by its own caller, at call time, inside the actor's
+ ;; process.
  :authorities
  {:esim {:enabled? false
          :endpoint nil}   ; cloud-itonami/cloud-itonami-esim
