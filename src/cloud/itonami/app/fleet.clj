@@ -26,7 +26,19 @@
 
   `:id` is not unique. Three repositories declare an id another already owns,
   so lookup is by `:repo` — the directory, which is unique — and `find-by-id`
-  returns every match rather than picking one."
+  returns every match rather than picking one.
+
+  `:execution` says when an actor runs, and it changes what a missing endpoint
+  means. An `:on-demand` actor wakes for an API or MCP call and stops; having
+  no endpoint means nobody has exposed it yet, which is unremarkable when 1,326
+  of them have no deploy config at all. A `:resident` actor carries its own
+  loop and runs unprompted; a missing endpoint there would mean the loop is not
+  running, which is a fault. Reporting both the same way would either bury a
+  dead organism or flag hundreds of healthy unexposed agents as broken.
+
+  The value is derived from the workspace authority
+  (`manifest/repository-rules.edn`, ADR-2607299000), not restated in the app,
+  and it is absent where that vocabulary does not yet reach."
   (:require [clojure.edn :as edn]
             [clojure.java.io :as io]
             [clojure.string :as str]))
@@ -90,6 +102,16 @@
   []
   (:duplicate-ids @catalog))
 
+(defn by-execution
+  "Actors with this execution model. `:unclassified` for the families the
+  authority's prefix rules do not yet cover — marketplace, assoc, municipality
+  and others. That is a gap in the vocabulary, not a property of the actors,
+  and it is left visible rather than defaulted to a plausible value."
+  [execution]
+  (if (= :unclassified execution)
+    (filterv #(nil? (:execution %)) (actors))
+    (filterv #(= execution (:execution %)) (actors))))
+
 (defn counts
   "Directory shape at a glance. `:company-records` are the 155 repositories
   whose blueprint.edn is a `:company/*` legal-entity record rather than an
@@ -99,7 +121,13 @@
   (let [c @catalog]
     {:actors (:count c)
      :callable (:callable-count c)
-     :company-records (:company-record-count c)}))
+     :company-records (:company-record-count c)
+     :duplicate-ids (count (:duplicate-ids c))
+     ;; No :resident actors appear here, and that is a scope fact rather than
+     ;; an absence of them: person-* and loop-* live outside cloud-itonami and
+     ;; carry no blueprint.edn, so this generator cannot see them.
+     :by-execution (frequencies (map #(or (:execution %) :unclassified)
+                                     (:actors c)))}))
 
 ;; ── search ───────────────────────────────────────────────────────────
 

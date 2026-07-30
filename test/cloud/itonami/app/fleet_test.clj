@@ -1,5 +1,6 @@
 (ns cloud.itonami.app.fleet-test
   (:require [clojure.test :refer [deftest is testing]]
+            [clojure.string]
             [cloud.itonami.app.fleet :as fleet]))
 
 (deftest catalog-loads
@@ -116,3 +117,36 @@
                                           :endpoint "https://actor.invalid"
                                           :health-path "/health"}])]
       (is (= :unknown (get-in (fleet/probe-health! 250) ["unreachable" :health]))))))
+
+(deftest execution-model-separates-on-demand-from-resident
+  (testing "isic actors are on-demand, and that is most of the fleet"
+    ;; 452 of them. They answer an API or MCP request and stop; making that
+    ;; many processes resident would pay continuously for idle.
+    (let [od (fleet/by-execution :on-demand)]
+      (is (< 400 (count od)))
+      (is (every? #(= :sector-agent (:role %)) od))
+      (is (every? #(clojure.string/starts-with? (:repo %) "cloud-itonami-isic-") od))))
+
+  (testing "no resident actors are in this catalog, and the reason is scope"
+    ;; person-* and loop-* are resident, but they live outside cloud-itonami
+    ;; and carry no blueprint.edn, so the generator cannot see them. Asserting
+    ;; zero here records that boundary — if resident actors ever appear, the
+    ;; missing-endpoint semantics in this namespace start mattering.
+    (is (empty? (fleet/by-execution :resident))))
+
+  (testing "unclassified is reported, not defaulted"
+    ;; marketplace, assoc, municipality and others match no prefix rule yet.
+    ;; Defaulting them to :on-demand because they happen to be reachable would
+    ;; turn an unfinished vocabulary into a confident answer.
+    (let [u (fleet/by-execution :unclassified)]
+      (is (seq u))
+      (is (every? #(nil? (:execution %)) u))
+      (is (= (count (fleet/actors))
+             (+ (count u)
+                (count (fleet/by-execution :on-demand))
+                (count (fleet/by-execution :resident)))))))
+
+  (testing "counts expose the split"
+    (let [{:keys [by-execution]} (fleet/counts)]
+      (is (pos? (:on-demand by-execution)))
+      (is (pos? (:unclassified by-execution))))))
