@@ -401,6 +401,66 @@
                         :schema credential/schema})
                 (send! exchange 200 (credential/did-web-document domain))))
 
+            ;; Issue a membership credential for the session's ACTIVE membership.
+            ;; Session + origin + CSRF gated like every other mutating route: it
+            ;; mints a signed assertion about a person, and an assertion anyone
+            ;; could cause this app to make is not worth anything.
+            (and (= method "POST") (= path "/api/credentials/membership"))
+            (let [session (require-app-session! exchange)]
+              (require-origin! exchange config)
+              (require-csrf! exchange session)
+              (identity/require-passkey! session)
+              (send! exchange 200
+                     (assoc (credential/issue-membership!
+                             (identity/membership-credential-context session))
+                            :schema credential/schema)))
+
+            ;; The register of what has been issued. Records only — this app does
+            ;; not keep the signed documents, so there is nothing here to hand
+            ;; back to a holder who lost one; they ask for a new credential.
+            (and (= method "GET") (= path "/api/credentials"))
+            (let [session (require-app-session! exchange)]
+              (send! exchange 200
+                     {:schema credential/schema
+                      :issued (credential/issued-credentials (store/snapshot))
+                      :may-revoke? (credential/may-revoke?
+                                    (identity/membership-role session))}))
+
+            ;; Revoke by status index. Owner/admin only: this flips a bit that
+            ;; stops another person's credential from being honoured ANYWHERE it
+            ;; is presented, which is strictly more power than a member holds.
+            (and (= method "POST")
+                 (re-matches #"/api/credentials/(\d+)/revoke" path))
+            (let [session (require-app-session! exchange)
+                  index (id-from-path path #"/api/credentials/(\d+)/revoke")]
+              (require-origin! exchange config)
+              (require-csrf! exchange session)
+              (when-not (credential/may-revoke? (identity/membership-role session))
+                (throw (ex-info "Credential の失効には owner または admin 権限が必要です。"
+                                {:type :identity/forbidden})))
+              (send! exchange 200
+                     (assoc (credential/revoke! (Long/parseLong index))
+                            :schema credential/schema)))
+
+            ;; Verify a credential someone presents. Session-gated deliberately:
+            ;; verification is a pure computation, but leaving it open would make
+            ;; this an oracle anyone can feed arbitrary JSON to, and the app's
+            ;; posture everywhere else is that unauthenticated callers get
+            ;; /health and the two public credential documents, nothing more.
+            ;;
+            ;; An invalid credential is a 200 with :valid? false, not an error
+            ;; status. "Is this credential good?" was answered successfully; the
+            ;; answer was no.
+            (and (= method "POST") (= path "/api/credentials/verify"))
+            (let [session (require-app-session! exchange)]
+              (require-origin! exchange config)
+              (require-csrf! exchange session)
+              (let [body (read-json exchange)
+                    presented (or (get body "credential") (:credential body) body)]
+                (send! exchange 200
+                       (assoc (credential/verify-presented presented)
+                              :schema credential/schema))))
+
             ;; The status list a verifier fetches to learn whether a credential
             ;; we issued has been revoked. Public for the same reason, and signed
             ;; so that serving it from anywhere is safe: an unverified list of
@@ -1647,6 +1707,21 @@
                      :did/unsupported-public-key 422
                      :passkey/onboarding-unavailable 409
                      :identity/organization-id-immutable 409
+                     ;; Credential issuance preconditions. 428 for the missing
+                     ;; Passkey to match :passkey/required — the client must do
+                     ;; something first — and 409 for an organization that has
+                     ;; not claimed an ID, which is a conflict with current state
+                     ;; rather than a malformed request.
+                     :credential/no-subject-did 428
+                     :credential/no-membership 409
+                     :credential/organization-incomplete 409
+                     ;; A presented credential that is not one this app issued.
+                     ;; Understood request, unacceptable content — 422, like
+                     ;; :did/invalid-public-key above.
+                     :credential/unknown-verification-method 422
+                     :credential/unknown-role 400
+                     :credential/no-subject 400
+                     :credential/no-domain 409
                      :ao.worker/not-found 404
                      :ao.intent/invalid 400
                      :ao.intent/rejected 409

@@ -279,3 +279,121 @@
                     (:credential (credential/issue-membership!
                                   {:subject-did subject-did :role :member
                                    :valid-from t}))))))))
+
+;; ── the register and revocation authorization ────────────────────────────────
+
+(deftest issued-register-records-what-is-needed-to-revoke-and-nothing-more
+  (testing "this app keeps the record, not the credential — the holder keeps the
+            signed document, which is the point of it verifying without asking
+            this server"
+    (let [{:keys [credential]}
+          (credential/issue-membership! {:organization-did org-did
+                                         :organization-domain org-domain
+                                         :subject-did subject-did
+                                         :role :auditor})
+          register (credential/issued-credentials (store/snapshot))
+          record (first register)]
+      (is (= 1 (count register)))
+      (is (= 0 (:status-index record)))
+      (is (= subject-did (:subject record)))
+      (is (= "auditor" (:role record)))
+      (is (= org-did (:issuer record)))
+      (is (false? (:revoked? record)))
+      (testing "the signed document itself is NOT in the register"
+        (is (not (contains? record :credential)))
+        (is (not (str/includes? (pr-str register) "proofValue")))
+        (is (some? (get-in credential ["proof" "proofValue"]))
+            "control: the credential handed back to the holder does have one")))))
+
+(deftest register-reflects-revocation-and-orders-newest-first
+  (dotimes [_ 3]
+    (credential/issue-membership! {:organization-did org-did
+                                   :organization-domain org-domain
+                                   :subject-did subject-did
+                                   :role :member}))
+  (credential/revoke! 1)
+  (let [register (credential/issued-credentials (store/snapshot))]
+    (is (= [2 1 0] (mapv :status-index register)) "newest index first")
+    (is (= [false true false] (mapv :revoked? register)))
+    (is (= 3 (credential/issued-count (store/snapshot))))))
+
+(deftest only-owner-and-admin-may-revoke
+  (testing "revocation stops another person's credential from being honoured
+            anywhere it is presented — strictly more power than a member holds"
+    (is (credential/may-revoke? :owner))
+    (is (credential/may-revoke? :admin))
+    (is (credential/may-revoke? "owner") "string roles from JSON must work too")
+    (is (not (credential/may-revoke? :member)))
+    (is (not (credential/may-revoke? :auditor)))
+    (is (not (credential/may-revoke? :guest)))
+    (is (not (credential/may-revoke? nil)))))
+
+;; ── verify-presented: the HTTP boundary ──────────────────────────────────────
+
+(deftest verify-presented-turns-malformed-input-into-an-answer-not-an-error
+  (testing "fed attacker-controlled JSON, a throw would surface as a 500 and tell
+            the caller the server broke when their credential was junk"
+    (doseq [[label input expected-reason]
+            [["not a map" "hello" :credential/not-a-document]
+             ["nil" nil :credential/not-a-document]
+             ["a number" 42 :credential/not-a-document]
+             ["empty map" {} :data-integrity/missing-proof]
+             ["no proof" {"type" ["VerifiableCredential"]} :data-integrity/missing-proof]]]
+      (let [r (credential/verify-presented input)]
+        (is (false? (:verified r)) (str label " must not verify"))
+        (is (false? (:valid? r)) (str label " must not be valid"))
+        (is (= expected-reason (:reason r)) (str label " reason"))))))
+
+(deftest verify-presented-rejects-a-credential-this-app-did-not-issue
+  (testing "as an answer, not an exception: someone presenting a foreign
+            credential is a normal verification outcome"
+    (let [other-seed (byte-array (repeat 32 (byte 9)))
+          other-did (ed/did-key-from-seed other-seed)
+          foreign (di/issue-credential
+                   {"@context" [credential/credentials-context]
+                    "type" ["VerifiableCredential"]
+                    "issuer" other-did
+                    "credentialSubject" {"id" subject-did "role" "owner"}}
+                   {:seed other-seed
+                    :verification-method (str other-did "#"
+                                               (subs other-did (count "did:key:")))
+                    :created (credential/now-timestamp)})
+          r (credential/verify-presented foreign)]
+      (is (false? (:verified r)))
+      (is (false? (:valid? r)))
+      (is (= :credential/unknown-verification-method (:reason r))))))
+
+(deftest verify-presented-agrees-with-verify-on-a-good-credential
+  (let [{:keys [credential status-index]}
+        (credential/issue-membership! {:organization-did org-did
+                                       :organization-domain org-domain
+                                       :subject-did subject-did
+                                       :role :member})]
+    (is (= (credential/verify credential) (credential/verify-presented credential)))
+    (credential/revoke! status-index)
+    (let [r (credential/verify-presented credential)]
+      (is (:verified r) "still correctly signed")
+      (is (false? (:valid? r)) "but revoked, so not to be honoured"))))
+
+(deftest verify-presented-does-not-swallow-programming-errors
+  (testing "only ex-info is caught. A credential whose proof is not a map makes
+            data-integrity raise ex-info, but a genuine NPE must still propagate,
+            or a real bug would hide behind a tidy :valid? false."
+    (is (= :data-integrity/missing-proof
+           (:reason (credential/verify-presented {"proof" "not-a-map"}))))
+    ;; The failure has to happen AFTER the proof checks pass, or the snapshot is
+    ;; never touched and the test proves nothing (which is what a first version
+    ;; of it did). So: a genuinely valid credential, and a snapshot whose
+    ;; :revoked is not seqable — `(set :nope)` raises IllegalArgumentException,
+    ;; which is not ex-info and must therefore propagate.
+    (let [{:keys [credential]}
+          (credential/issue-membership! {:organization-did org-did
+                                         :organization-domain org-domain
+                                         :subject-did subject-did
+                                         :role :member})]
+      (is (:valid? (credential/verify-presented credential))
+          "control: this credential is fine against a real snapshot")
+      (is (thrown? IllegalArgumentException
+                   (credential/verify-presented
+                    credential
+                    {:credentials {:next-status-index 0 :revoked :nope :issued {}}}))))))
