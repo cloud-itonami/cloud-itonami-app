@@ -648,6 +648,24 @@
     .connector-card .tool-button{grid-column:1/-1;width:100%}
     .local-actions{justify-content:stretch}.local-actions .dads-button{width:100%}
   }
+  /* WCAG 2.3.3, and kotoba-uiux rule 7. Both animations in this stylesheet are
+     INFINITE and decorative -- a typing indicator and a loading shimmer -- which
+     is the exact category `reduce` exists for; an animation that never stops is
+     the one most likely to cause discomfort.
+
+     Measured rather than assumed: design-quality scored the rendered page 87.64
+     with `reduced-motion` as the ONLY finding, which is what prompted this. This
+     app is on DADS rather than kotoba-ui, so it gets no reduced-motion base layer
+     for free and has to say it here.
+
+     Stopped rather than slowed. Both animations mean 'something is happening',
+     and the static state still says that -- the dots are still there, the
+     skeleton still occupies the space it is reserving -- so nothing is lost by
+     holding them still. */
+  @media (prefers-reduced-motion: reduce){
+    .typing span{animation:none;opacity:1}
+    .skeleton{animation:none;background:var(--color-neutral-solid-gray-100)}
+  }
   ")
 
 (def interaction-js

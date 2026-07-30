@@ -441,6 +441,16 @@
         (is (nil? (re-find #"class=\"form-actions\"" html))
             "form-actions is not a class this app defines"))
 
+      (testing "accessibility: motion is not forced on anyone (WCAG 2.3.3)"
+        ;; Measured, not assumed: kotoba-lang/design-quality scored this page
+        ;; 87.64 with `reduced-motion` as the ONLY finding, and 100.00 once the
+        ;; guard was added. This app is on DADS rather than kotoba-ui, so it gets
+        ;; no reduced-motion base layer for free and has to say it itself —
+        ;; which means a stylesheet edit can silently take it away again.
+        (is (re-find #"prefers-reduced-motion" html))
+        (is (re-find #"\.typing span\{animation:none" html))
+        (is (re-find #"\.skeleton\{animation:none" html)))
+
       (testing "accessibility: the status regions announce"
         (is (re-find #"id=\"credential-issue-status\"" html))
         (is (re-find #"aria-live=\"polite\"" html))))))
