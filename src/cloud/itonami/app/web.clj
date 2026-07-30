@@ -923,9 +923,11 @@
           make('strong', null,
             `${receipt.capability || 'intent'} · ${receipt.status || 'unknown'}`),
           make('p', 'data-list__meta',
-            `${receipt.intent} · effect ${receipt['effect-status'] || 'unknown'}`));
+            `${receipt.intent} · effect ${receipt['effect-status'] || 'unknown'}`
+              + `${receipt.evidence?.['run-id']
+                ? ` · run ${receipt.evidence['run-id']}` : ''}`));
         item.append(copy);
-        if (receipt.status === 'admitted'
+        if (['admitted', 'awaiting-approval'].includes(receipt.status)
             && receipt.capability === 'intent/submit'
             && !decidedIntents.has(receipt.intent)) {
           const actions = make('div', 'worker-actions');

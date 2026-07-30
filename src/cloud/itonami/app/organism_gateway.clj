@@ -212,16 +212,29 @@
                              StandardCopyOption/REPLACE_EXISTING]))
     value))
 
+(defn- safe-receipt-evidence [receipt]
+  (let [evidence (:receipt/evidence receipt)]
+    (cond-> {}
+      (:agent.run/id evidence)
+      (assoc :run-id (:agent.run/id evidence))
+      (:agent.run/status evidence)
+      (assoc :run-status (name (:agent.run/status evidence)))
+      (seq (:loops/stopped evidence))
+      (assoc :stopped-loops (mapv str (:loops/stopped evidence))))))
+
 (defn- public-receipt [receipt]
-  (let [public
+  (let [evidence (safe-receipt-evidence receipt)
+        public
         (select-keys receipt
                      [:receipt/schema :receipt/id :receipt/worker
                       :receipt/organization :receipt/intent
                       :receipt/capability :receipt/status
                       :receipt/effect-status :receipt/payload-hash
                       :receipt/parent :receipt/decision
-                      :receipt/next-gates :receipt/created-at
-                      :receipt/updated-at])
+                      :receipt/next-gates :receipt/reason
+                      :receipt/created-at :receipt/updated-at])
+        public (cond-> public
+                 (seq evidence) (assoc :receipt/evidence evidence))
         qualified-name
         (fn [value]
           (when value
@@ -237,6 +250,8 @@
       (update :receipt/effect-status qualified-name)
       (:receipt/decision public)
       (update :receipt/decision qualified-name)
+      (:receipt/reason public)
+      (update :receipt/reason qualified-name)
       (:receipt/next-gates public)
       (update :receipt/next-gates #(mapv qualified-name %)))))
 
