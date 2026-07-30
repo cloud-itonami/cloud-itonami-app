@@ -48,6 +48,35 @@ The server binds to `127.0.0.1` by default. The browser intentionally uses
 `http://localhost:1338`, which is required for the WebAuthn localhost
 development exception.
 
+## OpenAI-compatible clients
+
+Any tool that speaks the OpenAI chat API can use the local models through the
+loopback server. Point it at `http://localhost:1338/v1` with any API key — the
+compatibility slice is `GET /v1/models` and `POST /v1/chat/completions`, and it
+is reachable without a session because the loopback bind is what protects it.
+The management API under `/api` is not part of this surface and does require
+one.
+
+```bash
+curl -N http://localhost:1338/v1/chat/completions \
+  -H 'Content-Type: application/json' \
+  -d '{"model":"gemma4:e2b","stream":true,
+       "messages":[{"role":"user","content":"hello"}]}'
+```
+
+Streaming is Server-Sent Events in the `chat.completion.chunk` format, ending
+with `data: [DONE]`. `stream_options.include_usage` adds the usage-only chunk
+before it. Omit `stream` for a single `chat.completion` response.
+
+A request the provider policy refuses — a cloud provider behind a shut gate —
+fails with its real status code even under `stream: true`, rather than a 200
+stream that carries an error a client would read as an empty answer.
+
+The non-OpenAI extensions are `provider`, `agent_id` and `session_id`: they
+select a configured provider, one of the local agents, and the stored
+conversation the turn joins. Function calling, embeddings and the Responses API
+are not implemented.
+
 ## Background worker runs
 
 The Worker tab queues prompts that take longer than an interactive turn. Runs
