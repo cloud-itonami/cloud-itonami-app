@@ -2071,6 +2071,63 @@
                (get-in back [:sheets/tabs "予算" :sheets/cells [2 2]])))
         (is (= 1 (count (documents/documents @state alice))))))))
 
+(defn- excel-shaped-xlsx
+  "A .xlsx the way Excel writes one, which is not the way `sheets.xlsx`
+  writes one: shared strings, a style table, and numbers with no `t`.
+
+  Zipped by hand because `xlsx-files` cannot produce this — it has no
+  styles to write — and the whole point is to import a file this Drive did
+  not create."
+  []
+  (let [files
+        {"[Content_Types].xml" "<Types/>"
+         "_rels/.rels" "<Relationships/>"
+         "xl/workbook.xml"
+         (str "<workbook><workbookPr date1904=\"0\"/>"
+              "<sheets><sheet name=\"請求\" r:id=\"rId1\"/></sheets></workbook>")
+         "xl/_rels/workbook.xml.rels"
+         (str "<Relationships><Relationship Id=\"rId1\" "
+              "Target=\"worksheets/sheet1.xml\"/></Relationships>")
+         "xl/styles.xml"
+         (str "<styleSheet><cellXfs>"
+              "<xf numFmtId=\"0\"/><xf numFmtId=\"14\"/>"
+              "</cellXfs></styleSheet>")
+         "xl/sharedStrings.xml" "<sst><si><t>支払期日</t></si></sst>"
+         "xl/worksheets/sheet1.xml"
+         (str "<worksheet><sheetData>"
+              "<row r=\"1\"><c r=\"A1\" t=\"s\"><v>0</v></c>"
+              "<c r=\"B1\" s=\"1\"><v>45000</v></c></row>"
+              "<row r=\"2\"><c r=\"A2\" t=\"inlineStr\"><is><t>金額</t></is></c>"
+              "<c r=\"B2\" s=\"0\"><v>120000</v></c></row>"
+              "</sheetData></worksheet>")}
+        out (java.io.ByteArrayOutputStream.)]
+    (with-open [zip (java.util.zip.ZipOutputStream. out)]
+      (doseq [[path text] (sort files)]
+        (.putNextEntry zip (java.util.zip.ZipEntry. ^String path))
+        (.write zip (.getBytes ^String text "UTF-8"))
+        (.closeEntry zip)))
+    (.toByteArray out)))
+
+(deftest a-dated-cell-arrives-as-a-date
+  ;; Excel has no date type: a date is a serial number whose *format* makes
+  ;; it one. Without reading `xl/styles.xml` this cell arrives as 45000, and
+  ;; a person looking at their own invoice sees a five-digit number where
+  ;; they wrote a day.
+  (with-state
+    (fn [_state object-store]
+      (let [{:keys [item]} (documents/import! "xlsx" "請求書"
+                                              (excel-shaped-xlsx)
+                                              alice object-store)
+            back (:resource (documents/content (:id item) alice object-store))
+            cells (get-in back [:sheets/tabs "請求" :sheets/cells])]
+        (is (= {:sheets/value "2023-03-15"} (get cells [1 2])))
+        ;; And the amount beside it is not a date, because nothing said it
+        ;; was. This is the half that a converter guessing from shape alone
+        ;; would get wrong — 120000 is a plausible serial too.
+        (is (= {:sheets/value "120000"} (get cells [2 2])))
+        (is (= {:sheets/value "支払期日"} (get cells [1 1])))
+        (is (= {:sheets/value "金額"} (get cells [2 1])))))))
+
 (deftest an-xlsx-round-trips-through-the-drive
   (with-state
     (fn [_ object-store]

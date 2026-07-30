@@ -209,8 +209,29 @@ imported as pptx produced a one-slide deck and as xlsx an empty workbook,
 both reported as successes. The package is what can be asked, so
 `require-office-package!` checks for a `ppt/` or `xl/` part first.
 
-Styles are still not read, so an Excel date arrives as its serial number.
-There is still no docx.
+**A dated cell arrives as a date.** Excel has no date type: a date is a
+number counting days from an epoch, and what makes it a date is the format
+its style points at. Reading one means reading `xl/styles.xml`, so an
+invoice imported here shows `2023-03-15` where it used to show `45000`.
+
+This is the one place the import converts rather than passing text through,
+and it converts on what the document says rather than on what the value
+looks like. The amount next to that date — `120000`, a perfectly plausible
+serial — stays a number, because nothing formatted it as a day. Three other
+things decline for the same reason: a shared string under a date format is
+still a string, a word under one is still that word rather than
+1899-12-30, and a number under `0.00"円"` is currency, whose only letters
+are inside a quoted literal.
+
+Two smaller things came out of the same work. The 1900 leap bug is honoured
+— Excel believes in a 29th of February 1900 that did not happen, so serials
+above 60 sit one day further along than the arithmetic says. And 1904
+workbooks are asked rather than assumed: the two systems are 1462 days
+apart, which reads as a plausible date rather than an error.
+
+What is still not read is anything about appearance — fonts, fills, widths,
+merges — because nothing in the sheets model can hold them. There is still
+no docx.
 
 ### Two editors, one document
 
