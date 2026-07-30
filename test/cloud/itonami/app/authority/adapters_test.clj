@@ -27,6 +27,12 @@
 ;; matching what cardissuing.registry/assign-card-reference constructs.
 (def card-ref "4111111111111111")
 
+;; :authorization/decide and :card/issue now require a cross-domain posture
+;; (ADR-2607300300 D4, cloud.itonami.app.authority.posture). An absent posture
+;; refuses, which is what makes the invariant non-bypassable -- so these tests
+;; state a normal one explicitly. posture_test.clj covers the restricted side.
+(def normal-posture {:authority/posture :normal})
+
 (def demo-profiles
   [{:esim/iccid iccid-a :esim/state :enabled}
    {:esim/iccid iccid-b :esim/state :disabled}])
@@ -177,7 +183,8 @@
 
 (deftest card-daily-limit-is-a-deterministic-refusal
   (let [req {:op :authorization/decide :card-reference card-ref
-             :amount 5000 :daily-limit 10000 :spent-today 4000}]
+             :amount 5000 :daily-limit 10000 :spent-today 4000
+             :posture normal-posture}]
     (testing "within the limit it passes"
       (is (nil? (refuses #(card-adapter/pre-check {} session req)))))
     (testing "over the limit it refuses BEFORE a human is asked"
@@ -302,7 +309,8 @@
                                                      :card-reference card-ref
                                                      :amount 99999
                                                      :daily-limit 100
-                                                     :spent-today 0})]
+                                                     :spent-today 0
+                                                     :posture normal-posture})]
                      [:voice #(voice-adapter/review! ok-commit {} session
                                                       {:op :call/answer-authority
                                                        :caller-number "nope"})]]]
