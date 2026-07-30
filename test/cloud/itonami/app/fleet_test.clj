@@ -17,7 +17,8 @@
       ;; whenever an actor is added, while still catching a generator that
       ;; silently drops a population, which it did twice: first the :company/*
       ;; records, then the vector-wrapped isic ones.
-      (is (= 1338 (+ (count (remove :reference-only (fleet/actors)))
+      ;; 1,335 now, not 1,338: the three phantoms are gone from the numerator.
+      (is (= 1335 (+ (count (remove :reference-only (fleet/actors)))
                      company-records)))
       ;; The rest arrive by reference from west and are additive, never a
       ;; substitute for a blueprint that failed to parse.
@@ -56,19 +57,32 @@
     (is (nil? (fleet/actor "cloud-itonami-partners"))
         "deployed but has no blueprint.edn, so it cannot be catalogued")))
 
-(deftest ids-collide-and-the-catalog-says-so
-  (testing "id is not unique, and lookup does not pretend otherwise"
-    ;; Three actors were duplicated into a second repository — a -component, a
-    ;; -codex, and an ISIC code written both zero-padded and not — and each copy
-    ;; kept the original's id. The first catalog shipped 1,183 entries under
-    ;; 1,180 ids and a lookup by id silently returned whichever sorted first.
-    (let [dups (fleet/duplicate-ids)]
-      (is (= 3 (count dups)))
-      (is (= (- (count (fleet/actors)) (count dups))
-             (count (distinct (map :id (fleet/actors))))))
-      (doseq [id dups]
-        (is (< 1 (count (fleet/find-by-id id)))
-            (str id " should return every claimant, not one")))))
+(deftest ids-no-longer-collide-because-the-duplicates-were-not-real
+  (testing "id is unique again, and the three collisions were an artefact"
+    ;; The catalog once shipped 1,183 entries under 1,180 ids and I recorded
+    ;; three duplicated actors. Investigation showed none of the three was a
+    ;; duplicate repository:
+    ;;   cloud-itonami-isic-7500 — a stale local checkout under a pre-rename
+    ;;     name; GitHub reports the canonical .name as cloud-itonami-isic-750
+    ;;   cloud-itonami-commitment-ledger-component — 404 on GitHub
+    ;;   cloud-itonami-marketplace-order-codex     — 404 on GitHub
+    ;; The last two were never pushed. The generator was enumerating local
+    ;; directories, so a stale rename and two unpushed scratch directories
+    ;; entered a shipped artefact. It enumerates from west now.
+    (is (empty? (fleet/duplicate-ids)))
+    (let [ids (map :id (fleet/actors))]
+      (is (= (count ids) (count (distinct ids)))))
+    (doseq [phantom ["cloud-itonami-isic-7500"
+                     "cloud-itonami-commitment-ledger-component"
+                     "cloud-itonami-marketplace-order-codex"]]
+      (is (nil? (fleet/actor phantom))
+          (str phantom " is not a repository west registers"))))
+
+  (testing "find-by-id still returns a collection"
+    ;; Kept even though every id currently resolves to one actor: west could
+    ;; register two repositories declaring the same id, and returning the first
+    ;; match would be a wrong answer shaped like a right one.
+    (is (= 1 (count (fleet/find-by-id "cloud-itonami-isic-750")))))
 
   (testing "repo is unique, which is why lookup keys on it"
     (let [repos (map :repo (fleet/actors))]
@@ -220,8 +234,11 @@
 
 (deftest pin-age-is-pin-age-not-liveness
   (testing "every resident actor carries a pin date"
-    ;; They are all :reference-only, which is the set the generator fetches
-    ;; commit dates for. Without one, stale-pins would silently skip them.
+    ;; Resident actors are exactly the set the generator fetches commit dates
+    ;; for — it was every reference entry until the vocabulary grew to match
+    ;; most of west and the generator started timing out on hundreds of API
+    ;; calls. Pin age is a liveness proxy for something that runs a loop; for
+    ;; an undeployed on-demand agent it was never worth a network round-trip.
     (let [r (fleet/by-execution :resident)]
       (is (seq r))
       (is (every? :revision-committed-at r))
