@@ -37,6 +37,7 @@
             [cloud.itonami.app.mcp-test]
             [cloud.itonami.app.fleet-tools-test]
             [cloud.itonami.app.openai-compat-test]
+            [cloud.itonami.app.passkey-test]
             [cloud.itonami.app.payment-tools-test]
             [cloud.itonami.app.paypay-bank-test]
             [cloud.itonami.app.storj-node-test]
@@ -74,6 +75,7 @@
     cloud.itonami.app.mcp-test
     cloud.itonami.app.fleet-tools-test
     cloud.itonami.app.openai-compat-test
+    cloud.itonami.app.passkey-test
     cloud.itonami.app.payment-tools-test
     cloud.itonami.app.paypay-bank-test
     cloud.itonami.app.storj-node-test
