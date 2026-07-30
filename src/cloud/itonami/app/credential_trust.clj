@@ -53,6 +53,8 @@
   (:require [clojure.data.json :as json]
             [clojure.string :as str]
             [data-integrity.core :as di]
+            [data-integrity.ecdsa :as ecdsa]
+            [data-integrity.eddsa :as eddsa]
             [did.core :as did]
             [ed25519.core :as ed]
             [status-list.core :as sl])
@@ -188,20 +190,52 @@
               {:accept "application/did+json, application/json"
                :what "did:web document"}))
 
+;; ── cryptosuite selection ────────────────────────────────────────────────────
+;; A `publicKeyMultibase` announces its own curve in its prefix, and a proof
+;; announces its own cryptosuite. Both must be read, and they must AGREE.
+;;
+;; Choosing the suite from the KEY would let a substituted key change which
+;; algorithm runs. Choosing it from the PROOF alone, without checking the key,
+;; turns a suite/curve mismatch into an obscure verification failure that reads
+;; like a bad signature. So: the suite comes from the proof, the curve comes from
+;; the key, and a disagreement is named as such.
+(def cryptosuites
+  {"eddsa-jcs-2022" {:suite eddsa/suite :curve :ed25519 :prefix "z6Mk"}
+   "ecdsa-jcs-2019" {:suite ecdsa/suite :curve :p256    :prefix "zDna"}})
+
+(defn suite-for
+  "The cryptosuite a proof names, or nil for one this app does not implement."
+  [cryptosuite]
+  (get cryptosuites cryptosuite))
+
+(defn curve-of
+  "The curve a `publicKeyMultibase` announces, by prefix."
+  [multibase]
+  (cond
+    (not (string? multibase)) nil
+    (str/starts-with? multibase "z6Mk") :ed25519
+    (str/starts-with? multibase "zDna") :p256
+    :else nil))
+
 ;; ── document -> key ──────────────────────────────────────────────────────────
 
 (defn- as-vector [x]
   (cond (nil? x) [] (vector? x) x (sequential? x) (vec x) :else [x]))
 
 (defn assertion-key
-  "The Ed25519 public key `verification-method` refers to, from `document`.
+  "The public key `verification-method` refers to, from `document`.
 
   Requires the method to be listed under `assertionMethod`. A key present in
   `verificationMethod` but not in `assertionMethod` is a key the controller
   published for some OTHER purpose — authentication, key agreement — and
   accepting it for an issuer's assertion would let a key intended for logging in
-  sign claims about people."
-  [document verification-method]
+  sign claims about people.
+
+  `expected-curve` is the curve the proof's cryptosuite implies. When given, a key
+  on a different curve is refused by name rather than left to fail later as an
+  unexplained bad signature."
+  ([document verification-method] (assertion-key document verification-method nil))
+  ([document verification-method expected-curve]
   (let [methods (as-vector (get document "verificationMethod"))
         assertion-ids (set (map (fn [m] (if (map? m) (get m "id") m))
                                 (as-vector (get document "assertionMethod"))))
@@ -219,14 +253,28 @@
                   "published for authentication or key agreement must not sign "
                   "claims about people.")
              {:verification-method verification-method}))
-    (let [multibase (get entry "publicKeyMultibase")]
-      (when-not (and (string? multibase) (str/starts-with? multibase "z6Mk"))
+    (let [multibase (get entry "publicKeyMultibase")
+          curve (curve-of multibase)]
+      (when-not curve
         (fail! :credential-trust/unsupported-key-type
-               (str "only Ed25519 (publicKeyMultibase z6Mk…) is supported; "
-                    "eddsa-jcs-2022 is an Ed25519 cryptosuite")
+               (str "only Ed25519 (z6Mk…) and P-256 (zDna…) publicKeyMultibase "
+                    "values are supported")
                {:verification-method verification-method
                 :public-key-multibase multibase}))
-      (ed/did-key->pubkey (str "did:key:" multibase)))))
+      (when (and expected-curve (not= expected-curve curve))
+        ;; The proof said one algorithm and the issuer published a key for
+        ;; another. Named rather than left to fail as a bad signature, which is
+        ;; what it would look like otherwise.
+        (fail! :credential-trust/curve-cryptosuite-mismatch
+               (str "the proof's cryptosuite expects a " (name expected-curve)
+                    " key, but the issuer publishes a " (name curve) " one")
+               {:verification-method verification-method
+                :expected expected-curve :actual curve}))
+      ;; Each suite's verifier wants a different representation: eddsa takes raw
+      ;; public key bytes, ecdsa takes a java.security.PublicKey.
+      (case curve
+        :ed25519 (ed/did-key->pubkey (str "did:key:" multibase))
+        :p256 (ecdsa/did-key->public-key (str "did:key:" multibase)))))))
 
 ;; ── cache ────────────────────────────────────────────────────────────────────
 ;; Keyed by verificationMethod, not by domain: one domain may publish several
@@ -259,15 +307,23 @@
   that key, because the key came from the credential itself. This resolver
   returns it, and the trust decision for `did:key` issuers stays with the caller.
 
-  `did:web` goes through the trust list and the fetch above."
-  [configuration]
-  (fn [verification-method]
+  `did:web` goes through the trust list and the fetch above.
+
+  `expected-curve` selects the key representation, because the two suites want
+  different things: eddsa takes raw public key bytes and ecdsa takes a
+  java.security.PublicKey. It also makes a curve/cryptosuite disagreement an
+  explicit error instead of an unexplained bad signature."
+  ([configuration] (resolve-external-key configuration nil))
+  ([configuration expected-curve]
+   (fn [verification-method]
     (let [controller (if-let [i (str/index-of verification-method "#")]
                        (subs verification-method 0 i)
                        verification-method)]
       (cond
         (str/starts-with? controller "did:key:")
-        (ed/did-key->pubkey controller)
+        (case (or expected-curve (curve-of (subs controller (count "did:key:"))))
+          :p256 (ecdsa/did-key->public-key controller)
+          (ed/did-key->pubkey controller))
 
         (str/starts-with? controller "did:web:")
         (or (cached-key configuration verification-method)
@@ -279,12 +335,13 @@
                             (get document "id"))
                        {:expected controller :actual (get document "id")}))
               (cache-key! configuration verification-method
-                          (assertion-key document verification-method))))
+                          (assertion-key document verification-method
+                                         expected-curve))))
 
         :else
         (fail! :credential-trust/unsupported-did-method
                "only did:key and did:web issuers can be resolved"
-               {:verification-method verification-method})))))
+               {:verification-method verification-method}))))))
 
 ;; ── revocation ───────────────────────────────────────────────────────────────
 ;; Cached separately from keys and for much less time: a key rotates rarely, a
@@ -335,9 +392,17 @@
       (let [document (fetch-json configuration url
                                  {:accept "application/vc+json, application/json"
                                   :what "status list credential"})
+            named (get-in document ["proof" "cryptosuite"])
+            chosen (suite-for named)
+            _ (when-not chosen
+                (fail! :credential-trust/unsupported-cryptosuite
+                       (str "the status list at " url " names cryptosuite " named)
+                       {:url url :cryptosuite named}))
             result (di/verify-credential
                     document
-                    {:resolve-key (resolve-external-key configuration)})]
+                    {:suite (:suite chosen)
+                     :resolve-key (resolve-external-key
+                                   configuration (:curve chosen))})]
         (when-not (:verified result)
           (fail! :credential-trust/status-list-unverified
                  (str "the status list credential at " url " does not verify. An "
@@ -420,9 +485,20 @@
     {:verified false :valid? false :reason :credential/not-a-document
      :revocation :not-applicable :schema schema}
     (try
-      (let [result (di/verify-credential
-                    presented
-                    {:resolve-key (resolve-external-key configuration)})]
+      (let [named (get-in presented ["proof" "cryptosuite"])
+            chosen (suite-for named)]
+        (if-not chosen
+          ;; Naming an unimplemented cryptosuite is a legitimate thing for a
+          ;; stranger to do, and it is not a forgery — say which one rather than
+          ;; reporting a bad signature.
+          {:verified false :valid? false :revocation :not-applicable
+           :reason :credential-trust/unsupported-cryptosuite
+           :cryptosuite named :schema schema}
+          (let [result (di/verify-credential
+                        presented
+                        {:suite (:suite chosen)
+                         :resolve-key (resolve-external-key
+                                       configuration (:curve chosen))})]
         (if-not (:verified result)
           (assoc (select-keys result [:verified :reason])
                  :valid? false :revocation :not-applicable :schema schema)
@@ -438,7 +514,7 @@
               :subject (get-in presented ["credentialSubject" "id"])
               :verification-method (:verification-method result)
               :schema schema}
-             revocation))))
+             revocation))))))
       (catch clojure.lang.ExceptionInfo error
         (let [data (ex-data error)]
           {:verified false

@@ -5,7 +5,9 @@
             [cloud.itonami.app.credential-trust :as trust]
             [data-integrity.core :as di]
             [ed25519.core :as ed]
-            [status-list.core :as sl]))
+            [status-list.core :as sl]
+            [data-integrity.ecdsa]
+            [multiformats.core]))
 
 (use-fixtures :each (fn [f] (trust/clear-cache!) (f)))
 
@@ -109,15 +111,32 @@
                (catch clojure.lang.ExceptionInfo ex ex))]
     (is (= :credential-trust/method-not-in-document (:type (ex-data e))))))
 
-(deftest a-non-ed25519-key-is-refused
-  (testing "eddsa-jcs-2022 is an Ed25519 cryptosuite, so a P-256 key advertised
-            for it cannot be honoured"
+(deftest a-p256-key-is-now-accepted-and-an-unknown-curve-is-not
+  ;; This test used to assert the opposite -- that a P-256 key was refused with
+  ;; :unsupported-key-type. That was true when it was written and is false now:
+  ;; ecdsa-jcs-2019 landed, and P-256 is what every WebAuthn credential uses. The
+  ;; coverage is kept and pointed at what is actually still refused.
+  (testing "a P-256 key resolves"
+    (let [doc (assoc-in (partner-did-document)
+                        ["verificationMethod" 0 "publicKeyMultibase"]
+                        "zDnaerDaTF5BXEavCrfRZEk316dpbLsfPDZ3WJ5hRTPFU2169")]
+      (is (some? (trust/assertion-key doc (partner-vm))))))
+
+  (testing "a curve neither suite implements is refused"
+    (let [doc (assoc-in (partner-did-document)
+                        ["verificationMethod" 0 "publicKeyMultibase"]
+                        "zQ3shSomeSecp256k1KeyThatIsNotSupported")
+          e (try (trust/assertion-key doc (partner-vm))
+                 (catch clojure.lang.ExceptionInfo ex ex))]
+      (is (= :credential-trust/unsupported-key-type (:type (ex-data e))))))
+
+  (testing "and a key whose curve contradicts the proof's cryptosuite is named"
     (let [doc (assoc-in (partner-did-document)
                         ["verificationMethod" 0 "publicKeyMultibase"]
                         "zDnaerDaTF5BXEavCrfRZEk316dpbLsfPDZ3WJ5hRTPFU2169")
-          e (try (trust/assertion-key doc (partner-vm))
+          e (try (trust/assertion-key doc (partner-vm) :ed25519)
                  (catch clojure.lang.ExceptionInfo ex ex))]
-      (is (= :credential-trust/unsupported-key-type (:type (ex-data e)))))))
+      (is (= :credential-trust/curve-cryptosuite-mismatch (:type (ex-data e)))))))
 
 ;; ── verification against a supplied document ─────────────────────────────────
 ;; The resolver is the injection point, so these exercise the whole path with the
@@ -160,7 +179,7 @@
           ;; resolve locally so the signature check succeeds and only the
           ;; revocation question is left
           r (with-redefs [trust/resolve-external-key
-                          (fn [_] (fn [vm] (trust/assertion-key (partner-did-document) vm)))]
+                          (fn [_ & _] (fn [vm] (trust/assertion-key (partner-did-document) vm)))]
               (trust/verify-external trusting cred))]
       (is (:verified r) "the signature is good")
       (is (= :unchecked (:revocation r)))
@@ -169,7 +188,7 @@
 (deftest a-credential-with-no-status-has-nothing-to-revoke
   (let [cred (partner-credential)
         r (with-redefs [trust/resolve-external-key
-                        (fn [_] (fn [vm] (trust/assertion-key (partner-did-document) vm)))]
+                        (fn [_ & _] (fn [vm] (trust/assertion-key (partner-did-document) vm)))]
             (trust/verify-external trusting cred))]
     (is (:verified r))
     (is (= :not-applicable (:revocation r)))
@@ -381,3 +400,97 @@
     (is (= :credential-trust/internal-address
            (:type (ex-data (try (trust/fetch-json {} "https://localhost/status/1" {})
                                 (catch clojure.lang.ExceptionInfo e e))))))))
+
+;; ── P-256 issuers (ecdsa-jcs-2019) ───────────────────────────────────────────
+;; Before this, a P-256 credential was REFUSED with a message saying P-256 was
+;; unsupported. P-256 is what every WebAuthn credential uses, so that message was
+;; refusing the common case and telling its holder the wrong reason.
+
+(def ^:private p256-pair
+  (delay (let [g (java.security.KeyPairGenerator/getInstance "EC")]
+           (.initialize g (java.security.spec.ECGenParameterSpec. "secp256r1")
+                        (java.security.SecureRandom.))
+           (.generateKeyPair g))))
+
+(defn- p256-multibase []
+  (let [point (.getW (.getPublic @p256-pair))
+        x (let [v (vec (map #(bit-and % 0xff) (.toByteArray (.getAffineX point))))]
+            (cond (> (count v) 32) (subvec v (- (count v) 32))
+                  (< (count v) 32) (into (vec (repeat (- 32 (count v)) 0)) v)
+                  :else v))]
+    (str "z" (multiformats.core/base58btc
+              (byte-array (map unchecked-byte
+                               (into [0x80 0x24 (if (.testBit (.getAffineY point) 0) 0x03 0x02)]
+                                     x)))))))
+
+(defn- p256-vm [] (str partner-web-did "#" (p256-multibase)))
+
+(defn- p256-did-document []
+  {"@context" ["https://www.w3.org/ns/did/v1"]
+   "id" partner-web-did
+   "verificationMethod" [{"id" (p256-vm) "type" "Multikey"
+                          "controller" partner-web-did
+                          "publicKeyMultibase" (p256-multibase)}]
+   "assertionMethod" [(p256-vm)]})
+
+(defn- p256-credential []
+  (di/issue-credential
+   {"@context" ["https://www.w3.org/ns/credentials/v2"]
+    "type" ["VerifiableCredential"]
+    "issuer" partner-web-did
+    "credentialSubject" {"id" "did:example:alice" "role" "auditor"}}
+   {:suite data-integrity.ecdsa/suite
+    :sign (fn [h] (data-integrity.ecdsa/sign-hash-data (.getPrivate @p256-pair) h))
+    :verification-method (p256-vm)
+    :created "2026-07-31T00:00:00Z"}))
+
+(deftest a-p256-partner-credential-verifies
+  (with-redefs [trust/fetch-json (fn [_ _ _] (p256-did-document))]
+    (trust/clear-cache!)
+    (let [r (trust/verify-external trusting (p256-credential))]
+      (is (:verified r) (pr-str r))
+      (is (true? (:valid? r)) "no credentialStatus, so nothing to revoke"))))
+
+(deftest a-tampered-p256-credential-does-not-verify
+  (with-redefs [trust/fetch-json (fn [_ _ _] (p256-did-document))]
+    (trust/clear-cache!)
+    (let [tampered (assoc-in (p256-credential) ["credentialSubject" "role"] "owner")]
+      (is (not (:verified (trust/verify-external trusting tampered)))))))
+
+(deftest the-curve-and-the-cryptosuite-must-agree
+  (testing "the suite comes from the proof and the curve from the key; a
+            disagreement is named rather than left to look like a bad signature"
+    (with-redefs [trust/fetch-json (fn [_ _ _] (p256-did-document))]
+      (trust/clear-cache!)
+      ;; an Ed25519-suite proof pointing at the P-256 key the issuer publishes
+      (let [confused (assoc-in (p256-credential)
+                               ["proof" "cryptosuite"] "eddsa-jcs-2022")
+            r (trust/verify-external trusting confused)]
+        (is (false? (:verified r)))
+        (is (= :credential-trust/curve-cryptosuite-mismatch (:reason r)))))
+
+    (with-redefs [trust/fetch-json (fn [_ _ _] (partner-did-document))]
+      (trust/clear-cache!)
+      ;; …and the other way: an ECDSA-suite proof against the Ed25519 key
+      (let [confused (assoc-in (partner-credential)
+                               ["proof" "cryptosuite"] "ecdsa-jcs-2019")
+            r (trust/verify-external trusting confused)]
+        (is (false? (:verified r)))
+        (is (= :credential-trust/curve-cryptosuite-mismatch (:reason r)))))))
+
+(deftest an-unimplemented-cryptosuite-is-named-not-called-a-forgery
+  (with-redefs [trust/fetch-json (fn [_ _ _] (partner-did-document))]
+    (trust/clear-cache!)
+    (let [r (trust/verify-external
+             trusting
+             (assoc-in (partner-credential) ["proof" "cryptosuite"] "bbs-2023"))]
+      (is (false? (:verified r)))
+      (is (= :credential-trust/unsupported-cryptosuite (:reason r)))
+      (is (= "bbs-2023" (:cryptosuite r)) "say which one"))))
+
+(deftest both-curves-are-recognised-and-nothing-else-is
+  (is (= :ed25519 (trust/curve-of "z6MkrJVnaZkeFzdQyMZu1cgjg7k1pZZ6pvBQ7XJPt4swbTQ2")))
+  (is (= :p256 (trust/curve-of (p256-multibase))))
+  (is (nil? (trust/curve-of "zQ3shSomethingElse")))
+  (is (nil? (trust/curve-of nil)))
+  (is (= #{"eddsa-jcs-2022" "ecdsa-jcs-2019"} (set (keys trust/cryptosuites)))))
