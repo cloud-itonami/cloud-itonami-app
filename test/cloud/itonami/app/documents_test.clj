@@ -17,7 +17,9 @@
             [forms.model :as forms-model]
             [forms.validate :as forms-validate]
             [forms.wire :as forms-wire]
-            [sheets.wire :as sheets-wire]))
+            [sheets.model :as sheets-model]
+            [sheets.wire :as sheets-wire]
+            [sheets.xlsx :as sheets-xlsx]))
 
 (def alice "user-alice")
 (def bob "user-bob")
@@ -1386,9 +1388,29 @@
 (deftest an-unknown-import-format-is-refused
   (with-state
     (fn [_ object-store]
+      ;; "xlsx" was the example until it became a format. The check is the
+      ;; table, not a list written out here.
       (is (= :drive/unsupported-format
-             (try (documents/import! "xlsx" "売上" (.getBytes "x" "UTF-8") alice object-store)
+             (try (documents/import! "numbers" "売上" (.getBytes "x" "UTF-8")
+                                     alice object-store)
                   (catch clojure.lang.ExceptionInfo e (:type (ex-data e)))))))))
+
+(deftest bytes-that-are-not-the-file-they-claim-to-be-are-refused
+  (with-state
+    (fn [state object-store]
+      ;; A zip with no worksheet parts is still a zip, so `sheets.xlsx`
+      ;; answers an empty workbook rather than nil — and an import that let
+      ;; that through would look exactly like a working import of an empty
+      ;; file, which is the one failure a reader cannot tell from success.
+      (doseq [[format bytes] [["xlsx" (.getBytes "x" "UTF-8")]
+                              ["pptx" (.getBytes "x" "UTF-8")]]]
+        (is (= :drive/unsupported-format
+               (try (documents/import! format "壊れ" bytes alice object-store)
+                    (catch clojure.lang.ExceptionInfo e (:type (ex-data e)))))
+            format))
+      ;; And nothing was left behind by the create! that got as far as
+      ;; running before the refusal.
+      (is (<= (count (documents/documents @state alice)) 2)))))
 
 (deftest an-imported-file-goes-through-the-validator-like-anything-else
   (with-state
@@ -2021,3 +2043,44 @@
   ;; `documents/kinds` appears without a second list being edited.
   (is (= (set (map name (keys documents/kinds)))
          (set (map :kind (:kinds (with-state (fn [_ _] (documents/drive-view {:items []} alice)))))))))
+
+(deftest an-xlsx-imports-as-a-workbook
+  (with-state
+    (fn [state object-store]
+      (let [source (-> (sheets-model/workbook "src")
+                       (sheets-model/add-tab
+                        (-> (sheets-model/tab "予算" {:sheets/title "予算"})
+                            (sheets-model/put-cell 1 1 "四半期")
+                            (sheets-model/put-cell 2 1 "Q1")
+                            (sheets-model/put-formula 2 2 "A2")))
+                       (sheets-model/add-tab
+                        (-> (sheets-model/tab "実績" {:sheets/title "実績"})
+                            (sheets-model/put-cell 1 1 "実績"))))
+            {:keys [item]} (documents/import! "xlsx" "取り込み予算"
+                                              (sheets-xlsx/xlsx-bytes source)
+                                              alice object-store)
+            back (:resource (documents/content (:id item) alice object-store))]
+        (is (= ":sheets/workbook" (:resource-kind item)))
+        (is (= "取り込み予算" (:name item)))
+        ;; Both tabs, and no leftover "sheet1" from the seed in front of
+        ;; them — a workbook arrives whole.
+        (is (= ["予算" "実績"] (sort (keys (:sheets/tabs back)))))
+        (is (= {:sheets/value "四半期"}
+               (get-in back [:sheets/tabs "予算" :sheets/cells [1 1]])))
+        (is (= {:sheets/formula "A2"}
+               (get-in back [:sheets/tabs "予算" :sheets/cells [2 2]])))
+        (is (= 1 (count (documents/documents @state alice))))))))
+
+(deftest an-xlsx-round-trips-through-the-drive
+  (with-state
+    (fn [_ object-store]
+      (let [csv "四半期,売上\r\nQ1,1200"
+            imported (:item (documents/import! "csv" "売上"
+                                               (.getBytes csv "UTF-8") alice object-store))
+            xlsx (documents/export (:id imported) "xlsx" alice object-store)
+            again (:item (documents/import! "xlsx" "往復"
+                                            (:bytes xlsx) alice object-store))
+            back (:resource (documents/content (:id again) alice object-store))
+            tab (first (vals (:sheets/tabs back)))]
+        (is (= {:sheets/value "四半期"} (get-in tab [:sheets/cells [1 1]])))
+        (is (= {:sheets/value "1200"} (get-in tab [:sheets/cells [2 2]])))))))

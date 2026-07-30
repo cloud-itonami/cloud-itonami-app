@@ -196,9 +196,21 @@ already knew what an xlsx was and what was left fitted in one namespace.
 Every cell is written as an inline string: refusing to guess on the way in
 and then guessing on the way out would be the same mistake arriving late.
 
-There is still no docx, and xlsx is export only. Reading one needs an XML
-parser plus the sharedStrings/styles/date-serial handling writing gets to
-skip.
+xlsx reads as well as writes now, on `kotoba-lang/xml`. Reading meets more
+shapes than writing chose — shared strings, bare numbers with no `t`,
+formulas carrying the value Excel last calculated — and the formula wins
+over that value, because the formula is what the document says.
+
+**Bytes that are not the file they claim to be are refused before anything
+is created.** Neither office reader can be asked: `slides.office` builds a
+deck with one empty slide from an empty graph, and `sheets.xlsx` reads a zip
+with no worksheets as a workbook with no tabs. Measured — three bytes of `x`
+imported as pptx produced a one-slide deck and as xlsx an empty workbook,
+both reported as successes. The package is what can be asked, so
+`require-office-package!` checks for a `ppt/` or `xl/` part first.
+
+Styles are still not read, so an Excel date arrives as its serial number.
+There is still no docx.
 
 ### Two editors, one document
 
