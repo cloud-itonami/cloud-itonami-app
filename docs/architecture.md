@@ -89,6 +89,24 @@ applications on their own origin. Reaching those would mean widening
 `connect-src 'self'` in the page CSP, which is a decision about what this app
 may talk to and not one to make as a side effect of adding an editor.
 
+### Answering a form
+
+A form is the one surface with a second thing to do to it. Editing changes
+the questions; answering does not, and an answer is not a version of the
+form — writing one into the stored envelope would charge every response to
+the owner's quota and change the document every respondent is reading from.
+So submissions are kept beside the document, in app state, keyed by its id.
+
+Whoever may read a form may answer it, including through a share link:
+requiring write access to submit would make every respondent an editor of
+the questions. The answers belong to the owner, and only the owner reads
+them — an editor may change the questions and still not see the responses.
+
+`forms.validate/submission-problems` is what refuses one, on a **rehydrated**
+form. Against a projected payload `missing-required` reads `:forms/fields`,
+finds nil, and reports that nothing is required, so an empty submission would
+pass. There is a test asserting exactly that difference.
+
 ### Sharing
 
 Each principal has their own `drive.workspace`, and a grant is recorded on the

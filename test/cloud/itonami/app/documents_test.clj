@@ -12,10 +12,17 @@
             [drive.object :as object]
             [drive.store.memory :as memory]
             [drive.workspace :as ws]
+            [forms.model :as forms-model]
+            [forms.validate :as forms-validate]
+            [forms.wire :as forms-wire]
             [sheets.wire :as sheets-wire]))
 
 (def alice "user-alice")
 (def bob "user-bob")
+
+;; A fixed instant, because share-link expiry is compared numerically and a
+;; test that read the clock would be a test whose meaning changed at midnight.
+(def ^:private now-ms 1800000000000)
 
 (defn- with-state
   "Run `f` against a private app state and a private object store."
@@ -543,6 +550,132 @@
                (try (documents/update! (:id item) broken alice object-store)
                     (catch clojure.lang.ExceptionInfo e (:type (ex-data e))))))))))
 
+;; ── answering a form ────────────────────────────────────────────────────────
+
+(defn- contact-form
+  "A form with a required text field and an email field, as the editor makes
+  one."
+  [object-store]
+  (let [{:keys [item]} (documents/create! :forms "問い合わせ" alice object-store)
+        payload (:payload (documents/content (:id item) alice object-store))]
+    (documents/update! (:id item)
+                       (assoc payload "forms/fields"
+                              [{"forms/id" "name" "forms/label" "お名前"
+                                "forms/field-type" "text" "forms/required?" true}
+                               {"forms/id" "email" "forms/label" "メール"
+                                "forms/field-type" "email" "forms/required?" false}])
+                       alice object-store)
+    item))
+
+(deftest a-form-can-be-answered-by-anyone-who-may-read-it
+  (with-state
+    (fn [state object-store]
+      (let [item (contact-form object-store)]
+        (documents/grant! (:id item) bob "viewer" alice)
+        ;; A viewer, deliberately: requiring write access to submit would
+        ;; make every respondent an editor of the questions.
+        (let [{:keys [fields title]} (documents/form-for-answering (:id item) bob object-store)]
+          (is (= "問い合わせ" title))
+          (is (= [{:id "name" :label "お名前" :field-type "text" :required? true}
+                  {:id "email" :label "メール" :field-type "email" :required? false}]
+                 fields)))
+        (let [sent (documents/submit! (:id item) {"name" "Bob" "email" "bob@example.com"}
+                                      bob object-store)]
+          (is (:ok? sent))
+          (is (= bob (:author (:submission sent)))))
+        (let [{:keys [submissions]} (documents/submissions (:id item) alice)]
+          (is (= 1 (count submissions)))
+          (is (= {"name" "Bob" "email" "bob@example.com"} (:answers (first submissions))))
+          (is (= bob (:author (first submissions)))))
+        ;; Answering did not change the questions: no new version, nothing
+        ;; charged to the quota beyond the form itself.
+        (is (= 2 (:versions (first (documents/documents @state alice)))))))))
+
+(deftest a-missing-required-answer-is-refused
+  (with-state
+    (fn [_ object-store]
+      (let [item (contact-form object-store)
+            error (try (documents/submit! (:id item) {"email" "a@example.com"}
+                                          alice object-store)
+                       (catch clojure.lang.ExceptionInfo e (ex-data e)))]
+        (is (= :drive/invalid-submission (:type error)))
+        (is (= [{:code ":submission/missing-required" :field "name"
+                 :message "required answer is missing"}]
+               (:problems error)))
+        (is (empty? (:submissions (documents/submissions (:id item) alice))))))))
+
+(deftest an-answer-that-is-not-an-email-is-refused
+  (with-state
+    (fn [_ object-store]
+      (let [item (contact-form object-store)
+            error (try (documents/submit! (:id item) {"name" "Bob" "email" "not-an-address"}
+                                          alice object-store)
+                       (catch clojure.lang.ExceptionInfo e (ex-data e)))]
+        (is (= :drive/invalid-submission (:type error)))
+        (is (= [":submission/invalid-email"] (mapv :code (:problems error))))))))
+
+(deftest validating-a-submission-needs-the-rehydrated-form
+  ;; The same failure that made rehydration mandatory for saving. Against a
+  ;; projected form, `missing-required` reads `:forms/fields`, finds nil, and
+  ;; reports that nothing is required — so an empty submission would pass.
+  (with-state
+    (fn [_ object-store]
+      (let [item (contact-form object-store)
+            projected (:payload (documents/content (:id item) alice object-store))]
+        (is (empty? (forms-validate/submission-problems
+                     projected (forms-model/submission (:id item) {}))))
+        (is (= [:submission/missing-required]
+               (mapv :forms/code
+                     (forms-validate/submission-problems
+                      (forms-wire/rehydrate-form projected)
+                      (forms-model/submission (:id item) {})))))))))
+
+(deftest only-a-form-can-be-answered
+  (with-state
+    (fn [_ object-store]
+      (let [{:keys [item]} (documents/create! :docs "設計" alice object-store)]
+        (is (= :drive/unknown-kind
+               (try (documents/submit! (:id item) {} alice object-store)
+                    (catch clojure.lang.ExceptionInfo e (:type (ex-data e))))))))))
+
+(deftest responses-belong-to-the-owner
+  (with-state
+    (fn [_ object-store]
+      (let [item (contact-form object-store)]
+        (documents/grant! (:id item) bob "editor" alice)
+        (documents/submit! (:id item) {"name" "Bob"} bob object-store)
+        ;; An editor may change the questions and still not read the answers.
+        (is (= :drive/not-permitted
+               (try (documents/submissions (:id item) bob)
+                    (catch clojure.lang.ExceptionInfo e (:type (ex-data e))))))
+        (is (= 1 (count (:submissions (documents/submissions (:id item) alice)))))))))
+
+(deftest a-form-can-be-answered-through-a-share-link
+  (with-state
+    (fn [_ object-store]
+      (let [item (contact-form object-store)
+            {:keys [token]} (documents/create-link! (:id item) "viewer" nil alice now-ms)
+            sent (documents/submit-via-link! token {"name" "Carol"} "user-carol"
+                                             now-ms object-store)]
+        (is (:ok? sent))
+        (is (= "user-carol" (:author (:submission sent))))
+        (is (= [{"name" "Carol"}]
+               (mapv :answers (:submissions (documents/submissions (:id item) alice)))))
+        ;; And the link still cannot be used past its terms.
+        (documents/revoke-link! (:id item) token alice)
+        (is (= :drive/not-found
+               (try (documents/submit-via-link! token {"name" "Carol"} "user-carol"
+                                                now-ms object-store)
+                    (catch clojure.lang.ExceptionInfo e (:type (ex-data e))))))))))
+
+(deftest a-stranger-cannot-answer-a-form-they-cannot-read
+  (with-state
+    (fn [_ object-store]
+      (let [item (contact-form object-store)]
+        (is (= :drive/not-found
+               (try (documents/submit! (:id item) {"name" "Mallory"} bob object-store)
+                    (catch clojure.lang.ExceptionInfo e (:type (ex-data e))))))))))
+
 ;; ── sharing ─────────────────────────────────────────────────────────────────
 
 (deftest a-grant-makes-the-document-appear-in-the-grantees-list
@@ -646,8 +779,6 @@
                       (catch clojure.lang.ExceptionInfo e (:type (ex-data e)))))))))))
 
 ;; ── share links ─────────────────────────────────────────────────────────────
-
-(def ^:private now-ms 1800000000000)
 
 (deftest a-link-reads-without-a-role
   (with-state

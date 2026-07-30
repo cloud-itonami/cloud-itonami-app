@@ -669,6 +669,54 @@
                        (documents/grant! id (:principal request) (:role request)
                                          (:user-id session)))))
 
+            ;; The form as something to fill in. Readable by anyone who may
+            ;; read the document, because a form shared read-only is a form
+            ;; meant to be answered.
+            (and (= method "GET")
+                 (id-from-path path #"/api/workspace/drive/documents/([^/]+)/form"))
+            (let [session (require-app-session! exchange)]
+              (send! exchange 200
+                     (documents/form-for-answering
+                      (id-from-path path #"/api/workspace/drive/documents/([^/]+)/form")
+                      (:user-id session))))
+
+            (and (= method "POST")
+                 (id-from-path path #"/api/workspace/drive/documents/([^/]+)/submissions"))
+            (let [session (require-app-session! exchange)
+                  request (read-json-raw exchange)]
+              (require-origin! exchange config)
+              (require-csrf! exchange session)
+              (send! exchange 200
+                     (documents/submit!
+                      (id-from-path path
+                                    #"/api/workspace/drive/documents/([^/]+)/submissions")
+                      (get request "answers")
+                      (:user-id session))))
+
+            ;; Owner only — the responses are theirs.
+            (and (= method "GET")
+                 (id-from-path path #"/api/workspace/drive/documents/([^/]+)/submissions"))
+            (let [session (require-app-session! exchange)]
+              (send! exchange 200
+                     (documents/submissions
+                      (id-from-path path
+                                    #"/api/workspace/drive/documents/([^/]+)/submissions")
+                      (:user-id session))))
+
+            (and (= method "POST")
+                 (id-from-path path #"/api/workspace/drive/shared/([^/]+)/submissions"))
+            (let [session (require-app-session! exchange)
+                  request (read-json-raw exchange)]
+              (require-origin! exchange config)
+              (require-csrf! exchange session)
+              (send! exchange 200
+                     (documents/submit-via-link!
+                      (id-from-path path
+                                    #"/api/workspace/drive/shared/([^/]+)/submissions")
+                      (get request "answers")
+                      (:user-id session)
+                      (System/currentTimeMillis))))
+
             ;; Behind the app session like everything else — see
             ;; `documents/link-content` for why a token is not a way around it.
             (and (= method "GET")
@@ -930,6 +978,7 @@
                      ;; conflict with its current state, not a bad request.
                      :drive/not-trashed 409
                      :drive/invalid-share 400
+                     :drive/invalid-submission 422
                      :drive/not-found 404
                      :drive/not-permitted 403
                      :drive/no-content 409

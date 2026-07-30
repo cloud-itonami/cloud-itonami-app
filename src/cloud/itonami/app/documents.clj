@@ -945,3 +945,121 @@
                          (read-envelope body)
                          body)})
            (refuse! result)))))))
+
+;; ── form submissions ────────────────────────────────────────────────────────
+
+(defn- submissions-path [id] [:drive :submissions id])
+
+(defn- readable-form!
+  "The rehydrated form behind `id`, if this principal may read it.
+
+  Rehydrated, because `forms.model/missing-required` reads `:forms/fields`
+  and `forms.validate/submission-problems` matches on `:email` — a projected
+  payload has neither, so a submission checked against one would be told
+  every answer is fine and no field is required. The same failure that made
+  rehydration mandatory for saving makes it mandatory here."
+  [id actor object-store]
+  (let [{:keys [workspace owner]} (locate (store/snapshot) actor id)
+        item (when workspace (ws/item workspace id))]
+    (cond
+      (nil? item) (refuse! {:reason :no-such-item :item-id id})
+      (not= :forms/form (:drive/resource-kind item))
+      (throw (ex-info "回答できるのはフォームだけです。"
+                      {:type :drive/unknown-kind
+                       :resource-kind (:drive/resource-kind item)}))
+      :else
+      (let [current (content id actor object-store)]
+        {:owner owner
+         :item item
+         :form (forms-wire/rehydrate-form (:payload current))}))))
+
+(defn form-for-answering
+  "A form as something to fill in, rather than as a document to edit.
+
+  Whoever may read the form may answer it: a form shared read-only is a form
+  meant to be answered, and requiring write access to submit would make
+  every respondent an editor of the questions."
+  ([id actor] (form-for-answering id actor (store-instance)))
+  ([id actor object-store]
+   (let [{:keys [form item]} (readable-form! id actor object-store)]
+     {:schema schema
+      :ok? true
+      :id id
+      :title (:forms/title form)
+      :name (:drive/title item)
+      :fields (mapv (fn [field]
+                      {:id (:forms/id field)
+                       :label (:forms/label field)
+                       :field-type (some-> (:forms/field-type field) name)
+                       :required? (boolean (:forms/required? field))})
+                    (:forms/fields form))})))
+
+(defn- record-submission!
+  "Validate `answers` against `form` and keep them.
+
+  Beside the document rather than inside it. A submission is not a version of
+  the questions: writing one into the stored envelope would make every
+  response a new version of the form, charged to the owner's quota and
+  changing the document every respondent is reading from."
+  [id owner form answers author]
+  (let [answers (into {} (map (fn [[k v]] [(name k) v])) (or answers {}))
+        submission (forms/submission id answers)
+        errors (->> (forms-validate/submission-problems form submission)
+                    (filter #(= :error (:forms/severity %)))
+                    (mapv (fn [problem]
+                            {:code (some-> (:forms/code problem) str)
+                             :field (:forms/id problem)
+                             :message (:forms/msg problem)})))]
+    (when (seq errors)
+      (throw (ex-info (str "送信できません: " (:message (first errors)))
+                      {:type :drive/invalid-submission :problems errors})))
+    (let [record {:id (store/new-id "sub")
+                  :form-id id
+                  :owner owner
+                  :author author
+                  :answers answers
+                  :submitted-at (store/now)}]
+      (store/transact! update-in (submissions-path id) (fnil conj []) record)
+      {:schema schema :ok? true :submission (dissoc record :owner)})))
+
+(defn submit!
+  "Answer a form."
+  ([id answers actor] (submit! id answers actor (store-instance)))
+  ([id answers actor object-store]
+   (locking write-lock
+     (let [{:keys [form owner]} (readable-form! id actor object-store)]
+       (record-submission! id owner form answers actor)))))
+
+(defn submit-via-link!
+  "Answer a form reached by share link.
+
+  The link is what distributing a form looks like, so this exists for the
+  same reason `link-content` does. `read-via-share-link` is still what
+  decides — expiry and trash included — and a `:viewer` link is enough:
+  answering is not writing the questions."
+  ([token answers actor now-ms] (submit-via-link! token answers actor now-ms
+                                                  (store-instance)))
+  ([token answers actor now-ms object-store]
+   (locking write-lock
+     (let [read (link-content token actor now-ms object-store)
+           id (:id (:item read))]
+       (when-not (= ":forms/form" (:resource-kind read))
+         (throw (ex-info "回答できるのはフォームだけです。"
+                         {:type :drive/unknown-kind
+                          :resource-kind (:resource-kind read)})))
+       ;; The owner comes off the item the link resolved to, so the answers
+       ;; are filed against the Drive that actually holds the form rather
+       ;; than against whoever happened to follow the link.
+       (record-submission! id (:owner (:item read))
+                           (forms-wire/rehydrate-form (:payload read))
+                           answers actor)))))
+
+(defn submissions
+  "Every answer to this form. Owner only — the responses are theirs."
+  [id actor]
+  (let [_ (owned! actor id)]
+    {:schema schema
+     :ok? true
+     :id id
+     :submissions (mapv #(dissoc % :owner)
+                        (get-in (store/snapshot) (submissions-path id) []))}))

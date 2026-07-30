@@ -1265,8 +1265,96 @@
       if (item.role === 'owner') row.append(trash);
       actions.append(row, status, modes, pane, editor, versions);
       renderPane();
+      if (item.kind === 'forms') actions.append(answerPanel(item));
       if (item.role === 'owner') actions.append(sharingPanel(item, status));
       return actions;
+    };
+    // A form is the one surface with a second thing to do to it. Editing it
+    // changes the questions; answering it does not, and the answers are not
+    // a version of the form — so this is a panel of its own rather than
+    // another mode of the editor.
+    const inputTypes = {email:'email', number:'number', date:'date'};
+    const answerPanel = (item) => {
+      const panel = make('div', 'sharing');
+      panel.append(make('h3', 'sharing__title', 'このフォームに回答'));
+      const body = make('div', 'surface-editor');
+      const status = make('p', 'drive-create__status', '');
+      const answers = {};
+      const send = make('button', 'tool-button', '送信');
+      send.type = 'button';
+      send.disabled = true;
+      const responses = make('div', 'surface-editor');
+
+      const loadResponses = async () => {
+        if (item.role !== 'owner') return;
+        try {
+          const request = await fetch(
+            `/api/workspace/drive/documents/${encodeURIComponent(item.id)}/submissions`);
+          const data = await request.json();
+          if (!request.ok) return;
+          responses.replaceChildren(make('h3', 'sharing__title',
+            `回答 ${(data.submissions || []).length} 件`));
+          (data.submissions || []).forEach((entry) => {
+            const row = make('div', 'surface-row');
+            row.append(make('span', 'surface-note',
+              `${entry.author || '不明'} · ${entry['submitted-at'] || ''}`));
+            Object.entries(entry.answers || {}).forEach(([key, value]) => {
+              row.append(make('span', 'sharing__who', `${key}: ${value}`));
+            });
+            responses.append(row);
+          });
+        } catch (error) { /* the panel simply stays empty */ }
+      };
+      send.addEventListener('click', async () => {
+        send.disabled = true; status.textContent = '送信しています…';
+        try {
+          const sent = await postJSON(
+            `/api/workspace/drive/documents/${encodeURIComponent(item.id)}/submissions`,
+            {answers}, true);
+          status.textContent = `送信しました（${sent.submission['submitted-at']}）。`;
+          await loadResponses();
+        } catch (error) {
+          // The surface's own validator answered — a missing required field
+          // or an address that is not one — so the message is its message.
+          status.textContent = error.message;
+        } finally {
+          send.disabled = false;
+        }
+      });
+      (async () => {
+        try {
+          const request = await fetch(
+            `/api/workspace/drive/documents/${encodeURIComponent(item.id)}/form`);
+          const data = await request.json();
+          if (!request.ok) throw new Error(data?.error?.message || 'フォームを読み込めませんでした。');
+          body.replaceChildren();
+          if (!(data.fields || []).length) {
+            body.append(make('p', 'empty-state', 'まだ質問がありません。'));
+          }
+          (data.fields || []).forEach((entry) => {
+            const control = entry['field-type'] === 'textarea'
+              ? make('textarea', 'document-preview')
+              : make('input', 'workspace-search surface-input--wide');
+            if (control.tagName === 'INPUT') {
+              control.type = inputTypes[entry['field-type']] || 'text';
+            }
+            if (entry['field-type'] === 'checkbox') {
+              control.type = 'checkbox';
+              control.className = 'surface-check';
+              control.addEventListener('change', () => { answers[entry.id] = control.checked; });
+            } else {
+              control.addEventListener('input', () => { answers[entry.id] = control.value; });
+            }
+            body.append(field(`${entry.label}${entry['required?'] ? ' *' : ''}`, control));
+          });
+          send.disabled = false;
+        } catch (error) {
+          body.replaceChildren(make('p', 'empty-state', error.message));
+        }
+      })();
+      panel.append(body, send, status, responses);
+      loadResponses();
+      return panel;
     };
     // Sharing is owner-only, and the panel says who has what rather than
     // only offering to add: a share you cannot see is one you cannot undo.
