@@ -718,9 +718,15 @@ against its own cells, both worksheets are written, and the pair comes back
 whole through an xlsx round trip. CSV still takes one tab by name and says
 so when asked for one that is not there — a CSV is one table.
 
-`A1` means *this* tab's A1. Cross-tab references are `'シート'!A1` in a
-spreadsheet and are not implemented, so the answer is this tab's cell rather
-than a silent mixture of two.
+`A1` means *this* tab's A1 and `原価表!A1` means that tab's — the first
+half is what an unqualified reference must keep meaning now that the second
+half exists, and both are tested through the Drive. A sheet that is not
+there is `#REF!`.
+
+The chain of cells being computed is keyed by sheet *and* cell. With one tab
+those are the same thing; with two, `売上表!A1` and `原価表!A1` are both
+`[1 1]`, so a cell-only key would call an ordinary cross-tab reference a
+cycle and would miss a real one that goes out to another sheet and back.
 
 ### A spreadsheet that computes
 
