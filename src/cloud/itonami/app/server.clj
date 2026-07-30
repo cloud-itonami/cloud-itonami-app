@@ -7,6 +7,7 @@
             [cloud.itonami.app.service :as service]
             [cloud.itonami.app.store :as store]
             [cloud.itonami.app.web :as web]
+            [cloud.itonami.app.worker :as worker]
             [cloud.itonami.app.workspace :as workspace])
   (:import [com.sun.net.httpserver HttpExchange HttpHandler HttpServer]
            [java.io OutputStreamWriter]
@@ -106,6 +107,9 @@
 
 (defn- provider-from-path [path pattern]
   (some-> (re-matches pattern path) second keyword))
+
+(defn- id-from-path [path pattern]
+  (some-> (re-matches pattern path) second))
 
 (defn- public-session [session-id]
   {:schema "cloud.itonami.app.session.v1"
@@ -353,6 +357,36 @@
               (send! exchange 200
                      (workspace/snapshot :scheduler workspace/calendar-snapshot)))
 
+            ;; Worker runs are live queue state, so they bypass the workspace
+            ;; read cache.
+            (and (= method "GET") (= path "/api/workspace/worker"))
+            (do
+              (require-app-session! exchange)
+              (send! exchange 200 (worker/snapshot config)))
+
+            (and (= method "POST") (= path "/api/workers"))
+            (let [session (require-app-session! exchange)]
+              (require-origin! exchange config)
+              (require-csrf! exchange session)
+              (send! exchange 202
+                     (worker/enqueue! config (read-json exchange))))
+
+            (and (= method "POST") (= path "/api/workers/clear"))
+            (let [session (require-app-session! exchange)]
+              (require-origin! exchange config)
+              (require-csrf! exchange session)
+              (worker/clear-finished!)
+              (send! exchange 200 (worker/snapshot config)))
+
+            (and (= method "POST")
+                 (id-from-path path #"/api/workers/([^/]+)/cancel"))
+            (let [session (require-app-session! exchange)
+                  id (id-from-path path #"/api/workers/([^/]+)/cancel")]
+              (require-origin! exchange config)
+              (require-csrf! exchange session)
+              (worker/cancel! id)
+              (send! exchange 200 (worker/snapshot config)))
+
             (and (= method "GET") (= path "/v1/models"))
             (send! exchange 200 {:object "list"
                                  :data (service/available-models config)})
@@ -427,6 +461,9 @@
                      :passkey/onboarding-unavailable 409
                      :identity/organization-id-immutable 409
                      :identity/organization-required 409
+                     :worker/invalid-request 400
+                     :worker/not-found 404
+                     :worker/not-cancellable 409
                      :oauth/unsupported 400
                      :oauth/missing-code 400
                      :oauth/invalid-state 400

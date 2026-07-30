@@ -37,4 +37,8 @@
  :cloud-relay {:base-url nil
                :access-token-env "CLOUD_ITONAMI_RELAY_ACCESS_TOKEN"}
  :memory {:max-session-messages 40
-          :max-context-messages 20}}
+          :max-context-messages 20}
+ ;; Background worker runs. Concurrency is deliberately small: these share the
+ ;; local model with interactive chat.
+ :worker {:max-concurrency 2
+          :max-runs 50}}

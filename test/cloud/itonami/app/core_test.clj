@@ -1,6 +1,7 @@
 (ns cloud.itonami.app.core-test
   (:require [clojure.test :refer [deftest is]]
             [clojure.java.io :as io]
+            [clojure.set :as set]
             [clojure.string :as str]
             [cloud.itonami.app.app :as app]
             [cloud.itonami.app.config :as config-loader]
@@ -11,6 +12,7 @@
             [cloud.itonami.app.store :as store]
             [cloud.itonami.app.provider :as provider]
             [cloud.itonami.app.web :as web]
+            [cloud.itonami.app.worker :as worker]
             [cloud.itonami.app.workspace :as workspace]))
 
 (def config
@@ -114,11 +116,31 @@
       (is (re-find #"Passkey 登録が必須" html))
       (is (re-find #"id=\"connector-list\"" html))
       (is (re-find #"id=\"member-form\"" html))
+      (is (re-find #"data-view-panel=\"worker\"" html))
+      (is (re-find #"id=\"worker-form\"" html))
+      (is (re-find #"id=\"worker-prompt\"" html))
+      (is (re-find #"id=\"worker-list\"" html))
+      (is (re-find #"id=\"worker-detail\"" html))
+      (is (re-find #"id=\"worker-count\"" html))
       (is (re-find #"color-scheme\" content=\"light\"" html))
       (is (re-find #"id=\"request-status\"[^>]*role=\"status\"" html))
-      (doseq [view ["Inbox" "Projects" "Drive" "Scheduler"]]
+      (doseq [view ["Worker" "Inbox" "Projects" "Drive" "Scheduler"]]
         (is (re-find (re-pattern (str ">" view "<")) html)))
       (is (re-find #"data-view-panel=\"scheduler\"" html)))))
+
+(deftest every-scripted-element-exists-and-every-nav-item-has-a-panel
+  (with-redefs [store/snapshot (constantly (store/initial-state))]
+    (let [html (web/page-html config)
+          html-ids (set (map second (re-seq #"id=\"([^\"]+)\"" html)))
+          ;; An unresolved lookup throws inside DOMContentLoaded and takes the
+          ;; whole interaction layer down with it, so every one must resolve.
+          scripted (set (map second (re-seq #"\$\('#([^']+)'\)" web/interaction-js)))
+          panels (set (map second (re-seq #"data-view-panel=\"([^\"]+)\"" html)))
+          views (set (map second (re-seq #"data-view=\"([^\"]+)\"" html)))]
+      (is (seq scripted))
+      (is (empty? (set/difference scripted html-ids)))
+      (is (contains? views "worker"))
+      (is (= views panels)))))
 
 (deftest workspace-snapshot-composes-existing-systems
   (with-redefs [workspace/inbox-snapshot (constantly {:items [{:id "mail"}]})
@@ -171,6 +193,124 @@
     (is (= {:value 2} (workspace/snapshot :drive loader)))
     (is (= 2 @calls))
     (workspace/clear-cache!)))
+
+(defn- with-worker-sandbox
+  "Run `body` against isolated persisted state and an empty worker queue."
+  [body]
+  (let [temporary (java.nio.file.Files/createTempDirectory
+                   "cloud-itonami-app-worker-test"
+                   (make-array java.nio.file.attribute.FileAttribute 0))
+        previous-state @store/state
+        previous-runs @worker/runs]
+    (try
+      (reset! store/state (store/initial-state))
+      (reset! worker/runs [])
+      (with-redefs [config-loader/data-dir (fn [] (.toFile temporary))]
+        (body))
+      (finally
+        (reset! store/state previous-state)
+        (reset! worker/runs previous-runs)))))
+
+(deftest worker-runs-stream-in-the-background-and-keep-their-output
+  (with-worker-sandbox
+    (fn []
+      (with-redefs [provider/chat-stream!
+                    (fn [_ request on-delta]
+                      (is (= "受信トレイを整理して"
+                             (get-in request [:messages 1 :content])))
+                      (on-delta "整理")
+                      (on-delta "しました")
+                      {:content "整理しました" :usage {:total_tokens 4}})]
+        (let [queued (worker/enqueue! config {:prompt "受信トレイを整理して"})]
+          (is (= "queued" (:status queued)))
+          (is (= "受信トレイを整理して" (:title queued)))
+          (is (nil? (:model queued)))
+          (is (true? (worker/await-idle! 10000)))
+          (let [snapshot (worker/snapshot config)
+                run (first (:items snapshot))]
+            (is (= worker/schema (:schema snapshot)))
+            (is (= (:id queued) (:id run)))
+            (is (= "done" (:status run)))
+            (is (= "整理しました" (:output run)))
+            (is (= "ollama" (:provider run)))
+            (is (= "test-model" (:model run)))
+            (is (false? (:truncated? run)))
+            (is (nil? (:error run)))
+            (is (= 0 (:active snapshot)))
+            (is (= 1 (get-in snapshot [:counts :done])))
+            ;; The run record carries the transcript, so the per-run chat
+            ;; session must not be left behind in persisted state.
+            (is (empty? (store/session-messages (str "worker:" (:id run)))))
+            (is (some #(= :worker/finished (:type %))
+                      (:events (store/snapshot))))))))))
+
+(deftest worker-failure-is-recorded-without-losing-the-run
+  (with-worker-sandbox
+    (fn []
+      (with-redefs [provider/chat-stream!
+                    (fn [_ _ _] (throw (ex-info "provider exploded" {})))]
+        (let [queued (worker/enqueue! config {:title "壊れる仕事"
+                                              :prompt "失敗して"})]
+          (is (true? (worker/await-idle! 10000)))
+          (let [run (first (:items (worker/snapshot config)))]
+            (is (= (:id queued) (:id run)))
+            (is (= "壊れる仕事" (:title run)))
+            (is (= "failed" (:status run)))
+            (is (= "provider exploded" (:error run)))
+            (is (= "" (:output run)))))))))
+
+(deftest worker-run-can-be-cancelled-while-streaming
+  (with-worker-sandbox
+    (fn []
+      (let [streaming (promise)
+            release (promise)]
+        (with-redefs [provider/chat-stream!
+                      (fn [_ _ on-delta]
+                        (on-delta "開始")
+                        (deliver streaming true)
+                        @release
+                        (on-delta "中止後は書き込まれない")
+                        {:content "完走してはいけない"})]
+          (let [queued (worker/enqueue! config {:prompt "長い仕事"})]
+            (is (true? (deref streaming 10000 false)))
+            (worker/cancel! (:id queued))
+            (deliver release true)
+            (is (true? (worker/await-idle! 10000)))
+            (let [snapshot (worker/snapshot config)
+                  run (first (:items snapshot))]
+              (is (= "cancelled" (:status run)))
+              (is (= "開始" (:output run)))
+              (is (= 1 (get-in snapshot [:counts :cancelled]))))))))))
+
+(deftest worker-validates-prompts-and-clears-only-finished-runs
+  (with-worker-sandbox
+    (fn []
+      (is (thrown-with-msg? clojure.lang.ExceptionInfo #"指示"
+                            (worker/enqueue! config {:prompt "   "})))
+      (is (thrown-with-msg? clojure.lang.ExceptionInfo #"見つかりません"
+                            (worker/cancel! "wrk-missing")))
+      (with-redefs [provider/chat-stream!
+                    (fn [_ _ on-delta] (on-delta "ok") {:content "ok"})]
+        (let [queued (worker/enqueue! config {:prompt "一件目"})]
+          (is (true? (worker/await-idle! 10000)))
+          (is (= 1 (count (:items (worker/snapshot config)))))
+          (is (thrown-with-msg? clojure.lang.ExceptionInfo #"終了"
+                                (worker/cancel! (:id queued))))
+          (worker/clear-finished!)
+          (is (empty? (:items (worker/snapshot config)))))))))
+
+(deftest worker-retention-drops-only-the-oldest-finished-runs
+  (with-worker-sandbox
+    (fn []
+      (let [bounded (assoc config :worker {:max-runs 2})]
+        (with-redefs [provider/chat-stream!
+                      (fn [_ _ on-delta] (on-delta "ok") {:content "ok"})]
+          (doseq [index (range 4)]
+            (worker/enqueue! bounded {:title (str "job-" index)
+                                      :prompt (str "仕事 " index)})
+            (is (true? (worker/await-idle! 10000))))
+          (is (= ["job-3" "job-2"]
+                 (mapv :title (:items (worker/snapshot bounded))))))))))
 
 (deftest local-identity-registers-organization-owner-and-members-safely
   (let [temporary (java.nio.file.Files/createTempDirectory
