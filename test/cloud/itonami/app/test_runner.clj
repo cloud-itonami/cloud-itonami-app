@@ -14,6 +14,7 @@
             [cloud.itonami.app.canvas-test]
             [cloud.itonami.app.loops-test]
             [cloud.itonami.app.metrics-test]
+            [cloud.itonami.app.portfolio-test]
             [cloud.itonami.app.repos-test]
             [cloud.itonami.app.mailbox-test]
             [cloud.itonami.app.mailbox-http-test]
@@ -64,6 +65,7 @@
     cloud.itonami.app.canvas-test
     cloud.itonami.app.loops-test
     cloud.itonami.app.metrics-test
+    cloud.itonami.app.portfolio-test
     cloud.itonami.app.repos-test
     cloud.itonami.app.authority.adapters-test
     cloud.itonami.app.authority.api-test

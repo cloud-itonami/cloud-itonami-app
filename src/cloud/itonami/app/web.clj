@@ -42,6 +42,26 @@
     border:1px dashed var(--color-neutral-solid-gray-200)}
   .axis-row__value{font-variant-numeric:tabular-nums;
     color:var(--color-neutral-solid-gray-700)}
+  /* The matrix. Scrolls inside its own container so the page body never scrolls
+     sideways, and the business column stays put while the planes scroll. */
+  .matrix-wrap{overflow-x:auto;margin:0 0 1rem}
+  .matrix{border-collapse:collapse;font-size:.8125rem;min-width:100%}
+  .matrix th,.matrix td{padding:.5rem .625rem;text-align:left;vertical-align:top;
+    border-bottom:1px solid var(--color-neutral-solid-gray-200);
+    white-space:nowrap}
+  .matrix th{font-size:.75rem;color:var(--color-neutral-solid-gray-700)}
+  .matrix tbody th{position:sticky;left:0;background:var(--color-neutral-white);
+    white-space:normal;min-width:9rem}
+  .matrix__state{display:inline-block;min-width:4.5rem;font-weight:700}
+  /* Only 'missing' and 'stale' are warnings. 'unbound' and 'unresolvable' are
+     things the app cannot decide, which is the same line operator/readiness
+     draws — turning 「わからない」 into 「不可」 would be as dishonest as the
+     reverse. */
+  .matrix__state[data-state='measured']{color:var(--color-semantic-success-1)}
+  .matrix__state[data-state='missing']{color:var(--color-semantic-error-1)}
+  .matrix__state[data-state='stale']{color:var(--color-semantic-error-1)}
+  .matrix__detail{display:block;font-weight:400;white-space:normal;
+    color:var(--color-neutral-solid-gray-700)}
   .kv{display:grid;grid-template-columns:minmax(0,14rem) 1fr;gap:.25rem .75rem;
     margin:0;font-size:.8125rem}
   .kv dt{font-weight:700;color:var(--color-neutral-solid-gray-700);
@@ -5096,6 +5116,80 @@
       }
     };
 
+    // The matrix re-runs every bound XMILE model and reads 4.8 MB of repo planes,
+    // so it is fetched on demand rather than at boot — and the button says so
+    // instead of the pane appearing to be broken while it thinks.
+    const matrixStateLabel = {measured:'測定済み', unbound:'未紐付け',
+      unresolvable:'解析不能', missing:'不在', stale:'古い'};
+    let matrixLoaded = false;
+
+    const renderMatrix = (d) => {
+      const table = $('#matrix'); if (!table) return;
+      table.replaceChildren();
+      const cols = (d && d.columns) || [];
+      const rows = (d && d.businesses) || [];
+      const thead = make('thead');
+      const hr = make('tr');
+      hr.append(make('th', null, '事業'));
+      cols.forEach((c) => {
+        const th = make('th', null, c.label);
+        th.title = c.detail || '';
+        hr.append(th);
+      });
+      thead.append(hr); table.append(thead);
+      const tb = make('tbody');
+      rows.forEach((r) => {
+        const tr = make('tr');
+        const th = make('th', null, r.business?.name || r.business?.slug || '');
+        th.scope = 'row';
+        tr.append(th);
+        cols.forEach((c) => {
+          const cell = (r.cells || {})[bare(c.key)] || {};
+          const td = make('td');
+          const st = bare(cell.state);
+          const chip = make('span', 'matrix__state', matrixStateLabel[st] || st);
+          chip.dataset.state = st;
+          td.append(chip);
+          // The reason is always beside the state — a grid of grey words with no
+          // explanation is what this pane exists not to be.
+          td.append(make('span', 'matrix__detail', cell.detail || ''));
+          tr.append(td);
+        });
+        tb.append(tr);
+      });
+      table.append(tb);
+      const counts = $('#matrix-counts');
+      if (counts) {
+        const c = (d && d.counts) || {};
+        counts.textContent = rows.length
+          ? `${c.businesses} 事業 × ${cols.length} 面 = ${c.cells} セル — `
+            + Object.entries(c)
+                .filter(([k]) => matrixStateLabel[k])
+                .map(([k, v]) => `${matrixStateLabel[k]} ${v}`).join(' · ')
+          : '事業がありません。';
+      }
+    };
+
+    const loadMatrix = () => {
+      const btn = $('#matrix-load');
+      if (btn) { btn.disabled = true; btn.textContent = '計算中…'; }
+      return fetch('/api/portfolio/matrix')
+        .then((r) => r.ok ? r.json() : null)
+        .then((d) => {
+          if (d) { renderMatrix(d); matrixLoaded = true; }
+          if (btn) { btn.disabled = false; btn.textContent = '再計算する'; }
+          return Boolean(d);
+        })
+        .catch(() => {
+          const c = $('#matrix-counts');
+          if (c) c.textContent = 'matrix を計算できません。';
+          if (btn) { btn.disabled = false; btn.textContent = '計算する'; }
+          return false;
+        });
+    };
+
+    $('#matrix-load')?.addEventListener('click', () => loadMatrix());
+
     const loadPortfolio = () => fetch('/api/business')
       .then((r) => r.ok ? r.json() : null)
       .then((d) => { if (d) renderPortfolio(d); return Boolean(d); })
@@ -6892,6 +6986,9 @@
     onViewChange = () => {
       scheduleWorkerPoll();
       scheduleOrganismPoll();
+      // Computed the first time the pane is actually opened, then left alone
+      // until the button is pressed — it is expensive and it is not live data.
+      if (currentView === 'portfolio' && !matrixLoaded) loadMatrix();
       if (currentView === 'organisms' && !organismWorkers.length) {
         loadOrganisms().catch((error) => {
           $('#organism-activity-state').textContent = error.message;
@@ -7164,6 +7261,16 @@
                 :role "status" :aria-live "polite"}
           "workspace checkout の状態を確認中…"]
          [:div {:class "stat-row" :id "portfolio-stats"}]
+         [:div {:class "local-card"}
+          [:div {:class "view-header" :style "margin-bottom:1rem"}
+           [:div
+            (dds/heading 2 "面ごとの現在地" {:size "24"})
+            [:p {:class "form-help" :id "matrix-note"}
+             (str "事業 × 面。セルは「測定済み」「未紐付け」「解析不能」「不在」"
+                  "（実測だけ stale もあり）を区別します。開いたときに計算します。")]]
+           [:button {:class "tool-button" :type "button" :id "matrix-load"} "計算する"]]
+          [:div {:class "matrix-wrap"} [:table {:class "matrix" :id "matrix"}]]
+          [:p {:class "source-note" :id "matrix-counts"}]]
          [:div {:class "local-card"}
           (dds/heading 2 "事業を追加" {:size "24"})
           [:p {:class "form-help"}

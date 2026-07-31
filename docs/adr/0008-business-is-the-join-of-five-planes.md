@@ -295,6 +295,34 @@ tell them apart.** Phase 1 found it as `renderOperator` reading
 `:hyp/status` and `:gate/status` colliding once stripped; here it is a value
 `write-str` cannot express at all.
 
+## The matrix, finally filled
+
+ADR-2607309600 decision 7 described a matrix — business × plane, every value
+distinguishing measured from stale from unmeasured. Phase 1 shipped the pane with
+only face-resolution counts in it, because the columns needed the four analysis
+panes to exist first. They do now, so `cloud.itonami.app.portfolio` asks each of
+them for each business and lays the answers out in one grid.
+
+**Four kinds of nothing, never collapsed.** `unbound` (never named), 
+`unresolvable` (named, no checkout), `missing` (resolvable, absent), `measured`.
+Plus `stale`, which only metrics has, because only metrics carries a date it can
+be late against. Each cell states its reason beside its state; a grid of grey
+words with no explanation is what this pane exists not to be.
+
+**A bug the tests caught, in the same family as the earlier two.** `repos-cell`
+checked the plane's state before checking whether the business had bound any
+repositories at all, so a business that named none reported 「解析不能」 when the
+honest answer was 「未紐付け」 — pointing at the wrong fix. Two true statements,
+and the order decided which one the reader saw. That is the third time in this
+plane that precedence between two truths was the defect; the first two were
+`cond->` chains overwriting `:detail`.
+
+**Cost is stated, not hidden.** The matrix re-runs every bound XMILE model plus
+one run per constant, and reads 4.8 MB of repository planes. So it is not part of
+the startup request: it is its own endpoint, fetched when the pane is opened, and
+`repos/planes` was split out so those files are read once per request rather than
+once per business.
+
 ## Consequences
 
 - A business is created and bound by hand. Nothing is derived — which repo or

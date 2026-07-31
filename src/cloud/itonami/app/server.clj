@@ -23,6 +23,7 @@
             [cloud.itonami.app.identity :as identity]
             [cloud.itonami.app.loops :as loops]
             [cloud.itonami.app.metrics :as business-metrics]
+            [cloud.itonami.app.portfolio :as portfolio]
             [cloud.itonami.app.organism-gateway :as organism-gateway]
             [cloud.itonami.app.relay :as relay]
             [cloud.itonami.app.repos :as business-repos]
@@ -820,6 +821,17 @@
                 (send! exchange 200 snapshot)
                 (send! exchange 404 {:error {:type "not-found"
                                              :message "該当する business がありません"}})))
+
+            ;; ---- portfolio matrix ----
+            ;;
+            ;; Its own endpoint rather than part of /api/business, which loads at
+            ;; startup: this one re-runs every bound XMILE model (plus one run per
+            ;; constant for the sensitivity sweep) and reads 4.8 MB of repo
+            ;; planes. Paid when somebody opens the pane, not when the app boots.
+
+            (and (= method "GET") (= path "/api/portfolio/matrix"))
+            (let [session (require-app-session! exchange)]
+              (send! exchange 200 (portfolio/matrix config session)))
 
             ;; ---- 事業の repo と実測 ----
             ;;
