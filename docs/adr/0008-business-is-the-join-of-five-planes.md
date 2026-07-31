@@ -266,6 +266,35 @@ carried anyway, because the first product added without facts would otherwise
 appear assessed and poor rather than unassessed. The projection reports the
 arithmetic; it does not change it.
 
+## The wire may not carry a File
+
+`business/workspace` keeps a live `java.io.File` under `:file` so the face
+resolvers can open things beneath the root. `portfolio` returned that map whole,
+and `clojure.data.json/write-str` throws on a `File` — so `GET /api/business`
+answered **500 `Don't know how to write JSON of class java.io.File`** for every
+installation that had actually set `:business :workspace-root`. That is not an
+edge case: it is the only configuration in which the Portfolio has anything to
+resolve. An installation with no workspace worked, and configuring the setting
+the pane exists for broke it.
+
+The suite did not catch it because `business_http_test`'s config sets no
+workspace root, so only the `:unset` branch — which carries no `:file` — ever
+reached the serializer, and `business_test` calls `portfolio` directly and never
+serializes at all. Every assertion passed against the one shape that could not
+fail.
+
+`wire-workspace` now strips `:file` at that boundary, named rather than inlined
+so the next payload carrying a workspace has something to call. The regression
+test configures a real root and asserts both that the route is 200 and that
+`:file` is absent from the wire; it fails five assertions without the fix.
+
+Third instance of one rule in this pane: **what the server holds and what the
+browser reads are different shapes, and only a test that speaks the wire can
+tell them apart.** Phase 1 found it as `renderOperator` reading
+`['operator/name']` after `write-str` dropped the namespace; Phase 2 found it as
+`:hyp/status` and `:gate/status` colliding once stripped; here it is a value
+`write-str` cannot express at all.
+
 ## Consequences
 
 - A business is created and bound by hand. Nothing is derived — which repo or

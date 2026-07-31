@@ -147,6 +147,25 @@
       :else
       {:configured? true :state :present :root (.getPath file) :file file})))
 
+(defn wire-workspace
+  "The workspace map with the live `java.io.File` handle removed.
+
+  `:file` exists so the face resolvers can open things under the root; it is a
+  JVM object and `clojure.data.json/write-str` throws on it. Everything the
+  wire needs is already in `:root` as a string.
+
+  This is not hypothetical tidiness. `/api/business` returned 500
+  『Don't know how to write JSON of class java.io.File』 for every install that
+  had actually configured `:business :workspace-root` — which is every install
+  the Portfolio view exists for. The suite missed it because the HTTP harness
+  configures no workspace root, so only the `:unset` branch, which carries no
+  `:file`, ever reached the serializer.
+
+  Kept as a named function rather than an inline `dissoc` so the next payload
+  that carries a workspace has something to call, and so a test can name it."
+  [ws]
+  (dissoc ws :file))
+
 (def ^:private unreadable ::unreadable)
 
 (defn- read-edn
@@ -344,7 +363,8 @@
         unassigned (filterv #(not (contains? bound (:adoption/repo %))) live)]
     {:schema schema
      :organization-id organization-id
-     :workspace ws
+     ;; wire-safe: `ws` carries a live File handle the JSON writer cannot take.
+     :workspace (wire-workspace ws)
      :businesses rows
      :unassigned
      {:count (count unassigned)
