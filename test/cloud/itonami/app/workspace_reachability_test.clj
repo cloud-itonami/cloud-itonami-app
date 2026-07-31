@@ -45,6 +45,19 @@
 (defn- source [path]
   (slurp (io/file "src/cloud/itonami/app" path)))
 
+(defn- interface
+  "Everything a person can reach the server through: the page's markup and
+  the script that fetches.
+
+  Both, because they used to be one file. The interaction layer was a 300 kB
+  string literal inside `web.clj` and is a `.js` resource now, so a check
+  that reads only the namespace sees the markup and none of the URLs — which
+  is what this did for about a minute, reporting every route in the app as
+  unreachable."
+  []
+  (str (source "web.clj")
+       (slurp (io/file "resources/cloud/itonami/app/interaction.js"))))
+
 (defn- routes-under
   "The distinctive segment of every Drive route the server matches.
 
@@ -87,7 +100,7 @@
 
 (deftest every-workspace-route-is-reachable-from-the-interface
   (let [server (source "server.clj")
-        web (source "web.clj")
+        web (interface)
         families ["/api/workspace/drive" "/api/workspace/scheduler"
                   "/api/workspace/inbox"]
         found (mapcat #(:routes (unreached server web %)) families)
@@ -107,7 +120,7 @@
 (deftest importing-is-reachable
   ;; The specific one this file exists for, said plainly rather than as a
   ;; set difference: the app offers to read a file in, not only to store it.
-  (let [web (source "web.clj")]
+  (let [web (interface)]
     (is (str/includes? web "/api/workspace/drive/import"))
     (is (str/includes? web "drive-import-choice") "and there is somewhere to say so")
     (doseq [format ["xlsx" "docx" "pptx" "csv" "md" "edn"]]
@@ -118,7 +131,7 @@
   ;; segment — `events` is the word every route in the family shares, so the
   ;; set difference above cannot see it. Named here instead, or the one route
   ;; that creates anything in this family would be the one nothing checks.
-  (let [web (source "web.clj")]
+  (let [web (interface)]
     (is (str/includes? web "/api/workspace/scheduler/events"))
     (is (str/includes? web "scheduler-create-button") "and there is something to press")
     ;; All three answers. The model has `tentative`; an interface offering
