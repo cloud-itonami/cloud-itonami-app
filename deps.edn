@@ -204,8 +204,8 @@
    :git/sha "36bf13275706c1355c61690f41e1bd9d6540033f"}
   io.github.kotoba-lang/bitcoin-node
   {:git/url "https://github.com/kotoba-lang/bitcoin-node.git"
-   :git/tag "v0.29.0"
-   :git/sha "273876c7880d60b764baec64cbb78e12b1774b7e"}
+   :git/tag "v0.30.0"
+   :git/sha "9273409274e26e17a84f370e9393e736ce9815fc"}
   io.github.kotoba-lang/chain-observer
   {:git/url "https://github.com/kotoba-lang/chain-observer.git"
    :git/tag "v0.1.0"

@@ -411,8 +411,9 @@ serialization before the configured SegWit activation height even when a
 coinbase commitment is present. Excessive legacy sigops are rejected before
 either active or side-chain block bodies enter local storage. Prevout Script
 validation also matches Core's retroactive P2SH/WITNESS/TAPROOT flags and
-historical exception composition. Historical BIP30 replacement is limited to
-coinbase outputs, so non-coinbase outpoint collisions remain fail-closed. The
+historical exception composition. BIP30 checks use Core's parent-view scan,
+pinned BIP34-chain optimization, and height 1,983,702 recheck boundary;
+replacement remains coinbase-only and non-coinbase collisions fail closed. The
 embedded UTXO database uses Core-identical
 unspendable-output pruning and transactionally upgrades legacy state to schema
 v7, requiring authenticated reindex if impossible spend history is detected.
