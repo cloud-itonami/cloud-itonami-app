@@ -12,7 +12,7 @@
   .workspace{display:grid;grid-template-columns:17rem minmax(0,1fr);min-height:100vh}
   .sidebar{position:sticky;top:0;height:100vh;box-sizing:border-box;padding:1.5rem 1rem;
     background:var(--color-neutral-white);border-right:1px solid var(--color-neutral-solid-gray-200);
-    display:flex;flex-direction:column;gap:1.5rem}
+    display:flex;flex-direction:column;gap:1.5rem;overflow:hidden}
   .req-row{padding:.75rem 0;border-bottom:1px solid var(--color-neutral-solid-gray-200)}
   .req-row__head{display:flex;align-items:center;justify-content:space-between;gap:1rem}
   .req-row__detail{margin:.375rem 0 0;font-size:.875rem;line-height:1.7;
@@ -130,7 +130,9 @@
   .brand__mark{display:none}
   .brand__note{margin:.25rem 0 0;color:var(--color-neutral-solid-gray-600);
     font-size:.8125rem;line-height:1.6}
-  .local-nav{display:flex;flex-direction:column;gap:.25rem}
+  .local-nav{display:flex;flex:1 1 auto;min-height:0;flex-direction:column;gap:.25rem;
+    overflow-x:hidden;overflow-y:auto;overscroll-behavior:contain;scrollbar-gutter:stable;
+    padding-right:.25rem}
   /* The menu separates what you work ON (a business) from what you work WITH
      (chat, drive, scheduler). Twelve flat items had both kinds in one list. */
   .local-nav__group{margin:.75rem 0 .125rem;padding:0 .75rem;font-size:.6875rem;
@@ -307,7 +309,7 @@
      is only tinted says nothing to anyone who cannot see the tint, and the
      mark has to survive next to the styling a cell may already carry. */
   .is-commented{position:relative}
-  .is-commented::after{content:"";position:absolute;top:2px;right:2px;
+  .is-commented::after{content:\"\";position:absolute;top:2px;right:2px;
     width:.5rem;height:.5rem;border-radius:50%;
     background:var(--color-semantic-error-1)}
   .surface-row.is-commented{outline:2px solid var(--color-semantic-error-2);
@@ -675,7 +677,8 @@
     .sidebar__organization{display:none}
     .brand__mark{display:block;margin:0;color:var(--color-key-900);font-size:1.125rem;
       font-weight:700;line-height:2.5rem}
-    .local-nav{width:100%;flex-direction:column;overflow:visible}
+    .local-nav{width:100%;flex-direction:column;overflow-x:hidden;overflow-y:auto;
+      padding-right:0}
     .local-nav__item{width:100%;min-width:0;justify-content:center;padding:.625rem .25rem}
     .local-nav__item[aria-current='page']{border-left:0;border-bottom:4px solid var(--color-key-900);
       padding:.625rem .25rem .375rem}
@@ -723,24 +726,26 @@
     .typing span{animation:none;opacity:1}
     .skeleton{animation:none;background:var(--color-neutral-solid-gray-100)}
   }
+  .wallet-summary{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));
+    gap:1rem;margin-bottom:1rem}
+  .wallet-metric{padding:1rem;border:1px solid var(--color-neutral-solid-gray-200);
+    border-radius:.75rem;background:var(--color-neutral-white)}
+  .wallet-metric p{margin:0}.wallet-metric strong{display:block;margin-top:.25rem;
+    font-size:1.5rem}.wallet-address{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;
+    overflow-wrap:anywhere}.wallet-list{display:grid;gap:.75rem}
+  .wallet-row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:1rem;
+    align-items:center;padding:1rem;border:1px solid var(--color-neutral-solid-gray-200);
+    border-radius:.625rem;background:var(--color-neutral-white)}
+  .wallet-row h3,.wallet-row p{margin:0}.wallet-row p{margin-top:.25rem;
+    color:var(--color-neutral-solid-gray-600);font-size:.8125rem}
+  .operations-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));
+    gap:1rem;margin-top:1rem}.operations-grid .settings-section{margin:0}
+  @media(max-width:64rem){.wallet-summary,.operations-grid{grid-template-columns:1fr}}
   ")
 
 (def interaction-js
-  "The page's interaction layer, which is JavaScript and now lives in a
-  JavaScript file.
-
-  It used to be a 300 kB string literal in this namespace, and every
-  backslash in it had to be doubled for the Clojure reader: `\\.` in a
-  regular expression, `\\n` in a `split`. Writing one of them singly is a
-  compile error five separate changes made — loud, but a cycle each time,
-  and the mistake has no other cause than the value being a string in a
-  place where it is a program. As a resource it is neither escaped nor
-  quoted, `node --check` reads the file directly, and an editor knows what
-  language it is looking at.
-
-  Read once at load. The page is assembled per request and re-reading a
-  third of a megabyte for each one would be work nobody asked for."
-  (slurp (io/resource "cloud/itonami/app/interaction.js")))
+  "The page interaction program is a JavaScript resource, read once at load."
+  (slurp (clojure.java.io/resource "cloud/itonami/app/interaction.js")))
 
 (defn- nav-item [view title icon badge-id]
   [:button {:class "local-nav__item" :type "button" :data-view view
@@ -807,6 +812,7 @@
         (nav-item "esign" "eSign" "✍" "esign-count")
         (nav-item "credentials" "Credentials" "▣" "credentials-count")
         (nav-item "scheduler" "Scheduler" "○" "scheduler-count")
+        (nav-item "wallet" "Wallet" "◈" "wallet-count")
         (nav-item "storage" "Storage" "◈" "storage-count")
         (nav-group "SETTINGS")
         (nav-item "settings" "Settings" "⚙" nil)]
@@ -1446,7 +1452,109 @@
            [:ul {:class "record-list__items" :id "calendar-list"}
             [:li {:class "skeleton"}]]]
           [:article {:class "record-detail" :id "calendar-detail" :aria-live "polite"}
-           [:div {:class "empty-state"} "予定を読み込んでいます。"]]]]
+           [:div {:class "empty-state"} "予定を読み込んでいます。"]]]
+         [:div {:class "operations-grid"}
+          [:section {:class "settings-section"}
+           (dds/heading 2 "反復 AgentRun" {:size "24"})
+           [:p "指定間隔で bounded AgentRun を開始します。端末変更は自動承認されません。"]
+           [:form {:class "settings-form" :id "agent-schedule-form"}
+            [:label {:for "agent-schedule-goal"} "タスク"]
+            [:input {:id "agent-schedule-goal" :required true :maxlength 2000
+                     :placeholder "Inboxを確認して要対応を整理"}]
+            [:label {:for "agent-schedule-interval"} "間隔"]
+            [:select {:id "agent-schedule-interval"}
+             [:option {:value "300"} "5分"]
+             [:option {:value "900"} "15分"]
+             [:option {:value "3600"} "1時間"]
+             [:option {:value "86400"} "毎日"]]
+            [:button {:class "primary-action" :type "submit"} "反復タスクを追加"]]
+           [:p {:class "form-help" :id "agent-schedule-status"
+                :role "status" :aria-live "polite"}]
+           [:div {:class "wallet-list" :id "agent-schedule-list"}]]
+          [:section {:class "settings-section"}
+           (dds/heading 2 "変更検知 AgentRun" {:size "24"})
+           [:p "Mail・Calendar・Projects・Drive の変更 fingerprint で一度だけ起動します。"]
+           [:form {:class "settings-form" :id "agent-watcher-form"}
+            [:label {:for "agent-watcher-goal"} "タスク"]
+            [:input {:id "agent-watcher-goal" :required true :maxlength 2000
+                     :placeholder "新着と予定変更から要対応を整理"}]
+            [:label {:for "agent-watcher-event"} "変更元"]
+            [:select {:id "agent-watcher-event"}
+             [:option {:value "mail.changed"} "Mail"]
+             [:option {:value "calendar.changed"} "Calendar"]
+             [:option {:value "project.changed"} "GitHub Projects"]
+             [:option {:value "drive.changed"} "Drive"]]
+            [:label {:for "agent-watcher-provider"} "受信元"]
+            [:select {:id "agent-watcher-provider"}
+             [:option {:value ""} "すべて"]
+             [:option {:value "google"} "Gmail"]
+             [:option {:value "microsoft"} "Microsoft 365"]]
+            [:button {:class "primary-action" :type "submit"} "変更トリガーを追加"]]
+           [:p {:class "form-help" :id "agent-watcher-status"
+                :role "status" :aria-live "polite"}]
+           [:div {:class "wallet-list" :id "agent-watcher-list"}]]]]
+        [:section {:class "view" :data-view-panel "wallet" :hidden true}
+         (view-header
+          "Wallet"
+          "Passkey User に複数 chain の account を接続し、秘密鍵を預からずに監視・承認します。")
+         [:div {:class "wallet-summary"}
+          [:article {:class "wallet-metric"} [:p "Bitcoin watch-only"]
+           [:strong {:id "wallet-bitcoin-total"} "— sats"]]
+          [:article {:class "wallet-metric"} [:p "Active accounts"]
+           [:strong {:id "wallet-account-total"} "—"]]
+          [:article {:class "wallet-metric"} [:p "Pending approvals"]
+           [:strong {:id "wallet-approval-total"} "—"]]]
+         [:div {:class "operations-grid"}
+          [:section {:class "settings-section"}
+           (dds/heading 2 "Accounts" {:size "24"})
+           [:div {:class "local-actions"}
+            [:button {:class "primary-action" :id "wallet-connect-evm"
+                      :type "button"} "Coinbase / EVM Wallet を接続"]
+            [:button {:class "tool-button" :id "wallet-sync"
+                      :type "button"} "Account Link を同期"]]
+           [:p {:class "form-help" :id "wallet-status"
+                :role "status" :aria-live "polite"}
+            "EIP-1193 / EIP-6963 wallet を検出します。秘密鍵は browser wallet から出ません。"]
+           [:div {:class "wallet-list" :id "wallet-account-list"}
+            [:div {:class "skeleton"}]]]
+          [:section {:class "settings-section"}
+           (dds/heading 2 "Bitcoin Account Link" {:size "24"})
+           [:p "P2WPKH / Taproot address の BIP-322 simple 署名を外部 wallet で作成します。"]
+           [:form {:class "settings-form" :id "bitcoin-connect-form"}
+            [:label {:for "bitcoin-connect-address"} "Bitcoin address"]
+            [:input {:id "bitcoin-connect-address" :required true
+                     :placeholder "bc1q… または bc1p…"}]
+            [:label {:for "bitcoin-connect-signature"} "BIP-322 signature"]
+            [:textarea {:id "bitcoin-connect-signature" :rows 4
+                        :placeholder "最初は空欄で challenge を作成"}]
+            [:button {:class "primary-action" :type "submit"}
+             "Challenge を作成 / 署名を確認"]]
+           [:p {:class "form-help wallet-address" :id "bitcoin-connect-message"
+                :role "status" :aria-live "polite"}]]]
+         [:section {:class "settings-section"}
+          (dds/heading 2 "Bitcoin consensus / vault" {:size "24"})
+          [:div {:class "local-actions"}
+           [:button {:class "tool-button" :id "bitcoin-consensus-refresh"
+                     :type "button"} "Consensus 状態を更新"]
+           [:button {:class "tool-button" :id "bitcoin-consensus-sync"
+                     :type "button"} "検証同期を実行"]]
+          [:p {:class "form-help"}
+           "owner / admin のみ実行できます。Peer は可用性入力であり、"
+           "header・block・Script・UTXO は端末内で検証されます。"]
+          [:div {:class "security-callout"
+                 :id "bitcoin-headers-presync-state"
+                 :role "status" :aria-live "polite" :hidden true}]
+          [:div {:class "security-callout"
+                 :id "bitcoin-block-download-state"
+                 :role "status" :aria-live "polite" :hidden true}]
+          [:div {:class "security-callout"
+                 :id "bitcoin-invalid-branch-state"
+                 :role "status" :aria-live "polite" :hidden true}]
+          [:div {:class "security-callout"
+                 :id "bitcoin-history-evidence-state"
+                 :role "status" :aria-live "polite" :hidden true}]
+          [:pre {:class "worker-output" :id "bitcoin-consensus-state"}
+           "Bitcoin node を確認していません。"]]]
         [:section {:class "view" :data-view-panel "storage" :hidden true}
          (view-header "Storage"
                       (str "kotoba-lang/cloud-filecoin の PieceCID v2 でファイルを"

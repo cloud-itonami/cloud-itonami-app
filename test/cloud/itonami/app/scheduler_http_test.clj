@@ -16,7 +16,8 @@
             [cloud.itonami.app.config :as config-loader]
             [cloud.itonami.app.identity :as local-identity]
             [cloud.itonami.app.server :as server]
-            [cloud.itonami.app.store :as store])
+            [cloud.itonami.app.store :as store]
+            [cloud.itonami.app.workspace :as workspace])
   (:import [java.net URI]
            [java.net.http HttpClient HttpRequest HttpRequest$BodyPublishers
             HttpResponse$BodyHandlers]))
@@ -66,7 +67,10 @@
       (with-redefs [config-loader/data-dir (fn [] (.toFile temporary))
                     local-identity/session (fn [_] {:csrf csrf :user-id who})
                     local-identity/require-passkey! identity
-                    local-identity/configure! (fn [_] nil)]
+                    local-identity/configure! (fn [_] nil)
+                    workspace/calendar-snapshot
+                    (fn [] {:source "test" :status "connected"
+                            :items [] :days []})]
         (server/stop!)
         (server/start! config)
         (try (body) (finally (server/stop!))))

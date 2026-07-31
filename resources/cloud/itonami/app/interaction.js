@@ -4521,7 +4521,10 @@
         // Inside bootstrapApp, not beside loadFilecoin: a business belongs to an
         // organization and the portfolio is that organization's own record, so
         // it needs the session that loadFilecoin's public chain reads do not.
-        loadPortfolio()
+        loadPortfolio(),
+        loadWalletWorkspace(),
+        renderAgentSchedules(),
+        renderAgentWatchers()
       ]).then((results) => {
         const connected = results.filter(Boolean).length;
         $('#workspace-status').textContent = `${connected} / ${results.length} サービス接続`;
@@ -6853,6 +6856,371 @@
         workerHelp(error.message);
       }
     });
+    const operationCard = (title, detail, enabled, onDisable) => {
+      const card = make('article', 'wallet-row');
+      const copy = make('div');
+      copy.append(make('h3', null, title), make('p', null, detail));
+      card.append(copy);
+      if (enabled && onDisable) {
+        const stop = make('button', 'tool-button', '停止');
+        stop.type = 'button';
+        stop.addEventListener('click', async () => {
+          stop.disabled = true;
+          try {
+            await onDisable();
+          } catch (error) {
+            stop.disabled = false;
+            $('#agent-schedule-status').textContent = error.message;
+          }
+        });
+        card.append(stop);
+      }
+      return card;
+    };
+    const renderAgentSchedules = async () => {
+      const list = $('#agent-schedule-list');
+      try {
+        const response = await fetch('/api/agent/schedules');
+        const data = await response.json();
+        if (!response.ok) {
+          throw new Error(data?.error?.message || '反復タスクを読み込めません。');
+        }
+        list.replaceChildren();
+        (data.schedules || []).forEach((schedule) => list.append(operationCard(
+          schedule.goal,
+          `${Math.round(schedule['interval-seconds'] / 60)}分ごと · 次回 ${formatDate(schedule['next-run-at'])}`,
+          schedule['enabled?'],
+          async () => {
+            await postJSON(
+              `/api/agent/schedules/${encodeURIComponent(schedule.id)}/disable`,
+              {},
+              true);
+            await renderAgentSchedules();
+          })));
+        if (!data.schedules?.length) {
+          list.append(make('div', 'empty-state', '反復タスクはありません。'));
+        }
+        return true;
+      } catch (error) {
+        list.replaceChildren(make('div', 'empty-state', error.message));
+        return false;
+      }
+    };
+    const renderAgentWatchers = async () => {
+      const list = $('#agent-watcher-list');
+      try {
+        const response = await fetch('/api/agent/watchers');
+        const data = await response.json();
+        if (!response.ok) {
+          throw new Error(data?.error?.message || '変更トリガーを読み込めません。');
+        }
+        list.replaceChildren();
+        (data.watchers || []).forEach((watcher) => list.append(operationCard(
+          watcher.goal,
+          `${watcher['event-type']} · ${watcher['source-provider-filter'] || 'すべての接続'}`,
+          watcher['enabled?'],
+          async () => {
+            await postJSON(
+              `/api/agent/watchers/${encodeURIComponent(watcher.id)}/disable`,
+              {},
+              true);
+            await renderAgentWatchers();
+          })));
+        if (!data.watchers?.length) {
+          list.append(make('div', 'empty-state', '変更トリガーはありません。'));
+        }
+        return true;
+      } catch (error) {
+        list.replaceChildren(make('div', 'empty-state', error.message));
+        return false;
+      }
+    };
+    const loadWalletWorkspace = async () => {
+      const list = $('#wallet-account-list');
+      try {
+        const response = await fetch('/api/wallet');
+        const data = await response.json();
+        if (!response.ok) {
+          throw new Error(data?.error?.message || 'Walletを読み込めません。');
+        }
+        const active = (data.accounts || []).filter(
+          (account) => account.status === 'active');
+        $('#wallet-count').textContent = String(active.length);
+        $('#wallet-bitcoin-total').textContent =
+          `${Number(data.summary?.['bitcoin-sats'] || 0).toLocaleString()} sats`;
+        $('#wallet-account-total').textContent = String(active.length);
+        $('#wallet-approval-total').textContent = String(
+          (data.approvals || []).filter(
+            (item) => item.status === 'awaiting-passkey').length);
+        list.replaceChildren();
+        active.forEach((account) => {
+          const bitcoin = account.namespace === 'bip122';
+          const balance = (data.balances || []).find(
+            (item) => item['link-id'] === account.id);
+          list.append(operationCard(
+            bitcoin
+              ? `Bitcoin · ${account.network}`
+              : `EVM · chain ${account['chain-id']}`,
+            `${account.address} · ${account['proof-type']} · ${account['sync-status'] || 'pending'}`
+              + (balance
+                ? ` · ${Number(balance['total-sats']).toLocaleString()} sats`
+                : ''),
+            account.status === 'active',
+            async () => {
+              await postJSON(
+                `/api/wallets/${encodeURIComponent(account.id)}/revoke`,
+                {},
+                true);
+              await loadWalletWorkspace();
+            }));
+        });
+        if (!active.length) {
+          list.append(make('div', 'empty-state', '接続済み account はありません。'));
+        }
+        return true;
+      } catch (error) {
+        list.replaceChildren(make('div', 'empty-state', error.message));
+        return false;
+      }
+    };
+    $('#agent-schedule-form').addEventListener('submit', async (event) => {
+      event.preventDefault();
+      try {
+        await postJSON('/api/agent/schedules', {
+          goal:$('#agent-schedule-goal').value.trim(),
+          'interval-seconds':Number($('#agent-schedule-interval').value)
+        }, true);
+        event.currentTarget.reset();
+        $('#agent-schedule-status').textContent = '反復タスクを保存しました。';
+        await renderAgentSchedules();
+      } catch (error) {
+        $('#agent-schedule-status').textContent = error.message;
+      }
+    });
+    $('#agent-watcher-form').addEventListener('submit', async (event) => {
+      event.preventDefault();
+      try {
+        await postJSON('/api/agent/watchers', {
+          goal:$('#agent-watcher-goal').value.trim(),
+          'event-type':$('#agent-watcher-event').value,
+          'source-provider':$('#agent-watcher-provider').value || null
+        }, true);
+        event.currentTarget.reset();
+        $('#agent-watcher-status').textContent = '変更トリガーを保存しました。';
+        await renderAgentWatchers();
+      } catch (error) {
+        $('#agent-watcher-status').textContent = error.message;
+      }
+    });
+    $('#wallet-connect-evm').addEventListener('click', async () => {
+      const button = $('#wallet-connect-evm');
+      button.disabled = true;
+      try {
+        const ethereum = window.ethereum;
+        if (!ethereum?.request) {
+          throw new Error(
+            'Coinbase Wallet / MetaMask など EIP-1193 wallet が見つかりません。');
+        }
+        const accounts = await ethereum.request({method:'eth_requestAccounts'});
+        const address = accounts?.[0];
+        const chainHex = await ethereum.request({method:'eth_chainId'});
+        const started = await postJSON('/api/wallet/connect/start', {
+          address,
+          'chain-id':Number.parseInt(chainHex, 16)
+        }, true);
+        const signature = await ethereum.request({
+          method:'personal_sign',
+          params:[started.message, address]
+        });
+        await postJSON('/api/wallet/connect/finish', {
+          'transaction-id':started['transaction-id'],
+          signature
+        }, true);
+        $('#wallet-status').textContent =
+          'SIWE 署名で接続しました。秘密鍵は保存していません。';
+        await loadWalletWorkspace();
+      } catch (error) {
+        $('#wallet-status').textContent = error.message;
+      } finally {
+        button.disabled = false;
+      }
+    });
+    $('#wallet-sync').addEventListener('click', async () => {
+      const button = $('#wallet-sync');
+      button.disabled = true;
+      try {
+        const result = await postJSON('/api/wallets/sync', {}, true);
+        $('#wallet-status').textContent =
+          `Account Linkを同期しました（送信 ${result.pushed || 0} / 検証 ${result.verified || 0}）。`;
+        await loadWalletWorkspace();
+      } catch (error) {
+        $('#wallet-status').textContent = error.message;
+      } finally {
+        button.disabled = false;
+      }
+    });
+    let bitcoinLinkTransaction = null;
+    $('#bitcoin-connect-form').addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const signature = $('#bitcoin-connect-signature').value.trim();
+      try {
+        if (!bitcoinLinkTransaction) {
+          bitcoinLinkTransaction = await postJSON(
+            '/api/bitcoin/connect/start',
+            {address:$('#bitcoin-connect-address').value.trim()},
+            true);
+          $('#bitcoin-connect-message').textContent =
+            bitcoinLinkTransaction.message;
+          $('#bitcoin-connect-signature').focus();
+        } else {
+          await postJSON('/api/bitcoin/connect/finish', {
+            'transaction-id':bitcoinLinkTransaction['transaction-id'],
+            signature
+          }, true);
+          bitcoinLinkTransaction = null;
+          event.currentTarget.reset();
+          $('#bitcoin-connect-message').textContent =
+            'BIP-322 proof を検証し watch-only account として接続しました。';
+          await loadWalletWorkspace();
+        }
+      } catch (error) {
+        $('#bitcoin-connect-message').textContent = error.message;
+      }
+    });
+    const renderBitcoinConsensus = (data) => {
+      const target = $('#bitcoin-consensus-state');
+      const protection = $('#bitcoin-headers-presync-state');
+      const blockProtection = $('#bitcoin-block-download-state');
+      const invalidProtection = $('#bitcoin-invalid-branch-state');
+      const historyEvidence = $('#bitcoin-history-evidence-state');
+      protection.hidden = false;
+      blockProtection.hidden = false;
+      invalidProtection.hidden = false;
+      historyEvidence.hidden = false;
+      if (!data?.['configured?']) {
+        protection.textContent =
+          'Embedded consensus は未設定です。Bitcoin Core が既定の検証境界です。';
+      } else if (data?.['headers-presync-required?'] === true) {
+        protection.textContent =
+          `Header pre-sync 保護中 — height ${data['best-header-height'] ?? '—'}。` +
+          '最低 chainwork 到達前の1回目のheader取得は端末DBへ保存されません。';
+      } else if (data?.['headers-presync-required?'] === false) {
+        protection.textContent =
+          `Header anti-DoS 検証済み — minimum chainwork 到達、` +
+          `best header height ${data['best-header-height'] ?? '—'}。`;
+      } else {
+        protection.textContent =
+          'このbackendでは header pre-sync 状態を利用できません。';
+      }
+      const blockDownload =
+        data?.sync?.['last-result']?.blocks ?? data?.blocks;
+      const blockError = data?.sync?.['last-error'];
+      if (!data?.['configured?']) {
+        blockProtection.textContent =
+          'Multi-peer block pipeline は未設定です。';
+      } else if (blockError?.['block-validation-result'] === 'local') {
+        blockProtection.textContent =
+          'Local consensus recovery required — peerや候補branchは無効化していません。' +
+          '端末のstorage、undo履歴、block data、verifier、resource上限を復旧してから再開してください。';
+      } else if (blockError?.['peer-feedback']) {
+        const provider = blockError?.['source-peer']?.host ?? 'unknown peer';
+        const outcome = blockError['block-validation-result'] === 'mutated'
+          ? '再取得可能な mutated body'
+          : '恒久的な consensus invalid block';
+        blockProtection.textContent =
+          `Block provider ${provider} を最大cooldownへ移行 — ${outcome}。` +
+          '別peerから同期を再開し、local validation failure はpeerへ帰責しません。';
+      } else if (blockDownload) {
+        const observations = blockDownload.observations ?? [];
+        const failures = blockDownload.failures ?? [];
+        const validationFailures = blockDownload['validation-failures'] ?? [];
+        const latestValidation = validationFailures.at(-1);
+        const retryEvidence = validationFailures.length
+          ? ` ${validationFailures.length} provider bodiesを同一cycleで再試行` +
+            `（latest ${latestValidation?.['validation-type'] ?? 'unknown'}）。`
+          : '';
+        blockProtection.textContent =
+          `Block pipeline — ${blockDownload.downloaded ?? 0} blocks、` +
+          `${observations.length} peers 成功、${failures.length} peers を再割当。` +
+          `検証・commit window ${blockDownload.windows ?? 0}。` +
+          retryEvidence;
+      } else {
+        blockProtection.textContent =
+          'Block pipeline 待機中 — 最大8 peers、peerごとに16 blocks、' +
+          '端末内ではchain順に検証・commitします。';
+      }
+      const invalidCount = Number(data?.['invalid-blocks'] ?? 0);
+      const invalidRoots = data?.['invalid-block-roots'] ?? [];
+      if (!data?.['configured?']) {
+        invalidProtection.textContent =
+          'Invalid branch 隔離は embedded consensus 未設定のため利用できません。';
+      } else if (invalidCount > 0) {
+        const latest = invalidRoots[0] ?? {};
+        const hash = latest.hash
+          ? `${latest.hash.slice(0, 12)}…${latest.hash.slice(-8)}`
+          : 'unknown';
+        invalidProtection.textContent =
+          `Invalid branch ${invalidCount}件を隔離 — root ${hash}、` +
+          `height ${latest.height ?? '—'}、reason ${latest.reason ?? '—'}。` +
+          '子孫blockを破棄し、次善のmost-work chainへ復帰しました。';
+      } else {
+        invalidProtection.textContent =
+          'Invalid branch なし — 永続的な consensus failure は検出されていません。';
+      }
+      const evidence = data?.['full-history-evidence'];
+      if (!evidence?.['configured?']) {
+        historyEvidence.textContent =
+          'Full-history differential evidence は未設定です。';
+      } else if (evidence.status === 'verified-ancestor') {
+        historyEvidence.textContent =
+          `Core full-history evidence 検証済み — height ${evidence['target-height']}、` +
+          `${evidence['core-version']}。現在のlocal active chain ancestryと一致しています。`;
+      } else if (evidence.status === 'missing') {
+        historyEvidence.textContent =
+          'Full-history evidence file を待機しています。検証完了後にatomic publishしてください。';
+      } else if (evidence.status === 'ahead-of-local-chain') {
+        historyEvidence.textContent =
+          'Full-history evidence はlocal chainより先です。同期後にancestryを再検証します。';
+      } else {
+        historyEvidence.textContent =
+          'Full-history evidence は現在のlocal active chainと一致しません。信頼せず再検証してください。';
+      }
+      target.textContent = JSON.stringify(data, null, 2);
+    };
+    $('#bitcoin-consensus-refresh').addEventListener('click', async () => {
+      const target = $('#bitcoin-consensus-state');
+      try {
+        const response = await fetch('/api/bitcoin/consensus/status');
+        const data = await response.json();
+        if (!response.ok) {
+          throw new Error(data?.error?.message || 'Consensus状態を取得できません。');
+        }
+        renderBitcoinConsensus(data);
+      } catch (error) {
+        target.textContent = error.message;
+      }
+    });
+    $('#bitcoin-consensus-sync').addEventListener('click', async (event) => {
+      const button = event.currentTarget;
+      const target = $('#bitcoin-consensus-state');
+      button.disabled = true;
+      target.textContent = '検証済み tip から bounded P2P 同期を開始しています…';
+      try {
+        const result = await postJSON(
+          '/api/bitcoin/consensus/sync',
+          {},
+          true);
+        renderBitcoinConsensus(
+          result?.consensus
+            ? {...result.consensus, 'configured?':true,
+              sync:{'last-result':result}}
+            : result);
+      } catch (error) {
+        target.textContent = error.message;
+      } finally {
+        button.disabled = false;
+      }
+    });
     if (initialParams.get('connection')) {
       const notice = $('#connection-notice');
       const connected = initialParams.get('connection') === 'connected';
@@ -6871,4 +7239,3 @@
         item.setAttribute('aria-pressed', item === button ? 'true' : 'false'));
     }));
   });
-  

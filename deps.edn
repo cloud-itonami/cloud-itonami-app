@@ -202,6 +202,23 @@
   io.github.kotoba-lang/org-anthropic-mcp
   {:git/url "https://github.com/kotoba-lang/org-anthropic-mcp.git"
    :git/sha "9b343e64139763d66c2a3969669bc03f73b32a46"}
+  io.github.kotoba-lang/agent
+  {:git/url "https://github.com/kotoba-lang/agent.git"
+   :git/sha "38ca6d681c9dbeb1d366d84245f3a396138ad404"}
+  io.github.kotoba-lang/hil
+  {:git/url "https://github.com/kotoba-lang/hil.git"
+   :git/sha "75f5b9ed3ed00161f331f868a224d3a71e5db00e"}
+  io.github.kotoba-lang/wallet
+  {:git/url "https://github.com/kotoba-lang/wallet.git"
+   :git/sha "36bf13275706c1355c61690f41e1bd9d6540033f"}
+  io.github.kotoba-lang/bitcoin-node
+  {:git/url "https://github.com/kotoba-lang/bitcoin-node.git"
+   :git/tag "v0.49.0"
+   :git/sha "a2374e3b2290e742a008e768b1ae89f1e1466f8a"}
+  io.github.kotoba-lang/chain-observer
+  {:git/url "https://github.com/kotoba-lang/chain-observer.git"
+   :git/tag "v0.1.0"
+   :git/sha "f3fa15ae68dd3ec33ffb90917a74a0f1dbde8699"}
   io.github.kotoba-lang/oauth
   {:git/url "https://github.com/kotoba-lang/oauth.git"
    :git/sha "e47999a48cbc79e831c0690bac6681bda0b52785"}
@@ -235,6 +252,12 @@
   ;; be reverted by its next transact!. Must run with the same
   ;; CLOUD_ITONAMI_DATA_DIR as the server it talks to.
   :cli {:main-opts ["-m" "cloud.itonami.app.cli"]}
+  :mcp-stdio {:main-opts ["-m" "cloud.itonami.app.mcp-stdio"]}
+  :policy-artifact
+  {:main-opts ["-m" "cloud.itonami.app.policy-artifact"]}
+  :sdk-fixture
+  {:extra-paths ["test"]
+   :main-opts ["-m" "cloud.itonami.app.sdk-fixture-server"]}
   ;; The suite writes through cloud.itonami.app.store, which persists to
   ;; `cloud.itonami.app.config/data-dir`. Without this it defaults to `./data`
   ;; and the tests overwrite the real store -- measured on 2026-07-30, when a
@@ -269,4 +292,11 @@
     io.github.kotoba-lang/oauth {:local/root "../../kotoba-lang/oauth"}
     io.github.kotoba-lang/com-github {:local/root "../../kotoba-lang/com-github"}
     io.github.kotoba-lang/jp-go-digital-design-system
-    {:local/root "../../kotoba-lang/jp-go-digital-design-system"}}}}}
+    {:local/root "../../kotoba-lang/jp-go-digital-design-system"}
+    io.github.kotoba-lang/agent {:local/root "../../kotoba-lang/agent"}
+    io.github.kotoba-lang/hil {:local/root "../../kotoba-lang/hil"}
+    io.github.kotoba-lang/wallet {:local/root "../../kotoba-lang/wallet"}
+    io.github.kotoba-lang/bitcoin-node
+    {:local/root "../../kotoba-lang/bitcoin-node"}
+    io.github.kotoba-lang/chain-observer
+    {:local/root "../../kotoba-lang/chain-observer"}}}}}

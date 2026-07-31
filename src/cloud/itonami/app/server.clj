@@ -2,9 +2,15 @@
   (:require [clojure.data.json :as json]
             [clojure.string :as str]
             [cloud.itonami.app.agent-session :as agent-session]
+            [cloud.itonami.app.account-link-sync :as account-link-sync]
+            [cloud.itonami.app.account-services :as account-services]
+            [cloud.itonami.app.agent-control :as agent-control]
             [cloud.itonami.app.authority.api :as authority-api]
+            [cloud.itonami.app.bitcoin-node :as bitcoin-node]
+            [cloud.itonami.app.bitcoin-wallet :as bitcoin-wallet]
             [cloud.itonami.app.business :as business]
             [cloud.itonami.app.canvas :as canvas]
+            [cloud.itonami.app.compat :as compat]
             [cloud.itonami.app.config :as config]
             [cloud.itonami.app.contracts :as contracts]
             [cloud.itonami.app.credential :as credential]
@@ -25,10 +31,13 @@
             [cloud.itonami.app.fax :as fax]
             [cloud.itonami.app.lawfirm :as lawfirm]
             [cloud.itonami.app.loops :as loops]
+            [cloud.itonami.app.mail-sync :as mail-sync]
+            [cloud.itonami.app.mcp-http :as mcp-http]
             [cloud.itonami.app.metrics :as business-metrics]
             [cloud.itonami.app.portfolio :as portfolio]
             [cloud.itonami.app.organism-gateway :as organism-gateway]
             [cloud.itonami.app.relay :as relay]
+            [cloud.itonami.app.receipt-export :as receipt-export]
             [cloud.itonami.app.repos :as business-repos]
             [cloud.itonami.app.mailbox :as app-mailbox]
             [cloud.itonami.app.scheduler :as scheduler]
@@ -40,7 +49,8 @@
   (:import [com.sun.net.httpserver HttpExchange HttpHandler HttpServer]
            [java.io OutputStreamWriter]
            [java.net InetSocketAddress URLDecoder]
-           [java.nio.charset StandardCharsets]))
+           [java.nio.charset StandardCharsets]
+           [java.security MessageDigest]))
 
 (defonce server (atom nil))
 
@@ -71,6 +81,26 @@
     (.sendResponseHeaders exchange status (alength bytes))
     (with-open [out (.getResponseBody exchange)]
       (.write out bytes)))))
+
+(defn- send-empty! [^HttpExchange exchange status headers]
+  (doto (.getResponseHeaders exchange)
+    (.set "Cache-Control" "no-store"))
+  (doseq [[header value] headers]
+    (.set (.getResponseHeaders exchange) header value))
+  (.sendResponseHeaders exchange status -1)
+  (.close exchange))
+
+(defn- request-headers [^HttpExchange exchange]
+  (into {}
+        (map (fn [[name values]]
+               [(str/lower-case name) (first values)]))
+        (.entrySet (.getRequestHeaders exchange))))
+
+(defn- send-mcp-response!
+  [exchange {:keys [status body headers]}]
+  (if (nil? body)
+    (send-empty! exchange status headers)
+    (send! exchange status body headers)))
 
 (defn- read-body-bytes
   "The request body as a byte array.
@@ -231,6 +261,31 @@
   [exchange session]
   (when-not (bearer-token exchange)
     (require-csrf-header! exchange session)))
+
+(defn- secure-equal? [left right]
+  (and (string? left) (string? right)
+       (MessageDigest/isEqual
+        (.getBytes ^String left StandardCharsets/UTF_8)
+        (.getBytes ^String right StandardCharsets/UTF_8))))
+
+(defn- require-mcp-actor! [exchange configuration]
+  (let [{:keys [enabled? access-token-env actor-user-id]}
+        (:mcp configuration)
+        expected-token (some-> access-token-env System/getenv not-empty)
+        supplied-token (bearer-token exchange)]
+    (when-not enabled?
+      (throw (ex-info "MCP HTTP profile is disabled."
+                      {:type :mcp/disabled})))
+    (if (and expected-token (secure-equal? expected-token supplied-token))
+      (let [user (get-in (store/snapshot) [:identity :users actor-user-id])]
+        (when-not (and user (:passkey-enrolled? user))
+          (throw (ex-info "MCP actor is not a Passkey account."
+                          {:type :mcp/actor-invalid})))
+        actor-user-id)
+      (let [session (require-app-session! exchange)]
+        (require-origin! exchange configuration)
+        (require-csrf! exchange session)
+        (:user-id session)))))
 
 (defn- provider-from-path [path pattern]
   (some-> (re-matches pattern path) second keyword))
@@ -453,6 +508,478 @@
      :sessions (count (:sessions state))
      :memory-datoms (count (:datoms state))
      :last-response (:last-response state)}))
+
+(defn- sse-writer [^HttpExchange exchange]
+  (doto (.getResponseHeaders exchange)
+    (.set "Content-Type" "text/event-stream; charset=utf-8")
+    (.set "Cache-Control" "no-cache, no-store")
+    (.set "X-Accel-Buffering" "no")
+    (.set "X-Content-Type-Options" "nosniff"))
+  (.sendResponseHeaders exchange 200 0)
+  (OutputStreamWriter. (.getResponseBody exchange)
+                       StandardCharsets/UTF_8))
+
+(defn- write-sse! [^OutputStreamWriter writer event payload]
+  (when event (.write writer (str "event: " event "\n")))
+  (.write writer "data: ")
+  (.write writer (json/write-str payload))
+  (.write writer "\n\n")
+  (.flush writer))
+
+(defn- send-anthropic-stream! [exchange configuration request]
+  (with-open [writer (sse-writer exchange)]
+    (let [message-id (store/new-id "msg")
+          model (or (:model request)
+                    (get-in configuration [:routing :default-model]))
+          emit! #(write-sse! writer %1 (assoc %2 :type %1))]
+      (try
+        (emit! "message_start"
+               {:message {:id message-id :type "message"
+                          :role "assistant" :model model :content []
+                          :stop_reason nil :stop_sequence nil
+                          :usage {:input_tokens 0 :output_tokens 0}}})
+        (emit! "content_block_start"
+               {:index 0 :content_block {:type "text" :text ""}})
+        (let [response
+              (service/run-chat-stream!
+               configuration (compat/anthropic-request request)
+               #(emit! "content_block_delta"
+                       {:index 0 :delta {:type "text_delta" :text %}}))
+              adapted (assoc (compat/anthropic-response response)
+                             :id message-id)]
+          (emit! "content_block_stop" {:index 0})
+          (doseq [[offset tool]
+                  (map-indexed vector
+                               (filter #(= "tool_use" (:type %))
+                                       (:content adapted)))]
+            (let [index (inc offset)]
+              (emit! "content_block_start"
+                     {:index index :content_block (assoc tool :input {})})
+              (emit! "content_block_delta"
+                     {:index index
+                      :delta {:type "input_json_delta"
+                              :partial_json
+                              (json/write-str (:input tool))}})
+              (emit! "content_block_stop" {:index index})))
+          (emit! "message_delta"
+                 {:delta {:stop_reason (:stop_reason adapted)
+                          :stop_sequence nil}
+                  :usage (:usage adapted)})
+          (emit! "message_stop" {}))
+        (catch Exception error
+          (emit! "error"
+                 {:error {:type "api_error"
+                          :message (.getMessage error)}}))))))
+
+(defn- handle-model-compat-route! [exchange config method path]
+  (cond
+    (and (= method "POST") (= path "/v1/responses"))
+    (let [request (read-json exchange)]
+      (if (:stream request)
+        (throw (ex-info "Responses streaming is not enabled on this profile."
+                        {:type :provider/unsupported-stream}))
+        (send! exchange 200
+               (compat/responses-response
+                (service/run-chat!
+                 config (compat/responses-request request)))))
+      true)
+
+    (and (= method "POST") (= path "/v1/messages"))
+    (let [request (read-json exchange)]
+      (if (:stream request)
+        (send-anthropic-stream! exchange config request)
+        (send! exchange 200
+               (compat/anthropic-response
+                (service/run-chat!
+                 config (compat/anthropic-request request)))))
+      true)
+
+    :else false))
+
+(defn- mutation-session! [exchange config]
+  (let [session (require-app-session! exchange)]
+    (require-origin! exchange config)
+    (require-csrf! exchange session)
+    session))
+
+(defn- handle-wallet-route! [exchange config method path]
+  (cond
+    (and (= method "POST") (= path "/api/wallet/connect/start"))
+    (let [session (mutation-session! exchange config)]
+      (send! exchange 200
+             (identity/start-wallet-connection!
+              session (read-json exchange) (rp-id config) (origin config)))
+      true)
+
+    (and (= method "POST") (= path "/api/wallet/connect/finish"))
+    (let [session (mutation-session! exchange config)
+          link (identity/finish-wallet-connection!
+                session (read-json exchange) (rp-id config))]
+      (when (account-link-sync/configured? config)
+        (try
+          (account-link-sync/push-link! config link)
+          (identity/mark-wallet-synced! session (:id link))
+          (catch Exception _)))
+      (send! exchange 200 link)
+      true)
+
+    (and (= method "POST") (= path "/api/bitcoin/connect/start"))
+    (let [session (mutation-session! exchange config)]
+      (send! exchange 200
+             (identity/start-bitcoin-connection!
+              session (read-json exchange) (rp-id config)))
+      true)
+
+    (and (= method "POST") (= path "/api/bitcoin/connect/finish"))
+    (let [session (mutation-session! exchange config)
+          link (identity/finish-bitcoin-connection!
+                session (read-json exchange) (rp-id config))]
+      (when (account-link-sync/configured? config)
+        (try
+          (account-link-sync/push-link! config link)
+          (identity/mark-wallet-synced! session (:id link))
+          (catch Exception _)))
+      (send! exchange 200 link)
+      true)
+
+    (and (= method "POST") (= path "/api/wallets/sync"))
+    (let [session (mutation-session! exchange config)]
+      (send! exchange 200
+             (account-link-sync/sync! config session (rp-id config)))
+      true)
+
+    (and (= method "POST")
+         (id-from-path path #"/api/wallets/([^/]+)/revoke"))
+    (let [session (mutation-session! exchange config)
+          link-id (id-from-path path #"/api/wallets/([^/]+)/revoke")]
+      (send! exchange 200 (identity/revoke-wallet! session link-id))
+      true)
+
+    (and (= method "GET") (= path "/api/wallet"))
+    (let [session (require-app-session! exchange)]
+      (send! exchange 200 (bitcoin-wallet/wallet-snapshot config session))
+      true)
+
+    (and (= method "GET")
+         (id-from-path path #"/api/bitcoin/wallets/([^/]+)/(balance|activity)"))
+    (let [session (require-app-session! exchange)
+          [_ link-id operation]
+          (re-matches #"/api/bitcoin/wallets/([^/]+)/(balance|activity)" path)]
+      (send! exchange 200
+             ((if (= operation "balance")
+                bitcoin-wallet/balance!
+                bitcoin-wallet/activity!)
+              config session link-id))
+      true)
+
+    (and (= method "GET")
+         (contains? #{"/api/bitcoin/core/status"
+                      "/api/bitcoin/consensus/status"
+                      "/api/bitcoin/core/diagnostics"
+                      "/api/chains/bitcoin/observation"
+                      "/api/bitcoin/core/scan"} path))
+    (do
+      (require-app-session! exchange)
+      (send! exchange 200
+             ((get {"/api/bitcoin/core/status" bitcoin-node/status
+                    "/api/bitcoin/consensus/status" bitcoin-node/consensus-status
+                    "/api/bitcoin/core/diagnostics" bitcoin-node/diagnostics
+                    "/api/chains/bitcoin/observation" bitcoin-node/observation
+                    "/api/bitcoin/core/scan" bitcoin-node/scan-status}
+                   path)
+              config))
+      true)
+
+    (and (= method "POST") (= path "/api/bitcoin/consensus/sync"))
+    (let [session (mutation-session! exchange config)
+          role (identity/membership-role session)]
+      (when-not (contains? #{:owner :admin} role)
+        (throw
+         (ex-info
+          "Bitcoin consensus 同期にはOrganizationのownerまたはadmin権限が必要です。"
+          {:type :bitcoin.node/sync-operator-required :role role})))
+      (send! exchange 200 (bitcoin-node/sync-consensus! config))
+      true)
+
+    (and (= method "POST") (= path "/api/bitcoin/core/scan/abort"))
+    (do
+      (mutation-session! exchange config)
+      (send! exchange 202 (bitcoin-node/abort-scan! config))
+      true)
+
+    (and (= method "POST") (= path "/api/bitcoin/vaults"))
+    (let [session (mutation-session! exchange config)]
+      (send! exchange 201
+             (bitcoin-node/register-vault! config session (read-json exchange)))
+      true)
+
+    (and (= method "POST")
+         (id-from-path path #"/api/bitcoin/vaults/([^/]+)/(refresh|addresses/next)"))
+    (let [session (mutation-session! exchange config)
+          [_ vault-id operation]
+          (re-matches #"/api/bitcoin/vaults/([^/]+)/(refresh|addresses/next)" path)]
+      (send! exchange 200
+             ((if (= operation "refresh")
+                bitcoin-node/refresh-vault!
+                bitcoin-node/next-address!)
+              config session vault-id))
+      true)
+
+    (and (= method "GET") (= path "/api/bitcoin/psbt"))
+    (let [session (require-app-session! exchange)]
+      (send! exchange 200
+             {:schema "cloud.itonami.bitcoin.psbt-proposals.v1"
+              :proposals (bitcoin-wallet/proposals session)})
+      true)
+
+    (and (= method "POST") (= path "/api/bitcoin/psbt/review"))
+    (let [session (mutation-session! exchange config)]
+      (send! exchange 201
+             (bitcoin-wallet/create-psbt-review!
+              config session (read-json exchange)))
+      true)
+
+    (and (= method "POST")
+         (id-from-path path #"/api/bitcoin/psbt/([^/]+)/approve/start"))
+    (let [session (mutation-session! exchange config)
+          proposal-id
+          (id-from-path path #"/api/bitcoin/psbt/([^/]+)/approve/start")]
+      (send! exchange 200
+             (bitcoin-wallet/start-psbt-approval!
+              session proposal-id (rp-id config) (origin config)))
+      true)
+
+    (and (= method "POST")
+         (id-from-path path #"/api/bitcoin/psbt/([^/]+)/approve/finish"))
+    (let [session (mutation-session! exchange config)
+          proposal-id
+          (id-from-path path #"/api/bitcoin/psbt/([^/]+)/approve/finish")
+          request (read-json exchange)]
+      (send! exchange 200
+             (bitcoin-wallet/finish-psbt-approval!
+              session proposal-id (:transaction-id request)
+              (:credential request)))
+      true)
+
+    (and (= method "POST")
+         (id-from-path path #"/api/bitcoin/psbt/([^/]+)/signed"))
+    (let [session (mutation-session! exchange config)
+          proposal-id (id-from-path path #"/api/bitcoin/psbt/([^/]+)/signed")
+          request (read-json exchange)]
+      (send! exchange 200
+             (bitcoin-wallet/attach-signed-psbt!
+              session proposal-id (:psbt request)))
+      true)
+
+    :else false))
+
+(defn- handle-agent-route! [exchange config method path]
+  (cond
+    (and (= method "GET") (= path "/api/agent/control"))
+    (let [session (require-app-session! exchange)]
+      (send! exchange 200
+             {:settings (agent-control/settings config)
+              :diagnostics (agent-control/diagnostics config)
+              :runs (agent-control/runs (:user-id session))})
+      true)
+
+    (and (= method "POST") (= path "/api/agent/control"))
+    (do
+      (mutation-session! exchange config)
+      (send! exchange 200
+             {:settings (agent-control/configure! config (read-json exchange))
+              :diagnostics (agent-control/diagnostics config)})
+      true)
+
+    (and (= method "POST") (= path "/api/agent/runs"))
+    (let [session (mutation-session! exchange config)]
+      (send! exchange 201
+             (agent-control/create-run!
+              config (read-json exchange) (:user-id session)))
+      true)
+
+    (and (= method "GET") (= path "/api/agent/runs"))
+    (let [session (require-app-session! exchange)]
+      (send! exchange 200 {:runs (agent-control/runs (:user-id session))})
+      true)
+
+    (and (= method "POST")
+         (id-from-path path #"/api/agent/runs/([^/]+)/decision"))
+    (let [_session (mutation-session! exchange config)
+          run-id (id-from-path path #"/api/agent/runs/([^/]+)/decision")
+          request (read-json exchange)]
+      (send! exchange 200
+             (agent-control/decide! config run-id (:decision request)))
+      true)
+
+    (and (= method "GET")
+         (contains? #{"/api/agent/schedules" "/api/agent/watchers"} path))
+    (let [session (require-app-session! exchange)
+          watcher? (= path "/api/agent/watchers")]
+      (send! exchange 200
+             {(if watcher? :watchers :schedules)
+              ((if watcher? scheduler/watchers scheduler/schedules)
+               (:user-id session))})
+      true)
+
+    (and (= method "POST")
+         (contains? #{"/api/agent/schedules" "/api/agent/watchers"} path))
+    (let [session (mutation-session! exchange config)
+          watcher? (= path "/api/agent/watchers")]
+      (send! exchange 201
+             ((if watcher?
+                scheduler/create-watcher!
+                scheduler/create-schedule!)
+              config (read-json exchange) (:user-id session)))
+      true)
+
+    (and (= method "POST")
+         (re-matches #"/api/agent/(schedules|watchers)/([^/]+)/disable" path))
+    (let [session (mutation-session! exchange config)
+          [_ kind item-id]
+          (re-matches #"/api/agent/(schedules|watchers)/([^/]+)/disable" path)]
+      (send! exchange 200
+             ((if (= kind "watchers")
+                scheduler/disable-watcher!
+                scheduler/disable!)
+              (:user-id session) item-id))
+      true)
+
+    :else false))
+
+(defn- handle-integration-route! [exchange config method path]
+  (or
+   (handle-model-compat-route! exchange config method path)
+   (handle-wallet-route! exchange config method path)
+   (handle-agent-route! exchange config method path)
+   (cond
+     (and (= method "POST")
+          (re-matches
+           #"/api/receipts/(authority|bitcoin-psbt)/([^/]+)/export" path))
+     (let [session (mutation-session! exchange config)
+           [_ source-type source-id]
+           (re-matches
+            #"/api/receipts/(authority|bitcoin-psbt)/([^/]+)/export" path)]
+       (send! exchange 200
+              (receipt-export/export!
+               config (:user-id session) source-type source-id))
+       true)
+
+     (and (= method "GET") (= path "/api/account/services"))
+     (let [_session (require-app-session! exchange)
+           public (identity/public-state
+                   (cookie-value exchange identity/cookie-name))]
+       (send! exchange 200
+              (account-services/ensure-allocations!
+               config (:user public) (:organization public)))
+       true)
+
+     (and (= method "POST") (= path "/api/mail/sync"))
+     (do
+       (mutation-session! exchange config)
+       (let [result (mail-sync/sync-all!)]
+         (workspace/invalidate!)
+         (send! exchange 200 result))
+       true)
+
+     (and (contains? #{"POST" "GET" "DELETE"} method) (= path "/mcp"))
+     (let [actor (require-mcp-actor! exchange config)
+           headers (request-headers exchange)]
+       (send-mcp-response!
+        exchange
+        (case method
+          "POST" (mcp-http/handle-post
+                  config actor (read-json-raw exchange) headers)
+          "GET" (mcp-http/handle-get actor headers)
+          "DELETE" (mcp-http/handle-delete actor headers)))
+       true)
+
+     :else false)))
+
+(def ^:private integration-error-statuses
+  (merge
+   (zipmap
+    #{:mcp/invalid-arguments :mcp/header-mismatch
+      :mcp/missing-client-capability :mcp/invalid-protocol-version
+      :mcp/duplicate-request-id :receipt-export/invalid-signer
+      :wallet/invalid-address :wallet/invalid-chain
+      :wallet/invalid-transaction :wallet/unsupported-script
+      :bitcoin/invalid-address :bitcoin/unsupported-script
+      :bitcoin/invalid-psbt :bitcoin/unsafe-psbt
+      :bitcoin.node/invalid-endpoint :bitcoin.node/invalid-descriptor-metadata
+      :bitcoin.node/invalid-descriptor :bitcoin.node/invalid-range
+      :bitcoin.node/invalid-scan :bitcoin.node/private-descriptor
+      :bitcoin.node/unsolvable-descriptor :bitcoin.node/unsupported-descriptor
+      :bitcoin.node/sync-configuration :bitcoin.node/peer-set
+      :bitcoin.node/block-peer-set :bitcoin.node/block-download-set
+      :bitcoin.node/block-download-configuration
+      :bitcoin/invalid-descriptor :bitcoin/private-descriptor
+      :schedule/invalid :watcher/invalid :watcher/invalid-event
+      :agent/unknown-tool :agent/invalid-input :agent/invalid-decision
+      :agent/multiple-tool-calls :agent/invalid-coordinate
+      :agent/invalid-element :cli-agent/invalid-workspace}
+    (repeat 400))
+   (zipmap
+    #{:mcp/disabled :mcp/actor-invalid :wallet/verification-failed
+      :bitcoin/invalid-proof :bitcoin/core-method-denied
+      :bitcoin.node/method-denied :bitcoin.node/sync-operator-required
+      :agent/disabled :agent/no-capability
+      :agent/domain-denied :cli-agent/disabled :cli-agent/invalid-access}
+    (repeat 403))
+   (zipmap
+    #{:mcp/tool-not-found :mcp/session-not-found
+      :receipt-export/not-found :wallet/not-found
+      :bitcoin/wallet-not-found :bitcoin/proposal-not-found
+      :bitcoin/vault-not-found :schedule/not-found :watcher/not-found
+      :agent/not-found}
+    (repeat 404))
+   (zipmap
+    #{:wallet/already-bound :bitcoin/approval-mismatch
+      :bitcoin.node/network-mismatch :bitcoin.node/genesis-mismatch
+      :bitcoin.node/scan-busy :bitcoin.node/capability-unavailable
+      :bitcoin.node/sync-busy :bitcoin.node/peer-pool-cooldown
+      :bitcoin.consensus/known-invalid-block
+      :bitcoin.consensus/invalid-ancestor
+      :bitcoin/descriptor-not-ranged :agent/not-held
+      :agent/tool-decision :agent/frontmost-changed
+      :agent/settings-changed :cli-agent/workspace-changed}
+    (repeat 409))
+   (zipmap
+    #{:receipt-export/not-configured :wallet/sync-not-configured
+      :bitcoin/explorer-not-configured :bitcoin/core-not-configured
+      :bitcoin.node/not-configured :bitcoin.node/sync-not-configured}
+    (repeat 501))
+   (zipmap
+    #{:receipt-export/invalid-signature :receipt-export/response-too-large
+      :wallet/sync-failed :bitcoin/explorer-failed :bitcoin/core-failed
+      :bitcoin.node/invalid-response :bitcoin.node/response-too-large
+      :bitcoin.node/transport-failed :bitcoin.node/rpc-failed
+      :bitcoin.node/block-sync-failed :bitcoin.node/sync-failed
+      :bitcoin.node/block-peer-set-exhausted
+      :bitcoin.node/block-response-mismatch
+      :bitcoin.node/peer-insufficient-chainwork
+      :bitcoin.node/headers-presync-invalid
+      :bitcoin.node/headers-presync-length
+      :bitcoin.node/headers-presync-equivocation
+      :bitcoin.node/headers-presync-commitment-overrun
+      :agent/host-error}
+    (repeat 502))
+   {:mcp/invalid-transport 406
+    :receipt-export/invalid-receipt 409
+    :wallet/subject-required 409
+    :bitcoin/psbt-approval 428
+    :bitcoin.node/insecure-cookie 500
+    :agent/budget-exhausted 429
+    :agent/host-timeout 504
+    :cli-agent/workspace-required 428}))
+
+(defn- integration-error-status [error]
+  (let [data (ex-data error)
+        type (:type data)]
+    (or (get integration-error-statuses type)
+        (when (true? (:consensus-invalid? data)) 502)
+        (when (= type :receipt-export/signer-failed)
+          (or (:status data) 502)))))
 
 (defn handler [config]
   (reify HttpHandler
@@ -1117,6 +1644,9 @@
             (send! exchange 200
                    (identity/public-state
                     (cookie-value exchange identity/cookie-name)))
+
+            (handle-integration-route! exchange config method path)
+            nil
 
             (and (= method "POST") (= path "/api/identity/register"))
             (do
@@ -2322,7 +2852,7 @@
                   id (id-from-path path
                                    #"/api/workspace/scheduler/events/([^/]+)/conflicts")]
               (send! exchange 200
-                     {:schema scheduler/schema :ok? true :id id
+                     {:schema scheduler/calendar-schema :ok? true :id id
                       :conflicts (scheduler/conflicts id (:user-id session))}))
 
             (and (= method "POST")
@@ -2532,7 +3062,9 @@
             (send! exchange 404 {:error {:type "not_found" :path path}}))
           (catch clojure.lang.ExceptionInfo error
             (send! exchange
-                   (case (:type (ex-data error))
+                   (or
+                    (integration-error-status error)
+                    (case (:type (ex-data error))
                      :identity/unauthenticated 401
                      :identity/forbidden 403
                      :identity/invalid-csrf 403
@@ -2770,7 +3302,7 @@
                      :payment/posture-unknown 500
                      :payment/settlement-history-unknown 500
 
-                     502)
+                     502))
                    {:error {:type (name (or (:type (ex-data error))
                                            :provider/error))
                             :message (.getMessage error)
@@ -2784,22 +3316,36 @@
   ([configuration]
    (when @server
      (throw (ex-info "server already running" {})))
-   (identity/configure! configuration)
-   ;; Written here rather than lazily on first enrollment so that a CLI run at
-   ;; any point after the server is up has something to read. Creating it is
-   ;; idempotent and cheap; a missing key would otherwise look to the operator
-   ;; like the feature is absent rather than like they are early.
-   (agent-session/ensure-key!)
-   (let [host (get-in configuration [:server :host])
-         port (get-in configuration [:server :port])
-         instance (HttpServer/create (InetSocketAddress. host (int port)) 0)]
-     (.createContext instance "/" (handler configuration))
-     (.setExecutor instance (executor/task-executor))
-     (.start instance)
-     (reset! server instance)
-     {:host host :port port})))
+   (let [configuration (bitcoin-node/resolve-configuration! configuration)]
+     (bitcoin-node/preflight! configuration)
+     (identity/configure! configuration)
+     ;; Written during startup so a CLI launched after the server can enroll
+     ;; without racing lazy key creation. The operation is idempotent.
+     (agent-session/ensure-key!)
+     (workspace/configure! configuration)
+     (mail-sync/start! configuration)
+     (try
+       (let [host (get-in configuration [:server :host])
+             port (get-in configuration [:server :port])
+             instance (HttpServer/create (InetSocketAddress. host (int port)) 0)]
+         (.createContext instance "/" (handler configuration))
+         (.setExecutor instance (executor/task-executor))
+         (.start instance)
+         (reset! server instance)
+         (scheduler/start! configuration)
+         (bitcoin-node/start-consensus-sync! configuration)
+         {:host host :port (.getPort (.getAddress instance))})
+       (catch Exception error
+         (bitcoin-node/stop-consensus-sync!)
+         (scheduler/stop!)
+         (mail-sync/stop!)
+         (throw error))))))
 
 (defn stop! []
+  (bitcoin-node/stop-consensus-sync!)
+  (scheduler/stop!)
+  (mail-sync/stop!)
+  (mcp-http/clear-sessions!)
   (when-let [instance @server]
     (.stop instance 0)
     (reset! server nil)))

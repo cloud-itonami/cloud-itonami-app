@@ -50,3 +50,67 @@ jobs:
         run: go install github.com/zricethezav/gitleaks/v8@v8.28.0
       - name: Scan Git history
         run: gitleaks git --redact --no-banner
+
+  upstream-sdk-compatibility:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - profile: baseline
+            openai: "2.31.0"
+            anthropic: "0.102.0"
+          - profile: current
+            openai: "2.46.0"
+            anthropic: "0.117.0"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "24"
+      - uses: DeLaGuardo/setup-clojure@13.4
+        with:
+          cli: latest
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.25.x"
+          cache-dependency-path: test/sdk_go_compat/go.sum
+      - name: Resolve fixture dependencies
+        run: clojure -P -M:sdk-fixture
+      - name: Install pinned upstream SDKs
+        run: >-
+          python -m pip install
+          openai==${{ matrix.openai }}
+          anthropic==${{ matrix.anthropic }}
+          mcp==1.27.2
+      - name: Exercise real HTTP compatibility surfaces
+        env:
+          SDK_MCP_TOKEN: fixture-mcp-token
+          CLOUD_ITONAMI_SDK_FIXTURE_PORT: "18473"
+        run: |
+          set -euo pipefail
+          export CLOUD_ITONAMI_DATA_DIR
+          CLOUD_ITONAMI_DATA_DIR="$(mktemp -d)"
+          clojure -M:sdk-fixture >"$RUNNER_TEMP/sdk-fixture.log" 2>&1 &
+          fixture_pid=$!
+          cleanup() {
+            kill -TERM "$fixture_pid" 2>/dev/null || true
+            wait "$fixture_pid" 2>/dev/null || true
+          }
+          trap cleanup EXIT
+          for attempt in $(seq 1 60); do
+            if curl --fail --silent http://127.0.0.1:18473/v1/models >/dev/null; then
+              break
+            fi
+            if ! kill -0 "$fixture_pid" 2>/dev/null; then
+              cat "$RUNNER_TEMP/sdk-fixture.log"
+              exit 1
+            fi
+            sleep 1
+          done
+          curl --fail --silent http://127.0.0.1:18473/v1/models >/dev/null
+          python test/sdk_compat.py
+          (cd test/sdk_go_compat && go run .)

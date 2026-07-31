@@ -20,23 +20,8 @@
             [clojure.test :refer [deftest is testing]]))
 
 (def known-broken
-  "namespace -> why it does not compile, measured 2026-07-31.
-
-  None of these is required by anything in src/; all four are unreachable as well as
-  uncompilable. Whether each should be completed or deleted is a product-scope decision,
-  which is why they are recorded here rather than repaired by writing the vars they
-  happen to be missing."
-  {'cloud.itonami.app.agent-control
-   "calls store/update-agent-control! at four sites; cloud.itonami.app.store defines no such var"
-
-   'cloud.itonami.app.account-link-sync
-   "calls identity/wallet-links; the identity library defines no such var"
-
-   'cloud.itonami.app.mail-sync
-   "calls identity/provider-access-token!; the identity library defines no such var"
-
-   'cloud.itonami.app.bitcoin-wallet
-   "requires cloud.itonami.app.bitcoin, which is not in this repository"})
+  "Namespace exclusions. Keep empty: optional product surfaces must still load."
+  {})
 
 (defn- source-namespaces []
   (->> (file-seq (io/file "src"))

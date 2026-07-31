@@ -1,0 +1,9 @@
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Public deterministic did:key fixture used by credential tests"
+regexTarget = "line"
+regexes = [
+  '''did:key:zDnaerDaTF5BXEavCrfRZEk316dpbLsfPDZ3WJ5hRTPFU2169''',
+]

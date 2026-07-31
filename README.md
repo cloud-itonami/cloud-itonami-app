@@ -27,7 +27,7 @@ Data Integrity proof.
 ## Requirements
 
 - macOS 14 or later for the native shell, EventKit, and Keychain integrations
-- Java 21+
+- Java 24+ (required for the standard ML-DSA-65 provider used by `kagi`)
 - Clojure CLI
 - `jq` and `curl`
 - Ollama or another configured OpenAI-compatible provider
@@ -79,8 +79,9 @@ stream that carries an error a client would read as an empty answer.
 
 The non-OpenAI extensions are `provider`, `agent_id` and `session_id`: they
 select a configured provider, one of the local agents, and the stored
-conversation the turn joins. Function calling, embeddings and the Responses API
-are not implemented.
+conversation the turn joins. Function calls preserve provider-native stop
+reasons. `POST /v1/responses` and Anthropic-compatible `POST /v1/messages`
+(including Anthropic streaming) are also implemented. Embeddings are not.
 
 ## MCP server (fleet directory)
 
@@ -364,6 +365,132 @@ alone would state the wrong fact.
 
 See [ADR-0008](docs/adr/0008-business-is-the-join-of-five-planes.md).
 
+## Embedded Bitcoin consensus synchronization
+
+Bitcoin Core remains the default production backend. An operator who has
+allocated enough disk can instead enable the embedded, watch-only validating
+client. It persists headers, UTXOs, undo journals, side branches, peer health,
+and fork-choice evidence; private keys, transaction relay, mining, and signing
+are outside this process.
+
+```clojure
+{:bitcoin
+ {:embedded-consensus
+  {:path "/absolute/path/mainnet-consensus.sqlite"
+   :network :mainnet
+   ;; Optional local evidence emitted atomically by bitcoin-node's
+   ;; core_full_history_differential.sh.
+   :full-history-evidence-path "/absolute/path/full-history-evidence.json"
+   ;; Required only when creating a new database. A verified existing database
+   ;; reopens without replaying a configuration-supplied genesis body.
+   :genesis-hex "..."
+   :peer-sync
+   {:enabled? true
+    :dns-discovery? true
+    ;; Operator anchors are additional availability sources, not trust roots.
+    :peers [{:host "bitcoin.example.net" :port 8333}]
+    :interval-seconds 300
+    :maximum-peers 8
+    :required-successes 2
+    :max-header-batches 32
+    :max-blocks-per-cycle 32}}}}
+```
+
+`enabled?` starts an interruptible lifecycle supervisor. Each cycle resumes
+from the durable locator, compares a bounded health-scored peer set, validates
+and atomically commits headers, then downloads a bounded block segment and
+fully validates block, Script, UTXO, chainwork, and reorg transitions locally.
+DNS never supplies consensus. Peer selection/cooldown history is checksummed
+and persisted beside the chainstate by default. Sequential and atomic batch
+header paths reject obsolete block versions at the buried BIP34, BIP66, and
+BIP65 activation heights and enforce testnet4's BIP94 600-second
+adjustment-boundary timewarp floor. The pinned node release also carries the
+disk-backed, resumable Core full-history differential verifier and Core-aligned
+stripped transaction/output-script boundaries. Input values, transaction input
+totals, and accumulated block fees use Core's exact `MoneyRange`. Weight-derived
+witness bounds also preserve consensus-valid unknown witness versions for
+future soft-fork compatibility, while block validation rejects all witness
+serialization before the configured SegWit activation height even when a
+coinbase commitment is present. Excessive legacy sigops are rejected before
+either active or side-chain block bodies enter local storage. Prevout Script
+validation also matches Core's retroactive P2SH/WITNESS/TAPROOT flags and
+historical exception composition. BIP30 checks use Core's parent-view scan,
+pinned BIP34-chain optimization, and height 1,983,702 recheck boundary;
+replacement remains coinbase-only and non-coinbase collisions fail closed.
+BIP9 deployment periods preserve Core's start/timeout and threshold/timeout
+transition precedence. Compact proof-of-work targets preserve Core's exact
+`SetCompact` exponent-33/34 and 256-bit overflow boundaries, including during
+initial-context header validation. The `assumevalid` fast path preserves
+Core's 256-bit `GetBlockProofEquivalentTime` rounding and does not skip Script
+checks until the strict two-week burial boundary has actually been crossed.
+Transaction versions retain Core's unsigned 32-bit wire semantics, preserving
+CSV and BIP68 validation above `0x7fffffff`; the embedded Script verifier also
+matches `SCRIPT_VERIFY_CONST_SCRIPTCODE`. Legacy signature hashing matches
+Core's `OP_CODESEPARATOR` parser and serialization contract and is pinned
+against all 500 official legacy sighash outcomes.
+The pinned node also provides Core-compatible BIP158 basic-filter construction,
+strict decoding and membership matching plus BIP157 filter-header chaining.
+All 10 official Core block-filter vectors are pinned in its CI. Its P2P filter
+API requires `NODE_COMPACT_FILTERS`, an exact requested range, an explicit
+retained header anchor, strict GCS decoding, and an expected filter header;
+compact filters remain non-consensus scan hints and are not used to bypass the
+app's full local block-validation path. Filter-header synchronization now
+requires a configurable quorum of byte-identical replies from 2..32 unique
+peers for the same anchor/range/stop block. Conflicting successful replies
+fail closed, while filter-body retrieval can fail over only when the body
+authenticates into that quorum-agreed header.
+The embedded UTXO database uses Core-identical unspendable-output pruning and
+transactionally upgrades legacy state to schema v7, requiring authenticated
+reindex if impossible spend history is detected.
+
+Owner/admin users can trigger the same exclusive cycle with
+`POST /api/bitcoin/consensus/sync`; concurrent attempts return `409`.
+`GET /api/bitcoin/consensus/status` includes supervisor, peer, header, block,
+snapshot, reorg-window, failure evidence, and a bounded full-history evidence
+summary. The evidence file is accepted only when its schema, network, database,
+Core result, hashes, and size are valid; its target hash is resolved again from
+the currently served local SQLite active ancestry. Absolute storage paths are
+never returned by the API. Invalid enabled configuration
+fails before the HTTP listener binds. Full mainnet storage is never enabled by
+default or silently placed on the application disk.
+
+Before a public network reaches its pinned minimum chainwork, the embedded
+host uses `bitcoin-node` v0.38's two-phase header pre-sync. The first validated
+download remains outside SQLite; only a salted-commitment-protected redownload
+can publish headers. Wallet → Bitcoin consensus displays whether this boundary
+is still active or minimum chainwork has been verified.
+
+Block bodies use the `bitcoin-node` v0.49 managed pipeline: up to eight diverse
+peers download concurrently with 16 assignments per peer and a 128-block
+resident window, while the embedded validator commits only chronological,
+fully validated blocks. The parallel stage correlates only the bounded raw
+body's 80-byte header; complete parsing, mutation classification, branch
+quarantine, and UTXO changes stay inside the serial SQLite boundary. The same
+release pins a consensus kernel whose transaction, block, legacy Script, and
+tapscript boundaries run a bounded replayable fuzz corpus on every change and
+multiple deterministic seeds nightly. Its node-owned wire boundary applies the
+same typed, bounded corpus to P2P frames, version/headers messages, and compact
+filters, then mines competing branches through the real SQLite host and checks
+integrity, active ancestry, reorganization, and reopen stability after every
+transition. The same
+Wallet panel reports successful peers,
+reassignments, validation windows, and the exact provider of a rejected body.
+A definitive invalid block or retryable mutated body places its provider in
+durable maximum cooldown; missing local validation state is never blamed on a
+peer. Pruned undo, missing block data, SQLite failures, unavailable verification,
+and local resource limits instead stop with explicit recovery-required evidence;
+they neither invalidate the candidate branch nor cool down its provider. A definitive
+invalid block quarantines its minimal branch root and descendants, removes
+their staged bodies atomically, recovers the next viable most-work header, and
+survives restart. The panel shows the bounded invalid-root evidence separately
+from transient peer failures.
+
+Rejected provider bodies do not wait for the next supervisor interval. The
+same bounded cycle preserves its validated prefix, cools the provider, and
+immediately retries another peer or the recovered viable branch. The Wallet
+panel retains up to the configured 1..32 validation-retry outcomes; local
+verifier and ancestry failures stop without peer attribution.
+
 ## Funding accounts and payment settlement
 
 An Organization may link the bank accounts it pays from, and record what they
@@ -439,6 +566,23 @@ Without a token there are no such tools in the manifest at all — not tools tha
 fail on call. With one, the agent acts *as* that session: same organization
 scoping, same store, same refusals as `/api/*`. The session's user must have
 enrolled a Passkey.
+
+### Authenticated Streamable HTTP
+
+The app server can additionally expose `POST /mcp` for remote clients. It is
+disabled by default and requires a constant-time checked Bearer token from
+`:mcp :access-token-env`; the configured `:actor-user-id` scopes every AgentRun,
+schedule and watcher result. Stateful MCP `2025-06-18` and sessionless
+`2026-07-28` `server/discover` are both supported.
+
+Only this authenticated HTTP profile adds `workspace_snapshot`,
+`agent_runs_list`, `agent_run_create`, `agent_schedules_list`, and
+`agent_watchers_list`. The stdio manifest remains unchanged, so enabling HTTP
+does not silently widen Claude Code or another local client's authority.
+
+Official Python OpenAI/Anthropic/MCP SDKs and the official Go MCP SDK run against
+the real fixture server in CI (`test/sdk_compat.py`,
+`test/sdk_go_compat/main.go`).
 
 **An agent cannot approve.** `approve/start` and `approve/finish` have no tools
 and no dispatch branch, because consent is a WebAuthn user-verifying assertion

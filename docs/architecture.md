@@ -1268,17 +1268,19 @@ the in-app agent loop, and this translates them for a client that is not that
 loop. `mcp.model` holds the manifest, `mcp.execute` does the JSON-RPC dispatch,
 and an `ITool` port calls the same two functions.
 
-Stdio rather than a route on the loopback server: `/v1/*` is already the one
-unauthenticated exception the loopback bind exists to protect, and an MCP route
-would be a second. Over stdio the client is a process the operator launched, so
-nothing new listens and the trust boundary is one they already set.
+Stdio remains the local-client profile. The app server also has an independently
+gated `/mcp` Streamable HTTP profile: it is disabled by default, requires a
+Bearer token sourced from an environment variable, binds requests to a
+configured actor, expires stateful sessions, rejects duplicate IDs, and supports
+both `2025-06-18` and sessionless `2026-07-28` discovery.
 
 The fleet capability gate is honoured, so `tools/list` is empty until it is
 enabled — the same fail-closed default as the other agent capabilities. Browser
 and computer tools are excluded because their approval path verifies the
 frontmost application between approval and action, which cannot survive a
-protocol whose consent model belongs to the client; the workspace reads are
-excluded because they sit behind the Passkey session. See ADR-0004.
+protocol whose consent model belongs to the client. Workspace snapshots and
+actor-scoped AgentRun reads are exposed only by the authenticated HTTP profile;
+they are absent from stdio. See ADR-0004.
 
 ## API profile
 
@@ -1286,11 +1288,13 @@ The public compatibility slice is:
 
 - `GET /v1/models`
 - `POST /v1/chat/completions`
+- `POST /v1/responses`
+- `POST /v1/messages` (Anthropic-compatible)
 
 Management endpoints live under `/api` and are not part of the OpenAI
-compatibility claim. Function-call deltas, Responses API, embeddings, Anthropic
-compatibility, and MCP are future profiles and will receive separate
-compatibility tests.
+compatibility claim. Embeddings are not implemented. Function calls,
+OpenAI Responses, Anthropic messages, MCP `2025-06-18`, and MCP `2026-07-28`
+are exercised through upstream Python and Go SDKs in CI.
 
 `POST /v1/chat/completions` honours `stream: true` as Server-Sent Events in the
 `chat.completion.chunk` format: a role chunk, one chunk per provider delta, a
@@ -1377,10 +1381,7 @@ relevance queries. Writes replace the state file atomically.
 1. Tender the provider policy Wasm in the live request path.
 2. Add tool manifests with per-working-folder capabilities and approval
    receipts.
-3. Add an MCP **client** profile. (The server half exists for the fleet
-   capability: `cloud.itonami.app.mcp` on stdio — see below and ADR-0004.)
-4. Add memory distillation and relevance retrieval over kgraph.
-5. Add schedules/watchers after tool isolation is available.
-6. Add a function-call compatibility suite. (Streaming has one:
-   `test/cloud/itonami/app/openai_compat_test.clj` reads the SSE frames over
-   real HTTP, in both modes.)
+3. Add encrypted remote MCP client credential rotation and audit export.
+4. Add external semantic index adapters while retaining local-only defaults.
+5. Add calendar-native recurrence editing around durable AgentRun schedules.
+6. Add embeddings after defining its retention and model-egress policy.

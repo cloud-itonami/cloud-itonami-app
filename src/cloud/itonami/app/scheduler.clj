@@ -34,9 +34,15 @@
   (:require [calendar.model :as calendar]
             [calendar.validate :as calendar-validate]
             [clojure.string :as str]
-            [cloud.itonami.app.store :as store]))
+            [cloud.itonami.app.agent-control :as agent-control]
+            [cloud.itonami.app.store :as store]
+            [cloud.itonami.app.workspace :as workspace])
+  (:import [java.nio.charset StandardCharsets]
+           [java.security MessageDigest]
+           [java.time Duration Instant]
+           [java.util Base64 UUID]))
 
-(def schema "cloud.itonami.app.scheduler.v1")
+(def calendar-schema "cloud.itonami.app.scheduler.v1")
 
 (defonce ^:private write-lock (Object.))
 
@@ -131,7 +137,7 @@
   [actor]
   (actor! actor)
   (let [state (store/snapshot)]
-    {:schema schema :ok? true
+    {:schema calendar-schema :ok? true
      :items (->> (calendars state)
                  (mapcat (fn [[owner cal]]
                            (->> (calendar/events-in-order cal)
@@ -191,7 +197,7 @@
       (validate! event)
       (store/transact! update-in (calendar-path actor)
                        (fnil calendar/add-event (calendar/calendar actor)) event)
-      {:schema schema :ok? true :event (event-view event actor actor)})))
+      {:schema calendar-schema :ok? true :event (event-view event actor actor)})))
 
 (defn invite!
   "Add `person` to an event. Organizer only."
@@ -211,11 +217,11 @@
         ;; Already on it. Not an error and not a second invitation: the
         ;; attendee list would gain a duplicate and the RSVP map would not,
         ;; so the same person would appear twice with one answer.
-        {:schema schema :ok? true :already? true
+        {:schema calendar-schema :ok? true :already? true
          :event (event-view event owner actor)}
         (let [next-calendar (calendar/add-attendee (calendar-for state owner) id person)]
           (store/transact! assoc-in (calendar-path owner) next-calendar)
-          {:schema schema :ok? true :already? false
+          {:schema calendar-schema :ok? true :already? false
            :event (event-view (calendar/event-by-id next-calendar id) owner actor)})))))
 
 (defn respond!
@@ -242,7 +248,7 @@
                         {:type :scheduler/not-invited :id id})))
       (let [next-calendar (calendar/respond (calendar-for state owner) id actor status)]
         (store/transact! assoc-in (calendar-path owner) next-calendar)
-        {:schema schema :ok? true
+        {:schema calendar-schema :ok? true
          :event (event-view (calendar/event-by-id next-calendar id) owner actor)}))))
 
 (defn cancel!
@@ -260,4 +266,330 @@
           {:keys [owner]} (organizer! state id actor)]
       (store/transact! update-in (conj (calendar-path owner) :calendar/events)
                        dissoc id)
-      {:schema schema :ok? true :id id})))
+      {:schema calendar-schema :ok? true :id id})))
+
+;; Durable AgentRun schedules share the calendar lifecycle but not its event model.
+(def schedule-schema "cloud.itonami.agent-schedule.v1")
+(def watcher-schema "cloud.itonami.agent-watcher.v1")
+(def allowed-event-types
+  #{"mail.changed" "calendar.changed" "project.changed" "drive.changed"})
+(def ^:private snapshot-event-types
+  #{"calendar.changed" "project.changed" "drive.changed"})
+(def ^:private source-check-interval (Duration/ofSeconds 60))
+(def minimum-interval-seconds 300)
+(def maximum-interval-seconds (* 7 24 60 60))
+(defonce ^:private worker (atom nil))
+
+(defn- instant [value]
+  (if (instance? Instant value) value (Instant/parse value)))
+
+(defn- public-schedule [schedule]
+  (dissoc schedule :actor))
+
+(defn schedules [actor]
+  (->> (vals (get-in (store/snapshot) [:agent-control :schedules] {}))
+       (filter #(= actor (:actor %)))
+       (sort-by :created-at)
+       reverse
+       (mapv public-schedule)))
+
+(defn watchers [actor]
+  (->> (vals (get-in (store/snapshot) [:agent-control :watchers] {}))
+       (filter #(= actor (:actor %)))
+       (sort-by :created-at)
+       reverse
+       (mapv public-schedule)))
+
+(defn create-schedule!
+  [_configuration {:keys [goal interval-seconds model provider mode]} actor]
+  (when-not (and (string? goal)
+                 (<= 1 (count (str/trim goal)) 2000))
+    (throw (ex-info "Schedule goal is required."
+                    {:type :schedule/invalid})))
+  (when-not (and (int? interval-seconds)
+                 (<= minimum-interval-seconds interval-seconds
+                     maximum-interval-seconds))
+    (throw (ex-info "Schedule interval is outside the safe range."
+                    {:type :schedule/invalid
+                     :minimum minimum-interval-seconds
+                     :maximum maximum-interval-seconds})))
+  (let [now (Instant/now)
+        id (str "schedule-" (UUID/randomUUID))
+        schedule {:schema schedule-schema :id id :actor actor :enabled? true
+                  :goal (str/trim goal) :interval-seconds interval-seconds
+                  :model model :provider provider :mode mode
+                  :created-at (str now)
+                  :next-run-at (str (.plusSeconds now interval-seconds))
+                  :last-dispatched-at nil :last-run-id nil :last-error nil}]
+    (store/update-agent-control! assoc-in [:schedules id] schedule)
+    (public-schedule schedule)))
+
+(defn disable! [actor schedule-id]
+  (let [schedule (get-in (store/snapshot)
+                         [:agent-control :schedules schedule-id])]
+    (when-not (and schedule (= actor (:actor schedule)))
+      (throw (ex-info "Schedule was not found." {:type :schedule/not-found})))
+    (let [disabled (assoc schedule :enabled? false
+                         :disabled-at (store/now))]
+      (store/update-agent-control! assoc-in [:schedules schedule-id] disabled)
+      (public-schedule disabled))))
+
+(defn create-watcher!
+  [_configuration
+   {:keys [goal event-type source-provider provider model mode]} actor]
+  (when-not (and (string? goal)
+                 (<= 1 (count (str/trim goal)) 2000))
+    (throw (ex-info "Watcher goal is required."
+                    {:type :watcher/invalid})))
+  (when-not (contains? allowed-event-types event-type)
+    (throw (ex-info "Watcher event type is not supported."
+                    {:type :watcher/invalid
+                     :allowed-event-types allowed-event-types})))
+  (let [id (str "watcher-" (UUID/randomUUID))
+        watcher {:schema watcher-schema :id id :actor actor :enabled? true
+                 :goal (str/trim goal) :event-type event-type
+                 :source-provider-filter
+                 (some-> source-provider str/trim not-empty)
+                 :provider provider :model model :mode mode
+                 :created-at (store/now)
+                 :last-event-id nil :last-dispatched-at nil
+                 :last-run-id nil :last-error nil}]
+    (store/update-agent-control! assoc-in [:watchers id] watcher)
+    (public-schedule watcher)))
+
+(defn disable-watcher! [actor watcher-id]
+  (let [watcher (get-in (store/snapshot)
+                        [:agent-control :watchers watcher-id])]
+    (when-not (and watcher (= actor (:actor watcher)))
+      (throw (ex-info "Watcher was not found." {:type :watcher/not-found})))
+    (let [disabled (assoc watcher :enabled? false :disabled-at (store/now))]
+      (store/update-agent-control! assoc-in [:watchers watcher-id] disabled)
+      (public-schedule disabled))))
+
+(defn- matches-event? [watcher event]
+  (and (:enabled? watcher)
+       (= (:event-type watcher) (:type event))
+       (or (nil? (:source-provider-filter watcher))
+           (= (:source-provider-filter watcher) (:provider event)))
+       (not= (:last-event-id watcher) (:id event))))
+
+(defn dispatch-event!
+  "Dispatch an external event to matching actor-owned watchers.
+
+  Event payloads are deliberately reduced to id/type/provider before they enter
+  durable state or an AgentRun goal. Reserving the id before run creation makes
+  relay redelivery idempotent. The resulting run retains normal HIL behavior."
+  [configuration event]
+  (let [event (select-keys event [:id :type :provider])]
+    (when-not (and (string? (:id event))
+                   (contains? allowed-event-types (:type event)))
+      (throw (ex-info "Watcher event is invalid." {:type :watcher/invalid-event})))
+    (->> (vals (get-in (store/snapshot)
+                       [:agent-control :watchers] {}))
+         (filter #(matches-event? % event))
+         (mapv
+          (fn [watcher]
+            (let [reserved
+                  (assoc watcher :last-event-id (:id event)
+                         :last-dispatched-at (store/now) :last-error nil)]
+              (store/update-agent-control!
+               assoc-in [:watchers (:id watcher)] reserved)
+              (try
+                (let [run
+                      (agent-control/create-run!
+                       configuration
+                       (cond-> {:goal
+                                (str (:goal watcher)
+                                     "\n\nTrigger: " (:type event)
+                                     (when-let [provider (:provider event)]
+                                       (str " from " provider)))
+                                :model (:model watcher)
+                                :mode (:mode watcher)}
+                         (:provider watcher)
+                         (assoc :provider (:provider watcher)))
+                       (:actor watcher))]
+                  (store/update-agent-control!
+                   assoc-in [:watchers (:id watcher) :last-run-id]
+                   (:agent.run/id run))
+                  {:watcher-id (:id watcher)
+                   :run-id (:agent.run/id run) :status :dispatched})
+                (catch Exception error
+                  (store/update-agent-control!
+                   assoc-in [:watchers (:id watcher) :last-error]
+                   {:at (store/now) :message (.getMessage error)
+                    :type (some-> error ex-data :type)})
+                  {:watcher-id (:id watcher) :status :failed
+                   :error (.getMessage error)}))))))))
+
+(defn- canonical [value]
+  (cond
+    (map? value)
+    (into (sorted-map-by #(compare (pr-str %1) (pr-str %2)))
+          (map (fn [[key item]] [key (canonical item)]))
+          value)
+    (set? value) (vec (sort-by pr-str (map canonical value)))
+    (sequential? value) (mapv canonical value)
+    :else value))
+
+(defn- snapshot-fingerprint [event-type snapshot]
+  (let [projection
+        (case event-type
+          "calendar.changed"
+          (mapv #(select-keys % [:id :title :start :end :calendar :all-day?])
+                (:items snapshot))
+
+          "project.changed" (:items snapshot)
+
+          "drive.changed"
+          (mapv #(select-keys % [:id :name :folder :media-type
+                                 :size-bytes :available?])
+                (:items snapshot)))
+        bytes (.getBytes (pr-str (canonical projection))
+                         StandardCharsets/UTF_8)]
+    (-> (MessageDigest/getInstance "SHA-256")
+        (.digest bytes)
+        (->> (.encodeToString
+              (.withoutPadding (Base64/getUrlEncoder)))))))
+
+(defn- snapshot-ready? [event-type snapshot]
+  (case event-type
+    "calendar.changed" (not= "unavailable" (:status snapshot))
+    "project.changed" (= "connected" (:status snapshot))
+    "drive.changed" (and (map? snapshot) (vector? (:items snapshot)))
+    false))
+
+(defn observe-snapshot!
+  "Record a content-free source fingerprint and dispatch only later changes.
+
+  The first successful observation establishes a baseline and never creates a
+  run. Raw snapshot fields are not written to Agent state."
+  [configuration event-type provider snapshot]
+  (when-not (contains? snapshot-event-types event-type)
+    (throw (ex-info "Snapshot watcher event type is invalid."
+                    {:type :watcher/invalid-event})))
+  (let [path [:watcher-sources event-type]
+        previous (get-in (store/agent-control) path)
+        ready? (snapshot-ready? event-type snapshot)
+        fingerprint (when ready?
+                      (snapshot-fingerprint event-type snapshot))
+        observed {:event-type event-type :provider provider
+                  :ready? ready? :fingerprint fingerprint
+                  :checked-at (store/now)
+                  :status (or (:status snapshot)
+                              (if ready? "connected" "unavailable"))}]
+    (store/update-agent-control! assoc-in path observed)
+    (if (and ready? (:fingerprint previous)
+             (not= fingerprint (:fingerprint previous)))
+      (dispatch-event!
+       configuration {:id fingerprint :type event-type :provider provider})
+      [])))
+
+(defn- source-due? [event-type now]
+  (let [checked-at
+        (get-in (store/agent-control)
+                [:watcher-sources event-type :checked-at])]
+    (or (nil? checked-at)
+        (not (.isAfter (.plus (Instant/parse checked-at)
+                              source-check-interval)
+                       now)))))
+
+(defn poll-watchers!
+  "Poll only source types that currently have an enabled watcher."
+  [configuration]
+  (let [enabled-types
+        (->> (vals (get-in (store/agent-control) [:watchers] {}))
+             (filter :enabled?)
+             (map :event-type)
+             (filter snapshot-event-types)
+             set)
+        now (Instant/now)]
+    (into {}
+          (for [event-type enabled-types
+                :when (source-due? event-type now)]
+            [event-type
+             (try
+               (case event-type
+                 "calendar.changed"
+                 (observe-snapshot!
+                  configuration event-type "eventkit"
+                  (workspace/snapshot :scheduler workspace/calendar-snapshot))
+                 "project.changed"
+                 (observe-snapshot!
+                  configuration event-type "github"
+                  (workspace/snapshot :projects workspace/projects-snapshot))
+                 "drive.changed"
+                 (observe-snapshot!
+                  configuration event-type "onedrive"
+                  (workspace/snapshot :drive workspace/drive-snapshot)))
+               (catch Exception error
+                 (store/update-agent-control!
+                  assoc-in [:watcher-sources event-type]
+                  {:event-type event-type :ready? false
+                   :checked-at (store/now) :status "error"
+                   :last-error (.getMessage error)})
+                 []))]))))
+
+(defn- due? [now schedule]
+  (and (:enabled? schedule)
+       (not (.isAfter (instant (:next-run-at schedule)) now))))
+
+(defn- reserve-dispatch! [schedule now]
+  (let [reserved
+        (assoc schedule
+               :last-dispatched-at (str now)
+               :next-run-at
+               (str (.plusSeconds now (:interval-seconds schedule)))
+               :last-error nil)]
+    (store/update-agent-control!
+     assoc-in [:schedules (:id schedule)] reserved)
+    reserved))
+
+(defn tick!
+  "Dispatch each due schedule at most once for this persisted due time."
+  ([configuration] (tick! configuration (Instant/now)))
+  ([configuration now]
+   (let [now (instant now)]
+     (->> (vals (get-in (store/snapshot)
+                        [:agent-control :schedules] {}))
+          (filter #(due? now %))
+          (mapv
+           (fn [schedule]
+             (let [reserved (reserve-dispatch! schedule now)]
+               (try
+                 (let [run
+                       (agent-control/create-run!
+                        configuration
+                        (select-keys reserved
+                                     [:goal :model :provider :mode])
+                        (:actor reserved))]
+                   (store/update-agent-control!
+                    assoc-in [:schedules (:id reserved) :last-run-id]
+                    (:agent.run/id run))
+                   {:schedule-id (:id reserved)
+                    :run-id (:agent.run/id run) :status :dispatched})
+                 (catch Exception error
+                   (store/update-agent-control!
+                    assoc-in [:schedules (:id reserved) :last-error]
+                    {:at (store/now) :message (.getMessage error)
+                     :type (some-> error ex-data :type)})
+                   {:schedule-id (:id reserved) :status :failed
+                    :error (.getMessage error)})))))))))
+
+(defn start! [configuration]
+  (when-not @worker
+    (reset!
+     worker
+     (future
+       (while (not (Thread/interrupted))
+         (try
+           (tick! configuration)
+           (poll-watchers! configuration)
+           (catch Exception _))
+         (Thread/sleep 30000)))))
+  true)
+
+(defn stop! []
+  (when-let [task @worker]
+    (future-cancel task)
+    (reset! worker nil))
+  true)

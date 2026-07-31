@@ -74,6 +74,52 @@
         (is (zero? exit) (str source " does not parse under node " version ":\n" err))))
     (println "web-script-test: node is not on PATH, so the interaction layer was not parsed.")))
 
+(deftest bitcoin-header-presync-security-state-is-human-readable
+  (let [js (slurp (io/file "resources/cloud/itonami/app/interaction.js"))
+        html (with-redefs [store/snapshot (constantly (store/initial-state))]
+               (web/page-html config))]
+    (is (str/includes? html "id=\"bitcoin-headers-presync-state\""))
+    (is (str/includes? js "const renderBitcoinConsensus = (data) =>"))
+    (is (str/includes? js "data?.['headers-presync-required?'] === true"))
+    (is (str/includes? js
+                       "1回目のheader取得は端末DBへ保存されません"))
+    (is (str/includes? js
+                       "Header anti-DoS 検証済み"))))
+
+(deftest bitcoin-multi-peer-block-pipeline-is-human-readable
+  (let [js (slurp (io/file "resources/cloud/itonami/app/interaction.js"))
+        html (with-redefs [store/snapshot (constantly (store/initial-state))]
+               (web/page-html config))]
+    (is (str/includes? html "id=\"bitcoin-block-download-state\""))
+    (is (str/includes? html "id=\"bitcoin-history-evidence-state\""))
+    (is (str/includes? js "data?.sync?.['last-result']?.blocks"))
+    (is (str/includes? js "最大8 peers、peerごとに16 blocks"))
+    (is (str/includes? js "peers を再割当"))
+    (is (str/includes? js "blockError?.['peer-feedback']"))
+    (is (str/includes? js
+                       "blockError?.['block-validation-result'] === 'local'"))
+    (is (str/includes? js "Local consensus recovery required"))
+    (is (str/includes? js "peerや候補branchは無効化していません"))
+    (is (str/includes? js "Block provider ${provider} を最大cooldownへ移行"))
+    (is (str/includes? js "local validation failure はpeerへ帰責しません"))
+    (is (str/includes? js "blockDownload['validation-failures']"))
+    (is (str/includes? js "provider bodiesを同一cycleで再試行"))
+    (is (str/includes? js "evidence.status === 'verified-ancestor'"))
+    (is (str/includes? js "現在のlocal active chain ancestryと一致しています"))
+    (is (str/includes? js "信頼せず再検証してください"))
+    (is (str/includes? js "sync:{'last-result':result}"))))
+
+(deftest bitcoin-invalid-branch-quarantine-is-human-readable
+  (let [js (slurp (io/file "resources/cloud/itonami/app/interaction.js"))
+        html (with-redefs [store/snapshot (constantly (store/initial-state))]
+               (web/page-html config))]
+    (is (str/includes? html "id=\"bitcoin-invalid-branch-state\""))
+    (is (str/includes? js "data?.['invalid-blocks']"))
+    (is (str/includes? js "data?.['invalid-block-roots']"))
+    (is (str/includes? js "Invalid branch ${invalidCount}件を隔離"))
+    (is (str/includes? js "次善のmost-work chainへ復帰しました"))
+    (is (str/includes? js "Invalid branch なし"))))
+
 (deftest a-cell-anchor-is-spelled-in-one-place
   ;; The grid writes `Sheet1!B3` onto every cell as `data-anchor`, and the
   ;; comment box reads it back to put a dot where a comment points. Two
