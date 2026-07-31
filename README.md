@@ -417,10 +417,12 @@ replacement remains coinbase-only and non-coinbase collisions fail closed.
 BIP9 deployment periods preserve Core's start/timeout and threshold/timeout
 transition precedence. Compact proof-of-work targets preserve Core's exact
 `SetCompact` exponent-33/34 and 256-bit overflow boundaries, including during
-initial-context header validation. The embedded UTXO database uses
-Core-identical unspendable-output pruning and transactionally upgrades legacy
-state to schema v7, requiring authenticated reindex if impossible spend
-history is detected.
+initial-context header validation. The `assumevalid` fast path preserves
+Core's 256-bit `GetBlockProofEquivalentTime` rounding and does not skip Script
+checks until the strict two-week burial boundary has actually been crossed.
+The embedded UTXO database uses Core-identical unspendable-output pruning and
+transactionally upgrades legacy state to schema v7, requiring authenticated
+reindex if impossible spend history is detected.
 
 Owner/admin users can trigger the same exclusive cycle with
 `POST /api/bitcoin/consensus/sync`; concurrent attempts return `409`.
