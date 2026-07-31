@@ -413,8 +413,9 @@ either active or side-chain block bodies enter local storage. Prevout Script
 validation also matches Core's retroactive P2SH/WITNESS/TAPROOT flags and
 historical exception composition. BIP30 checks use Core's parent-view scan,
 pinned BIP34-chain optimization, and height 1,983,702 recheck boundary;
-replacement remains coinbase-only and non-coinbase collisions fail closed. The
-embedded UTXO database uses Core-identical
+replacement remains coinbase-only and non-coinbase collisions fail closed.
+BIP9 deployment periods preserve Core's start/timeout and threshold/timeout
+transition precedence. The embedded UTXO database uses Core-identical
 unspendable-output pruning and transactionally upgrades legacy state to schema
 v7, requiring authenticated reindex if impossible spend history is detected.
 
