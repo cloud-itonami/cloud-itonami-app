@@ -795,6 +795,21 @@
   (true? (get-in (identity-state (store/snapshot))
                  [:users (:user-id session) :passkey-enrolled?])))
 
+(defn may-act?
+  "Whether this session has established who it is well enough to act.
+
+  The one expression of that rule. `require-passkey!` is this plus a throw, and
+  anything else asking the same question should ask it here rather than reach
+  for `passkey-enrolled?` — a second spelling of one rule is how the two drift.
+
+  Measured 2026-07-31: they had already drifted. `require-passkey!` learned about
+  agent sessions and `payment-tools/session` did not, because it called
+  `passkey-enrolled?` directly. That is now a DELIBERATE difference, documented
+  where it is made, rather than an oversight — see that namespace."
+  [session]
+  (or (= :agent (:kind session))
+      (passkey-enrolled? session)))
+
 (defn require-passkey!
   "Refuse a session that has not established who it is.
 
@@ -813,7 +828,7 @@
   user-verifying assertion and no agent can produce one (ADR-0006); that stays
   exactly where it was."
   [session]
-  (when-not (or (= :agent (:kind session)) (passkey-enrolled? session))
+  (when-not (may-act? session)
     (throw (ex-info
             "アプリを利用するには Passkey の登録が必要です。"
             {:type :passkey/required})))

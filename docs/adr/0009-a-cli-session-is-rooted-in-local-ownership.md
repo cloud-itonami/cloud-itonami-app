@@ -104,6 +104,23 @@ with the same key it would have acted on the wrong install.
 directly, so the bound host and port are the truth. Fixed, and the reason is in
 the docstring rather than in this file alone.
 
+## The money surface is deliberately left out
+
+`payment-tools/session` asked the same question by a different name — it called
+`passkey-enrolled?` directly rather than `require-passkey!`, so it did not learn
+about agent sessions when that gate did. Found by running the CLI's own token
+through it: the Keychain item resolved, the digest matched, and the session came
+back nil.
+
+Two spellings of one rule is how they drift, so there is now one:
+`identity/may-act?`, which `require-passkey!` is a throwing wrapper around.
+`payment-tools` keeps the stricter check and now says why in the place it makes
+the choice: an agent session is rooted in being able to read a file in the data
+directory, and the decision that made that enough was about the business and
+portfolio surface. Widening it to funding and settlement is a separate decision
+nobody has made. A test holds the line and fails if the check is swapped for
+`may-act?`.
+
 ## Consequences
 
 - **Anything that can read `~/.cloud-itonami/data/agent-enrollment.key` can act

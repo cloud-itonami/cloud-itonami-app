@@ -94,6 +94,16 @@
   [configuration]
   (when-let [token (session-token configuration)]
     (let [s (identity/session token)]
+      ;; DELIBERATELY stricter than `identity/may-act?`, which the rest of the
+      ;; app uses and which an agent session satisfies (ADR-0009). This is the
+      ;; money surface: an agent session is rooted in being able to read a file
+      ;; in the data directory, and the decision that made that enough was about
+      ;; the business/portfolio surface. Widening it to funding and settlement is
+      ;; a separate decision nobody has made, so it stays a real Passkey here and
+      ;; a test holds the line.
+      ;;
+      ;; This is not the approval gate either way — `approve/finish` needs a
+      ;; WebAuthn user-verifying assertion and no agent can produce one.
       (when (and s (identity/passkey-enrolled? s))
         s))))
 
