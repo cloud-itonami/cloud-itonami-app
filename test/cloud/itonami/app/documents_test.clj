@@ -4555,3 +4555,49 @@
                                               :action "insert"})))
         (is (= :drive/not-found (refuse {:tab "no-such" :axis "row" :at 1
                                          :action "insert"})))))))
+
+(deftest speaker-notes-are-kept-printed-and-carried-into-powerpoint
+  ;; `slides.pptx` has written `:slides/notes` as a real notesSlide part the
+  ;; whole time, and nothing in this app read or wrote them: a deck imported
+  ;; with notes lost them on the next save, and one made here never had any.
+  (with-state
+    (fn [_ object-store]
+      (let [{:keys [item]} (documents/create! :slides "提案" alice object-store)
+            payload (:payload (documents/content (:id item) alice object-store))
+            ;; Exactly what the notes box writes.
+            noted (assoc-in payload ["slides/slides" 0 "slides/notes"]
+                            "ここで在庫の話をする。")
+            saved (save! (:id item) noted alice object-store)]
+        (is (:ok? saved))
+        (is (empty? (:warnings saved)) "notes are not a problem the validator has")
+        (let [back (:resource (documents/content (:id item) alice object-store))]
+          (is (= "ここで在庫の話をする。"
+                 (:slides/notes (first (:slides/slides back))))
+              "through the plain-JSON projection and back"))
+        (let [printed (:html (documents/printable (:id item) alice object-store))]
+          (is (str/includes? printed "ここで在庫の話をする。")
+              "the handout has them under the slide")
+          (is (str/includes? printed "slide-notes")))
+        (let [pptx (:bytes (documents/export (:id item) "pptx" alice object-store))
+              text (String. ^bytes pptx "ISO-8859-1")]
+          ;; A .pptx is a zip and a zip names its entries in the clear.
+          (is (str/includes? text "notesSlide")
+              (str "no notesSlide part in " (count pptx) " bytes")))))))
+
+(deftest a-slide-with-no-notes-prints-and-exports-without-an-empty-one
+  ;; The box removes the key rather than storing an empty string, because
+  ;; `slides.pptx` writes a notesSlide part for a slide that has the key at
+  ;; all — an empty one would be a blank notes page per slide somebody
+  ;; clicked into and left.
+  (with-state
+    (fn [_ object-store]
+      (let [{:keys [item]} (documents/create! :slides "提案" alice object-store)
+            printed (:html (documents/printable (:id item) alice object-store))
+            pptx (String. ^bytes (:bytes (documents/export (:id item) "pptx" alice
+                                                           object-store))
+                          "ISO-8859-1")]
+        (is (not (str/includes? printed "slide-notes")))
+        ;; And this is what makes the assertion above about the noted deck
+        ;; worth anything: the marker is absent when there are no notes, so
+        ;; finding it there was not finding boilerplate.
+        (is (not (str/includes? pptx "notesSlide")))))))

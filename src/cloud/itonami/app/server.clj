@@ -1852,6 +1852,11 @@
                             ".docs-ref{color:#555;font-size:.9em}"
                             ".answer-line{border-bottom:1px solid #999;height:1.6rem}"
                             ".slide svg{width:100%;height:auto;border:1px solid #ccc}"
+                            ;; The notes under the slide, in the reader's
+                            ;; own type: this is a handout, and a presenter
+                            ;; reads them at arm's length.
+                            ".slide-notes{margin:.75rem 0 0;white-space:pre-wrap;"
+                            "font-size:.9375rem;line-height:1.7}"
                             ;; One slide per page, and never a heading left
                             ;; alone at the bottom of one.
                             "@media print{body{margin:0;max-width:none}"
