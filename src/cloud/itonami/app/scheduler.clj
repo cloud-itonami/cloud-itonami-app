@@ -593,4 +593,3 @@
     (future-cancel task)
     (reset! worker nil))
   true)
-
