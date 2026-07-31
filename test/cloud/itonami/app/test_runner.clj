@@ -10,6 +10,7 @@
             [clojure.test :as test]
             [cloud.itonami.app.authority-test]
             [cloud.itonami.app.business-test]
+            [cloud.itonami.app.agent-session-test]
             [cloud.itonami.app.business-http-test]
             [cloud.itonami.app.canvas-test]
             [cloud.itonami.app.loops-test]
@@ -61,6 +62,7 @@
 (def ^:private namespaces
   '[cloud.itonami.app.authority-test
     cloud.itonami.app.business-test
+    cloud.itonami.app.agent-session-test
     cloud.itonami.app.business-http-test
     cloud.itonami.app.canvas-test
     cloud.itonami.app.loops-test

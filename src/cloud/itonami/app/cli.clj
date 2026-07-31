@@ -1,0 +1,265 @@
+(ns cloud.itonami.app.cli
+  "A command line client for the running app.
+
+  ## Why it is a client and not a second writer
+
+  `store/state` is `(defonce state (atom (load-state)))` — read once when a
+  process starts and never re-read. A CLI that wrote `state.edn` beside a
+  running server would have its write silently reverted by the server's next
+  `transact!`. So every command here is an HTTP call to the server that owns the
+  store, and `auth login` is the one that gets a token to make the rest with.
+
+  ## Where the token goes
+
+  Into the login Keychain under service `cloud-itonami-app.mcp`, account
+  `session-token` — the item `payment-tools` already reads. That is not a
+  coincidence to tidy up later: one `auth login` is meant to be what makes the
+  CLI *and* the MCP server able to act, and inventing a second location would
+  mean enrolling twice for one decision. `CLOUD_ITONAMI_MCP_SESSION` overrides
+  it, same as there.
+
+  ## What it is not
+
+  It cannot approve anything. `approve/finish` needs a WebAuthn user-verifying
+  assertion; no agent and no CLI can produce one (ADR-0006). An agent session
+  may ask, record, and carry out what a human already approved.
+
+  Usage:
+
+    clojure -M:cli auth login --label \"claude-code\" [--ttl-days 30]
+    clojure -M:cli auth status
+    clojure -M:cli auth revoke --id session-…
+    clojure -M:cli business list
+    clojure -M:cli business create --slug cloud-itonami-vc --name \"…\"
+    clojure -M:cli business bind --id business-… --repos a,b,c [--canvas …]
+
+  The CLI resolves the server's address and the data directory from the same
+  config the server does, so it must run with the same `CLOUD_ITONAMI_DATA_DIR`
+  as the server it is talking to. Mismatched, `auth login` reads the wrong key
+  file and is refused by the server rather than acting on the wrong store."
+  (:require [clojure.data.json :as json]
+            [clojure.string :as str]
+            [cloud.itonami.app.agent-session :as agent-session]
+            [cloud.itonami.app.config :as config]
+            [cloud.itonami.app.payment-tools :as payment-tools])
+  (:import [java.net URI]
+           [java.net.http HttpClient HttpRequest HttpRequest$BodyPublishers
+            HttpResponse$BodyHandlers]
+           [java.nio.file Files LinkOption]
+           [java.util.concurrent TimeUnit]))
+
+;; ---------------------------------------------------------------------------
+;; arguments
+;; ---------------------------------------------------------------------------
+
+(defn parse-flags
+  "`--key value` pairs into a map. A flag with no value is `true`, so `--json`
+  works without inventing a second syntax."
+  [args]
+  (loop [args args acc {}]
+    (if-let [head (first args)]
+      (if (str/starts-with? head "--")
+        (let [k (keyword (subs head 2))
+              v (second args)]
+          (if (and v (not (str/starts-with? v "--")))
+            (recur (drop 2 args) (assoc acc k v))
+            (recur (rest args) (assoc acc k true))))
+        (recur (rest args) acc))
+      acc)))
+
+(defn- comma-list [v]
+  (when (string? v)
+    (->> (str/split v #",") (map str/trim) (remove str/blank?) vec)))
+
+;; ---------------------------------------------------------------------------
+;; transport
+;; ---------------------------------------------------------------------------
+
+(defonce ^:private client (HttpClient/newHttpClient))
+
+(defn- base-url
+  "The address the server actually binds, NOT `:public-origin`.
+
+  `:public-origin` defaults to `http://localhost:1338` in the shipped config,
+  so preferring it sent every command to whatever was listening on 1338 — which,
+  on a machine running a second install on another port, is a different store
+  than the data directory the enrollment key was read from. Measured while
+  building this: a probe server on 1351 was enrolled against, and the request
+  went to the resident app on 1338 and came back 404.
+
+  `:public-origin` is what a browser is told the app is called. A CLI connects
+  to it directly, so the bound host and port are the truth."
+  [configuration]
+  (str "http://" (get-in configuration [:server :host])
+       ":" (get-in configuration [:server :port])))
+
+(defn- call
+  "One request. `token` nil means the route takes no session (enrollment)."
+  [configuration method path {:keys [body token]}]
+  (let [builder (-> (HttpRequest/newBuilder
+                     (URI/create (str (base-url configuration) path)))
+                    (.header "Content-Type" "application/json"))]
+    (when token
+      (.header builder "Authorization" (str "Bearer " token)))
+    (let [built (case method
+                  :get (.GET builder)
+                  :post (.POST builder (HttpRequest$BodyPublishers/ofString
+                                        (json/write-str (or body {})))))
+          response (.send client (.build built)
+                          (HttpResponse$BodyHandlers/ofString))
+          parsed (try (json/read-str (.body response) :key-fn keyword)
+                      (catch Exception _ {:raw (.body response)}))]
+      {:status (.statusCode response) :body parsed})))
+
+(defn- unwrap
+  "The body, or an exit-worthy message. The server's own error text is used
+  rather than a rephrasing: it already says which refusal fired."
+  [{:keys [status body]}]
+  (if (<= 200 status 299)
+    body
+    (throw (ex-info (or (get-in body [:error :message])
+                        (str "HTTP " status))
+                    {:status status :body body}))))
+
+;; ---------------------------------------------------------------------------
+;; token storage
+;; ---------------------------------------------------------------------------
+
+(defn- keychain-put!
+  "Store the token as one named Keychain item, replacing any previous one.
+
+  `-U` updates in place instead of erroring on a duplicate, so re-running
+  `auth login` after a revoke does not leave the operator with two items and no
+  way to tell which one is read."
+  [token]
+  (let [process (-> (ProcessBuilder.
+                     ^java.util.List
+                     ["security" "add-generic-password"
+                      "-U"
+                      "-s" payment-tools/keychain-service
+                      "-a" payment-tools/keychain-account
+                      "-w" token
+                      "-D" "cloud-itonami agent session"])
+                    (.redirectErrorStream true)
+                    .start)
+        output (future (slurp (.getInputStream process)))
+        completed? (.waitFor process 15 TimeUnit/SECONDS)]
+    (if (and completed? (zero? (.exitValue process)))
+      :stored
+      {:failed (str/trim (deref output 500 ""))})))
+
+(defn- stored-token [configuration]
+  (payment-tools/session-token configuration))
+
+(defn- read-enrollment-key []
+  (let [path (agent-session/key-file)]
+    (when-not (Files/isRegularFile path (into-array LinkOption []))
+      (throw (ex-info (str "enrollment key がありません: " path
+                           "\nサーバーを一度起動すると作成されます"
+                           "（CLOUD_ITONAMI_DATA_DIR が同じか確認してください）")
+                      {:type :cli/no-enrollment-key})))
+    (str/trim (String. (Files/readAllBytes path) "UTF-8"))))
+
+;; ---------------------------------------------------------------------------
+;; commands
+;; ---------------------------------------------------------------------------
+
+(defn- require-token [configuration]
+  (or (stored-token configuration)
+      (throw (ex-info "session がありません。先に `auth login` を実行してください"
+                      {:type :cli/no-session}))))
+
+(defn auth-login [configuration flags]
+  (let [issued (unwrap
+                (call configuration :post "/api/agent-session"
+                      {:body {:enrollment-key (read-enrollment-key)
+                              :label (or (:label flags) "cli")
+                              :user-id (:user-id flags)
+                              :ttl-days (some-> (:ttl-days flags) str parse-long)}}))
+        stored (keychain-put! (:token issued))]
+    {:session-id (:session-id issued)
+     :label (:label issued)
+     :expires-at (:expires-at issued)
+     :keychain (if (= :stored stored) "stored" stored)
+     ;; Printed once. The Keychain item is the copy that lasts; echoing it here
+     ;; is what makes CLOUD_ITONAMI_MCP_SESSION usable for a client that would
+     ;; rather carry the token in its own environment than read the Keychain.
+     :token (:token issued)}))
+
+(defn auth-status [configuration]
+  (unwrap (call configuration :get "/api/agent-session"
+                {:token (require-token configuration)})))
+
+(defn auth-revoke [configuration flags]
+  (let [id (or (:id flags)
+               (throw (ex-info "--id が必要です（auth status で確認できます）"
+                               {:type :cli/missing-id})))]
+    (unwrap (call configuration :post (str "/api/agent-session/" id "/revoke")
+                  {:token (require-token configuration)}))))
+
+(defn business-list [configuration]
+  (unwrap (call configuration :get "/api/business"
+                {:token (require-token configuration)})))
+
+(defn business-create [configuration flags]
+  (unwrap (call configuration :post "/api/business"
+                {:token (require-token configuration)
+                 :body {:slug (:slug flags)
+                        :name (:name flags)
+                        :note (:note flags)}})))
+
+(defn business-bind [configuration flags]
+  (let [id (or (:id flags)
+               (throw (ex-info "--id が必要です" {:type :cli/missing-id})))
+        ;; Only keys the caller actually passed are sent. `bind!` treats a
+        ;; present-but-empty key as "clear this face", so sending every key on
+        ;; every call would silently unbind whatever this invocation did not
+        ;; mention.
+        body (cond-> {}
+               (contains? flags :repos) (assoc :repos (comma-list (:repos flags)))
+               (contains? flags :adoptions) (assoc :adoptions (comma-list (:adoptions flags)))
+               (contains? flags :canvas) (assoc :canvas (:canvas flags))
+               (contains? flags :model) (assoc :model (:model flags))
+               (contains? flags :leverage) (assoc :leverage (:leverage flags))
+               (contains? flags :lei) (assoc :lei (:lei flags)))]
+    (when (empty? body)
+      (throw (ex-info "bind する面を 1 つ以上指定してください（--repos / --canvas / --model / --leverage / --adoptions / --lei）"
+                      {:type :cli/nothing-to-bind})))
+    (unwrap (call configuration :post (str "/api/business/" id "/bind")
+                  {:token (require-token configuration) :body body}))))
+
+(def usage
+  (str "cloud-itonami-app CLI\n\n"
+       "  auth login    --label <name> [--ttl-days N] [--user-id U]\n"
+       "  auth status\n"
+       "  auth revoke   --id <session-id>\n"
+       "  business list\n"
+       "  business create --slug <slug> [--name N] [--note X]\n"
+       "  business bind --id <business-id> [--repos a,b] [--canvas c]\n"
+       "                [--model path] [--leverage path] [--adoptions a,b] [--lei L]\n"))
+
+(defn run
+  "Dispatch. Returns the value to print, or throws with a message to show."
+  [configuration args]
+  (let [[group command] args
+        flags (parse-flags args)]
+    (case [group command]
+      ["auth" "login"] (auth-login configuration flags)
+      ["auth" "status"] (auth-status configuration)
+      ["auth" "revoke"] (auth-revoke configuration flags)
+      ["business" "list"] (business-list configuration)
+      ["business" "create"] (business-create configuration flags)
+      ["business" "bind"] (business-bind configuration flags)
+      (throw (ex-info usage {:type :cli/usage})))))
+
+(defn -main [& args]
+  (try
+    (println (json/write-str (run (config/load-config) (vec args))
+                             :escape-unicode false))
+    (System/exit 0)
+    (catch clojure.lang.ExceptionInfo e
+      (binding [*out* *err*] (println (ex-message e)))
+      (System/exit 1))
+    (catch Exception e
+      (binding [*out* *err*] (println (str "error: " (ex-message e))))
+      (System/exit 1))))

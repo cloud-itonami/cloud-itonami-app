@@ -176,25 +176,47 @@
 (defn session [token]
   (session-by-token token))
 
-(defn issue-session! [user-id]
-  (let [state (identity-state (store/snapshot))
-        membership (some #(when (= user-id (:user-id %)) %)
-                         (vals (:memberships state)))]
-    (when-not membership
-      (throw (ex-info "組織 membership が見つかりません。"
-                      {:type :identity/unauthenticated})))
-    (let [token (random-token 32)
-          session-id (str "session-" (UUID/randomUUID))
-          csrf (random-token 24)
-          now (store/now)
-          expires-at (str (.plusSeconds (Instant/now) session-seconds))]
-      (store/transact!
-       assoc-in [:identity :sessions session-id]
-       {:id session-id :user-id user-id
-        :organization-id (:organization-id membership)
-        :membership-id (:id membership) :token-digest (digest token)
-        :csrf csrf :created-at now :expires-at expires-at :revoked? false})
-      {:token token :expires-at expires-at})))
+(defn issue-session!
+  "Mint a session for `user-id` and return its token.
+
+  `opts` marks non-browser sessions. A browser session takes none and is
+  `:kind :passkey` — the shape every caller had before agent sessions existed,
+  so an unmarked record read back from an older store is a browser session and
+  is treated as one.
+
+    :kind        :passkey | :agent   what may present this token
+    :label       free-form           what to call it when revoking
+    :issued-via  :local-ownership    what was proved to get it
+    :ttl-seconds                     defaults to `session-seconds`
+
+  See `cloud.itonami.app.agent-session` for why `:agent` exists and for what it
+  still cannot do."
+  ([user-id] (issue-session! user-id nil))
+  ([user-id {:keys [kind label issued-via ttl-seconds]}]
+   (let [state (identity-state (store/snapshot))
+         membership (some #(when (= user-id (:user-id %)) %)
+                          (vals (:memberships state)))]
+     (when-not membership
+       (throw (ex-info "組織 membership が見つかりません。"
+                       {:type :identity/unauthenticated})))
+     (let [token (random-token 32)
+           session-id (str "session-" (UUID/randomUUID))
+           csrf (random-token 24)
+           now (store/now)
+           expires-at (str (.plusSeconds (Instant/now)
+                                         (or ttl-seconds session-seconds)))]
+       (store/transact!
+        assoc-in [:identity :sessions session-id]
+        (cond-> {:id session-id :user-id user-id
+                 :organization-id (:organization-id membership)
+                 :membership-id (:id membership) :token-digest (digest token)
+                 :csrf csrf :created-at now :expires-at expires-at
+                 :revoked? false
+                 :kind (or kind :passkey)}
+          label (assoc :label label)
+          issued-via (assoc :issued-via issued-via)))
+       {:token token :expires-at expires-at :session-id session-id
+        :csrf csrf}))))
 
 (defn- public-connection [connection]
   (select-keys connection [:id :provider :status :display-name :email
@@ -773,8 +795,25 @@
   (true? (get-in (identity-state (store/snapshot))
                  [:users (:user-id session) :passkey-enrolled?])))
 
-(defn require-passkey! [session]
-  (when-not (passkey-enrolled? session)
+(defn require-passkey!
+  "Refuse a session that has not established who it is.
+
+  For a browser session that means an enrolled Passkey: the loopback server is
+  reachable by every process and page on this machine, and a half-enrolled user
+  must not act.
+
+  An `:agent` session satisfies it by a different root — it was minted against a
+  0600 file inside the data directory, and anything that can read that file can
+  already rewrite `state.edn` and mint itself whatever it likes. Requiring a
+  Passkey on top of that refuses the operator and stops nobody else. See
+  `cloud.itonami.app.agent-session`; the check is inline here rather than
+  delegated because that namespace requires this one.
+
+  This is not the approval gate. `approve/finish` needs a WebAuthn
+  user-verifying assertion and no agent can produce one (ADR-0006); that stays
+  exactly where it was."
+  [session]
+  (when-not (or (= :agent (:kind session)) (passkey-enrolled? session))
     (throw (ex-info
             "アプリを利用するには Passkey の登録が必要です。"
             {:type :passkey/required})))
