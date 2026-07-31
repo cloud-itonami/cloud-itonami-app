@@ -1550,6 +1550,9 @@
           [:div {:class "security-callout"
                  :id "bitcoin-invalid-branch-state"
                  :role "status" :aria-live "polite" :hidden true}]
+          [:div {:class "security-callout"
+                 :id "bitcoin-history-evidence-state"
+                 :role "status" :aria-live "polite" :hidden true}]
           [:pre {:class "worker-output" :id "bitcoin-consensus-state"}
            "Bitcoin node を確認していません。"]]]
         [:section {:class "view" :data-view-panel "storage" :hidden true}

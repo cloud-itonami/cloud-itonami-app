@@ -378,6 +378,9 @@ are outside this process.
  {:embedded-consensus
   {:path "/absolute/path/mainnet-consensus.sqlite"
    :network :mainnet
+   ;; Optional local evidence emitted atomically by bitcoin-node's
+   ;; core_full_history_differential.sh.
+   :full-history-evidence-path "/absolute/path/full-history-evidence.json"
    ;; Required only when creating a new database. A verified existing database
    ;; reopens without replaying a configuration-supplied genesis body.
    :genesis-hex "..."
@@ -443,7 +446,11 @@ reindex if impossible spend history is detected.
 Owner/admin users can trigger the same exclusive cycle with
 `POST /api/bitcoin/consensus/sync`; concurrent attempts return `409`.
 `GET /api/bitcoin/consensus/status` includes supervisor, peer, header, block,
-snapshot, reorg-window, and failure evidence. Invalid enabled configuration
+snapshot, reorg-window, failure evidence, and a bounded full-history evidence
+summary. The evidence file is accepted only when its schema, network, database,
+Core result, hashes, and size are valid; its target hash is resolved again from
+the currently served local SQLite active ancestry. Absolute storage paths are
+never returned by the API. Invalid enabled configuration
 fails before the HTTP listener binds. Full mainnet storage is never enabled by
 default or silently placed on the application disk.
 
@@ -453,7 +460,7 @@ download remains outside SQLite; only a salted-commitment-protected redownload
 can publish headers. Wallet → Bitcoin consensus displays whether this boundary
 is still active or minimum chainwork has been verified.
 
-Block bodies use the `bitcoin-node` v0.45 managed pipeline: up to eight diverse
+Block bodies use the `bitcoin-node` v0.47 managed pipeline: up to eight diverse
 peers download concurrently with 16 assignments per peer and a 128-block
 resident window, while the embedded validator commits only chronological,
 fully validated blocks. The parallel stage correlates only the bounded raw

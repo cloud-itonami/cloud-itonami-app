@@ -12,11 +12,107 @@
             [chain.observer.protocol :as chain-observer]
             [cloud.itonami.app.bitcoin-consensus-sync :as consensus-sync]
             [cloud.itonami.app.store :as store]
+            [clojure.data.json :as json]
             [clojure.string :as str])
-  (:import [java.util UUID]))
+  (:import [java.nio.file Files LinkOption Path]
+           [java.util UUID]))
 
 (defonce ^:private backends (atom {}))
 (defonce ^:private disk-backends (atom {}))
+(def ^:private maximum-evidence-bytes 65536)
+(def ^:private full-history-evidence-schema
+  "kotoba.bitcoin.full-history-differential.v1")
+(def ^:private hash-pattern #"[0-9a-f]{64}")
+
+(defn- evidence-fail! [message data]
+  (throw
+   (ex-info message
+            (assoc data :type :bitcoin.node/full-history-evidence-invalid))))
+
+(defn- absolute-path! [value field]
+  (when-not (and (string? value) (not (str/blank? value)))
+    (evidence-fail! "Bitcoin full-history evidence path is invalid."
+                    {:field field}))
+  (let [path (Path/of value (make-array String 0))]
+    (when-not (.isAbsolute path)
+      (evidence-fail! "Bitcoin full-history evidence paths must be absolute."
+                      {:field field}))
+    (.normalize path)))
+
+(defn full-history-evidence-status
+  "Validate local Core differential evidence and bind it to active ancestry.
+
+  Absolute storage paths are used only for binding and are never returned."
+  [options node current-status]
+  (if-not (:full-history-evidence-path options)
+    {:configured? false :status :not-configured}
+    (let [evidence-path
+          (absolute-path! (:full-history-evidence-path options) :evidence-path)]
+      (if-not (Files/exists evidence-path (make-array LinkOption 0))
+        {:configured? true :status :missing}
+        (do
+          (when (or (Files/isSymbolicLink evidence-path)
+                    (not (Files/isRegularFile
+                          evidence-path (make-array LinkOption 0))))
+            (evidence-fail! "Bitcoin full-history evidence must be a regular file."
+                            {:field :evidence-path}))
+          (let [size (Files/size evidence-path)]
+            (when (> size maximum-evidence-bytes)
+              (evidence-fail! "Bitcoin full-history evidence is too large."
+                              {:maximum maximum-evidence-bytes :actual size})))
+          (let [evidence
+                (try
+                  (json/read-str (slurp (.toFile evidence-path)))
+                  (catch Exception error
+                    (throw
+                     (ex-info "Bitcoin full-history evidence is not valid JSON."
+                              {:type :bitcoin.node/full-history-evidence-invalid}
+                              error))))
+                target (get evidence "target")
+                target-height (get target "height")
+                target-hash (get target "hash")
+                utxo-hash (get evidence "hash_serialized_3")
+                txouts (get evidence "txouts")
+                database
+                (absolute-path! (get evidence "database") :database)
+                configured-database
+                (absolute-path! (str (:path options)) :configured-database)
+                network (some-> (:network options) name)]
+            (when-not
+             (and (= full-history-evidence-schema (get evidence "schema"))
+                  (= "match" (get evidence "result"))
+                  (= "ok" (get evidence "sqlite_integrity"))
+                  (= network (get evidence "network"))
+                  (= database configured-database)
+                  (integer? target-height) (not (neg? target-height))
+                  (string? target-hash) (re-matches hash-pattern target-hash)
+                  (string? utxo-hash) (re-matches hash-pattern utxo-hash)
+                  (integer? txouts) (not (neg? txouts))
+                  (string? (get evidence "core_version"))
+                  (string? (get evidence "completed_at")))
+              (evidence-fail!
+               "Bitcoin full-history evidence does not match local configuration."
+               {:network network :target-height target-height}))
+            (let [current-height (:height current-status)
+                  local-hash
+                  (when (and (integer? current-height)
+                             (<= target-height current-height))
+                    (disk-consensus/active-block-hash-at-height
+                     node target-height))
+                  status
+                  (cond
+                    (nil? local-hash) :ahead-of-local-chain
+                    (= target-hash local-hash) :verified-ancestor
+                    :else :stale-chain)]
+              (cond->
+               {:configured? true :status status
+                :target-height target-height :target-hash target-hash
+                :current-height current-height
+                :core-version (get evidence "core_version")
+                :completed-at (get evidence "completed_at")
+                :txouts txouts :hash-serialized-3 utxo-hash}
+                (= :stale-chain status)
+                (assoc :local-active-hash local-hash)))))))))
 
 (defn- backend [configuration]
   (let [rpc-configuration (get-in configuration [:bitcoin :core-rpc])]
@@ -100,11 +196,14 @@
                        [:format :source-tip :target-tip :fork-height
                         :published-at])})
        (if (integrated-consensus? configuration)
-         (assoc
-          (disk-consensus/consensus-status
-           (disk-backend configuration options))
-          :sync (consensus-sync/status
-                 (consensus-sync-options configuration)))
+         (let [node (disk-backend configuration options)
+               status (disk-consensus/consensus-status node)]
+           (assoc
+            status
+            :sync (consensus-sync/status
+                   (consensus-sync-options configuration))
+            :full-history-evidence
+            (full-history-evidence-status options node status)))
          (disk-utxo/status (disk-backend configuration options)))))))
 
 (defn preflight!

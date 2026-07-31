@@ -3,6 +3,7 @@
             [bitcoin.node.peer :as peer]
             [bitcoin.node.peer-pool :as peer-pool]
             [clojure.data.json :as json]
+            [clojure.string :as str]
             [clojure.test :refer [deftest is testing]]
             [cloud.itonami.app.bitcoin-consensus-sync :as sync]
             [cloud.itonami.app.bitcoin-node :as bitcoin-node]
@@ -238,6 +239,60 @@
           (is (true? (:recovery-required? retained)))
           (is (nil? (:source-peer retained)))
           (is (nil? (:peer-feedback retained))))))))
+
+(deftest full-history-evidence-is-bound-to-local-active-ancestry
+  (let [database (temporary-path)
+        evidence-path (str database ".evidence.json")
+        target-hash (apply str (repeat 64 "a"))
+        utxo-hash (apply str (repeat 64 "b"))
+        options {:path database :network :regtest
+                 :full-history-evidence-path evidence-path}
+        evidence
+        {"schema" "kotoba.bitcoin.full-history-differential.v1"
+         "network" "regtest" "core_version" "/Satoshi:31.1.0/"
+         "database" database "completed_at" "2026-07-31T00:00:00Z"
+         "target" {"height" 24 "hash" target-hash}
+         "resumed_from_height" 0 "verified_blocks" 24
+         "txouts" 24 "hash_serialized_3" utxo-hash
+         "sqlite_integrity" "ok" "result" "match"}
+        local-hash (atom target-hash)]
+    (is (= {:configured? true :status :missing}
+           (bitcoin-node/full-history-evidence-status
+            options ::node {:height 24})))
+    (spit evidence-path (json/write-str evidence))
+    (with-redefs
+     [disk-consensus/active-block-hash-at-height
+      (fn [node height]
+        (is (= ::node node))
+        (is (= 24 height))
+        @local-hash)]
+      (let [status
+            (bitcoin-node/full-history-evidence-status
+             options ::node {:height 30})]
+        (is (= :verified-ancestor (:status status)))
+        (is (= 24 (:target-height status)))
+        (is (= target-hash (:target-hash status)))
+        (is (= utxo-hash (:hash-serialized-3 status)))
+        (is (not (str/includes? (pr-str status) database))))
+      (reset! local-hash (apply str (repeat 64 "c")))
+      (let [status
+            (bitcoin-node/full-history-evidence-status
+             options ::node {:height 30})]
+        (is (= :stale-chain (:status status)))
+        (is (= @local-hash (:local-active-hash status)))))
+    (is (= :ahead-of-local-chain
+           (:status
+            (bitcoin-node/full-history-evidence-status
+             options ::node {:height 23}))))
+    (spit evidence-path
+          (json/write-str (assoc evidence "database" (str database ".other"))))
+    (is (= :bitcoin.node/full-history-evidence-invalid
+           (:type
+            (ex-data
+             (try
+               (bitcoin-node/full-history-evidence-status
+                options ::node {:height 24})
+               (catch clojure.lang.ExceptionInfo error error))))))))
 
 (def ^:private http-origin "http://localhost:1338")
 (def ^:private csrf "bitcoin-sync-csrf")

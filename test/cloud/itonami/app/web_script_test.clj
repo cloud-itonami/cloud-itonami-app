@@ -91,6 +91,7 @@
         html (with-redefs [store/snapshot (constantly (store/initial-state))]
                (web/page-html config))]
     (is (str/includes? html "id=\"bitcoin-block-download-state\""))
+    (is (str/includes? html "id=\"bitcoin-history-evidence-state\""))
     (is (str/includes? js "data?.sync?.['last-result']?.blocks"))
     (is (str/includes? js "最大8 peers、peerごとに16 blocks"))
     (is (str/includes? js "peers を再割当"))
@@ -103,6 +104,9 @@
     (is (str/includes? js "local validation failure はpeerへ帰責しません"))
     (is (str/includes? js "blockDownload['validation-failures']"))
     (is (str/includes? js "provider bodiesを同一cycleで再試行"))
+    (is (str/includes? js "evidence.status === 'verified-ancestor'"))
+    (is (str/includes? js "現在のlocal active chain ancestryと一致しています"))
+    (is (str/includes? js "信頼せず再検証してください"))
     (is (str/includes? js "sync:{'last-result':result}"))))
 
 (deftest bitcoin-invalid-branch-quarantine-is-human-readable

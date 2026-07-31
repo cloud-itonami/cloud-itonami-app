@@ -7092,9 +7092,11 @@
       const protection = $('#bitcoin-headers-presync-state');
       const blockProtection = $('#bitcoin-block-download-state');
       const invalidProtection = $('#bitcoin-invalid-branch-state');
+      const historyEvidence = $('#bitcoin-history-evidence-state');
       protection.hidden = false;
       blockProtection.hidden = false;
       invalidProtection.hidden = false;
+      historyEvidence.hidden = false;
       if (!data?.['configured?']) {
         protection.textContent =
           'Embedded consensus は未設定です。Bitcoin Core が既定の検証境界です。';
@@ -7164,6 +7166,24 @@
       } else {
         invalidProtection.textContent =
           'Invalid branch なし — 永続的な consensus failure は検出されていません。';
+      }
+      const evidence = data?.['full-history-evidence'];
+      if (!evidence?.['configured?']) {
+        historyEvidence.textContent =
+          'Full-history differential evidence は未設定です。';
+      } else if (evidence.status === 'verified-ancestor') {
+        historyEvidence.textContent =
+          `Core full-history evidence 検証済み — height ${evidence['target-height']}、` +
+          `${evidence['core-version']}。現在のlocal active chain ancestryと一致しています。`;
+      } else if (evidence.status === 'missing') {
+        historyEvidence.textContent =
+          'Full-history evidence file を待機しています。検証完了後にatomic publishしてください。';
+      } else if (evidence.status === 'ahead-of-local-chain') {
+        historyEvidence.textContent =
+          'Full-history evidence はlocal chainより先です。同期後にancestryを再検証します。';
+      } else {
+        historyEvidence.textContent =
+          'Full-history evidence は現在のlocal active chainと一致しません。信頼せず再検証してください。';
       }
       target.textContent = JSON.stringify(data, null, 2);
     };

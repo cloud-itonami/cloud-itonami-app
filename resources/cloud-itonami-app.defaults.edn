@@ -53,6 +53,7 @@
   :max-fee-ratio 0.1
   :embedded-consensus
   {:path nil :reindex-pointer nil :network :mainnet
+   :full-history-evidence-path nil
    :genesis-hex nil :busy-timeout-ms 5000
    ;; Disabled until an operator explicitly allocates chainstate storage.
    ;; When enabled, every downloaded header/block is still locally validated;
