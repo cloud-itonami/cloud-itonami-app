@@ -101,17 +101,22 @@
            roots))))
 
 (defn- nonce
-  "A 63-bit nonce.
+  "A 64-bit nonce, as HEX.
 
-  63 rather than 64: `asn1.core/integer` writes a minimal two's-complement
-  INTEGER, so a value with the top bit set becomes negative, and some TSAs
-  reject a negative nonce. Losing one bit is cheaper than a rejection an
-  operator would have to reproduce to understand."
+  Hex rather than a number, because `rfc3161/request` now takes hex — a 64-bit
+  value does not fit a ClojureScript number and was being silently rounded
+  there, producing a request whose nonce differed from the one the caller
+  believed they sent. The library refuses a numeric nonce for that reason and
+  this is the shape it wants.
+
+  Returning hex also removes the round trip this function used to make: the
+  value was generated as bytes, turned into a number to hand to the library, and
+  turned back into hex to compare against `TSTInfo`. Two conversions, one of
+  which was lossy."
   []
   (let [bytes (byte-array 8)]
     (.nextBytes (SecureRandom.) bytes)
-    (bit-and (reduce (fn [acc b] (+ (* acc 256) (bit-and b 0xff))) 0 bytes)
-             0x7fffffffffffffff)))
+    (apply str (map #(format "%02x" (bit-and % 0xff)) bytes))))
 
 (defn request-token
   "POST a `TimeStampReq` over `digest` and return the raw response bytes.
@@ -181,9 +186,8 @@
              verification (ts/verify-token
                            token
                            {:digest digest
-                            ;; The nonce as hex, which is how TSTInfo reports it.
-                            :nonce (let [h (.toString (biginteger n) 16)]
-                                     (if (odd? (count h)) (str "0" h) h))
+                            ;; Already hex — the same string that went out.
+                            :nonce n
                             :digest-fn cms-jvm/digest
                             :verify-fn cms-jvm/verify
                             :trusted? #(accredited? configuration %)})]

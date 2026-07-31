@@ -86,19 +86,19 @@
   ;; algorithm ageing. asn1 -> x509 -> cms -> rfc3161 -> ers.
   io.github.kotoba-lang/org-ietf-asn1
   {:git/url "https://github.com/kotoba-lang/org-ietf-asn1.git"
-   :git/sha "3704c75db3da21e1f1153cb7907411f0b7d9fa28"}
+   :git/sha "fac4891dfbca57860536b04bd4bc1ea9e7de40b0"}
   io.github.kotoba-lang/org-ietf-x509
   {:git/url "https://github.com/kotoba-lang/org-ietf-x509.git"
-   :git/sha "9cbe0756319e558007fb3c1bbf7a15968b07dcd2"}
+   :git/sha "ac78f7046c6a226fbb911f15d35ade0b13dfb4d0"}
   io.github.kotoba-lang/org-ietf-cms
   {:git/url "https://github.com/kotoba-lang/org-ietf-cms.git"
-   :git/sha "bed620a69179ecb04f10af709c1949d7541b3feb"}
+   :git/sha "248e23bbb6b7e003d2746216fbcb4814dadfdde8"}
   io.github.kotoba-lang/org-ietf-rfc3161
   {:git/url "https://github.com/kotoba-lang/org-ietf-rfc3161.git"
-   :git/sha "0b629e23f91feb4628c34011461ce730c4204e90"}
+   :git/sha "dc118768626e72a9c0dfa2f6da260fe755901238"}
   io.github.kotoba-lang/org-ietf-ers
   {:git/url "https://github.com/kotoba-lang/org-ietf-ers.git"
-   :git/sha "90d0a9d7e65a6e34c589576e08f26841c644211d"}
+   :git/sha "0043b4c75d9e1368fded8e48efdb763d546bf2d7"}
   io.github.kotoba-lang/org-w3-did
   {:git/url "https://github.com/kotoba-lang/org-w3-did.git"
    :git/sha "c61e6c95515cd6b66ef19550876d40b7356fc6a7"}
