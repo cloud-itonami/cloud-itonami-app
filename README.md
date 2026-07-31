@@ -415,9 +415,12 @@ historical exception composition. BIP30 checks use Core's parent-view scan,
 pinned BIP34-chain optimization, and height 1,983,702 recheck boundary;
 replacement remains coinbase-only and non-coinbase collisions fail closed.
 BIP9 deployment periods preserve Core's start/timeout and threshold/timeout
-transition precedence. The embedded UTXO database uses Core-identical
-unspendable-output pruning and transactionally upgrades legacy state to schema
-v7, requiring authenticated reindex if impossible spend history is detected.
+transition precedence. Compact proof-of-work targets preserve Core's exact
+`SetCompact` exponent-33/34 and 256-bit overflow boundaries, including during
+initial-context header validation. The embedded UTXO database uses
+Core-identical unspendable-output pruning and transactionally upgrades legacy
+state to schema v7, requiring authenticated reindex if impossible spend
+history is detected.
 
 Owner/admin users can trigger the same exclusive cycle with
 `POST /api/bitcoin/consensus/sync`; concurrent attempts return `409`.
