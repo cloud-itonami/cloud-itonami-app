@@ -447,6 +447,12 @@ snapshot, reorg-window, and failure evidence. Invalid enabled configuration
 fails before the HTTP listener binds. Full mainnet storage is never enabled by
 default or silently placed on the application disk.
 
+Before a public network reaches its pinned minimum chainwork, the embedded
+host uses `bitcoin-node` v0.38's two-phase header pre-sync. The first validated
+download remains outside SQLite; only a salted-commitment-protected redownload
+can publish headers. Wallet → Bitcoin consensus displays whether this boundary
+is still active or minimum chainwork has been verified.
+
 ## Funding accounts and payment settlement
 
 An Organization may link the bank accounts it pays from, and record what they

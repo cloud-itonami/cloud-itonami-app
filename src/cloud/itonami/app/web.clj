@@ -1541,6 +1541,9 @@
           [:p {:class "form-help"}
            "owner / admin のみ実行できます。Peer は可用性入力であり、"
            "header・block・Script・UTXO は端末内で検証されます。"]
+          [:div {:class "security-callout"
+                 :id "bitcoin-headers-presync-state"
+                 :role "status" :aria-live "polite" :hidden true}]
           [:pre {:class "worker-output" :id "bitcoin-consensus-state"}
            "Bitcoin node を確認していません。"]]]
         [:section {:class "view" :data-view-panel "storage" :hidden true}

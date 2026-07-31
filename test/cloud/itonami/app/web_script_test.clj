@@ -74,6 +74,18 @@
         (is (zero? exit) (str source " does not parse under node " version ":\n" err))))
     (println "web-script-test: node is not on PATH, so the interaction layer was not parsed.")))
 
+(deftest bitcoin-header-presync-security-state-is-human-readable
+  (let [js (slurp (io/file "resources/cloud/itonami/app/interaction.js"))
+        html (with-redefs [store/snapshot (constantly (store/initial-state))]
+               (web/page-html config))]
+    (is (str/includes? html "id=\"bitcoin-headers-presync-state\""))
+    (is (str/includes? js "const renderBitcoinConsensus = (data) =>"))
+    (is (str/includes? js "data?.['headers-presync-required?'] === true"))
+    (is (str/includes? js
+                       "1回目のheader取得は端末DBへ保存されません"))
+    (is (str/includes? js
+                       "Header anti-DoS 検証済み"))))
+
 (deftest a-cell-anchor-is-spelled-in-one-place
   ;; The grid writes `Sheet1!B3` onto every cell as `data-anchor`, and the
   ;; comment box reads it back to put a dot where a comment points. Two

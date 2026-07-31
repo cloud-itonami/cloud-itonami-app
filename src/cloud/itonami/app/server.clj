@@ -949,6 +949,11 @@
       :bitcoin.node/invalid-response :bitcoin.node/response-too-large
       :bitcoin.node/transport-failed :bitcoin.node/rpc-failed
       :bitcoin.node/block-sync-failed :bitcoin.node/sync-failed
+      :bitcoin.node/peer-insufficient-chainwork
+      :bitcoin.node/headers-presync-invalid
+      :bitcoin.node/headers-presync-length
+      :bitcoin.node/headers-presync-equivocation
+      :bitcoin.node/headers-presync-commitment-overrun
       :agent/host-error}
     (repeat 502))
    {:mcp/invalid-transport 406

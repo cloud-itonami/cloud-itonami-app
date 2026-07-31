@@ -7087,6 +7087,27 @@
         $('#bitcoin-connect-message').textContent = error.message;
       }
     });
+    const renderBitcoinConsensus = (data) => {
+      const target = $('#bitcoin-consensus-state');
+      const protection = $('#bitcoin-headers-presync-state');
+      protection.hidden = false;
+      if (!data?.['configured?']) {
+        protection.textContent =
+          'Embedded consensus は未設定です。Bitcoin Core が既定の検証境界です。';
+      } else if (data?.['headers-presync-required?'] === true) {
+        protection.textContent =
+          `Header pre-sync 保護中 — height ${data['best-header-height'] ?? '—'}。` +
+          '最低 chainwork 到達前の1回目のheader取得は端末DBへ保存されません。';
+      } else if (data?.['headers-presync-required?'] === false) {
+        protection.textContent =
+          `Header anti-DoS 検証済み — minimum chainwork 到達、` +
+          `best header height ${data['best-header-height'] ?? '—'}。`;
+      } else {
+        protection.textContent =
+          'このbackendでは header pre-sync 状態を利用できません。';
+      }
+      target.textContent = JSON.stringify(data, null, 2);
+    };
     $('#bitcoin-consensus-refresh').addEventListener('click', async () => {
       const target = $('#bitcoin-consensus-state');
       try {
@@ -7095,7 +7116,7 @@
         if (!response.ok) {
           throw new Error(data?.error?.message || 'Consensus状態を取得できません。');
         }
-        target.textContent = JSON.stringify(data, null, 2);
+        renderBitcoinConsensus(data);
       } catch (error) {
         target.textContent = error.message;
       }
@@ -7110,7 +7131,7 @@
           '/api/bitcoin/consensus/sync',
           {},
           true);
-        target.textContent = JSON.stringify(result, null, 2);
+        renderBitcoinConsensus(result?.consensus || result);
       } catch (error) {
         target.textContent = error.message;
       } finally {
