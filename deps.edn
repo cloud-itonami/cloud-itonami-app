@@ -212,6 +212,11 @@
   ;; The MCP server speaks JSON-RPC on stdout, so nothing else may print there:
   ;; run it with this alias, never alongside :server in one process.
   :mcp {:main-opts ["-m" "cloud.itonami.app.mcp"]}
+  ;; A client of the running server, not a second writer: `store/state` is read
+  ;; once per process, so a CLI that wrote state.edn beside a live server would
+  ;; be reverted by its next transact!. Must run with the same
+  ;; CLOUD_ITONAMI_DATA_DIR as the server it talks to.
+  :cli {:main-opts ["-m" "cloud.itonami.app.cli"]}
   ;; The suite writes through cloud.itonami.app.store, which persists to
   ;; `cloud.itonami.app.config/data-dir`. Without this it defaults to `./data`
   ;; and the tests overwrite the real store -- measured on 2026-07-30, when a

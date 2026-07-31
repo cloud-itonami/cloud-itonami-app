@@ -1,6 +1,7 @@
 (ns cloud.itonami.app.server
   (:require [clojure.data.json :as json]
             [clojure.string :as str]
+            [cloud.itonami.app.agent-session :as agent-session]
             [cloud.itonami.app.authority.api :as authority-api]
             [cloud.itonami.app.business :as business]
             [cloud.itonami.app.canvas :as canvas]
@@ -147,24 +148,62 @@
 (defn- rp-id [config]
   (or (get-in config [:server :webauthn-rp-id]) "localhost"))
 
-(defn- require-origin! [exchange config]
-  (when-not (= (origin config)
-               (.getFirst (.getRequestHeaders exchange) "Origin"))
-    (throw (ex-info "リクエスト元を確認できません。"
-                    {:type :identity/invalid-origin}))))
+(defn- bearer-token
+  "The token from `Authorization: Bearer …`, or nil.
 
-(defn- require-session! [exchange]
-  (or (identity/session (cookie-value exchange identity/cookie-name))
+  Only a non-browser client sends this. A page cannot attach an Authorization
+  header to a cross-origin request without a CORS preflight, and this server
+  sends no CORS headers, so the browser refuses before the request is made.
+  That is what lets the two checks below stand down for a bearer request."
+  [^HttpExchange exchange]
+  (some-> exchange .getRequestHeaders (.getFirst "Authorization")
+          str/trim
+          (as-> header (when (str/starts-with? (str/lower-case header) "bearer ")
+                         (str/trim (subs header 7))))
+          not-empty))
+
+(defn- require-origin!
+  "Origin must match — for a cookie-borne request.
+
+  A bearer request has no Origin to check and needs none: the header was set by
+  a process that already held the token, not by a browser acting on a page's
+  behalf."
+  [exchange config]
+  (when-not (bearer-token exchange)
+    (when-not (= (origin config)
+                 (.getFirst (.getRequestHeaders exchange) "Origin"))
+      (throw (ex-info "リクエスト元を確認できません。"
+                      {:type :identity/invalid-origin})))))
+
+(defn- require-session!
+  "The session behind this request, from a bearer token or the cookie.
+
+  Bearer first, so a CLI that also happens to carry a stale browser cookie acts
+  as the token it presented rather than as whoever last logged in."
+  [exchange]
+  (or (some-> (bearer-token exchange) identity/session)
+      (identity/session (cookie-value exchange identity/cookie-name))
       (throw (ex-info "認証が必要です。" {:type :identity/unauthenticated}))))
 
 (defn- require-app-session! [exchange]
   (identity/require-passkey! (require-session! exchange)))
 
-(defn- require-csrf! [exchange session]
+(defn- require-csrf-header! [exchange session]
   (when-not (= (:csrf session)
                (.getFirst (.getRequestHeaders exchange) "X-CLOUD-ITONAMI-CSRF"))
     (throw (ex-info "CSRF token が一致しません。"
                     {:type :identity/invalid-csrf}))))
+
+(defn- require-csrf!
+  "CSRF token must match — for a cookie-borne request.
+
+  CSRF exists because a browser attaches the cookie by itself. Nothing attaches
+  a bearer token by itself, so there is no confused deputy to defend against and
+  requiring the header would only mean the CLI has to fetch and echo a value
+  that proves nothing."
+  [exchange session]
+  (when-not (bearer-token exchange)
+    (require-csrf-header! exchange session)))
 
 (defn- provider-from-path [path pattern]
   (some-> (re-matches pattern path) second keyword))
@@ -737,6 +776,37 @@
                        (operator/register-endpoint!
                         repo (cond-> {:endpoint endpoint :by by}
                                (seq health-path) (assoc :health-path health-path))))))
+
+            ;; ---- agent session — a CLI or MCP client's way in ----
+            ;;
+            ;; Enrollment is the one route that takes no session, because it is
+            ;; the route that issues one. What it takes instead is the data
+            ;; directory's 0600 key file, which is the boundary that actually
+            ;; holds here: anything able to read it can rewrite state.edn and
+            ;; mint itself a session directly. See `agent-session`'s docstring.
+            ;;
+            ;; Origin is not required (a CLI has none to send) and CSRF is not
+            ;; required (there is no cookie a browser could be tricked into
+            ;; attaching). Listing and revoking DO take a session, because by
+            ;; then one exists and the question is who is asking.
+
+            (and (= method "POST") (= path "/api/agent-session"))
+            (send! exchange 200 (agent-session/enroll! (read-json exchange)))
+
+            (and (= method "GET") (= path "/api/agent-session"))
+            (do (require-app-session! exchange)
+                (send! exchange 200 {:schema agent-session/schema
+                                     :sessions (agent-session/sessions)}))
+
+            (and (= method "POST")
+                 (re-matches #"/api/agent-session/([^/]+)/revoke" path))
+            (let [session (require-app-session! exchange)]
+              (require-origin! exchange config)
+              (require-csrf! exchange session)
+              (send! exchange 200
+                     (agent-session/revoke!
+                      (second (re-matches #"/api/agent-session/([^/]+)/revoke"
+                                          path)))))
 
             ;; ---- 事業 (business) — the entity the analysis planes join on ----
             ;;
@@ -2334,6 +2404,19 @@
                      :passkey/user-verification-required 403
                      :passkey/verification-failed 403
                      :passkey/required 428
+                     ;; Agent-session enrolment. The key is a credential, so a
+                     ;; wrong one is 403 rather than 400 -- 400 would read as
+                     ;; "you sent the field badly" when the field was fine and
+                     ;; the secret was not. Everything else here is genuinely a
+                     ;; malformed or unanswerable request, except the ambiguous
+                     ;; owner, which is a conflict with the store's shape.
+                     :agent-session/invalid-key 403
+                     :agent-session/label-missing 400
+                     :agent-session/ttl-invalid 400
+                     :agent-session/unknown-user 400
+                     :agent-session/not-found 404
+                     :agent-session/no-owner 409
+                     :agent-session/ambiguous-user 409
                      ;; The ceremony succeeded and the credential it produced is
                      ;; not one we can root a did:key in. Understood request,
                      ;; unacceptable content -- 422, like :drive/invalid-document.
@@ -2548,6 +2631,11 @@
    (when @server
      (throw (ex-info "server already running" {})))
    (identity/configure! configuration)
+   ;; Written here rather than lazily on first enrollment so that a CLI run at
+   ;; any point after the server is up has something to read. Creating it is
+   ;; idempotent and cheap; a missing key would otherwise look to the operator
+   ;; like the feature is absent rather than like they are early.
+   (agent-session/ensure-key!)
    (let [host (get-in configuration [:server :host])
          port (get-in configuration [:server :port])
          instance (HttpServer/create (InetSocketAddress. host (int port)) 0)]
