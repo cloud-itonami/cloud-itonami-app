@@ -59,26 +59,32 @@
 
 (defn- with-server
   "Runs `body` against a live server whose stubbed session carries `organization`
-  (nil for a session that has not set an Organization ID yet)."
-  [organization body]
-  (let [temporary (java.nio.file.Files/createTempDirectory
-                   "cloud-itonami-app-business-http"
-                   (make-array java.nio.file.attribute.FileAttribute 0))
-        previous-state @store/state]
-    (try
-      (reset! store/state (store/initial-state))
-      (with-redefs [config-loader/data-dir (fn [] (.toFile temporary))
-                    local-identity/session
-                    (fn [_] (cond-> {:csrf csrf :user-id "test-user"}
-                              organization (assoc :organization-id organization)))
-                    local-identity/require-passkey! identity
-                    local-identity/configure! (fn [_] nil)]
-        (server/stop!)
-        (server/start! config)
-        (try (body) (finally (server/stop!))))
-      (finally
-        (server/stop!)
-        (reset! store/state previous-state)))))
+  (nil for a session that has not set an Organization ID yet).
+
+  `overrides` is merged into the config. It exists because the default config
+  configures no workspace root, and for a long time that was the ONLY shape
+  these tests ran: every assertion here passed while `/api/business` returned
+  500 for any install that had actually set one."
+  ([organization body] (with-server organization {} body))
+  ([organization overrides body]
+   (let [temporary (java.nio.file.Files/createTempDirectory
+                    "cloud-itonami-app-business-http"
+                    (make-array java.nio.file.attribute.FileAttribute 0))
+         previous-state @store/state]
+     (try
+       (reset! store/state (store/initial-state))
+       (with-redefs [config-loader/data-dir (fn [] (.toFile temporary))
+                     local-identity/session
+                     (fn [_] (cond-> {:csrf csrf :user-id "test-user"}
+                               organization (assoc :organization-id organization)))
+                     local-identity/require-passkey! identity
+                     local-identity/configure! (fn [_] nil)]
+         (server/stop!)
+         (server/start! (merge config overrides))
+         (try (body) (finally (server/stop!))))
+       (finally
+         (server/stop!)
+         (reset! store/state previous-state))))))
 
 (deftest a-session-without-an-organization-is-told-to-set-one
   (with-server nil
@@ -154,3 +160,38 @@
             (let [r (request :post path {:body body
                                          :headers {"Origin" origin}})]
               (is (= 403 (:status r)) path))))))))
+
+;; The branch every previous case in this file skipped. `business/workspace`
+;; puts a live `java.io.File` under `:file` when the root resolves, and
+;; `clojure.data.json/write-str` throws on it — so configuring the setting the
+;; Portfolio view exists for was enough to make the route 500. Nothing here
+;; caught it because the default config sets no workspace root, and the
+;; `:unset` branch carries no `:file`.
+(deftest a-configured-workspace-still-serializes
+  (let [root (.toFile (java.nio.file.Files/createTempDirectory
+                       "cloud-itonami-app-business-ws"
+                       (make-array java.nio.file.attribute.FileAttribute 0)))]
+    (with-server "org-ws" {:business {:workspace-root (.getPath root)}}
+      (fn []
+        (testing "a present workspace is 200, not 500 on a File it cannot write"
+          (let [r (authed :get "/api/business")]
+            (is (= 200 (:status r)))
+            (is (= "present" (get-in r [:body :workspace :state])))
+            (is (true? (get-in r [:body :workspace :configured?])))
+            (is (= (.getPath root) (get-in r [:body :workspace :root])))))
+
+        (testing "the live File handle is not on the wire at all"
+          (let [r (authed :get "/api/business")]
+            (is (not (contains? (get-in r [:body :workspace]) :file)))))
+
+        (testing "and a business bound to a missing plane still round-trips"
+          (let [created (authed :post "/api/business"
+                                (json/write-str {:slug "workspace-present"}))
+                id (get-in created [:body :id])]
+            (is (= 200 (:status created)))
+            (is (= 200 (:status (authed :post (str "/api/business/" id "/bind")
+                                        (json/write-str {:canvas "cloud-itonami"})))))
+            (let [b (first (get-in (authed :get "/api/business") [:body :businesses]))
+                  canvas (first (filter #(= "canvas" (:face %)) (:faces b)))]
+              ;; the root exists but carries no planes: missing, not unresolvable
+              (is (= "missing" (:state canvas))))))))))
