@@ -12,7 +12,7 @@
   .workspace{display:grid;grid-template-columns:17rem minmax(0,1fr);min-height:100vh}
   .sidebar{position:sticky;top:0;height:100vh;box-sizing:border-box;padding:1.5rem 1rem;
     background:var(--color-neutral-white);border-right:1px solid var(--color-neutral-solid-gray-200);
-    display:flex;flex-direction:column;gap:1.5rem}
+    display:flex;flex-direction:column;gap:1.5rem;overflow:hidden}
   .req-row{padding:.75rem 0;border-bottom:1px solid var(--color-neutral-solid-gray-200)}
   .req-row__head{display:flex;align-items:center;justify-content:space-between;gap:1rem}
   .req-row__detail{margin:.375rem 0 0;font-size:.875rem;line-height:1.7;
@@ -130,7 +130,9 @@
   .brand__mark{display:none}
   .brand__note{margin:.25rem 0 0;color:var(--color-neutral-solid-gray-600);
     font-size:.8125rem;line-height:1.6}
-  .local-nav{display:flex;flex-direction:column;gap:.25rem}
+  .local-nav{display:flex;flex:1 1 auto;min-height:0;flex-direction:column;gap:.25rem;
+    overflow-x:hidden;overflow-y:auto;overscroll-behavior:contain;scrollbar-gutter:stable;
+    padding-right:.25rem}
   /* The menu separates what you work ON (a business) from what you work WITH
      (chat, drive, scheduler). Twelve flat items had both kinds in one list. */
   .local-nav__group{margin:.75rem 0 .125rem;padding:0 .75rem;font-size:.6875rem;
@@ -307,7 +309,7 @@
      is only tinted says nothing to anyone who cannot see the tint, and the
      mark has to survive next to the styling a cell may already carry. */
   .is-commented{position:relative}
-  .is-commented::after{content:"";position:absolute;top:2px;right:2px;
+  .is-commented::after{content:\"\";position:absolute;top:2px;right:2px;
     width:.5rem;height:.5rem;border-radius:50%;
     background:var(--color-semantic-error-1)}
   .surface-row.is-commented{outline:2px solid var(--color-semantic-error-2);
@@ -675,7 +677,8 @@
     .sidebar__organization{display:none}
     .brand__mark{display:block;margin:0;color:var(--color-key-900);font-size:1.125rem;
       font-weight:700;line-height:2.5rem}
-    .local-nav{width:100%;flex-direction:column;overflow:visible}
+    .local-nav{width:100%;flex-direction:column;overflow-x:hidden;overflow-y:auto;
+      padding-right:0}
     .local-nav__item{width:100%;min-width:0;justify-content:center;padding:.625rem .25rem}
     .local-nav__item[aria-current='page']{border-left:0;border-bottom:4px solid var(--color-key-900);
       padding:.625rem .25rem .375rem}

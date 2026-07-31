@@ -207,6 +207,38 @@
         (str "app-css references design tokens that jp-go-dds does not define: "
              (pr-str (sort missing))))))
 
+(deftest app-css-retains-the-foundational-workspace-layout
+  ;; A raw CSS quote inside this Clojure string once split `(def app-css ...)`
+  ;; into a docstring plus a suffix value. The stylesheet still parsed and the
+  ;; later component rules still existed, but body/workspace/sidebar/chat were
+  ;; silently absent and the whole app rendered as unstyled block flow.
+  (doseq [rule ["body{background:"
+                ".workspace{display:grid;"
+                ".sidebar{position:sticky;"
+                ".local-nav{display:flex;flex:1 1 auto;min-height:0;"
+                ".main{min-width:0}"
+                ".topbar{min-height:"
+                ".chat-shell{position:relative;"]]
+    (is (str/includes? web/app-css rule)
+        (str "app-css lost foundational rule " rule)))
+  (is (nil? (:doc (meta #'web/app-css)))
+      "CSS must be the def value, never accidentally become its docstring")
+  (with-redefs [store/snapshot (constantly (store/initial-state))]
+    (let [html (web/page-html config)]
+      (is (str/includes? html ".workspace{display:grid;"))
+      (is (str/includes? html ".sidebar{position:sticky;")))))
+
+(deftest ipad-aside-keeps-every-menu-item-scroll-reachable
+  ;; The workspace has more menu entries than any iPad viewport can show at
+  ;; once. The outer aside stays fixed while its nav, not the whole page,
+  ;; scrolls; otherwise Wallet/Storage/Settings are clipped below the fold.
+  (is (str/includes? web/app-css
+                     ".local-nav{display:flex;flex:1 1 auto;min-height:0;"))
+  (is (str/includes? web/app-css
+                     "overflow-x:hidden;overflow-y:auto;overscroll-behavior:contain;"))
+  (is (str/includes? web/app-css
+                     ".sidebar{position:sticky;top:0;height:100vh;")))
+
 (deftest every-scripted-element-exists-and-every-nav-item-has-a-panel
   (with-redefs [store/snapshot (constantly (store/initial-state))]
     (let [html (web/page-html config)
