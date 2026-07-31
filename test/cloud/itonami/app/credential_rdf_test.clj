@@ -18,6 +18,10 @@
   (:require [clojure.string :as str]
             [clojure.test :refer [deftest is testing]]
             [cloud.itonami.app.credential :as credential]
+            [data-integrity.core :as di]
+            [data-integrity.eddsa :as eddsa]
+            [data-integrity.eddsa-rdfc :as eddsa-rdfc]
+            [ed25519.core :as ed]
             [json-ld-api.core :as jld]
             [json-ld-api.to-rdf :as tordf]
             [rdf-canon.core :as c14n]))
@@ -140,3 +144,59 @@
   (testing "while a changed role changes the graph"
     (is (not= (canonical a-credential)
               (canonical (assoc-in a-credential ["credentialSubject" "role"] "guest"))))))
+
+;; ── the app can now VERIFY an rdfc-signed credential ─────────────────────────
+;; The allowlist containing a name proves nothing. This issues with the suite and
+;; verifies through the app's own options, which is the path a real credential takes.
+
+(deftest the-app-verifies-both-cryptosuites-through-its-own-options
+  (let [seed (byte-array (repeat 32 (byte 31)))
+        did (ed/did-key-from-seed seed)
+        vm (str did "#" (subs did (count "did:key:")))
+        base {:seed seed :verification-method vm :created "2026-07-31T00:00:00Z"}
+        ;; a credential with only terms the pinned context defines, so this test is
+        ;; about the cryptosuite rather than about term resolution
+        doc {"@context" [credential/credentials-context]
+             "id" "urn:uuid:99999999-8888-7777-6666-555555555555"
+             "type" ["VerifiableCredential"]
+             "issuer" did
+             "validFrom" "2026-07-31T00:00:00Z"
+             "credentialSubject" {"id" "did:example:someone"}}
+        jcs (di/issue-credential doc base)
+        rdfc (di/issue-credential doc (assoc base
+                                             :suite eddsa-rdfc/suite
+                                             :suite-opts {:contexts @credential/pinned-contexts}))
+        ;; the app's shared options, with this test's key rather than the app's
+        opts (credential/verify-opts {:resolve-key (fn [_] (ed/did-key->pubkey did))})]
+    (is (= "eddsa-jcs-2022" (get-in jcs ["proof" "cryptosuite"])))
+    (is (= "eddsa-rdfc-2022" (get-in rdfc ["proof" "cryptosuite"])))
+
+    (testing "both verify under the SAME options — this is what makes a cutover
+              possible, because a mixed corpus is what any cutover produces"
+      (is (:verified (di/verify-credential jcs opts)))
+      (is (:verified (di/verify-credential rdfc opts))))
+
+    (testing "and a tampered rdfc credential still fails"
+      (is (false? (:verified (di/verify-credential
+                              (assoc-in rdfc ["credentialSubject" "id"] "did:example:other")
+                              opts)))))
+
+    (testing "a cryptosuite outside the allowlist is refused as a result, not a crash"
+      (let [r (di/verify-credential rdfc (assoc opts :accept-suites [eddsa/suite]))]
+        (is (false? (:verified r)))
+        (is (= :data-integrity/unacceptable-cryptosuite (:reason r)))))))
+
+(deftest the-pinned-context-is-the-published-one
+  (testing "pinned BYTES, not a fetch: a fetched @context lets its host change what a
+            signature covers after signing. The consequence is that these bytes are
+            now part of this app's verification behaviour — if they change,
+            credentials signed against the old ones may stop verifying."
+    (let [ctx (get @credential/pinned-contexts credential/credentials-context)]
+      (is (map? ctx))
+      (is (contains? ctx "@context"))
+      (testing "and it really is the VC 2.0 context, not a stub"
+        (let [terms (get ctx "@context")]
+          (is (contains? terms "VerifiableCredential"))
+          (is (contains? terms "VerifiablePresentation"))
+          (is (true? (get terms "@protected"))
+              "@protected, so a later context cannot redefine these terms"))))))
