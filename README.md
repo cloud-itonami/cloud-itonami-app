@@ -450,6 +450,37 @@ review ¥38,500 against a ¥120,000 balance -> ok, status=awaiting-passkey
 commit a proposal no human approved       -> REFUSED authority/proposal-not-found
 ```
 
+## Legal practice record (disabled by default)
+
+This app can host the record for `cloud-itonami/lawfirm` — a practice OS whose
+gate refuses any operation a bar-verified 弁護士 did not decide. It owns every
+rule; `cloud.itonami.app.lawfirm` owns only the effects.
+
+```clojure
+;; data/config.edn — holding a practice's 一件記録 is a deployment decision
+{:lawfirm {:enabled? true}}
+```
+
+| route | |
+|---|---|
+| `GET /api/workspace/lawfirm` | whether the surface is on. **Answers while disabled** — reports `:matters nil`, never `0` |
+| `GET /api/workspace/lawfirm/summary` | the practice, as `lawfirm.projection` computes it |
+| `GET /api/workspace/lawfirm/docket` | every 期限 as a `calendar.model` calendar |
+| `POST /api/workspace/lawfirm/inbound/sync` | run archive arrivals through the practice's gate |
+| `POST /api/workspace/lawfirm/matters/{id}/drive` | put a matter's 一件記録 folders in your Drive |
+
+The record lives in `state.edn` under `:lawfirm/db`. Arrivals carry the
+message id as their digest and **never the body** — the practice's record
+holds classifications and identifiers, not prose.
+
+**This app cannot approve anything.** Recording what arrived is not a decision
+and needs no sign-off; every operation that *is* a decision — 受任, 提出, 出金,
+和解, 辞任, 書面の外部送付, 送達, 相談回答の送信, 共同受任の招請 — parks for a
+弁護士 in the practice's own console. See
+[ADR-0010](docs/adr/0010-host-a-practice-record-without-owning-a-rule.md) for
+what the Drive port deliberately does not create and why there is no calendar
+port at all.
+
 ## Distribution profiles
 
 Set a named profile or an EDN file path:

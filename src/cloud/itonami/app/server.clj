@@ -22,6 +22,7 @@
             [cloud.itonami.app.operator :as operator]
             [cloud.itonami.app.funding :as funding]
             [cloud.itonami.app.identity :as identity]
+            [cloud.itonami.app.lawfirm :as lawfirm]
             [cloud.itonami.app.loops :as loops]
             [cloud.itonami.app.metrics :as business-metrics]
             [cloud.itonami.app.portfolio :as portfolio]
@@ -2171,6 +2172,51 @@
             ;; under one key for the whole server, and appointments are per
             ;; principal — putting them through it would hand one person's
             ;; meetings to the next reader for a minute.
+            ;; The practice surface. `status` answers while disabled — a
+            ;; client has to be able to render something when the record is
+            ;; off — and every other route refuses, because a summary of a
+            ;; record this app does not hold has no honest value to return.
+            (and (= method "GET") (= path "/api/workspace/lawfirm"))
+            (do
+              (require-app-session! exchange)
+              (send! exchange 200 (lawfirm/status)))
+
+            (and (= method "GET") (= path "/api/workspace/lawfirm/summary"))
+            (do
+              (require-app-session! exchange)
+              (send! exchange 200 (lawfirm/summary (subs (store/now) 0 10))))
+
+            (and (= method "GET") (= path "/api/workspace/lawfirm/docket"))
+            (do
+              (require-app-session! exchange)
+              (send! exchange 200 (lawfirm/docket (subs (store/now) 0 10))))
+
+            ;; Arrivals become proposals the practice's gate decides on. Not
+            ;; a write endpoint even though it changes the record: what it
+            ;; posts is what the archive says arrived, and the governor is
+            ;; what turns that into a fact.
+            (and (= method "POST") (= path "/api/workspace/lawfirm/inbound/sync"))
+            (let [session (require-app-session! exchange)
+                  request (read-json exchange)]
+              (require-origin! exchange config)
+              (require-csrf! exchange session)
+              (send! exchange 200
+                     (lawfirm/sync-inbound!
+                      {:since (get request "since" "1970-01-01")
+                       :bengoshi-id (get request "bengoshi-id")
+                       :client-id (get request "client-id")
+                       :today (subs (store/now) 0 10)})))
+
+            (and (= method "POST")
+                 (id-from-path path #"/api/workspace/lawfirm/matters/([^/]+)/drive"))
+            (let [session (require-app-session! exchange)]
+              (require-origin! exchange config)
+              (require-csrf! exchange session)
+              (send! exchange 200
+                     (lawfirm/publish-matter-drive!
+                      (:user-id session)
+                      (id-from-path path #"/api/workspace/lawfirm/matters/([^/]+)/drive"))))
+
             (and (= method "GET") (= path "/api/workspace/scheduler"))
             (let [session (require-app-session! exchange)
                   mirror (workspace/snapshot :scheduler workspace/calendar-snapshot)
