@@ -40,12 +40,9 @@
   (:require [clojure.data.json :as json]
             [clojure.string :as str]
             [cloud.itonami.app.agent-session :as agent-session]
-            [cloud.itonami.app.config :as config]
-            [cloud.itonami.app.payment-tools :as payment-tools])
-  (:import [java.net URI]
-           [java.net.http HttpClient HttpRequest HttpRequest$BodyPublishers
-            HttpResponse$BodyHandlers]
-           [java.nio.file Files LinkOption]
+            [cloud.itonami.app.app-client :as client]
+            [cloud.itonami.app.config :as config])
+  (:import [java.nio.file Files LinkOption]
            [java.util.concurrent TimeUnit]))
 
 ;; ---------------------------------------------------------------------------
@@ -72,54 +69,13 @@
     (->> (str/split v #",") (map str/trim) (remove str/blank?) vec)))
 
 ;; ---------------------------------------------------------------------------
-;; transport
+;; transport — `app-client` owns it; `mcp` is the other caller
 ;; ---------------------------------------------------------------------------
 
-(defonce ^:private client (HttpClient/newHttpClient))
+(defn- call [configuration method path {:keys [body token]}]
+  (client/call configuration method path {:body body :token token}))
 
-(defn- base-url
-  "The address the server actually binds, NOT `:public-origin`.
-
-  `:public-origin` defaults to `http://localhost:1338` in the shipped config,
-  so preferring it sent every command to whatever was listening on 1338 — which,
-  on a machine running a second install on another port, is a different store
-  than the data directory the enrollment key was read from. Measured while
-  building this: a probe server on 1351 was enrolled against, and the request
-  went to the resident app on 1338 and came back 404.
-
-  `:public-origin` is what a browser is told the app is called. A CLI connects
-  to it directly, so the bound host and port are the truth."
-  [configuration]
-  (str "http://" (get-in configuration [:server :host])
-       ":" (get-in configuration [:server :port])))
-
-(defn- call
-  "One request. `token` nil means the route takes no session (enrollment)."
-  [configuration method path {:keys [body token]}]
-  (let [builder (-> (HttpRequest/newBuilder
-                     (URI/create (str (base-url configuration) path)))
-                    (.header "Content-Type" "application/json"))]
-    (when token
-      (.header builder "Authorization" (str "Bearer " token)))
-    (let [built (case method
-                  :get (.GET builder)
-                  :post (.POST builder (HttpRequest$BodyPublishers/ofString
-                                        (json/write-str (or body {})))))
-          response (.send client (.build built)
-                          (HttpResponse$BodyHandlers/ofString))
-          parsed (try (json/read-str (.body response) :key-fn keyword)
-                      (catch Exception _ {:raw (.body response)}))]
-      {:status (.statusCode response) :body parsed})))
-
-(defn- unwrap
-  "The body, or an exit-worthy message. The server's own error text is used
-  rather than a rephrasing: it already says which refusal fired."
-  [{:keys [status body]}]
-  (if (<= 200 status 299)
-    body
-    (throw (ex-info (or (get-in body [:error :message])
-                        (str "HTTP " status))
-                    {:status status :body body}))))
+(def ^:private unwrap client/unwrap)
 
 ;; ---------------------------------------------------------------------------
 ;; token storage
@@ -136,8 +92,8 @@
                      ^java.util.List
                      ["security" "add-generic-password"
                       "-U"
-                      "-s" payment-tools/keychain-service
-                      "-a" payment-tools/keychain-account
+                      "-s" agent-session/keychain-service
+                      "-a" agent-session/keychain-account
                       "-w" token
                       "-D" "cloud-itonami agent session"])
                     (.redirectErrorStream true)
@@ -149,7 +105,7 @@
       {:failed (str/trim (deref output 500 ""))})))
 
 (defn- stored-token [configuration]
-  (payment-tools/session-token configuration))
+  (agent-session/session-token configuration))
 
 (defn- read-enrollment-key []
   (let [path (agent-session/key-file)]

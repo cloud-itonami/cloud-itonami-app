@@ -224,7 +224,7 @@
         (testing "and payment-tools still refuses it, because the decision that
                   made local ownership enough was about the business surface —
                   not funding and settlement"
-          (with-redefs [payment-tools/session-token (fn [_] token)]
+          (with-redefs [agent-session/session-token (fn [_] token)]
             (is (nil? (payment-tools/session configuration)))
             (is (false? (payment-tools/available? configuration)))))
 
@@ -232,5 +232,35 @@
                   is about :kind and not about the token being unreadable"
           (store/transact! assoc-in
                            [:identity :users "user-1" :passkey-enrolled?] true)
-          (with-redefs [payment-tools/session-token (fn [_] token)]
+          (with-redefs [agent-session/session-token (fn [_] token)]
             (is (some? (payment-tools/session configuration)))))))))
+
+;; The same line, held where it is actually crossed. Until 2026-07-31 it was
+;; held only in the MCP adapter, while /api/funding/* used the gate that passes
+;; agent sessions — so a token could reach over HTTP what the surface it was
+;; minted for refused. A boundary enforced in the client and not at the route is
+;; not a boundary.
+(deftest the-money-routes-refuse-an-agent-session
+  (with-server
+    (fn []
+      (let [token (get-in (enroll {:label "money-route-probe"}) [:body :token])]
+        (testing "the same token works on the business surface"
+          (is (= 200 (:status (bearer :get "/api/business" token)))))
+
+        (testing "and is refused on funding and authority, by route — reads
+                  and writes alike, so the refusal is not only about mutation"
+          (doseq [[method path] [[:get "/api/funding"]
+                                 [:get "/api/authority"]
+                                 [:post "/api/funding/accounts"]]]
+            (let [r (bearer method path token "{}")]
+              (is (= 403 (:status r)) (str method " " path))
+              (is (= "agent-session-forbidden" (get-in r [:body :error :type]))
+                  (str method " " path)))))
+
+        (testing "a Passkey session reaches them, so the refusal is about :kind"
+          (store/transact! assoc-in
+                           [:identity :users "user-1" :passkey-enrolled?] true)
+          (let [{:keys [token]} (identity/issue-session! "user-1")
+                r (request :get "/api/funding"
+                           {:headers {"Cookie" (str identity/cookie-name "=" token)}})]
+            (is (= 200 (:status r)))))))))

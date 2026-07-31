@@ -12,6 +12,7 @@
             [cloud.itonami.app.funding :as funding]
             [cloud.itonami.app.identity :as identity]
             [cloud.itonami.app.mcp :as mcp]
+            [cloud.itonami.app.agent-session :as agent-session]
             [cloud.itonami.app.payment-tools :as payment-tools]
             [cloud.itonami.app.store :as store]))
 
@@ -76,14 +77,14 @@
 
 (deftest a-user-without-a-passkey-does-not-get-a-session
   (let [token (seed-identity! false)]
-    (with-redefs [payment-tools/session-token (constantly token)]
+    (with-redefs [agent-session/session-token (constantly token)]
       (is (nil? (payment-tools/session unset-env))
           "the token is valid but its user never enrolled -- the app's own gate")
       (is (false? (payment-tools/available? unset-env))))))
 
 (deftest a-revoked-session-stops-working-immediately
   (let [token (seed-identity! true)]
-    (with-redefs [payment-tools/session-token (constantly token)]
+    (with-redefs [agent-session/session-token (constantly token)]
       (is (some? (payment-tools/session unset-env)))
       (store/transact! update-in [:identity :sessions]
                        (fn [ss] (into {} (map (fn [[k v]]
@@ -108,7 +109,7 @@
     (testing "and the dispatch has no branch for one either, so guessing a name
               gets an unknown-tool refusal rather than a hidden path"
       (let [token (seed-identity! true)]
-        (with-redefs [payment-tools/session-token (constantly token)]
+        (with-redefs [agent-session/session-token (constantly token)]
           (is (= :mcp/unknown-tool
                  (refuses #(payment-tools/call-tool
                             unset-env "payment_approve_finish" {})))))))))
@@ -117,7 +118,7 @@
   (let [token (seed-identity! true)
         session (identity/session token)
         account-id (linked! session 100000)]
-    (with-redefs [payment-tools/session-token (constantly token)]
+    (with-redefs [agent-session/session-token (constantly token)]
       (let [p (payment-tools/call-tool
                unset-env "payment_review"
                {:funding-account-id account-id :amount-minor 38500
@@ -137,7 +138,7 @@
   (let [token (seed-identity! true)
         session (identity/session token)
         account-id (linked! session 10000)]
-    (with-redefs [payment-tools/session-token (constantly token)]
+    (with-redefs [agent-session/session-token (constantly token)]
       (is (= :payment/insufficient-funds
              (refuses #(payment-tools/call-tool
                         unset-env "payment_review"
@@ -151,7 +152,7 @@
   (let [token (seed-identity! true)
         session (identity/session token)
         account-id (linked! session nil)]
-    (with-redefs [payment-tools/session-token (constantly token)]
+    (with-redefs [agent-session/session-token (constantly token)]
       (testing "the read reports it as null with a status, never as 0"
         (let [account (first (:accounts (payment-tools/call-tool
                                          unset-env "funding_accounts" {})))]
@@ -169,7 +170,7 @@
   (let [token (seed-identity! true)
         session (identity/session token)
         account-id (linked! session nil)]
-    (with-redefs [payment-tools/session-token (constantly token)]
+    (with-redefs [agent-session/session-token (constantly token)]
       (is (= :funding/as-of-invalid
              (refuses #(payment-tools/call-tool
                         unset-env "funding_record_balance"
@@ -188,7 +189,7 @@
   (let [token (seed-identity! true)
         session (identity/session token)
         account-id (linked! session 100000)]
-    (with-redefs [payment-tools/session-token (constantly token)]
+    (with-redefs [agent-session/session-token (constantly token)]
       (let [p (payment-tools/call-tool
                unset-env "payment_review"
                {:funding-account-id account-id :amount-minor 38500
@@ -207,7 +208,7 @@
     (store/transact! assoc-in [:identity :organizations "org-2"]
                      {:id "org-2" :organization-id "other" :status :active})
     (let [theirs (linked! {:user-id "user-9" :organization-id "org-2"} 10000000)]
-      (with-redefs [payment-tools/session-token (constantly token)]
+      (with-redefs [agent-session/session-token (constantly token)]
         (is (= :payment/account-not-linked
                (refuses #(payment-tools/call-tool
                           unset-env "payment_review"
@@ -224,7 +225,7 @@
   (let [token (seed-identity! true)
         session (identity/session token)
         account-id (linked! session nil)]
-    (with-redefs [payment-tools/session-token (constantly token)]
+    (with-redefs [agent-session/session-token (constantly token)]
       (let [r (payment-tools/call-tool
                unset-env "paypay_ingest_balance_notice"
                (merge balance-notice {:funding-account-id account-id
@@ -243,7 +244,7 @@
   (let [token (seed-identity! true)
         session (identity/session token)
         account-id (linked! session nil)]
-    (with-redefs [payment-tools/session-token (constantly token)]
+    (with-redefs [agent-session/session-token (constantly token)]
       (doseq [m [{:subject "ポイント受取設定完了のお知らせ" :body "..."}
                  {:subject "【残高不足】引落予定のご案内" :body "壊れた本文"}]]
         (let [r (payment-tools/call-tool
@@ -265,7 +266,7 @@
   (let [token (seed-identity! true)
         session (identity/session token)
         account-id (linked! session nil)]
-    (with-redefs [payment-tools/session-token (constantly token)]
+    (with-redefs [agent-session/session-token (constantly token)]
       (payment-tools/call-tool
        unset-env "paypay_ingest_balance_notice"
        (merge balance-notice {:funding-account-id account-id
@@ -290,7 +291,7 @@
 
 (deftest with-a-session-the-tools-are-published-and-each-is-well-formed
   (let [token (seed-identity! true)]
-    (with-redefs [payment-tools/session-token (constantly token)]
+    (with-redefs [agent-session/session-token (constantly token)]
       (let [published (mcp/published-tools unset-env)
             names (set (map :name published))]
         (is (= #{"funding_accounts" "funding_link_account"

@@ -121,6 +121,50 @@ portfolio surface. Widening it to funding and settlement is a separate decision
 nobody has made. A test holds the line and fails if the check is swapped for
 `may-act?`.
 
+## The money line, held where it is actually crossed
+
+The paragraph above was true of the MCP adapter and false of the app. `/api/*`
+uses `require-app-session!`, which is `require-passkey!`, which now passes an
+agent session — so the moment bearer auth landed, a token could reach
+`/api/funding/*` and `/api/authority/*` over HTTP while the surface it was
+minted for refused it. **A boundary enforced in the client and not at the route
+is not a boundary**, and this one was enforced in the client for exactly one
+commit.
+
+`require-human-session!` refuses an agent session outright and now gates all
+thirteen money routes. 403 rather than 428: a Passkey is required and this
+caller can never present one, so telling it to go and enrol would be an
+instruction it cannot follow. A test calls three of those routes with a real
+agent token, asserts the refusal, then enrols a Passkey and shows the same
+routes answer — so the refusal is about `:kind` and not about the token.
+
+## The surfaces over MCP
+
+`business_list`, `business_create` and `business_bind` are published when a
+session resolves against the running server. They are HTTP clients of this
+app's own `/api/business` routes, so a refusal the route makes is the refusal
+the agent sees.
+
+They go over HTTP rather than calling `business/bind!` in-process because
+`store/state` is read once per process: an MCP server writing in-process would
+write onto a snapshot taken when IT started, and the resident app's next
+`transact!` would drop it. `app-client` owns that transport and the CLI uses the
+same one — one expression, after the `may-act?` lesson about two spellings.
+
+`fleet` stays in-process. Measured: `fleet.clj` contains no `store/` call at
+all, so it has no snapshot to go stale, and routing a pure read of a bundled
+resource through HTTP would add a running-server requirement to the one
+capability that does not need one.
+
+**Not converted: `payment-tools`.** It still calls `funding/*` and
+`authority-api/*` in-process and therefore still has the stale-snapshot hazard.
+It is also, as of this change, unreachable in practice: it needs a
+Passkey-enrolled session token, and `auth login` writes an AGENT token into the
+one Keychain item it reads. The two surfaces need different sessions and there
+is one slot. That is a design question — how does the money surface get a human
+session when the token slot is taken — not a port to HTTP, so it is named here
+rather than answered.
+
 ## Consequences
 
 - **Anything that can read `~/.cloud-itonami/data/agent-enrollment.key` can act
