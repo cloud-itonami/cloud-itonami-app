@@ -460,7 +460,7 @@ download remains outside SQLite; only a salted-commitment-protected redownload
 can publish headers. Wallet → Bitcoin consensus displays whether this boundary
 is still active or minimum chainwork has been verified.
 
-Block bodies use the `bitcoin-node` v0.48 managed pipeline: up to eight diverse
+Block bodies use the `bitcoin-node` v0.49 managed pipeline: up to eight diverse
 peers download concurrently with 16 assignments per peer and a 128-block
 resident window, while the embedded validator commits only chronological,
 fully validated blocks. The parallel stage correlates only the bounded raw
@@ -468,7 +468,11 @@ body's 80-byte header; complete parsing, mutation classification, branch
 quarantine, and UTXO changes stay inside the serial SQLite boundary. The same
 release pins a consensus kernel whose transaction, block, legacy Script, and
 tapscript boundaries run a bounded replayable fuzz corpus on every change and
-multiple deterministic seeds nightly. The same
+multiple deterministic seeds nightly. Its node-owned wire boundary applies the
+same typed, bounded corpus to P2P frames, version/headers messages, and compact
+filters, then mines competing branches through the real SQLite host and checks
+integrity, active ancestry, reorganization, and reopen stability after every
+transition. The same
 Wallet panel reports successful peers,
 reassignments, validation windows, and the exact provider of a rejected body.
 A definitive invalid block or retryable mutated body places its provider in
