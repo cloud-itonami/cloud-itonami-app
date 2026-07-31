@@ -1663,8 +1663,85 @@
         } else if ('docs/text' in block || block['docs/kind'] === 'heading'
             || block['docs/kind'] === 'paragraph' || block['docs/kind'] === 'quote'
             || block['docs/kind'] === 'code') {
-          row.append(field('本文', textInput(block['docs/text'],
-            (value) => { block['docs/text'] = value; changed(false); }, 'surface-input--wide')));
+          const input = textInput(block['docs/text'],
+            (value) => {
+              // Runs are offsets into this text. Editing it moves them, and
+              // nothing here can tell an insertion from a rewrite, so a run
+              // whose range no longer fits the text is dropped rather than
+              // left pointing somewhere it does not mean. The writers
+              // already ignore a range that does not fit; this stops one
+              // being stored and quietly reappearing when the text grows
+              // back past it.
+              const runs = block['docs/text-runs'] || [];
+              if (runs.length) {
+                block['docs/text-runs'] = runs.filter(
+                  (run) => run['docs/to'] <= value.length);
+              }
+              block['docs/text'] = value;
+              changed(false);
+            }, 'surface-input--wide');
+          row.append(field('本文', input));
+          // Styling a range. `:docs/text-runs` has been in the model, in the
+          // validator, in the wire and in all three writers since the
+          // beginning, the preview draws it, and there was no way to make
+          // one except by typing JSON: bold was a feature you had to know
+          // the file format to use.
+          if (block['docs/kind'] !== 'code') {
+            const marks = make('div', 'appointment__answers');
+            [['bold', '太字'], ['italic', '斜体'], ['underline', '下線'],
+             ['strike', '取り消し線'], ['code', '等幅']].forEach(([mark, label]) => {
+              const button = make('button', 'tool-button', label);
+              button.type = 'button';
+              button.addEventListener('click', () => {
+                // The selection inside the field, which is what a person
+                // means by 「この部分」. An empty selection is not a range and
+                // `text-spans` would ignore it, so nothing is stored.
+                const from = input.selectionStart;
+                const to = input.selectionEnd;
+                if (from === null || to === null || from >= to) {
+                  const note = $('#drive-create-status');
+                  if (note) note.textContent = '装飾する範囲を選んでから押してください。';
+                  return;
+                }
+                const runs = block['docs/text-runs'] || [];
+                // An identical range already there is toggled off rather
+                // than added twice: two runs over the same characters
+                // overlap, and overlapping runs mark up nothing at all.
+                const same = runs.findIndex(
+                  (run) => run['docs/from'] === from && run['docs/to'] === to
+                           && Boolean((run['docs/style'] || {})[mark]));
+                if (same >= 0) runs.splice(same, 1);
+                else runs.push({'docs/from': from, 'docs/to': to,
+                                'docs/style': {[mark]: true}});
+                block['docs/text-runs'] = runs;
+                changed(true);
+              });
+              marks.append(button);
+            });
+            row.append(field('装飾', marks));
+            // What is on it now, as the text each run covers. A list of
+            // offsets is a thing to decode; the words are what a person put
+            // the style on.
+            const runs = block['docs/text-runs'] || [];
+            if (runs.length) {
+              const chips = make('div', 'appointment__answers');
+              runs.forEach((run, runIndex) => {
+                const covered = String(block['docs/text'] ?? '')
+                  .slice(run['docs/from'], run['docs/to']);
+                const names = Object.keys(run['docs/style'] || {})
+                  .filter((key) => run['docs/style'][key]).join('・');
+                const chip = make('button', 'tool-button', `${names}: ${covered} ✕`);
+                chip.type = 'button';
+                chip.setAttribute('aria-label', `${covered} の${names}を外す`);
+                chip.addEventListener('click', () => {
+                  block['docs/text-runs'].splice(runIndex, 1);
+                  changed(true);
+                });
+                chips.append(chip);
+              });
+              row.append(field('装飾中', chips));
+            }
+          }
         } else if (block['docs/kind'] === 'list') {
           // A list is its items. They used to be reachable only through the
           // JSON editor, which is a working escape hatch and a wall for
