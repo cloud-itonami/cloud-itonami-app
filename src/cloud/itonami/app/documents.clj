@@ -2768,11 +2768,23 @@
                                   "</table>"))
                            "</section>"))))
            :slides
-           (apply str
-                  (for [{:keys [svg]} (slides-svg/deck resource)]
-                    ;; One slide per page, and the SVG unescaped because
-                    ;; this process just built it from this deck.
-                    (str "<section class=\"slide\">" svg "</section>")))
+           (let [notes (into {} (map (juxt :slides/id :slides/notes))
+                             (filter map? (:slides/slides resource)))]
+             (apply str
+                    (for [{:keys [id svg]} (slides-svg/deck resource)
+                          :let [note (str (get notes id))]]
+                      ;; One slide per page, and the SVG unescaped because
+                      ;; this process just built it from this deck.
+                      ;;
+                      ;; The speaker notes under the slide they belong to,
+                      ;; which is what makes this a handout rather than a
+                      ;; contact sheet. They are not drawn onto the slide —
+                      ;; they are what the presenter says, not what the room
+                      ;; reads.
+                      (str "<section class=\"slide\">" svg
+                           (when-not (str/blank? note)
+                             (str "<div class=\"slide-notes\">" (esc note) "</div>"))
+                           "</section>"))))
            :forms
            (str "<h1>" (esc (:forms/title resource)) "</h1>"
                 (apply str

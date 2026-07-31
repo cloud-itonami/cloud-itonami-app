@@ -1646,6 +1646,26 @@
               `${kind || '?'}（${shape['slides/id']}）は JSON で編集してください。`));
           }
         });
+        // Speaker notes. `slides.pptx` has written them as a real
+        // notesSlide part the whole time — and patches the one an imported
+        // deck already had — while nothing in this app read or wrote them,
+        // so a deck imported with notes lost them on the next save and a
+        // deck made here never had any.
+        const notes = make('textarea', 'form-control form-control--area');
+        notes.value = slide['slides/notes'] ?? '';
+        notes.placeholder = '発表者ノート（スライドには映りません）';
+        notes.setAttribute('aria-label', `${slide['slides/id']} の発表者ノート`);
+        notes.addEventListener('change', () => {
+          const text = notes.value;
+          // Absent rather than empty: `slides.pptx` writes a notesSlide
+          // part for a slide that has the key at all, so an empty string
+          // would put a blank notes page in the .pptx for every slide
+          // somebody clicked into and left.
+          if (text.trim()) slide['slides/notes'] = text;
+          else delete slide['slides/notes'];
+          changed(false);
+        });
+        card.append(field('発表者ノート', notes));
         const addRect = make('button', 'tool-button', '図形を追加');
         addRect.type = 'button';
         addRect.addEventListener('click', () => {
