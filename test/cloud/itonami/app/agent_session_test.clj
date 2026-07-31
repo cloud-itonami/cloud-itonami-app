@@ -12,6 +12,7 @@
             [cloud.itonami.app.agent-session :as agent-session]
             [cloud.itonami.app.config :as config-loader]
             [cloud.itonami.app.identity :as identity]
+            [cloud.itonami.app.payment-tools :as payment-tools]
             [cloud.itonami.app.server :as server]
             [cloud.itonami.app.store :as store])
   (:import [java.net URI]
@@ -207,3 +208,29 @@
       (testing "a non-positive ttl is refused rather than quietly defaulted"
         (is (= "ttl-invalid"
                (get-in (enroll {:ttl-days 0}) [:body :error :type])))))))
+
+;; ---------------------------------------------------------------------------
+;; the money surface is deliberately stricter
+;; ---------------------------------------------------------------------------
+
+(deftest an-agent-session-does-not-reach-the-money-surface
+  (with-server
+    (fn []
+      (let [token (get-in (enroll {:label "money-probe"}) [:body :token])
+            configuration {:mcp {:session-token-env "CLOUD_ITONAMI_TEST_SESSION"}}]
+        (testing "the session is real and satisfies the app-wide rule"
+          (is (true? (identity/may-act? (identity/session token)))))
+
+        (testing "and payment-tools still refuses it, because the decision that
+                  made local ownership enough was about the business surface —
+                  not funding and settlement"
+          (with-redefs [payment-tools/session-token (fn [_] token)]
+            (is (nil? (payment-tools/session configuration)))
+            (is (false? (payment-tools/available? configuration)))))
+
+        (testing "a Passkey-enrolled user IS accepted there, so the refusal above
+                  is about :kind and not about the token being unreadable"
+          (store/transact! assoc-in
+                           [:identity :users "user-1" :passkey-enrolled?] true)
+          (with-redefs [payment-tools/session-token (fn [_] token)]
+            (is (some? (payment-tools/session configuration)))))))))
