@@ -400,9 +400,11 @@ fully validates block, Script, UTXO, chainwork, and reorg transitions locally.
 DNS never supplies consensus. Peer selection/cooldown history is checksummed
 and persisted beside the chainstate by default. Sequential and atomic batch
 header paths reject obsolete block versions at the buried BIP34, BIP66, and
-BIP65 activation heights. The pinned node release also carries the
-disk-backed, resumable Core full-history differential verifier and
-Core-aligned stripped transaction/output-script boundaries. Weight-derived
+BIP65 activation heights and enforce testnet4's BIP94 600-second
+adjustment-boundary timewarp floor. The pinned node release also carries the
+disk-backed, resumable Core full-history differential verifier and Core-aligned
+stripped transaction/output-script boundaries. Input values, transaction input
+totals, and accumulated block fees use Core's exact `MoneyRange`. Weight-derived
 witness bounds also preserve consensus-valid unknown witness versions for
 future soft-fork compatibility. The embedded UTXO database uses Core-identical
 unspendable-output pruning and transactionally upgrades legacy state to schema
