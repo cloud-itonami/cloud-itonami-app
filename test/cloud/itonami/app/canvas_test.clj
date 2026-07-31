@@ -172,6 +172,87 @@
               with :canvas/id and means nothing to a client"
       (is (not (contains? (first (:blocks c)) :db/id))))))
 
+
+;; ---------------------------------------------------------------------------
+;; maturity — a judgement nobody recorded is not a low score
+;; ---------------------------------------------------------------------------
+
+(def ^:private maturity-tx
+  [{:db/id -1 :projection/id "maturity-scores" :projection/as-of "2026-07-30"
+    :projection/products 1 :source/dataset "maturity-scores"}
+   {:db/id -2 :score/product :cloud-itonami :score/bmc 78.0 :score/yc 61.0
+    :score/unrecorded-dims 1 :score/unrecorded ["defensibility"]
+    :source/dataset "maturity-scores"}
+   {:db/id -3 :dim/product :cloud-itonami :dim/name :completeness :dim/value 5.0
+    :dim/source :auto :dim/recorded? true :source/dataset "maturity-scores"}
+   {:db/id -4 :dim/product :cloud-itonami :dim/name :pricing :dim/value 3.0
+    :dim/source :facts :dim/recorded? true :source/dataset "maturity-scores"}
+   {:db/id -5 :dim/product :cloud-itonami :dim/name :defensibility :dim/value 0.0
+    :dim/source :facts :dim/recorded? false :source/dataset "maturity-scores"}
+   {:db/id -6 :dim/product :other-product :dim/name :pricing :dim/value 1.0
+    :dim/source :facts :dim/recorded? true :source/dataset "maturity-scores"}])
+
+(defn- with-maturity [root tx]
+  (let [f (io/file root "90-docs/business/maturity-scores.datoms.edn")]
+    (.mkdirs (.getParentFile f))
+    (spit f (if (string? tx) tx (pr-str tx)))
+    {:business {:workspace-root (.getPath root)}}))
+
+(deftest maturity-separates-computed-dimensions-from-recorded-judgements
+  (reset-all!)
+  (let [root (temp-dir)
+        _ (workspace-with root)
+        config (with-maturity root maturity-tx)
+        m (:maturity (canvas/snapshot config session (:business/id (a-business!))))
+        by-name (into {} (map (juxt :name identity)) (:dims m))]
+    (is (= :resolved (:state m)))
+    (is (= 78.0 (:bmc m)))
+    (is (= "2026-07-30" (:as-of m)))
+    (testing "only this product's dimensions"
+      (is (= 3 (count (:dims m)))))
+    (testing "three of the fourteen are computed from the canvas; the rest are
+              judgements somebody entered, and the reader should not have to guess"
+      (is (= :auto (:source (by-name "completeness"))))
+      (is (= :facts (:source (by-name "pricing")))))
+    (testing "an unrecorded judgement is flagged, and its 0 is not a verdict —
+              the generator defaults absent facts to the worst value"
+      (is (false? (:recorded? (by-name "defensibility"))))
+      (is (= 0.0 (:value (by-name "defensibility"))))
+      (is (= 1 (:unrecorded-dims m)))
+      (is (= ["defensibility"] (:unrecorded m))))))
+
+(deftest a-product-outside-the-portfolio-is-missing-not-zero
+  (reset-all!)
+  (let [root (temp-dir)
+        _ (workspace-with root)
+        config (with-maturity root maturity-tx)
+        b (a-business! {:canvas "not-a-portfolio-product"})
+        m (:maturity (canvas/snapshot config session (:business/id b)))]
+    (testing "the gftd portfolio has twelve products; a business bound to
+              anything else has no score rather than a zero one"
+      (is (= :missing (:state m)))
+      (is (str/includes? (:detail m) "投影にありません")))))
+
+(deftest maturity-states-mirror-the-canvas-states
+  (reset-all!)
+  (let [b (a-business!)]
+    (is (= :unresolvable (:state (:maturity (canvas/snapshot no-workspace session
+                                                             (:business/id b))))))
+    (let [root (temp-dir)
+          config (workspace-with root)]
+      (testing "a workspace without the projection names the generator"
+        (let [m (:maturity (canvas/snapshot config session (:business/id b)))]
+          (is (= :missing (:state m)))
+          (is (str/includes? (:detail m) "score datoms"))))
+      (testing "and an unparseable projection is reported, not treated as empty"
+        (let [config (with-maturity root "[{:score/product")]
+          (is (= :unreadable (:state (:maturity (canvas/snapshot
+                                                 config session (:business/id b))))))))))
+  (reset-all!)
+  (testing "a business with no canvas has no product to score"
+    (is (= :unbound (:state (:maturity (canvas/snapshot no-workspace session
+                                                        (:business/id (a-business! {})))))))))
+
 ;; ---------------------------------------------------------------------------
 ;; proposals — recorded, never applied; landed-ness measured, never stored
 ;; ---------------------------------------------------------------------------

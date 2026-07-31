@@ -5099,6 +5099,57 @@
       return li;
     };
 
+    // 14 dimensions, of which 11 are judgements somebody entered and 3 are
+    // computed from the canvas itself. The projection carries which is which,
+    // and whether the judgement was actually recorded — a dimension the
+    // generator defaulted to 0 is not a product assessed and found lacking.
+    const maturityDimRow = (dm) => {
+      const row = make('div', 'axis-row');
+      row.append(make('span', null,
+        `${dm.name}${bare(dm.source) === 'auto' ? '（自動）' : ''}`));
+      const v = typeof dm.value === 'number' ? dm.value : null;
+      if (v !== null && dm['recorded?'] !== false) {
+        const track = make('div', 'axis-row__track');
+        const fill = make('div', 'axis-row__fill');
+        // The rubric's dimensions are 0-5.
+        fill.style.width = `${Math.round(Math.max(0, Math.min(1, v / 5)) * 100)}%`;
+        track.append(fill);
+        row.append(track);
+        row.append(make('span', 'axis-row__value', v.toFixed(1)));
+      } else {
+        row.append(make('div', 'axis-row__unscored'));
+        row.append(make('span', 'axis-row__value', '未記録'));
+      }
+      return row;
+    };
+
+    const renderMaturity = (mt) => {
+      const stats = $('#canvas-maturity-stats');
+      const list = $('#canvas-maturity-dims');
+      const note = $('#canvas-maturity-note');
+      if (!stats || !list) return;
+      const state = bare(mt && mt.state);
+      if (state !== 'resolved') {
+        stats.replaceChildren();
+        list.replaceChildren(make('li', 'empty-state',
+          (mt && mt.detail) || '成熟度を読み込めていません。'));
+        return;
+      }
+      stats.replaceChildren(
+        statTile('BMC', typeof mt.bmc === 'number' ? mt.bmc.toFixed(1) : '—'),
+        statTile('YC bench', typeof mt.yc === 'number' ? mt.yc.toFixed(1) : '—'),
+        // Shown even at 0, because 0 unrecorded is the fact that makes the two
+        // scores above trustworthy.
+        statTile('未記録の次元', mt['unrecorded-dims'] ?? '—'),
+        statTile('as-of', mt['as-of'] || '—'));
+      list.replaceChildren();
+      (mt.dims || []).forEach((dm) => list.append(maturityDimRow(dm)));
+      if (note && (mt.unrecorded || []).length) {
+        note.textContent = `未記録: ${mt.unrecorded.join('・')} — `
+          + '生成器は未記録の判断を 0 として採点するので、これらは「評価されて低い」ではなく「未評価」です。';
+      }
+    };
+
     const renderCanvas = (d) => {
       canvasData = d;
       const c = (d && d.canvas) || {};
@@ -5129,6 +5180,8 @@
         : '事業を選択してください。';
       const auth = $('#canvas-authority');
       if (auth && d && d.authority) auth.textContent = d.authority;
+
+      renderMaturity(d && d.maturity);
 
       const grid = $('#canvas-blocks');
       if (grid) {
@@ -7103,6 +7156,14 @@
                 :role "status" :aria-live "polite"}
           "canvas を確認中…"]
          [:div {:class "canvas-grid" :id "canvas-blocks"}]
+         [:div {:class "local-card"}
+          (dds/heading 2 "成熟度" {:size "24"})
+          [:p {:class "form-help" :id "canvas-maturity-note"}
+           (str "14 次元のうち 11 は誰かが記録した判断で、3 つ（completeness / hypothesis / "
+                "validation）だけがこの canvas から計算されます。区別して表示します。")]
+          [:div {:class "stat-row" :id "canvas-maturity-stats"}]
+          [:ul {:class "record-list__items" :id "canvas-maturity-dims"}
+           [:li {:class "empty-state"} "事業を選ぶと表示します。"]]]
          [:div {:class "local-card"}
           (dds/heading 2 "仮説と gate" {:size "24"})
           [:p {:class "form-help"}
