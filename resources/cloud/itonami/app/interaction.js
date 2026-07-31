@@ -932,6 +932,11 @@
       const list = make('div', 'surface-list');
       (payload['docs/blocks'] || []).forEach((block, index) => {
         const row = make('div', 'surface-row');
+        // What a comment on this block would name.
+        if (block['docs/id']) row.dataset.anchor = String(block['docs/id']);
+        row.addEventListener('focusin', () => {
+          driveEditor.block = block['docs/id'] || null;
+        });
         row.append(
           field('ID', textInput(block['docs/id'],
             (value) => { block['docs/id'] = value; changed(false); })),
@@ -1362,6 +1367,9 @@
           // formatting to what you have selected, and this grid's notion of
           // selected is the box the cursor is in.
           input.addEventListener('focus', () => { driveEditor.cell = [row, col]; });
+          // What a comment on this cell would name, and what `markAnchored`
+          // looks for when one does.
+          input.dataset.anchor = cellAnchor(current, row, col);
           input.addEventListener('change', () => {
             tab['sheets/cells'] = tab['sheets/cells'] || {};
             const key = cellKey(row, col);
@@ -1556,6 +1564,8 @@
       const list = make('div', 'surface-list');
       (payload['slides/slides'] || []).forEach((slide, index) => {
         const card = make('div', 'surface-row');
+        if (slide['slides/id']) card.dataset.anchor = String(slide['slides/id']);
+        card.addEventListener('focusin', () => { driveEditor.slide = index; });
         card.append(
           field('ID', textInput(slide['slides/id'],
             (value) => { slide['slides/id'] = value; changed(false); })),
@@ -2009,6 +2019,11 @@
     };
     // A1 rather than 1行1列: the addresses are numeric in `sheets.model` and
     // this is the notation every formula in the sheet is written in.
+    // What a comment on a cell is called. One function, because the grid
+    // writes it onto every cell and the comment box reads it back: two
+    // spellings of `Sheet1!B3` would mean a dot that never appears, and
+    // nothing would say why.
+    const cellAnchor = (tab, row, col) => `${tab}!${columnName(col)}${row}`;
     const columnName = (col) => {
       let name = '';
       let n = col;
@@ -2884,6 +2899,18 @@
       anchor.type = 'text';
       anchor.placeholder = '位置（任意）';
       anchor.setAttribute('aria-label', 'コメントの位置（任意）');
+      // The anchor was a box to type `B3` into by hand. The server keeps it
+      // as free text on purpose — it owes no surface a parser — but the
+      // editor knows exactly where the cursor is, and asking a person to
+      // read a cell reference off the screen and retype it is asking them
+      // to make the mistake.
+      const here = make('button', 'tool-button', '編集中の位置を入れる');
+      here.type = 'button';
+      here.addEventListener('click', () => {
+        const at = currentAnchor(item);
+        if (at) anchor.value = at;
+        else status.textContent = '位置を特定できる編集画面が開いていません。';
+      });
       const add = make('button', 'tool-button', '投稿');
       add.type = 'button';
 
@@ -2956,6 +2983,13 @@
           const data = await request.json();
           if (!request.ok) return;
           render(data.comments || []);
+          // A dot where each comment points. Google puts one on the cell;
+          // this app kept every anchor in the panel, so a workbook with a
+          // comment on B3 looked exactly like one without.
+          markAnchored((data.comments || [])
+            .filter((entry) => !entry['resolved-at'])
+            .map((entry) => entry.anchor)
+            .filter(Boolean));
           // The count worth seeing before opening the panel: an unresolved
           // thread is one somebody is still waiting on.
           heading.textContent = data.unresolved
@@ -2978,7 +3012,7 @@
       add.addEventListener('click', () => submit(
         '/comments', {text:text.value, anchor:anchor.value}, 'コメントしました。'));
 
-      form.append(text, anchor, add);
+      form.append(text, anchor, here, add);
       panel.append(list);
       if (commentRoles.includes(item.role)) panel.append(form);
       panel.append(status);
@@ -3100,6 +3134,41 @@
       panel.append(body, send, status, responses);
       loadResponses();
       return panel;
+    };
+    // Where the editor's cursor is, in the notation the surface uses.
+    //
+    // Free text, because that is what the server stores and what
+    // `documents/comment!` refuses to parse: the moment it interpreted one
+    // it would owe every surface a different parser. So the shape is agreed
+    // here, between the editor that offers it and the mark below that finds
+    // it again, and nothing on the server depends on it.
+    const currentAnchor = (item) => {
+      if (item.kind === 'sheets') {
+        const at = driveEditor.cell;
+        if (!at || !driveEditor.tab) return null;
+        return cellAnchor(driveEditor.tab, at[0], at[1]);
+      }
+      if (item.kind === 'slides') {
+        const slides = driveEditor.payload?.['slides/slides'] || [];
+        const slide = slides[driveEditor.slide ?? 0];
+        return slide?.['slides/id'] || null;
+      }
+      if (item.kind === 'docs') {
+        // The block the cursor is in, which the editor records on focus.
+        return driveEditor.block || null;
+      }
+      return null;
+    };
+    // A mark on whatever the anchors name. By attribute rather than by
+    // re-rendering: the comments arrive after the pane is drawn, and a
+    // redraw would take the cursor out of the cell somebody is typing in.
+    const markAnchored = (anchors) => {
+      // Across the document rather than inside a named pane: the editor
+      // pane is built by `make` and has no id, and an anchor attribute only
+      // ever exists inside it.
+      $$('[data-anchor]').forEach((node) => {
+        node.classList.toggle('is-commented', anchors.includes(node.dataset.anchor));
+      });
     };
     // Sharing is owner-only, and the panel says who has what rather than
     // only offering to add: a share you cannot see is one you cannot undo.
