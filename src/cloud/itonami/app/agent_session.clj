@@ -44,6 +44,7 @@
             [cloud.itonami.app.identity :as identity]
             [cloud.itonami.app.store :as store])
   (:import [java.nio.file Files LinkOption Path]
+           [java.util.concurrent TimeUnit]
            [java.nio.file.attribute PosixFilePermission PosixFilePermissions]
            [java.security MessageDigest SecureRandom]
            [java.time Instant]
@@ -194,3 +195,53 @@
   browser. `identity/require-passkey!` reads this."
   [session]
   (= :agent (:kind session)))
+
+;; ---------------------------------------------------------------------------
+;; where the token lives
+;; ---------------------------------------------------------------------------
+;;
+;; Moved here from `payment-tools`, which owned it because it was the only
+;; client. It is now read by the CLI, by `app-client`, and by payment-tools, and
+;; a constant that three namespaces need does not belong in the one that happens
+;; to have needed it first — especially this one, where the money surface owning
+;; the general session location reads as though the session were about money.
+
+(def keychain-service "cloud-itonami-app.mcp")
+(def keychain-account "session-token")
+
+(defn- keychain-secret
+  "Read the MCP session token from the login Keychain.
+
+  One named item, fetched by service and account -- never an enumeration. A
+  `security dump-keychain` style sweep would expose unrelated credentials'
+  metadata to answer a question about exactly one of them."
+  []
+  (try
+    (let [process (-> (ProcessBuilder.
+                       ^java.util.List
+                       ["security" "find-generic-password"
+                        "-s" keychain-service "-a" keychain-account "-w"])
+                      (.redirectErrorStream true)
+                      .start)
+          output (future (slurp (.getInputStream process)))
+          completed? (.waitFor process 3 TimeUnit/SECONDS)]
+      (when (and completed? (zero? (.exitValue process)))
+        (not-empty (str/trim (deref output 500 "")))))
+    (catch Exception _ nil)))
+
+(def session-token
+  "The configured token, resolved once per process.
+
+  Memoized because `available?` runs on every `tools/list`, and an unmemoized
+  fallback would shell out to `security` on each one -- slow, and noisy against
+  the operator's Keychain for a question whose answer cannot change without a
+  restart.
+
+  Caching the TOKEN is not caching the SESSION. `identity/session` re-resolves it
+  against the store on every call, so expiry and revocation still take effect
+  immediately; what is cached is only which token string to ask about."
+  (memoize
+   (fn [configuration]
+     (or (some-> (get-in configuration [:mcp :session-token-env])
+                 System/getenv str/trim not-empty)
+         (keychain-secret)))))

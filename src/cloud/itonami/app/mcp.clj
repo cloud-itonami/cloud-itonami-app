@@ -15,8 +15,8 @@
   client is a process the operator launched, so the trust boundary is the one
   they already established, and nothing new listens.
 
-  Scope: the fleet capability, plus funding and settlement when — and only when —
-  a real app session resolves. Browser and computer tools are not exposed, and
+  Scope: the fleet capability, the 事業 (business) surface, plus funding and
+  settlement when — and only when — a real app session resolves. Browser and computer tools are not exposed, and
   that is a boundary rather than an omission — they take a screenshot of whatever
   the operator is looking at, and their approval path in agent-control checks the
   frontmost application between approval and action. Neither survives translation
@@ -24,6 +24,15 @@
   and chat are not exposed either: those sit behind the Passkey session on
   `/api/*`, and reaching around that from a surface with no session would weaken
   a gate the app means.
+
+  The 事業 surface reaches around nothing either: `business-tools` is an HTTP
+  client of THIS APP's own /api/business routes, carrying an agent session
+  token, so every refusal those routes make is the refusal an agent sees. It
+  goes over HTTP rather than calling `business/bind!` in-process because
+  `store/state` is read once per process — an MCP server writing in-process
+  would write onto a snapshot taken when it started and the resident app's next
+  transact! would drop it. `fleet` stays in-process because it touches no store
+  at all (measured: no `store/` call in fleet.clj).
 
   Funding and settlement are the exception that proves that rule rather than
   breaking it. `cloud.itonami.app.payment-tools` does not reach around the
@@ -48,6 +57,7 @@
   (:require [clojure.data.json :as json]
             [clojure.string :as str]
             [cloud.itonami.app.config :as config]
+            [cloud.itonami.app.business-tools :as business-tools]
             [cloud.itonami.app.fleet :as fleet]
             [cloud.itonami.app.payment-tools :as payment-tools]
             [cloud.itonami.app.store :as store]
@@ -84,6 +94,7 @@
   [configuration]
   (cond-> []
     (fleet-enabled? configuration) (into fleet/tools)
+    (business-tools/available? configuration) (into business-tools/tools)
     (payment-tools/available? configuration) (into payment-tools/tools)))
 
 (defn manifest
@@ -118,6 +129,8 @@
         ;; tool list would otherwise keep calling a surface that is no longer
         ;; bound to anyone.
         payment-tool? (payment-tools/call-tool configuration tool-name input)
+        (business-tools/tool? tool-name)
+        (business-tools/call-tool configuration tool-name input)
         (= "fleet_search" tool-name) (fleet/search-tool input)
         (= "fleet_call" tool-name)
         (if (fleet-enabled? configuration)

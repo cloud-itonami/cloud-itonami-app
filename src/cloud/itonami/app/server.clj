@@ -188,6 +188,31 @@
 (defn- require-app-session! [exchange]
   (identity/require-passkey! (require-session! exchange)))
 
+(defn- require-human-session!
+  "`require-app-session!`, minus agent sessions.
+
+  The money surface. `payment-tools` refuses an agent session on purpose
+  (ADR-0009): an agent session is rooted in being able to read a file in the
+  data directory, and the decision that made that enough was about the business
+  and portfolio surface, not funding and settlement.
+
+  That refusal was held in ONE place — the MCP adapter — while these routes went
+  on using `require-app-session!`, which passes an agent session. So the moment
+  bearer auth landed, a token could reach the money routes over HTTP while the
+  MCP surface it was minted for refused it. A boundary enforced in the client
+  and not at the route is not a boundary.
+
+  Approval is separate again and stricter still: `approve/finish` needs a
+  WebAuthn user-verifying assertion, which nothing here can substitute for."
+  [exchange]
+  (let [session (require-session! exchange)]
+    (when (= :agent (:kind session))
+      (throw (ex-info
+              (str "この操作は agent session では実行できません。"
+                   "資金・決済面はブラウザの Passkey session が必要です。")
+              {:type :identity/agent-session-forbidden})))
+    (identity/require-passkey! session)))
+
 (defn- require-csrf-header! [exchange session]
   (when-not (= (:csrf session)
                (.getFirst (.getRequestHeaders exchange) "X-CLOUD-ITONAMI-CSRF"))
@@ -937,11 +962,11 @@
             ;; funds gate opens.
 
             (and (= method "GET") (= path "/api/funding"))
-            (let [session (require-app-session! exchange)]
+            (let [session (require-human-session! exchange)]
               (send! exchange 200 (funding/snapshot config session)))
 
             (and (= method "POST") (= path "/api/funding/accounts"))
-            (let [session (require-app-session! exchange)]
+            (let [session (require-human-session! exchange)]
               (require-origin! exchange config)
               (require-csrf! exchange session)
               (send! exchange 200
@@ -953,7 +978,7 @@
             ;; `cloud.itonami.app.funding` for why that distinction is load-bearing.
             (and (= method "POST")
                  (re-matches #"/api/funding/accounts/([^/]+)/balance" path))
-            (let [session (require-app-session! exchange)
+            (let [session (require-human-session! exchange)
                   [_ account-id] (re-matches
                                   #"/api/funding/accounts/([^/]+)/balance" path)]
               (require-origin! exchange config)
@@ -964,7 +989,7 @@
 
             (and (= method "POST")
                  (re-matches #"/api/funding/accounts/([^/]+)/close" path))
-            (let [session (require-app-session! exchange)
+            (let [session (require-human-session! exchange)
                   [_ account-id] (re-matches
                                   #"/api/funding/accounts/([^/]+)/close" path)]
               (require-origin! exchange config)
@@ -988,18 +1013,18 @@
               (send! exchange 200 (contracts/report)))
 
             (and (= method "GET") (= path "/api/authority"))
-            (let [session (require-app-session! exchange)]
+            (let [session (require-human-session! exchange)]
               (send! exchange 200 (authority-api/overview config session)))
 
             (and (= method "GET")
                  (authority-from-path path #"/api/authority/([^/]+)"))
-            (let [session (require-app-session! exchange)
+            (let [session (require-human-session! exchange)
                   a (authority-from-path path #"/api/authority/([^/]+)")]
               (send! exchange 200 (authority-api/proposals config session a)))
 
             (and (= method "POST")
                  (authority-from-path path #"/api/authority/([^/]+)/review"))
-            (let [session (require-app-session! exchange)
+            (let [session (require-human-session! exchange)
                   a (authority-from-path path #"/api/authority/([^/]+)/review")]
               (require-origin! exchange config)
               (require-csrf! exchange session)
@@ -1010,7 +1035,7 @@
             (and (= method "POST")
                  (authority+id-from-path
                   path #"/api/authority/([^/]+)/proposals/([^/]+)/approve/start"))
-            (let [session (require-app-session! exchange)
+            (let [session (require-human-session! exchange)
                   [a id] (authority+id-from-path
                           path #"/api/authority/([^/]+)/proposals/([^/]+)/approve/start")]
               (require-origin! exchange config)
@@ -1024,7 +1049,7 @@
             (and (= method "POST")
                  (authority+id-from-path
                   path #"/api/authority/([^/]+)/proposals/([^/]+)/approve/finish"))
-            (let [session (require-app-session! exchange)
+            (let [session (require-human-session! exchange)
                   [a id] (authority+id-from-path
                           path #"/api/authority/([^/]+)/proposals/([^/]+)/approve/finish")
                   body (read-json exchange)]
@@ -1038,7 +1063,7 @@
             (and (= method "POST")
                  (authority+id-from-path
                   path #"/api/authority/([^/]+)/proposals/([^/]+)/reject"))
-            (let [session (require-app-session! exchange)
+            (let [session (require-human-session! exchange)
                   [a id] (authority+id-from-path
                           path #"/api/authority/([^/]+)/proposals/([^/]+)/reject")]
               (require-origin! exchange config)
@@ -1054,7 +1079,7 @@
             ;; proposal used to sit forever. A caller that opens the authority panel can
             ;; hit this once instead of knowing which proposals to chase.
             (and (= method "POST") (= path "/api/authority/resolve-pending"))
-            (let [session (require-app-session! exchange)]
+            (let [session (require-human-session! exchange)]
               (require-origin! exchange config)
               (require-csrf! exchange session)
               (send! exchange 200 (authority-api/resolve-pending! config session)))
@@ -1062,7 +1087,7 @@
             (and (= method "POST")
                  (authority+id-from-path
                   path #"/api/authority/([^/]+)/proposals/([^/]+)/refresh"))
-            (let [session (require-app-session! exchange)
+            (let [session (require-human-session! exchange)
                   [a id] (authority+id-from-path
                           path #"/api/authority/([^/]+)/proposals/([^/]+)/refresh")]
               (require-origin! exchange config)
@@ -1076,7 +1101,7 @@
             (and (= method "POST")
                  (authority+id-from-path
                   path #"/api/authority/([^/]+)/proposals/([^/]+)/commit"))
-            (let [session (require-app-session! exchange)
+            (let [session (require-human-session! exchange)
                   [a id] (authority+id-from-path
                           path #"/api/authority/([^/]+)/proposals/([^/]+)/commit")]
               (require-origin! exchange config)
@@ -2404,6 +2429,10 @@
                      :passkey/user-verification-required 403
                      :passkey/verification-failed 403
                      :passkey/required 428
+                     ;; 403 rather than 428: a Passkey is required and this
+                     ;; caller can never present one, so telling it to go and
+                     ;; enrol would be an instruction it cannot follow.
+                     :identity/agent-session-forbidden 403
                      ;; Agent-session enrolment. The key is a credential, so a
                      ;; wrong one is 403 rather than 400 -- 400 would read as
                      ;; "you sent the field badly" when the field was fine and

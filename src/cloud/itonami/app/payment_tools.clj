@@ -37,52 +37,12 @@
   The deterministic gates are unchanged and are the point: an agent proposing a
   payment the balance does not cover is refused BEFORE a human is asked, exactly
   as a human proposing it would be."
-  (:require [clojure.string :as str]
+  (:require [cloud.itonami.app.agent-session :as agent-session]
             [cloud.itonami.app.authority.api :as authority-api]
             [cloud.itonami.app.funding :as funding]
             [cloud.itonami.app.identity :as identity]
             [cloud.itonami.app.paypay-bank :as paypay-bank])
-  (:import [java.util.concurrent TimeUnit]))
-
-(def keychain-service "cloud-itonami-app.mcp")
-(def keychain-account "session-token")
-
-(defn- keychain-secret
-  "Read the MCP session token from the login Keychain.
-
-  One named item, fetched by service and account -- never an enumeration. A
-  `security dump-keychain` style sweep would expose unrelated credentials'
-  metadata to answer a question about exactly one of them."
-  []
-  (try
-    (let [process (-> (ProcessBuilder.
-                       ^java.util.List
-                       ["security" "find-generic-password"
-                        "-s" keychain-service "-a" keychain-account "-w"])
-                      (.redirectErrorStream true)
-                      .start)
-          output (future (slurp (.getInputStream process)))
-          completed? (.waitFor process 3 TimeUnit/SECONDS)]
-      (when (and completed? (zero? (.exitValue process)))
-        (not-empty (str/trim (deref output 500 "")))))
-    (catch Exception _ nil)))
-
-(def session-token
-  "The configured token, resolved once per process.
-
-  Memoized because `available?` runs on every `tools/list`, and an unmemoized
-  fallback would shell out to `security` on each one -- slow, and noisy against
-  the operator's Keychain for a question whose answer cannot change without a
-  restart.
-
-  Caching the TOKEN is not caching the SESSION. `identity/session` re-resolves it
-  against the store on every call, so expiry and revocation still take effect
-  immediately; what is cached is only which token string to ask about."
-  (memoize
-   (fn [configuration]
-     (or (some-> (get-in configuration [:mcp :session-token-env])
-                 System/getenv str/trim not-empty)
-         (keychain-secret)))))
+  )
 
 (defn session
   "The app session this server acts as, or nil.
@@ -92,7 +52,7 @@
   all of them is the same: publish no tools. Distinguishing them in the manifest
   would tell an unauthenticated client which of its guesses was closest."
   [configuration]
-  (when-let [token (session-token configuration)]
+  (when-let [token (agent-session/session-token configuration)]
     (let [s (identity/session token)]
       ;; DELIBERATELY stricter than `identity/may-act?`, which the rest of the
       ;; app uses and which an agent session satisfies (ADR-0009). This is the
@@ -296,8 +256,8 @@
        (throw (ex-info
                (str "MCP session が解決できません。app の session token を "
                     (get-in configuration [:mcp :session-token-env])
-                    " または Keychain（service " keychain-service
-                    " / account " keychain-account "）に設定し、その user が"
+                    " または Keychain（service " agent-session/keychain-service
+                    " / account " agent-session/keychain-account "）に設定し、その user が"
                     "Passkey を登録済みであることを確認してください。")
                {:type :mcp/session-unavailable})))
      (call-tool configuration s tool-name arguments)))
