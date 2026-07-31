@@ -4418,3 +4418,79 @@
               warned (get (documents/export-warnings :docs resource) "docx")]
           (is (some #(= ":docx/image-dropped" (:code %)) warned)
               (str "Word does not carry it, and the pane says so: " (pr-str warned))))))))
+
+(defn- score-book
+  "A workbook with a header and three rows, as the grid makes one."
+  [object-store]
+  (let [{:keys [item]} (documents/create! :sheets "点数" alice object-store)
+        payload (:payload (documents/content (:id item) alice object-store))
+        tab (first (sort (keys (get payload "sheets/tabs"))))]
+    [item tab
+     (assoc-in payload ["sheets/tabs" tab "sheets/cells"]
+               {"[1 1]" {"sheets/value" "名前"} "[1 2]" {"sheets/value" "点"}
+                "[2 1]" {"sheets/value" "b"} "[2 2]" {"sheets/value" "20"}
+                "[3 1]" {"sheets/value" "a"} "[3 2]" {"sheets/value" "100"}
+                "[4 1]" {"sheets/value" "c"} "[4 2]" {"sheets/value" "3"}})]))
+
+(deftest sorting-a-range-is-a-version-like-any-other-edit
+  ;; Not a different kind of change to a workbook — a change to what the
+  ;; cells say. A Drive where one kind of edit skipped the history would be
+  ;; one where undo lied.
+  (with-state
+    (fn [_ object-store]
+      (let [[item tab payload] (score-book object-store)
+            _ (save! (:id item) payload alice object-store)
+            before (documents/content (:id item) alice object-store)
+            sorted (documents/sort-range! (:id item)
+                                          {:tab tab :range "A2:B4" :by "B"}
+                                          alice (:etag (:item before)) object-store)
+            after (:resource (documents/content (:id item) alice object-store))
+            values (sheets-model/range-values (get-in after [:sheets/tabs tab]) 2 1 4 2)]
+        (is (:ok? sorted))
+        (is (= [["c" "3"] ["b" "20"] ["a" "100"]] values)
+            "by what the number is, not by how it is spelled")
+        (is (= ["名前" "点"]
+               (first (sheets-model/range-values (get-in after [:sheets/tabs tab]) 1 1 1 2)))
+            "the header was outside the range and did not move")
+        (is (= 3 (:versions (first (documents/documents (store/snapshot) alice))))
+            "create, save, sort")
+        (testing "and the etag moved with it, so a stale sort is refused"
+          (is (= :drive/stale-version
+                 (try (documents/sort-range! (:id item)
+                                             {:tab tab :range "A2:B4" :by "B"}
+                                             alice (:etag (:item before)) object-store)
+                      nil
+                      (catch clojure.lang.ExceptionInfo e (:type (ex-data e)))))))))))
+
+(deftest a-range-with-a-formula-is-refused-with-a-reason
+  ;; `sheets.model/sort-range` returns the tab unchanged; an app that just
+  ;; called it would save a version that changed nothing and say it worked.
+  (with-state
+    (fn [_ object-store]
+      (let [[item tab payload] (score-book object-store)
+            with-formula (assoc-in payload ["sheets/tabs" tab "sheets/cells" "[3 2]"]
+                                   {"sheets/formula" "B2*2"})
+            _ (save! (:id item) with-formula alice object-store)
+            etag (:etag (:item (documents/content (:id item) alice object-store)))]
+        (is (= :sheets/range-has-formulas
+               (try (documents/sort-range! (:id item) {:tab tab :range "A2:B4" :by "B"}
+                                           alice etag object-store)
+                    nil
+                    (catch clojure.lang.ExceptionInfo e (:type (ex-data e))))))
+        (is (= 2 (:versions (first (documents/documents (store/snapshot) alice))))
+            "and nothing was written")))))
+
+(deftest a-range-or-a-column-that-is-not-one-is-refused
+  (with-state
+    (fn [_ object-store]
+      (let [[item tab payload] (score-book object-store)
+            _ (save! (:id item) payload alice object-store)
+            etag (:etag (:item (documents/content (:id item) alice object-store)))
+            refuse (fn [request]
+                     (try (documents/sort-range! (:id item) request alice etag object-store)
+                          nil
+                          (catch clojure.lang.ExceptionInfo e (:type (ex-data e)))))]
+        (is (= :sheets/invalid-range (refuse {:tab tab :range "みかん" :by "B"})))
+        (is (= :sheets/invalid-range (refuse {:tab tab :range "A2:B4" :by "Z"}))
+            "a column outside the range would sort by nothing")
+        (is (= :drive/not-found (refuse {:tab "no-such" :range "A2:B4" :by "B"})))))))

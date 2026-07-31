@@ -3253,3 +3253,50 @@
                                    {:owner owner :own? (= owner actor) :role :owner})
                   :quota (quota-view (store/snapshot) owner)})
              (refuse! pruned))))))))
+
+(defn sort-range!
+  "Reorder the rows of a range in one tab, by one of its columns.
+
+  Through `update!`, so it is a version like any other edit: an etag the
+  caller has to hold, the quota, the validator, the history. Sorting is not
+  a different kind of change to a workbook — it is a change to what the
+  cells say, and a Drive where one kind of edit skipped the version history
+  would be one where undo lied.
+
+  The refusals are the model's. `sheets.model/sort-range` returns the tab
+  unchanged when the range holds a formula, because a formula moves with its
+  row and its references do not; this asks `sortable-range?` first so the
+  answer is a reason rather than a save that changed nothing."
+  ([id request actor expected-etag] (sort-range! id request actor expected-etag
+                                                 (store-instance)))
+  ([id {:keys [tab range by ascending?]} actor expected-etag object-store]
+   (let [{:keys [resource]} (content id actor object-store)
+         tab-id (or (not-empty (str tab))
+                    (first (sort (keys (:sheets/tabs resource)))))
+         sheet (get-in resource [:sheets/tabs tab-id])
+         corners (sheets-chart/parse-range (str range))
+         by-col (cond
+                  (number? by) (long by)
+                  (re-matches #"\d+" (str/trim (str by))) (parse-long (str/trim (str by)))
+                  :else (sheets/column-number (str/trim (str by))))]
+     (when-not sheet
+       (throw (ex-info (str "タブ " (pr-str tab-id) " はありません。")
+                       {:type :drive/not-found :tab tab-id
+                        :tabs (vec (sort (keys (:sheets/tabs resource))))})))
+     (when-not corners
+       (throw (ex-info (str "範囲を読み取れません: " (pr-str range))
+                       {:type :sheets/invalid-range :range (str range)})))
+     (let [[[row1 col1] [row2 col2]] corners]
+       (when-not (and by-col (<= col1 by-col col2))
+         (throw (ex-info "並べ替えの基準は範囲の中の列にしてください。"
+                         {:type :sheets/invalid-range :by (str by)
+                          :range (str range)})))
+       (when-not (sheets/sortable-range? sheet row1 col1 row2 col2)
+         (throw (ex-info (str "この範囲には数式があるので並べ替えられません。"
+                              "数式は行と一緒に動きますが、参照は動きません。")
+                         {:type :sheets/range-has-formulas :range (str range)})))
+       (let [sorted (sheets/sort-range sheet row1 col1 row2 col2 by-col
+                                       (not (false? ascending?)))]
+         (update! id
+                  (transit/write-json (assoc-in resource [:sheets/tabs tab-id] sorted))
+                  actor expected-etag object-store))))))

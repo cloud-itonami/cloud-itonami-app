@@ -1935,6 +1935,21 @@
             ;; resolve through `locate`, so a reference to something the
             ;; asker may not read is reported as unresolved rather than
             ;; leaking that it exists.
+            ;; Sorting is a save, so it takes an etag like a save.
+            (and (= method "POST")
+                 (id-from-path path #"/api/workspace/drive/documents/([^/]+)/sort"))
+            (let [session (require-app-session! exchange)
+                  request (read-json exchange)]
+              (require-origin! exchange config)
+              (require-csrf! exchange session)
+              (send! exchange 200
+                     (documents/sort-range!
+                      (id-from-path path #"/api/workspace/drive/documents/([^/]+)/sort")
+                      {:tab (:tab request) :range (:range request)
+                       :by (:by request) :ascending? (:ascending? request)}
+                      (:user-id session)
+                      (:etag request))))
+
             (and (= method "GET")
                  (id-from-path path #"/api/workspace/drive/documents/([^/]+)/references"))
             (let [session (require-app-session! exchange)
@@ -2563,6 +2578,13 @@
                      ;; request was understood and names a place rather than
                      ;; a label, which is a bad request and not a refusal.
                      :mail/reserved-label 400
+                     ;; ---- sheets ----
+                     :sheets/invalid-range 400
+                     ;; The request was understood and the range is one this
+                     ;; cannot reorder without changing what it computes,
+                     ;; which is a conflict with the state and not a bad
+                     ;; request.
+                     :sheets/range-has-formulas 409
                      :scheduler/organizer-is-not-an-attendee 400
                      :oauth/unsupported 400
                      :oauth/missing-code 400

@@ -2717,6 +2717,71 @@
                `この文書を ${format.toUpperCase()} で書き出すと失われるもの:`),
           list);
       });
+      // Sorting a range. In this panel rather than beside the grid because
+      // it is a save — the server reorders the cells and hands back a new
+      // version — and this is where the things that write a version live.
+      // The range is typed, the way the chart panel's is, because the grid
+      // has no multi-cell selection to read one from.
+      if (item.kind === 'sheets' && item['writable?']) {
+        const sortBox = make('div', 'appointment__invite');
+        const rangeField = make('input', 'workspace-search');
+        rangeField.type = 'text';
+        rangeField.placeholder = '範囲（例 A2:C20）';
+        rangeField.setAttribute('aria-label', '並べ替える範囲');
+        const byField = make('input', 'workspace-search document-title');
+        byField.type = 'text';
+        byField.placeholder = '基準の列（例 B）';
+        byField.setAttribute('aria-label', '並べ替えの基準になる列');
+        // Prefilled from the cell the cursor is in, which is the column
+        // somebody looking at a table means. Still typed over freely.
+        if (driveEditor.id === item.id && driveEditor.cell) {
+          byField.value = columnName(driveEditor.cell[1]);
+        }
+        const direction = make('select', 'model-pill');
+        direction.setAttribute('aria-label', '並び順');
+        [['昇順', 'true'], ['降順', 'false']].forEach(([label, value]) => {
+          const option = make('option', null, label);
+          option.value = value;
+          direction.append(option);
+        });
+        const sortButton = make('button', 'tool-button', '並べ替え');
+        sortButton.type = 'button';
+        sortButton.addEventListener('click', async () => {
+          const status = $('#drive-create-status');
+          if (!rangeField.value.trim() || !byField.value.trim()) {
+            status.textContent = '範囲と基準の列を入れてください。';
+            return;
+          }
+          status.textContent = '並べ替えています…';
+          try {
+            await postJSON(
+              `/api/workspace/drive/documents/${encodeURIComponent(item.id)}/sort`,
+              {tab:driveEditor.id === item.id ? driveEditor.tab : null,
+               range:rangeField.value.trim(),
+               by:byField.value.trim(),
+               'ascending?':direction.value === 'true',
+               // The version the editor is looking at. A sort is a save, so
+               // it is refused if somebody else saved first — the same rule
+               // and the same 409 as typing in a cell.
+               etag:driveEditor.id === item.id ? driveEditor.etag : item.etag},
+              true);
+            status.textContent = '並べ替えました。';
+            // Re-read, because the cells on screen are the ones from before
+            // the sort and the etag with them.
+            if (driveEditor.id === item.id && driveEditor.open) {
+              driveEditor = openedEditor(await load());
+              renderPane();
+            }
+            await loadWorkspace('drive', renderDrive);
+          } catch (error) {
+            status.textContent = error.message;
+          }
+        });
+        sortBox.append(rangeField, byField, direction, sortButton);
+        exports.append(sortBox);
+        exportNotes.append(make('p', 'surface-note',
+          '数式のある範囲は並べ替えられません（数式は行と一緒に動き、参照は動かないため）。'));
+      }
       if (item.kind === 'forms' && item.role === 'owner') {
         const snapshot = make('button', 'tool-button', '回答をスプレッドシートに');
         snapshot.type = 'button';
