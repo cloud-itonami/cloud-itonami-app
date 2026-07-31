@@ -1738,7 +1738,41 @@
               });
               marks.append(button);
             });
-            row.append(field('装飾', marks));
+            // A link over the selection. An inline field rather than
+            // `window.prompt` for the same reason renaming uses one: a
+            // modal blocks the page to collect a single string this row has
+            // room for. The URL is checked here as well as at the writers —
+            // storing one nothing will follow, and saying nothing, is how a
+            // document ends up claiming a link it does not have.
+            const linkField = make('input', 'workspace-search');
+            linkField.type = 'url';
+            linkField.placeholder = 'https://…';
+            linkField.setAttribute('aria-label', 'リンク先');
+            const linkButton = make('button', 'tool-button', 'リンク');
+            linkButton.type = 'button';
+            linkButton.addEventListener('click', () => {
+              const note = $('#drive-create-status');
+              const from = input.selectionStart;
+              const to = input.selectionEnd;
+              if (from === null || to === null || from >= to) {
+                if (note) note.textContent = 'リンクにする範囲を選んでから押してください。';
+                return;
+              }
+              const url = linkField.value.trim();
+              if (!docLink({link:url})) {
+                if (note) {
+                  note.textContent = 'リンクは http・https・mailto のいずれかにしてください。';
+                }
+                return;
+              }
+              linkField.value = '';
+              block['docs/text-runs'] = (block['docs/text-runs'] || []).concat(
+                [{'docs/from': from, 'docs/to': to, 'docs/style': {link: url}}]);
+              changed(true);
+            });
+            const linkRow = make('div', 'appointment__invite');
+            linkRow.append(linkField, linkButton);
+            row.append(field('装飾', marks), field('リンク', linkRow));
             // What is on it now, as the text each run covers. A list of
             // offsets is a thing to decode; the words are what a person put
             // the style on.
@@ -1749,7 +1783,11 @@
                 const covered = String(block['docs/text'] ?? '')
                   .slice(run['docs/from'], run['docs/to']);
                 const names = Object.keys(run['docs/style'] || {})
-                  .filter((key) => run['docs/style'][key]).join('・');
+                  .filter((key) => run['docs/style'][key])
+                  // A link's value is its address, not `true`, so naming it
+                  // by its key would print the whole URL into the chip.
+                  .map((key) => (key === 'link' ? 'リンク' : key))
+                  .join('・');
                 const chip = make('button', 'tool-button', `${names}: ${covered} ✕`);
                 chip.type = 'button';
                 chip.setAttribute('aria-label', `${covered} の${names}を外す`);
@@ -2403,6 +2441,20 @@
     const docRunClasses = {bold:'doc-run--bold', italic:'doc-run--italic',
                            underline:'doc-run--underline', strike:'doc-run--strike',
                            code:'doc-run--code'};
+    // The schemes a document's link may use, and the same three
+    // `docs.model/link` allows. A document is rendered here as DOM and by
+    // the print page as HTML, and a `javascript:` href in either is script
+    // running in the reader's session — so this is an allowlist, and one
+    // that has to agree with the library rather than be more generous than
+    // it. Anything else keeps its text and loses its link.
+    const linkSchemes = ['http:', 'https:', 'mailto:'];
+    const docLink = (style) => {
+      if (!style || typeof style !== 'object') return null;
+      const url = String(style.link ?? style['docs/link'] ?? '').trim();
+      if (!url) return null;
+      const scheme = (url.match(/^([A-Za-z][A-Za-z0-9+.-]*):/) || [])[1];
+      return scheme && linkSchemes.includes(`${scheme.toLowerCase()}:`) ? url : null;
+    };
     const docRunClass = (style) => {
       if (typeof style === 'string') return docRunClasses[style] || null;
       if (!style || typeof style !== 'object') return null;
@@ -2423,7 +2475,8 @@
       const runs = (block['docs/text-runs'] || [])
         .filter((run) => run && typeof run === 'object')
         .map((run) => ({from:Number(run['docs/from']), to:Number(run['docs/to']),
-                        className:docRunClass(run['docs/style'])}))
+                        className:docRunClass(run['docs/style']),
+                        href:docLink(run['docs/style'])}))
         .filter((run) => Number.isFinite(run.from) && Number.isFinite(run.to))
         .map((run) => ({...run, from:Math.max(0, run.from), to:Math.min(text.length, run.to)}))
         .filter((run) => run.to > run.from)
@@ -2435,7 +2488,15 @@
         const from = Math.max(at, run.from);
         if (run.to <= from) return;
         if (from > at) nodes.push(document.createTextNode(text.slice(at, from)));
-        nodes.push(make('span', run.className, text.slice(from, run.to)));
+        if (run.href) {
+          const anchor = make('a', run.className, text.slice(from, run.to));
+          anchor.href = run.href;
+          anchor.rel = 'noreferrer noopener';
+          anchor.target = '_blank';
+          nodes.push(anchor);
+        } else {
+          nodes.push(make('span', run.className, text.slice(from, run.to)));
+        }
         at = run.to;
       });
       if (at < text.length) nodes.push(document.createTextNode(text.slice(at)));

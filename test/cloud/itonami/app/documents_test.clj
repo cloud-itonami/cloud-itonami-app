@@ -4344,3 +4344,35 @@
         ;; And the drawn slide carries it, which is what the editor shows.
         (let [drawn (:slides (documents/content (:id item) alice object-store))]
           (is (str/includes? (:svg (first drawn)) "data:image/png;base64,")))))))
+
+(deftest a-link-in-a-document-reaches-the-page-and-word-and-a-bad-one-does-not
+  ;; The editor stores what this stores. `docs.model/link` is the rule and
+  ;; it is an allowlist: a document is rendered as HTML by the print page,
+  ;; so a `javascript:` href in one is script in the reader's session.
+  (with-state
+    (fn [_ object-store]
+      (let [{:keys [item]} (documents/create! :docs "案内" alice object-store)
+            payload (:payload (documents/content (:id item) alice object-store))
+            linked (fn [url]
+                     (assoc payload "docs/blocks"
+                            [{"docs/id" "p" "docs/kind" "paragraph"
+                              "docs/text" "ここを見て"
+                              "docs/text-runs" [{"docs/from" 0 "docs/to" 2
+                                                 "docs/style" {"link" url}}]}]))]
+        (is (:ok? (save! (:id item) (linked "https://example.com/a") alice object-store)))
+        (let [printed (:html (documents/printable (:id item) alice object-store))]
+          (is (str/includes? printed "<a href=\"https://example.com/a\""))
+          (is (str/includes? printed "rel=\"noreferrer noopener\"")))
+        (let [word (String. ^bytes (:bytes (documents/export (:id item) "docx" alice
+                                                             object-store))
+                            "ISO-8859-1")]
+          ;; The relationship target is in the rels part, which the zip
+          ;; stores deflated, so this looks for the entry rather than the
+          ;; text. The library's own tests read the XML.
+          (is (str/includes? word "word/_rels/document.xml.rels")))
+        (testing "a scheme that is not a place keeps its text and loses its link"
+          (is (:ok? (save! (:id item) (linked "javascript:alert(1)") alice object-store)))
+          (let [printed (:html (documents/printable (:id item) alice object-store))]
+            (is (not (str/includes? printed "<a ")))
+            (is (not (str/includes? printed "javascript")))
+            (is (str/includes? printed "ここを見て"))))))))
