@@ -600,9 +600,17 @@
             blocks (map-indexed (fn [index kind]
                                   {"docs/id" (str "b" index) "docs/kind" kind})
                                 offered)]
-        (is (= 9 (count offered)))
-        (is (:ok? (save! (:id item) (assoc payload "docs/blocks" (vec blocks))
-                                     alice object-store)))))))
+        (is (= 10 (count offered)))
+        (is (contains? (set offered) "image"))
+        ;; Each one as a bare block, with nothing in it. An image with no
+        ;; bytes is a `:warning` from `docs.validate` and not an error — the
+        ;; document is still a document — so this saves, and the pane shows
+        ;; the warning next to the block.
+        (let [saved (save! (:id item) (assoc payload "docs/blocks" (vec blocks))
+                           alice object-store)]
+          (is (:ok? saved))
+          (is (some #(= ":image/undrawable" (:code %)) (:warnings saved))
+              (pr-str (:warnings saved))))))))
 
 (deftest the-cell-key-the-sheets-editor-writes-is-the-one-the-wire-parses
   ;; `cellKey(row, col)` in the page builds "[1 1]" by hand, because it is
@@ -4376,3 +4384,37 @@
             (is (not (str/includes? printed "<a ")))
             (is (not (str/includes? printed "javascript")))
             (is (str/includes? printed "ここを見て"))))))))
+
+(deftest a-picture-added-the-way-the-editor-adds-one-reaches-the-page
+  ;; `docs.model` carries the bytes in the block. This is the rest of the
+  ;; path: the projection, storage, the print page, and the two exports —
+  ;; one of which does not carry it and says so.
+  (with-state
+    (fn [_ object-store]
+      (let [png "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR4nGNgYAAAAAMAASsJTYQAAAAASUVORK5CYII="
+            {:keys [item]} (documents/create! :docs "写真つき" alice object-store)
+            payload (:payload (documents/content (:id item) alice object-store))
+            ;; Exactly what 画像を追加 pushes.
+            added (assoc payload "docs/blocks"
+                         [{"docs/id" "b1" "docs/kind" "image"
+                           "docs/image-data" png
+                           "docs/media-type" "image/png"
+                           "docs/alt" "売上の図"}])
+            saved (save! (:id item) added alice object-store)]
+        (is (:ok? saved))
+        (is (empty? (:warnings saved)) "with alt text there is nothing to warn about")
+        (let [back (:resource (documents/content (:id item) alice object-store))
+              b (first (:docs/blocks back))]
+          (is (= :image (:docs/kind b)))
+          (is (= png (:docs/image-data b))))
+        (let [printed (:html (documents/printable (:id item) alice object-store))]
+          (is (str/includes? printed (str "src=\"data:image/png;base64," png "\"")))
+          (is (str/includes? printed "alt=\"売上の図\"")))
+        (let [md (String. ^bytes (:bytes (documents/export (:id item) "md" alice
+                                                           object-store))
+                          "UTF-8")]
+          (is (str/includes? md "![売上の図](data:image/png;base64,")))
+        (let [resource (:resource (documents/content (:id item) alice object-store))
+              warned (get (documents/export-warnings :docs resource) "docx")]
+          (is (some #(= ":docx/image-dropped" (:code %)) warned)
+              (str "Word does not carry it, and the pane says so: " (pr-str warned))))))))
