@@ -2778,7 +2778,64 @@
           }
         });
         sortBox.append(rangeField, byField, direction, sortButton);
-        exports.append(sortBox);
+        // Inserting and removing rows and columns. Beside the sort control
+        // for the same reason it is here rather than beside the grid: both
+        // are saves, and this is where the things that write a version
+        // live. The position is prefilled from the cell the cursor is in,
+        // which is the row somebody looking at a table means.
+        const shiftBox = make('div', 'appointment__invite');
+        const axisPick = make('select', 'model-pill');
+        axisPick.setAttribute('aria-label', '行か列か');
+        [['行', 'row'], ['列', 'col']].forEach(([label, value]) => {
+          const option = make('option', null, label);
+          option.value = value;
+          axisPick.append(option);
+        });
+        const atField = make('input', 'workspace-search document-title');
+        atField.type = 'number';
+        atField.min = '1';
+        atField.placeholder = '位置';
+        atField.setAttribute('aria-label', '挿入・削除する位置');
+        if (driveEditor.id === item.id && driveEditor.cell) {
+          atField.value = String(driveEditor.cell[0]);
+        }
+        const shiftAction = async (action, done) => {
+          const status = $('#drive-create-status');
+          if (!atField.value) { status.textContent = '位置を入れてください。'; return; }
+          status.textContent = '編集しています…';
+          try {
+            const result = await postJSON(
+              `/api/workspace/drive/documents/${encodeURIComponent(item.id)}/rows`,
+              {tab:driveEditor.id === item.id ? driveEditor.tab : null,
+               axis:axisPick.value, at:Number(atField.value), count:1, action,
+               etag:driveEditor.id === item.id ? driveEditor.etag : item.etag},
+              true);
+            // What the edit could not carry with it, said here rather than
+            // found later by opening the chart and seeing it plot the wrong
+            // rows.
+            const left = (result.unfollowed || []).map((u) => u.message).join(' ');
+            status.textContent = left ? `${done} ${left}` : done;
+            if (driveEditor.id === item.id && driveEditor.open) {
+              driveEditor = openedEditor(await load());
+              renderPane();
+            }
+            await loadWorkspace('drive', renderDrive);
+          } catch (error) {
+            status.textContent = error.message;
+          }
+        };
+        const insertButton = make('button', 'tool-button', '挿入');
+        insertButton.type = 'button';
+        insertButton.addEventListener('click',
+          () => shiftAction('insert', '挿入しました。'));
+        const deleteButton = make('button', 'tool-button', '削除');
+        deleteButton.type = 'button';
+        deleteButton.addEventListener('click',
+          () => shiftAction('delete', '削除しました。'));
+        shiftBox.append(axisPick, atField, insertButton, deleteButton);
+        exports.append(sortBox, shiftBox);
+        exportNotes.append(make('p', 'surface-note',
+          '行や列の挿入・削除では数式の参照が追随します（削除された参照は #REF! になります）。'));
         exportNotes.append(make('p', 'surface-note',
           '数式のある範囲は並べ替えられません（数式は行と一緒に動き、参照は動かないため）。'));
       }

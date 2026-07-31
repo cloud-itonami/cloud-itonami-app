@@ -4494,3 +4494,64 @@
         (is (= :sheets/invalid-range (refuse {:tab tab :range "A2:B4" :by "Z"}))
             "a column outside the range would sort by nothing")
         (is (= :drive/not-found (refuse {:tab "no-such" :range "A2:B4" :by "B"})))))))
+
+(deftest inserting-a-row-is-a-version-and-the-formulas-follow
+  (with-state
+    (fn [_ object-store]
+      (let [[item tab payload] (score-book object-store)
+            with-total (assoc-in payload ["sheets/tabs" tab "sheets/cells" "[6 2]"]
+                                 {"sheets/formula" "SUM(B2:B4)"})
+            _ (save! (:id item) with-total alice object-store)
+            etag (:etag (:item (documents/content (:id item) alice object-store)))
+            result (documents/shift-rows! (:id item)
+                                          {:tab tab :axis "row" :at 3 :count 1
+                                           :action "insert"}
+                                          alice etag object-store)
+            after (:resource (documents/content (:id item) alice object-store))
+            sheet (get-in after [:sheets/tabs tab])]
+        (is (:ok? result))
+        (is (= "a" (:sheets/value (sheets-model/get-cell sheet 4 1)))
+            "the row that was 3 is now 4")
+        (is (nil? (sheets-model/get-cell sheet 3 1)) "and 3 is empty")
+        (is (= "SUM(B2:B5)" (:sheets/formula (sheets-model/get-cell sheet 7 2)))
+            "the total moved and grew to cover the new row")
+        (is (= [] (:unfollowed result)) "nothing was left behind")))))
+
+(deftest removing-a-row-says-what-could-not-follow
+  ;; A chart's range is text on the workbook and `sheets.edit` will not
+  ;; guess which tab a chart's name resolves to, so the answer names it
+  ;; rather than leaving it to be found by opening the chart.
+  (with-state
+    (fn [_ object-store]
+      (let [[item tab payload] (score-book object-store)
+            charted (assoc payload "sheets/charts"
+                           [{"sheets/id" "c" "sheets/tab" tab
+                             "sheets/data-range" "A1:B4"}])
+            _ (save! (:id item) charted alice object-store)
+            etag (:etag (:item (documents/content (:id item) alice object-store)))
+            result (documents/shift-rows! (:id item)
+                                          {:tab tab :axis "row" :at 2 :count 1
+                                           :action "delete"}
+                                          alice etag object-store)
+            sheet (get-in (:resource (documents/content (:id item) alice object-store))
+                          [:sheets/tabs tab])]
+        (is (= "a" (:sheets/value (sheets-model/get-cell sheet 2 1)))
+            "the row below moved up")
+        (is (= [":chart/range-not-shifted"] (mapv :code (:unfollowed result))))
+        (is (= "c" (:id (first (:unfollowed result)))))))))
+
+(deftest a-position-that-is-not-one-is-refused
+  (with-state
+    (fn [_ object-store]
+      (let [[item tab payload] (score-book object-store)
+            _ (save! (:id item) payload alice object-store)
+            etag (:etag (:item (documents/content (:id item) alice object-store)))
+            refuse (fn [request]
+                     (try (documents/shift-rows! (:id item) request alice etag object-store)
+                          nil
+                          (catch clojure.lang.ExceptionInfo e (:type (ex-data e)))))]
+        (is (= :sheets/invalid-range (refuse {:tab tab :axis "row" :at 0 :action "insert"})))
+        (is (= :sheets/invalid-range (refuse {:tab tab :axis "row" :at "みかん"
+                                              :action "insert"})))
+        (is (= :drive/not-found (refuse {:tab "no-such" :axis "row" :at 1
+                                         :action "insert"})))))))

@@ -68,6 +68,7 @@
             [forms.responses :as forms-responses]
             [sheets.chart :as sheets-chart]
             [sheets.csv :as sheets-csv]
+            [sheets.edit :as sheets-edit]
             [sheets.formula :as sheets-formula]
             [sheets.xlsx :as sheets-xlsx]
             [sheets.model :as sheets]
@@ -3300,3 +3301,53 @@
          (update! id
                   (transit/write-json (assoc-in resource [:sheets/tabs tab-id] sorted))
                   actor expected-etag object-store))))))
+
+(defn shift-rows!
+  "Insert or remove rows or columns in one tab.
+
+  Through `update!`, like sorting: a structural edit is a change to what the
+  cells say, and a Drive where one kind of edit skipped the version history
+  would be one where undo lied.
+
+  `sheets.edit` rewrites the formulas — in every tab, because one sheet can
+  name a cell in another — so this does not have to know what a reference
+  is. What it does have to do is say what did not follow: a chart's range is
+  text on the workbook and `sheets.edit/unfollowed` reports it rather than
+  guessing which tab a chart's name resolves to."
+  ([id request actor expected-etag]
+   (shift-rows! id request actor expected-etag (store-instance)))
+  ([id {:keys [tab axis at count action]} actor expected-etag object-store]
+   (let [{:keys [resource]} (content id actor object-store)
+         tab-id (or (not-empty (str tab))
+                    (first (sort (keys (:sheets/tabs resource)))))
+         axis (if (= "col" (str axis)) :col :row)
+         at (cond (number? at) (long at)
+                  (re-matches #"\d+" (str/trim (str at)))
+                  (parse-long (str/trim (str at))))
+         n (cond (number? count) (long count)
+                 (re-matches #"\d+" (str/trim (str count)))
+                 (parse-long (str/trim (str count)))
+                 :else 1)
+         remove? (= "delete" (str action))]
+     (when-not (get-in resource [:sheets/tabs tab-id])
+       (throw (ex-info (str "タブ " (pr-str tab-id) " はありません。")
+                       {:type :drive/not-found :tab tab-id})))
+     (when-not (and at (pos? at) (pos? n))
+       (throw (ex-info "挿入・削除する位置と数を指定してください。"
+                       {:type :sheets/invalid-range :at (str at) :count (str count)})))
+     (let [f (cond
+               (and remove? (= :row axis)) sheets-edit/delete-rows
+               remove? sheets-edit/delete-cols
+               (= :row axis) sheets-edit/insert-rows
+               :else sheets-edit/insert-cols)
+           next-book (f resource tab-id at n)
+           written (update! id (transit/write-json next-book) actor expected-etag
+                            object-store)]
+       (assoc written
+              ;; Said with the result rather than left to be discovered by
+              ;; opening the chart and finding it plotting the wrong rows.
+              :unfollowed (mapv (fn [entry]
+                                  {:code (str (:sheets/code entry))
+                                   :id (:sheets/id entry)
+                                   :message (:sheets/msg entry)})
+                                (sheets-edit/unfollowed resource tab-id)))))))
