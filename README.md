@@ -402,7 +402,9 @@ and persisted beside the chainstate by default. Sequential and atomic batch
 header paths reject obsolete block versions at the buried BIP34, BIP66, and
 BIP65 activation heights. The pinned node release also carries the
 disk-backed, resumable Core full-history differential verifier and
-Core-aligned stripped transaction/output-script boundaries.
+Core-aligned stripped transaction/output-script boundaries. Weight-derived
+witness bounds also preserve consensus-valid unknown witness versions for
+future soft-fork compatibility.
 
 Owner/admin users can trigger the same exclusive cycle with
 `POST /api/bitcoin/consensus/sync`; concurrent attempts return `409`.

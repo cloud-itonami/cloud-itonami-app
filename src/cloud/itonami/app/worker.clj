@@ -110,13 +110,15 @@
   ;; it was gone failed intermittently in exactly that window (CI, 2026-07-30).
   ;; The `finally` still clears, for the paths that never reach here.
   (store/clear-session! (str "worker:" id))
-  (update-run! id
-               (fn [run]
-                 (-> (merge run extra)
-                     (assoc :status status :finished-at (now)))))
-  (let [run (find-run id)]
-    (swap! runs retain (retention-limit config))
-    (when run (record-event! run))))
+  (when-let [run (find-run id)]
+    (let [finished (-> (merge run extra)
+                       (assoc :status status :finished-at (now)))]
+      ;; Publish the durable event before exposing a terminal in-memory status.
+      ;; `await-idle!` observes `runs`, so returning true now also guarantees
+      ;; that callers can observe the corresponding completion event.
+      (record-event! finished)
+      (update-run! id (constantly finished))
+      (swap! runs retain (retention-limit config)))))
 
 (defn- public-run [run]
   {:id (:id run)
