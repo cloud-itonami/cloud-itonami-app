@@ -1935,6 +1935,23 @@
             ;; resolve through `locate`, so a reference to something the
             ;; asker may not read is reported as unresolved rather than
             ;; leaking that it exists.
+            ;; Inserting or removing rows is a save too, and the formulas
+            ;; follow — `sheets.edit` rewrites them, and the answer says
+            ;; what did not follow.
+            (and (= method "POST")
+                 (id-from-path path #"/api/workspace/drive/documents/([^/]+)/rows"))
+            (let [session (require-app-session! exchange)
+                  request (read-json exchange)]
+              (require-origin! exchange config)
+              (require-csrf! exchange session)
+              (send! exchange 200
+                     (documents/shift-rows!
+                      (id-from-path path #"/api/workspace/drive/documents/([^/]+)/rows")
+                      {:tab (:tab request) :axis (:axis request) :at (:at request)
+                       :count (:count request) :action (:action request)}
+                      (:user-id session)
+                      (:etag request))))
+
             ;; Sorting is a save, so it takes an etag like a save.
             (and (= method "POST")
                  (id-from-path path #"/api/workspace/drive/documents/([^/]+)/sort"))
