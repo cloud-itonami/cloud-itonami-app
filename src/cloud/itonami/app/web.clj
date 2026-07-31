@@ -393,6 +393,10 @@
     border:1px solid var(--color-neutral-solid-gray-200);border-radius:.25rem;
     box-shadow:0 1px 3px rgba(0,0,0,.08);color:var(--color-neutral-solid-gray-900);
     line-height:1.9}
+  /* A picture is bounded by the page rather than by its own pixels: a
+     photograph from a phone is wider than any column it lands in. */
+  .doc-figure{margin:1rem 0}
+  .doc-figure img{max-width:100%;height:auto;display:block}
   .doc-page__title{margin:0 0 1.5rem;padding-bottom:.75rem;font-size:1.75rem;
     line-height:1.45;border-bottom:1px solid var(--color-neutral-solid-gray-200)}
   .doc-page h2,.doc-page h3,.doc-page h4,.doc-page h5,.doc-page h6{
@@ -1800,6 +1804,21 @@
               row.append(field('装飾中', chips));
             }
           }
+        } else if (block['docs/kind'] === 'image') {
+          const stored = String(block['docs/image-data'] || '').length;
+          row.append(make('span', 'surface-note',
+            `画像（${block['docs/media-type'] || '形式不明'}）${stored ? ` · ${bytes(Math.floor(stored * 3 / 4))}` : ' · データなし'}`));
+          // The alternative text, which the validator asks for: a document
+          // read aloud has a hole where a picture with none is.
+          row.append(field('説明文', textInput(block['docs/alt'],
+            (value) => { block['docs/alt'] = value; changed(false); },
+            'surface-input--wide')));
+          // Word does not carry the picture — `docs.docx` reports it rather
+          // than writing DrawingML nobody could check — so the pane says so
+          // here as well as in the export warnings, where it is only read
+          // by somebody already on their way out.
+          row.append(make('span', 'surface-note',
+            'Word への書き出しでは説明文だけになります。'));
         } else if (block['docs/kind'] === 'list') {
           // A list is its items. They used to be reachable only through the
           // JSON editor, which is a working escape hatch and a wall for
@@ -1907,7 +1926,59 @@
         });
         changed(true);
       });
-      root.append(list, add);
+      // A picture. `docs.model` carries the bytes as base64 in the block,
+      // the same way `slides.model` does, so the document travels whole and
+      // there is nothing to re-resolve later. The same three costs as a
+      // picture on a slide, and the same three answers: only the types the
+      // writers carry, a size the document can afford, and the size shown
+      // beside it because every save writes all of it again.
+      const picker = make('input', null);
+      picker.type = 'file';
+      picker.accept = 'image/png,image/jpeg,image/gif,image/webp';
+      picker.hidden = true;
+      picker.addEventListener('change', async () => {
+        const file = picker.files?.[0];
+        picker.value = '';
+        if (!file) return;
+        const note = $('#drive-create-status');
+        if (!picker.accept.split(',').includes(file.type)) {
+          if (note) {
+            note.textContent = `${file.type || 'この形式'} は貼れません。PNG・JPEG・GIF・WebP のいずれかにしてください。`;
+          }
+          return;
+        }
+        const limit = 2 * 1024 * 1024;
+        if (file.size > limit) {
+          if (note) note.textContent = `画像は 2 MB までです（${bytes(file.size)}）。`;
+          return;
+        }
+        try {
+          const view = new Uint8Array(await file.arrayBuffer());
+          let binary = '';
+          for (let i = 0; i < view.length; i += 0x8000) {
+            binary += String.fromCharCode.apply(null, view.subarray(i, i + 0x8000));
+          }
+          payload['docs/blocks'] = payload['docs/blocks'] || [];
+          payload['docs/blocks'].push({
+            'docs/id': `b${payload['docs/blocks'].length + 1}`,
+            'docs/kind': 'image',
+            'docs/image-data': btoa(binary),
+            'docs/media-type': file.type,
+            // The file's name, which is a poor description and a better
+            // starting point than nothing — the field below is where it
+            // becomes one, and the validator asks for it.
+            'docs/alt': file.name.replace(/\\.[^.]*$/, '')
+          });
+          if (note) note.textContent = `${file.name} を貼りました。説明文を入れてください。`;
+          changed(true);
+        } catch (error) {
+          if (note) note.textContent = error.message;
+        }
+      });
+      const addImage = make('button', 'tool-button', '画像を追加');
+      addImage.type = 'button';
+      addImage.addEventListener('click', () => picker.click());
+      root.append(list, add, picker, addImage);
       return root;
     };
     // The string form [1 1] is what `transit.core/write-json` makes of the
@@ -2517,6 +2588,22 @@
           const heading = make(`h${Math.min(6, level + 1)}`);
           heading.append(...docText(block));
           page.append(heading);
+        } else if (kind === 'image') {
+          const media = String(block['docs/media-type'] ?? '');
+          const data = String(block['docs/image-data'] ?? '').trim();
+          // The same allowlist `docs.model/image-data` uses. A media type
+          // nobody checked is one the browser will sniff, and this builds a
+          // `src` out of it.
+          if (data && ['image/png', 'image/jpeg', 'image/gif', 'image/webp'].includes(media)) {
+            const figure = make('figure', 'doc-figure');
+            const picture = make('img');
+            picture.src = `data:${media};base64,${data}`;
+            picture.alt = String(block['docs/alt'] ?? '');
+            figure.append(picture);
+            page.append(figure);
+          } else {
+            page.append(make('p', 'empty-state', '表示できない画像です。'));
+          }
         } else if (kind === 'quote') {
           const quote = make('blockquote');
           quote.append(...docText(block));
