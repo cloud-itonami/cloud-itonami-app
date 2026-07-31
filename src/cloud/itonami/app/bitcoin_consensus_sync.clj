@@ -57,6 +57,9 @@
         max-blocks
         (bounded-integer! (or (:max-blocks-per-cycle raw) 32) 1 1024
                           :max-blocks-per-cycle)
+        max-validation-retries
+        (bounded-integer! (or (:max-validation-retries raw) 32) 1 32
+                          :max-validation-retries)
         discovery-timeout-ms
         (bounded-integer! (or (:discovery-timeout-ms raw) 5000) 100 60000
                           :discovery-timeout-ms)
@@ -148,6 +151,7 @@
        :required-successes required-successes
        :max-header-batches max-header-batches
        :max-blocks-per-cycle max-blocks
+       :max-validation-retries max-validation-retries
        :discovery-timeout-ms discovery-timeout-ms
        :maximum-discovered-peers maximum-discovered
        :peer-timeout-ms peer-timeout-ms
@@ -204,6 +208,7 @@
       (disk-consensus/sync-blocks-managed!
        node pool-atom (quot now-ms 1000)
        {:max-blocks (:max-blocks-per-cycle options)
+        :max-validation-retries (:max-validation-retries options)
         :maximum-peers (:maximum-peers options)
         :parallel-peers
         (min peer/maximum-block-download-peers

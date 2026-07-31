@@ -68,7 +68,10 @@
               :required-successes]
              [{:enabled? true
                :peers [{:host "node.example" :required-services -1}]}
-              :required-services]]]
+              :required-services]
+             [{:enabled? true :max-validation-retries 33
+               :peers [{:host "node.example"}]}
+              :max-validation-retries]]]
       (let [error
             (try
               (sync/normalize-options
@@ -134,6 +137,7 @@
         (is (= ::node node))
         (is (= pool actual-pool))
         (is (= 32 (:max-blocks passed)))
+        (is (= 32 (:max-validation-retries passed)))
         (is (= 2 (:maximum-peers passed)))
         (is (= 2 (:parallel-peers passed)))
         (is (= 16 (:per-peer-limit passed)))

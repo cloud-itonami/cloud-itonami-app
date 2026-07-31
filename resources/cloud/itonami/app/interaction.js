@@ -7127,10 +7127,17 @@
       } else if (blockDownload) {
         const observations = blockDownload.observations ?? [];
         const failures = blockDownload.failures ?? [];
+        const validationFailures = blockDownload['validation-failures'] ?? [];
+        const latestValidation = validationFailures.at(-1);
+        const retryEvidence = validationFailures.length
+          ? ` ${validationFailures.length} provider bodiesを同一cycleで再試行` +
+            `（latest ${latestValidation?.['validation-type'] ?? 'unknown'}）。`
+          : '';
         blockProtection.textContent =
           `Block pipeline — ${blockDownload.downloaded ?? 0} blocks、` +
           `${observations.length} peers 成功、${failures.length} peers を再割当。` +
-          `検証・commit window ${blockDownload.windows ?? 0}。`;
+          `検証・commit window ${blockDownload.windows ?? 0}。` +
+          retryEvidence;
       } else {
         blockProtection.textContent =
           'Block pipeline 待機中 — 最大8 peers、peerごとに16 blocks、' +

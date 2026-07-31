@@ -97,6 +97,8 @@
     (is (str/includes? js "blockError?.['peer-feedback']"))
     (is (str/includes? js "Block provider ${provider} を最大cooldownへ移行"))
     (is (str/includes? js "local validation failure はpeerへ帰責しません"))
+    (is (str/includes? js "blockDownload['validation-failures']"))
+    (is (str/includes? js "provider bodiesを同一cycleで再試行"))
     (is (str/includes? js "sync:{'last-result':result}"))))
 
 (deftest bitcoin-invalid-branch-quarantine-is-human-readable

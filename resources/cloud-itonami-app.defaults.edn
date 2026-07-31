@@ -67,6 +67,8 @@
     :required-successes 1
     :max-header-batches 32
     :max-blocks-per-cycle 32
+    :max-validation-retries 32
+    :block-batch-timeout-ms 30000
     :discovery-timeout-ms 5000
     :maximum-discovered-peers 64
     :peer-timeout-ms 10000}}
