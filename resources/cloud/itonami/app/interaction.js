@@ -1614,6 +1614,37 @@
         };
         (slide['slides/shapes'] || []).forEach((shape) => {
           const kind = shape['slides/shape'];
+          // A link on the shape, whatever kind it is: `slides.pptx` puts
+          // the relationship on the shape rather than on its text, so a
+          // picture and a box can each be one.
+          const shapeLink = () => {
+            const row = make('div', 'appointment__invite');
+            const url = make('input', 'workspace-search');
+            url.type = 'url';
+            url.value = shape['slides/hyperlink'] ?? '';
+            url.placeholder = 'リンク先（https://…）';
+            url.setAttribute('aria-label', `${shape['slides/id']} のリンク先`);
+            url.addEventListener('change', () => {
+              const value = url.value.trim();
+              if (!value) { delete shape['slides/hyperlink']; changed(true); return; }
+              // The same three schemes `slides.model/shape-link` allows.
+              // Checked here as well as there, not because the client is
+              // trusted but because storing a link nothing will follow, and
+              // saying nothing, is how a deck claims one it does not have.
+              if (!docLink({link:value})) {
+                const note = $('#drive-create-status');
+                if (note) {
+                  note.textContent = 'リンクは http・https・mailto のいずれかにしてください。';
+                }
+                url.value = shape['slides/hyperlink'] ?? '';
+                return;
+              }
+              shape['slides/hyperlink'] = value;
+              changed(true);
+            });
+            row.append(url);
+            return row;
+          };
           if (kind === 'text') {
             card.append(field(`テキスト（${shape['slides/id']}）`,
               textInput(shape['slides/text'],
@@ -1679,11 +1710,13 @@
             });
             card.append(field('大きさ', size), field('色', colour));
             card.append(box(shape));
+            card.append(field('リンク', shapeLink()));
           } else if (kind === 'rect') {
             card.append(make('span', 'surface-note', `図形（${shape['slides/id']}）`));
             card.append(field('塗り', textInput(shape['slides/fill'],
               (value) => { shape['slides/fill'] = value; changed(true); })));
             card.append(box(shape));
+            card.append(field('リンク', shapeLink()));
           } else if (kind === 'image') {
             // The size, because a picture is the one shape that makes a
             // deck heavy and every save writes all of it again. Base64 is
@@ -1691,7 +1724,7 @@
             const stored = String(shape['slides/image-data'] || '').length;
             card.append(make('span', 'surface-note',
               `画像（${shape['slides/id']}）${stored ? ` · ${bytes(Math.floor(stored * 3 / 4))}` : ''}`));
-            card.append(box(shape));
+            card.append(box(shape), field('リンク', shapeLink()));
             card.append(removeButton(() => {
               const shapes = slide['slides/shapes'];
               shapes.splice(shapes.indexOf(shape), 1);

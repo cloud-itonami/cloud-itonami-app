@@ -4631,3 +4631,35 @@
                                                              object-store))
                             "ISO-8859-1")]
           (is (str/includes? pptx "ppt/slides/slide1.xml")))))))
+
+(deftest a-link-on-a-slide-shape-is-drawn-and-carried-and-a-bad-one-is-not
+  ;; `slides.pptx` has written `:slides/hyperlink` as a relationship on the
+  ;; shape all along, and every preview drew an ordinary shape.
+  (with-state
+    (fn [_ object-store]
+      (let [{:keys [item]} (documents/create! :slides "提案" alice object-store)
+            payload (:payload (documents/content (:id item) alice object-store))
+            linked (fn [url]
+                     (assoc-in payload ["slides/slides" 0 "slides/shapes"]
+                               [{"slides/id" "t1" "slides/shape" "text"
+                                 "slides/text" "詳しくはこちら"
+                                 "slides/x" 0.8 "slides/y" 0.8
+                                 "slides/w" 8.4 "slides/h" 1.0
+                                 "slides/hyperlink" url}]))]
+        (is (:ok? (save! (:id item) (linked "https://example.com/a") alice object-store)))
+        (let [drawn (:svg (first (:slides (documents/content (:id item) alice
+                                                             object-store))))]
+          (is (str/includes? drawn "<a href=\"https://example.com/a\""))
+          (is (str/includes? drawn "rel=\"noreferrer noopener\"")))
+        (let [pptx (String. ^bytes (:bytes (documents/export (:id item) "pptx" alice
+                                                             object-store))
+                            "ISO-8859-1")]
+          (is (str/includes? pptx "ppt/slides/_rels/slide1.xml.rels")
+              "the link is a relationship on the slide"))
+        (testing "a scheme that is not a place leaves the shape and loses the link"
+          (is (:ok? (save! (:id item) (linked "javascript:alert(1)") alice object-store)))
+          (let [drawn (:svg (first (:slides (documents/content (:id item) alice
+                                                               object-store))))]
+            (is (not (str/includes? drawn "<a ")))
+            (is (not (str/includes? drawn "javascript")))
+            (is (str/includes? drawn "詳しくはこちら"))))))))
