@@ -52,7 +52,7 @@
   all of them is the same: publish no tools. Distinguishing them in the manifest
   would tell an unauthenticated client which of its guesses was closest."
   [configuration]
-  (when-let [token (agent-session/session-token configuration)]
+  (when-let [token (agent-session/human-session-token configuration)]
     (let [s (identity/session token)]
       ;; DELIBERATELY stricter than `identity/may-act?`, which the rest of the
       ;; app uses and which an agent session satisfies (ADR-0009). This is the
@@ -64,7 +64,7 @@
       ;;
       ;; This is not the approval gate either way — `approve/finish` needs a
       ;; WebAuthn user-verifying assertion and no agent can produce one.
-      (when (and s (identity/passkey-enrolled? s))
+      (when (and s (identity/human-session? s) (identity/passkey-enrolled? s))
         s))))
 
 (defn available?
@@ -255,9 +255,9 @@
      (when-not s
        (throw (ex-info
                (str "MCP session が解決できません。app の session token を "
-                    (get-in configuration [:mcp :session-token-env])
+                    (get-in configuration [:mcp :human-session-token-env])
                     " または Keychain（service " agent-session/keychain-service
-                    " / account " agent-session/keychain-account "）に設定し、その user が"
+                    " / account " agent-session/human-keychain-account "）に設定し、その user が"
                     "Passkey を登録済みであることを確認してください。")
                {:type :mcp/session-unavailable})))
      (call-tool configuration s tool-name arguments)))

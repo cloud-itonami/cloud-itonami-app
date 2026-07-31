@@ -207,20 +207,38 @@
 ;; the general session location reads as though the session were about money.
 
 (def keychain-service "cloud-itonami-app.mcp")
-(def keychain-account "session-token")
+
+;; TWO accounts, not one. `auth login` writes an AGENT token, and payment-tools
+;; needs a session whose user actually enrolled a Passkey — the money surface is
+;; deliberately stricter (ADR-0009). Sharing one item meant enrolling the CLI
+;; silently disabled funding and settlement, because the surface that reads it
+;; found an agent token and refused. One slot cannot hold two sessions that are
+;; required to differ.
+(def keychain-account
+  "Where `auth login` puts the agent session token."
+  "session-token")
+
+(def human-keychain-account
+  "Where a PASSKEY session token goes, for the money surface.
+
+  Nothing writes this today. `identity/issue-session!` mints one for a
+  Passkey-enrolled user, and the browser flow keeps it in a cookie rather than
+  handing it to the operator, so there is no supported way to obtain one yet —
+  named here rather than left as an empty item nobody can explain."
+  "human-session-token")
 
 (defn- keychain-secret
-  "Read the MCP session token from the login Keychain.
+  "Read one named token from the login Keychain.
 
   One named item, fetched by service and account -- never an enumeration. A
   `security dump-keychain` style sweep would expose unrelated credentials'
   metadata to answer a question about exactly one of them."
-  []
+  [account]
   (try
     (let [process (-> (ProcessBuilder.
                        ^java.util.List
                        ["security" "find-generic-password"
-                        "-s" keychain-service "-a" keychain-account "-w"])
+                        "-s" keychain-service "-a" account "-w"])
                       (.redirectErrorStream true)
                       .start)
           output (future (slurp (.getInputStream process)))
@@ -229,8 +247,13 @@
         (not-empty (str/trim (deref output 500 "")))))
     (catch Exception _ nil)))
 
+(defn- resolve-token [configuration env-key account]
+  (or (some-> (get-in configuration [:mcp env-key])
+              System/getenv str/trim not-empty)
+      (keychain-secret account)))
+
 (def session-token
-  "The configured token, resolved once per process.
+  "The agent session token, resolved once per process.
 
   Memoized because `available?` runs on every `tools/list`, and an unmemoized
   fallback would shell out to `security` on each one -- slow, and noisy against
@@ -242,6 +265,13 @@
   immediately; what is cached is only which token string to ask about."
   (memoize
    (fn [configuration]
-     (or (some-> (get-in configuration [:mcp :session-token-env])
-                 System/getenv str/trim not-empty)
-         (keychain-secret)))))
+     (resolve-token configuration :session-token-env keychain-account))))
+
+(def human-session-token
+  "The Passkey session token for the money surface, resolved once per process.
+
+  Separate from `session-token` on purpose; see `human-keychain-account`."
+  (memoize
+   (fn [configuration]
+     (resolve-token configuration :human-session-token-env
+                    human-keychain-account))))
