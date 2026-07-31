@@ -303,6 +303,15 @@
   /* Empty until a file that could be read is chosen, and it collapses when
      it is: a gap the width of a gesture nobody is making reads as something
      missing. */
+  /* Where a comment points. A dot rather than a colour alone: a cell that
+     is only tinted says nothing to anyone who cannot see the tint, and the
+     mark has to survive next to the styling a cell may already carry. */
+  .is-commented{position:relative}
+  .is-commented::after{content:"";position:absolute;top:2px;right:2px;
+    width:.5rem;height:.5rem;border-radius:50%;
+    background:var(--color-semantic-error-1)}
+  .surface-row.is-commented{outline:2px solid var(--color-semantic-error-2);
+    outline-offset:2px}
   .drive-import-choice{display:flex;gap:.5rem;flex-wrap:wrap}
   .drive-import-choice:empty{display:none}
   .scheduler-create{display:flex;gap:.5rem;flex-wrap:wrap;align-items:center}

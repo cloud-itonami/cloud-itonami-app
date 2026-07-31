@@ -73,3 +73,20 @@
       (let [{:keys [exit err]} (shell/sh "node" "--check" (str source))]
         (is (zero? exit) (str source " does not parse under node " version ":\n" err))))
     (println "web-script-test: node is not on PATH, so the interaction layer was not parsed.")))
+
+(deftest a-cell-anchor-is-spelled-in-one-place
+  ;; The grid writes `Sheet1!B3` onto every cell as `data-anchor`, and the
+  ;; comment box reads it back to put a dot where a comment points. Two
+  ;; spellings would mean a dot that never appears and nothing to say why —
+  ;; the same drift `docs.model/text-spans` was pulled out to end, one file
+  ;; over and in JavaScript.
+  (let [js (slurp (io/file "resources/cloud/itonami/app/interaction.js"))]
+    ;; The anchor format specifically — `!${columnName(` — and not every
+    ;; use of `columnName`, which the style bar also makes when it says
+    ;; which cell it is acting on. The first version of this assertion
+    ;; counted those too and failed on code that was right.
+    (is (= 1 (count (re-seq #"!\$\{columnName\(" js)))
+        "the `tab!B3` form is written in exactly one place, which is cellAnchor")
+    (is (str/includes? js "const cellAnchor = (tab, row, col)"))
+    (is (= 2 (count (re-seq #"cellAnchor\(" (str/replace js "const cellAnchor" ""))))
+        "and both the grid and the comment box call it")))
