@@ -5,6 +5,7 @@
             [kotoba.kgraph :as kgraph])
   (:import [java.nio.file Files StandardCopyOption]
            [java.time Instant]
+           [java.time.temporal ChronoUnit]
            [java.util UUID]))
 
 (def schema "cloud.itonami.app.state.v1")
@@ -197,7 +198,11 @@
   (.format instant-format
            (swap! last-instant
                   (fn [previous]
-                    (let [candidate (Instant/now)]
+                    ;; Compare at the same precision we publish. Linux clocks
+                    ;; commonly advance by nanoseconds, so two distinct raw
+                    ;; Instants can still format to one six-digit timestamp.
+                    (let [candidate (.truncatedTo (Instant/now)
+                                                  ChronoUnit/MICROS)]
                       (if (and previous (not (.isAfter candidate ^Instant previous)))
                         (.plusNanos ^Instant previous 1000)
                         candidate))))))
