@@ -936,6 +936,8 @@
       :bitcoin.node/network-mismatch :bitcoin.node/genesis-mismatch
       :bitcoin.node/scan-busy :bitcoin.node/capability-unavailable
       :bitcoin.node/sync-busy :bitcoin.node/peer-pool-cooldown
+      :bitcoin.consensus/known-invalid-block
+      :bitcoin.consensus/invalid-ancestor
       :bitcoin/descriptor-not-ranged :agent/not-held
       :agent/tool-decision :agent/frontmost-changed
       :agent/settings-changed :cli-agent/workspace-changed}
@@ -970,10 +972,12 @@
     :cli-agent/workspace-required 428}))
 
 (defn- integration-error-status [error]
-  (let [type (:type (ex-data error))]
+  (let [data (ex-data error)
+        type (:type data)]
     (or (get integration-error-statuses type)
+        (when (true? (:consensus-invalid? data)) 502)
         (when (= type :receipt-export/signer-failed)
-          (or (:status (ex-data error)) 502)))))
+          (or (:status data) 502)))))
 
 (defn handler [config]
   (reify HttpHandler

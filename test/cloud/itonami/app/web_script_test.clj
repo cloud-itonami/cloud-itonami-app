@@ -96,6 +96,17 @@
     (is (str/includes? js "peers を再割当"))
     (is (str/includes? js "sync:{'last-result':result}"))))
 
+(deftest bitcoin-invalid-branch-quarantine-is-human-readable
+  (let [js (slurp (io/file "resources/cloud/itonami/app/interaction.js"))
+        html (with-redefs [store/snapshot (constantly (store/initial-state))]
+               (web/page-html config))]
+    (is (str/includes? html "id=\"bitcoin-invalid-branch-state\""))
+    (is (str/includes? js "data?.['invalid-blocks']"))
+    (is (str/includes? js "data?.['invalid-block-roots']"))
+    (is (str/includes? js "Invalid branch ${invalidCount}件を隔離"))
+    (is (str/includes? js "次善のmost-work chainへ復帰しました"))
+    (is (str/includes? js "Invalid branch なし"))))
+
 (deftest a-cell-anchor-is-spelled-in-one-place
   ;; The grid writes `Sheet1!B3` onto every cell as `data-anchor`, and the
   ;; comment box reads it back to put a dot where a comment points. Two

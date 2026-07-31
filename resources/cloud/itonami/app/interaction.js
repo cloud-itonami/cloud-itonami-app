@@ -7091,8 +7091,10 @@
       const target = $('#bitcoin-consensus-state');
       const protection = $('#bitcoin-headers-presync-state');
       const blockProtection = $('#bitcoin-block-download-state');
+      const invalidProtection = $('#bitcoin-invalid-branch-state');
       protection.hidden = false;
       blockProtection.hidden = false;
+      invalidProtection.hidden = false;
       if (!data?.['configured?']) {
         protection.textContent =
           'Embedded consensus は未設定です。Bitcoin Core が既定の検証境界です。';
@@ -7124,6 +7126,24 @@
         blockProtection.textContent =
           'Block pipeline 待機中 — 最大8 peers、peerごとに16 blocks、' +
           '端末内ではchain順に検証・commitします。';
+      }
+      const invalidCount = Number(data?.['invalid-blocks'] ?? 0);
+      const invalidRoots = data?.['invalid-block-roots'] ?? [];
+      if (!data?.['configured?']) {
+        invalidProtection.textContent =
+          'Invalid branch 隔離は embedded consensus 未設定のため利用できません。';
+      } else if (invalidCount > 0) {
+        const latest = invalidRoots[0] ?? {};
+        const hash = latest.hash
+          ? `${latest.hash.slice(0, 12)}…${latest.hash.slice(-8)}`
+          : 'unknown';
+        invalidProtection.textContent =
+          `Invalid branch ${invalidCount}件を隔離 — root ${hash}、` +
+          `height ${latest.height ?? '—'}、reason ${latest.reason ?? '—'}。` +
+          '子孫blockを破棄し、次善のmost-work chainへ復帰しました。';
+      } else {
+        invalidProtection.textContent =
+          'Invalid branch なし — 永続的な consensus failure は検出されていません。';
       }
       target.textContent = JSON.stringify(data, null, 2);
     };
