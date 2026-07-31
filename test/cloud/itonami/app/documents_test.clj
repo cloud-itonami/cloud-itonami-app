@@ -4601,3 +4601,33 @@
         ;; worth anything: the marker is absent when there are no notes, so
         ;; finding it there was not finding boilerplate.
         (is (not (str/includes? pptx "notesSlide")))))))
+
+(deftest a-slides-text-style-is-drawn-and-exported
+  ;; `slides.svg` draws every one of these and `slides.pptx` writes every
+  ;; one into the .pptx; the editor offered none, so text on a slide could
+  ;; not be made bold without opening the JSON pane.
+  (with-state
+    (fn [_ object-store]
+      (let [{:keys [item]} (documents/create! :slides "提案" alice object-store)
+            payload (:payload (documents/content (:id item) alice object-store))
+            ;; Exactly what the style buttons write.
+            styled (assoc-in payload ["slides/slides" 0 "slides/shapes"]
+                             [{"slides/id" "t1" "slides/shape" "text"
+                               "slides/text" "四半期のまとめ"
+                               "slides/x" 0.8 "slides/y" 0.8 "slides/w" 8.4 "slides/h" 1.0
+                               "slides/bold" true "slides/underline" true
+                               "slides/strikethrough" true
+                               "slides/font-size" 32 "slides/color" "1F6FEB"}])
+            saved (save! (:id item) styled alice object-store)]
+        (is (:ok? saved))
+        (let [drawn (:svg (first (:slides (documents/content (:id item) alice
+                                                             object-store))))]
+          (is (str/includes? drawn "font-weight=\"bold\""))
+          (is (str/includes? drawn "text-decoration=\"underline line-through\"")
+              "both marks in one attribute, which is what SVG takes")
+          (is (str/includes? drawn "fill=\"#1F6FEB\"") "the hash is the renderer's")
+          (is (str/includes? drawn "font-size=\"0.4444\"") "32pt in inches"))
+        (let [pptx (String. ^bytes (:bytes (documents/export (:id item) "pptx" alice
+                                                             object-store))
+                            "ISO-8859-1")]
+          (is (str/includes? pptx "ppt/slides/slide1.xml")))))))

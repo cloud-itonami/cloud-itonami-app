@@ -1619,6 +1619,65 @@
               textInput(shape['slides/text'],
                 (value) => { shape['slides/text'] = value; changed(false); },
                 'surface-input--wide')));
+            // How the text looks. `slides.svg` draws every one of these and
+            // `slides.pptx` writes every one into the .pptx, and the editor
+            // offered none of them: text on a slide could not be made bold
+            // without opening the JSON pane, which is a working escape
+            // hatch and a wall for anyone who has not been told about it.
+            //
+            // A whole shape at a time, unlike a document's runs. A text box
+            // is one run to this model — there is no offset into it to
+            // style — so a mark is a property of the box and the interface
+            // should not suggest otherwise by asking for a selection.
+            const marks = make('div', 'appointment__answers');
+            [['bold', '太字'], ['italic', '斜体'], ['underline', '下線'],
+             ['strikethrough', '取り消し線']].forEach(([key, label]) => {
+              const button = make('button', 'tool-button', label);
+              button.type = 'button';
+              button.setAttribute('aria-pressed', shape[`slides/${key}`] ? 'true' : 'false');
+              button.addEventListener('click', () => {
+                // Absent rather than false: a shape saying it is not bold
+                // is a key in every exported deck for a property nobody
+                // set, and `slides.pptx` writes what it is given.
+                if (shape[`slides/${key}`]) delete shape[`slides/${key}`];
+                else shape[`slides/${key}`] = true;
+                changed(true);
+              });
+              marks.append(button);
+            });
+            card.append(field('装飾', marks));
+            const size = make('input', 'workspace-search document-title');
+            size.type = 'number';
+            size.min = '1';
+            size.value = shape['slides/font-size'] ?? '';
+            size.placeholder = 'pt';
+            size.setAttribute('aria-label', '文字の大きさ（ポイント）');
+            size.addEventListener('change', () => {
+              const n = Number(size.value);
+              // A size that is not a number is not a size. The renderer
+              // falls back to 18pt for a missing one, which is the right
+              // answer for a box nobody has sized and the wrong one to
+              // store as a guess.
+              if (Number.isFinite(n) && n > 0) shape['slides/font-size'] = n;
+              else delete shape['slides/font-size'];
+              changed(true);
+            });
+            const colour = make('input', 'workspace-search document-title');
+            colour.type = 'text';
+            colour.value = shape['slides/color'] ?? '';
+            colour.placeholder = '色（例 24292F）';
+            colour.setAttribute('aria-label', '文字の色');
+            colour.addEventListener('change', () => {
+              const value = colour.value.trim().replace(/^#/, '');
+              // Six hex digits and no hash, which is what OOXML stores and
+              // what `slides.svg/colour` adds the hash back to. Anything
+              // else is dropped rather than written, because an
+              // unparseable fill draws black and looks deliberate.
+              if (/^[0-9A-Fa-f]{6}$/.test(value)) shape['slides/color'] = value.toUpperCase();
+              else delete shape['slides/color'];
+              changed(true);
+            });
+            card.append(field('大きさ', size), field('色', colour));
             card.append(box(shape));
           } else if (kind === 'rect') {
             card.append(make('span', 'surface-note', `図形（${shape['slides/id']}）`));
