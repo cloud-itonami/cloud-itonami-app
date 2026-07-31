@@ -453,10 +453,13 @@ download remains outside SQLite; only a salted-commitment-protected redownload
 can publish headers. Wallet → Bitcoin consensus displays whether this boundary
 is still active or minimum chainwork has been verified.
 
-Block bodies use the `bitcoin-node` v0.41 managed pipeline: up to eight diverse
+Block bodies use the `bitcoin-node` v0.42 managed pipeline: up to eight diverse
 peers download concurrently with 16 assignments per peer and a 128-block
 resident window, while the embedded validator commits only chronological,
-fully validated blocks. The same Wallet panel reports successful peers,
+fully validated blocks. The parallel stage correlates only the bounded raw
+body's 80-byte header; complete parsing, mutation classification, branch
+quarantine, and UTXO changes stay inside the serial SQLite boundary. The same
+Wallet panel reports successful peers,
 reassignments, validation windows, and the exact provider of a rejected body.
 A definitive invalid block or retryable mutated body places its provider in
 durable maximum cooldown; missing local validation state is never blamed on a
