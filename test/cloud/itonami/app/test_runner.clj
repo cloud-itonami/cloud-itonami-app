@@ -31,6 +31,7 @@
             [cloud.itonami.app.contracts-test]
             [cloud.itonami.app.core-test]
             [cloud.itonami.app.credential-http-test]
+            [cloud.itonami.app.credential-rdf-test]
             [cloud.itonami.app.presentation-request-test]
             [cloud.itonami.app.credential-sd-jwt-test]
             [cloud.itonami.app.credential-test]
@@ -79,6 +80,7 @@
     cloud.itonami.app.contracts-test
     cloud.itonami.app.core-test
     cloud.itonami.app.credential-http-test
+    cloud.itonami.app.credential-rdf-test
     cloud.itonami.app.presentation-request-test
     cloud.itonami.app.credential-sd-jwt-test
     cloud.itonami.app.credential-test

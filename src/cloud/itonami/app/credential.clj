@@ -35,9 +35,11 @@
   **A holder-signed Verifiable Presentation is a different matter and is NOT
   implemented here.** Two independent reasons, both structural:
 
-    1. `eddsa-jcs-2022` is Ed25519. The user's DID is P-256. Verifying a proof
-       from that DID needs `ecdsa-jcs-2019`, which
-       `kotoba-lang/org-w3-vc-data-integrity` does not implement.
+    1. `eddsa-jcs-2022` is Ed25519 and the user's DID is P-256, so verifying a
+       proof from that DID needs `ecdsa-jcs-2019`. That suite **is** implemented
+       now (`data_integrity/ecdsa.cljc`); this docstring previously said it was
+       not, which made presentations look further away than they are. The
+       remaining blocker is entirely (2).
     2. Even with that suite it would not work, for the reason
        `cloud.itonami.app.capability` already records about CACAO: WebAuthn signs
        its own `authenticatorData || clientDataHash`, not bytes of our choosing.
@@ -68,6 +70,66 @@
 (def schema "cloud.itonami.app.credential.v1")
 
 (def credentials-context "https://www.w3.org/ns/credentials/v2")
+
+(def membership-vocabulary
+  "The IRI namespace for this app's own credential terms.
+
+  A URN rather than an HTTPS URL, deliberately: it needs no DNS, nothing to serve,
+  and no domain to keep owning for as long as the credentials live. It matches the
+  `vct` already used by `credential-sd-jwt`
+  (`urn:cloud-itonami:credentials:membership:v1`), so the two representations of the
+  same credential name the same thing.
+
+  If a hosted HTTPS vocabulary is ever wanted for discoverability, that is a
+  one-line change — but it must happen BEFORE credentials are issued against it,
+  because the term IRIs are inside the signed graph."
+  "urn:cloud-itonami:credentials:membership:v1#")
+
+(def membership-context
+  "An INLINE `@context` giving this app's terms real IRIs.
+
+  ## Why this exists: without it the signed graph omits the credential's substance
+
+  `credentials/v2` defines neither `role`, `organizationName`, `organization` nor
+  `OrganizationMembershipCredential`, and sets no top-level `@vocab`. Under
+  `eddsa-jcs-2022` that is invisible, because JCS signs the JSON bytes and every
+  key survives regardless of whether it means anything.
+
+  Under a `-rdfc-` cryptosuite it is not invisible at all. Expansion **drops** a
+  term it cannot resolve, so the canonical RDF of a membership credential without
+  this context contained no `role` — the credential asserted that someone was an
+  `OrganizationMembershipCredential` and said nothing about what role they held.
+  Measured, not assumed: canonicalizing the old shape produced ten quads and none
+  of them mentioned the role, the organization name, or the organization.
+
+  Signing that would have produced a perfectly verifiable credential asserting
+  nothing. That is why this is a correctness fix rather than a nicety, and why it
+  belongs here even for deployments that never switch cryptosuite.
+
+  ## And the type IRI was in a namespace this app does not own
+
+  With no definition, `OrganizationMembershipCredential` resolved relative to the
+  credentials vocabulary into `https://www.w3.org/ns/credentials/…` — a W3C
+  namespace. Claiming a type IRI there is wrong however the credential is signed.
+
+  ## Inline, not a hosted context
+
+  `org-w3-json-ld-api` never fetches a remote context, because a fetched one lets
+  its host change what a signature covers after signing. An inline context cannot
+  be fetched, cannot drift, and travels with the credential — so a verifier who has
+  never heard of this app still learns what `role` means, which is exactly the
+  interoperability the namespace docstring claims for VCs over CACAO.
+
+  `@protected` prevents a later context in the same array from redefining these
+  terms out from under the proof."
+  {"@protected" true
+   "OrganizationMembershipCredential" (str membership-vocabulary
+                                           "OrganizationMembershipCredential")
+   "role" {"@id" (str membership-vocabulary "role")}
+   "organizationName" {"@id" (str membership-vocabulary "organizationName")}
+   ;; an organization is named by a DID, so it is a node reference and not a
+   ;; string -- otherwise the graph would carry the DID as an opaque literal
+   "organization" {"@id" (str membership-vocabulary "organization") "@type" "@id"}})
 
 (def ^:private membership-roles #{:owner :admin :member :auditor :guest})
 
@@ -220,7 +282,7 @@
                     {:type :credential/no-subject})))
   (let [issuer (or (not-empty (str organization-did)) (issuer-did-key))]
     (cond->
-     {"@context" [credentials-context]
+     {"@context" [credentials-context membership-context]
       "type" ["VerifiableCredential" "OrganizationMembershipCredential"]
       "issuer" issuer
       "validFrom" (or valid-from (now-timestamp))
