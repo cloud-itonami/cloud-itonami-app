@@ -425,6 +425,13 @@ CSV and BIP68 validation above `0x7fffffff`; the embedded Script verifier also
 matches `SCRIPT_VERIFY_CONST_SCRIPTCODE`. Legacy signature hashing matches
 Core's `OP_CODESEPARATOR` parser and serialization contract and is pinned
 against all 500 official legacy sighash outcomes.
+The pinned node also provides Core-compatible BIP158 basic-filter construction,
+strict decoding and membership matching plus BIP157 filter-header chaining.
+All 10 official Core block-filter vectors are pinned in its CI. Its P2P filter
+API requires `NODE_COMPACT_FILTERS`, an exact requested range, an explicit
+retained header anchor, strict GCS decoding, and an expected filter header;
+compact filters remain non-consensus scan hints and are not used to bypass the
+app's full local block-validation path.
 The embedded UTXO database uses Core-identical unspendable-output pruning and
 transactionally upgrades legacy state to schema v7, requiring authenticated
 reindex if impossible spend history is detected.
