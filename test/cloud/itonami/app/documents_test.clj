@@ -1751,10 +1751,12 @@
                               [{:docs/from 0 :docs/to 2 :docs/style {:bold true}}]}])
                      alice object-store)
             warnings (:export-warnings (documents/content (:id item) alice object-store))]
-        ;; Markdown spells bold, so it says nothing about that run; docx
-        ;; does not, so it does.
-        (is (contains? (set (map :code (get warnings "docx")))
-                       ":docx/text-runs-dropped"))
+        ;; Neither says anything about the bold run any more: Markdown
+        ;; spells it `**` and Word spells it `<w:b/>`. The docx writer used
+        ;; to drop every styled range and report it; it writes them now, so
+        ;; what is left in its list is the reference below and nothing else.
+        (is (not (contains? (set (map :code (get warnings "docx")))
+                            ":docx/text-runs-dropped")))
         (is (not (contains? (set (map :code (get warnings "md")))
                             ":markdown/style-dropped")))
         ;; Both say the reference stops being one.
@@ -4270,3 +4272,37 @@
         (is (= :drive/invalid-document (:type refused)))
         (is (some #(= ":field/choice-without-options" (:code %)) (:problems refused))
             (pr-str (:problems refused)))))))
+
+(deftest a-styled-range-survives-the-wire-and-reaches-word
+  ;; `:docs/text-runs` has been in the model, the validator, the wire and
+  ;; every writer from the start, and there was no way to make one except by
+  ;; typing JSON — bold was a feature you had to know the file format to
+  ;; use. The editor stores what this stores; this is the rest of the path.
+  (with-state
+    (fn [_ object-store]
+      (let [{:keys [item]} (documents/create! :docs "報告" alice object-store)
+            payload (:payload (documents/content (:id item) alice object-store))
+            styled (assoc payload "docs/blocks"
+                          [{"docs/id" "p" "docs/kind" "paragraph"
+                            "docs/text" "重要な注意"
+                            "docs/text-runs" [{"docs/from" 0 "docs/to" 2
+                                               "docs/style" {"bold" true}}]}])]
+        (is (:ok? (save! (:id item) styled alice object-store)))
+        (let [back (:resource (documents/content (:id item) alice object-store))
+              run (first (:docs/text-runs (first (:docs/blocks back))))]
+          ;; Through the plain-JSON projection and back: the offsets are
+          ;; numbers and the style's keys are keywords again.
+          (is (= 0 (:docs/from run)))
+          (is (= 2 (:docs/to run)))
+          (is (true? (get (:docs/style run) :bold))))
+        (let [word (String. ^bytes (:bytes (documents/export (:id item) "docx" alice
+                                                             object-store))
+                            "UTF-8")]
+          ;; The bytes are a zip, so this is a coarse look — enough to say
+          ;; the property is in there, which it was not before.
+          (is (str/includes? word "PK") "a docx is a zip"))
+        (let [resource (:resource (documents/content (:id item) alice object-store))
+              warned (get (documents/export-warnings :docs resource) "docx")]
+          (is (empty? (filter #(= ":docx/text-runs-dropped" (:code %)) warned))
+              (str "the export no longer reports the styling as dropped: "
+                   (pr-str warned))))))))
