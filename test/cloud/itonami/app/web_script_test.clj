@@ -10,6 +10,12 @@
   fine, ship fine, and turn the whole app blank in the browser, because one
   syntax error takes the entire script with it.
 
+  The interaction layer is a `.js` resource now rather than a string
+  literal, which removes the escaping entirely — the reader no longer sees
+  it, so a backslash is a backslash. That makes this check cheaper and not
+  less necessary: what ships is the rendered page, and a script assembled
+  correctly out of a file that does not parse is still a blank app.
+
   So the page is rendered and every `<script>` in it is handed to a
   JavaScript parser. `node --check` is the parser: it is the same engine the
   browser will use, it is already on any machine that builds this, and
@@ -57,3 +63,13 @@
     (println (str "web-script-test: node is not on PATH, so the page's "
                   "JavaScript was not parsed. It is not being checked "
                   "anywhere else."))))
+
+(deftest the-interaction-layer-parses-as-the-file-it-is
+  ;; The rendered page above is what ships; this is the source it is built
+  ;; from, checked directly, so a failure says which file to open.
+  (if-let [version (node-version)]
+    (let [source (io/file "resources/cloud/itonami/app/interaction.js")]
+      (is (.isFile source) "the interaction layer is a resource, not a literal")
+      (let [{:keys [exit err]} (shell/sh "node" "--check" (str source))]
+        (is (zero? exit) (str source " does not parse under node " version ":\n" err))))
+    (println "web-script-test: node is not on PATH, so the interaction layer was not parsed.")))
