@@ -431,7 +431,11 @@ All 10 official Core block-filter vectors are pinned in its CI. Its P2P filter
 API requires `NODE_COMPACT_FILTERS`, an exact requested range, an explicit
 retained header anchor, strict GCS decoding, and an expected filter header;
 compact filters remain non-consensus scan hints and are not used to bypass the
-app's full local block-validation path.
+app's full local block-validation path. Filter-header synchronization now
+requires a configurable quorum of byte-identical replies from 2..32 unique
+peers for the same anchor/range/stop block. Conflicting successful replies
+fail closed, while filter-body retrieval can fail over only when the body
+authenticates into that quorum-agreed header.
 The embedded UTXO database uses Core-identical unspendable-output pruning and
 transactionally upgrades legacy state to schema v7, requiring authenticated
 reindex if impossible spend history is detected.
