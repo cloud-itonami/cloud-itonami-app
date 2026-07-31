@@ -404,7 +404,9 @@ BIP65 activation heights. The pinned node release also carries the
 disk-backed, resumable Core full-history differential verifier and
 Core-aligned stripped transaction/output-script boundaries. Weight-derived
 witness bounds also preserve consensus-valid unknown witness versions for
-future soft-fork compatibility.
+future soft-fork compatibility. The embedded UTXO database uses Core-identical
+unspendable-output pruning and transactionally upgrades legacy state to schema
+v7, requiring authenticated reindex if impossible spend history is detected.
 
 Owner/admin users can trigger the same exclusive cycle with
 `POST /api/bitcoin/consensus/sync`; concurrent attempts return `409`.
