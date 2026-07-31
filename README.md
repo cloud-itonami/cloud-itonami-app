@@ -408,7 +408,9 @@ totals, and accumulated block fees use Core's exact `MoneyRange`. Weight-derived
 witness bounds also preserve consensus-valid unknown witness versions for
 future soft-fork compatibility, while block validation rejects all witness
 serialization before the configured SegWit activation height even when a
-coinbase commitment is present. The embedded UTXO database uses Core-identical
+coinbase commitment is present. Excessive legacy sigops are rejected before
+either active or side-chain block bodies enter local storage. The embedded
+UTXO database uses Core-identical
 unspendable-output pruning and transactionally upgrades legacy state to schema
 v7, requiring authenticated reindex if impossible spend history is detected.
 
