@@ -4663,3 +4663,31 @@
             (is (not (str/includes? drawn "<a ")))
             (is (not (str/includes? drawn "javascript")))
             (is (str/includes? drawn "詳しくはこちら"))))))))
+
+(deftest a-table-on-a-slide-is-drawn-and-reaches-powerpoint
+  ;; `slides.pptx` has written a table as a native `<a:tbl>` from the start
+  ;; and there was no way to make the shape it writes, so a deck could only
+  ;; have one if a .pptx brought it in.
+  (with-state
+    (fn [_ object-store]
+      (let [{:keys [item]} (documents/create! :slides "四半期" alice object-store)
+            payload (:payload (documents/content (:id item) alice object-store))
+            ;; Exactly what 表を追加 pushes, then typed into.
+            with-table (assoc-in payload ["slides/slides" 0 "slides/shapes"]
+                                 [{"slides/id" "tb1" "slides/shape" "table"
+                                   "slides/x" 0.8 "slides/y" 1.5
+                                   "slides/w" 8.4 "slides/h" 2.0
+                                   "slides/rows" [["四半期" "売上"] ["Q1" "1200"]]}])
+            saved (save! (:id item) with-table alice object-store)]
+        (is (:ok? saved))
+        (is (empty? (:warnings saved))
+            "a table is a shape kind the validator knows, so no unknown-kind warning")
+        (let [drawn (:svg (first (:slides (documents/content (:id item) alice
+                                                             object-store))))]
+          (is (str/includes? drawn ">四半期</text>"))
+          (is (str/includes? drawn ">1200</text>"))
+          (is (= 4 (count (re-seq #"stroke=\"#8c959f\"" drawn))) "four cells"))
+        (let [pptx (String. ^bytes (:bytes (documents/export (:id item) "pptx" alice
+                                                             object-store))
+                            "ISO-8859-1")]
+          (is (str/includes? pptx "ppt/slides/slide1.xml")))))))

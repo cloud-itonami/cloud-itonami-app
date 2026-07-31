@@ -1717,6 +1717,63 @@
               (value) => { shape['slides/fill'] = value; changed(true); })));
             card.append(box(shape));
             card.append(field('リンク', shapeLink()));
+          } else if (kind === 'table') {
+            // A grid of text. The same shape `docs`' table editor draws,
+            // because it is the same problem: rows of rows, ragged allowed,
+            // and the widest row is how many columns there are.
+            const rows = shape['slides/rows'] || [];
+            const width = Math.max(1, ...rows.map((r) => (r || []).length));
+            const grid = make('table', 'surface-grid');
+            rows.forEach((cells, r) => {
+              const tr = make('tr');
+              for (let c = 0; c < width; c += 1) {
+                const td = make('td');
+                const input = make('input', 'surface-cell');
+                input.type = 'text';
+                input.value = (cells || [])[c] ?? '';
+                input.setAttribute('aria-label', `${r + 1}行${c + 1}列`);
+                input.addEventListener('change', () => {
+                  // Filled out to the width on the way in, so a row nobody
+                  // has touched stays short and one somebody typed into is
+                  // rectangular — the writer pads to the widest anyway, and
+                  // this keeps what is stored equal to what was entered.
+                  while (shape['slides/rows'][r].length < width) {
+                    shape['slides/rows'][r].push('');
+                  }
+                  shape['slides/rows'][r][c] = input.value;
+                  changed(false);
+                });
+                td.append(input);
+                tr.append(td);
+              }
+              const td = make('td');
+              td.append(removeButton(() => {
+                shape['slides/rows'].splice(r, 1); changed(true);
+              }));
+              tr.append(td);
+              grid.append(tr);
+            });
+            const tableBox = make('div', 'surface-editor');
+            tableBox.append(grid);
+            const tableRow = make('div', 'detail-actions__row');
+            const addRow = make('button', 'tool-button', '行を追加');
+            addRow.type = 'button';
+            addRow.addEventListener('click', () => {
+              shape['slides/rows'] = (shape['slides/rows'] || [])
+                .concat([new Array(width).fill('')]);
+              changed(true);
+            });
+            const addCol = make('button', 'tool-button', '列を追加');
+            addCol.type = 'button';
+            addCol.addEventListener('click', () => {
+              shape['slides/rows'] = (shape['slides/rows'] || [[]])
+                .map((r) => (r || []).concat(['']));
+              changed(true);
+            });
+            tableRow.append(addRow, addCol);
+            tableBox.append(tableRow);
+            card.append(make('span', 'surface-note', `表（${shape['slides/id']}）`),
+                        tableBox, box(shape), field('リンク', shapeLink()));
           } else if (kind === 'image') {
             // The size, because a picture is the one shape that makes a
             // deck heavy and every save writes all of it again. Base64 is
@@ -1858,6 +1915,21 @@
         addImage.type = 'button';
         addImage.addEventListener('click', () => imagePicker.click());
         card.append(imagePicker, addImage);
+        const addTable = make('button', 'tool-button', '表を追加');
+        addTable.type = 'button';
+        addTable.addEventListener('click', () => {
+          slide['slides/shapes'] = slide['slides/shapes'] || [];
+          // What `slides.model/table` produces, defaults included — a shape
+          // without a box is one the renderer has to guess at.
+          slide['slides/shapes'].push({
+            'slides/id': `tb${slide['slides/shapes'].length + 1}`,
+            'slides/shape': 'table',
+            'slides/x': 0.8, 'slides/y': 1.5, 'slides/w': 8.4, 'slides/h': 2.0,
+            'slides/rows': [['', ''], ['', '']]
+          });
+          changed(true);
+        });
+        card.append(addTable);
         const addText = make('button', 'tool-button', 'テキストを追加');
         addText.type = 'button';
         addText.addEventListener('click', () => {
