@@ -453,7 +453,7 @@ download remains outside SQLite; only a salted-commitment-protected redownload
 can publish headers. Wallet → Bitcoin consensus displays whether this boundary
 is still active or minimum chainwork has been verified.
 
-Block bodies use the `bitcoin-node` v0.44 managed pipeline: up to eight diverse
+Block bodies use the `bitcoin-node` v0.45 managed pipeline: up to eight diverse
 peers download concurrently with 16 assignments per peer and a 128-block
 resident window, while the embedded validator commits only chronological,
 fully validated blocks. The parallel stage correlates only the bounded raw
