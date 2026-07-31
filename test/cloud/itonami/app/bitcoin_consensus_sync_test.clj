@@ -210,6 +210,35 @@
                (dissoc retained :message)))
         (is (= "rejected provider body" (:message retained)))))))
 
+(deftest failed-sync-marks-local-consensus-recovery-without-peer-blame
+  (doseq [failure-type
+          [:bitcoin.consensus/undo-pruned
+           :bitcoin.consensus/missing-block-data
+           :bitcoin.consensus/sqlite-header-ancestry]]
+    (sync/clear-caches!)
+    (let [options
+          (sync/normalize-options
+           {:network :regtest :path (temporary-path)
+            :peer-sync
+            {:enabled? true :pool-path (str (temporary-path) ".peers")
+             :peers [{:host "innocent"}]}})]
+      (with-redefs
+       [sync/sync-cycle!
+        (fn [& _]
+          (throw (ex-info "local consensus recovery required"
+                          {:type failure-type})))]
+        (let [error
+              (try
+                (sync/run-once! ::node options)
+                (catch clojure.lang.ExceptionInfo value value))
+              retained (:last-error (sync/status options))]
+          (is (= failure-type (:type (ex-data error))))
+          (is (= failure-type (:type retained)))
+          (is (= :local (:block-validation-result retained)))
+          (is (true? (:recovery-required? retained)))
+          (is (nil? (:source-peer retained)))
+          (is (nil? (:peer-feedback retained))))))))
+
 (def ^:private http-origin "http://localhost:1338")
 (def ^:private csrf "bitcoin-sync-csrf")
 (defonce ^:private http-client (HttpClient/newHttpClient))

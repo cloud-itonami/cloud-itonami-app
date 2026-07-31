@@ -95,6 +95,10 @@
     (is (str/includes? js "最大8 peers、peerごとに16 blocks"))
     (is (str/includes? js "peers を再割当"))
     (is (str/includes? js "blockError?.['peer-feedback']"))
+    (is (str/includes? js
+                       "blockError?.['block-validation-result'] === 'local'"))
+    (is (str/includes? js "Local consensus recovery required"))
+    (is (str/includes? js "peerや候補branchは無効化していません"))
     (is (str/includes? js "Block provider ${provider} を最大cooldownへ移行"))
     (is (str/includes? js "local validation failure はpeerへ帰責しません"))
     (is (str/includes? js "blockDownload['validation-failures']"))

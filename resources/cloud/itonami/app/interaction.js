@@ -7116,6 +7116,10 @@
       if (!data?.['configured?']) {
         blockProtection.textContent =
           'Multi-peer block pipeline は未設定です。';
+      } else if (blockError?.['block-validation-result'] === 'local') {
+        blockProtection.textContent =
+          'Local consensus recovery required — peerや候補branchは無効化していません。' +
+          '端末のstorage、undo履歴、block data、verifier、resource上限を復旧してから再開してください。';
       } else if (blockError?.['peer-feedback']) {
         const provider = blockError?.['source-peer']?.host ?? 'unknown peer';
         const outcome = blockError['block-validation-result'] === 'mutated'

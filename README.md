@@ -453,7 +453,7 @@ download remains outside SQLite; only a salted-commitment-protected redownload
 can publish headers. Wallet → Bitcoin consensus displays whether this boundary
 is still active or minimum chainwork has been verified.
 
-Block bodies use the `bitcoin-node` v0.43 managed pipeline: up to eight diverse
+Block bodies use the `bitcoin-node` v0.44 managed pipeline: up to eight diverse
 peers download concurrently with 16 assignments per peer and a 128-block
 resident window, while the embedded validator commits only chronological,
 fully validated blocks. The parallel stage correlates only the bounded raw
@@ -463,7 +463,9 @@ Wallet panel reports successful peers,
 reassignments, validation windows, and the exact provider of a rejected body.
 A definitive invalid block or retryable mutated body places its provider in
 durable maximum cooldown; missing local validation state is never blamed on a
-peer. A definitive
+peer. Pruned undo, missing block data, SQLite failures, unavailable verification,
+and local resource limits instead stop with explicit recovery-required evidence;
+they neither invalidate the candidate branch nor cool down its provider. A definitive
 invalid block quarantines its minimal branch root and descendants, removes
 their staged bodies atomically, recovers the next viable most-work header, and
 survives restart. The panel shows the bounded invalid-root evidence separately

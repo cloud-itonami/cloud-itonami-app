@@ -4,7 +4,8 @@
   Peer discovery and transport are availability inputs only. Every header and
   block still crosses `bitcoin.node.disk-consensus`, which owns proof-of-work,
   fork choice, block, Script, UTXO, reorg, and durable publication validation."
-  (:require [bitcoin.node.disk-consensus :as disk-consensus]
+  (:require [bitcoin.consensus.chainstate :as chainstate]
+            [bitcoin.node.disk-consensus :as disk-consensus]
             [bitcoin.node.peer :as peer]
             [bitcoin.node.peer-pool :as peer-pool]
             [clojure.java.io :as io]
@@ -271,12 +272,20 @@
       result)
     (catch Throwable error
       (let [data (ex-data error)
+            validation-result
+            (chainstate/block-validation-result error)
             evidence
-            (select-keys
-             data
-             [:block-validation-result :block-hash :invalid-block-hash
-              :consensus-invalid? :retryable? :source-peer
-              :peer-feedback])]
+            (cond->
+             (select-keys
+              data
+              [:block-validation-result :block-hash :invalid-block-hash
+               :consensus-invalid? :retryable? :source-peer
+               :peer-feedback])
+              (not= :unknown validation-result)
+              (assoc :block-validation-result validation-result)
+
+              (= :local validation-result)
+              (assoc :recovery-required? true))]
         (swap! runtime
                #(-> %
                     (assoc :status :failed :running? false
