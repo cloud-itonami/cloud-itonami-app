@@ -122,7 +122,7 @@
   ;; surface ships disabled, like every :authority here.
   io.github.cloud-itonami/lawfirm
   {:git/url "https://github.com/cloud-itonami/lawfirm.git"
-   :git/sha "eb816888680868edb319446e3c37953a808e6a7b"}
+   :git/sha "8889aa061d0e55fcabb77339810ca0e86d2e4440"}
 
   ;; The three document surfaces the Drive can create. Each is a portable
   ;; model plus an office-envelope wire namespace, and nothing in any of them

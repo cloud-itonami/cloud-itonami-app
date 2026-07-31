@@ -15,6 +15,7 @@
             [cloud.itonami.app.canvas-test]
             [cloud.itonami.app.loops-test]
             [cloud.itonami.app.lawfirm-test]
+            [cloud.itonami.app.fax-test]
             [cloud.itonami.app.metrics-test]
             [cloud.itonami.app.portfolio-test]
             [cloud.itonami.app.repos-test]
@@ -69,6 +70,7 @@
     cloud.itonami.app.canvas-test
     cloud.itonami.app.loops-test
     cloud.itonami.app.lawfirm-test
+    cloud.itonami.app.fax-test
     cloud.itonami.app.metrics-test
     cloud.itonami.app.portfolio-test
     cloud.itonami.app.repos-test
