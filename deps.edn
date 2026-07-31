@@ -127,7 +127,7 @@
   ;; not code that runs.
   io.github.kotoba-lang/slides
   {:git/url "https://github.com/kotoba-lang/slides.git"
-   :git/sha "58fd25f44fe78ab5f113faeb720865a7bc073afa"}
+   :git/sha "4e0671e31520f005a3d9cc05bd02daa470b8aeb5"}
   ;; Named directly even though all three now agree on it. They agree because
   ;; sheets and docs were advanced off 77e3ce7d for the rehydrate work; before
   ;; that they pinned the last commit before the wire moved to plain JSON and
