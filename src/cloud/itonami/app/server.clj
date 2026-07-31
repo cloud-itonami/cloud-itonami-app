@@ -206,7 +206,7 @@
   WebAuthn user-verifying assertion, which nothing here can substitute for."
   [exchange]
   (let [session (require-session! exchange)]
-    (when (= :agent (:kind session))
+    (when-not (identity/human-session? session)
       (throw (ex-info
               (str "この操作は agent session では実行できません。"
                    "資金・決済面はブラウザの Passkey session が必要です。")

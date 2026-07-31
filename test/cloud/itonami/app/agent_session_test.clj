@@ -224,16 +224,18 @@
         (testing "and payment-tools still refuses it, because the decision that
                   made local ownership enough was about the business surface —
                   not funding and settlement"
-          (with-redefs [agent-session/session-token (fn [_] token)]
+          (with-redefs [agent-session/human-session-token (fn [_] token)]
             (is (nil? (payment-tools/session configuration)))
             (is (false? (payment-tools/available? configuration)))))
 
-        (testing "a Passkey-enrolled user IS accepted there, so the refusal above
-                  is about :kind and not about the token being unreadable"
+        (testing "even after the user enrols a Passkey the AGENT token is still
+                  refused — the rule is about the session's :kind, not the
+                  user's enrolment, which is what it checked before and why the
+                  boundary held only where it happened not to be tested"
           (store/transact! assoc-in
                            [:identity :users "user-1" :passkey-enrolled?] true)
-          (with-redefs [agent-session/session-token (fn [_] token)]
-            (is (some? (payment-tools/session configuration)))))))))
+          (with-redefs [agent-session/human-session-token (fn [_] token)]
+            (is (nil? (payment-tools/session configuration)))))))))
 
 ;; The same line, held where it is actually crossed. Until 2026-07-31 it was
 ;; held only in the MCP adapter, while /api/funding/* used the gate that passes
@@ -264,3 +266,28 @@
                 r (request :get "/api/funding"
                            {:headers {"Cookie" (str identity/cookie-name "=" token)}})]
             (is (= 200 (:status r)))))))))
+
+;; One slot could not hold two sessions that are required to differ. Enrolling
+;; the CLI used to write an agent token into the item payment-tools reads, which
+;; silently disabled funding and settlement — the surface found a token, refused
+;; it for being :agent, and published no tools.
+(deftest enrolling-the-cli-does-not-disable-the-money-surface
+  (with-server
+    (fn []
+      (let [agent-token (get-in (enroll {:label "slot-probe"}) [:body :token])]
+        (store/transact! assoc-in
+                         [:identity :users "user-1" :passkey-enrolled?] true)
+        (let [human (:token (identity/issue-session! "user-1"))
+              configuration {:mcp {:session-token-env "UNSET_A"
+                                   :human-session-token-env "UNSET_B"}}]
+          (testing "the two slots resolve independently"
+            (with-redefs [agent-session/session-token (fn [_] agent-token)
+                          agent-session/human-session-token (fn [_] human)]
+              (is (some? (payment-tools/session configuration)))
+              (is (= :passkey (:kind (payment-tools/session configuration))))))
+
+          (testing "and an agent token in the human slot is refused on :kind,
+                    even though this user now has a Passkey"
+            (with-redefs [agent-session/session-token (fn [_] agent-token)
+                          agent-session/human-session-token (fn [_] agent-token)]
+              (is (nil? (payment-tools/session configuration))))))))))

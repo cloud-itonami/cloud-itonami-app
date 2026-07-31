@@ -795,6 +795,19 @@
   (true? (get-in (identity-state (store/snapshot))
                  [:users (:user-id session) :passkey-enrolled?])))
 
+(defn human-session?
+  "Whether this session belongs to a person at a browser rather than to a CLI or
+  an MCP client.
+
+  The money surface's rule, in one place. `payment-tools` and the server's
+  `require-human-session!` both ask it — and before 2026-07-31 both asked
+  something else instead: payment-tools checked `passkey-enrolled?`, which is
+  about the USER, not the session. On an install where the owner HAS enrolled a
+  Passkey — the normal case — an agent token passed that check, so the boundary
+  held only where it happened not to be tested."
+  [session]
+  (not= :agent (:kind session)))
+
 (defn may-act?
   "Whether this session has established who it is well enough to act.
 

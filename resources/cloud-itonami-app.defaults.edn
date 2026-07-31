@@ -51,7 +51,12 @@
  ;; The token is an app session token. It is read from this environment variable,
  ;; or from the login Keychain (service `cloud-itonami-app.mcp`, account
  ;; `session-token`) — never stored here.
- :mcp {:session-token-env "CLOUD_ITONAMI_MCP_SESSION"}
+ ;; Two slots, because the two surfaces need sessions that are required to
+ ;; differ: the agent one is minted by `auth login`, the human one has to belong
+ ;; to a Passkey-enrolled user (ADR-0009). Sharing one meant enrolling the CLI
+ ;; silently disabled funding and settlement.
+ :mcp {:session-token-env "CLOUD_ITONAMI_MCP_SESSION"
+       :human-session-token-env "CLOUD_ITONAMI_MCP_HUMAN_SESSION"}
 
  ;; 事業 (ADR-2607309600). A Business holds one key from each analysis plane —
  ;; BMC canvas, XMILE model, adopted blueprints, repo paths, LEI — so that the
