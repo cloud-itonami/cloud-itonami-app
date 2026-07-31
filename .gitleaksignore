@@ -1,0 +1,20 @@
+# gitleaks fingerprints that are false positives, listed one by one.
+#
+# Each is a `did:key:z…` in a test file. A did:key is a W3C DID whose method IS
+# "the identifier contains the public key" — there is no private half in it by
+# construction — and it is unavoidably shaped like `key:<long base58>`, which is
+# what the generic-api-key rule looks for.
+#
+# Fingerprints and not an allowlist regex, deliberately. A regex allowlist was
+# tried first: the initial version (regexTarget = "line") silenced a real secret
+# two lines from a DID, and the narrowed version could not be given a regression
+# test that reproduced reliably. An allowlist nobody can verify is worse than a
+# red scan. A fingerprint silences exactly one finding at one line of one commit
+# and nothing else, and a new DID has to be added here by somebody who looked.
+
+# test/cloud/itonami/app/credential_http_test.clj:29
+a6b86ad192e4fbfaac43ebd89dd7545340f05b6f:test/cloud/itonami/app/credential_http_test.clj:generic-api-key:29
+# test/cloud/itonami/app/credential_sd_jwt_test.clj:11
+fd00122126c26eb51f705d9b42cb518759e580e1:test/cloud/itonami/app/credential_sd_jwt_test.clj:generic-api-key:11
+# test/cloud/itonami/app/credential_test.clj:21
+8b1dc9f15ce5b5fb8e8a59701152a0927bc41687:test/cloud/itonami/app/credential_test.clj:generic-api-key:21

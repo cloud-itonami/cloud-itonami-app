@@ -166,5 +166,15 @@
         (let [r (request :post path {:body (json/write-str body)
                                      :headers {"Origin" origin}})]
           (is (not= 200 (:status r)) (str path " without a CSRF token"))))
-      (is (= [] (get-in (authed :get "/api/workspace/scheduler") [:body :items]))
-          "and nothing was written"))))
+      ;; NOT `(= [] items)`. This endpoint merges the app's own events with the
+      ;; MACHINE's calendar — the test above says so in as many words — so an
+      ;; empty list is an assertion about the developer's diary rather than about
+      ;; the app. It passed only on a machine with no calendar, and on one with
+      ;; a calendar it failed by printing the owner's real appointments into the
+      ;; failure output. (Measured 2026-07-31: fifteen of them.)
+      ;;
+      ;; What the assertion is actually for is that the rejected writes created
+      ;; nothing, so that is what it now says.
+      (let [items (get-in (authed :get "/api/workspace/scheduler") [:body :items])]
+        (is (not-any? #(= (:title morning) (:title %)) items)
+            "the rejected write created nothing")))))

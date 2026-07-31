@@ -16,6 +16,16 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
+      # Pinned, and not left to the runner's default. `kagitaba` signs with
+      # ML-DSA-65 (FIPS 204), which the JDK gained in 24; the runners default to
+      # 21, so every CI run since that dependency landed has failed with
+      # "ML-DSA-65 KeyPairGenerator not available" — eleven errors in
+      # contracts-test, on main, for everyone. It passed locally only because
+      # local `clojure` happened to pick up a newer JDK.
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "25"
       - uses: DeLaGuardo/setup-clojure@13.4
         with:
           cli: latest
