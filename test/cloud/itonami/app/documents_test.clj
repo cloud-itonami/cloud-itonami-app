@@ -4306,3 +4306,41 @@
           (is (empty? (filter #(= ":docx/text-runs-dropped" (:code %)) warned))
               (str "the export no longer reports the styling as dropped: "
                    (pr-str warned))))))))
+
+(deftest an-image-added-the-way-the-editor-adds-one-reaches-powerpoint
+  ;; `slides.pptx` has embedded images as `p:pic` with their own media part
+  ;; the whole time, and `slides.svg` draws them as a data URI. The editor
+  ;; could move an image's box and had no way to make one, so a picture
+  ;; could only arrive by importing a .pptx.
+  (with-state
+    (fn [_ object-store]
+      (let [;; A one-pixel PNG, which is a real one — a shape carrying bytes
+            ;; that are not an image would be a different test.
+            png (str "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR4"
+                     "2mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=")
+            {:keys [item]} (documents/create! :slides "写真" alice object-store)
+            payload (:payload (documents/content (:id item) alice object-store))
+            ;; Exactly what 画像を追加 pushes.
+            added (assoc-in payload ["slides/slides" 0 "slides/shapes"]
+                            [{"slides/id" "i1" "slides/shape" "image"
+                              "slides/x" 0.8 "slides/y" 0.8 "slides/w" 6 "slides/h" 4
+                              "slides/image-data" png
+                              "slides/media-type" "image/png"}])
+            saved (save! (:id item) added alice object-store)]
+        (is (:ok? saved))
+        (is (empty? (:warnings saved)) "an image is not a problem the validator has")
+        (let [back (:resource (documents/content (:id item) alice object-store))
+              shape (first (:slides/shapes (first (:slides/slides back))))]
+          ;; Through the plain-JSON projection and back: the kind is a
+          ;; keyword again and the bytes are unchanged.
+          (is (= :image (:slides/shape shape)))
+          (is (= png (:slides/image-data shape))))
+        (let [pptx (:bytes (documents/export (:id item) "pptx" alice object-store))
+              text (String. ^bytes pptx "ISO-8859-1")]
+          ;; A .pptx is a zip, and a zip names its entries in the clear. The
+          ;; media part is the evidence the picture travelled; before this
+          ;; there was nothing in the deck to travel.
+          (is (str/includes? text "ppt/media/") (str "no media part in " (count pptx) " bytes")))
+        ;; And the drawn slide carries it, which is what the editor shows.
+        (let [drawn (:slides (documents/content (:id item) alice object-store))]
+          (is (str/includes? (:svg (first drawn)) "data:image/png;base64,")))))))

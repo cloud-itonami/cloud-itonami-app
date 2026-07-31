@@ -2206,8 +2206,18 @@
               (value) => { shape['slides/fill'] = value; changed(true); })));
             card.append(box(shape));
           } else if (kind === 'image') {
-            card.append(make('span', 'surface-note', `画像（${shape['slides/id']}）`));
+            // The size, because a picture is the one shape that makes a
+            // deck heavy and every save writes all of it again. Base64 is
+            // four characters per three bytes.
+            const stored = String(shape['slides/image-data'] || '').length;
+            card.append(make('span', 'surface-note',
+              `画像（${shape['slides/id']}）${stored ? ` · ${bytes(Math.floor(stored * 3 / 4))}` : ''}`));
             card.append(box(shape));
+            card.append(removeButton(() => {
+              const shapes = slide['slides/shapes'];
+              shapes.splice(shapes.indexOf(shape), 1);
+              changed(true);
+            }));
           } else {
             // A component or a kind the renderer does not know. Its
             // position could be edited, and moving a shape nobody can see
@@ -2231,6 +2241,91 @@
           changed(true);
         });
         card.append(addRect);
+        // A picture. `slides.model/image` carries the bytes as base64 in
+        // the shape and `slides.pptx` embeds them as a `p:pic` with its own
+        // media part, so the format has been able to do this the whole
+        // time: the editor could move an image's box and had no way to make
+        // one, which meant a picture could only arrive by importing a .pptx.
+        //
+        // Base64 in the document, because that is where the model puts it —
+        // the deck travels whole, into a .pptx or an EDN export, with no
+        // second place the bytes live and nothing to re-resolve later. What
+        // it costs is that every save writes the picture again: the deck is
+        // one object and a version is the whole of it.
+        const imagePicker = make('input', null);
+        imagePicker.type = 'file';
+        imagePicker.accept = 'image/png,image/jpeg,image/gif,image/webp';
+        imagePicker.hidden = true;
+        imagePicker.addEventListener('change', async () => {
+          const file = imagePicker.files?.[0];
+          imagePicker.value = '';
+          if (!file) return;
+          const note = $('#drive-create-status');
+          // The types `slides.pptx` has an extension for. One it does not
+          // know is written as `.png` and PowerPoint opens a file whose
+          // bytes are not what its name says.
+          if (!imagePicker.accept.split(',').includes(file.type)) {
+            if (note) note.textContent = `${file.type || 'この形式'} は貼れません。PNG・JPEG・GIF・WebP のいずれかにしてください。`;
+            return;
+          }
+          // Every save rewrites the whole deck, so a large picture is a
+          // large write on every keystroke that follows it. The cap is
+          // stated rather than silently resized: resizing would hand back
+          // different bytes from the ones that were chosen.
+          const limit = 2 * 1024 * 1024;
+          if (file.size > limit) {
+            if (note) note.textContent = `画像は 2 MB までです（${bytes(file.size)}）。`;
+            return;
+          }
+          try {
+            const buffer = await file.arrayBuffer();
+            // In chunks: `String.fromCharCode(...array)` on a megabyte of
+            // bytes passes a million arguments and overflows the stack.
+            const view = new Uint8Array(buffer);
+            let binary = '';
+            for (let i = 0; i < view.length; i += 0x8000) {
+              binary += String.fromCharCode.apply(null, view.subarray(i, i + 0x8000));
+            }
+            const data = btoa(binary);
+            // The picture's own proportions, so it does not arrive
+            // stretched. `slides.svg` draws it with `preserveAspectRatio`
+            // and would letterbox it inside a wrong box; PowerPoint would
+            // not, and would stretch it.
+            const measured = await new Promise((resolve) => {
+              const probe = new Image();
+              probe.addEventListener('load',
+                () => resolve({w:probe.naturalWidth, h:probe.naturalHeight}));
+              probe.addEventListener('error', () => resolve(null));
+              probe.src = `data:${file.type};base64,${data}`;
+            });
+            const maxW = 6;
+            const maxH = 4;
+            let w = maxW;
+            let h = maxH;
+            if (measured && measured.w > 0 && measured.h > 0) {
+              const scale = Math.min(maxW / measured.w, maxH / measured.h);
+              w = Math.round(measured.w * scale * 100) / 100;
+              h = Math.round(measured.h * scale * 100) / 100;
+            }
+            slide['slides/shapes'] = slide['slides/shapes'] || [];
+            // What `slides.model/image` produces, defaults included.
+            slide['slides/shapes'].push({
+              'slides/id': `i${slide['slides/shapes'].length + 1}`,
+              'slides/shape': 'image',
+              'slides/x': 0.8, 'slides/y': 0.8, 'slides/w': w, 'slides/h': h,
+              'slides/image-data': data,
+              'slides/media-type': file.type
+            });
+            if (note) note.textContent = `${file.name} を貼りました。`;
+            changed(true);
+          } catch (error) {
+            if (note) note.textContent = error.message;
+          }
+        });
+        const addImage = make('button', 'tool-button', '画像を追加');
+        addImage.type = 'button';
+        addImage.addEventListener('click', () => imagePicker.click());
+        card.append(imagePicker, addImage);
         const addText = make('button', 'tool-button', 'テキストを追加');
         addText.type = 'button';
         addText.addEventListener('click', () => {
