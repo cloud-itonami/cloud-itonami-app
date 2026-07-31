@@ -208,6 +208,28 @@ rather than reporting `missing` for a place nobody said to look.
 The Portfolio pane reports whether a face resolves, not what it says. The Canvas
 pane is the first one that reads a face's contents.
 
+### The matrix — every business across every plane
+
+```bash
+GET /api/portfolio/matrix
+```
+
+One row per business, one column per plane (Canvas / riskiest gate / maturity /
+Loops / Repos / 実測). Every cell carries **which kind of nothing it is**, and the
+four never collapse into one: `unbound` (this business never named that face —
+fix it in Portfolio), `unresolvable` (it named one, but there is no workspace
+checkout — set `:workspace-root`), `missing` (resolvable and not there — generate
+it), `measured` (a real value). Metrics adds a fifth, `stale`, because it is the
+only plane carrying a date it can be late against.
+
+The counts under the table turn 「まだ何も測れていない」 into a number rather
+than a screen of grey cells.
+
+It is **its own endpoint and loads on demand**, not part of `/api/business` which
+runs at startup: computing it re-runs every bound XMILE model — plus one extra
+run per constant for the sensitivity sweep — and reads 4.8 MB of repository
+planes. Those planes are read once per request, not once per business.
+
 ### Canvas — read the fold, propose the change
 
 ```bash

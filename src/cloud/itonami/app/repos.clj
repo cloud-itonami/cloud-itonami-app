@@ -182,15 +182,25 @@
 
     :else {:state :resolved}))
 
-(defn snapshot
-  "Every repository this business is implemented in, joined against the two
-  generated planes on `:repo/path`."
-  [configuration session business-id]
+(defn planes
+  "Both generated planes, read once.
+
+  Separated from `snapshot` because they are 4.8 MB of EDN between them
+  (taxonomy 1.5 MB / maturity 3.3 MB, measured 2026-07-31) and the portfolio
+  matrix asks about every business in one request. Reading them per business
+  would multiply that by the number of businesses for no new information."
+  [configuration]
+  (let [ws (business/workspace configuration)
+        tax (index-by-path (read-plane ws taxonomy-path))
+        mat (index-by-path (read-plane ws maturity-path))]
+    {:ws ws :taxonomy tax :maturity mat :plane (plane-state ws tax mat)}))
+
+(defn snapshot-with
+  "`snapshot`, against planes somebody else already read."
+  [{:keys [taxonomy maturity plane]} session business-id]
   (when-let [b (business/business session business-id)]
-    (let [ws (business/workspace configuration)
-          tax (index-by-path (read-plane ws taxonomy-path))
-          mat (index-by-path (read-plane ws maturity-path))
-          plane (plane-state ws tax mat)
+    (let [tax taxonomy
+          mat maturity
           es (entries b)
           rows (if (= :resolved (:state plane))
                  (mapv (fn [e]
@@ -210,3 +220,9 @@
        :axes (mapv (fn [a] {:axis a :label (axis-labels a)}) axes)
        :repos rows
        :roll-up (roll-up rows)})))
+
+(defn snapshot
+  "Every repository this business is implemented in, joined against the two
+  generated planes on `:repo/path`."
+  [configuration session business-id]
+  (snapshot-with (planes configuration) session business-id))
