@@ -94,6 +94,9 @@
     (is (str/includes? js "data?.sync?.['last-result']?.blocks"))
     (is (str/includes? js "最大8 peers、peerごとに16 blocks"))
     (is (str/includes? js "peers を再割当"))
+    (is (str/includes? js "blockError?.['peer-feedback']"))
+    (is (str/includes? js "Block provider ${provider} を最大cooldownへ移行"))
+    (is (str/includes? js "local validation failure はpeerへ帰責しません"))
     (is (str/includes? js "sync:{'last-result':result}"))))
 
 (deftest bitcoin-invalid-branch-quarantine-is-human-readable

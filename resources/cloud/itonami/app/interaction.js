@@ -7112,9 +7112,18 @@
       }
       const blockDownload =
         data?.sync?.['last-result']?.blocks ?? data?.blocks;
+      const blockError = data?.sync?.['last-error'];
       if (!data?.['configured?']) {
         blockProtection.textContent =
           'Multi-peer block pipeline は未設定です。';
+      } else if (blockError?.['peer-feedback']) {
+        const provider = blockError?.['source-peer']?.host ?? 'unknown peer';
+        const outcome = blockError['block-validation-result'] === 'mutated'
+          ? '再取得可能な mutated body'
+          : '恒久的な consensus invalid block';
+        blockProtection.textContent =
+          `Block provider ${provider} を最大cooldownへ移行 — ${outcome}。` +
+          '別peerから同期を再開し、local validation failure はpeerへ帰責しません。';
       } else if (blockDownload) {
         const observations = blockDownload.observations ?? [];
         const failures = blockDownload.failures ?? [];

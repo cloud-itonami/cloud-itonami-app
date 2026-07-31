@@ -173,6 +173,39 @@
             :cycles 0}
            (sync/status options)))))
 
+(deftest failed-sync-retains-rejected-block-provider-evidence
+  (sync/clear-caches!)
+  (let [options
+        (sync/normalize-options
+         {:network :regtest :path (temporary-path)
+          :peer-sync
+          {:enabled? true :pool-path (str (temporary-path) ".peers")
+           :peers [{:host "invalid-body"}]}})
+        failure-data
+        {:type :bitcoin.consensus/bad-coinbase-amount
+         :block-validation-result :invalid
+         :invalid-block-hash "0000bad"
+         :consensus-invalid? true
+         :source-peer {:host "invalid-body" :port 18444 :network :regtest}
+         :peer-feedback :bitcoin.node/peer-invalid-block}]
+    (with-redefs
+     [sync/sync-cycle!
+      (fn [& _]
+        (throw (ex-info "rejected provider body" failure-data)))]
+      (let [error
+            (try
+              (sync/run-once! ::node options)
+              (catch clojure.lang.ExceptionInfo value value))
+            retained (:last-error (sync/status options))]
+        (is (= :bitcoin.consensus/bad-coinbase-amount
+               (:type (ex-data error))))
+        (is (= (select-keys
+                failure-data
+                [:type :block-validation-result :invalid-block-hash
+                 :consensus-invalid? :source-peer :peer-feedback])
+               (dissoc retained :message)))
+        (is (= "rejected provider body" (:message retained)))))))
+
 (def ^:private http-origin "http://localhost:1338")
 (def ^:private csrf "bitcoin-sync-csrf")
 (defonce ^:private http-client (HttpClient/newHttpClient))

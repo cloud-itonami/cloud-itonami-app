@@ -265,15 +265,24 @@
                   (update :cycles inc)))
       result)
     (catch Throwable error
-      (swap! runtime
-             #(-> %
-                  (assoc :status :failed :running? false
-                         :completed-at (str (java.time.Instant/now))
-                         :last-error
-                         {:type (or (:type (ex-data error))
-                                    :bitcoin.node/sync-failed)
-                          :message (.getMessage error)})
-                  (update :cycles inc)))
+      (let [data (ex-data error)
+            evidence
+            (select-keys
+             data
+             [:block-validation-result :block-hash :invalid-block-hash
+              :consensus-invalid? :retryable? :source-peer
+              :peer-feedback])]
+        (swap! runtime
+               #(-> %
+                    (assoc :status :failed :running? false
+                           :completed-at (str (java.time.Instant/now))
+                           :last-error
+                           (merge
+                            {:type (or (:type data)
+                                       :bitcoin.node/sync-failed)
+                             :message (.getMessage error)}
+                            evidence))
+                    (update :cycles inc))))
       (throw error))))
 
 (defn status [options]
