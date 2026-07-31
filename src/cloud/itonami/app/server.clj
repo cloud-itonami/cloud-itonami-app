@@ -22,6 +22,7 @@
             [cloud.itonami.app.operator :as operator]
             [cloud.itonami.app.funding :as funding]
             [cloud.itonami.app.identity :as identity]
+            [cloud.itonami.app.fax :as fax]
             [cloud.itonami.app.lawfirm :as lawfirm]
             [cloud.itonami.app.loops :as loops]
             [cloud.itonami.app.metrics :as business-metrics]
@@ -2176,6 +2177,40 @@
             ;; client has to be able to render something when the record is
             ;; off — and every other route refuses, because a summary of a
             ;; record this app does not hold has no honest value to return.
+            (and (= method "GET") (= path "/api/workspace/lawfirm/fax"))
+            (do
+              (require-app-session! exchange)
+              (send! exchange 200 (fax/status)))
+
+            ;; The bytes travel in the request; the DESTINATION does not, and
+            ;; cannot. It is read from the practice record by `dispatch-plan`.
+            ;; A caller can choose which 送達 to execute and nothing about
+            ;; where it goes.
+            (and (= method "POST") (= path "/api/workspace/lawfirm/fax/dispatch"))
+            (let [session (require-app-session! exchange)
+                  request (read-json exchange)]
+              (require-origin! exchange config)
+              (require-csrf! exchange session)
+              (send! exchange 200
+                     (fax/dispatch!
+                      {:transmission-id (get request "transmission-id")
+                       :bytes (.decode (java.util.Base64/getDecoder)
+                                       ^String (str (get request "document-base64")))
+                       :filename (get request "filename")
+                       :today (subs (store/now) 0 10)})))
+
+            ;; The provider's callback. No session — a fax machine has none.
+            ;; Authenticated by the configured token in the path, and bounded
+            ;; by what it can do: record a status against a 送達 this practice
+            ;; already sent, resolved by the provider's own GUID.
+            (and (= method "POST")
+                 (id-from-path path #"/api/fax/callback/([^/]+)"))
+            (send! exchange 200
+                   (fax/on-callback!
+                    {:token (id-from-path path #"/api/fax/callback/([^/]+)")
+                     :payload (slurp (.getRequestBody exchange))
+                     :today (subs (store/now) 0 10)}))
+
             (and (= method "GET") (= path "/api/workspace/lawfirm"))
             (do
               (require-app-session! exchange)

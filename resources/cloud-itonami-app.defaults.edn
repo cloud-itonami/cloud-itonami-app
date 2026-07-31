@@ -159,6 +159,31 @@
  ;; would be a secret in git, and this particular one is what lets a caller claim a
  ;; subject consented. The actor refuses (503) when its own side is unconfigured, which
  ;; is the honest failure; this app does not pre-emptively refuse on the actor's behalf.
+ ;; Dropbox Fax as the practice's outbound fax transport
+ ;; (`cloud.itonami.app.fax`). OFF by default: enabling it means this machine
+ ;; can put a client's document on a phone line.
+ ;;
+ ;; The API takes Basic auth with the ACCOUNT'S OWN PASSWORD, so the password
+ ;; is not here and must never be. Only the coordinates that locate it are:
+ ;; the credential lives in the OS keychain under `:keychain-service` with
+ ;; `:username` as the account.
+ ;;
+ ;;   security add-generic-password -s dropbox-fax -a you@example.jp -w
+ ;;
+ ;; `:account-guid` comes from app.hellofax.com/account/apiInfo. API access is
+ ;; paid-plan only and must be switched on by Dropbox support first.
+ ;; `:callback-token` is a shared secret in the callback URL — weak, and what
+ ;; the provider's callback mechanism affords. What bounds it is reach: a
+ ;; callback can record a status against a 送達 this practice already sent
+ ;; and nothing else.
+ :fax {:enabled? false
+       :username nil
+       :account-guid nil
+       :keychain-service "dropbox-fax"
+       :callback-token nil
+       :cover-from nil
+       :cover-message nil}
+
  ;; The legal-practice record surface (`cloud.itonami.app.lawfirm`).
  ;;
  ;; OFF by default. Enabling it means this installation holds a law practice's
