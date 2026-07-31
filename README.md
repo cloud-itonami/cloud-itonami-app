@@ -420,6 +420,9 @@ transition precedence. Compact proof-of-work targets preserve Core's exact
 initial-context header validation. The `assumevalid` fast path preserves
 Core's 256-bit `GetBlockProofEquivalentTime` rounding and does not skip Script
 checks until the strict two-week burial boundary has actually been crossed.
+Transaction versions retain Core's unsigned 32-bit wire semantics, preserving
+CSV and BIP68 validation above `0x7fffffff`; the embedded Script verifier also
+matches `SCRIPT_VERIFY_CONST_SCRIPTCODE`.
 The embedded UTXO database uses Core-identical unspendable-output pruning and
 transactionally upgrades legacy state to schema v7, requiring authenticated
 reindex if impossible spend history is detected.
