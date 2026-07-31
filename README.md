@@ -406,7 +406,9 @@ disk-backed, resumable Core full-history differential verifier and Core-aligned
 stripped transaction/output-script boundaries. Input values, transaction input
 totals, and accumulated block fees use Core's exact `MoneyRange`. Weight-derived
 witness bounds also preserve consensus-valid unknown witness versions for
-future soft-fork compatibility. The embedded UTXO database uses Core-identical
+future soft-fork compatibility, while block validation rejects all witness
+serialization before the configured SegWit activation height even when a
+coinbase commitment is present. The embedded UTXO database uses Core-identical
 unspendable-output pruning and transactionally upgrades legacy state to schema
 v7, requiring authenticated reindex if impossible spend history is detected.
 
