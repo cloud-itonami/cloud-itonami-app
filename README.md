@@ -398,7 +398,9 @@ from the durable locator, compares a bounded health-scored peer set, validates
 and atomically commits headers, then downloads a bounded block segment and
 fully validates block, Script, UTXO, chainwork, and reorg transitions locally.
 DNS never supplies consensus. Peer selection/cooldown history is checksummed
-and persisted beside the chainstate by default.
+and persisted beside the chainstate by default. Sequential and atomic batch
+header paths reject obsolete block versions at the buried BIP34, BIP66, and
+BIP65 activation heights.
 
 Owner/admin users can trigger the same exclusive cycle with
 `POST /api/bitcoin/consensus/sync`; concurrent attempts return `409`.
