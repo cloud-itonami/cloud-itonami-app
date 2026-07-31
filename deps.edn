@@ -115,6 +115,15 @@
   {:git/url "https://github.com/kotoba-lang/drive.git"
    :git/sha "20f6f4940a60061b692aa53ae501e2d36f8bf010"}
 
+  ;; The practice record this app can host. `cloud-itonami/lawfirm` owns every
+  ;; rule about what a practice may do; `cloud.itonami.app.lawfirm` owns only
+  ;; the effects — the archive inbox as arrivals, the Drive as folders, and
+  ;; `state.edn` as the durable seam its `Store` protocol asks for. The
+  ;; surface ships disabled, like every :authority here.
+  io.github.cloud-itonami/lawfirm
+  {:git/url "https://github.com/cloud-itonami/lawfirm.git"
+   :git/sha "eb816888680868edb319446e3c37953a808e6a7b"}
+
   ;; The three document surfaces the Drive can create. Each is a portable
   ;; model plus an office-envelope wire namespace, and nothing in any of them
   ;; knows about drive — `cloud.itonami.app.documents` is where they meet,

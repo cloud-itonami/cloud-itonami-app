@@ -159,6 +159,18 @@
  ;; would be a secret in git, and this particular one is what lets a caller claim a
  ;; subject consented. The actor refuses (503) when its own side is unconfigured, which
  ;; is the honest failure; this app does not pre-emptively refuse on the actor's behalf.
+ ;; The legal-practice record surface (`cloud.itonami.app.lawfirm`).
+ ;;
+ ;; OFF by default. Enabling it means this installation holds a law practice's
+ ;; 一件記録 — client identities, 利益相反 clearances, 預り金 balances, 送達先
+ ;; — in `state.edn` beside everything else in the data directory. That is a
+ ;; deployment decision about what this machine is, not a feature toggle.
+ ;;
+ ;; The practice's own gate (`lawfirm.governor`) is unaffected by this flag:
+ ;; it refuses the same operations whether the surface is on or off. This
+ ;; flag decides only whether this app hosts a record at all.
+ :lawfirm {:enabled? false}
+
  :authorities
  {:esim {:enabled? false
          :endpoint nil    ; cloud-itonami/cloud-itonami-esim
