@@ -52,9 +52,15 @@
   asked about."
   (:require [clojure.data.json :as json]
             [clojure.string :as str]
+            ;; for the pinned @context bytes. One definition shared rather than a
+            ;; second read of the same file: an issuer and a verifier that pin
+            ;; different bytes for a context URL disagree about the graph, and two
+            ;; definitions in one process is the easiest way to arrange that.
+            [cloud.itonami.app.credential :as credential]
             [data-integrity.core :as di]
             [data-integrity.ecdsa :as ecdsa]
             [data-integrity.eddsa :as eddsa]
+            [data-integrity.eddsa-rdfc :as eddsa-rdfc]
             [did.core :as did]
             [ed25519.core :as ed]
             [status-list.core :as sl])
@@ -201,7 +207,16 @@
 ;; the key, and a disagreement is named as such.
 (def cryptosuites
   {"eddsa-jcs-2022" {:suite eddsa/suite :curve :ed25519 :prefix "z6Mk"}
-   "ecdsa-jcs-2019" {:suite ecdsa/suite :curve :p256    :prefix "zDna"}})
+   "ecdsa-jcs-2019" {:suite ecdsa/suite :curve :p256    :prefix "zDna"}
+   ;; eddsa-rdfc-2022 is Ed25519 like the jcs variant -- same curve, same key
+   ;; prefix; only the transformation differs (RDF canonicalization instead of
+   ;; JCS). It is the more widely implemented of the two, so a foreign credential
+   ;; is MORE likely to arrive in this form than the other, and rejecting it as
+   ;; "not implemented" was turning away the common case.
+   ;;
+   ;; It needs pinned contexts, which `needs-contexts?` marks so the call sites can
+   ;; supply them without testing the suite's name.
+   "eddsa-rdfc-2022" {:suite eddsa-rdfc/suite :curve :ed25519 :prefix "z6Mk"}})
 
 (defn suite-for
   "The cryptosuite a proof names, or nil for one this app does not implement."
@@ -401,6 +416,8 @@
             result (di/verify-credential
                     document
                     {:suite (:suite chosen)
+                     :suite-opts (when (:needs-contexts? (:suite chosen))
+                                   {:contexts @credential/pinned-contexts})
                      :resolve-key (resolve-external-key
                                    configuration (:curve chosen))})]
         (when-not (:verified result)
@@ -497,6 +514,8 @@
           (let [result (di/verify-credential
                         presented
                         {:suite (:suite chosen)
+                         :suite-opts (when (:needs-contexts? (:suite chosen))
+                                       {:contexts @credential/pinned-contexts})
                          :resolve-key (resolve-external-key
                                        configuration (:curve chosen))})]
         (if-not (:verified result)

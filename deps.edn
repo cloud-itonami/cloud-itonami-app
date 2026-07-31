@@ -53,7 +53,7 @@
   ;; supported now, and that message was the last thing making it untrue.
   io.github.kotoba-lang/org-w3-vc-data-integrity
   {:git/url "https://github.com/kotoba-lang/org-w3-vc-data-integrity.git"
-   :git/sha "2c9867243bd8385ff39693c4f3f7e28632eb1e5b"}
+   :git/sha "37ccc89cb75296020d8dc7df6436399fc147f026"}
   ;; The -rdfc- tower. Present so the credential's own tests can prove that its
   ;; claims survive RDF canonicalization -- the failure this context exists to
   ;; prevent is invisible under JCS.

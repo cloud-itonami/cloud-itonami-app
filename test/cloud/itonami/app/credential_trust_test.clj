@@ -493,4 +493,19 @@
   (is (= :p256 (trust/curve-of (p256-multibase))))
   (is (nil? (trust/curve-of "zQ3shSomethingElse")))
   (is (nil? (trust/curve-of nil)))
-  (is (= #{"eddsa-jcs-2022" "ecdsa-jcs-2019"} (set (keys trust/cryptosuites)))))
+  (testing "the allowlist is pinned so that ADDING a cryptosuite is a deliberate
+            act with a test change, not something that drifts in. eddsa-rdfc-2022
+            was added because it is the more widely implemented of the two Ed25519
+            suites, so a foreign credential is more likely to arrive in that form
+            than in the JCS one — rejecting it as unsupported turned away the
+            common case."
+    (is (= #{"eddsa-jcs-2022" "ecdsa-jcs-2019" "eddsa-rdfc-2022"}
+           (set (keys trust/cryptosuites)))))
+  (testing "and the rdfc entry is Ed25519 with the same key prefix — only the
+            transformation differs"
+    (let [e (get trust/cryptosuites "eddsa-rdfc-2022")]
+      (is (= :ed25519 (:curve e)))
+      (is (= "z6Mk" (:prefix e)))
+      (is (true? (:needs-contexts? (:suite e)))
+          "and it declares that it needs pinned contexts, so call sites can supply
+           them without testing the suite's name"))))

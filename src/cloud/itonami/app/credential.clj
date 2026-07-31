@@ -58,10 +58,14 @@
   same Ed25519 key, because `did-web-document` embeds it. Naming an unpublished
   `did:web` would produce credentials nobody outside this process could verify,
   so the fallback is the self-describing form rather than the aspirational one."
-  (:require [clojure.string :as str]
+  (:require [clojure.data.json :as json]
+            [clojure.java.io :as io]
+            [clojure.string :as str]
             [cloud.itonami.app.capability :as capability]
             [cloud.itonami.app.store :as store]
             [data-integrity.core :as di]
+            [data-integrity.eddsa :as eddsa]
+            [data-integrity.eddsa-rdfc :as eddsa-rdfc]
             [ed25519.core :as ed]
             [status-list.core :as sl])
   (:import [java.time Instant]
@@ -207,6 +211,49 @@
                       {:type :credential/unknown-verification-method
                        :verification-method vm})))
     (ed/did-key->pubkey (str "did:key:" expected))))
+
+;; ── which cryptosuites this app will verify ──────────────────────────────────
+
+(def pinned-contexts
+  "The `@context` documents needed to canonicalize RDF, as BYTES in this repo.
+
+  `org-w3-json-ld-api` never fetches a remote context, and that is the point: a
+  fetched `@context` lets its host change what a signature covers *after* signing,
+  with no key involved and nothing to detect. The document would still verify —
+  against a different graph.
+
+  So the bytes are pinned here. The operational consequence is worth stating plainly:
+  an issuer and a verifier who pin DIFFERENT bytes for the same URL disagree about
+  the graph, and the proof fails with no indication why. If this file is ever
+  updated, credentials signed against the old bytes may stop verifying."
+  (delay {credentials-context
+          (json/read-str (slurp (io/resource "cloud/itonami/app/contexts/credentials-v2.jsonld")))}))
+
+(def accepted-cryptosuites
+  "The ALLOWLIST of cryptosuites this app will verify a proof against.
+
+  Both, deliberately. This app issues `eddsa-jcs-2022` today; accepting
+  `eddsa-rdfc-2022` as well is what makes a later change of issuance suite possible
+  at all — without it, one credential naming the other suite would throw rather than
+  be skipped, so a mixed corpus (which any cutover produces) would be unverifiable.
+
+  An allowlist rather than \"whatever the proof names\": `cryptosuite` is a field of
+  the proof, so it is chosen by whoever produced the document. Selecting from it
+  unconditionally would let an attacker pick the weakest suite a verifier supports."
+  [eddsa/suite eddsa-rdfc/suite])
+
+(defn verify-opts
+  "The options every verify in this app uses.
+
+  One definition rather than the same map written at each call site: there are five,
+  across two namespaces, and a per-site change is how one of them keeps the old
+  behaviour unnoticed."
+  ([] (verify-opts nil))
+  ([extra]
+   (merge {:resolve-key local-resolver
+           :accept-suites accepted-cryptosuites
+           :suite-opts {:contexts @pinned-contexts}}
+          extra)))
 
 ;; ── status list (revocation) ─────────────────────────────────────────────────
 
@@ -389,10 +436,10 @@
   un-revoke their own credential — the hazard
   `status-list-credential` already names, arriving from the other direction."
   [credential status-list]
-  (let [list-result (di/verify-credential status-list {:resolve-key local-resolver})]
+  (let [list-result (di/verify-credential status-list (verify-opts))]
     (if-not (:verified list-result)
       {:verified false :valid? false :reason :status-list-unverifiable}
-      (let [result (di/verify-credential credential {:resolve-key local-resolver})]
+      (let [result (di/verify-credential credential (verify-opts))]
         (if-not (:verified result)
           {:verified false :valid? false :reason (:reason result)}
           (let [entry (get credential "credentialStatus")
@@ -426,7 +473,7 @@
    ;; the REVOCATION check. A revoked credential verified as valid over HTTP. The
    ;; signature succeeding is what made it invisible.
    (let [doc (di/stringify credential)
-         result (di/verify-credential doc {:resolve-key local-resolver})]
+         result (di/verify-credential doc (verify-opts))]
      (if-not (:verified result)
        {:verified false :valid? false :reason (:reason result)}
        (let [entry (get doc "credentialStatus")
