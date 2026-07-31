@@ -242,6 +242,30 @@ This does **not** close the gap that the leverage ledgers model repository
 backlog rather than business economics — it routes around it for models that
 exist, and that limit is still stated on the ledger section of the same pane.
 
+## Maturity: the second markdown blob, opened
+
+`maturity-scores.edn` had the same shape as the canvas projection before Phase 2:
+a markdown table wrapped in `:doc/body`, readable and unqueryable, so no consumer
+outside `70-tools/bmc` could read a score at all. It was recorded as an open gap
+when Phase 4 landed. The fix is the same one Phase 2 used — the tool that already
+computes the numbers emits them as data (`gftd score datoms`) — and the Canvas
+pane reads them, because three of the five BMC dimensions are computed from the
+very blocks and hypotheses it renders.
+
+Two facts travel that the markdown could not carry.
+
+**`source`: computed or entered.** Eleven of the fourteen dimensions are
+judgements recorded in `maturity-facts.edn`; three are derived from the canvas
+and the ledger. The markdown flattened both into one row of decimals.
+
+**`recorded?`: was the judgement actually made.** `score-product` reads facts
+with a 0 default, so an unrecorded dimension scores as the *worst* value and the
+composite absorbs it silently. Measured on 2026-07-30 this is **latent, not
+firing** — all twelve products carry all eleven fact dimensions — and it is
+carried anyway, because the first product added without facts would otherwise
+appear assessed and poor rather than unassessed. The projection reports the
+arithmetic; it does not change it.
+
 ## Consequences
 
 - A business is created and bound by hand. Nothing is derived — which repo or

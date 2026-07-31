@@ -263,6 +263,72 @@
     (item-present? c proposal) :landed
     :else :awaiting-governor))
 
+(def maturity-path "90-docs/business/maturity-scores.datoms.edn")
+
+(defn maturity
+  "This product's BMC / YC maturity score, from the generated projection.
+
+  The score is OF the canvas — three of its five BMC dimensions (completeness,
+  hypothesis, validation) are computed from the very blocks and hypotheses this
+  pane renders — so it belongs here rather than beside traffic metrics.
+
+  Two things the projection carries that the old markdown table could not, and
+  that this function passes straight through:
+
+  `:source` per dimension — `:auto` (computed from the canvas and the ledger) or
+  `:facts` (a judgement somebody recorded). Eleven of the fourteen are
+  judgements, and a reader comparing two products should not have to guess which.
+
+  `:recorded?` — whether that judgement was actually entered. The generator reads
+  facts with a 0 default, so an unrecorded dimension scores as the worst value
+  rather than as absent. Measured 2026-07-30 nothing is currently unrecorded; the
+  flag is rendered anyway, because the first product added without facts would
+  otherwise look assessed and poor rather than unassessed."
+  [configuration product]
+  (let [ws (business/workspace configuration)]
+    (cond
+      (nil? product)
+      {:state :unbound :detail "この事業には canvas が紐付いていません"}
+
+      (not= :present (:state ws))
+      {:state :unresolvable :source maturity-path :detail (:detail ws)}
+
+      :else
+      (let [f (io/file (:file ws) maturity-path)]
+        (if-not (.isFile f)
+          {:state :missing :source maturity-path
+           :detail (str maturity-path " が workspace にありません。superproject で "
+                        "`nbb 70-tools/bmc/bin/gftd.cljs score datoms` を実行すると生成されます")}
+          (let [tx (try (filterv map? (edn/read-string (slurp f)))
+                        (catch Exception _ unreadable))]
+            (cond
+              (identical? unreadable tx)
+              {:state :unreadable :source maturity-path
+               :detail (str maturity-path " を読めませんでした")}
+
+              :else
+              (let [header (first (filter :projection/id tx))
+                    row (first (filter #(= product (:score/product %)) tx))
+                    dims (->> tx
+                              (filter #(= product (:dim/product %)))
+                              (mapv (fn [d]
+                                      {:name (kw->str (:dim/name d))
+                                       :value (:dim/value d)
+                                       :source (:dim/source d)
+                                       :recorded? (:dim/recorded? d)})))]
+                (if (nil? row)
+                  {:state :missing :source maturity-path
+                   :detail (str (kw->str product) " はこの投影にありません"
+                                "（対象は gftd portfolio の product のみ）")}
+                  {:state :resolved :source maturity-path
+                   :as-of (:projection/as-of header)
+                   :bmc (:score/bmc row)
+                   :yc (:score/yc row)
+                   :unrecorded-dims (:score/unrecorded-dims row)
+                   :unrecorded (vec (:score/unrecorded row))
+                   :note (:score/note row)
+                   :dims dims})))))))))
+
 (defn snapshot
   "The canvas read model for one business, with its proposals and their derived
   states."
@@ -275,6 +341,7 @@
          :business (select-keys b [:business/id :business/slug :business/name
                                    :business/canvas])
          :canvas c
+         :maturity (maturity configuration (:business/canvas b))
          :authority ledger-authority
          :proposals (mapv (fn [p]
                             (let [st (proposal-state c p)]

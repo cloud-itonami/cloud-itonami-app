@@ -229,6 +229,17 @@ and governed; this app has no governor, so there is no route that appends to it 
 not one that fails, one that does not exist. A proposal is recorded here and
 rendered as the exact `gftd` command that would apply it.
 
+**The canvas carries its own maturity score.** Three of the five BMC dimensions
+(completeness, hypothesis, validation) are computed from the very blocks and
+hypotheses this pane renders, so `90-docs/business/maturity-scores.datoms.edn` is
+read here. Fourteen dimensions come back, each labelled `auto` (computed) or
+`facts` (a judgement somebody entered) — eleven are judgements, and a reader
+comparing two products should not have to guess which. Each also carries whether
+that judgement was **recorded**: the generator reads absent facts as 0, so an
+unassessed dimension would otherwise read as one assessed and found lacking. As
+of 2026-07-30 nothing is unrecorded across the twelve products; the flag exists
+for the day a thirteenth is added.
+
 **Whether a proposal landed is measured, not stored.** `awaiting-governor` means
 the value is not in the projection; `landed` means it is, read back out of the
 regenerated projection; `unverifiable` means there is no checkout to read.
