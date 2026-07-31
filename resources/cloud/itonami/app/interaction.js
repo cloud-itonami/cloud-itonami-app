@@ -7090,7 +7090,9 @@
     const renderBitcoinConsensus = (data) => {
       const target = $('#bitcoin-consensus-state');
       const protection = $('#bitcoin-headers-presync-state');
+      const blockProtection = $('#bitcoin-block-download-state');
       protection.hidden = false;
+      blockProtection.hidden = false;
       if (!data?.['configured?']) {
         protection.textContent =
           'Embedded consensus は未設定です。Bitcoin Core が既定の検証境界です。';
@@ -7105,6 +7107,23 @@
       } else {
         protection.textContent =
           'このbackendでは header pre-sync 状態を利用できません。';
+      }
+      const blockDownload =
+        data?.sync?.['last-result']?.blocks ?? data?.blocks;
+      if (!data?.['configured?']) {
+        blockProtection.textContent =
+          'Multi-peer block pipeline は未設定です。';
+      } else if (blockDownload) {
+        const observations = blockDownload.observations ?? [];
+        const failures = blockDownload.failures ?? [];
+        blockProtection.textContent =
+          `Block pipeline — ${blockDownload.downloaded ?? 0} blocks、` +
+          `${observations.length} peers 成功、${failures.length} peers を再割当。` +
+          `検証・commit window ${blockDownload.windows ?? 0}。`;
+      } else {
+        blockProtection.textContent =
+          'Block pipeline 待機中 — 最大8 peers、peerごとに16 blocks、' +
+          '端末内ではchain順に検証・commitします。';
       }
       target.textContent = JSON.stringify(data, null, 2);
     };
@@ -7131,7 +7150,11 @@
           '/api/bitcoin/consensus/sync',
           {},
           true);
-        renderBitcoinConsensus(result?.consensus || result);
+        renderBitcoinConsensus(
+          result?.consensus
+            ? {...result.consensus, 'configured?':true,
+              sync:{'last-result':result}}
+            : result);
       } catch (error) {
         target.textContent = error.message;
       } finally {

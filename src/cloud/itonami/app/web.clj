@@ -1544,6 +1544,9 @@
           [:div {:class "security-callout"
                  :id "bitcoin-headers-presync-state"
                  :role "status" :aria-live "polite" :hidden true}]
+          [:div {:class "security-callout"
+                 :id "bitcoin-block-download-state"
+                 :role "status" :aria-live "polite" :hidden true}]
           [:pre {:class "worker-output" :id "bitcoin-consensus-state"}
            "Bitcoin node を確認していません。"]]]
         [:section {:class "view" :data-view-panel "storage" :hidden true}

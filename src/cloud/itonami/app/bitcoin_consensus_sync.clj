@@ -65,7 +65,11 @@
                           :maximum-discovered-peers)
         peer-timeout-ms
         (bounded-integer! (or (:peer-timeout-ms raw) 10000) 100 120000
-                          :peer-timeout-ms)]
+                          :peer-timeout-ms)
+        block-batch-timeout-ms
+        (bounded-integer!
+         (or (:block-batch-timeout-ms raw) 30000)
+         1000 120000 :block-batch-timeout-ms)]
     (when-not (contains? peer/network-configuration network)
       (fail! :bitcoin.node/sync-configuration
              "Bitcoin consensus sync network is unsupported."
@@ -146,7 +150,8 @@
        :max-blocks-per-cycle max-blocks
        :discovery-timeout-ms discovery-timeout-ms
        :maximum-discovered-peers maximum-discovered
-       :peer-timeout-ms peer-timeout-ms})))
+       :peer-timeout-ms peer-timeout-ms
+       :block-batch-timeout-ms block-batch-timeout-ms})))
 
 (defn configured?
   [options]
@@ -190,55 +195,23 @@
                        (assoc % key (atom (persisted-pool options)))))
              key))))
 
-(defn- failure-evidence [configuration error elapsed-ms]
-  {:peer (select-keys configuration [:host :port :network :source :anchor?])
-   :type (or (:type (ex-data error)) :bitcoin.node/peer-error)
-   :elapsed-ms elapsed-ms})
-
-(defn- sync-blocks-with-failover!
+(defn- sync-blocks-with-pool!
   [node pool-atom options]
   (if-not (seq (disk-consensus/pending-best-chain-blocks node 1))
     {:status :synced :downloaded 0 :more? false
      :consensus (disk-consensus/consensus-status node)}
-    (let [now-ms (System/currentTimeMillis)
-          candidates (peer-pool/candidates
-                      @pool-atom now-ms (:maximum-peers options))]
-      (loop [remaining candidates failures []]
-        (if-let [configuration (first remaining)]
-          (let [started (System/nanoTime)
-                attempt
-                (try
-                  {:result
-                   (let [connection (peer/connect! configuration)]
-                     (try
-                       (let [result
-                             (disk-consensus/sync-blocks!
-                              node connection (quot now-ms 1000)
-                              {:max-blocks (:max-blocks-per-cycle options)})
-                             elapsed-ms
-                             (/ (- (System/nanoTime) started) 1e6)]
-                         (swap! pool-atom peer-pool/record-success
-                                configuration now-ms elapsed-ms
-                                (get-in connection
-                                        [:peer-version :services]))
-                         result)
-                       (finally
-                         (peer/close! connection))))}
-                  (catch Throwable error
-                    {:error error}))]
-            (if-let [result (:result attempt)]
-              result
-              (let [error (:error attempt)
-                    elapsed-ms (/ (- (System/nanoTime) started) 1e6)
-                    evidence (failure-evidence
-                              configuration error elapsed-ms)]
-                (swap! pool-atom peer-pool/record-failure
-                       configuration now-ms (:type evidence) elapsed-ms)
-                (recur (subvec remaining 1)
-                       (conj failures evidence)))))
-          (fail! :bitcoin.node/block-sync-failed
-                 "Every eligible Bitcoin block peer failed."
-                 {:failures failures}))))))
+    (let [now-ms (System/currentTimeMillis)]
+      (disk-consensus/sync-blocks-managed!
+       node pool-atom (quot now-ms 1000)
+       {:max-blocks (:max-blocks-per-cycle options)
+        :maximum-peers (:maximum-peers options)
+        :parallel-peers
+        (min peer/maximum-block-download-peers
+             (:maximum-peers options))
+        :per-peer-limit 16
+        :batch-timeout-ms (:block-batch-timeout-ms options)
+        :now-ms now-ms
+        :pool-path (:pool-path options)}))))
 
 (defn sync-cycle!
   "Run one headers-first, fully validating, bounded synchronization cycle."
@@ -252,7 +225,7 @@
               :required-successes (:required-successes options)
               :max-batches (:max-header-batches options)
               :pool-path (:pool-path options)})
-            blocks (sync-blocks-with-failover! node pool-atom options)]
+            blocks (sync-blocks-with-pool! node pool-atom options)]
         {:status (if (:more? blocks) :batch-limit :synced)
          :headers headers
          :blocks blocks

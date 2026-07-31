@@ -113,43 +113,40 @@
         (is (= [:headers :pending] @order))
         (is (= 1 @saved))))))
 
-(deftest block-download-fails-over-without-bypassing-local-validation
+(deftest block-download-delegates-to-managed-multi-peer-validation
   (let [path (str (temporary-path) ".peers.edn")
         options
         (sync/normalize-options
-         {:network :mainnet :path (temporary-path)
+        {:network :mainnet :path (temporary-path)
           :peer-sync
           {:enabled? true :pool-path path :maximum-peers 2
            :peers [{:host "203.0.113.20" :port 8333}
                    {:host "198.51.100.42" :port 8333}]}})
         pool (atom (peer-pool/create (:operator-peers options)))
-        connections (atom [])
-        closed (atom [])
         validation-calls (atom 0)]
     (with-redefs
      [disk-consensus/sync-headers-managed!
       (fn [_ _ _ _] {:status :synced :accepted 1})
       disk-consensus/pending-best-chain-blocks
       (fn [_ _] [[1 2 3]])
-      peer-pool/candidates
-      (fn [_ _ _] (:operator-peers options))
-      peer/connect!
-      (fn [configuration]
-        (swap! connections conj (:host configuration))
-        (if (= "203.0.113.20" (:host configuration))
-          (throw (ex-info "first peer unavailable"
-                          {:type :bitcoin.node/peer-timeout}))
-          {:peer-version {:services peer/node-network-service}
-           :host (:host configuration)}))
-      peer/close!
-      (fn [connection] (swap! closed conj (:host connection)))
-      disk-consensus/sync-blocks!
-      (fn [node connection _ passed]
+      disk-consensus/sync-blocks-managed!
+      (fn [node actual-pool _ passed]
         (is (= ::node node))
-        (is (= "198.51.100.42" (:host connection)))
+        (is (= pool actual-pool))
         (is (= 32 (:max-blocks passed)))
+        (is (= 2 (:maximum-peers passed)))
+        (is (= 2 (:parallel-peers passed)))
+        (is (= 16 (:per-peer-limit passed)))
+        (is (= 30000 (:batch-timeout-ms passed)))
+        (is (= path (:pool-path passed)))
+        (is (integer? (:now-ms passed)))
         (swap! validation-calls inc)
-        {:status :synced :downloaded 1 :more? false})
+        {:status :synced :downloaded 1 :more? false
+         :observations
+         [{:peer {:host "198.51.100.42"} :downloaded 1}]
+         :failures
+         [{:peer {:host "203.0.113.20"}
+           :type :bitcoin.node/peer-timeout}]})
       disk-consensus/consensus-status
       (fn [_] {:height 1 :best-header-height 1 :fully-validated? true})
       peer-pool/save! (fn [_ _] nil)]
@@ -157,13 +154,9 @@
         (is (= :synced (:status result)))
         (is (= 1 @validation-calls)
             "Only disk-consensus may publish a downloaded block")
-        (is (= ["203.0.113.20" "198.51.100.42"] @connections))
-        (is (= ["198.51.100.42"] @closed))
-        (is (= 1 (get-in @pool
-                         [:peers
-                          (peer-pool/peer-id
-                           (first (:operator-peers options)))
-                          :failures])))))))
+        (is (= 1 (count (get-in result [:blocks :observations]))))
+        (is (= :bitcoin.node/peer-timeout
+               (get-in result [:blocks :failures 0 :type])))))))
 
 (deftest sync-status-never-pretends-disabled-is-running
   (sync/clear-caches!)

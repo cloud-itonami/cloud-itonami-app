@@ -909,6 +909,8 @@
       :bitcoin.node/invalid-scan :bitcoin.node/private-descriptor
       :bitcoin.node/unsolvable-descriptor :bitcoin.node/unsupported-descriptor
       :bitcoin.node/sync-configuration :bitcoin.node/peer-set
+      :bitcoin.node/block-peer-set :bitcoin.node/block-download-set
+      :bitcoin.node/block-download-configuration
       :bitcoin/invalid-descriptor :bitcoin/private-descriptor
       :schedule/invalid :watcher/invalid :watcher/invalid-event
       :agent/unknown-tool :agent/invalid-input :agent/invalid-decision
@@ -949,6 +951,8 @@
       :bitcoin.node/invalid-response :bitcoin.node/response-too-large
       :bitcoin.node/transport-failed :bitcoin.node/rpc-failed
       :bitcoin.node/block-sync-failed :bitcoin.node/sync-failed
+      :bitcoin.node/block-peer-set-exhausted
+      :bitcoin.node/block-response-mismatch
       :bitcoin.node/peer-insufficient-chainwork
       :bitcoin.node/headers-presync-invalid
       :bitcoin.node/headers-presync-length
