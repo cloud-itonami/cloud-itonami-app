@@ -122,7 +122,7 @@
   ;; surface ships disabled, like every :authority here.
   io.github.cloud-itonami/lawfirm
   {:git/url "https://github.com/cloud-itonami/lawfirm.git"
-   :git/sha "8889aa061d0e55fcabb77339810ca0e86d2e4440"}
+   :git/sha "eb816888680868edb319446e3c37953a808e6a7b"}
 
   ;; The three document surfaces the Drive can create. Each is a portable
   ;; model plus an office-envelope wire namespace, and nothing in any of them
@@ -227,6 +227,7 @@
 
  :aliases
  {:server {:main-opts ["-m" "cloud.itonami.app.server"]}
+  :payment-actor {:main-opts ["-m" "cloud.itonami.app.payment-settlement-actor"]}
   ;; The MCP server speaks JSON-RPC on stdout, so nothing else may print there:
   ;; run it with this alias, never alongside :server in one process.
   :mcp {:main-opts ["-m" "cloud.itonami.app.mcp"]}

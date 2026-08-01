@@ -414,6 +414,21 @@ app holds no banking credential and moves no money; a human makes the transfer
 in their bank. `:payment` ships disabled, like every other authority. See
 [ADR-0005](docs/adr/0005-payment-settlement-authority.md).
 
+For a local deployment, the record-only authority runs as a separate,
+loopback-only process:
+
+```bash
+clojure -M:payment-actor
+```
+
+Configure `:authorities :payment :endpoint` as
+`http://127.0.0.1:1340/commit` and `:token-file` as
+`data/payment-settlement.token`. The actor creates that owner-readable
+capability on first start, rejects requests without it, re-checks that the
+proposal is Passkey-approved, and persists an idempotent record in
+`data/payment-settlement.edn`. The record explicitly carries
+`:money-moved? false`.
+
 ### Driving it from an agent (MCP)
 
 The stdio MCP server publishes these as tools — but only when it can resolve a
@@ -480,43 +495,6 @@ and needs no sign-off; every operation that *is* a decision — 受任, 提出, 
 [ADR-0010](docs/adr/0010-host-a-practice-record-without-owning-a-rule.md) for
 what the Drive port deliberately does not create and why there is no calendar
 port at all.
-
-### FAX (Dropbox Fax, disabled by default)
-
-The practice can compute what to send and where; this is what executes it.
-
-```clojure
-;; data/config.edn — the password is NOT here and must never be
-{:fax {:enabled? true
-       :username "you@example.jp"          ; also the keychain account
-       :account-guid "…"                   ; app.hellofax.com/account/apiInfo
-       :keychain-service "dropbox-fax"
-       :callback-token "…"}}
-```
-
-```bash
-security add-generic-password -s dropbox-fax -a you@example.jp -w
-```
-
-| route | |
-|---|---|
-| `GET /api/workspace/lawfirm/fax` | whether the surface is on, and whether a credential could be located (never its value) |
-| `POST /api/workspace/lawfirm/fax/dispatch` | execute a committed 送達 — `{transmission-id, document-base64, filename}` |
-| `POST /api/fax/callback/{token}` | the provider's terminal status. No session; a fax machine has none |
-
-**The destination is not a parameter.** It is read from the practice record by
-`lawfirm.workspace/dispatch-plan`; a caller chooses which 送達 to execute and
-nothing about where it goes. That is the whole reason this uses the API rather
-than Dropbox Fax's web UI, which is what the prior implementation in this
-workspace did — a UI handoff puts the number back in the hands of whoever is
-in the biggest hurry.
-
-**An unidentified document is refused.** If the approved work product records
-`:object-ref "sha256:…"`, the bytes must hash to it. No ref means no send.
-
-**This has never run against the live service** — no account is provisioned
-and every test drives an injected transport. See
-[ADR-0011](docs/adr/0011-fax-through-the-api-because-the-ui-is-the-hazard.md).
 
 ## Distribution profiles
 

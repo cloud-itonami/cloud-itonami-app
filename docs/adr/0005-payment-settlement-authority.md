@@ -146,6 +146,23 @@ governor is the gate expected to see a later shortfall.
 Like every authority in `defaults.edn`, and with `:endpoint nil`. A fresh
 install has no settlement surface. Enabling it is a deployment decision.
 
+### The local authority is a separate record-only process
+
+`cloud.itonami.app.payment-settlement-actor` serves `POST /commit` on loopback.
+It accepts only a proposal whose authority/op/status are
+`payment`/`payment/settle`/`approved` and which carries the organization,
+content digest, approval time, and Passkey credential evidence. It independently
+rejects malformed proposals, proposal-id content changes, and duplicate
+organization/reference pairs.
+
+The app and actor authenticate with a random capability created at
+`data/payment-settlement.token` on the actor's first start; the capability is
+not stored in tracked configuration. Accepted records are append-like and
+idempotent in `data/payment-settlement.edn`, and explicitly state
+`:effect :record-only` and `:money-moved? false`. This closes the missing
+hand-off for a local deployment without adding any bank credential or transfer
+ability.
+
 ### Error statuses
 
 The spine's own refusals were previously unmapped and answered `502` — a
