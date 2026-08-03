@@ -10,6 +10,7 @@
             [cloud.itonami.app.identity :as local-identity]
             [cloud.itonami.app.organism-gateway :as organism-gateway]
             [cloud.itonami.app.organism-worker :as organism-worker]
+            [cloud.itonami.app.passkey :as passkey]
             [cloud.itonami.app.policy :as policy]
             [cloud.itonami.app.service :as service]
             [cloud.itonami.app.store :as store]
@@ -43,6 +44,12 @@
    :providers [{:id "ollama" :kind :ollama :local? true :enabled? true}
                {:id "cloud" :kind :openai-compatible
                 :local? false :enabled? true}]})
+
+(def ^:private passkey-session-options
+  {:kind :passkey
+   :issued-via :passkey
+   :authn-ref "test-passkey-authn"
+   :authn-level :phishing-resistant})
 
 (deftest local-first-policy-is-fail-closed
   (is (= "ollama" (:id (policy/select-provider config nil))))
@@ -177,6 +184,18 @@
       (is (re-find #"id=\"registration-form\"" html))
       (is (re-find #"id=\"passkey-gate-notice\"" html))
       (is (re-find #"Passkey 登録が必須" html))
+      (is (re-find #"現在のOrganization" html))
+      (is (re-find #"aria-label=\"Organization切替\"" html))
+      (doseq [section ["business-design" "operations" "trust-records"]]
+        (is (re-find (re-pattern (str "data-nav-section=\"" section "\""))
+                     html)))
+      (is (re-find #"id=\"mobile-overflow-panel\"" html))
+      (is (re-find #"class=\"mobile-menu-toggle\"[^>]*aria-expanded=\"false\"" html))
+      (is (re-find #"aria-label=\"メニューを閉じる\"" html))
+      (is (str/includes? web/app-css "overflow-y:auto"))
+      (is (str/includes? web/app-css "@media(max-width:40rem)"))
+      (is (str/includes? web/app-css "--mobile-nav-height"))
+      (is (str/includes? web/interaction-js "setMobileMenuOpen"))
       (is (re-find #"id=\"connector-list\"" html))
       (is (re-find #"id=\"member-form\"" html))
       (is (re-find #"data-view-panel=\"worker\"" html))
@@ -205,6 +224,17 @@
     (is (empty? missing)
         (str "app-css references design tokens that jp-go-dds does not define: "
              (pr-str (sort missing))))))
+
+(deftest app-css-keeps-the-layout-rules-before-css-string-quotes
+  ;; A raw `"` inside this Clojure string makes everything before it the
+  ;; var's docstring and everything after it the value. The page still has a
+  ;; large stylesheet and later component rules, but its shell silently falls
+  ;; back to browser-default block layout.
+  (is (nil? (:doc (meta #'web/app-css))))
+  (is (str/includes? web/app-css
+                     ".workspace{display:grid;grid-template-columns:17rem"))
+  (is (str/includes? web/app-css
+                     ".is-commented::after{content:\"\";position:absolute")))
 
 (deftest every-scripted-element-exists-and-every-nav-item-has-a-panel
   (with-redefs [store/snapshot (constantly (store/initial-state))]
@@ -450,7 +480,8 @@
                         :organization-id "org-personal"
                         :user-id "user-1" :role :owner :created-at now}}}))
       (with-redefs [config-loader/data-dir (fn [] (.toFile temporary))]
-        (let [{:keys [token]} (local-identity/issue-session! "user-1")
+        (let [{:keys [token]} (local-identity/issue-session!
+                               "user-1" passkey-session-options)
               session (local-identity/session token)]
           (local-identity/create-organization!
            session {:organization-id "etzhayyim"
@@ -507,9 +538,11 @@
            :user-id "user-member" :role :owner :created-at now}}}))
       (with-redefs [config-loader/data-dir (fn [] (.toFile temporary))]
         (let [owner-token (:token
-                           (local-identity/issue-session! "user-owner"))
+                           (local-identity/issue-session!
+                            "user-owner" passkey-session-options))
               member-token (:token
-                            (local-identity/issue-session! "user-member"))
+                            (local-identity/issue-session!
+                             "user-member" passkey-session-options))
               invitation
               (local-identity/add-user!
                (local-identity/session owner-token)
@@ -720,9 +753,11 @@
                  (assoc-in [:identity :users (:user-id session)
                             :passkey-enrolled?] true)
                  (assoc-in [:identity :users (:user-id session) :did]
-                           even-did))))
+                           even-did)
+                 (update-in [:identity :sessions (:id session)]
+                            merge passkey-session-options))))
           (local-identity/configure-organization!
-           session {:organization-id "example"})
+           (local-identity/session token) {:organization-id "example"})
           (let [configured (local-identity/public-state token)]
             (is (= "example@cloud-itonami.app"
                    (get-in configured [:user :email])))
@@ -733,6 +768,37 @@
             (is (true?
                  (get-in configured
                          [:organization :profile-complete?]))))))
+      (finally
+        (reset! store/state previous)))))
+
+(deftest legacy-provisional-owner-repairs-a-missing-webauthn-user-handle
+  (let [previous @store/state
+        captured (atom nil)]
+    (try
+      (reset! store/state
+              (assoc (store/initial-state)
+                     :identity
+                     {:users {"user-1" {:id "user-1"
+                                        :display-name "Owner"
+                                        :status :pending-passkey
+                                        :passkey-enrolled? false}}
+                      :memberships {}
+                      :passkeys {}}))
+      (with-redefs [passkey/start-registration!
+                    (fn [user _rp-id _origin]
+                      (reset! captured user)
+                      {:transaction-id "test-registration"})]
+        (is (= "test-registration"
+               (:transaction-id
+                (local-identity/start-passkey-registration!
+                 {:user-id "user-1"} "localhost"
+                 "http://localhost:1338"))))
+        (let [handle (:user-handle @captured)]
+          (is (string? handle))
+          (is (not (str/blank? handle)))
+          (is (= handle
+                 (get-in (store/snapshot)
+                         [:identity :users "user-1" :user-handle])))))
       (finally
         (reset! store/state previous)))))
 

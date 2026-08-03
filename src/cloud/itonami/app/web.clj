@@ -10,9 +10,9 @@
   button{font:inherit}
   .local-app{max-width:100%;padding:0}
   .workspace{display:grid;grid-template-columns:17rem minmax(0,1fr);min-height:100vh}
-  .sidebar{position:sticky;top:0;height:100vh;box-sizing:border-box;padding:1.5rem 1rem;
+  .sidebar{position:sticky;top:0;height:100vh;box-sizing:border-box;padding:1rem;
     background:var(--color-neutral-white);border-right:1px solid var(--color-neutral-solid-gray-200);
-    display:flex;flex-direction:column;gap:1.5rem}
+    display:flex;flex-direction:column;gap:.75rem}
   .req-row{padding:.75rem 0;border-bottom:1px solid var(--color-neutral-solid-gray-200)}
   .req-row__head{display:flex;align-items:center;justify-content:space-between;gap:1rem}
   .req-row__detail{margin:.375rem 0 0;font-size:.875rem;line-height:1.7;
@@ -130,16 +130,42 @@
   .brand__mark{display:none}
   .brand__note{margin:.25rem 0 0;color:var(--color-neutral-solid-gray-600);
     font-size:.8125rem;line-height:1.6}
-  .local-nav{display:flex;flex-direction:column;gap:.25rem}
-  /* The menu separates what you work ON (a business) from what you work WITH
-     (chat, drive, scheduler). Twelve flat items had both kinds in one list. */
-  .local-nav__group{margin:.75rem 0 .125rem;padding:0 .75rem;font-size:.6875rem;
-    font-weight:700;letter-spacing:.08em;
+  .workspace-switcher{display:grid;gap:.25rem;padding:.625rem .75rem;border-radius:.75rem;
+    background:var(--color-neutral-solid-gray-50);
+    border:1px solid var(--color-neutral-solid-gray-200)}
+  .workspace-switcher__label{font-size:.6875rem;font-weight:700;letter-spacing:.06em;
     color:var(--color-neutral-solid-gray-600)}
-  .local-nav__group:first-child{margin-top:0}
+  .workspace-switcher select{min-height:2.5rem;width:100%;box-sizing:border-box;
+    border:1px solid var(--color-neutral-solid-gray-300);border-radius:.5rem;
+    padding:.5rem 2rem .5rem .625rem;background:var(--color-neutral-white);font:inherit;
+    font-weight:700;color:var(--color-neutral-solid-gray-800)}
+  .workspace-switcher__hint{font-size:.6875rem;line-height:1.5;
+    color:var(--color-neutral-solid-gray-600)}
+  .local-nav{display:flex;flex:1;min-height:0;flex-direction:column;gap:.25rem;
+    overflow-y:auto;overscroll-behavior:contain;scrollbar-gutter:stable;
+    padding-right:.25rem}
+  .nav-primary{display:grid;gap:.25rem}
+  .nav-overflow-panel{display:contents}
+  .nav-secondary{display:grid;gap:.25rem}
+  .mobile-menu-toggle,.mobile-nav-backdrop{display:none}
+  .nav-section{border-top:1px solid var(--color-neutral-solid-gray-100);
+    padding-top:.25rem}
+  .nav-section__summary{display:flex;align-items:center;gap:.75rem;min-height:2.5rem;
+    box-sizing:border-box;padding:.5rem .75rem;border-radius:.5rem;cursor:pointer;
+    color:var(--color-neutral-solid-gray-700);font-size:.8125rem;font-weight:700;
+    list-style:none}
+  .nav-section__summary::-webkit-details-marker{display:none}
+  .nav-section__summary:hover{background:var(--color-neutral-solid-gray-50)}
+  .nav-section__summary:focus-visible{outline:4px solid var(--color-primitive-yellow-300);
+    outline-offset:1px}
+  .nav-section__label{flex:1}.nav-section__chevron{font-size:.75rem;transition:transform .15s ease}
+  .nav-section[open] .nav-section__chevron{transform:rotate(180deg)}
+  .nav-section__items{display:grid;gap:.125rem;padding:.125rem 0 .375rem .75rem}
+  .nav-section__items .local-nav__item{min-height:2.5rem;padding:.375rem .625rem}
+  .sidebar__utility{padding-top:.5rem;border-top:1px solid var(--color-neutral-solid-gray-200)}
   .local-nav__item{width:100%;border:0;border-radius:.5rem;background:transparent;
     color:var(--color-neutral-solid-gray-800);display:flex;align-items:center;gap:.75rem;
-    min-height:3rem;padding:.625rem .75rem;text-align:left;cursor:pointer}
+    min-height:2.75rem;padding:.5rem .75rem;text-align:left;cursor:pointer}
   .local-nav__item:hover{background:var(--color-neutral-solid-gray-50)}
   .local-nav__item:disabled{cursor:not-allowed;opacity:.42;background:transparent}
   .local-nav__item:focus-visible{outline:4px solid var(--color-primitive-yellow-300);outline-offset:1px}
@@ -149,7 +175,7 @@
   .nav-icon{width:1.5rem;text-align:center;font-size:1.1rem}
   .nav-badge{margin-left:auto;min-width:1.5rem;padding:.1rem .4rem;border-radius:999px;
     background:var(--color-neutral-solid-gray-100);font-size:.75rem;text-align:center}
-  .sidebar__status{margin-top:auto;padding:.75rem;border-radius:.5rem;
+  .sidebar__status{padding:.625rem .75rem;border-radius:.5rem;
     background:var(--color-neutral-solid-gray-50);font-size:.8125rem;line-height:1.6}
   .sidebar__status strong{display:block;color:var(--color-semantic-success-2)}
   .main{min-width:0}
@@ -307,7 +333,7 @@
      is only tinted says nothing to anyone who cannot see the tint, and the
      mark has to survive next to the styling a cell may already carry. */
   .is-commented{position:relative}
-  .is-commented::after{content:"";position:absolute;top:2px;right:2px;
+  .is-commented::after{content:\"\";position:absolute;top:2px;right:2px;
     width:.5rem;height:.5rem;border-radius:50%;
     background:var(--color-semantic-error-1)}
   .surface-row.is-commented{outline:2px solid var(--color-semantic-error-2);
@@ -639,6 +665,7 @@
     background:var(--color-key-50);font-size:.875rem;line-height:1.7}
   .settings-notice{margin-bottom:1rem;padding:.75rem 1rem;border-radius:.5rem;
     background:var(--color-primitive-green-50);color:var(--color-semantic-success-2)}
+  .settings-notice:empty{display:none}
   .settings-notice--error{background:var(--color-primitive-red-50);color:var(--color-semantic-error-1)}
   .member-list{list-style:none;margin:1rem 0 0;padding:0}
   .member-list li{display:flex;justify-content:space-between;gap:1rem;padding:.75rem 0;
@@ -667,24 +694,14 @@
   @keyframes pulse{to{background-position:-200% 0}}
   @media(max-width:64rem){.local-grid,.settings-grid{grid-template-columns:1fr}}
   @media(max-width:56rem){
-    .workspace{grid-template-columns:4.75rem minmax(0,1fr)}
-    .sidebar{position:sticky;top:0;height:100dvh;padding:.75rem .5rem;overflow:hidden;
-      border-right:1px solid var(--color-neutral-solid-gray-200);border-bottom:0;gap:1rem}
-    .brand{padding:.25rem 0;text-align:center}
-    .brand__eyebrow,.brand__name,.brand__note,.sidebar__status{display:none}
-    .sidebar__organization{display:none}
-    .brand__mark{display:block;margin:0;color:var(--color-key-900);font-size:1.125rem;
-      font-weight:700;line-height:2.5rem}
-    .local-nav{width:100%;flex-direction:column;overflow:visible}
-    .local-nav__item{width:100%;min-width:0;justify-content:center;padding:.625rem .25rem}
-    .local-nav__item[aria-current='page']{border-left:0;border-bottom:4px solid var(--color-key-900);
-      padding:.625rem .25rem .375rem}
-    .nav-label,.nav-badge{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
-      overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
-    /* The labels are hidden here, so a group heading over icon-only buttons
-       would name a grouping the user cannot see. */
-    .local-nav__group{display:none}
-    .nav-icon{font-size:1.25rem}
+    .workspace{grid-template-columns:13rem minmax(0,1fr)}
+    .sidebar{padding:1rem .75rem;gap:.75rem}
+    .brand__eyebrow,.brand__note,.brand__mark,.sidebar__status{display:none}
+    .brand__name{font-size:1.125rem}
+    .workspace-switcher__hint{display:none}
+    .local-nav{padding-right:.125rem}
+    .local-nav__item{min-width:0}
+    .nav-badge{display:none}
     .topbar{min-height:auto;padding:.75rem 1rem}.topbar__meta{display:none}
     .view{padding:1rem}.view-header{display:block}.view-header .dads-button{margin-top:1rem}
     .chat-view{padding:0}.chat-shell{height:calc(100dvh - 3.75rem)}
@@ -704,6 +721,62 @@
     .form-grid{grid-template-columns:1fr}.connector-card{grid-template-columns:2.75rem 1fr}
     .connector-card .tool-button{grid-column:1/-1;width:100%}
     .local-actions{justify-content:stretch}.local-actions .dads-button{width:100%}
+  }
+  @media(max-width:40rem){
+    :root{--mobile-nav-height:calc(4.5rem + env(safe-area-inset-bottom))}
+    body.has-mobile-menu{overflow:hidden}
+    .workspace{display:block;min-height:100dvh;padding-bottom:var(--mobile-nav-height)}
+    .sidebar{position:fixed;inset:auto 0 0 0;z-index:40;width:auto;height:var(--mobile-nav-height);
+      display:block;padding:0;background:var(--color-neutral-white);
+      border:0;border-top:1px solid var(--color-neutral-solid-gray-200);overflow:visible}
+    .brand,.sidebar__status{display:none}
+    .workspace-switcher{position:fixed;z-index:31;top:calc(.625rem + env(safe-area-inset-top));right:.75rem;
+      width:7.5rem;padding:0;border:0;background:transparent}
+    .workspace-switcher__label,.workspace-switcher__hint{position:absolute;width:1px;height:1px;
+      padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
+    .workspace-switcher select{min-height:2.75rem;padding:.375rem 1.75rem .375rem .5rem;
+      background:var(--color-neutral-white);font-size:.75rem;text-overflow:ellipsis}
+    .local-nav{position:static;display:block;width:auto;overflow:visible;padding:0}
+    .nav-primary{position:fixed;z-index:44;left:0;right:20%;bottom:0;
+      height:var(--mobile-nav-height);display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:0;
+      padding-bottom:env(safe-area-inset-bottom);box-sizing:border-box;background:var(--color-neutral-white)}
+    .nav-primary .local-nav__item,.mobile-menu-toggle{min-height:4.5rem;height:4.5rem;
+      display:flex;flex-direction:column;align-items:center;justify-content:center;gap:.125rem;
+      padding:.375rem .125rem;border-radius:0;color:var(--color-neutral-solid-gray-700);
+      font-size:.6875rem;font-weight:700;line-height:1.2}
+    .nav-primary .local-nav__item[aria-current='page']{border:0;border-top:4px solid var(--color-key-900);
+      padding:.25rem .125rem .375rem;background:var(--color-key-50);color:var(--color-key-900)}
+    .nav-primary .nav-icon,.mobile-menu-toggle .nav-icon{width:auto;font-size:1.125rem;line-height:1.4}
+    .nav-primary .nav-label,.mobile-menu-toggle .nav-label{display:block;position:static;width:auto;height:auto;
+      padding:0;margin:0;overflow:visible;clip:auto;white-space:nowrap;border:0}
+    .nav-overflow-panel{display:none;position:fixed;z-index:43;left:.75rem;right:.75rem;
+      bottom:calc(var(--mobile-nav-height) + .75rem);max-height:calc(100dvh - var(--mobile-nav-height) - 2rem);
+      box-sizing:border-box;overflow-y:auto;padding:.75rem;border:1px solid var(--color-neutral-solid-gray-200);
+      border-radius:1rem;background:var(--color-neutral-white);box-shadow:0 .75rem 2rem rgb(0 0 0 / .18)}
+    .sidebar[data-mobile-menu-open='true'] .nav-overflow-panel{display:block}
+    .nav-secondary{display:grid;gap:.25rem}
+    .nav-section__summary{min-height:3rem;padding:.625rem .75rem}
+    .nav-section__items{padding:.125rem 0 .375rem .75rem}
+    .nav-section__items .local-nav__item{justify-content:flex-start;min-height:2.75rem;padding:.5rem .625rem}
+    .sidebar__utility{margin-top:.5rem;padding-top:.5rem;background:var(--color-neutral-white)}
+    .sidebar__utility .local-nav__item{justify-content:flex-start;min-height:3rem;padding:.625rem .75rem}
+    .mobile-menu-toggle{position:fixed;z-index:44;right:0;bottom:0;width:20%;
+      padding-bottom:calc(.375rem + env(safe-area-inset-bottom));border:0;border-top:4px solid transparent;
+      background:var(--color-neutral-white);cursor:pointer}
+    .mobile-menu-toggle[aria-expanded='true']{border-top-color:var(--color-key-900);
+      background:var(--color-key-50);color:var(--color-key-900)}
+    .mobile-nav-backdrop{position:fixed;z-index:42;inset:0 0 var(--mobile-nav-height);border:0;
+      background:rgb(0 0 0 / .32)}
+    .sidebar[data-mobile-menu-open='true'] .mobile-nav-backdrop{display:block}
+    .main{min-width:0}
+    .topbar{position:sticky;z-index:30;top:0;min-height:calc(4rem + env(safe-area-inset-top));
+      box-sizing:border-box;padding:calc(.75rem + env(safe-area-inset-top)) 8.75rem .75rem 1rem;
+      background:var(--color-neutral-white)}
+    .topbar__title{font-size:1rem;line-height:1.4;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+    .view{padding:1rem}.view-header h1{font-size:1.75rem;line-height:1.3}.view-lead{line-height:1.7}
+    .chat-shell{height:calc(100dvh - 4rem - var(--mobile-nav-height))}
+    .data-card,.settings-card{padding:1rem}
+    input,select,textarea,button{max-width:100%}
   }
   /* WCAG 2.3.3, and kotoba-uiux rule 7. Both animations in this stylesheet are
      INFINITE and decorative -- a typing indicator and a loading shimmer -- which
@@ -750,12 +823,13 @@
    [:span {:class "nav-label"} title]
    (when badge-id [:span {:class "nav-badge" :id badge-id} "—"])])
 
-(defn- nav-group
-  "A heading over one run of nav items. Presentational only — the buttons keep
-  carrying their own `data-view`, so `showView` is unchanged and a group cannot
-  become a thing that has to be opened before its items work."
-  [title]
-  [:p {:class "local-nav__group" :aria-hidden "true"} title])
+(defn- nav-section [id title icon items]
+  [:details {:class "nav-section" :data-nav-section id}
+   [:summary {:class "nav-section__summary" :aria-label title}
+    [:span {:class "nav-icon" :aria-hidden "true"} icon]
+    [:span {:class "nav-section__label"} title]
+    [:span {:class "nav-section__chevron" :aria-hidden "true"} "⌄"]]
+   (into [:div {:class "nav-section__items"}] items)])
 
 (defn- view-header [title lead]
   [:header {:class "view-header"}
@@ -780,36 +854,52 @@
         [:p {:class "brand__name"} brand]
         [:p {:class "brand__mark" :role "img" :aria-label brand} "ai"]
         [:p {:class "brand__note"} "Kotoba でつながる、手元の仕事場"]]
-       [:div {:class "field sidebar__organization"}
-        [:label {:for "organization-switcher"} "Organization"]
-        [:select {:id "organization-switcher" :disabled true}
-         [:option "確認中…"]]]
-       [:nav {:class "local-nav"}
-        ;; 対象（事業とその実装）と道具（chat・drive・scheduler）を分ける。
-        ;; ADR-2607309600 決定4。12 項目が平らに並んでいた状態では、事業を1つ
-        ;; 増やすことと道具を1つ増やすことが同じ操作に見えていた。
-        (nav-group "BUSINESS")
-        (nav-item "portfolio" "Portfolio" "▤" "portfolio-count")
-        (nav-item "canvas" "Canvas" "◱" "canvas-count")
-        (nav-item "loops" "Loops" "∞" "loops-count")
-        (nav-item "repos" "Repos" "⌗" "repos-count")
-        (nav-item "metrics" "Metrics" "⌸" "metrics-count")
-        (nav-item "fleet" "Fleet" "◉" "fleet-count")
-        (nav-item "operator" "\u4e8b\u696d\u8005" "◐" "operator-count")
-        (nav-item "contracts" "Contracts" "◫" "contracts-count")
-        (nav-group "WORKSPACE")
-        (nav-item "chat" "Chat" "✦" nil)
-        (nav-item "worker" "Worker" "◐" "worker-count")
-        (nav-item "organisms" "Organisms" "◎" "organism-count")
-        (nav-item "inbox" "Inbox" "□" "inbox-count")
-        (nav-item "projects" "Projects" "▦" "projects-count")
-        (nav-item "drive" "Drive" "◇" "drive-count")
-        (nav-item "esign" "eSign" "✍" "esign-count")
-        (nav-item "credentials" "Credentials" "▣" "credentials-count")
-        (nav-item "scheduler" "Scheduler" "○" "scheduler-count")
-        (nav-item "storage" "Storage" "◈" "storage-count")
-        (nav-group "SETTINGS")
-        (nav-item "settings" "Settings" "⚙" nil)]
+       [:section {:class "workspace-switcher" :aria-label "Organization切替"}
+        [:label {:class "workspace-switcher__label"
+                 :for "organization-switcher"} "現在のOrganization"]
+        [:select {:id "organization-switcher" :disabled true
+                  :aria-describedby "organization-switcher-hint"}
+         [:option "確認中…"]]
+        [:span {:class "workspace-switcher__hint"
+                :id "organization-switcher-hint"}
+         "作業対象の組織を切り替えます"]]
+       [:nav {:class "local-nav" :aria-label "機能メニュー"}
+        [:div {:class "nav-primary"}
+         (nav-item "chat" "Chat" "✦" nil)
+         (nav-item "inbox" "Inbox" "□" "inbox-count")
+         (nav-item "projects" "Projects" "▦" "projects-count")
+         (nav-item "drive" "Drive" "◇" "drive-count")]
+        [:div {:class "nav-overflow-panel" :id "mobile-overflow-panel"}
+         [:div {:class "nav-secondary"}
+          (nav-section
+           "business-design" "事業設計" "◱"
+           [(nav-item "portfolio" "Portfolio" "▤" "portfolio-count")
+            (nav-item "canvas" "Canvas" "◱" "canvas-count")
+            (nav-item "loops" "Loops" "∞" "loops-count")
+            (nav-item "metrics" "Metrics" "⌸" "metrics-count")
+            (nav-item "repos" "Repos" "⌗" "repos-count")])
+          (nav-section
+           "operations" "運営" "◉"
+           [(nav-item "operator" "事業者" "◐" "operator-count")
+            (nav-item "fleet" "Fleet" "◉" "fleet-count")
+            (nav-item "worker" "Worker" "◐" "worker-count")
+            (nav-item "organisms" "Organisms" "◎" "organism-count")
+            (nav-item "scheduler" "Scheduler" "○" "scheduler-count")])
+          (nav-section
+           "trust-records" "信頼・記録" "▣"
+           [(nav-item "contracts" "Contracts" "◫" "contracts-count")
+            (nav-item "esign" "eSign" "✍" "esign-count")
+            (nav-item "credentials" "Credentials" "▣" "credentials-count")
+            (nav-item "storage" "Storage" "◈" "storage-count")])]
+         [:div {:class "sidebar__utility"}
+          (nav-item "settings" "Settings" "⚙" nil)]]
+        [:button {:class "mobile-menu-toggle" :type "button"
+                  :aria-controls "mobile-overflow-panel" :aria-expanded "false"
+                  :aria-label "その他のメニュー"}
+         [:span {:class "nav-icon" :aria-hidden "true"} "☰"]
+         [:span {:class "nav-label"} "その他"]]]
+       [:button {:class "mobile-nav-backdrop" :type "button"
+                 :aria-label "メニューを閉じる"}]
        [:div {:class "sidebar__status"}
         [:strong "● ローカルモード"]
         [:span {:id "workspace-status"} "既存サービスを確認中…"]]]
@@ -1630,8 +1720,8 @@
            [:div {:class "empty-state"} "契約を選ぶと、解約手順と予告期限を表示します。"]]]]
         [:section {:class "view" :data-view-panel "settings" :hidden true}
          (view-header "Settings" "Cloud Itonami の組織・ユーザーと、外部サービスへの委任接続を管理します。")
-         [:p {:class "visually-hidden" :id "identity-status"
-              :role "status" :aria-live "polite"} "アカウント情報を確認中です。"]
+         [:p {:class "settings-notice" :id "identity-status"
+              :role "status" :aria-live "polite"} ""]
          [:div {:class "settings-notice" :id "connection-notice" :hidden true}]
          [:div {:class "security-callout" :id "passkey-gate-notice"
                 :role "status" :aria-live "polite"}
@@ -1648,6 +1738,16 @@
            [:button {:class "primary-action" :id "registration-submit"
                      :type "submit"} "Passkey で登録"]]
           [:div {:class "settings-stack" :id "registered-auth" :hidden true}
+           [:form {:class "settings-form" :id "email-login-form" :hidden true}
+            (dds/heading 3 "Email でサインイン" {:size "20"})
+            [:p {:class "form-help"}
+             "登録済みの連絡先へ、10分間・一回限りのログインリンクを送ります。"]
+            [:div {:class "field"}
+             [:label {:for "email-login-address"} "メールアドレス"]
+             [:input {:id "email-login-address" :name "email" :type "email"
+                      :required true :autocomplete "email"}]]
+            [:button {:class "tool-button" :id "email-login-submit"
+                      :type "submit"} "ログインリンクを送る"]]
            [:button {:class "primary-action" :id "passkey-signin" :type "button"}
             "Passkey でサインイン"]
            [:form {:class "settings-form" :id "enrollment-form"}
