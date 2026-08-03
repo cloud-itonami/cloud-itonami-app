@@ -34,6 +34,7 @@
             [cloud.itonami.app.scheduler-http-test]
             [cloud.itonami.app.authority.adapters-test]
             [cloud.itonami.app.authority.api-test]
+            [cloud.itonami.app.authority.number-test]
             [cloud.itonami.app.authority.payment-test]
             [cloud.itonami.app.authority.posture-test]
             [cloud.itonami.app.authority-http-test]
@@ -96,6 +97,7 @@
     cloud.itonami.app.repository-profile-ci-test
     cloud.itonami.app.authority.adapters-test
     cloud.itonami.app.authority.api-test
+    cloud.itonami.app.authority.number-test
     cloud.itonami.app.authority.payment-test
     cloud.itonami.app.authority.posture-test
     cloud.itonami.app.authority-http-test
