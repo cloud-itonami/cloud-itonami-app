@@ -90,6 +90,31 @@
      :semantic/cid (:basis/cid hydrated)
      :scope :warm-configured-transport}))
 
+(defn measure-cold-hydrate
+  "Measure a current-state recovery only after proving that the isolated
+  DataLad dataset contains no materialized block content. This is the only
+  measurement in this namespace which may set `:cold-hydrate?` true."
+  [{:keys [datalad-root] :as context}]
+  (let [cache-proof (repository/assert-empty-datalad-block-cache! datalad-root)
+        started (System/nanoTime)
+        hydrated (repository/hydrate-current context)
+        elapsed-ms (/ (double (- (System/nanoTime) started)) 1.0e6)]
+    (when-not hydrated
+      (throw (ex-info "a published head is required for cold hydrate measurement"
+                      {:type :repository-storage/measurement-head-required})))
+    (let [descriptors (cons (get-in hydrated [:head :manifest])
+                            (get-in hydrated [:manifest :chunks]))
+          downloaded-bytes (reduce + (map :sealed/bytes descriptors))]
+      (merge cache-proof
+             {:hydrate-ms elapsed-ms
+              :downloaded-bytes downloaded-bytes
+              :download-bps (long (/ downloaded-bytes
+                                     (/ elapsed-ms 1000.0)))
+              :head/revision (:head/revision hydrated)
+              :semantic/cid (:basis/cid hydrated)
+              :cold-hydrate? true
+              :scope :cold-cache-empty-transport}))))
+
 (defn measure-workspace
   [context iterations]
   (let [workspace (repository/workspace-snapshot

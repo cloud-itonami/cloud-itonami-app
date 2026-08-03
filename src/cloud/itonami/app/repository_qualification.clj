@@ -73,8 +73,9 @@
 (defn validate-production-attestation!
   "Require fresh, commit-addressed, cache-empty recovery evidence. Capacity
   numbers remain subject to the twelve gates after this provenance check."
-  [evidence]
-  (let [measured-at (try
+  ([evidence] (validate-production-attestation! evidence nil))
+  ([evidence expected-source-commit]
+   (let [measured-at (try
                       (Instant/parse (:evidence/measured-at evidence))
                       (catch Exception _ nil))
         now (Instant/now)
@@ -87,10 +88,16 @@
                    (true? (:evidence/cold-hydrate? evidence))
                    (string? (:evidence/source-commit evidence))
                    (re-matches #"[0-9a-f]{40}"
-                               (:evidence/source-commit evidence)))
+                               (:evidence/source-commit evidence))
+                   (or (nil? expected-source-commit)
+                       (= expected-source-commit
+                          (:evidence/source-commit evidence))))
       (throw (ex-info "fresh commit-addressed production recovery evidence is required"
-                      {:type :repository-storage/production-evidence-required})))
-    evidence))
+                      {:type :repository-storage/production-evidence-required
+                       :source-commit-match?
+                       (= expected-source-commit
+                          (:evidence/source-commit evidence))})))
+    evidence)))
 
 (defn evaluate
   [{:keys [peak-logical-write-bps reconcile-bps local-view-apply-bps

@@ -50,6 +50,12 @@
                :evidence/source-commit (apply str (repeat 40 "a"))
                :evidence/cold-hydrate? true}]
     (is (= valid (qualification/validate-production-attestation! valid)))
+    (is (= valid (qualification/validate-production-attestation!
+                  valid (:evidence/source-commit valid))))
+    (is (thrown-with-msg?
+         clojure.lang.ExceptionInfo #"production recovery evidence"
+         (qualification/validate-production-attestation!
+          valid (apply str (repeat 40 "b")))))
     (doseq [invalid [(assoc valid :evidence/cold-hydrate? false)
                      (assoc valid :evidence/source-commit "main")
                      (assoc valid :evidence/measured-at "2020-01-01T00:00:00Z")]]

@@ -68,6 +68,38 @@
     (is (pos? (:seal-input-bps result)))
     (is (pos? (:encrypted-output-ratio result)))))
 
+(deftest cold-hydrate-requires-an-empty-isolated-block-cache
+  (let [empty-root (.toFile (Files/createTempDirectory
+                             "cloud-itonami-cold-cache-"
+                             (make-array java.nio.file.attribute.FileAttribute
+                                         0)))
+        {:keys [provider vmk signing-public transport head-store] :as context}
+        (fixture)
+        prepared (preparation context base-state base-state base-state nil)
+        _ (repository/publish-prepared!
+           {:transport transport :head-store head-store
+            :provider provider :signing-public signing-public
+            :owner owner :expected-revision 0}
+           prepared)
+        cold (measurement/measure-cold-hydrate
+              {:datalad-root (.getPath empty-root)
+               :transport transport :head-store head-store
+               :provider provider :vmk vmk
+               :signing-public signing-public :owner owner})]
+    (is (:cache-empty? cold))
+    (is (:cold-hydrate? cold))
+    (is (pos? (:hydrate-ms cold)))
+    (is (pos? (:downloaded-bytes cold)))
+    (let [blocks (io/file empty-root ".itonami" "blocks")
+          materialized (io/file blocks
+                                (str (apply str (repeat 64 "a")) ".block"))]
+      (.mkdirs blocks)
+      (Files/write (.toPath materialized) (byte-array [1 2 3])
+                   (make-array java.nio.file.OpenOption 0))
+      (is (thrown-with-msg?
+           clojure.lang.ExceptionInfo #"already contains local block"
+           (repository/assert-empty-datalad-block-cache! empty-root))))))
+
 (deftest direct-edn-and-datom-update-converge
   (let [added ["m2" :message/content "same"]
         candidate (update base-state :datoms conj added)

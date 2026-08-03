@@ -13,4 +13,5 @@
  :evidence/scope :production
  :evidence/measured-at nil
  :evidence/source-commit nil
- :evidence/cold-hydrate? nil}
+ :evidence/cold-hydrate? nil
+ :evidence/cold-downloaded-bytes nil}

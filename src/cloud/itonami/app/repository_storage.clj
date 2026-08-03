@@ -920,6 +920,24 @@
                        :path (.getPath dataset)})))
     (->DataLadBlockTransport (.getPath dataset) remote)))
 
+(defn assert-empty-datalad-block-cache!
+  "Prove that an isolated recovery dataset has no locally materialized block
+  content before a cold hydrate. Broken git-annex symlinks are allowed: Java's
+  `isFile` follows the link and becomes true only when its annex object is
+  present. The result deliberately exposes counts, never dataset paths."
+  [dataset]
+  (let [root (io/file dataset ".itonami" "blocks")
+        materialized (if (.isDirectory root)
+                       (filter #(.isFile ^java.io.File %)
+                               (file-seq root))
+                       [])
+        count* (count materialized)]
+    (when (pos? count*)
+      (throw (ex-info "cold recovery dataset already contains local block content"
+                      {:type :repository-storage/cold-cache-not-empty
+                       :materialized-blocks count*})))
+    {:cache-empty? true :materialized-blocks 0}))
+
 (defn audit-datalad-blocks
   "Verify the application-owned DataLad tree contains only CID-named blocks,
   each matching its bytes, and none of the supplied plaintext marker bytes.

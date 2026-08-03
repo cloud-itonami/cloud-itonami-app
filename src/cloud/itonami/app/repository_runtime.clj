@@ -6,7 +6,11 @@
             [cloud.itonami.app.config :as config]
             [cloud.itonami.app.repository-measurement :as measurement]
             [cloud.itonami.app.repository-qualification :as qualification]
-            [cloud.itonami.app.repository-storage :as repository]))
+            [cloud.itonami.app.repository-storage :as repository])
+  (:import [java.nio.charset StandardCharsets]
+           [java.nio.file Files StandardCopyOption]
+           [java.time Instant]
+           [java.util UUID]))
 
 (defn- required-env [name]
   (or (not-empty (System/getenv name))
@@ -158,6 +162,126 @@
    (production-context)
    (some-> iterations Long/parseLong)))
 
+(defn- safe-read-evidence [file]
+  (edn/read-string
+   {:readers {}
+    :default (fn [tag _]
+               (throw (ex-info "tagged qualification evidence denied"
+                               {:type :repository-storage/tagged-evidence
+                                :tag tag})))}
+   (slurp file)))
+
+(defn- nearest-git-root [file]
+  (loop [current (.getCanonicalFile ^java.io.File file)]
+    (cond
+      (.exists (io/file current ".git")) current
+      (.getParentFile current) (recur (.getParentFile current))
+      :else nil)))
+
+(defn- require-ignored-evidence-output! [file]
+  (when-let [git-root (nearest-git-root (.getParentFile ^java.io.File file))]
+    (let [process (-> (ProcessBuilder.
+                       ^java.util.List
+                       ["git" "-C" (.getPath git-root) "check-ignore" "-q"
+                        "--" (.getPath (.getCanonicalFile file))])
+                      (.redirectErrorStream true)
+                      .start)]
+      (with-open [input (.getInputStream process)] (.readAllBytes input))
+      (when-not (zero? (.waitFor process))
+        (throw (ex-info "production evidence output must be ignored by Git"
+                        {:type :repository-storage/evidence-git-trackable})))))
+  file)
+
+(defn- running-source-commit []
+  (let [declared (required-env "CLOUD_ITONAMI_SOURCE_COMMIT")
+        _ (when-not (re-matches #"[0-9a-f]{40}" declared)
+            (throw (ex-info "CLOUD_ITONAMI_SOURCE_COMMIT must be an exact Git SHA"
+                            {:type :repository-storage/invalid-source-commit})))
+        git-root (nearest-git-root (io/file "."))
+        checked-out
+        (when git-root
+          (let [process (-> (ProcessBuilder.
+                             ^java.util.List
+                             ["git" "-C" (.getPath git-root)
+                              "rev-parse" "HEAD"])
+                            (.redirectErrorStream true)
+                            .start)
+                output (with-open [input (.getInputStream process)]
+                         (String. (.readAllBytes input)
+                                  StandardCharsets/UTF_8))]
+            (when-not (zero? (.waitFor process))
+              (throw (ex-info "cannot resolve checked-out source commit"
+                              {:type :repository-storage/source-commit-unavailable})))
+            (.trim output)))]
+    (when (and checked-out (not= declared checked-out))
+      (throw (ex-info "declared source commit differs from checked-out code"
+                      {:type :repository-storage/source-commit-mismatch})))
+    declared))
+
+(defn- atomic-write-evidence! [file evidence]
+  (let [file (.getCanonicalFile (io/file file))
+        parent (.getParentFile file)
+        temporary (io/file parent (str ".repository-evidence-"
+                                        (UUID/randomUUID) ".tmp"))
+        bytes (.getBytes (str (pr-str (into (sorted-map) evidence)) "\n")
+                         StandardCharsets/UTF_8)]
+    (.mkdirs parent)
+    (require-ignored-evidence-output! file)
+    (Files/write (.toPath temporary) bytes
+                 (make-array java.nio.file.OpenOption 0))
+    (Files/move (.toPath temporary) (.toPath file)
+                (into-array StandardCopyOption
+                            [StandardCopyOption/REPLACE_EXISTING
+                             StandardCopyOption/ATOMIC_MOVE]))
+    {:evidence-file (.getPath file)}))
+
+(defn drill!
+  "Collect source-bound local capacity and a real cache-empty hydrate into the
+  ignored production evidence file. Peak write rate, sustained upload capacity,
+  RTO and invariant approvals remain explicit operator/CI inputs."
+  [iterations output-file]
+  (let [context (production-context)
+        cold-dataset (required-env "CLOUD_ITONAMI_COLD_DATALAD_DATASET")
+        source-commit (running-source-commit)
+        warm-path (.getCanonicalPath (io/file (:datalad-root context)))
+        cold-path (.getCanonicalPath (io/file cold-dataset))
+        _ (when (= warm-path cold-path)
+            (throw (ex-info "cold recovery requires a separate DataLad dataset"
+                            {:type :repository-storage/cold-dataset-not-isolated})))
+        cold-context (assoc context
+                            :datalad-root cold-path
+                            :transport (repository/datalad-block-transport
+                                        cold-path
+                                        (required-env
+                                         "CLOUD_ITONAMI_DATALAD_REMOTE")))
+        workspace (repository/workspace-snapshot
+                   (:workspace-root context) (:owner context))
+        _ (when-not workspace
+            (throw (ex-info "editable workspace is required for production drill"
+                            {:type :repository-storage/workspace-missing})))
+        local (measurement/measure-local-capacity
+               context (:state workspace) (some-> iterations Long/parseLong))
+        cold (measurement/measure-cold-hydrate cold-context)
+        file (io/file (or output-file
+                          "config/repository-production-evidence.edn"))
+        prior (if (.isFile file)
+                (safe-read-evidence file)
+                (safe-read-evidence
+                 (io/file "config/repository-production-evidence.example.edn")))
+        evidence (merge prior
+                        {:reconcile-bps (:reconcile-bps local)
+                         :local-view-apply-bps (:local-view-apply-bps local)
+                         :encrypted-output-bps (:sealed-output-bps local)
+                         :hydrate-ms (:hydrate-ms cold)
+                         :evidence/scope :production
+                         :evidence/measured-at (str (Instant/now))
+                         :evidence/source-commit source-commit
+                         :evidence/cold-hydrate? (:cold-hydrate? cold)
+                         :evidence/cold-downloaded-bytes
+                         (:downloaded-bytes cold)})]
+    (merge (atomic-write-evidence! file evidence)
+           {:measurement {:local local :cold cold}})))
+
 (defn usage!
   []
   (let [{:keys [head-store owner] :as context} (production-context)
@@ -181,7 +305,8 @@
                                      {:type :repository-storage/tagged-evidence
                                       :tag tag})))}
          (slurp evidence-file))
-        _ (qualification/validate-production-attestation! evidence)
+        _ (qualification/validate-production-attestation!
+           evidence (running-source-commit))
         context (production-context)
         workspace (repository/workspace-snapshot
                    (:workspace-root context) (:owner context))
@@ -218,13 +343,14 @@
           "hydrate" (hydrate!)
           "rotate-vmk" (rotate-vmk!)
           "measure" (measure! (first arguments))
+          "drill" (drill! (first arguments) (second arguments))
           "usage" (usage!)
           "qualify" (qualify! (or (first arguments)
                                    "config/repository-production-evidence.edn"))
           "audit" (audit! arguments)
           "profiles" (audit-profiles! arguments)
           (throw (ex-info
-                  "usage: repository migrate [legacy.edn] | publish | hydrate | rotate-vmk | measure [iterations] | usage | qualify [evidence.edn] | audit [markers...] | profiles [repo...]"
+                  "usage: repository migrate [legacy.edn] | publish | hydrate | rotate-vmk | measure [iterations] | drill [iterations] [evidence.edn] | usage | qualify [evidence.edn] | audit [markers...] | profiles [repo...]"
                   {:type :repository-storage/invalid-command})))]
     ;; Result summaries are explicitly stripped of plaintext, VMKs, blocks and
     ;; tokens before they reach an operator terminal.
@@ -232,4 +358,4 @@
                       [:published? :head/revision :basis/cid :qualified?
                        :key/epoch :measurement :violations :failed :sealed/bytes
                        :physical/bytes :reconciled? :heads :blocks :state-file
-                       :basis-file :base-file]))))
+                       :basis-file :base-file :evidence-file]))))

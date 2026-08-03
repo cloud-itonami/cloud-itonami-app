@@ -578,6 +578,7 @@ clojure -M:repository publish
 clojure -M:repository hydrate
 clojure -M:repository rotate-vmk
 clojure -M:repository measure 20
+clojure -M:repository drill 20 config/repository-production-evidence.edn
 clojure -M:repository usage
 clojure -M:repository qualify config/repository-production-evidence.edn
 clojure -M:repository audit secret-fixture-marker
@@ -586,11 +587,14 @@ clojure -M:repository profiles
 
 `publish` fails closed for missing/unfinished DataLad transport, locked Kagi,
 invalid or stale heads, and merge conflicts. `profiles` audits the explicit
-29-repository inventory. `measure` is a warm local probe; production cutover
-still requires fresh, commit-addressed peak-write, sustained-sync and
-cache-empty cold-recovery evidence. Copy the example evidence file to the
-Git-ignored `config/repository-production-evidence.edn`; live inventory,
-plaintext-leak and physical-byte gates cannot be overridden by that file.
+29-repository inventory. `measure` is a warm local probe. `drill` requires a
+separate cache-empty dataset in `CLOUD_ITONAMI_COLD_DATALAD_DATASET`, verifies
+that it contains no materialized annex blocks, performs the real hydrate, and
+atomically writes source-bound measurements to the Git-ignored evidence file.
+`CLOUD_ITONAMI_SOURCE_COMMIT` must be the exact deployed 40-character SHA and
+`qualify` refuses evidence from any other commit. Production cutover still
+requires observed peak-write, sustained-upload and RTO inputs. Live inventory,
+plaintext-leak and physical-byte gates cannot be overridden by the file.
 
 See [`.env.example`](.env.example), [the architecture](docs/architecture.md),
 and [the tenant model](docs/tenant-model.md).

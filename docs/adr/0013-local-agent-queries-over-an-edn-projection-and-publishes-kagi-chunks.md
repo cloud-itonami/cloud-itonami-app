@@ -326,6 +326,15 @@ workspace, gate 9 from the encrypted retained-head chain and physical blocks,
 and gate 11 from the explicit 29-repository inventory. An evidence file cannot
 override those three live results and is itself ignored by Git.
 
+The cache-empty attestation is produced by `repository drill`, not typed by an
+operator: the command refuses the warm DataLad dataset, proves that a separate
+recovery dataset contains no materialized annex block, hydrates through the
+configured remote, and atomically records elapsed time and downloaded bytes.
+Both `drill` and `qualify` bind the evidence to the exact 40-character
+`CLOUD_ITONAMI_SOURCE_COMMIT`; a well-formed SHA from another build is refused.
+Peak logical writes, sustained upload capacity and the chosen RTO remain
+deployment observations and are not fabricated by this drill.
+
 An emergency compromise of a blind/index key is distinct from routine VMK
 rotation. If remote Arrangement is ever enabled, that event may require a full
 reindex/re-encryption and must receive its own measured recovery model.
