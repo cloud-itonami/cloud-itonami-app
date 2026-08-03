@@ -36,6 +36,33 @@
            :allow-cloud-without-review? false}
  :cloud-relay {:base-url nil
                :access-token-env "CLOUD_ITONAMI_RELAY_ACCESS_TOKEN"}
+ ;; Live mailbox synchronization. Off in the tenant-neutral distribution: an
+ ;; installed workspace that starts reading somebody's mail has answered a
+ ;; question nobody asked it.
+ ;;
+ ;; A provider syncs when this app holds its own OAuth connection (Settings →
+ ;; Connect), or when `:delegated-credential` names one another tool on this
+ ;; machine already holds. The delegated form exists so a person who has
+ ;; already consented once — to `kotoba-lang/mail-archive`, say — is not
+ ;; marched through a second consent screen for the same read-only scope.
+ ;;
+ ;; Both keychain items are named in full, service *and* account. Nothing here
+ ;; searches the keychain or infers an account: an application that reached for
+ ;; whichever Google token happened to be present would be reading a mailbox it
+ ;; was never pointed at.
+ ;;
+ ;;   :providers {:google {:delegated-credential
+ ;;                        {:client-service  "google-oauth-client"
+ ;;                         :client-account  "mail-archive"
+ ;;                         :refresh-service "google-oauth:<slug>"
+ ;;                         :refresh-account "<address>@gmail.com"}}}
+ :mail-sync {:enabled? false
+             :interval-seconds 60
+             ;; The hosted webhook relay is a further opt-in; a loopback-only
+             ;; deployment should not be calling out to it by default.
+             :relay-enabled? false
+             :gmail-topic nil
+             :providers {}}
  :memory {:max-session-messages 40
           :max-context-messages 20}
  ;; Background worker runs. Concurrency is deliberately small: these share the

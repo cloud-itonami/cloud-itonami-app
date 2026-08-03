@@ -301,8 +301,52 @@
         (gmail-full-sync! token)
         (throw error)))))
 
+;; Two ways to hold a Gmail grant, and this app prefers neither on principle.
+;;
+;; The first is its own: somebody opened Settings, clicked Connect, and the
+;; authorization code came back to this server. The second is delegated — a
+;; sibling tool on this machine (`kotoba-lang/mail-archive`) already asked the
+;; same person for the same read-only scope and kept the refresh token in the
+;; Keychain. Minting a second OAuth client for that would buy one more consent
+;; screen and nothing else.
+;;
+;; Delegation is opt-in and names its credential outright, because the
+;; alternative — an application that reaches for whichever Google token is on
+;; the machine — is an application that reads mail it was never pointed at.
+;; Absent `:delegated-credential`, this returns nil and the provider is simply
+;; not synced.
+
+(defn- delegated-credential [provider]
+  (get-in @runtime-config [:providers provider :delegated-credential]))
+
+(defn- access-token! [provider]
+  (or (identity/provider-access-token! provider)
+      (when-let [credential (delegated-credential provider)]
+        (or (identity/delegated-access-token! provider credential)
+            ;; Configured and refused is not the same as not configured, and
+            ;; only one of the two is worth telling somebody about. A grant
+            ;; goes stale on its own — Google expires refresh tokens issued by
+            ;; a client still in testing after a week — and the symptom is a
+            ;; mailbox that quietly stops updating. Raise it so `record-error!`
+            ;; writes it where `status` will report it.
+            (throw (ex-info (str (name provider)
+                                 " の委任認証情報が拒否されました。再認可が必要です。")
+                            {:type :mail/credential-rejected
+                             :provider provider}))))))
+
+(defn syncable-providers
+  "Providers this process can actually sync right now.
+
+  A provider counts if this app holds its own connection, or if the operator
+  named a delegated credential for it in configuration. Whether that
+  credential still works is answered by using it, not by asking here."
+  []
+  (into (identity/connected-providers)
+        (keep #(when (delegated-credential %) %))
+        [:google :microsoft]))
+
 (defn sync-gmail! []
-  (when-let [token (identity/provider-access-token! :google)]
+  (when-let [token (access-token! :google)]
     (let [history-id (get-in (store/snapshot)
                              [:mail-sync :providers :google :cursor :history-id])
           result (if history-id
@@ -362,7 +406,7 @@
 (declare ensure-graph-subscription!)
 
 (defn sync-microsoft! []
-  (when-let [token (identity/provider-access-token! :microsoft)]
+  (when-let [token (access-token! :microsoft)]
     (let [folders (graph-folders! token)
           previous (get-in (store/snapshot)
                            [:mail-sync :providers :microsoft :cursor
@@ -452,7 +496,7 @@
        :providers
        (into {}
              (keep (fn [provider]
-                     (when (contains? (identity/connected-providers) provider)
+                     (when (contains? (syncable-providers) provider)
                        [provider
                         (try
                           (case provider
@@ -493,25 +537,59 @@
         (relay-request-json! :post "/v1/events/ack" {:keys keys}))
       {:events (count events)})))
 
+(defn status
+  "What this deployment can sync, and what it last did.
+
+  Reported without a provider round trip, so it stays answerable when the
+  network or the grant is down — which is exactly when somebody asks."
+  []
+  (let [providers (get-in (store/snapshot) [:mail-sync :providers])
+        syncable (syncable-providers)]
+    {:enabled? (boolean @scheduler)
+     :syncable (vec (sort (map name syncable)))
+     :messages (count (get-in (store/snapshot) [:mail-sync :messages]))
+     :providers
+     (into {}
+           (map (fn [provider]
+                  (let [state (get providers provider)]
+                    [provider
+                     {:configured? (contains? syncable provider)
+                      :delegated? (boolean (delegated-credential provider))
+                      :own-connection?
+                      (contains? (identity/connected-providers) provider)
+                      :status (or (:status state) :never-synced)
+                      :last-synced-at (:last-synced-at state)
+                      :last-attempt-at (:last-attempt-at state)
+                      :last-error (:last-error state)
+                      :message-count (or (:message-count state) 0)}]))
+                [:google :microsoft]))}))
+
 (defn start!
   ([] (start! {}))
   ([configuration]
-  (reset! runtime-config (:mail-sync configuration))
-  (when-not @scheduler
-    (let [executor (Executors/newSingleThreadScheduledExecutor
-                    (reify ThreadFactory
-                      (newThread [_ runnable]
-                        (doto (Thread. runnable "cloud-itonami-mail-sync")
-                          (.setDaemon true)))))]
-      (.scheduleWithFixedDelay
-       ^ScheduledExecutorService executor
-       ^Runnable #(sync-all!) 10 60 TimeUnit/SECONDS)
-      (.scheduleWithFixedDelay
-       ^ScheduledExecutorService executor
-       ^Runnable #(try (poll-relay!) (catch Exception _ nil))
-       5 5 TimeUnit/SECONDS)
-      (reset! scheduler executor)))
-  true))
+   (reset! runtime-config (:mail-sync configuration))
+   ;; Off unless asked for. A workspace app that begins pulling somebody's
+   ;; mail because it was installed has answered a question nobody put to it.
+   (when (and (:enabled? @runtime-config) (not @scheduler))
+     (let [executor (Executors/newSingleThreadScheduledExecutor
+                     (reify ThreadFactory
+                       (newThread [_ runnable]
+                         (doto (Thread. runnable "cloud-itonami-mail-sync")
+                           (.setDaemon true)))))
+           interval (long (or (:interval-seconds @runtime-config) 60))]
+       (.scheduleWithFixedDelay
+        ^ScheduledExecutorService executor
+        ^Runnable #(try (sync-all!) (catch Exception _ nil))
+        10 interval TimeUnit/SECONDS)
+       ;; The relay is a separate opt-in: it reaches a hosted endpoint, which
+       ;; a loopback-only deployment has no business doing by default.
+       (when (:relay-enabled? @runtime-config)
+         (.scheduleWithFixedDelay
+          ^ScheduledExecutorService executor
+          ^Runnable #(try (poll-relay!) (catch Exception _ nil))
+          5 5 TimeUnit/SECONDS))
+       (reset! scheduler executor)))
+   (boolean @scheduler)))
 
 (defn stop! []
   (when-let [^ScheduledExecutorService executor @scheduler]
