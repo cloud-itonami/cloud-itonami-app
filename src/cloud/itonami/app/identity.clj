@@ -921,7 +921,7 @@
                                         transaction 0))
                                 cooldown-ms)))
                       (vals (:email-login-transactions state)))]
-    (when (and user (not recent?))
+    (when (and (email-login/configured? configuration) user (not recent?))
       (let [token (random-token 32)
             transaction-id (str "email-login-" (UUID/randomUUID))
             expires-at (+ now (* 1000 email-login-seconds))
