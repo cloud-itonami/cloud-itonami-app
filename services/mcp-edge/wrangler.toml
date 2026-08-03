@@ -1,0 +1,9 @@
+name = "cloud-itonami-mcp-edge"
+main = "src/index.js"
+compatibility_date = "2026-06-28"
+routes = [
+  { pattern = "mcp.itonami.cloud", custom_domain = true }
+]
+
+[vars]
+ORIGIN = "https://mcp.itonami.cloud.etzhayyim.com"
