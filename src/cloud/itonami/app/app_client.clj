@@ -27,6 +27,7 @@
   would add a running-server requirement to the one capability that does not
   need one."
   (:require [clojure.data.json :as json]
+            [clojure.string :as str]
             [cloud.itonami.app.agent-session :as agent-session])
   (:import [java.net ConnectException URI]
            [java.net.http HttpClient HttpRequest HttpRequest$BodyPublishers
@@ -37,6 +38,19 @@
   (-> (HttpClient/newBuilder)
       (.connectTimeout (Duration/ofSeconds 5))
       .build))
+
+(def ^:dynamic *environment* #(System/getenv %))
+
+(defn- remote-api-url []
+  (when-let [value (some-> (*environment* "CLOUD_ITONAMI_API_URL") str/trim not-empty)]
+    (let [uri (URI/create value)
+          scheme (.getScheme uri)
+          host (.getHost uri)
+          loopback? (contains? #{"localhost" "127.0.0.1" "::1"} host)]
+      (when-not (or (= "https" scheme) (and (= "http" scheme) loopback?))
+        (throw (ex-info "CLOUD_ITONAMI_API_URLはHTTPSまたはloopbackを指定してください"
+                        {:type :app-client/insecure-api-url})))
+      (str/replace value #"/+$" ""))))
 
 (defn base-url
   "The address the server actually binds, NOT `:public-origin`.
@@ -50,8 +64,9 @@
   `:public-origin` is what a browser is told the app is called. This connects
   directly, so the bound host and port are the truth."
   [configuration]
-  (str "http://" (get-in configuration [:server :host])
-       ":" (get-in configuration [:server :port])))
+  (or (remote-api-url)
+      (str "http://" (get-in configuration [:server :host])
+           ":" (get-in configuration [:server :port]))))
 
 (defn token
   "The agent-session token, from the environment or the Keychain."

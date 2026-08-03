@@ -1748,6 +1748,15 @@
                         :type "submit"}
                "招待を承認して参加"]]
              [:ul {:class "member-list" :id "member-list"}]]
+            [:div {:class "local-card"}
+             (dds/heading 2 "Agent tenant connections" {:size "20"})
+             [:p {:class "form-help"}
+              "Agentの申請を確認し、tenant・capability・期限・予算を固定して承認します。Agent自身は承認できません。"]
+             [:p {:class "source-note" :id "tenant-connection-state"
+                  :role "status" :aria-live "polite"}
+              "接続申請を確認中…"]
+             [:ul {:class "member-list" :id "tenant-connection-list"}
+              [:li {:class "skeleton"}]]]
             [:div {:class "local-card" :id "member-card"}
              (dds/heading 2 "User を追加" {:size "20"})
              [:form {:class "settings-form" :id "member-form"}

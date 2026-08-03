@@ -35,6 +35,7 @@
             [cloud.itonami.app.scheduler :as scheduler]
             [cloud.itonami.app.service :as service]
             [cloud.itonami.app.store :as store]
+            [cloud.itonami.app.tenant-connection :as tenant-connection]
             [cloud.itonami.app.web :as web]
             [cloud.itonami.app.worker :as worker]
             [cloud.itonami.app.workspace :as workspace])
@@ -1113,6 +1114,80 @@
 
             (and (= method "GET") (= path "/api/state"))
             (send! exchange 200 (public-state config))
+
+            ;; Versioned tenant control plane. A connection is immutable loop
+            ;; context; unlike the browser organization switcher it never
+            ;; mutates shared active-organization state.
+            (and (= method "GET") (= path "/v1/tenants"))
+            (send! exchange 200
+                   (tenant-connection/tenants (require-app-session! exchange)))
+
+            (and (= method "GET") (= path "/v1/tenant-connections"))
+            (send! exchange 200
+                   (tenant-connection/connections
+                    (require-app-session! exchange)))
+
+            (and (= method "POST") (= path "/v1/tenant-connections"))
+            (let [session (require-app-session! exchange)]
+              (require-origin! exchange config)
+              (require-csrf! exchange session)
+              (send! exchange 202
+                     (tenant-connection/request! session (read-json exchange))))
+
+            (and (= method "GET")
+                 (id-from-path path #"/v1/tenant-connections/([^/]+)"))
+            (send! exchange 200
+                   (tenant-connection/connection
+                    (require-app-session! exchange)
+                    (id-from-path path #"/v1/tenant-connections/([^/]+)")))
+
+            (and (= method "POST")
+                 (id-from-path path #"/v1/tenant-connections/([^/]+)/approve"))
+            (let [session (require-human-session! exchange)]
+              (require-origin! exchange config)
+              (require-csrf! exchange session)
+              (send! exchange 200
+                     (tenant-connection/approve!
+                      session
+                      (id-from-path path
+                                    #"/v1/tenant-connections/([^/]+)/approve"))))
+
+            (and (= method "POST")
+                 (id-from-path path #"/v1/tenant-connections/([^/]+)/renew"))
+            (let [session (require-app-session! exchange)
+                  request (read-json exchange)]
+              (require-origin! exchange config)
+              (require-csrf! exchange session)
+              (send! exchange 202
+                     (tenant-connection/request-renewal!
+                      session
+                      (id-from-path path
+                                    #"/v1/tenant-connections/([^/]+)/renew")
+                      (or (:ttl-seconds request) (:ttl_seconds request)))))
+
+            (and (= method "POST")
+                 (id-from-path path #"/v1/tenant-connections/([^/]+)/revoke"))
+            (let [session (require-app-session! exchange)]
+              (require-origin! exchange config)
+              (require-csrf! exchange session)
+              (send! exchange 200
+                     (tenant-connection/revoke!
+                      session
+                      (id-from-path path
+                                    #"/v1/tenant-connections/([^/]+)/revoke"))))
+
+            (and (= method "POST")
+                 (id-from-path path #"/v1/tenant-connections/([^/]+)/context"))
+            (let [session (require-app-session! exchange)
+                  request (read-json exchange)]
+              (require-origin! exchange config)
+              (require-csrf! exchange session)
+              (send! exchange 200
+                     (tenant-connection/context!
+                      session
+                      (id-from-path path
+                                    #"/v1/tenant-connections/([^/]+)/context")
+                      (:capability request))))
 
             (and (= method "GET") (= path "/api/identity"))
             (send! exchange 200
@@ -2565,6 +2640,18 @@
                      ;; caller can never present one, so telling it to go and
                      ;; enrol would be an instruction it cannot follow.
                      :identity/agent-session-forbidden 403
+                     :tenant-connection/forbidden 403
+                     :tenant-connection/human-approval-required 403
+                     :tenant-connection/capability-denied 403
+                     :tenant-connection/not-found 404
+                     :tenant-connection/not-active 409
+                     :tenant-connection/invalid-state 409
+                     :tenant-connection/expired 409
+                     :tenant-connection/budget-exhausted 429
+                     :tenant-connection/tenant-required 400
+                     :tenant-connection/invalid-ttl 400
+                     :tenant-connection/invalid-capability 400
+                     :tenant-connection/invalid-budget 400
                      ;; Agent-session enrolment. The key is a credential, so a
                      ;; wrong one is 403 rather than 400 -- 400 would read as
                      ;; "you sent the field badly" when the field was fine and

@@ -13,6 +13,7 @@
             [cloud.itonami.app.agent-session-test]
             [cloud.itonami.app.business-http-test]
             [cloud.itonami.app.canvas-test]
+            [cloud.itonami.app.cli-test]
             [cloud.itonami.app.loops-test]
             [cloud.itonami.app.lawfirm-test]
             [cloud.itonami.app.local-query-test]
@@ -69,6 +70,8 @@
             [cloud.itonami.app.storj-node-test]
             [cloud.itonami.app.store-test]
             [cloud.itonami.app.storj-test]
+            [cloud.itonami.app.tenant-connection-test]
+            [cloud.itonami.app.tenant-connection-http-test]
             [cloud.itonami.app.worker-http-test]))
 
 (def ^:private namespaces
@@ -77,6 +80,7 @@
     cloud.itonami.app.agent-session-test
     cloud.itonami.app.business-http-test
     cloud.itonami.app.canvas-test
+    cloud.itonami.app.cli-test
     cloud.itonami.app.loops-test
     cloud.itonami.app.lawfirm-test
     cloud.itonami.app.local-query-test
@@ -133,6 +137,8 @@
     cloud.itonami.app.storj-node-test
     cloud.itonami.app.store-test
     cloud.itonami.app.storj-test
+    cloud.itonami.app.tenant-connection-test
+    cloud.itonami.app.tenant-connection-http-test
     cloud.itonami.app.worker-http-test])
 
 (defn- test-namespaces-on-disk

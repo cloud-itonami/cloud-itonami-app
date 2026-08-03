@@ -8,8 +8,11 @@
   (:require [clojure.data.json :as json]
             [clojure.string :as str]
             [clojure.test :refer [deftest is testing]]
+            [cloud.itonami.app.business-tools :as business-tools]
             [cloud.itonami.app.mcp :as mcp]
-            [cloud.itonami.app.store :as store])
+            [cloud.itonami.app.payment-tools :as payment-tools]
+            [cloud.itonami.app.store :as store]
+            [cloud.itonami.app.tenant-tools :as tenant-tools])
   (:import [java.io BufferedReader StringReader StringWriter]))
 
 (def ^:private enabled {:agent-control {:fleet {:enabled? true}}})
@@ -153,3 +156,25 @@
 (deftest an-unknown-method-is-method-not-found
   (let [[response] (exchange enabled [(rpc 1 "resources/subscribe" nil)])]
     (is (= -32601 (get-in response [:error :code])))))
+
+(deftest tenant-tools-are-published-only-with-a-live-agent-session
+  (with-redefs [tenant-tools/available? (constantly true)
+                business-tools/available? (constantly false)
+                payment-tools/available? (constantly false)]
+    (let [names (set (map :name (mcp/published-tools disabled)))]
+      (is (contains? names "tenant_list"))
+      (is (contains? names "tenant_connection_request"))
+      (is (contains? names "tenant_connection_context"))
+      (is (not (contains? names "tenant_connection_approve")))))
+  (with-redefs [tenant-tools/available? (constantly false)
+                business-tools/available? (constantly false)
+                payment-tools/available? (constantly false)]
+    (is (not-any? #(str/starts-with? (:name %) "tenant_")
+                  (mcp/published-tools disabled)))))
+
+(deftest tenant-mcp-call-delegates-to-the-api-adapter
+  (with-redefs [tenant-tools/call-tool
+                (fn [_ name input] {:tool name :connection (:connection_id input)})]
+    (is (= {:tool "tenant_connection_status" :connection "tc-1"}
+           (mcp/invoke {} "tenant_connection_status"
+                       {"connection_id" "tc-1"})))))

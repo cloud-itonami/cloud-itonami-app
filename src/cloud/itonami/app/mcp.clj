@@ -61,6 +61,7 @@
             [cloud.itonami.app.fleet :as fleet]
             [cloud.itonami.app.payment-tools :as payment-tools]
             [cloud.itonami.app.store :as store]
+            [cloud.itonami.app.tenant-tools :as tenant-tools]
             [mcp.execute :as execute]
             [mcp.model :as model]
             [mcp.ports :as ports])
@@ -95,6 +96,7 @@
   (cond-> []
     (fleet-enabled? configuration) (into fleet/tools)
     (business-tools/available? configuration) (into business-tools/tools)
+    (tenant-tools/available? configuration) (into tenant-tools/tools)
     (payment-tools/available? configuration) (into payment-tools/tools)))
 
 (defn manifest
@@ -131,6 +133,8 @@
         payment-tool? (payment-tools/call-tool configuration tool-name input)
         (business-tools/tool? tool-name)
         (business-tools/call-tool configuration tool-name input)
+        (tenant-tools/tool? tool-name)
+        (tenant-tools/call-tool configuration tool-name input)
         (= "fleet_search" tool-name) (fleet/search-tool input)
         (= "fleet_call" tool-name)
         (if (fleet-enabled? configuration)

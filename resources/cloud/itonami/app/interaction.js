@@ -6211,6 +6211,77 @@
       renderMembers(data.organization);
       renderConnectors(data);
       loadCloudAlias(data);
+      loadTenantConnections();
+    };
+    const renderTenantConnections = (data) => {
+      const list = $('#tenant-connection-list');
+      const state = $('#tenant-connection-state');
+      if (!list || !state) return;
+      const connections = data.connections || [];
+      list.replaceChildren();
+      connections.forEach((connection) => {
+        const item = make('li', 'member-list__item');
+        const copy = make('div');
+        const capabilities = (connection.capabilities || []).join('、');
+        copy.append(
+          make('strong', null, connection['agent-id'] || connection.id),
+          make('p', 'form-help',
+            `${connection['tenant-organization-id'] || connection['tenant-id']} · ${capabilities}`),
+          make('p', 'form-help',
+            `${connection.status} · ${connection['expires-at'] || '未承認'}`));
+        const actions = make('div', 'worker-actions');
+        const needsApproval = connection.status === 'pending-approval'
+          || Boolean(connection['renewal-requested-at']);
+        if (needsApproval) {
+          const approve = make('button', 'primary-action', 'Passkey sessionで承認');
+          approve.type = 'button';
+          approve.addEventListener('click', async () => {
+            approve.disabled = true;
+            try {
+              await postJSON(`/v1/tenant-connections/${encodeURIComponent(connection.id)}/approve`, {}, true);
+              $('#identity-status').textContent = 'Agent tenant connectionを承認しました。';
+              await loadTenantConnections();
+            } catch (error) {
+              $('#identity-status').textContent = error.message;
+              approve.disabled = false;
+            }
+          });
+          actions.append(approve);
+        }
+        if (connection.status !== 'revoked') {
+          const revoke = make('button', 'tool-button', '取り消す');
+          revoke.type = 'button';
+          revoke.addEventListener('click', async () => {
+            revoke.disabled = true;
+            try {
+              await postJSON(`/v1/tenant-connections/${encodeURIComponent(connection.id)}/revoke`, {}, true);
+              $('#identity-status').textContent = 'Agent tenant connectionを取り消しました。';
+              await loadTenantConnections();
+            } catch (error) {
+              $('#identity-status').textContent = error.message;
+              revoke.disabled = false;
+            }
+          });
+          actions.append(revoke);
+        }
+        item.append(copy, actions); list.append(item);
+      });
+      if (!connections.length)
+        list.append(make('li', 'empty-state', 'Agentからの接続申請はありません。'));
+      state.textContent = `${connections.length}件のtenant connection`;
+    };
+    const loadTenantConnections = async () => {
+      if (!identityState?.['authenticated?']) return;
+      try {
+        const request = await fetch('/v1/tenant-connections');
+        const data = await request.json();
+        if (!request.ok)
+          throw new Error(data?.error?.message || 'tenant connectionを確認できませんでした。');
+        renderTenantConnections(data);
+      } catch (error) {
+        const state = $('#tenant-connection-state');
+        if (state) state.textContent = error.message;
+      }
     };
     const loadCloudAlias = async (identity) => {
       const state = $('#cloud-alias-state');
@@ -6871,4 +6942,3 @@
         item.setAttribute('aria-pressed', item === button ? 'true' : 'false'));
     }));
   });
-  

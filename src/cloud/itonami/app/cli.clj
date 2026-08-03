@@ -29,6 +29,11 @@
     clojure -M:cli auth login --label \"claude-code\" [--ttl-days 30]
     clojure -M:cli auth status
     clojure -M:cli auth revoke --id session-…
+    clojure -M:cli tenant list
+    clojure -M:cli tenant connect --tenant acme --cap workspace.read,actor.invoke
+    clojure -M:cli tenant status --connection tc-…
+    clojure -M:cli tenant renew --connection tc-… [--ttl-seconds 3600]
+    clojure -M:cli tenant revoke --connection tc-…
     clojure -M:cli business list
     clojure -M:cli business create --slug cloud-itonami-vc --name \"…\"
     clojure -M:cli business bind --id business-… --repos a,b,c [--canvas …]
@@ -36,7 +41,9 @@
   The CLI resolves the server's address and the data directory from the same
   config the server does, so it must run with the same `CLOUD_ITONAMI_DATA_DIR`
   as the server it is talking to. Mismatched, `auth login` reads the wrong key
-  file and is refused by the server rather than acting on the wrong store."
+  file and is refused by the server rather than acting on the wrong store.
+  `CLOUD_ITONAMI_API_URL=https://itonami.cloud` switches CLI and MCP adapters
+  to the hosted control plane; non-loopback plain HTTP is refused."
   (:require [clojure.data.json :as json]
             [clojure.string :as str]
             [cloud.itonami.app.agent-session :as agent-session]
@@ -153,6 +160,57 @@
     (unwrap (call configuration :post (str "/api/agent-session/" id "/revoke")
                   {:token (require-token configuration)}))))
 
+(defn tenant-list [configuration]
+  (unwrap (call configuration :get "/v1/tenants"
+                {:token (require-token configuration)})))
+
+(defn tenant-connections [configuration]
+  (unwrap (call configuration :get "/v1/tenant-connections"
+                {:token (require-token configuration)})))
+
+(defn tenant-connect [configuration flags]
+  (unwrap
+   (call configuration :post "/v1/tenant-connections"
+         {:token (require-token configuration)
+          :body {:tenant_id (:tenant flags)
+                 :agent_id (:agent-id flags)
+                 :capabilities (comma-list (:cap flags))
+                 :ttl_seconds (some-> (:ttl-seconds flags) parse-long)
+                 :budget {:max_operations (some-> (:max-operations flags) parse-long)
+                          :max_storage_bytes
+                          (some-> (:max-storage-bytes flags) parse-long)}
+                 :idempotency_key (:idempotency-key flags)}})))
+
+(defn- required-connection [flags]
+  (or (:connection flags)
+      (throw (ex-info "--connection が必要です"
+                      {:type :cli/missing-connection}))))
+
+(defn tenant-status [configuration flags]
+  (unwrap (call configuration :get
+                (str "/v1/tenant-connections/" (required-connection flags))
+                {:token (require-token configuration)})))
+
+(defn tenant-renew [configuration flags]
+  (unwrap (call configuration :post
+                (str "/v1/tenant-connections/" (required-connection flags)
+                     "/renew")
+                {:token (require-token configuration)
+                 :body {:ttl_seconds (some-> (:ttl-seconds flags) parse-long)}})))
+
+(defn tenant-revoke [configuration flags]
+  (unwrap (call configuration :post
+                (str "/v1/tenant-connections/" (required-connection flags)
+                     "/revoke")
+                {:token (require-token configuration) :body {}})))
+
+(defn tenant-context [configuration flags]
+  (unwrap (call configuration :post
+                (str "/v1/tenant-connections/" (required-connection flags)
+                     "/context")
+                {:token (require-token configuration)
+                 :body {:capability (:capability flags)}})))
+
 (defn business-list [configuration]
   (unwrap (call configuration :get "/api/business"
                 {:token (require-token configuration)})))
@@ -189,6 +247,13 @@
        "  auth login    --label <name> [--ttl-days N] [--user-id U]\n"
        "  auth status\n"
        "  auth revoke   --id <session-id>\n"
+       "  tenant list\n"
+       "  tenant connections\n"
+       "  tenant connect --tenant <id> --cap a,b [--ttl-seconds N]\n"
+       "  tenant status --connection <tc-id>\n"
+       "  tenant renew --connection <tc-id> [--ttl-seconds N]\n"
+       "  tenant revoke --connection <tc-id>\n"
+       "  tenant context --connection <tc-id> --capability <name>\n"
        "  business list\n"
        "  business create --slug <slug> [--name N] [--note X]\n"
        "  business bind --id <business-id> [--repos a,b] [--canvas c]\n"
@@ -203,6 +268,13 @@
       ["auth" "login"] (auth-login configuration flags)
       ["auth" "status"] (auth-status configuration)
       ["auth" "revoke"] (auth-revoke configuration flags)
+      ["tenant" "list"] (tenant-list configuration)
+      ["tenant" "connections"] (tenant-connections configuration)
+      ["tenant" "connect"] (tenant-connect configuration flags)
+      ["tenant" "status"] (tenant-status configuration flags)
+      ["tenant" "renew"] (tenant-renew configuration flags)
+      ["tenant" "revoke"] (tenant-revoke configuration flags)
+      ["tenant" "context"] (tenant-context configuration flags)
       ["business" "list"] (business-list configuration)
       ["business" "create"] (business-create configuration flags)
       ["business" "bind"] (business-bind configuration flags)
