@@ -10,7 +10,8 @@
             [kagi.persist :as kagi-persist]
             [kagi.repository-context :as kagi-context]
             [kagi.secret-store :as secret-store]
-            [kotobase.local :as local])
+            [kotobase.local :as local]
+            [langchain.edn-persist :as edn-persist])
   (:import [com.sun.net.httpserver HttpHandler HttpServer]
            [java.net InetSocketAddress]
            [java.nio.charset StandardCharsets]
@@ -34,6 +35,59 @@
      :signing-public (:public signing)
      :transport (repository/memory-block-transport)
      :head-store (local/local-store)}))
+
+(deftest actor-appends-and-direct-edn-edits-share-one-lock
+  (let [root (.toFile (Files/createTempDirectory
+                       "repository-edit-lock-"
+                       (make-array java.nio.file.attribute.FileAttribute 0)))
+        owner-dir (io/file root owner)
+        state-file (io/file owner-dir "state.edn")
+        _ (.mkdirs owner-dir)
+        _ (spit state-file (pr-str base-state))
+        persist (edn-persist/configured-persist
+                 {"KOTOBA_REPOSITORY_STATE_FILE" (.getPath state-file)
+                  "KOTOBA_REPOSITORY_STREAM" "actor/concurrent"}
+                 "unused")
+        edit (future
+               (repository/retry-workspace-edit!
+                {:workspace-root (.getPath root) :owner owner
+                 :edit-fn #(assoc % :agent/direct-note "preserved")}))
+        writers (doall (for [n (range 30)]
+                         (future ((:append persist)
+                                  {:tx n :tx-data []}))))]
+    @edit
+    (doseq [writer writers] @writer)
+    (let [state (:state (repository/workspace-snapshot root owner))
+          events (get-in state [:kotoba.agent/streams "actor/concurrent"])]
+      (is (= "preserved" (:agent/direct-note state)))
+      (is (= 30 (count events)))
+      (is (= (vec (range 1 31)) (mapv :seq events))))))
+
+(deftest stale-direct-edit-fails-without-overwriting-actor-transaction
+  (let [root (.toFile (Files/createTempDirectory
+                       "repository-stale-edit-"
+                       (make-array java.nio.file.attribute.FileAttribute 0)))
+        owner-dir (io/file root owner)
+        state-file (io/file owner-dir "state.edn")
+        _ (.mkdirs owner-dir)
+        _ (spit state-file (pr-str base-state))
+        expected (repository/semantic-cid base-state)
+        persist (edn-persist/configured-persist
+                 {"KOTOBA_REPOSITORY_STATE_FILE" (.getPath state-file)}
+                 "actor/stale")]
+    ((:append persist) {:tx 1 :tx-data []})
+    (let [error (try
+                  (repository/edit-workspace!
+                   {:workspace-root (.getPath root) :owner owner
+                    :expected-cid expected
+                    :edit-fn #(assoc % :agent/note "must-not-land")})
+                  nil
+                  (catch clojure.lang.ExceptionInfo value value))
+          state (:state (repository/workspace-snapshot root owner))]
+      (is (= :repository-storage/edit-conflict (:type (ex-data error))))
+      (is (nil? (:agent/note state)))
+      (is (= 1 (count (get-in state
+                              [:kotoba.agent/streams "actor/stale"])))))))
 
 (defn preparation
   [context base candidate current previous-head]

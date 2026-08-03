@@ -4,11 +4,14 @@
   These checks do not claim production throughput or remote availability. They
   prove properties of the exact running implementation, so an operator cannot
   replace them with `true` in an evidence file."
-  (:require [cloud.itonami.app.local-query :as local-query]
+  (:require [clojure.java.io :as io]
+            [cloud.itonami.app.local-query :as local-query]
             [cloud.itonami.app.repository-storage :as repository]
             [datascript.core :as datascript]
             [kagi.crypto :as crypto]
-            [kotobase.local :as local]))
+            [kotobase.local :as local]
+            [langchain.edn-persist :as edn-persist])
+  (:import [java.nio.file Files]))
 
 (def ^:private owner "qualification-invariant-owner")
 
@@ -113,10 +116,41 @@
     (= (datascript/q query datascript-db)
        (set (local-query/query-state base-state (pr-str query))))))
 
+(defn- actor-and-agent-edits-converge? []
+  (let [root (.toFile (Files/createTempDirectory
+                       "repository-lock-invariant-"
+                       (make-array java.nio.file.attribute.FileAttribute 0)))
+        owner-dir (io/file root owner)
+        state-file (io/file owner-dir "state.edn")
+        lock-file (io/file owner-dir ".state.edn.lock")]
+    (try
+      (.mkdirs owner-dir)
+      (spit state-file (pr-str base-state))
+      (let [persist (edn-persist/configured-persist
+                     {"KOTOBA_REPOSITORY_STATE_FILE" (.getPath state-file)}
+                     "actor/qualification")
+            edit (future
+                   (repository/retry-workspace-edit!
+                    {:workspace-root (.getPath root) :owner owner
+                     :edit-fn #(assoc % :agent/edit :preserved)}))
+            append (future ((:append persist) {:tx 1 :tx-data []}))]
+        @edit
+        @append
+        (let [state (:state (repository/workspace-snapshot root owner))]
+          (and (= :preserved (:agent/edit state))
+               (= 1 (count (get-in state
+                                   [:kotoba.agent/streams
+                                    "actor/qualification"]))))))
+      (finally
+        (Files/deleteIfExists (.toPath state-file))
+        (Files/deleteIfExists (.toPath lock-file))
+        (Files/deleteIfExists (.toPath owner-dir))
+        (Files/deleteIfExists (.toPath root))))))
+
 (defn verify
   "Run all code invariants and return only boolean qualification facts. Any
   unexpected exception fails that invariant closed rather than aborting before
-  the twelve-gate report can identify it."
+  the qualification report can identify it."
   []
   (let [check (fn [f] (try (true? (f)) (catch Throwable _ false)))
         result {:semantic-convergence? (check mutation-converges?)
@@ -124,5 +158,7 @@
                 :vmk-rotation-payload-stable?
                 (check vmk-rewrap-preserves-payload?)
                 :transport-failure-head-stable? (check transport-before-head?)
-                :query-backend-parity? (check query-backends-agree?)}]
+                :query-backend-parity? (check query-backends-agree?)
+                :agent-actor-edit-convergence?
+                (check actor-and-agent-edits-converge?)}]
     (assoc result :qualified? (every? true? (vals result)))))

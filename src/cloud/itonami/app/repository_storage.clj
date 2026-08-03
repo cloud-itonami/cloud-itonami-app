@@ -11,6 +11,7 @@
             [clojure.string :as str]
             [clojure.walk :as walk]
             [kagi.crypto :as crypto]
+            [langchain.edn-persist :as edn-persist]
             [kotobase.store :as kstore])
   (:import [java.nio.charset StandardCharsets]
            [java.nio.file Files StandardCopyOption]
@@ -1082,6 +1083,87 @@
                (validate-state! (read-safe-edn-file base-file)))
        :basis (when (.isFile basis-file) (read-safe-edn-file basis-file))
        :owner-dir owner-dir})))
+
+(defn workspace-state-file
+  "Return the canonical editable state file for one opaque storage owner.
+  Owner validation makes traversal impossible and gives launchers one shared
+  coordinate instead of reconstructing the path independently."
+  [workspace-root owner]
+  (when-not (valid-owner? owner)
+    (throw (ex-info "opaque owner storage id is invalid"
+                    {:type :repository-storage/invalid-owner})))
+  (let [root (.getCanonicalFile (io/file workspace-root))
+        owner-dir (.getCanonicalFile (io/file root owner))
+        prefix (str (.getPath root) java.io.File/separator)]
+    (when-not (str/starts-with? (.getPath owner-dir) prefix)
+      (throw (ex-info "workspace owner escapes its root"
+                      {:type :repository-storage/workspace-escape})))
+    (io/file owner-dir "state.edn")))
+
+(defn edit-workspace!
+  "Optimistic direct-EDN mutation membrane shared with actor append.
+
+  EXPECTED-CID must identify the projection the agent actually read. The
+  mutation runs under `langchain.edn-persist/with-state-lock`, so cooperating
+  actor transactions and agent edits cannot overwrite each other. Basis/base
+  files stay untouched; publish still performs the normal three-way reconcile."
+  [{:keys [workspace-root owner expected-cid edit-fn]}]
+  (when-not (ifn? edit-fn)
+    (throw (ex-info "workspace edit function is required"
+                    {:type :repository-storage/edit-function-required})))
+  (let [state-file (workspace-state-file workspace-root owner)]
+    (edn-persist/with-state-lock
+     state-file
+     (fn []
+       (let [workspace (workspace-snapshot workspace-root owner)]
+         (when-not workspace
+           (throw (ex-info "editable user workspace is missing"
+                           {:type :repository-storage/workspace-missing
+                            :owner owner})))
+         (let [state (:state workspace)
+               actual-cid (semantic-cid state)]
+           (when-not (= expected-cid actual-cid)
+             (throw (ex-info "workspace edit basis is stale"
+                             {:type :repository-storage/edit-conflict
+                              :expected-cid expected-cid
+                              :actual-cid actual-cid})))
+           (let [candidate (validate-state! (edit-fn state))
+                 candidate-cid (semantic-cid candidate)]
+             (atomic-write-bytes! state-file (canonical-bytes candidate))
+             {:state candidate :basis/cid actual-cid
+              :semantic/cid candidate-cid})))))))
+
+(defn retry-workspace-edit!
+  "Rebase a pure EDIT-FN on the latest local projection after an actor append.
+  Only optimistic edit conflicts are retried; validation and I/O failures stay
+  fail-closed."
+  [{:keys [workspace-root owner maximum-attempts]
+    :or {maximum-attempts 4}
+    :as request}]
+  (when-not (pos-int? maximum-attempts)
+    (throw (ex-info "maximum edit attempts must be positive"
+                    {:type :repository-storage/invalid-edit-attempts})))
+  (loop [attempt 1]
+    (let [workspace (workspace-snapshot workspace-root owner)]
+      (when-not workspace
+        (throw (ex-info "editable user workspace is missing"
+                        {:type :repository-storage/workspace-missing
+                         :owner owner})))
+      (let [result
+            (try
+              {:value
+               (assoc (edit-workspace!
+                       (assoc request
+                              :expected-cid (semantic-cid (:state workspace))))
+                      :attempts attempt)}
+              (catch clojure.lang.ExceptionInfo error {:error error}))]
+        (if-let [error (:error result)]
+          (if (and (= :repository-storage/edit-conflict
+                      (:type (ex-data error)))
+                   (< attempt maximum-attempts))
+            (recur (inc attempt))
+            (throw error))
+          (:value result))))))
 
 (defn commit-workspace!
   "Commit one user's editable workspace with a ciphertext-only retry journal.

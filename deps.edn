@@ -200,7 +200,7 @@
   ;; remains an injected append/read port; queries never move to the remote.
   io.github.kotoba-lang/langchain
   {:git/url "https://github.com/kotoba-lang/langchain.git"
-   :git/sha "926b52a7e27be2e7ee4bc6714507802d38661682"}
+   :git/sha "7038bb80ce030cc5a279785512c0e92d09f323e0"}
   ;; Transaction and signed-head CAS registry. Encrypted payload blocks remain
   ;; in DataLad and are verified there before this head advances.
   io.github.kotoba-lang/kotobase

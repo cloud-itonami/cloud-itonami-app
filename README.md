@@ -584,6 +584,9 @@ clojure -M:repository usage
 clojure -M:repository qualify config/repository-production-evidence.edn
 clojure -M:repository audit secret-fixture-marker
 clojure -M:repository profiles
+# Registered actors receive this owner's state path and their fixed stream.
+clojure -M:repository actor swachh ../swachh-actor \
+  clojure -M:dev:run-repository z-001 25
 ```
 
 `publish` fails closed for missing/unfinished DataLad transport, locked Kagi,

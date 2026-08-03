@@ -5,6 +5,7 @@
             [clojure.edn :as edn]
             [clojure.string :as str]
             [cloud.itonami.app.config :as config]
+            [cloud.itonami.app.repository-actor :as repository-actor]
             [cloud.itonami.app.repository-measurement :as measurement]
             [cloud.itonami.app.repository-invariants :as invariants]
             [cloud.itonami.app.repository-qualification :as qualification]
@@ -159,6 +160,18 @@
     (qualification/audit-profile-roots roots)
     (qualification/audit-profile-inventory
      "config/repository-storage-inventory.edn")))
+
+(defn launch-actor!
+  "Launch one registered repository-driven actor against this user's editable
+  projection. Command execution is argv-only; no shell interpolation occurs."
+  [actor-id working-directory command]
+  (let [owner (required-env "CLOUD_ITONAMI_STORAGE_OWNER")
+        workspace-root (or (env "CLOUD_ITONAMI_WORKSPACE_ROOT")
+                           (.getPath (io/file (config/data-dir) "workspace")))]
+    (repository-actor/launch!
+     {:workspace-root workspace-root :owner owner
+      :actor-id (keyword actor-id) :working-directory working-directory
+      :command (vec command)})))
 
 (defn measure!
   [iterations]
@@ -315,9 +328,17 @@
          (preflight-check :editable-workspace
                           #(require-check!
                             (and owner
-                                 (.isFile (io/file workspace-root owner
-                                                   "state.edn")))
+                                 (.isFile
+                                  (repository/workspace-state-file
+                                   workspace-root owner)))
                             :preflight/workspace-missing))
+         (preflight-check :repository-actor-host
+                          #(do
+                             (require-check!
+                              (requiring-resolve
+                               'langchain.edn-persist-cli/execute)
+                              :preflight/edn-bridge-missing)
+                             :shared-lock-and-foreign-runtime-bridge))
          (preflight-check :source-commit running-source-commit)
          (preflight-check :evidence-output
                           #(do
@@ -466,7 +487,9 @@
             (:vmk-rotation-payload-stable? live-invariants)
             :transport-failure-head-stable?
             (:transport-failure-head-stable? live-invariants)
-            :query-backend-parity? (:query-backend-parity? live-invariants)))))
+            :query-backend-parity? (:query-backend-parity? live-invariants)
+            :agent-actor-edit-convergence?
+            (:agent-actor-edit-convergence? live-invariants)))))
 
 (defn -main [& [command & arguments]]
   (let [result
@@ -485,8 +508,15 @@
                                    "config/repository-production-evidence.edn"))
           "audit" (audit! arguments)
           "profiles" (audit-profiles! arguments)
+          "actor" (let [[actor-id working-directory & actor-command] arguments]
+                    (when-not (and actor-id working-directory
+                                   (seq actor-command))
+                      (throw (ex-info
+                              "usage: repository actor <id> <cwd> <argv...>"
+                              {:type :repository-actor/arguments-required})))
+                    (launch-actor! actor-id working-directory actor-command))
           (throw (ex-info
-                  "usage: repository preflight | migrate [legacy.edn] | publish | hydrate | rotate-vmk | measure [iterations] | drill [iterations] [evidence.edn] | usage | qualify [evidence.edn] | audit [markers...] | profiles [repo...]"
+                  "usage: repository preflight | migrate [legacy.edn] | publish | hydrate | rotate-vmk | measure [iterations] | drill [iterations] [evidence.edn] | usage | qualify [evidence.edn] | audit [markers...] | profiles [repo...] | actor <id> <cwd> <argv...>"
                   {:type :repository-storage/invalid-command})))]
     ;; Result summaries are explicitly stripped of plaintext, VMKs, blocks and
     ;; tokens before they reach an operator terminal.
@@ -494,4 +524,5 @@
                       [:published? :head/revision :basis/cid :qualified?
                        :key/epoch :measurement :violations :failed :sealed/bytes
                        :physical/bytes :reconciled? :heads :blocks :state-file
-                       :basis-file :base-file :evidence-file :checks :missing]))))
+                       :basis-file :base-file :evidence-file :checks :missing
+                       :actor/id :state/changed? :state/after-cid]))))

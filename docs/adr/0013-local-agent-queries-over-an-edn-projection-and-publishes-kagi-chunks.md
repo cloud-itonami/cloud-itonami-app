@@ -371,9 +371,10 @@ reindex/re-encryption and must receive its own measured recovery model.
   assertion/retraction deltas, and a cardinality/schema change rebuilds from
   authoritative state. It never grants the Agent a remote query capability.
 - The checked-out `animeka`, `dougaka`, `shinshi-growth` and `swachh` actor
-  stores accept the shared append/read persistence port while keeping queries
-  local. New actor and artificial-organism implementations inherit the same
-  repo profile from the common library/template boundary.
+  live/deploy paths consume the shared editable-EDN append/read host while
+  keeping queries local. `repository actor` derives the authenticated owner's
+  exact workspace path and injects it with a registered per-actor stream; no
+  actor receives Kagi, DataLad, or Kotobase credentials.
 - Every checked-out deployable `cloud-itonami/*-actor` repository now declares
   the private-default profile. None receives an inferred public-data exception;
   a public ledger must add the explicit classification and pass the payload
@@ -381,8 +382,9 @@ reindex/re-encryption and must receive its own measured recovery model.
   deployment inventory and fails on a missing, malformed or weakened profile.
 - `kotoba-lang/organisms` now persists artificial-organism state through an
   injected append/read port, restores it on restart, and queries only a local
-  EAV projection. Python owns no duplicate crypto implementation: the host
-  wires the Kagi/Kotobase/DataLad stack. The public
+  EAV projection. Its concrete Python host sends JSON over stdin to
+  `langchain.edn-persist-cli`; Python never parses or rewrites the surrounding
+  EDN and owns no duplicate crypto implementation. The public
   `com-etzhayyim-app-organism` projections carry an explicit public-only
   classification and prohibit private user state in that path.
 - `cloud.itonami.app.repository-storage` implements canonical semantic CIDs,
@@ -404,7 +406,7 @@ reindex/re-encryption and must receive its own measured recovery model.
   `expected_epoch` comparison are the CAS; cloud-itonami does not downgrade it
   to independent IStore `put` and `append` calls. Runtime cutover remains
   fail-closed until a production tenant token/DataLad remote are configured and
-  measured evidence passes all twelve gates. The current whole `data/state.edn`
+  measured evidence passes all thirteen gates. The current whole `data/state.edn`
   remains migration input until then.
 - `repository measure` collects representative warm reconcile, local-view,
   Kagi-seal and configured-transport hydrate capacity from the real workspace.
@@ -418,10 +420,10 @@ This record distinguishes an accepted default from completed runtime adoption.
 |---|---|---|
 | `kotoba-lang/langchain` | common local query engine, Kotobase append/read adapter and machine-checkable repo profile are published on `main`; cloud-itonami pins the verified SHA | none for this decision |
 | `kotoba-lang/kotobase` + Kagi | fail-closed seal/write/read adapter, wrapped repository-VMK epoch keyring, real Kagi callbacks and deployed encryptedGraph expected-epoch CAS | production tenant credential and recovery drill |
-| `cloud-itonami-app` | local Agent query, DataScript parity corpus, reconciler, chunk publisher, per-user workspace/head, retry, hydrate, VMK rotation, encrypted retained-head chain, accounting, measurement probe, encryptedGraph adapter and executable 12-gate evaluator | configure production DataLad/Kotobase credentials and collect peak-write, sustained-sync and cold-RTO evidence |
-| four Datomic-shaped cloud-itonami actors | optional shared persistence port; local query remains unchanged | host wiring to the sealed Kotobase store |
+| `cloud-itonami-app` | local Agent query, DataScript parity corpus, reconciler, chunk publisher, per-user workspace/head, retry, hydrate, VMK rotation, encrypted retained-head chain, accounting, measurement probe, encryptedGraph adapter and executable 13-gate evaluator | configure production DataLad/Kotobase credentials and collect peak-write, sustained-sync and cold-RTO evidence |
+| four Datomic-shaped cloud-itonami actors | live/deploy entrypoints use the shared editable-EDN host; cloud-itonami injects one owner path and registered stream; local query remains unchanged | production recovery drill |
 | other checked-out cloud-itonami actor repositories | private-default profile declared and executable inventory audit available | add a host persistence port when a repository begins to retain private runtime state; classify any public dataset explicitly |
-| `kotoba-lang/organisms` | restartable injected persistence seam and local EAV query projection | wire the deployment host to the shared sealed store |
+| `kotoba-lang/organisms` | restartable concrete foreign-runtime bridge, repository runner and local EAV query projection | production recovery drill |
 | `com-etzhayyim-app-organism` | public generated projection explicitly classified; private state prohibited on that path | keep generated-public and private-runtime heads separate |
 
 An absent or unbuildable repository is not marked migrated. Deployment CI must

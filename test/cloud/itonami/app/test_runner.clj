@@ -24,6 +24,7 @@
             [cloud.itonami.app.repository-qualification-test]
             [cloud.itonami.app.repository-invariants-test]
             [cloud.itonami.app.repository-runtime-test]
+            [cloud.itonami.app.repository-actor-test]
             [cloud.itonami.app.repository-profile-ci-test]
             [cloud.itonami.app.mailbox-test]
             [cloud.itonami.app.mailbox-http-test]
@@ -87,6 +88,7 @@
     cloud.itonami.app.repository-qualification-test
     cloud.itonami.app.repository-invariants-test
     cloud.itonami.app.repository-runtime-test
+    cloud.itonami.app.repository-actor-test
     cloud.itonami.app.repository-profile-ci-test
     cloud.itonami.app.authority.adapters-test
     cloud.itonami.app.authority.api-test

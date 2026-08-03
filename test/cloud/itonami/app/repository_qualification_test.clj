@@ -20,12 +20,13 @@
    :profiles-report {:qualified? true
                      :repositories [{:repository "cloud-itonami-app"
                                      :qualified? true}]}
-   :query-backend-parity? true})
+   :query-backend-parity? true
+   :agent-actor-edit-convergence? true})
 
-(deftest all-twelve-gates-are-required
+(deftest all-thirteen-gates-are-required
   (let [result (qualification/evaluate qualified-evidence)]
     (is (:qualified? result))
-    (is (= (range 1 13) (map :gate (:gates result)))))
+    (is (= (range 1 14) (map :gate (:gates result)))))
   (let [result (qualification/evaluate
                 (dissoc qualified-evidence :hydrate-ms))]
     (is (false? (:qualified? result)))

@@ -123,7 +123,7 @@
 
 (defn validate-production-attestation!
   "Require fresh, commit-addressed, cache-empty recovery evidence. Capacity
-  numbers remain subject to the twelve gates after this provenance check."
+  numbers remain subject to the thirteen gates after this provenance check."
   ([evidence] (validate-production-attestation! evidence nil))
   ([evidence expected-source-commit]
    (let [measured-at (try
@@ -156,7 +156,7 @@
            semantic-convergence? conflict-surfaced? datalad-audit
            vmk-rotation-payload-stable? usage-reconciliation
            transport-failure-head-stable? profiles-report
-           query-backend-parity?]}]
+           query-backend-parity? agent-actor-edit-convergence?]}]
   (let [gates
         [{:gate 1 :name :reconcile-headroom
           :qualified? (ratio-at-least? reconcile-bps peak-logical-write-bps 1.5)}
@@ -187,7 +187,9 @@
          {:gate 11 :name :repository-profiles
           :qualified? (true? (:qualified? profiles-report))}
          {:gate 12 :name :query-backend-parity
-          :qualified? (true? query-backend-parity?)}]]
+          :qualified? (true? query-backend-parity?)}
+         {:gate 13 :name :agent-actor-edit-convergence
+          :qualified? (true? agent-actor-edit-convergence?)}]]
     {:qualified? (every? :qualified? gates)
      :gates gates
      :failed (mapv :gate (remove :qualified? gates))}))
