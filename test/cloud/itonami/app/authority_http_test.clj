@@ -96,7 +96,7 @@
       (fn []
         (let [r (authed :get "/api/authority")]
           (is (= 200 (:status r)))
-          (is (= #{:esim :card :payment :voice}
+          (is (= #{:esim :card :number :payment :voice}
                  (set (keys (get-in r [:body :authorities])))))
           (doseq [[k v] (get-in r [:body :authorities])]
             (is (false? (:enabled? v)) (str k))))))))

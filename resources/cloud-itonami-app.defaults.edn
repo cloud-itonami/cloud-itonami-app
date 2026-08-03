@@ -227,6 +227,28 @@
  {:esim {:enabled? false
          :endpoint nil    ; cloud-itonami/cloud-itonami-esim
          :consent-token-env "ESIM_CONSENT_TOKEN"}
+  ;; Numbering: allocation (払い出し), assignment, lifecycle and portability
+  ;; (ADR-2608034000). THE ACTOR DOES NOT EXIST YET -- there is no
+  ;; cloud-itonami-numbering to hand a consented proposal to, so an enabled
+  ;; :number authority with no endpoint records a refusal rather than a commit.
+  ;; That is the honest outcome and it is why this ships off like the others.
+  :number {:enabled? false
+           :endpoint nil   ; cloud-itonami/cloud-itonami-numbering (not built)
+           :consent-token-env "NUMBER_CONSENT_TOKEN"
+           ;; The ranges this operator was assigned. Configuration, not store: a
+           ;; block that could arrive in a request would let a caller allocate
+           ;; themselves a number out of a range nobody gave this operator.
+           ;; Each entry: {:id "…" :first "+81…" :last "+81…" :kind :mobile}
+           :blocks []
+           ;; How long a released number ages before anybody else may have it.
+           ;; nil = kotoba.phone.numbering/default-quarantine-days (90). The
+           ;; thing being waited out is the previous holder's account-recovery
+           ;; traffic -- password resets and one-time codes -- so short is the
+           ;; dangerous direction.
+           :quarantine-days nil
+           ;; How long after a line changes hands it may not change hands again.
+           ;; nil = kotoba.phone.porting/default-change-freeze-days (60).
+           :freeze-days nil}
   :card {:enabled? false
          :endpoint nil    ; cloud-itonami/cloud-itonami-card-issuing
          :consent-token-env "CARD_CONSENT_TOKEN"   ; actor: X-CARD-CONSENT-TOKEN
@@ -280,4 +302,27 @@
           ;; nil = no allowlist configured, so the pre-check does not apply one.
           ;; An EMPTY vector means nothing is allowed -- an absent policy is not a
           ;; permissive policy, and `[]` is how you say "no callers yet".
-          :allowed-callers nil}}}
+          :allowed-callers nil
+
+          ;; ---- outbound (:call/originate, ADR-2608034000) ----
+          ;; The caller's country, used to classify a destination as domestic,
+          ;; international, premium-rate, toll-free or emergency.
+          :home-country-code "81"
+          ;; Short codes (2-4 digits) this deployment may dial. nil and [] both
+          ;; mean NONE -- short numbers sit next to the emergency and service
+          ;; ranges, so "anything three digits" is not a default anybody should
+          ;; get by leaving a key out. An emergency number is refused even when
+          ;; it appears here; see kotoba.phone.origination/emergency-issue.
+          :allowed-short-codes nil
+          ;; Premium-rate destinations bill the caller and pay the called party,
+          ;; which is the shape of toll fraud. Explicit opt-in only.
+          :allow-premium-rate? false
+          ;; What a minute costs, in integer MINOR units, by destination class.
+          ;; A class with no entry cannot be priced, and an unpriced call is
+          ;; REFUSED rather than assumed free (:origination/cost-unknown).
+          :rate-card {:domestic nil :international nil :toll-free nil
+                      :short-code nil :premium-rate nil}
+          ;; The daily ceiling on outbound spend, in minor units. nil refuses
+          ;; every call: an absent limit is not an unlimited one, the same rule
+          ;; the card adapter's daily-limit gate follows.
+          :daily-limit-minor nil}}}
