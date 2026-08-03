@@ -117,6 +117,7 @@
 
  :aliases
  {:server {:main-opts ["-m" "cloud.itonami.app.server"]}
+  :payment-actor {:main-opts ["-m" "cloud.itonami.app.payment-settlement-actor"]}
   ;; The MCP server speaks JSON-RPC on stdout, so nothing else may print there:
   ;; run it with this alias, never alongside :server in one process.
   :mcp {:main-opts ["-m" "cloud.itonami.app.mcp"]}

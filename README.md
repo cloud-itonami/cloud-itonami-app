@@ -220,6 +220,21 @@ app holds no banking credential and moves no money; a human makes the transfer
 in their bank. `:payment` ships disabled, like every other authority. See
 [ADR-0005](docs/adr/0005-payment-settlement-authority.md).
 
+For a local deployment, the record-only authority runs as a separate,
+loopback-only process:
+
+```bash
+clojure -M:payment-actor
+```
+
+Configure `:authorities :payment :endpoint` as
+`http://127.0.0.1:1340/commit` and `:token-file` as
+`data/payment-settlement.token`. The actor creates that owner-readable
+capability on first start, rejects requests without it, re-checks that the
+proposal is Passkey-approved, and persists an idempotent record in
+`data/payment-settlement.edn`. The record explicitly carries
+`:money-moved? false`.
+
 ### Driving it from an agent (MCP)
 
 The stdio MCP server publishes these as tools — but only when it can resolve a

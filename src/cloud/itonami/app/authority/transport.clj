@@ -38,7 +38,9 @@
   `denwaban` still have no HTTP surface, so those two remain
   :endpoint-not-configured / :transport-failed until they get one. See
   ADR-2607300300's remaining gaps."
-  (:require [clojure.data.json :as json])
+  (:require [clojure.data.json :as json]
+            [clojure.java.io :as io]
+            [clojure.string :as str])
   (:import [java.net URI]
            [java.net.http HttpClient HttpClient$Redirect HttpRequest
             HttpRequest$BodyPublishers HttpResponse$BodyHandlers]
@@ -65,23 +67,33 @@
    :authority/refusal (cond-> {:rule rule}
                         detail (assoc :detail detail))})
 
+(defn proposal-envelope
+  "The exact authority wire payload. Ownership scope is included because the
+  actor deduplicates references per organization; raw session/token data is not."
+  [proposal]
+  {:proposal (select-keys proposal
+                          [:id :organization-id :authority :op
+                           :value :digest :status :approved-at
+                           :passkey-credential-id])})
+
 (defn- post-proposal!
   "POST the proposal to the actor. Returns the actor's own answer, or a
   :transport-failed refusal. Never throws -- a transport problem is an outcome to
   record, not an exception to leak into a route."
-  [endpoint proposal]
+  [endpoint token-file proposal]
   (try
-    (let [body {:proposal (select-keys proposal
-                                       [:id :authority :op :value :digest
-                                        :status :approved-at
-                                        :passkey-credential-id])}
-          request (-> (HttpRequest/newBuilder (URI/create endpoint))
+    (let [body (proposal-envelope proposal)
+          token (when token-file
+                  (some-> token-file io/file slurp str/trim not-empty))
+          builder (-> (HttpRequest/newBuilder (URI/create endpoint))
                       (.timeout (Duration/ofSeconds 20))
                       (.header "Accept" "application/json")
-                      (.header "Content-Type" "application/json")
-                      (.POST (HttpRequest$BodyPublishers/ofString
-                              (json/write-str body)))
-                      (.build))
+                      (.header "Content-Type" "application/json"))
+          request (cond-> builder
+                    token (.header "X-Cloud-Itonami-Actor-Token" token)
+                    true (.POST (HttpRequest$BodyPublishers/ofString
+                                 (json/write-str body)))
+                    true (.build))
           response (.send client request (HttpResponse$BodyHandlers/ofString))
           status (.statusCode response)
           payload (try (json/read-str (.body response) :key-fn keyword)
@@ -124,7 +136,7 @@
   recorded as refused instead of erroring out of a route."
   [authority-key]
   (fn [configuration _session proposal]
-    (let [{:keys [endpoint]} (settings configuration authority-key)]
+    (let [{:keys [endpoint token-file]} (settings configuration authority-key)]
       (cond
         (not (enabled? configuration authority-key))
         (refusal :authority-disabled
@@ -136,4 +148,4 @@
                  {:detail (str (name authority-key) " authority に endpoint がありません")})
 
         :else
-        (post-proposal! endpoint proposal)))))
+        (post-proposal! endpoint token-file proposal)))))

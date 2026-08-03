@@ -90,7 +90,7 @@
   ;; settlement RECORD -- this app holds no banking credential and moves no
   ;; money; a human makes the transfer in their bank.
   :payment {:enabled? false
-            :endpoint nil  ; cloud-itonami/cloud-itonami-settlement
+            :endpoint nil  ; local: cloud.itonami.app.payment-settlement-actor
             ;; How old a recorded balance may be and still answer 'will this
             ;; clear?'. 24h: a company current account moves on business-day
             ;; timescales. Beyond this the pre-check refuses with
