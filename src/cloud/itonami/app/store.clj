@@ -2,12 +2,18 @@
   (:require [clojure.edn :as edn]
             [clojure.java.io :as io]
             [cloud.itonami.app.config :as config]
-            [kotoba.kgraph :as kgraph])
+            [kotoba.kgraph :as kgraph]
+            [langchain.edn-persist :as edn-persist])
   (:import [java.nio.file Files StandardCopyOption]
            [java.time Instant]
            [java.util UUID]))
 
 (def schema "cloud.itonami.app.state.v1")
+
+(def ^:dynamic *environment*
+  "Environment lookup seam. Repository deployments inject the same canonical
+  state file used by actors; ordinary desktop runs keep the legacy data dir."
+  #(System/getenv %))
 
 (defn initial-state []
   {:schema schema
@@ -23,7 +29,11 @@
    :last-response nil})
 
 (defn state-file []
-  (io/file (config/data-dir) "state.edn"))
+  (io/file (or (not-empty (*environment* "KOTOBA_REPOSITORY_STATE_FILE"))
+               (.getPath (io/file (config/data-dir) "state.edn")))))
+
+(defn- repository-mode? []
+  (boolean (not-empty (*environment* "KOTOBA_REPOSITORY_STATE_FILE"))))
 
 (defn- load-state []
   (let [file (state-file)]
@@ -47,9 +57,17 @@
   value)
 
 (defn transact! [f & args]
-  (locking state
-    (let [next-value (apply swap! state f args)]
-      (persist! next-value))))
+  (if (repository-mode?)
+    (edn-persist/with-state-lock
+     (state-file)
+     (fn []
+       (locking state
+         (let [next-value (apply f (load-state) args)]
+           (reset! state next-value)
+           (persist! next-value)))))
+    (locking state
+      (let [next-value (apply swap! state f args)]
+        (persist! next-value)))))
 
 (defn new-id [prefix]
   (str prefix "-" (UUID/randomUUID)))

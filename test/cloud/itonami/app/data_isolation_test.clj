@@ -44,3 +44,10 @@
 (deftest the-store-file-lives-under-that-directory
   (testing "the check above is only worth anything if this is what store/ uses"
     (is (str/starts-with? (str (store/state-file)) (str (config/data-dir))))))
+
+(deftest repository-deployment-uses-the-injected-user-projection
+  (let [file "/tmp/cloud-itonami-user-workspace/state.edn"]
+    (binding [store/*environment*
+              (fn [name]
+                (when (= name "KOTOBA_REPOSITORY_STATE_FILE") file))]
+      (is (= file (.getPath (store/state-file)))))))

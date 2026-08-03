@@ -387,6 +387,15 @@ reindex/re-encryption and must receive its own measured recovery model.
   EDN and owns no duplicate crypto implementation. The public
   `com-etzhayyim-app-organism` projections carry an explicit public-only
   classification and prohibit private user state in that path.
+- The Cloud Itonami application store itself now accepts the same
+  `KOTOBA_REPOSITORY_STATE_FILE` coordinate as its actors. A repository-mode
+  server therefore reads and writes the authenticated owner's editable
+  projection instead of maintaining a second `data/state.edn`; an ordinary
+  desktop launch without that coordinate retains the legacy local path.
+- `com-etzhayyim-kaiyaku` supplies a repository-backed Datomic checkpointer.
+  Recreating its runtime replays the member-approval interrupt history from its
+  isolated `actor/etzhayyim/kaiyaku` stream; the actor receives no publication
+  key, remote token or DataLad coordinate.
 - `cloud.itonami.app.repository-storage` implements canonical semantic CIDs,
   datom-aware three-way reconciliation, bounded chunks, Kagi AES-GCM sealing,
   hybrid-signed heads, ciphertext-only retry journals, DataLad
@@ -420,17 +429,18 @@ This record distinguishes an accepted default from completed runtime adoption.
 |---|---|---|
 | `kotoba-lang/langchain` | common local query engine, Kotobase append/read adapter and machine-checkable repo profile are published on `main`; cloud-itonami pins the verified SHA | none for this decision |
 | `kotoba-lang/kotobase` + Kagi | fail-closed seal/write/read adapter, wrapped repository-VMK epoch keyring, real Kagi callbacks and deployed encryptedGraph expected-epoch CAS | production tenant credential and recovery drill |
-| `cloud-itonami-app` | local Agent query, DataScript parity corpus, reconciler, chunk publisher, per-user workspace/head, retry, hydrate, VMK rotation, encrypted retained-head chain, accounting, measurement probe, encryptedGraph adapter and executable 13-gate evaluator | configure production DataLad/Kotobase credentials and collect peak-write, sustained-sync and cold-RTO evidence |
+| `cloud-itonami-app` | application store and actor processes share the injected per-user editable projection; local Agent query, DataScript parity corpus, reconciler, chunk publisher, retry, hydrate, VMK rotation, encrypted retained-head chain, accounting, measurement probe, encryptedGraph adapter and executable 13-gate evaluator | configure production DataLad/Kotobase credentials and collect peak-write, sustained-sync and cold-RTO evidence |
 | four Datomic-shaped cloud-itonami actors | live/deploy entrypoints use the shared editable-EDN host; cloud-itonami injects one owner path and registered stream; local query remains unchanged | production recovery drill |
 | other checked-out cloud-itonami actor repositories | private-default profile declared and executable inventory audit available | add a host persistence port when a repository begins to retain private runtime state; classify any public dataset explicitly |
 | `kotoba-lang/organisms` | restartable concrete foreign-runtime bridge, repository runner and local EAV query projection | production recovery drill |
 | `com-etzhayyim-app-organism` | public generated projection explicitly classified; private state prohibited on that path | keep generated-public and private-runtime heads separate |
+| `com-etzhayyim-kaiyaku` | repository-backed LangGraph/Datomic checkpointer, stable private actor stream, restart/replay test and deployment heartbeat | production recovery drill |
 
 An absent or unbuildable repository is not marked migrated. Deployment CI must
 pass its complete explicit repository list to `repository profiles`; relying on
 workspace discovery would silently omit a repository that was not checked out.
 The app CI now consumes that same repository/path inventory directly: it
-validates the PR checkout locally and fetches the other 28 `main` profiles via
+validates the PR checkout locally and fetches the other 29 `main` profiles via
 the GitHub Contents API. Duplicate inventory entries, network/API failure,
 missing repositories and invalid profiles all fail closed; there is no second
 workflow list which can drift from qualification.

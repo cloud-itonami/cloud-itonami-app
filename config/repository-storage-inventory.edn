@@ -26,4 +26,5 @@
  {:repository "kotoba-lang/kotoba-actor-sdk" :path "../../../kotoba-lang/kotoba-actor-sdk"}
  {:repository "kotoba-lang/kotoba-actors" :path "../../../kotoba-lang/kotoba-actors"}
  {:repository "kotoba-lang/organisms" :path "../../../kotoba-lang/organisms"}
- {:repository "etzhayyim/com-etzhayyim-app-organism" :path "../../../etzhayyim/com-etzhayyim-app-organism"}]
+ {:repository "etzhayyim/com-etzhayyim-app-organism" :path "../../../etzhayyim/com-etzhayyim-app-organism"}
+ {:repository "etzhayyim/com-etzhayyim-kaiyaku" :path "../../../etzhayyim/com-etzhayyim-kaiyaku"}]

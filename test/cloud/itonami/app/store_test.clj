@@ -6,8 +6,11 @@
   So two properties matter and neither was true: that no two are equal, and
   that comparing them as strings gives the same answer as comparing the
   instants they stand for."
-  (:require [clojure.test :refer [deftest is]]
-            [cloud.itonami.app.store :as store])
+  (:require [clojure.edn :as edn]
+            [clojure.java.io :as io]
+            [clojure.test :refer [deftest is]]
+            [cloud.itonami.app.store :as store]
+            [langchain.edn-persist :as edn-persist])
   (:import [java.time Instant]))
 
 (deftest no-two-timestamps-are-equal
@@ -45,3 +48,24 @@
   ;; wrong for ever.
   (let [xs (repeatedly 5000 #(Instant/parse (store/now)))]
     (is (every? (fn [[a b]] (.isBefore a b)) (partition 2 1 xs)))))
+
+(deftest repository-transaction-preserves-a-direct-actor-edit
+  (let [root (.toFile (java.nio.file.Files/createTempDirectory
+                       "cloud-store-repository-"
+                       (make-array java.nio.file.attribute.FileAttribute 0)))
+        file (io/file root "state.edn")
+        original (store/snapshot)]
+    (try
+      (spit file (pr-str {:schema store/schema :events [] :datoms []}))
+      (let [host (edn-persist/host file)]
+        ((:append host) "actor/test" {:tx 1 :tx-data []}))
+      (binding [store/*environment*
+                (fn [name]
+                  (when (= name "KOTOBA_REPOSITORY_STATE_FILE")
+                    (.getPath file)))]
+        (store/transact! assoc :app/write :kept))
+      (let [saved (edn/read-string (slurp file))]
+        (is (= :kept (:app/write saved)))
+        (is (= 1 (get-in saved [:kotoba.agent/streams "actor/test" 0 :tx]))))
+      (finally
+        (reset! store/state original)))))

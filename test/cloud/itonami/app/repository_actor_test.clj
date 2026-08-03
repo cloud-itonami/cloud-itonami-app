@@ -40,6 +40,15 @@
            (:agent/note (:state (repository/workspace-snapshot
                                  (:workspace-root context) owner)))))))
 
+(deftest etzhayyim-actors-have-a-stable-user-scoped-stream
+  (let [context (fixture)
+        environment (actor/launch-environment
+                     (assoc context :actor-id :etzhayyim-kaiyaku))]
+    (is (= "actor/etzhayyim/kaiyaku"
+           (get environment "KOTOBA_REPOSITORY_STREAM")))
+    (is (= (.getCanonicalPath ^java.io.File (:state-file context))
+           (get environment "KOTOBA_REPOSITORY_STATE_FILE")))))
+
 (deftest launcher-fails-closed-on-unknown-owner-actor-and-process-failure
   (let [context (fixture)]
     (testing "path traversal cannot select another user's workspace"

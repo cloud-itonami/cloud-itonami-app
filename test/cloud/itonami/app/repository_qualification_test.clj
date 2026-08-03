@@ -48,8 +48,8 @@
 (deftest repository-inventory-is-unique-and-explicit
   (let [entries (qualification/read-profile-inventory!
                  "config/repository-storage-inventory.edn")]
-    (is (= 29 (count entries)))
-    (is (= 29 (count (distinct (map :repository entries)))))
+    (is (= 30 (count entries)))
+    (is (= 30 (count (distinct (map :repository entries)))))
     (is (= "cloud-itonami/cloud-itonami-app"
            (:repository (first entries))))))
 

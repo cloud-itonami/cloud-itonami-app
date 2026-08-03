@@ -11,7 +11,8 @@
    :dougaka "actor/dougaka"
    :shinshi-growth "actor/shinshi-growth"
    :swachh "actor/swachh"
-   :organisms "actor/organisms"})
+   :organisms "actor/organisms"
+   :etzhayyim-kaiyaku "actor/etzhayyim/kaiyaku"})
 
 (defn launch-environment
   "Resolve the exact state file and stable stream for ACTOR-ID. The workspace
