@@ -36,6 +36,16 @@
       (str/starts-with? (or (.readLine reader) "") "/annex/objects/"))
     (catch Exception _ false)))
 
+;; A git-annex pointer is one short line naming the object it stands for, so
+;; anything past a page cannot be one. Checking length first matters because
+;; the caller asks about every file in the folder on every render, and a
+;; directory listing already knows the size — opening ten thousand files to
+;; learn what `stat` had is the kind of thing that turns a mailbox into a
+;; spinner.
+(defn- content-present? [file]
+  (or (> (.length file) 4096)
+      (not (annex-pointer? file))))
+
 (defn- inbox-timestamp [filename]
   (when-let [[_ raw] (re-find #"^(\d{8}T\d{6}Z)_" filename)]
     (try
@@ -176,16 +186,26 @@
   and lives in `cloud.itonami.app.mailbox`, laid over the top."
   []
   (let [directory (io/file (archive-root) "mail/受信トレイ")
-        files (if (.isDirectory directory)
-                (->> (.listFiles directory)
-                     (filter #(.isFile %))
-                     (sort-by #(.getName %) #(compare %2 %1))
-                     (take 40))
-                [])
+        newest (if (.isDirectory directory)
+                 (->> (.listFiles directory)
+                      (filter #(.isFile %))
+                      (sort-by #(.getName %) #(compare %2 %1)))
+                 [])
+        ;; Newest forty, but a sealed message must not spend one of the forty
+        ;; that a readable one could have had. The archive's tail can be
+        ;; pointers whose content was never uploaded — 116 of them on
+        ;; 2026-08-03, every message since 2026-06-19 — and taking forty and
+        ;; *then* noticing they are sealed renders an Inbox of forty blanks
+        ;; sitting on top of nine thousand readable messages.
+        ;;
+        ;; Sealed ones still show when there is nothing else, because an
+        ;; archive nobody has fetched should say so rather than look empty.
+        {present true sealed false} (group-by content-present? newest)
+        files (take 40 (concat present sealed))
         entries
         (mapv
            (fn [file]
-             (let [available? (not (annex-pointer? file))
+             (let [available? (content-present? file)
                    content (if available? (read-prefix file 65536) "")
                    headers (message-headers content)
                    sender (address-parts (:from headers))
