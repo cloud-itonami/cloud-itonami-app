@@ -6133,16 +6133,15 @@
     };
     const renderIdentity = (data) => {
       identityState = data;
-      const passkeyReady = Boolean(
-        data['authenticated?'] && data.user?.['passkey-enrolled?']);
-      appUnlocked = passkeyReady;
+      const identityReady = Boolean(data['authenticated?'] && data['may-act?']);
+      appUnlocked = identityReady;
       $$('.local-nav__item').forEach((item) => {
-        item.disabled = !passkeyReady && !publicViews.has(item.dataset.view);
+        item.disabled = !identityReady && !publicViews.has(item.dataset.view);
         item.setAttribute('aria-disabled', String(item.disabled));
       });
-      document.body.dataset.identityGate = passkeyReady ? 'ready' : 'required';
-      $('#passkey-gate-notice').hidden = passkeyReady;
-      if (!passkeyReady) {
+      document.body.dataset.identityGate = identityReady ? 'ready' : 'required';
+      $('#passkey-gate-notice').hidden = identityReady;
+      if (!identityReady) {
         // a public view the user actually asked for stays put
         showView(publicViews.has(requestedView) ? requestedView : 'settings');
         $('#current-view').textContent =
@@ -6157,6 +6156,8 @@
       onboarding.hidden = data['registered?'];
       workspace.hidden = !data['authenticated?'];
       $('#registered-auth').hidden = !(data['registered?'] && !data['authenticated?']);
+      $('#email-login-form').hidden = !(data['registered?'] &&
+        !data['authenticated?'] && data['email-login-configured?']);
       if (data['registered?'] && !data['authenticated?']) {
         onboarding.hidden = false;
         const pendingPasskey = data['passkey-required?'];
@@ -6421,6 +6422,21 @@
       } catch (error) {
         $('#identity-status').textContent = error.message;
       } finally { button.disabled = false; }
+    });
+    $('#email-login-form').addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const button = $('#email-login-submit');
+      const fields = Object.fromEntries(new FormData(event.currentTarget));
+      button.disabled = true; button.textContent = '送信中…';
+      try {
+        await postJSON('/api/email-authenticate/start', fields);
+        $('#identity-status').textContent =
+          '登録済みの場合、ログインリンクを送信しました。メールを確認してください。';
+      } catch (error) {
+        $('#identity-status').textContent = error.message;
+      } finally {
+        button.disabled = false; button.textContent = 'ログインリンクを送る';
+      }
     });
     $('#enrollment-form').addEventListener('submit', async (event) => {
       event.preventDefault();
@@ -6862,7 +6878,21 @@
         ? `${initialParams.get('provider')} を接続しました。`
         : `${initialParams.get('provider')} の接続を完了できませんでした。`;
     }
-    loadIdentity();
+    const finishEmailLoginFromLink = async () => {
+      const token = new URLSearchParams(location.hash.slice(1)).get('email-login');
+      if (!token) return;
+      // Remove the bearer-like token from the address bar before doing any
+      // other work. It remains available in this closure for this one POST.
+      history.replaceState(null, '', `${location.pathname}${location.search}`);
+      try {
+        const data = await postJSON('/api/email-authenticate/finish', {token});
+        renderIdentity(data);
+        $('#identity-status').textContent = 'Email でサインインしました。';
+      } catch (error) {
+        $('#identity-status').textContent = error.message;
+      }
+    };
+    finishEmailLoginFromLink().finally(loadIdentity);
     // after every const above is defined — calling this next to the initial
     // showView() would hit `Cannot access 'loadFilecoin' before initialization`
     loadFilecoin();
@@ -6871,4 +6901,3 @@
         item.setAttribute('aria-pressed', item === button ? 'true' : 'false'));
     }));
   });
-  

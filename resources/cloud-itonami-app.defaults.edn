@@ -9,6 +9,20 @@
             ;; Enable only when the deployment publishes a DID document for
             ;; every generated organization domain.
             :publish-did-web? false}
+ ;; Passwordless email sign-in is an alternate proof for an already active,
+ ;; Passkey-rooted User. It never creates a User or a did:key and cannot replace
+ ;; the WebAuthn assertion required to approve money, signatures, or governed
+ ;; outward authority operations.
+ ;;
+ ;; The delivery endpoint receives JSON:
+ ;;   {:template "cloud-itonami-email-login"
+ ;;    :to "person@example.jp" :magicLink "https://…/#email-login=…"
+ ;;    :expiresAt "…"}
+ ;; It must return 2xx. The bearer token is read from the named environment
+ ;; variable at delivery time; never put the token itself in config.edn.
+ :email-login {:enabled? false
+               :delivery-endpoint nil
+               :access-token-env "CLOUD_ITONAMI_EMAIL_LOGIN_TOKEN"}
  :routing {:default-provider "ollama"
            :default-model "gemma4:e2b"
            :cloud-enabled? false}

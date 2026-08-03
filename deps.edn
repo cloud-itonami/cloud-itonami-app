@@ -182,6 +182,16 @@
   io.github.kotoba-lang/identity
   {:git/url "https://github.com/kotoba-lang/identity.git"
    :git/sha "5cf94e38c816ced6857ef62de344f6adea9fc050"}
+  ;; Provider-neutral email challenge + authentication decision. The email
+  ;; facet deliberately excludes the full provider graph (OAuth/OIDC/SAML,
+  ;; WebAuthn, biometrics); this app already owns those concrete adapters.
+  io.github.kotoba-lang/authentication
+  {:git/url "https://github.com/kotoba-lang/authentication.git"
+   :git/sha "188eb0e6ff7c0bc5fc6de04ef7b3f36fef45d9b0"
+   :deps/root "modules/email"}
+  io.github.kotoba-lang/authorization
+  {:git/url "https://github.com/kotoba-lang/authorization.git"
+   :git/sha "97fb24206b6a2018213d5a5cc5d11f681258f9fb"}
 
   ;; The contract surface. This app stores nothing about a contract itself —
   ;; kagi owns the vault (E2E on disk and in kotobase.net, ADR-2607170500) and
@@ -266,6 +276,10 @@
     io.github.kotoba-lang/forms {:local/root "../../kotoba-lang/forms"}
     io.github.kotoba-lang/transit {:local/root "../../kotoba-lang/transit"}
     io.github.kotoba-lang/identity {:local/root "../../kotoba-lang/identity"}
+    io.github.kotoba-lang/authentication
+    {:local/root "../../kotoba-lang/authentication/modules/email"}
+    io.github.kotoba-lang/authorization
+    {:local/root "../../kotoba-lang/authorization"}
     io.github.kotoba-lang/oauth {:local/root "../../kotoba-lang/oauth"}
     io.github.kotoba-lang/com-github {:local/root "../../kotoba-lang/com-github"}
     io.github.kotoba-lang/jp-go-digital-design-system

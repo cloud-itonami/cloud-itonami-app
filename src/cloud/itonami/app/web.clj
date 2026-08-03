@@ -1648,6 +1648,16 @@
            [:button {:class "primary-action" :id "registration-submit"
                      :type "submit"} "Passkey で登録"]]
           [:div {:class "settings-stack" :id "registered-auth" :hidden true}
+           [:form {:class "settings-form" :id "email-login-form" :hidden true}
+            (dds/heading 3 "Email でサインイン" {:size "20"})
+            [:p {:class "form-help"}
+             "登録済みの連絡先へ、10分間・一回限りのログインリンクを送ります。"]
+            [:div {:class "field"}
+             [:label {:for "email-login-address"} "メールアドレス"]
+             [:input {:id "email-login-address" :name "email" :type "email"
+                      :required true :autocomplete "email"}]]
+            [:button {:class "tool-button" :id "email-login-submit"
+                      :type "submit"} "ログインリンクを送る"]]
            [:button {:class "primary-action" :id "passkey-signin" :type "button"}
             "Passkey でサインイン"]
            [:form {:class "settings-form" :id "enrollment-form"}

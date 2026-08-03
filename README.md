@@ -124,7 +124,7 @@ empty, which is the same fail-closed default the agent capabilities have:
 Browser, computer, mail, calendar, drive and chat are deliberately **not**
 exposed. The device tools verify the frontmost application between approval and
 action, which does not survive translation to a protocol whose consent model
-belongs to the client; the workspace reads sit behind the Passkey session on
+belongs to the client; the workspace reads sit behind an authenticated session on
 `/api/*`, and a surface with no session must not reach around it.
 
 ## Background worker runs
@@ -145,6 +145,13 @@ chunk, so a stalled provider request can stay open until it times out.
 First launch requires only a Passkey. The verified ES256/P-256 public key is
 encoded as the stable User `did:key`; the private key remains in the
 authenticator. Organization information can be entered later.
+
+Returning active Users may also sign in through a ten-minute, single-use email
+magic link when `:email-login` delivery is configured. Email proves control of
+the registered address for that session; it does not create a User, replace the
+Passkey-rooted `did:key`, enroll an invited User, or approve a governed action.
+Money, signatures, and outward authorities continue to require their own
+operation-bound WebAuthn assertion.
 
 The default public profile uses managed addresses below `cloud-itonami.app`,
 but does **not** claim `did:web`. A deployment may enable Organization

@@ -1127,6 +1127,25 @@
                        {"Set-Cookie"
                         (session-cookie token)})))
 
+            (and (= method "POST")
+                 (= path "/api/email-authenticate/start"))
+            (let [request (read-json exchange)]
+              (require-origin! exchange config)
+              (send! exchange 202
+                     (identity/start-email-authentication!
+                      config (:email request) (origin config))))
+
+            (and (= method "POST")
+                 (= path "/api/email-authenticate/finish"))
+            (let [request (read-json exchange)
+                  result (do
+                           (require-origin! exchange config)
+                           (identity/finish-email-authentication!
+                            (:token request)))]
+              (send! exchange 200
+                     (identity/public-state (:token result))
+                     {"Set-Cookie" (session-cookie (:token result))}))
+
             (and (= method "POST") (= path "/api/identity/users"))
             (let [session (require-app-session! exchange)]
               (require-origin! exchange config)
@@ -2542,11 +2561,14 @@
                      :identity/already-member 409
                      :identity/invalid-registration 400
                      :identity/invalid-invitation 400
+                     :identity/email-already-used 409
                      :passkey/invalid-transaction 400
                      :passkey/invalid-enrollment 400
                      :passkey/user-verification-required 403
                      :passkey/verification-failed 403
                      :passkey/required 428
+                     :email-login/not-configured 503
+                     :email-login/invalid-token 400
                      ;; 403 rather than 428: a Passkey is required and this
                      ;; caller can never present one, so telling it to go and
                      ;; enrol would be an instruction it cannot follow.
