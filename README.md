@@ -561,6 +561,37 @@ Runtime state is stored below `data/` and is ignored by Git. OAuth tokens use
 macOS Keychain; only references and non-secret metadata enter the local state.
 Provider and relay credentials are read from environment variables.
 
+Repository-backed private state follows
+[ADR-0013](docs/adr/0013-local-agent-queries-over-an-edn-projection-and-publishes-kagi-chunks.md):
+
+- `workspace/<opaque-user-storage-id>/state.edn` is local editable plaintext;
+- Kagi seals bounded EDN chunks and supplies non-interactive VMK/signing keys;
+- DataLad verifies CID-named ciphertext remotely before the Kotobase head CAS;
+- the local Agent queries a materialized Datomic/DataScript-compatible view;
+- direct EDN edits and Datomic-shaped transactions meet at one reconciler.
+
+Operator flow:
+
+```bash
+clojure -M:repository migrate data/state.edn
+clojure -M:repository publish
+clojure -M:repository hydrate
+clojure -M:repository rotate-vmk
+clojure -M:repository measure 20
+clojure -M:repository usage
+clojure -M:repository qualify config/repository-production-evidence.edn
+clojure -M:repository audit secret-fixture-marker
+clojure -M:repository profiles
+```
+
+`publish` fails closed for missing/unfinished DataLad transport, locked Kagi,
+invalid or stale heads, and merge conflicts. `profiles` audits the explicit
+29-repository inventory. `measure` is a warm local probe; production cutover
+still requires fresh, commit-addressed peak-write, sustained-sync and
+cache-empty cold-recovery evidence. Copy the example evidence file to the
+Git-ignored `config/repository-production-evidence.edn`; live inventory,
+plaintext-leak and physical-byte gates cannot be overridden by that file.
+
 See [`.env.example`](.env.example), [the architecture](docs/architecture.md),
 and [the tenant model](docs/tenant-model.md).
 

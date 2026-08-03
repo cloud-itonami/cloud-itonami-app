@@ -5,6 +5,7 @@
             [clojure.string :as str]
             [cloud.itonami.app.cli-runner :as cli-runner]
             [cloud.itonami.app.config :as config]
+            [cloud.itonami.app.local-query :as local-query]
             [cloud.itonami.app.policy :as policy]
             [cloud.itonami.app.provider :as provider]
             [cloud.itonami.app.store :as store]
@@ -86,7 +87,17 @@
                              :success {:type "boolean"}}
                 :required ["text"]}})
 
-(def ^:private read-only-tools #{"browser_snapshot" "computer_screenshot"})
+(def ^:private local-query-tool
+  {:name "local_datalog_query"
+   :description (str "Query this device's current local EDN datom projection. "
+                     "The query is Datomic/DataScript-compatible EDN and never runs remotely.")
+   :parameters {:type "object"
+                :properties {:query {:type "string"
+                                     :description "EDN query vector containing :find and :where"}}
+                :required ["query"]}})
+
+(def ^:private read-only-tools
+  #{"browser_snapshot" "computer_screenshot" "local_datalog_query"})
 
 (defn- now-ms [] (System/currentTimeMillis))
 
@@ -377,12 +388,15 @@
          selected {:prompt (:goal input) :model (:model input)
                    :cwd requested :access (keyword (:access input))}))
 
+      "local_datalog_query"
+      (pr-str (local-query/query-state (store/snapshot) (:query input)))
+
       (throw (ex-info "未知の端末toolです。" {:type :agent/unknown-tool
                                             :tool name})))))
 
 (defn- available-tools [configuration]
   (let [s (settings configuration)]
-    (cond-> [done-tool]
+    (cond-> [done-tool local-query-tool]
       (get-in s [:browser :enabled?]) (into browser-tools)
       (get-in s [:computer :enabled?]) (into computer-tools))))
 

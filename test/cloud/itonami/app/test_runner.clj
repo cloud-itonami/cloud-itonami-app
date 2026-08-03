@@ -15,10 +15,13 @@
             [cloud.itonami.app.canvas-test]
             [cloud.itonami.app.loops-test]
             [cloud.itonami.app.lawfirm-test]
+            [cloud.itonami.app.local-query-test]
             [cloud.itonami.app.fax-test]
             [cloud.itonami.app.metrics-test]
             [cloud.itonami.app.portfolio-test]
             [cloud.itonami.app.repos-test]
+            [cloud.itonami.app.repository-storage-test]
+            [cloud.itonami.app.repository-qualification-test]
             [cloud.itonami.app.mailbox-test]
             [cloud.itonami.app.mailbox-http-test]
             [cloud.itonami.app.mail-sync-test]
@@ -56,6 +59,7 @@
             [cloud.itonami.app.fleet-tools-test]
             [cloud.itonami.app.openai-compat-test]
             [cloud.itonami.app.passkey-test]
+            [cloud.itonami.app.payment-settlement-actor-test]
             [cloud.itonami.app.payment-tools-test]
             [cloud.itonami.app.paypay-bank-test]
             [cloud.itonami.app.storj-node-test]
@@ -71,10 +75,13 @@
     cloud.itonami.app.canvas-test
     cloud.itonami.app.loops-test
     cloud.itonami.app.lawfirm-test
+    cloud.itonami.app.local-query-test
     cloud.itonami.app.fax-test
     cloud.itonami.app.metrics-test
     cloud.itonami.app.portfolio-test
     cloud.itonami.app.repos-test
+    cloud.itonami.app.repository-storage-test
+    cloud.itonami.app.repository-qualification-test
     cloud.itonami.app.authority.adapters-test
     cloud.itonami.app.authority.api-test
     cloud.itonami.app.authority.payment-test
@@ -107,6 +114,7 @@
     cloud.itonami.app.fleet-tools-test
     cloud.itonami.app.openai-compat-test
     cloud.itonami.app.passkey-test
+    cloud.itonami.app.payment-settlement-actor-test
     cloud.itonami.app.mailbox-test
     cloud.itonami.app.mailbox-http-test
     cloud.itonami.app.mail-sync-test
