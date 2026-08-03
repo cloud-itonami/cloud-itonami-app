@@ -2,13 +2,21 @@
   "The cross-domain invariant, and the reason the three authorities were
   integrated rather than shipped as three features.
 
-  > An eSIM ownership transfer -- a SIM swap -- lowers the same subject's card
-  > authorization posture.
+  > A change in who controls a subject's line -- an eSIM ownership transfer (a
+  > SIM swap) or a number port-out -- lowers that same subject's card
+  > authorization posture, their ability to place outbound calls, and their
+  > ability to move the number onward.
 
   This is the actual defence the integration buys. Whoever takes over a phone
   number has taken over the second factor for everything else, and the classic
   sequence is: move the line, then spend. Neither the eSIM authority nor the card
-  authority can see that sequence on its own; only something reading BOTH can.
+  authority nor the numbering authority can see that sequence on its own; only
+  something reading ALL of them can.
+
+  The number-plane half arrived with ADR-2608034000, and it closes a hole the
+  eSIM-only version had: an attacker who could not swap the profile could still
+  port the number, and a port-out is the step after which the subject cannot get
+  the line back by asking their own operator.
 
   That is why ADR-2607300300 D4 requires the three domains' audit records to
   share one plane keyed by the subject. In this app they share one store
@@ -31,20 +39,67 @@
   legitimate device change does not restrict a subject indefinitely."
   (* 7 24 60 60))
 
+(def restricted-ops-by-authority
+  "What a restricted posture refuses, per authority.
+
+  `:card` -- `:authorization/decide` is the spend path, the direct objective of a
+  takeover. `:card/issue` is included because issuing a NEW card immediately
+  after taking over the line is the same attack one step earlier: the attacker
+  does not need the victim's existing card if they can have a fresh one.
+
+  `:voice` -- `:call/originate` is the same objective through a different meter.
+  Toll fraud spends the subject's money by placing calls, and a takeover that
+  cannot reach a card can still reach a premium-rate number.
+
+  `:number` -- moving the line ONWARD is what makes a takeover permanent. Swap
+  the profile, then port the number out is one attack in two steps, and the
+  second step is the one after which the subject cannot get the line back by
+  asking their own operator. `:number/assign` is here for the same reason
+  `:card/issue` is: reassigning the line to a new subject is the takeover
+  written down."
+  {:card   #{:authorization/decide :card/issue}
+   :voice  #{:call/originate}
+   :number #{:number/port-out :number/assign}})
+
 (def restricted-ops
   "The card operations a restricted posture refuses.
 
-  `:authorization/decide` is the spend path -- the direct objective of a takeover.
-  `:card/issue` is included because issuing a NEW card immediately after taking
-  over the line is the same attack one step earlier: the attacker does not need
-  the victim's existing card if they can have a fresh one."
-  #{:authorization/decide :card/issue})
+  Kept as its own name because the card adapter and the API layer both read it
+  directly, and because card was the domain this invariant was built for
+  (ADR-2607300300 D4). It is now one entry in `restricted-ops-by-authority`."
+  (:card restricted-ops-by-authority))
 
-(defn- transfer-proposal?
-  "True for an eSIM ownership-transfer proposal, in any state."
+(defn restricts?
+  "True when this authority gates this op on the posture at all.
+
+  Used by an adapter to decide whether a posture is a REQUIRED input. That is
+  what stops the invariant being bypassable by simply not asking: a caller
+  cannot decide a restricted op without having stated the posture."
+  [authority-key op]
+  (contains? (get restricted-ops-by-authority authority-key #{}) op))
+
+(def control-change-ops
+  "The proposals that say a line changed hands, by authority.
+
+  The eSIM entry is where this invariant started: an ownership transfer is a SIM
+  swap. The `:number` entries arrived with numbering (ADR-2608034000) and are
+  read from `kotoba.phone.lifecycle/takeover-signals` rather than restated --
+  `:number/port-out` is `:port-out-request`, `:number/assign` is a line being
+  reassigned, and the library is where 'the line changed hands' is defined so
+  that every consumer reads one definition.
+
+  A port-IN is deliberately absent. An arriving number is a different worry --
+  its provenance is unsettled, not the subject's control lost -- and treating it
+  as a takeover would restrict the very subject who just consolidated their
+  lines."
+  {:esim   #{:ownership/transfer}
+   :number #{:number/port-out :number/assign}})
+
+(defn- control-change-proposal?
+  "True for a proposal that moves a subject's line or profile to somebody else,
+  in any state."
   [p]
-  (and (= :esim (:authority p))
-       (= :ownership/transfer (:op p))))
+  (contains? (get control-change-ops (:authority p) #{}) (:op p)))
 
 (def ^:private not-a-signal
   "The one status that clears a transfer as a takeover signal: the human was
@@ -81,11 +136,15 @@
       :else (<= (.toSeconds (Duration/between at' now')) (long window-seconds)))))
 
 (defn transfer-signals
-  "The transfer proposals that currently count as takeover signals for this set
-  of proposals. Pure."
+  "The proposals that currently count as takeover signals for this set of
+  proposals. Pure.
+
+  Named for the eSIM transfer it was built for; it now covers every
+  control-change op in `control-change-ops`, which is why the filter reads a
+  table rather than one authority."
   [proposals now window-seconds]
   (->> proposals
-       (filter transfer-proposal?)
+       (filter control-change-proposal?)
        (remove #(contains? not-a-signal (:status %)))
        (filter #(within-window? (or (:created-at %) (:committed-at %))
                                 now window-seconds))
@@ -99,17 +158,31 @@
     {:authority/posture :normal}
   or
     {:authority/posture :restricted
-     :authority/reason :esim/ownership-transfer
+     :authority/reason :esim/ownership-transfer | :number/port-out | :control/change
      :authority/signals [...]        ; the proposal ids that caused it
-     :authority/window-seconds n}"
+     :authority/reasons [...]        ; every distinct reason, when there are several
+     :authority/window-seconds n}
+
+  `:authority/reason` stays SINGULAR and keeps its original value when the only
+  signals are eSIM transfers, because a reader (and a stored proposal's material)
+  already depends on that shape. When signals come from more than one domain it
+  reports `:control/change` and `:authority/reasons` carries the list -- a
+  restriction caused by both a SIM swap and a port-out must not be describable as
+  only one of them."
   ([proposals now] (for-subject proposals now default-window-seconds))
   ([proposals now window-seconds]
-   (let [signals (transfer-signals proposals now window-seconds)]
+   (let [signals (transfer-signals proposals now window-seconds)
+         reasons (distinct (map (fn [p]
+                                  (if (= :esim (:authority p))
+                                    :esim/ownership-transfer
+                                    (:op p)))
+                                signals))]
      (if (seq signals)
-       {:authority/posture :restricted
-        :authority/reason :esim/ownership-transfer
-        :authority/signals (mapv :id signals)
-        :authority/window-seconds window-seconds}
+       (cond-> {:authority/posture :restricted
+                :authority/reason (if (= 1 (count reasons)) (first reasons) :control/change)
+                :authority/signals (mapv :id signals)
+                :authority/window-seconds window-seconds}
+         (< 1 (count reasons)) (assoc :authority/reasons (vec reasons)))
        {:authority/posture :normal}))))
 
 (defn restricted?
@@ -117,9 +190,16 @@
   (= :restricted (:authority/posture posture)))
 
 (defn refuses?
-  "True when this posture refuses this card op."
-  [posture op]
-  (and (restricted? posture) (contains? restricted-ops op)))
+  "True when this posture refuses this op.
+
+  Two arities. The 2-arity one asks about a CARD op and is what the card adapter
+  and the existing callers use. The 3-arity one names the authority, and is what
+  every other domain must use -- `:call/originate` and `:number/port-out` are
+  restricted ops too, and a 2-arity call would have quietly answered false for
+  them by looking them up in the card table."
+  ([posture op] (refuses? posture :card op))
+  ([posture authority-key op]
+   (and (restricted? posture) (restricts? authority-key op))))
 
 ;; ---------------------------------------------------------------------------
 ;; The impure edge

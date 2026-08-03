@@ -414,6 +414,31 @@ app holds no banking credential and moves no money; a human makes the transfer
 in their bank. `:payment` ships disabled, like every other authority. See
 [ADR-0005](docs/adr/0005-payment-settlement-authority.md).
 
+### Numbering, portability and outbound calls
+
+`:number` (allocation 払い出し, assignment, lifecycle, MNP port-in/port-out) and
+`:voice`'s `:call/originate` ride the same spine, and pre-check against
+[`kotoba-lang/phone`](https://github.com/kotoba-lang/phone) — the same tables a
+governed numbering actor enforces, not a second copy. See ADR-2608034000.
+
+What is refused **before a human is asked**:
+
+| refusal | why |
+|---|---|
+| re-allocating a released number | `:assign` is unreachable from `:released`; the path back runs through quarantine (90d default) and `:recycle`, which needs the elapsed window stated as a fact. A recycled number carries the previous holder's one-time codes. |
+| a port-out naming somebody other than the holder | that mismatch **is** the port-out scam; asking a human first would be asking them to authorise their own takeover |
+| an emergency number as an outbound destination | a machine-originated 110/119/911 sends people somewhere. A human in trouble dials from their own phone — nothing here is between them and the call |
+| a calling number the subject does not hold and have active | caller-ID spoofing. Only possible to check because numbering records and call records are on one plane |
+| an unpriced or over-limit call | an absent rate is not free and an absent limit is not unlimited — the card daily-limit rule, pointed at toll fraud |
+| any of the above while the subject's line has just changed hands | a SIM swap or port-out restricts spend, outbound calls **and** moving the number onward, for 7 days |
+
+The records, blocks, posture, rate and today's spend are computed server-side
+and overwrite anything the client sends. A committed proposal is a **governed
+claim, not a provisioned line**: `cloud.itonami.app.numbers` records what was
+consented and governed, never what a network agrees to. **The `:number` actor
+does not exist yet** — an enabled authority with no endpoint records a refusal,
+which is why it ships disabled.
+
 ### Driving it from an agent (MCP)
 
 The stdio MCP server publishes these as tools — but only when it can resolve a

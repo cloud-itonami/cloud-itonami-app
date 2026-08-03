@@ -170,6 +170,15 @@
   io.github.kotoba-lang/card
   {:git/url "https://github.com/kotoba-lang/card.git"
    :git/sha "488ec3252086380aeaad46d94d47766500ecb425"}
+  ;; phone arrives transitively through esim -> card, but at whatever sha CARD
+  ;; happens to pin -- which is older than the numbering, portability and
+  ;; origination tables cloud.itonami.app.authority.number and .voice now
+  ;; pre-check against. Named directly so the version this app compiles against
+  ;; is the version this app states, rather than one chosen by a dependency that
+  ;; does not know about either adapter.
+  io.github.kotoba-lang/phone
+  {:git/url "https://github.com/kotoba-lang/phone.git"
+   :git/sha "9626a93bd26615f7924c0000b204d955b7f64556"}
   ;; Storj as an IObjectStore. Its store-fns produce exactly the four-function
   ;; map drive.object/store-of takes, and neither library depends on the other
   ;; — this app depends on both, which is the arrangement both docstrings name.
@@ -276,6 +285,7 @@
     io.github.kotoba-lang/sheets {:local/root "../../kotoba-lang/sheets"}
     io.github.kotoba-lang/esim {:local/root "../../kotoba-lang/esim"}
     io.github.kotoba-lang/card {:local/root "../../kotoba-lang/card"}
+    io.github.kotoba-lang/phone {:local/root "../../kotoba-lang/phone"}
     io.github.kotoba-lang/docs {:local/root "../../kotoba-lang/docs"}
     io.github.kotoba-lang/forms {:local/root "../../kotoba-lang/forms"}
     io.github.kotoba-lang/transit {:local/root "../../kotoba-lang/transit"}

@@ -27,17 +27,21 @@
             [cloud.itonami.app.authority :as authority]
             [cloud.itonami.app.authority.card :as card]
             [cloud.itonami.app.authority.esim :as esim]
+            [cloud.itonami.app.authority.number :as number]
             [cloud.itonami.app.authority.payment :as payment]
             [cloud.itonami.app.authority.posture :as posture]
             [cloud.itonami.app.authority.transport :as transport]
             [cloud.itonami.app.authority.voice :as voice]
             [cloud.itonami.app.funding :as funding]
-            [cloud.itonami.app.store :as store]))
+            [cloud.itonami.app.numbers :as numbers]
+            [cloud.itonami.app.store :as store]
+            [kotoba.phone.origination :as origination]))
 
 (def adapters
   "authority key -> the namespace's domain constructor."
   {:esim    esim/domain
    :card    card/domain
+   :number  number/domain
    :payment payment/domain
    :voice   voice/domain})
 
@@ -87,6 +91,83 @@
                                         (some-> (:reference request) str
                                                 str/trim)))))
 
+(defn- number-facts
+  "The facts the numbering pre-check stands on, read from the store and from
+  configuration.
+
+  `:records` is THE one that must not come from the caller. It is what decides
+  whether a port-out names the number's actual holder, and a client that could
+  send its own records could send `{:phone/subject me}` and pre-check its way
+  through the port-out scam this adapter exists to refuse.
+
+  `:blocks` comes from configuration rather than the store for a different
+  reason: which ranges an operator was assigned predates every proposal, and a
+  block that arrived in a request would let a caller allocate themselves a
+  number out of a range nobody gave this operator."
+  [configuration session request]
+  (assoc request
+         :posture (posture/subject-posture session configuration)
+         :records (numbers/records session)
+         :blocks (numbers/blocks configuration)
+         :now-ms (numbers/now-ms)
+         :quarantine-days (numbers/quarantine-days configuration)
+         :freeze-days (numbers/freeze-days configuration)
+         ;; The subject of an allocation or an assignment is whoever this session
+         ;; is. Taking it from the request would let one subject allocate a
+         ;; number to another -- which is `:number/assign`, an op with its own
+         ;; consent context, reached by writing a different field.
+         :subject (:user-id session)))
+
+(defn- today-prefix
+  "The date part of a stored ISO-8601 instant."
+  [s]
+  (when (string? s) (subs (str s) 0 (min 10 (count (str s))))))
+
+(defn- spent-today-minor
+  "What this subject has already committed to spending on outbound calls today.
+
+  Summed from THIS APP's own proposals, which is the only spend it can honestly
+  account for: the actor's meter is the actor's. Every proposal that is not
+  terminally refused or rejected counts, including one still awaiting the
+  authority -- money the operator has not yet decided on is money that may still
+  leave, and leaving it out of the total is how two calls each pass a limit that
+  neither would pass second."
+  [session]
+  (let [today (today-prefix (store/now))]
+    (->> (authority/proposals session :voice)
+         (filter #(= :call/originate (:op %)))
+         (remove #(contains? #{:rejected :authority-refused} (:status %)))
+         (filter #(= today (today-prefix (:created-at %))))
+         (keep #(get-in % [:value :estimate-minor]))
+         (reduce + 0))))
+
+(defn- rate-minor-per-minute
+  "The configured rate for this destination's class, or nil.
+
+  A rate card keyed by classification, not by number: this app is a consent
+  surface and has no carrier relationship to price a single destination from.
+  nil is NOT read as free -- `kotoba.phone.origination/cost-issues` refuses an
+  unknown rate, which is the only safe reading when the thing being estimated is
+  a bill."
+  [configuration destination]
+  (let [settings (get-in configuration [:authorities :voice])
+        class (origination/classify destination (:home-country-code settings))]
+    (get-in settings [:rate-card class])))
+
+(defn- origination-facts
+  "The facts the outbound pre-check stands on. Same discipline as
+  `payment-facts`: the caller states what it WANTS (destination, calling number,
+  expected minutes) and every fact that decides whether it is allowed is
+  computed here."
+  [configuration session request]
+  (assoc request
+         :posture (posture/subject-posture session configuration)
+         :records (numbers/records session)
+         :subject (:user-id session)
+         :rate-minor-per-minute (rate-minor-per-minute configuration (:destination request))
+         :daily-limit-minor (get-in configuration [:authorities :voice :daily-limit-minor])
+         :spent-today-minor (spent-today-minor session)))
+
 (defn- with-server-computed-facts
   "Replace any caller-supplied security-bearing facts with ones computed from the
   store.
@@ -102,6 +183,12 @@
     ;; Every payment op is a spend op, so there is no restricted-op subset to
     ;; test against -- the facts are computed for all of them.
     :payment (payment-facts configuration session request)
+    ;; Same for numbering: every op reads the subject's records, and the records
+    ;; are the thing that must not be caller-supplied.
+    :number (number-facts configuration session request)
+    :voice (if (= :call/originate (:op request))
+             (origination-facts configuration session request)
+             request)
     request))
 
 ;; ---------------------------------------------------------------------------
@@ -184,6 +271,47 @@
                 (keyword? after) (assoc :now after
                                         :moved? (not= before after))))))}))
 
+(defn record-number-outcome!
+  "Update this app's number read model from a COMMITTED numbering proposal.
+
+  Only `:committed`. A proposal that is pending, refused or rejected changed
+  nothing, and writing it here would make the read model claim a number the
+  authority never granted -- which is the same number the origination check then
+  treats as presentable.
+
+  What this records is a governed CLAIM, not a network state: see the warning at
+  the top of `cloud.itonami.app.numbers`. `apply-transition!` re-runs the state
+  machine against the records as they are NOW, so a transition that has become
+  unreachable since review is refused rather than forced -- the read model would
+  rather disagree with a stale proposal than with the actor."
+  [session proposal]
+  (when (and (= :number (:authority proposal)) (= :committed (:status proposal)))
+    (let [{:keys [msisdn subject operation iccid]} (:value proposal)]
+      (case (:op proposal)
+        (:number/allocate :number/port-in)
+        (numbers/admit! session msisdn :iccid iccid)
+
+        :number/assign
+        (numbers/apply-transition! session msisdn :assign :subject subject)
+
+        :number/lifecycle
+        (numbers/apply-transition! session msisdn operation
+                                   :iccid iccid
+                                   ;; The pre-check already established this
+                                   ;; against the same window; re-deriving it
+                                   ;; here would let a slow approval land a
+                                   ;; recycle whose window has since been
+                                   ;; extended by a fresh release.
+                                   :quarantine-elapsed? (= :recycle operation))
+
+        ;; A port-out proposal REQUESTS the move; it does not complete it. The
+        ;; number stays on this operator's plane, in :porting-out, until the
+        ;; actor says otherwise -- and until there is an actor, it stays there.
+        :number/port-out
+        (numbers/apply-transition! session msisdn :port-out-request)
+
+        nil))))
+
 (defn commit!
   "Hand the consented proposal to its authority and record the outcome.
 
@@ -192,7 +320,9 @@
   licensed operator still said no, which is the two gates working."
   [configuration session authority-key proposal-id]
   (require-enabled! configuration authority-key)
-  (authority/commit! (domain-for authority-key) configuration session proposal-id))
+  (let [outcome (authority/commit! (domain-for authority-key) configuration session proposal-id)]
+    (record-number-outcome! session outcome)
+    outcome))
 
 ;; ---------------------------------------------------------------------------
 ;; read model
