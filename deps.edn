@@ -2,6 +2,9 @@
  :deps
  {org.clojure/clojure {:mvn/version "1.12.5"}
   org.clojure/data.json {:mvn/version "2.5.1"}
+  ;; A second implementation executes the persisted portable Datalog corpus
+  ;; during cutover qualification; normal Agent queries remain on langchain.db.
+  datascript/datascript {:mvn/version "1.7.8"}
   com.fasterxml.jackson.dataformat/jackson-dataformat-cbor
   {:mvn/version "2.22.1"}
   com.yubico/webauthn-server-core {:mvn/version "2.9.0"}
@@ -254,7 +257,6 @@
   ;; an exported CLOUD_ITONAMI_DATA_DIR cannot redirect the suite back onto a
   ;; real store.
   :test {:extra-paths ["test"]
-         :extra-deps {datascript/datascript {:mvn/version "1.7.8"}}
          :jvm-opts ["-Dcloud.itonami.data-dir=target/test-data"]
          :main-opts ["-m" "cloud.itonami.app.test-runner"]}
   :lint {:replace-deps {clj-kondo/clj-kondo {:mvn/version "2024.11.14"}}

@@ -22,6 +22,7 @@
             [cloud.itonami.app.repos-test]
             [cloud.itonami.app.repository-storage-test]
             [cloud.itonami.app.repository-qualification-test]
+            [cloud.itonami.app.repository-invariants-test]
             [cloud.itonami.app.mailbox-test]
             [cloud.itonami.app.mailbox-http-test]
             [cloud.itonami.app.mail-sync-test]
@@ -82,6 +83,7 @@
     cloud.itonami.app.repos-test
     cloud.itonami.app.repository-storage-test
     cloud.itonami.app.repository-qualification-test
+    cloud.itonami.app.repository-invariants-test
     cloud.itonami.app.authority.adapters-test
     cloud.itonami.app.authority.api-test
     cloud.itonami.app.authority.payment-test

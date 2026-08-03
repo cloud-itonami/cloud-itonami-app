@@ -5,6 +5,7 @@
             [clojure.edn :as edn]
             [cloud.itonami.app.config :as config]
             [cloud.itonami.app.repository-measurement :as measurement]
+            [cloud.itonami.app.repository-invariants :as invariants]
             [cloud.itonami.app.repository-qualification :as qualification]
             [cloud.itonami.app.repository-storage :as repository])
   (:import [java.nio.charset StandardCharsets]
@@ -326,12 +327,20 @@
         ;; therefore cannot pass merely because local content was dropped.
         audit (repository/audit-datalad-blocks
                (:datalad-root context)
-               (repository/plaintext-markers (:state workspace)))]
+               (repository/plaintext-markers (:state workspace)))
+        live-invariants (invariants/verify)]
     (qualification/require-qualified!
      (assoc evidence
             :profiles-report profiles
             :datalad-audit audit
-            :usage-reconciliation usage))))
+            :usage-reconciliation usage
+            :semantic-convergence? (:semantic-convergence? live-invariants)
+            :conflict-surfaced? (:conflict-surfaced? live-invariants)
+            :vmk-rotation-payload-stable?
+            (:vmk-rotation-payload-stable? live-invariants)
+            :transport-failure-head-stable?
+            (:transport-failure-head-stable? live-invariants)
+            :query-backend-parity? (:query-backend-parity? live-invariants)))))
 
 (defn -main [& [command & arguments]]
   (let [result

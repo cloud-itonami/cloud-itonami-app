@@ -5,11 +5,6 @@
  :sustained-sync-bps nil
  :hydrate-ms nil
  :rto-ms nil
- :semantic-convergence? nil
- :conflict-surfaced? nil
- :vmk-rotation-payload-stable? nil
- :transport-failure-head-stable? nil
- :query-backend-parity? nil
  :evidence/scope :production
  :evidence/measured-at nil
  :evidence/source-commit nil

@@ -594,7 +594,9 @@ atomically writes source-bound measurements to the Git-ignored evidence file.
 `CLOUD_ITONAMI_SOURCE_COMMIT` must be the exact deployed 40-character SHA and
 `qualify` refuses evidence from any other commit. Production cutover still
 requires observed peak-write, sustained-upload and RTO inputs. Live inventory,
-plaintext-leak and physical-byte gates cannot be overridden by the file.
+plaintext-leak, physical-byte, mutation/conflict, VMK-rewrap,
+transport-before-head and DataScript-parity gates are executed by the current
+build and cannot be overridden by the file.
 
 See [`.env.example`](.env.example), [the architecture](docs/architecture.md),
 and [the tenant model](docs/tenant-model.md).

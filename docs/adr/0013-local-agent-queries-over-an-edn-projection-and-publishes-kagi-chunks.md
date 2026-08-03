@@ -323,8 +323,11 @@ from the current app prove:
 measurement timestamp and explicit cache-empty hydrate attestation. It derives
 gate 7 from all non-trivial keyword/string markers in the current private
 workspace, gate 9 from the encrypted retained-head chain and physical blocks,
-and gate 11 from the explicit 29-repository inventory. An evidence file cannot
-override those three live results and is itself ignored by Git.
+and gate 11 from the explicit 29-repository inventory. Gates 5, 6, 8, 10 and
+12 execute again inside the exact qualifying build using the production
+reconciler, memory failure transport, VMK rewrap path, `langchain.db`, and
+DataScript. An evidence file cannot override these eight live results and is
+itself ignored by Git.
 
 The cache-empty attestation is produced by `repository drill`, not typed by an
 operator: the command refuses the warm DataLad dataset, proves that a separate
