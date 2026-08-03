@@ -338,6 +338,13 @@ Both `drill` and `qualify` bind the evidence to the exact 40-character
 Peak logical writes, sustained upload capacity and the chosen RTO remain
 deployment observations and are not fabricated by this drill.
 
+Before either command, `repository preflight` performs a read-only readiness
+check. Its output contains only check identifiers, booleans and bounded reason
+keywords—never paths, owner identifiers, tokens, Kagi material, signed heads or
+plaintext. It verifies both CLI tools, owner shape, warm/cold dataset isolation,
+empty cold cache, annex remote configuration, editable workspace, exact source
+commit, Kagi context, Kotobase read access and presence of a published head.
+
 An emergency compromise of a blind/index key is distinct from routine VMK
 rotation. If remote Arrangement is ever enabled, that event may require a full
 reindex/re-encryption and must receive its own measured recovery model.

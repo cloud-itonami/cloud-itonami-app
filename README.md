@@ -573,6 +573,7 @@ Repository-backed private state follows
 Operator flow:
 
 ```bash
+clojure -M:repository preflight
 clojure -M:repository migrate data/state.edn
 clojure -M:repository publish
 clojure -M:repository hydrate
@@ -587,7 +588,11 @@ clojure -M:repository profiles
 
 `publish` fails closed for missing/unfinished DataLad transport, locked Kagi,
 invalid or stale heads, and merge conflicts. `profiles` audits the explicit
-29-repository inventory. `measure` is a warm local probe. `drill` requires a
+29-repository inventory. `preflight` is read-only and reports readiness without
+printing environment values, paths, owner IDs, tokens, Kagi material, heads or
+plaintext. It checks the CLI tools, owner shape, warm/cold dataset isolation,
+empty cold annex cache, configured remote, workspace, source SHA, Kagi unlock,
+Kotobase read and published head. `measure` is a warm local probe. `drill` requires a
 separate cache-empty dataset in `CLOUD_ITONAMI_COLD_DATALAD_DATASET`, verifies
 that it contains no materialized annex blocks, performs the real hydrate, and
 atomically writes source-bound measurements to the Git-ignored evidence file.

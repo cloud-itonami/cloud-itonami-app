@@ -110,7 +110,7 @@
 (defn bytes-cid [^bytes value]
   (str "sha256:" (hex (sha256 value))))
 
-(defn- valid-owner? [owner]
+(defn valid-owner? [owner]
   (and (string? owner)
        (boolean (re-matches #"[A-Za-z0-9][A-Za-z0-9._-]{7,127}" owner))
        (not (str/includes? owner ".."))))

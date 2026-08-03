@@ -3,6 +3,7 @@
   Kotobase token environment; they are never accepted as command arguments."
   (:require [clojure.java.io :as io]
             [clojure.edn :as edn]
+            [clojure.string :as str]
             [cloud.itonami.app.config :as config]
             [cloud.itonami.app.repository-measurement :as measurement]
             [cloud.itonami.app.repository-invariants :as invariants]
@@ -13,8 +14,14 @@
            [java.time Instant]
            [java.util UUID]))
 
+(def ^:dynamic *environment*
+  "Environment lookup seam for fail-closed preflight tests."
+  #(System/getenv %))
+
+(defn- env [name] (not-empty (*environment* name)))
+
 (defn- required-env [name]
-  (or (not-empty (System/getenv name))
+  (or (env name)
       (throw (ex-info (str name " is required")
                       {:type :repository-storage/config-required
                        :environment name}))))
@@ -30,18 +37,15 @@
         owner (required-env "CLOUD_ITONAMI_STORAGE_OWNER")
         dataset (required-env "CLOUD_ITONAMI_DATALAD_DATASET")
         remote (required-env "CLOUD_ITONAMI_DATALAD_REMOTE")
-        endpoint (or (not-empty (System/getenv "CLOUD_ITONAMI_KOTOBASE_ENDPOINT"))
+        endpoint (or (env "CLOUD_ITONAMI_KOTOBASE_ENDPOINT")
                      "https://kotobase.net")
         token (required-env "CLOUD_ITONAMI_KOTOBASE_TOKEN")
-        workspace-root (or (not-empty
-                            (System/getenv "CLOUD_ITONAMI_WORKSPACE_ROOT"))
+        workspace-root (or (env "CLOUD_ITONAMI_WORKSPACE_ROOT")
                            (.getPath (io/file (config/data-dir) "workspace")))
-        requested-key-epoch (some-> (not-empty
-                                     (System/getenv
-                                      "CLOUD_ITONAMI_KEY_EPOCH"))
+        requested-key-epoch (some-> (env "CLOUD_ITONAMI_KEY_EPOCH")
                                     Long/parseLong)
         kagi-context (load-kagi-context
-                      {:vault-home (not-empty (System/getenv "KAGI_HOME"))
+                      {:vault-home (env "KAGI_HOME")
                        :repository-id owner
                        :key-epoch requested-key-epoch})]
     (merge kagi-context
@@ -138,8 +142,7 @@
   [legacy-file]
   (let [owner (required-env "CLOUD_ITONAMI_STORAGE_OWNER")
         dataset (required-env "CLOUD_ITONAMI_DATALAD_DATASET")
-        workspace-root (or (not-empty
-                            (System/getenv "CLOUD_ITONAMI_WORKSPACE_ROOT"))
+        workspace-root (or (env "CLOUD_ITONAMI_WORKSPACE_ROOT")
                            (.getPath (io/file (config/data-dir) "workspace")))]
     (repository/migrate-legacy-state!
      {:workspace-root workspace-root :datalad-root dataset :owner owner}
@@ -218,6 +221,129 @@
       (throw (ex-info "declared source commit differs from checked-out code"
                       {:type :repository-storage/source-commit-mismatch})))
     declared))
+
+(defn- executable-on-path? [name]
+  (boolean
+   (some (fn [directory]
+           (let [file (io/file directory name)]
+             (and (.isFile file) (.canExecute file))))
+         (some-> (or (env "PATH") "")
+                 (str/split
+                  (re-pattern (java.util.regex.Pattern/quote
+                               java.io.File/pathSeparator)))))))
+
+(defn- require-check! [condition type]
+  (when-not condition (throw (ex-info "repository preflight check failed"
+                                      {:type type})))
+  true)
+
+(defn- dataset? [path]
+  (and path
+       (.isDirectory (io/file path))
+       (.exists (io/file path ".git"))))
+
+(defn- command-succeeds? [directory arguments]
+  (try
+    (let [process (-> (ProcessBuilder. ^java.util.List (vec arguments))
+                      (.directory (io/file directory))
+                      (.redirectErrorStream true)
+                      .start)]
+      (with-open [input (.getInputStream process)] (.readAllBytes input))
+      (zero? (.waitFor process)))
+    (catch Exception _ false)))
+
+(defn- preflight-check [id f]
+  (try
+    (let [detail (f)]
+      {:id id :ready? true :detail (if (keyword? detail) detail :ready)})
+    (catch Exception error
+      {:id id :ready? false
+       :detail (or (:type (ex-data error)) :preflight/failed)})))
+
+(defn preflight!
+  "Read-only production readiness report. It emits no environment values,
+  paths, tokens, owner IDs, Kagi material, heads or plaintext."
+  []
+  (let [owner (env "CLOUD_ITONAMI_STORAGE_OWNER")
+        warm (env "CLOUD_ITONAMI_DATALAD_DATASET")
+        cold (env "CLOUD_ITONAMI_COLD_DATALAD_DATASET")
+        remote (env "CLOUD_ITONAMI_DATALAD_REMOTE")
+        workspace-root (or (env "CLOUD_ITONAMI_WORKSPACE_ROOT")
+                           (.getPath (io/file (config/data-dir) "workspace")))
+        context-holder (atom nil)
+        basic-checks
+        [(preflight-check :datalad-cli
+                          #(require-check! (executable-on-path? "datalad")
+                                           :preflight/datalad-missing))
+         (preflight-check :git-annex-cli
+                          #(require-check! (executable-on-path? "git-annex")
+                                           :preflight/git-annex-missing))
+         (preflight-check :storage-owner
+                          #(require-check! (repository/valid-owner? owner)
+                                           :preflight/storage-owner-invalid))
+         (preflight-check :kotobase-token
+                          #(require-check! (env "CLOUD_ITONAMI_KOTOBASE_TOKEN")
+                                           :preflight/kotobase-token-missing))
+         (preflight-check :warm-datalad-dataset
+                          #(require-check! (dataset? warm)
+                                           :preflight/warm-dataset-missing))
+         (preflight-check :cold-datalad-dataset
+                          #(require-check! (dataset? cold)
+                                           :preflight/cold-dataset-missing))
+         (preflight-check :datasets-isolated
+                          #(do
+                             (require-check! (and warm cold)
+                                             :preflight/dataset-missing)
+                             (require-check!
+                              (not= (.getCanonicalPath (io/file warm))
+                                    (.getCanonicalPath (io/file cold)))
+                              :preflight/datasets-not-isolated)))
+         (preflight-check :cold-block-cache
+                          #(do
+                             (require-check! (dataset? cold)
+                                             :preflight/cold-dataset-missing)
+                             (repository/assert-empty-datalad-block-cache! cold)
+                             :cache-empty))
+         (preflight-check :datalad-remote
+                          #(do
+                             (require-check! (and (dataset? warm) remote)
+                                             :preflight/remote-missing)
+                             (require-check!
+                              (command-succeeds?
+                               warm ["git" "annex" "info" remote])
+                              :preflight/remote-unconfigured)))
+         (preflight-check :editable-workspace
+                          #(require-check!
+                            (and owner
+                                 (.isFile (io/file workspace-root owner
+                                                   "state.edn")))
+                            :preflight/workspace-missing))
+         (preflight-check :source-commit running-source-commit)
+         (preflight-check :evidence-output
+                          #(do
+                             (require-ignored-evidence-output!
+                              (io/file
+                               "config/repository-production-evidence.edn"))
+                             :git-ignored))]
+        context-check
+        (preflight-check :kagi-and-production-context
+                         #(do (reset! context-holder (production-context))
+                              :unlocked))
+        head-check
+        (preflight-check :kotobase-published-head
+                         #(do
+                            (require-check! @context-holder
+                                            :preflight/context-unavailable)
+                            (require-check!
+                             (:head (repository/head-snapshot
+                                     (:head-store @context-holder)
+                                     (:owner @context-holder)))
+                             :preflight/head-missing)
+                            :head-present))
+        checks (conj basic-checks context-check head-check)]
+    {:qualified? (every? :ready? checks)
+     :checks checks
+     :missing (mapv :id (remove :ready? checks))}))
 
 (defn- atomic-write-evidence! [file evidence]
   (let [file (.getCanonicalFile (io/file file))
@@ -352,6 +478,7 @@
           "hydrate" (hydrate!)
           "rotate-vmk" (rotate-vmk!)
           "measure" (measure! (first arguments))
+          "preflight" (preflight!)
           "drill" (drill! (first arguments) (second arguments))
           "usage" (usage!)
           "qualify" (qualify! (or (first arguments)
@@ -359,7 +486,7 @@
           "audit" (audit! arguments)
           "profiles" (audit-profiles! arguments)
           (throw (ex-info
-                  "usage: repository migrate [legacy.edn] | publish | hydrate | rotate-vmk | measure [iterations] | drill [iterations] [evidence.edn] | usage | qualify [evidence.edn] | audit [markers...] | profiles [repo...]"
+                  "usage: repository preflight | migrate [legacy.edn] | publish | hydrate | rotate-vmk | measure [iterations] | drill [iterations] [evidence.edn] | usage | qualify [evidence.edn] | audit [markers...] | profiles [repo...]"
                   {:type :repository-storage/invalid-command})))]
     ;; Result summaries are explicitly stripped of plaintext, VMKs, blocks and
     ;; tokens before they reach an operator terminal.
@@ -367,4 +494,4 @@
                       [:published? :head/revision :basis/cid :qualified?
                        :key/epoch :measurement :violations :failed :sealed/bytes
                        :physical/bytes :reconciled? :heads :blocks :state-file
-                       :basis-file :base-file :evidence-file]))))
+                       :basis-file :base-file :evidence-file :checks :missing]))))
