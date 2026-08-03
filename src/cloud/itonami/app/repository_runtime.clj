@@ -30,12 +30,13 @@
 (defn production-context
   "Resolve non-secret coordinates and unlock the pinned Kagi adapter
   non-interactively."
-  []
+  ([] (production-context nil))
+  ([owner-override]
   (let [load-kagi-context
         (or (requiring-resolve 'kagi.repository-context/load-context)
             (throw (ex-info "Kagi repository context is unavailable"
                             {:type :repository-storage/kagi-adapter-required})))
-        owner (required-env "CLOUD_ITONAMI_STORAGE_OWNER")
+        owner (or owner-override (required-env "CLOUD_ITONAMI_STORAGE_OWNER"))
         dataset (required-env "CLOUD_ITONAMI_DATALAD_DATASET")
         remote (required-env "CLOUD_ITONAMI_DATALAD_REMOTE")
         endpoint (or (env "CLOUD_ITONAMI_KOTOBASE_ENDPOINT")
@@ -54,7 +55,7 @@
             :workspace-root workspace-root
             :datalad-root dataset
             :transport (repository/datalad-block-transport dataset remote)
-            :head-store (repository/encrypted-graph-head-registry endpoint token)})))
+            :head-store (repository/encrypted-graph-head-registry endpoint token)}))))
 
 (defn publish! []
   (repository/commit-workspace! (production-context)))

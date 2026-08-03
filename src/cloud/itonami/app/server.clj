@@ -2,6 +2,7 @@
   (:require [clojure.data.json :as json]
             [clojure.string :as str]
             [cloud.itonami.app.agent-session :as agent-session]
+            [cloud.itonami.app.app-client :as app-client]
             [cloud.itonami.app.authority.api :as authority-api]
             [cloud.itonami.app.business :as business]
             [cloud.itonami.app.canvas :as canvas]
@@ -26,6 +27,8 @@
             [cloud.itonami.app.lawfirm :as lawfirm]
             [cloud.itonami.app.loops :as loops]
             [cloud.itonami.app.metrics :as business-metrics]
+            [cloud.itonami.app.mcp :as mcp]
+            [cloud.itonami.app.oauth-resource :as oauth-resource]
             [cloud.itonami.app.portfolio :as portfolio]
             [cloud.itonami.app.organism-gateway :as organism-gateway]
             [cloud.itonami.app.relay :as relay]
@@ -36,15 +39,18 @@
             [cloud.itonami.app.service :as service]
             [cloud.itonami.app.store :as store]
             [cloud.itonami.app.tenant-connection :as tenant-connection]
+            [cloud.itonami.app.tenant-repository :as tenant-repository]
+            [cloud.itonami.app.tenant-tools :as tenant-tools]
             [cloud.itonami.app.web :as web]
             [cloud.itonami.app.worker :as worker]
             [cloud.itonami.app.workspace :as workspace])
   (:import [com.sun.net.httpserver HttpExchange HttpHandler HttpServer]
-           [java.io OutputStreamWriter]
+           [java.io ByteArrayOutputStream OutputStreamWriter]
            [java.net InetSocketAddress URLDecoder]
            [java.nio.charset StandardCharsets]))
 
 (defonce server (atom nil))
+(defonce ^:private active-config (atom nil))
 
 (defn- read-json [^HttpExchange exchange]
   (let [body (slurp (.getRequestBody exchange))]
@@ -60,6 +66,30 @@
   [^HttpExchange exchange]
   (let [body (slurp (.getRequestBody exchange))]
     (if (str/blank? body) {} (json/read-str body))))
+
+(defn- read-json-limited
+  "Read a remote control-plane JSON object without allowing an unbounded body
+  to be materialized before tenant budget checks can run."
+  [^HttpExchange exchange maximum-bytes key-fn]
+  (let [buffer (byte-array 8192)
+        output (ByteArrayOutputStream.)]
+    (with-open [input (.getRequestBody exchange)]
+      (loop [total 0]
+        (let [read (.read input buffer)]
+          (when-not (neg? read)
+            (let [next-total (+ total read)]
+              (when (> next-total maximum-bytes)
+                (throw (ex-info "request body is too large"
+                                {:type :http/payload-too-large
+                                 :maximum-bytes maximum-bytes})))
+              (.write output buffer 0 read)
+              (recur next-total))))))
+    (let [body (.toString output StandardCharsets/UTF_8)]
+      (if (str/blank? body)
+        {}
+        (if key-fn
+          (json/read-str body :key-fn key-fn)
+          (json/read-str body))))))
 
 (defn- send!
   ([exchange status body] (send! exchange status body {}))
@@ -179,6 +209,20 @@
       (throw (ex-info "リクエスト元を確認できません。"
                       {:type :identity/invalid-origin})))))
 
+(defn- oauth-scope-for [^HttpExchange exchange]
+  (let [method (.getRequestMethod exchange)
+        path (.getPath (.getRequestURI exchange))]
+    (cond
+      (= path "/mcp") "mcp:tools"
+      (re-matches #"/v1/tenant-connections/[^/]+/repository/publish" path)
+      "repository:write"
+      (re-matches #"/v1/tenant-connections/[^/]+/repository" path)
+      (if (= method "GET") "repository:read" "repository:write")
+      (or (= path "/v1/tenants")
+          (str/starts-with? path "/v1/tenant-connections"))
+      "tenant:connect"
+      :else nil)))
+
 (defn- require-session!
   "The session behind this request, from a bearer token or the cookie.
 
@@ -186,6 +230,9 @@
   as the token it presented rather than as whoever last logged in."
   [exchange]
   (or (some-> (bearer-token exchange) identity/session)
+      (when-let [scope (and @active-config (oauth-scope-for exchange))]
+        (oauth-resource/session @active-config (bearer-token exchange) scope
+                                (oauth-resource/resource-url @active-config)))
       (identity/session (cookie-value exchange identity/cookie-name))
       (throw (ex-info "認証が必要です。" {:type :identity/unauthenticated}))))
 
@@ -233,6 +280,136 @@
   [exchange session]
   (when-not (bearer-token exchange)
     (require-csrf-header! exchange session)))
+
+(defn- send-empty! [^HttpExchange exchange status headers]
+  (doseq [[header value] headers]
+    (.set (.getResponseHeaders exchange) header value))
+  (.sendResponseHeaders exchange status -1)
+  (.close exchange))
+
+(defn- require-mcp-origin! [^HttpExchange exchange configuration]
+  (when-let [request-origin (some-> exchange .getRequestHeaders
+                                    (.getFirst "Origin") not-empty)]
+    (let [allowed (conj (set (get-in configuration [:mcp :allowed-origins]))
+                        (origin configuration))]
+      (when-not (contains? allowed request-origin)
+        (throw (ex-info "MCP Origin is not allowed"
+                        {:type :mcp-http/invalid-origin})))))
+  true)
+
+(defn- negotiated-mcp-version [^HttpExchange exchange request]
+  (let [header (.getFirst (.getRequestHeaders exchange)
+                          "MCP-Protocol-Version")
+        initialize? (= "initialize" (get request "method"))
+        requested (or header
+                      (when initialize?
+                        (get-in request ["params" "protocolVersion"]))
+                      "2025-03-26")]
+    (when-not (contains? mcp/supported-protocol-versions requested)
+      (throw (ex-info "unsupported MCP protocol version"
+                      {:type :mcp-http/unsupported-version
+                       :protocol-version requested})))
+    requested))
+
+(defn- require-mcp-content! [^HttpExchange exchange request]
+  (let [accept (or (.getFirst (.getRequestHeaders exchange) "Accept") "")
+        content-type (or (.getFirst (.getRequestHeaders exchange)
+                                   "Content-Type") "")
+        routed-method (.getFirst (.getRequestHeaders exchange) "Mcp-Method")
+        routed-name (.getFirst (.getRequestHeaders exchange) "Mcp-Name")]
+    (when-not (and (str/includes? accept "application/json")
+                   (str/includes? accept "text/event-stream"))
+      (throw (ex-info "MCP Accept must include JSON and event-stream"
+                      {:type :mcp-http/not-acceptable})))
+    (when-not (str/starts-with? (str/lower-case content-type)
+                                "application/json")
+      (throw (ex-info "MCP request must be application/json"
+                      {:type :mcp-http/unsupported-media-type})))
+    ;; 2026 routing headers are accepted now and fail closed when present.
+    ;; They remain optional until the release candidate becomes a stable
+    ;; protocol version.
+    (when (and routed-method (not= routed-method (get request "method")))
+      (throw (ex-info "Mcp-Method does not match the JSON-RPC body"
+                      {:type :mcp-http/routing-header-mismatch})))
+    (when (and routed-name
+               (= "tools/call" (get request "method"))
+               (not= routed-name (get-in request ["params" "name"])))
+      (throw (ex-info "Mcp-Name does not match the tool call"
+                      {:type :mcp-http/routing-header-mismatch})))
+    true))
+
+(defn- require-mcp-tool-scope! [session request]
+  (when-let [granted (:oauth/scopes session)]
+    (when (= "tools/call" (get request "method"))
+      (let [tool (get-in request ["params" "name"])
+            required (cond
+                       (= tool "tenant_repository_read") "repository:read"
+                       (contains? #{"tenant_repository_write"
+                                    "tenant_repository_publish"} tool)
+                       "repository:write"
+                       (str/starts-with? (or tool "") "tenant_")
+                       "tenant:connect"
+                       :else nil)]
+        (when (and required (not (contains? granted required)))
+          (throw (ex-info "OAuth access token lacks the tool scope"
+                          {:type :oauth-resource/insufficient-scope
+                           :required-scope required}))))))
+  true)
+
+(defn- send-mcp-http! [^HttpExchange exchange configuration]
+  (try
+    (require-mcp-origin! exchange configuration)
+    (let [session (require-app-session! exchange)]
+      (if-not (= "POST" (.getRequestMethod exchange))
+        (send-empty! exchange 405 {"Allow" "POST"})
+        (let [request (read-json-limited exchange (* 2 1024 1024) nil)
+              _ (require-mcp-content! exchange request)
+              _ (require-mcp-tool-scope! session request)
+              protocol-version (negotiated-mcp-version exchange request)]
+          (binding [app-client/*token* (bearer-token exchange)
+                    app-client/*base-url*
+                    (str "http://127.0.0.1:"
+                         (.getPort (.getLocalAddress exchange)))
+                    tenant-tools/*authenticated?* true]
+            (if-let [response (mcp/respond configuration request
+                                           protocol-version)]
+              (send! exchange 200 response
+                     {"MCP-Protocol-Version" protocol-version})
+              (send-empty! exchange 202
+                           {"MCP-Protocol-Version" protocol-version}))))))
+    (catch clojure.lang.ExceptionInfo error
+      (let [type (:type (ex-data error))
+            insufficient? (= :oauth-resource/insufficient-scope type)
+            unauthenticated? (contains? #{:identity/unauthenticated
+                                          :oauth-resource/invalid-token
+                                          :oauth-resource/invalid-audience
+                                          :oauth-resource/unknown-subject
+                                          :oauth-resource/not-configured
+                                          :oauth-resource/introspection-failed}
+                                        type)
+            status (cond
+                     insufficient? 403
+                     unauthenticated? 401
+                     (= :mcp-http/invalid-origin type) 403
+                     (= :mcp-http/not-acceptable type) 406
+                     (= :mcp-http/unsupported-media-type type) 415
+                     (= :http/payload-too-large type) 413
+                     :else 400)
+            required-scope (or (:required-scope (ex-data error)) "mcp:tools")
+            challenge (str (oauth-resource/challenge configuration required-scope)
+                           (when insufficient?
+                             ", error=\"insufficient_scope\""))]
+        (send! exchange status
+               {"jsonrpc" "2.0" "id" nil
+                "error" {"code" (if unauthenticated? -32001 -32600)
+                         "message" (.getMessage error)}}
+               (cond-> {}
+                 (or unauthenticated? insufficient?)
+                 (assoc "WWW-Authenticate" challenge)))))
+    (catch Exception _
+      (send! exchange 400
+             {"jsonrpc" "2.0" "id" nil
+              "error" {"code" -32700 "message" "parse error"}}))))
 
 (defn- provider-from-path [path pattern]
   (some-> (re-matches pattern path) second keyword))
@@ -456,6 +633,32 @@
      :memory-datoms (count (:datoms state))
      :last-response (:last-response state)}))
 
+(defn- control-plane-error-status [type]
+  (get {:tenant-connection/storage-budget-exhausted 507
+        :tenant-repository/not-found 404
+        :tenant-repository/state-required 400
+        :repository-storage/edit-conflict 409
+        :repository-storage/expected-cid-required 428
+        :repository-storage/initialization-conflict 409
+        :repository-storage/invalid-state 422
+        :repository-storage/invalid-datom 422
+        :repository-storage/unsafe-edn 422
+        :repository-storage/tagged-edn 422
+        :repository-storage/workspace-missing 404
+        :repository-storage/config-required 501
+        :oauth-resource/invalid-token 401
+        :oauth-resource/invalid-audience 401
+        :oauth-resource/unknown-subject 401
+        :oauth-resource/insufficient-scope 403
+        :oauth-resource/not-configured 401
+        :oauth-resource/introspection-failed 502
+        :oauth-resource/insecure-introspection 500
+        :oauth-resource/insecure-resource 500
+        :oauth-resource/introspection-credentials-missing 500
+        :oauth-resource/no-authorization-server 500
+        :http/payload-too-large 413}
+       type 502))
+
 (defn handler [config]
   (reify HttpHandler
     (handle [_ exchange]
@@ -469,6 +672,14 @@
             (and (= method "GET") (= path "/health"))
             (send! exchange 200 {:ok true :service "cloud-itonami-app"
                                  :schema "cloud.itonami.app.health.v1"})
+
+            (and (= method "GET")
+                 (= path "/.well-known/oauth-protected-resource/mcp"))
+            (send! exchange 200 (oauth-resource/metadata config))
+
+            (and (contains? #{"POST" "GET" "DELETE"} method)
+                 (= path "/mcp"))
+            (send-mcp-http! exchange config)
 
             ;; Public by necessity, like /health. A DID document is the public
             ;; half of a key pair plus the purposes it may be used for; a
@@ -1133,6 +1344,41 @@
               (require-csrf! exchange session)
               (send! exchange 202
                      (tenant-connection/request! session (read-json exchange))))
+
+            (and (= method "GET")
+                 (id-from-path
+                  path #"/v1/tenant-connections/([^/]+)/repository"))
+            (send! exchange 200
+                   (tenant-repository/read!
+                    (require-app-session! exchange)
+                    (id-from-path
+                     path #"/v1/tenant-connections/([^/]+)/repository")))
+
+            (and (= method "POST")
+                 (id-from-path
+                  path #"/v1/tenant-connections/([^/]+)/repository"))
+            (let [session (require-app-session! exchange)]
+              (require-origin! exchange config)
+              (require-csrf! exchange session)
+              (send! exchange 200
+                     (tenant-repository/write!
+                      session
+                      (id-from-path
+                       path #"/v1/tenant-connections/([^/]+)/repository")
+                      (read-json-limited exchange (* 16 1024 1024) keyword))))
+
+            (and (= method "POST")
+                 (id-from-path
+                  path #"/v1/tenant-connections/([^/]+)/repository/publish"))
+            (let [session (require-app-session! exchange)]
+              (require-origin! exchange config)
+              (require-csrf! exchange session)
+              (send! exchange 200
+                     (tenant-repository/publish!
+                      session
+                      (id-from-path
+                       path
+                       #"/v1/tenant-connections/([^/]+)/repository/publish"))))
 
             (and (= method "GET")
                  (id-from-path path #"/v1/tenant-connections/([^/]+)"))
@@ -2871,7 +3117,7 @@
                      :payment/posture-unknown 500
                      :payment/settlement-history-unknown 500
 
-                     502)
+                     (control-plane-error-status (:type (ex-data error))))
                    {:error {:type (name (or (:type (ex-data error))
                                            :provider/error))
                             :message (.getMessage error)
@@ -2885,6 +3131,7 @@
   ([configuration]
    (when @server
      (throw (ex-info "server already running" {})))
+   (reset! active-config configuration)
    (identity/configure! configuration)
    ;; Written here rather than lazily on first enrollment so that a CLI run at
    ;; any point after the server is up has something to read. Creating it is
@@ -2905,7 +3152,8 @@
   (mail-sync/stop!)
   (when-let [instance @server]
     (.stop instance 0)
-    (reset! server nil)))
+    (reset! server nil))
+  (reset! active-config nil))
 
 (defn -main [& _]
   (let [{:keys [host port]} (start!)]

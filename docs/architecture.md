@@ -18,7 +18,7 @@ its Swift implementation.
 | Provider selection | safe `.kotoba` policy + host-side mirror |
 | Local/cloud model transport | localhost service adapters |
 | Session memory | `kotoba.kgraph` EAV datoms + durable EDN |
-| Compatible client access | OpenAI-compatible loopback HTTP API; MCP over stdio for the fleet |
+| Compatible client access | OpenAI-compatible HTTP; MCP over stdio and authenticated Streamable HTTP |
 | Secret access | named environment variables at provider boundary |
 
 ## Workspace integrations
@@ -1261,17 +1261,18 @@ step; the current host mirror is not described as if it were already tendered.
 
 ## MCP surface
 
-`cloud.itonami.app.mcp` serves the fleet capability's two tools — `fleet_search`
-and `fleet_call` — over MCP on **stdio**, launched as `clojure -M:mcp`. It is an
-adapter: `cloud.itonami.app.fleet` already owns the descriptors and behaviour for
-the in-app agent loop, and this translates them for a client that is not that
-loop. `mcp.model` holds the manifest, `mcp.execute` does the JSON-RPC dispatch,
-and an `ITool` port calls the same two functions.
+`cloud.itonami.app.mcp` is one dispatcher with two adapters. `clojure -M:mcp`
+keeps stdio for a process the operator launched. `POST /mcp` exposes the same
+manifest over stateless Streamable HTTP, with bearer authentication, Origin
+validation, protocol negotiation and RFC 9728 protected-resource discovery.
+Externally issued tokens are introspected and audience/scope checked; local
+opaque agent sessions remain usable for loopback clients.
 
-Stdio rather than a route on the loopback server: `/v1/*` is already the one
-unauthenticated exception the loopback bind exists to protect, and an MCP route
-would be a second. Over stdio the client is a process the operator launched, so
-nothing new listens and the trust boundary is one they already set.
+The manifest includes fleet, session-gated tenant connections, and direct
+tenant repository read/write/publish tools. Repository writes are CID-guarded,
+storage-budgeted plaintext edits to the local projection; publish uses the
+Kagi/DataLad/Kotobase encrypted pipeline. Approval remains browser Passkey-only
+and is deliberately absent from MCP. See ADR-0004, ADR-0014 and ADR-0015.
 
 The fleet capability gate is honoured, so `tools/list` is empty until it is
 enabled — the same fail-closed default as the other agent capabilities. Browser
@@ -1289,8 +1290,8 @@ The public compatibility slice is:
 
 Management endpoints live under `/api` and are not part of the OpenAI
 compatibility claim. Function-call deltas, Responses API, embeddings, Anthropic
-compatibility, and MCP are future profiles and will receive separate
-compatibility tests.
+compatibility are future profiles. MCP has separate stdio and HTTP compatibility
+tests.
 
 `POST /v1/chat/completions` honours `stream: true` as Server-Sent Events in the
 `chat.completion.chunk` format: a role chunk, one chunk per provider delta, a
@@ -1377,8 +1378,8 @@ relevance queries. Writes replace the state file atomically.
 1. Tender the provider policy Wasm in the live request path.
 2. Add tool manifests with per-working-folder capabilities and approval
    receipts.
-3. Add an MCP **client** profile. (The server half exists for the fleet
-   capability: `cloud.itonami.app.mcp` on stdio — see below and ADR-0004.)
+3. Add an MCP **client** profile. The server half now supports stdio and hosted
+   Streamable HTTP; see ADR-0004 and ADR-0015.
 4. Add memory distillation and relevance retrieval over kgraph.
 5. Add schedules/watchers after tool isolation is available.
 6. Add a function-call compatibility suite. (Streaming has one:

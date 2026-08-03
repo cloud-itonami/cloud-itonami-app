@@ -1133,12 +1133,54 @@
              {:state candidate :basis/cid actual-cid
               :semantic/cid candidate-cid})))))))
 
+(defn replace-workspace!
+  "Initialize or replace one local projection under its cross-process lock.
+
+  Existing workspaces require EXPECTED-CID; initialization requires it absent.
+  BEFORE-WRITE runs only after that check and before bytes move into place. It
+  is the admission seam used by tenant storage accounting, so stale retries do
+  not consume a lease operation."
+  [{:keys [workspace-root datalad-root owner expected-cid candidate
+           before-write]}]
+  (let [candidate (validate-state! candidate)
+        state-file (workspace-state-file workspace-root owner)
+        owner-dir (.getParentFile state-file)]
+    (.mkdirs owner-dir)
+    (require-workspace-untracked! owner-dir)
+    (edn-persist/with-state-lock
+     state-file
+     (fn []
+       (let [workspace (workspace-snapshot workspace-root owner)]
+         (if workspace
+           (do
+             (when-not (and (string? expected-cid) (seq expected-cid))
+               (throw (ex-info "expected CID is required for an existing workspace"
+                               {:type :repository-storage/expected-cid-required})))
+             (let [actual-cid (semantic-cid (:state workspace))]
+               (when-not (= expected-cid actual-cid)
+                 (throw (ex-info "workspace edit basis is stale"
+                                 {:type :repository-storage/edit-conflict
+                                  :expected-cid expected-cid
+                                  :actual-cid actual-cid})))
+               (when before-write (before-write candidate))
+               (atomic-write-bytes! state-file (canonical-bytes candidate))
+               {:state candidate :basis/cid actual-cid
+                :semantic/cid (semantic-cid candidate)}))
+           (do
+             (when (some? expected-cid)
+               (throw (ex-info "expected CID must be absent when initializing"
+                               {:type :repository-storage/initialization-conflict})))
+             (when before-write (before-write candidate))
+             (write-workspace! workspace-root datalad-root owner candidate
+                               {:head/cid nil} 0)
+             {:state candidate :semantic/cid (semantic-cid candidate)})))))))
+
 (defn retry-workspace-edit!
   "Rebase a pure EDIT-FN on the latest local projection after an actor append.
   Only optimistic edit conflicts are retried; validation and I/O failures stay
   fail-closed."
   [{:keys [workspace-root owner maximum-attempts]
-    :or {maximum-attempts 4}
+    :or {maximum-attempts 64}
     :as request}]
   (when-not (pos-int? maximum-attempts)
     (throw (ex-info "maximum edit attempts must be positive"
@@ -1171,7 +1213,7 @@
   and tx-id are reused."
   [{:keys [workspace-root datalad-root transport head-store provider vmk
            signing-secret signing-public owner key-epoch key-envelopes
-           max-chunk-bytes]
+           max-chunk-bytes before-publish]
     :as context}]
   (let [{:keys [revision head]} (head-snapshot head-store owner)
         workspace (workspace-snapshot workspace-root owner)]
@@ -1213,6 +1255,7 @@
               (atomic-write-bytes! journal-file
                                    (preparation->journal value))
               value))
+          _ (when before-publish (before-publish prepared))
           result (publish-prepared!
                   {:transport transport :head-store head-store
                    :provider provider :signing-public signing-public

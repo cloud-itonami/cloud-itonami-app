@@ -34,6 +34,9 @@
     clojure -M:cli tenant status --connection tc-…
     clojure -M:cli tenant renew --connection tc-… [--ttl-seconds 3600]
     clojure -M:cli tenant revoke --connection tc-…
+    clojure -M:cli tenant repository-read --connection tc-…
+    clojure -M:cli tenant repository-write --connection tc-… --file state.edn
+    clojure -M:cli tenant repository-publish --connection tc-…
     clojure -M:cli business list
     clojure -M:cli business create --slug cloud-itonami-vc --name \"…\"
     clojure -M:cli business bind --id business-… --repos a,b,c [--canvas …]
@@ -211,6 +214,29 @@
                 {:token (require-token configuration)
                  :body {:capability (:capability flags)}})))
 
+(defn tenant-repository-read [configuration flags]
+  (unwrap (call configuration :get
+                (str "/v1/tenant-connections/" (required-connection flags)
+                     "/repository")
+                {:token (require-token configuration)})))
+
+(defn tenant-repository-write [configuration flags]
+  (let [file (or (:file flags)
+                 (throw (ex-info "--file が必要です"
+                                 {:type :cli/missing-file})))]
+    (unwrap (call configuration :post
+                  (str "/v1/tenant-connections/" (required-connection flags)
+                       "/repository")
+                  {:token (require-token configuration)
+                   :body {:state_edn (slurp file)
+                          :expected_cid (:expected-cid flags)}}))))
+
+(defn tenant-repository-publish [configuration flags]
+  (unwrap (call configuration :post
+                (str "/v1/tenant-connections/" (required-connection flags)
+                     "/repository/publish")
+                {:token (require-token configuration) :body {}})))
+
 (defn business-list [configuration]
   (unwrap (call configuration :get "/api/business"
                 {:token (require-token configuration)})))
@@ -254,6 +280,9 @@
        "  tenant renew --connection <tc-id> [--ttl-seconds N]\n"
        "  tenant revoke --connection <tc-id>\n"
        "  tenant context --connection <tc-id> --capability <name>\n"
+       "  tenant repository-read --connection <tc-id>\n"
+       "  tenant repository-write --connection <tc-id> --file state.edn [--expected-cid C]\n"
+       "  tenant repository-publish --connection <tc-id>\n"
        "  business list\n"
        "  business create --slug <slug> [--name N] [--note X]\n"
        "  business bind --id <business-id> [--repos a,b] [--canvas c]\n"
@@ -275,6 +304,9 @@
       ["tenant" "renew"] (tenant-renew configuration flags)
       ["tenant" "revoke"] (tenant-revoke configuration flags)
       ["tenant" "context"] (tenant-context configuration flags)
+      ["tenant" "repository-read"] (tenant-repository-read configuration flags)
+      ["tenant" "repository-write"] (tenant-repository-write configuration flags)
+      ["tenant" "repository-publish"] (tenant-repository-publish configuration flags)
       ["business" "list"] (business-list configuration)
       ["business" "create"] (business-create configuration flags)
       ["business" "bind"] (business-bind configuration flags)

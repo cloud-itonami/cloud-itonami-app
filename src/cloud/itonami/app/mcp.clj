@@ -1,5 +1,5 @@
 (ns cloud.itonami.app.mcp
-  "An MCP server over the fleet directory, on stdio.
+  "One MCP dispatcher used by stdio and hosted Streamable HTTP.
 
   This is an adapter, not a second tool layer. `cloud.itonami.app.fleet` already
   owns the descriptors and the behaviour — `fleet/tools`, `fleet/search-tool`,
@@ -9,11 +9,10 @@
   `mcp.model`, `mcp.execute/handle` does the JSON-RPC dispatch, and an ITool
   port sends `tools/call` back to the same two functions the agent calls.
 
-  Transport is stdio, deliberately. The app binds a loopback HTTP server, and an
-  MCP surface there would be a third unauthenticated route on it — `/v1/*` is
-  already the exception the loopback bind exists to protect. Over stdio the
-  client is a process the operator launched, so the trust boundary is the one
-  they already established, and nothing new listens.
+  Stdio remains the local-process trust boundary. `cloud.itonami.app.server`
+  also hosts this pure dispatcher at `/mcp`; that adapter owns bearer/OAuth,
+  Origin, content negotiation and protocol-version checks rather than teaching
+  the tool layer about HTTP.
 
   Scope: the fleet capability, the 事業 (business) surface, plus funding and
   settlement when — and only when — a real app session resolves. Browser and computer tools are not exposed, and
@@ -69,6 +68,9 @@
 
 (def server-name "cloud-itonami-fleet")
 (def server-version "1")
+(def latest-protocol-version "2025-11-25")
+(def supported-protocol-versions
+  #{"2025-03-26" "2025-06-18" latest-protocol-version})
 
 (defn fleet-enabled?
   "The same gate `agent-control/available-tools` applies to `fleet/tools`:
@@ -163,9 +165,15 @@
   MCP clients send `notifications/initialized` right after `initialize`, so a
   server that answered every message would put an unsolicited error on the wire
   during the handshake."
-  [configuration request]
-  (when (contains? request "id")
-    (execute/handle (ports configuration) (manifest configuration) request)))
+  ([configuration request] (respond configuration request nil))
+  ([configuration request protocol-version]
+   (when (contains? request "id")
+     (let [response (execute/handle (ports configuration)
+                                    (manifest configuration) request)]
+       (if (= "initialize" (get request "method"))
+         (assoc-in response ["result" "protocolVersion"]
+                   (or protocol-version latest-protocol-version))
+         response)))))
 
 (defn- write-line! [writer value]
   (.write writer (json/write-str value))

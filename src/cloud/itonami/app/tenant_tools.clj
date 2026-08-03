@@ -42,11 +42,32 @@
                       "tenant/repository context for a capability.")
     :parameters {:type "object" :required ["connection_id" "capability"]
                  :properties {:connection_id {:type "string"}
-                              :capability {:type "string"}}}}])
+                              :capability {:type "string"}}}}
+   {:name "tenant_repository_read"
+    :description "Read the local plaintext EDN projection bound to a tenant connection."
+    :parameters {:type "object" :required ["connection_id"]
+                 :properties {:connection_id {:type "string"}}}}
+   {:name "tenant_repository_write"
+    :description (str "Replace the local EDN projection using semantic-CID "
+                      "optimistic concurrency and consume storage budget.")
+    :parameters {:type "object" :required ["connection_id" "state_edn"]
+                 :properties
+                 {:connection_id {:type "string"}
+                  :state_edn {:type "string"}
+                  :expected_cid {:type "string"}}}}
+   {:name "tenant_repository_publish"
+    :description (str "Encrypt the local projection with Kagi, publish ciphertext "
+                      "blocks through DataLad, then advance the Kotobase head.")
+    :parameters {:type "object" :required ["connection_id"]
+                 :properties {:connection_id {:type "string"}}}}])
 
 (def ^:private tool-names (into #{} (map :name tools)))
 (defn tool? [name] (contains? tool-names name))
-(defn available? [configuration] (client/available? configuration))
+(def ^:dynamic *authenticated?*
+  "True only while the HTTP MCP boundary has authenticated its bearer."
+  false)
+(defn available? [configuration]
+  (or *authenticated?* (client/available? configuration)))
 
 (defn call-tool [configuration tool-name arguments]
   (let [id (or (:connection-id arguments) (:connection_id arguments))]
@@ -81,5 +102,19 @@
       (client/request! configuration :post
                        (str "/v1/tenant-connections/" id "/context")
                        {:capability (:capability arguments)})
+      "tenant_repository_read"
+      (client/request! configuration :get
+                       (str "/v1/tenant-connections/" id "/repository"))
+      "tenant_repository_write"
+      (client/request! configuration :post
+                       (str "/v1/tenant-connections/" id "/repository")
+                       {:state_edn (or (:state-edn arguments)
+                                       (:state_edn arguments))
+                        :expected_cid (or (:expected-cid arguments)
+                                          (:expected_cid arguments))})
+      "tenant_repository_publish"
+      (client/request! configuration :post
+                       (str "/v1/tenant-connections/" id
+                            "/repository/publish") {})
       (throw (ex-info "unknown tenant tool"
                       {:type :tenant-tools/unknown-tool})))))

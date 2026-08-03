@@ -2,7 +2,8 @@
 
 ## Status
 
-Accepted.
+Accepted for the local transport; extended by ADR-0015 with authenticated
+Streamable HTTP. The stdio decision remains in force and was not replaced.
 
 ## Context
 

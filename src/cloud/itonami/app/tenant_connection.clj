@@ -19,7 +19,7 @@
 
 (def allowed-capabilities
   #{"tenant.read" "workspace.read" "workspace.write" "chat.read"
-    "chat.write" "actor.invoke" "repository.query"})
+    "chat.write" "actor.invoke" "repository.query" "repository.write"})
 
 (defn- identity-state []
   (merge {:organizations {} :memberships {} :tenant-connections {}}
@@ -106,7 +106,8 @@
                [:id :tenant-id :tenant-organization-id :tenant-did :agent-id
                 :capabilities :budget :operations-used :status :created-at
                 :approved-at :expires-at :revoked-at :renewal-requested-at
-                :requested-ttl-seconds :repository-stream]))
+                :requested-ttl-seconds :repository-stream
+                :storage-used-bytes :workspace-bytes :published-bytes]))
 
 (defn connections [session]
   (identity/require-passkey! session)
@@ -167,7 +168,10 @@
                     :agent-id (or (not-empty (some-> agent-id str str/trim))
                                   (:label session) (:id session))
                     :capabilities capabilities :budget budget
-                    :operations-used 0 :requested-ttl-seconds ttl
+                    :operations-used 0 :storage-used-bytes 0
+                    :workspace-bytes 0 :published-bytes 0
+                    :accounted-publications {}
+                    :requested-ttl-seconds ttl
                     :idempotency-key idempotency-key
                     :repository-stream (str "tenant/" (:id organization)
                                             "/agent/" (:id session))
@@ -264,40 +268,99 @@
     (public-connection @result)))
 
 (defn context!
-  "Resolve an immutable loop context and consume one operation from its budget."
-  [session connection-id capability]
-  (identity/require-passkey! session)
-  (let [chosen (volatile! nil)
-        capability (str capability)]
+  "Resolve an immutable loop context and consume one operation.
+
+  `:storage-bytes` replaces local workspace capacity. A publication supplies
+  `:published-byte-delta` and stable `:publication-id`; retrying the same sealed
+  transaction is storage-idempotent. Validation and counters move in one store
+  transaction."
+  ([session connection-id capability]
+   (context! session connection-id capability nil))
+  ([session connection-id capability
+    {:keys [storage-bytes published-byte-delta publication-id]}]
+   (identity/require-passkey! session)
+   (let [chosen (volatile! nil)
+         capability (str capability)
+         storage-bytes (when (some? storage-bytes) (long storage-bytes))
+         published-byte-delta (when (some? published-byte-delta)
+                                (long published-byte-delta))]
+     (when (or (and storage-bytes (neg? storage-bytes))
+               (and published-byte-delta (neg? published-byte-delta))
+               (and published-byte-delta (str/blank? (str publication-id))))
+       (throw (ex-info "storage bytes must not be negative"
+                       {:type :tenant-connection/invalid-budget})))
     ;; Validation and increment are one store transaction. Checking first and
     ;; incrementing later lets two loops both consume the last budget unit.
-    (store/transact!
-     (fn [root]
-       (let [state (merge {:organizations {} :memberships {}
-                           :tenant-connections {}}
-                          (:identity root))
-             connection (->> (require-visible state session connection-id)
-                             (require-requesting-agent session))
-             now (Instant/now)]
-         (when-not (= :active (:status connection))
-           (throw (ex-info "tenant connectionはactiveではありません。"
-                           {:type :tenant-connection/not-active})))
-         (when-not (.isAfter (Instant/parse (:expires-at connection)) now)
-           (throw (ex-info "tenant connectionのleaseが期限切れです。"
-                           {:type :tenant-connection/expired})))
-         (when-not (contains? (set (:capabilities connection)) capability)
-           (throw (ex-info "tenant connectionにcapabilityがありません。"
-                           {:type :tenant-connection/capability-denied})))
-         (when (>= (:operations-used connection)
-                   (get-in connection [:budget :max-operations]))
-           (throw (ex-info "tenant connectionのoperation budgetを使い切りました。"
-                           {:type :tenant-connection/budget-exhausted})))
-         (vreset! chosen connection)
-         (update-in root
-                    [:identity :tenant-connections connection-id :operations-used]
-                    (fnil inc 0)))))
-    (let [connection @chosen]
-      {:connection-id connection-id :tenant-id (:tenant-id connection)
-       :membership-id (:membership-id connection) :agent-id (:agent-id connection)
-       :repository-stream (:repository-stream connection)
-       :capability capability})))
+     (store/transact!
+      (fn [root]
+        (let [state (merge {:organizations {} :memberships {}
+                            :tenant-connections {}}
+                           (:identity root))
+              connection (->> (require-visible state session connection-id)
+                              (require-requesting-agent session))
+              now (Instant/now)
+              already-accounted? (and publication-id
+                                      (contains?
+                                       (:accounted-publications connection)
+                                       publication-id))
+              workspace-bytes (if (some? storage-bytes)
+                                storage-bytes
+                                (long (or (:workspace-bytes connection) 0)))
+              publication-delta (if already-accounted?
+                                  0
+                                  (long (or published-byte-delta 0)))
+              published-bytes (+ (long (or (:published-bytes connection) 0))
+                                 publication-delta)
+              total-storage (+ workspace-bytes published-bytes)]
+          (when-not (= :active (:status connection))
+            (throw (ex-info "tenant connectionはactiveではありません。"
+                            {:type :tenant-connection/not-active})))
+          (when-not (.isAfter (Instant/parse (:expires-at connection)) now)
+            (throw (ex-info "tenant connectionのleaseが期限切れです。"
+                            {:type :tenant-connection/expired})))
+          (when-not (contains? (set (:capabilities connection)) capability)
+            (throw (ex-info "tenant connectionにcapabilityがありません。"
+                            {:type :tenant-connection/capability-denied})))
+          (when (>= (:operations-used connection)
+                    (get-in connection [:budget :max-operations]))
+            (throw (ex-info "tenant connectionのoperation budgetを使い切りました。"
+                            {:type :tenant-connection/budget-exhausted})))
+          (when (> total-storage
+                   (get-in connection [:budget :max-storage-bytes]))
+            (throw (ex-info "tenant connectionのstorage budgetを超えます。"
+                            {:type :tenant-connection/storage-budget-exhausted
+                             :storage-bytes total-storage})))
+          (vreset! chosen connection)
+          (cond->
+           (update-in root
+                      [:identity :tenant-connections connection-id
+                       :operations-used]
+                      (fnil inc 0))
+            (or (some? storage-bytes) (some? published-byte-delta))
+            (-> (assoc-in [:identity :tenant-connections connection-id
+                           :workspace-bytes] workspace-bytes)
+                (assoc-in [:identity :tenant-connections connection-id
+                           :published-bytes] published-bytes)
+                (assoc-in [:identity :tenant-connections connection-id
+                           :storage-used-bytes] total-storage))
+            (and publication-id (not already-accounted?))
+            (assoc-in [:identity :tenant-connections connection-id
+                       :accounted-publications publication-id]
+                      publication-delta)))))
+     (let [connection @chosen]
+       (cond->
+        {:connection-id connection-id :tenant-id (:tenant-id connection)
+         :membership-id (:membership-id connection)
+         :agent-id (:agent-id connection)
+         :repository-stream (:repository-stream connection)
+         :capability capability}
+         (or (some? storage-bytes) (some? published-byte-delta))
+         (assoc :storage-used-bytes
+                (+ (if (some? storage-bytes)
+                     storage-bytes
+                     (long (or (:workspace-bytes connection) 0)))
+                   (long (or (:published-bytes connection) 0))
+                   (if (and published-byte-delta
+                            (not (contains? (:accounted-publications connection)
+                                            publication-id)))
+                     published-byte-delta 0))))))))

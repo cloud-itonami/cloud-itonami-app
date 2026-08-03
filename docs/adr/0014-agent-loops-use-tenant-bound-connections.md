@@ -63,8 +63,7 @@ agent session resolves against the running app.
 Creating a connection does not grant a tool which the application does not
 otherwise implement. Each business operation must still map to a named
 capability and call `tenant-connection/context!` before it can accept a
-connection handle. The storage ceiling is recorded in the lease but is not yet
-debited because repository write operations do not accept connection handles
-yet. Remote Internet-facing MCP transport and OAuth protected resource
-discovery are separate deployment work; the implemented MCP adapter continues
-to use the existing local stdio trust boundary.
+connection handle. ADR-0015 adds the first connection-gated repository
+read/write/publish tools, storage accounting, Streamable HTTP MCP and OAuth
+protected-resource discovery. Other business operations still need that same
+explicit mapping before they may accept a connection handle.

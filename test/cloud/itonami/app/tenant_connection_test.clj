@@ -101,3 +101,36 @@
           (is (= 1 (count (get-in (store/snapshot)
                                   [:identity :tenant-connections]))))))
       (finally (reset! store/state previous)))))
+
+(deftest ciphertext-publication-storage-is-retry-idempotent
+  (let [previous @store/state]
+    (try
+      (reset! store/state (state))
+      (let [requested (connection/request!
+                       agent-session
+                       {:tenant-id "acme"
+                        :capabilities ["repository.write"]
+                        :budget {:max-operations 10 :max-storage-bytes 1000}})
+            id (:id requested)]
+        (connection/approve! human-session id)
+        (connection/context! agent-session id "repository.write"
+                             {:storage-bytes 100})
+        (connection/context! agent-session id "repository.write"
+                             {:publication-id "tx:one"
+                              :published-byte-delta 200})
+        (connection/context! agent-session id "repository.write"
+                             {:publication-id "tx:one"
+                              :published-byte-delta 200})
+        (let [record (connection/connection agent-session id)]
+          (is (= 100 (:workspace-bytes record)))
+          (is (= 200 (:published-bytes record)))
+          (is (= 300 (:storage-used-bytes record))))
+        (is (= :tenant-connection/storage-budget-exhausted
+               (:type
+                (ex-data
+                 (try (connection/context!
+                       agent-session id "repository.write"
+                       {:publication-id "tx:two"
+                        :published-byte-delta 800})
+                      (catch clojure.lang.ExceptionInfo e e)))))))
+      (finally (reset! store/state previous)))))

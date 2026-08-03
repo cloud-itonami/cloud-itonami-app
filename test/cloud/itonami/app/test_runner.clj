@@ -61,6 +61,7 @@
             [cloud.itonami.app.operator-test]
             [cloud.itonami.app.funding-test]
             [cloud.itonami.app.mcp-test]
+            [cloud.itonami.app.mcp-http-test]
             [cloud.itonami.app.namespaces-test]
             [cloud.itonami.app.fleet-tools-test]
             [cloud.itonami.app.openai-compat-test]
@@ -73,6 +74,8 @@
             [cloud.itonami.app.storj-test]
             [cloud.itonami.app.tenant-connection-test]
             [cloud.itonami.app.tenant-connection-http-test]
+            [cloud.itonami.app.tenant-repository-test]
+            [cloud.itonami.app.oauth-resource-test]
             [cloud.itonami.app.worker-http-test]))
 
 (def ^:private namespaces
@@ -124,6 +127,7 @@
     cloud.itonami.app.operator-test
     cloud.itonami.app.funding-test
     cloud.itonami.app.mcp-test
+    cloud.itonami.app.mcp-http-test
     cloud.itonami.app.namespaces-test
     cloud.itonami.app.fleet-tools-test
     cloud.itonami.app.openai-compat-test
@@ -141,6 +145,8 @@
     cloud.itonami.app.storj-test
     cloud.itonami.app.tenant-connection-test
     cloud.itonami.app.tenant-connection-http-test
+    cloud.itonami.app.tenant-repository-test
+    cloud.itonami.app.oauth-resource-test
     cloud.itonami.app.worker-http-test])
 
 (defn- test-namespaces-on-disk

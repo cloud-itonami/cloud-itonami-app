@@ -40,6 +40,12 @@
       .build))
 
 (def ^:dynamic *environment* #(System/getenv %))
+(def ^:dynamic *token*
+  "Incoming hosted-MCP bearer token. nil for the stdio server and CLI."
+  nil)
+(def ^:dynamic *base-url*
+  "Resident server address for an HTTP MCP request invoking its own API."
+  nil)
 
 (defn- remote-api-url []
   (when-let [value (some-> (*environment* "CLOUD_ITONAMI_API_URL") str/trim not-empty)]
@@ -64,14 +70,15 @@
   `:public-origin` is what a browser is told the app is called. This connects
   directly, so the bound host and port are the truth."
   [configuration]
-  (or (remote-api-url)
+  (or *base-url*
+      (remote-api-url)
       (str "http://" (get-in configuration [:server :host])
            ":" (get-in configuration [:server :port]))))
 
 (defn token
   "The agent-session token, from the environment or the Keychain."
   [configuration]
-  (agent-session/session-token configuration))
+  (or *token* (agent-session/session-token configuration)))
 
 (defn call
   "One request. Returns `{:status :body}`; throws only if the server cannot be
