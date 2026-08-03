@@ -1,0 +1,16 @@
+{:peak-logical-write-bps nil
+ :reconcile-bps nil
+ :local-view-apply-bps nil
+ :encrypted-output-bps nil
+ :sustained-sync-bps nil
+ :hydrate-ms nil
+ :rto-ms nil
+ :semantic-convergence? nil
+ :conflict-surfaced? nil
+ :vmk-rotation-payload-stable? nil
+ :transport-failure-head-stable? nil
+ :query-backend-parity? nil
+ :evidence/scope :production
+ :evidence/measured-at nil
+ :evidence/source-commit nil
+ :evidence/cold-hydrate? nil}
