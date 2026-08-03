@@ -427,6 +427,11 @@ This record distinguishes an accepted default from completed runtime adoption.
 An absent or unbuildable repository is not marked migrated. Deployment CI must
 pass its complete explicit repository list to `repository profiles`; relying on
 workspace discovery would silently omit a repository that was not checked out.
+The app CI now consumes that same repository/path inventory directly: it
+validates the PR checkout locally and fetches the other 28 `main` profiles via
+the GitHub Contents API. Duplicate inventory entries, network/API failure,
+missing repositories and invalid profiles all fail closed; there is no second
+workflow list which can drift from qualification.
 
 ## What this model has not proved
 

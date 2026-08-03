@@ -35,6 +35,11 @@ jobs:
         run: clojure -M:test
       - name: Lint
         run: clojure -M:lint
+      - name: Audit all repository storage profiles
+        if: matrix.os == 'ubuntu-latest'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: clojure -M -m cloud.itonami.app.repository-profile-ci
 
   secret-scan:
     runs-on: ubuntu-latest

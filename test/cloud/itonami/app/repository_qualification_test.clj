@@ -44,6 +44,14 @@
       (is (false? (:qualified? missing)))
       (is (seq (:failed missing))))))
 
+(deftest repository-inventory-is-unique-and-explicit
+  (let [entries (qualification/read-profile-inventory!
+                 "config/repository-storage-inventory.edn")]
+    (is (= 29 (count entries)))
+    (is (= 29 (count (distinct (map :repository entries)))))
+    (is (= "cloud-itonami/cloud-itonami-app"
+           (:repository (first entries))))))
+
 (deftest production-attestation-is-fresh-cold-and-commit-addressed
   (let [valid {:evidence/scope :production
                :evidence/measured-at (str (java.time.Instant/now))

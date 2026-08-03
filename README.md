@@ -603,6 +603,13 @@ plaintext-leak, physical-byte, mutation/conflict, VMK-rewrap,
 transport-before-head and DataScript-parity gates are executed by the current
 build and cannot be overridden by the file.
 
+CI reads the same inventory as local qualification. Each entry binds a unique
+GitHub `owner/repository` to its checkout path; the Ubuntu job validates the
+current app profile from the PR checkout and the other 28 profiles from their
+`main` branches through GitHub's Contents API. Missing repositories, missing or
+tagged profiles, duplicate entries, API failures and weakened profiles fail the
+job. The workflow contains no second hand-maintained repository list.
+
 See [`.env.example`](.env.example), [the architecture](docs/architecture.md),
 and [the tenant model](docs/tenant-model.md).
 

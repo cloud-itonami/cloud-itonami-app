@@ -19,6 +19,62 @@
                       {:type :repository-storage/profile-validator-required})))
     (validate profile)))
 
+(defn read-profile-inventory!
+  "Read the single local/CI repository inventory. Every entry binds one unique
+  GitHub owner/repository slug to one unique local checkout path."
+  [inventory-path]
+  (let [entries
+        (edn/read-string
+         {:readers {}
+          :default (fn [tag _]
+                     (throw (ex-info "tagged repository inventory denied"
+                                     {:type :repository-storage/tagged-inventory
+                                      :tag tag})))}
+         (slurp inventory-path))
+        valid-entry? (fn [entry]
+                       (and (map? entry)
+                            (= #{:repository :path} (set (keys entry)))
+                            (string? (:path entry))
+                            (re-matches #"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+"
+                                        (:repository entry))))]
+    (when-not (and (vector? entries) (seq entries)
+                   (every? valid-entry? entries)
+                   (= (count entries) (count (distinct (map :repository entries))))
+                   (= (count entries) (count (distinct (map :path entries)))))
+      (throw (ex-info "repository profile inventory requires unique repository/path entries"
+                      {:type :repository-storage/invalid-profile-inventory})))
+    entries))
+
+(defn- safe-profile [text]
+  (edn/read-string
+   {:readers {}
+    :default (fn [tag _]
+               (throw (ex-info "tagged repository profile denied"
+                               {:type :repository-storage/tagged-profile
+                                :tag tag})))}
+   text))
+
+(defn audit-profile-documents
+  "Validate already-loaded profile text, identified by repository slug. This
+  is the network-free shared boundary used by local checkout and remote CI."
+  [documents]
+  (let [repositories
+        (mapv
+         (fn [{:keys [repository profile-text error]}]
+           (try
+             (when error (throw (ex-info "repository profile unavailable" {})))
+             (let [profile (safe-profile profile-text)
+                   violations (profile-violations profile)]
+               {:repository repository :qualified? (empty? violations)
+                :repo/kind (:repo/kind profile) :violations violations})
+             (catch Exception exception
+               {:repository repository :qualified? false
+                :error (or error (.getMessage exception))})))
+         documents)]
+    {:qualified? (and (seq repositories) (every? :qualified? repositories))
+     :repositories repositories
+     :failed (mapv :repository (remove :qualified? repositories))}))
+
 (defn audit-profile-roots
   "Validate each explicitly supplied deployable repository root. Missing or
   malformed profiles are ordinary failed evidence, not skipped repositories."
@@ -33,7 +89,7 @@
                  (throw (ex-info "repository root is not a directory" {})))
                (when-not (.isFile profile-file)
                  (throw (ex-info "storage-profile.edn is missing" {})))
-               (let [profile (edn/read-string (slurp profile-file))
+               (let [profile (safe-profile (slurp profile-file))
                      violations (profile-violations profile)]
                  {:repository (.getPath directory)
                   :qualified? (empty? violations)
@@ -56,14 +112,9 @@
   [inventory-path]
   (let [inventory-file (.getCanonicalFile (io/file inventory-path))
         parent (.getParentFile inventory-file)
-        entries (edn/read-string (slurp inventory-file))]
-    (when-not (and (vector? entries) (seq entries)
-                   (every? string? entries))
-      (throw (ex-info "repository profile inventory must be a non-empty vector of paths"
-                      {:type :repository-storage/invalid-profile-inventory
-                       :inventory (.getPath inventory-file)})))
+        entries (read-profile-inventory! inventory-file)]
     (assoc (audit-profile-roots
-            (mapv #(.getPath (io/file parent %)) entries))
+            (mapv #(.getPath (io/file parent (:path %))) entries))
            :inventory (.getPath inventory-file))))
 
 (defn- ratio-at-least? [numerator denominator ratio]

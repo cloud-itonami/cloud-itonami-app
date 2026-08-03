@@ -1,29 +1,29 @@
-[".."
- "../../animeka-actor"
- "../../demining-actor"
- "../../dougaka-actor"
- "../../gftd-audio-actor"
- "../../gftd-avatar-actor"
- "../../gftd-illust-actor"
- "../../gftd-motion-actor"
- "../../gftd-rig-actor"
- "../../gftd-sculpt-actor"
- "../../gftd-voice-actor"
- "../../graph-sos-intel-actor"
- "../../handotai-actor"
- "../../hc-actor"
- "../../insatsu-actor"
- "../../intel-actor"
- "../../ipaddress-actor"
- "../../jp-ashiba-actor"
- "../../port-actor"
- "../../shinshi-growth-actor"
- "../../swachh-actor"
- "../../tsukuru-actor"
- "../../vessel-actor"
- "../../vin-actor"
- "../../yabai-actor"
- "../../../kotoba-lang/kotoba-actor-sdk"
- "../../../kotoba-lang/kotoba-actors"
- "../../../kotoba-lang/organisms"
- "../../../etzhayyim/com-etzhayyim-app-organism"]
+[{:repository "cloud-itonami/cloud-itonami-app" :path ".."}
+ {:repository "cloud-itonami/animeka-actor" :path "../../animeka-actor"}
+ {:repository "cloud-itonami/demining-actor" :path "../../demining-actor"}
+ {:repository "cloud-itonami/dougaka-actor" :path "../../dougaka-actor"}
+ {:repository "cloud-itonami/gftd-audio-actor" :path "../../gftd-audio-actor"}
+ {:repository "cloud-itonami/gftd-avatar-actor" :path "../../gftd-avatar-actor"}
+ {:repository "cloud-itonami/gftd-illust-actor" :path "../../gftd-illust-actor"}
+ {:repository "cloud-itonami/gftd-motion-actor" :path "../../gftd-motion-actor"}
+ {:repository "cloud-itonami/gftd-rig-actor" :path "../../gftd-rig-actor"}
+ {:repository "cloud-itonami/gftd-sculpt-actor" :path "../../gftd-sculpt-actor"}
+ {:repository "cloud-itonami/gftd-voice-actor" :path "../../gftd-voice-actor"}
+ {:repository "cloud-itonami/graph-sos-intel-actor" :path "../../graph-sos-intel-actor"}
+ {:repository "cloud-itonami/handotai-actor" :path "../../handotai-actor"}
+ {:repository "cloud-itonami/hc-actor" :path "../../hc-actor"}
+ {:repository "cloud-itonami/insatsu-actor" :path "../../insatsu-actor"}
+ {:repository "cloud-itonami/intel-actor" :path "../../intel-actor"}
+ {:repository "cloud-itonami/ipaddress-actor" :path "../../ipaddress-actor"}
+ {:repository "cloud-itonami/jp-ashiba-actor" :path "../../jp-ashiba-actor"}
+ {:repository "cloud-itonami/port-actor" :path "../../port-actor"}
+ {:repository "cloud-itonami/shinshi-growth-actor" :path "../../shinshi-growth-actor"}
+ {:repository "cloud-itonami/swachh-actor" :path "../../swachh-actor"}
+ {:repository "cloud-itonami/tsukuru-actor" :path "../../tsukuru-actor"}
+ {:repository "cloud-itonami/vessel-actor" :path "../../vessel-actor"}
+ {:repository "cloud-itonami/vin-actor" :path "../../vin-actor"}
+ {:repository "cloud-itonami/yabai-actor" :path "../../yabai-actor"}
+ {:repository "kotoba-lang/kotoba-actor-sdk" :path "../../../kotoba-lang/kotoba-actor-sdk"}
+ {:repository "kotoba-lang/kotoba-actors" :path "../../../kotoba-lang/kotoba-actors"}
+ {:repository "kotoba-lang/organisms" :path "../../../kotoba-lang/organisms"}
+ {:repository "etzhayyim/com-etzhayyim-app-organism" :path "../../../etzhayyim/com-etzhayyim-app-organism"}]
