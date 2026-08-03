@@ -31,6 +31,7 @@
             [cloud.itonami.app.relay :as relay]
             [cloud.itonami.app.repos :as business-repos]
             [cloud.itonami.app.mailbox :as app-mailbox]
+            [cloud.itonami.app.mail-sync :as mail-sync]
             [cloud.itonami.app.scheduler :as scheduler]
             [cloud.itonami.app.service :as service]
             [cloud.itonami.app.store :as store]
@@ -1301,6 +1302,19 @@
             (do
               (require-app-session! exchange)
               (send! exchange 200 (workspace/snapshot)))
+
+            ;; Whether mail is arriving, separately from what has arrived.
+            ;; An empty Inbox and a sync that has been failing since Tuesday
+            ;; look identical in the message list and must not here.
+            (and (= method "GET") (= path "/api/mail-sync"))
+            (do
+              (require-app-session! exchange)
+              (send! exchange 200 (mail-sync/status)))
+
+            (and (= method "POST") (= path "/api/mail-sync/sync"))
+            (do
+              (require-app-session! exchange)
+              (send! exchange 200 (mail-sync/sync-all!)))
 
             ;; The archive, as this reader has marked it. Not through
             ;; `workspace/snapshot`: that cache is keyed per server, and what
@@ -2790,6 +2804,7 @@
    ;; idempotent and cheap; a missing key would otherwise look to the operator
    ;; like the feature is absent rather than like they are early.
    (agent-session/ensure-key!)
+   (mail-sync/start! configuration)
    (let [host (get-in configuration [:server :host])
          port (get-in configuration [:server :port])
          instance (HttpServer/create (InetSocketAddress. host (int port)) 0)]
@@ -2800,6 +2815,7 @@
      {:host host :port port})))
 
 (defn stop! []
+  (mail-sync/stop!)
   (when-let [instance @server]
     (.stop instance 0)
     (reset! server nil)))

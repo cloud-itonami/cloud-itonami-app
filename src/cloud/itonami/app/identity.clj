@@ -32,6 +32,9 @@
    :organization-domain-overrides {}
    :publish-did-web? false})
 (defonce runtime-identity-profile (atom default-identity-profile))
+;; Provider -> {:service :account}: an OAuth client this deployment holds under
+;; a name the application did not choose. See `referenced-client`.
+(defonce runtime-oauth-clients (atom {}))
 (defonce http-client (-> (HttpClient/newBuilder)
                          (.connectTimeout (Duration/ofSeconds 8))
                          .build))
@@ -40,7 +43,8 @@
   "Install the distribution/tenant profile for this process."
   [configuration]
   (reset! runtime-identity-profile
-          (merge default-identity-profile (:identity configuration))))
+          (merge default-identity-profile (:identity configuration)))
+  (reset! runtime-oauth-clients (or (:oauth-clients configuration) {})))
 
 (defn identity-profile []
   @runtime-identity-profile)
@@ -107,30 +111,56 @@
                        (.getBytes (str value) StandardCharsets/UTF_8))]
     (.encodeToString (.withoutPadding (Base64/getUrlEncoder)) bytes)))
 
+(defn keychain-find
+  "The password stored under `service` for `account`, or nil.
+
+  Takes the service *and* the account by name because that is the only way
+  this codebase reads a keychain: one item, both halves of its identity known
+  in advance. There is deliberately no listing, no wildcard, and no
+  enumeration — a caller that does not already know which item it wants has
+  no business in the keychain at all."
+  [service account]
+  (try
+    (let [process (-> (ProcessBuilder.
+                       ^java.util.List
+                       ["security" "find-generic-password"
+                        "-s" service "-a" account "-w"])
+                      (.redirectErrorStream true)
+                      .start)
+          output (future (slurp (.getInputStream process)))
+          completed? (.waitFor process 3 TimeUnit/SECONDS)]
+      (when (and completed? (zero? (.exitValue process)))
+        (not-empty (str/trim (deref output 500 "")))))
+    (catch Exception _ nil)))
+
 (defn- configured-value [provider suffix]
   (let [config (get provider-catalog provider)
-        env-name (get config (keyword (str suffix "-env")))
-        environment (some-> env-name System/getenv not-empty)]
-    (or environment
-        (try
-          (let [process (-> (ProcessBuilder.
-                             ^java.util.List
-                             ["security" "find-generic-password"
-                              "-s" (:credential-service config)
-                              "-a" (str/upper-case (str/replace suffix "-" "_"))
-                              "-w"])
-                            (.redirectErrorStream true)
-                            .start)
-                output (future (slurp (.getInputStream process)))
-                completed? (.waitFor process 3 TimeUnit/SECONDS)]
-            (when (and completed? (zero? (.exitValue process)))
-              (not-empty (str/trim (deref output 500 "")))))
-          (catch Exception _ nil)))))
+        env-name (get config (keyword (str suffix "-env")))]
+    (or (some-> env-name System/getenv not-empty)
+        (keychain-find (:credential-service config)
+                       (str/upper-case (str/replace suffix "-" "_"))))))
+
+;; A deployment may already hold an OAuth client for a provider under a name
+;; this app did not choose — issued to some other tool on the same machine,
+;; for the same person. Pointing at it beats copying it: a secret duplicated
+;; into a second keychain item is a secret with two expiry dates and one
+;; rotation.
+;;
+;; Named in full, service and account both, and empty unless configured.
+
+(defn- referenced-client [provider]
+  (when-let [{:keys [service account]} (get @runtime-oauth-clients provider)]
+    (try
+      (some-> (keychain-find service account) (json/read-str :key-fn keyword))
+      (catch Exception _ nil))))
 
 (defn provider-config [provider]
   (when-let [config (get provider-catalog provider)]
-    (let [client-id (configured-value provider "client-id")
-          client-secret (configured-value provider "client-secret")]
+    (let [referenced (referenced-client provider)
+          client-id (or (configured-value provider "client-id")
+                        (:client_id referenced))
+          client-secret (or (configured-value provider "client-secret")
+                            (:client_secret referenced))]
       (assoc config
              :provider provider
              :client-id client-id
@@ -1073,32 +1103,149 @@
       (str "keychain://" keychain-service "/" account))))
 
 (defn- keychain-get [account]
-  (try
-    (let [process (-> (ProcessBuilder.
-                       ^java.util.List
-                       ["security" "find-generic-password"
-                        "-s" keychain-service "-a" account "-w"])
-                      (.redirectErrorStream true)
-                      .start)
-          output (future (slurp (.getInputStream process)))
-          completed? (.waitFor process 3 TimeUnit/SECONDS)]
-      (when (and completed? (zero? (.exitValue process)))
-        (not-empty (str/trim (deref output 500 "")))))
-    (catch Exception _ nil)))
+  (keychain-find keychain-service account))
+
+(defn- connection-for [provider]
+  (->> (:connections (identity-state (store/snapshot)))
+       vals
+       (filter #(and (= provider (:provider %))
+                     (= :connected (:status %))))
+       first))
 
 (defn access-token
   "Resolve the first connected provider token from Keychain. Never returns a
   token reference or token through an HTTP/public view."
   [provider]
-  (let [connection (->> (:connections (identity-state (store/snapshot)))
-                        vals
-                        (filter #(and (= provider (:provider %))
-                                      (= :connected (:status %))))
-                        first)]
-    (when connection
-      (keychain-get
-       (str (:organization-id connection) ":" (:user-id connection) ":"
-            (name provider) ":access")))))
+  (when-let [connection (connection-for provider)]
+    (keychain-get
+     (str (:organization-id connection) ":" (:user-id connection) ":"
+          (name provider) ":access"))))
+
+(defn connected-providers
+  "The providers this deployment currently holds a connection for."
+  []
+  (->> (:connections (identity-state (store/snapshot)))
+       vals
+       (keep #(when (= :connected (:status %)) (:provider %)))
+       set))
+
+;; `access-token` hands back whatever the authorization-code exchange wrote,
+;; which for Google stops working an hour after somebody clicked Connect.
+;; That was survivable while every caller was a person watching the screen.
+;; A background sync is not: it runs on a timer for as long as the process
+;; lives, so it needs the refresh grant the connect flow never had.
+;;
+;; The cache exists because refreshing is a network round trip against the
+;; provider and the sync loop asks once a minute. It is in-memory on purpose:
+;; a restart should re-derive the token rather than trust one it cannot check.
+
+(defonce ^:private access-token-cache (atom {}))
+
+(def ^:private token-skew-seconds 60)
+
+(defn- cached-access-token [cache-key]
+  (let [{:keys [token expires-at]} (get @access-token-cache cache-key)]
+    (when (and token expires-at
+               (pos? (compare expires-at
+                              (.plusSeconds (Instant/now) token-skew-seconds))))
+      token)))
+
+(defn- cache-access-token! [cache-key token expires-in]
+  (swap! access-token-cache assoc cache-key
+         {:token token
+          :expires-at (.plusSeconds (Instant/now) (long (or expires-in 3600)))})
+  token)
+
+(defn refresh-access-token!
+  "Trade `refresh-token` for a fresh access token and cache it under `provider`.
+
+  Returns the access token, or nil when the provider refuses — a revoked or
+  expired grant is an ordinary outcome here, not an error worth unwinding a
+  background sync over, and the caller finds out by getting nil."
+  [provider refresh-token]
+  (let [config (provider-config provider)]
+    (when (and (:configured? config) (not (str/blank? refresh-token)))
+      (try
+        (let [body (form-body {:grant_type "refresh_token"
+                               :refresh_token refresh-token
+                               :client_id (:client-id config)
+                               :client_secret (:client-secret config)})
+              request (-> (HttpRequest/newBuilder
+                           (URI/create (:token-endpoint config)))
+                          (.header "Content-Type"
+                                   "application/x-www-form-urlencoded")
+                          (.header "Accept" "application/json")
+                          (.POST (HttpRequest$BodyPublishers/ofString body))
+                          .build)
+              token (request-json! request)
+              access (:access_token token)]
+          (when-not (str/blank? access)
+            (cache-access-token! provider access (:expires_in token))))
+        (catch Exception _ nil)))))
+
+(defn provider-access-token!
+  "A currently-valid access token for `provider`, refreshing if it can.
+
+  Prefers the refresh token this app stored at connect time. Falls back to
+  the access token itself for providers whose grants do not expire (GitHub),
+  where there is nothing to refresh and the stored value is the answer."
+  [provider]
+  (or (cached-access-token provider)
+      (when-let [connection (connection-for provider)]
+        (let [prefix (str (:organization-id connection) ":"
+                          (:user-id connection) ":" (name provider) ":")]
+          (or (some->> (keychain-get (str prefix "refresh"))
+                       (refresh-access-token! provider))
+              (keychain-get (str prefix "access")))))))
+
+;; A delegated credential is one this application did not obtain and does not
+;; own: an access grant some other tool on this machine already holds for the
+;; same person and the same scope. Reusing one is how a local-first workspace
+;; avoids marching its owner through a second consent screen to read the same
+;; mailbox twice.
+;;
+;; It is opt-in by naming, and only by naming. The caller passes the exact
+;; keychain service and account; nothing here searches, guesses a slug, or
+;; falls back to a default identity. A tenant-neutral application that read
+;; whatever Google credential happened to be lying around would be reading
+;; somebody's mail on the strength of a coincidence.
+
+(defn delegated-access-token!
+  "Refresh `provider`'s access token from a credential another tool owns.
+
+  `client-service`/`client-account` name a keychain item holding the OAuth
+  client as JSON (`client_id`, `client_secret`); `refresh-service`/
+  `refresh-account` name one holding that account's refresh token. Returns
+  nil if either is absent or the provider refuses the grant."
+  [provider {:keys [client-service client-account
+                    refresh-service refresh-account]}]
+  (when (and client-service client-account refresh-service refresh-account)
+    (or
+     (cached-access-token [:delegated provider refresh-service refresh-account])
+     (try
+      (let [client (some-> (keychain-find client-service client-account)
+                           (json/read-str :key-fn keyword))
+            refresh-token (keychain-find refresh-service refresh-account)
+            endpoint (get-in provider-catalog [provider :token-endpoint])]
+        (when (and (:client_id client) (:client_secret client)
+                   refresh-token endpoint)
+          (let [body (form-body {:grant_type "refresh_token"
+                                 :refresh_token refresh-token
+                                 :client_id (:client_id client)
+                                 :client_secret (:client_secret client)})
+                request (-> (HttpRequest/newBuilder (URI/create endpoint))
+                            (.header "Content-Type"
+                                     "application/x-www-form-urlencoded")
+                            (.header "Accept" "application/json")
+                            (.POST (HttpRequest$BodyPublishers/ofString body))
+                            .build)
+                token (request-json! request)
+                access (not-empty (str (:access_token token)))]
+            (when access
+              (cache-access-token!
+               [:delegated provider refresh-service refresh-account]
+               access (:expires_in token))))))
+      (catch Exception _ nil)))))
 
 (defn complete-oauth! [provider {:keys [state code error]}]
   (when error

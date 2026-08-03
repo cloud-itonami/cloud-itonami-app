@@ -22,18 +22,20 @@
 (def known-broken
   "namespace -> why it does not compile, measured 2026-07-31.
 
-  None of these is required by anything in src/; all four are unreachable as well as
+  None of these is required by anything in src/; all three are unreachable as well as
   uncompilable. Whether each should be completed or deleted is a product-scope decision,
   which is why they are recorded here rather than repaired by writing the vars they
-  happen to be missing."
+  happen to be missing.
+
+  `cloud.itonami.app.mail-sync` left this list on 2026-08-03: the missing var was
+  the token half of the OAuth story — a connect flow that stored a one-hour Google
+  token and no way to renew it — so `identity/provider-access-token!` was written
+  rather than the namespace deleted, and the server now starts it."
   {'cloud.itonami.app.agent-control
    "calls store/update-agent-control! at four sites; cloud.itonami.app.store defines no such var"
 
    'cloud.itonami.app.account-link-sync
    "calls identity/wallet-links; the identity library defines no such var"
-
-   'cloud.itonami.app.mail-sync
-   "calls identity/provider-access-token!; the identity library defines no such var"
 
    'cloud.itonami.app.bitcoin-wallet
    "requires cloud.itonami.app.bitcoin, which is not in this repository"})
