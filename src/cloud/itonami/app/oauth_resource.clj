@@ -73,8 +73,12 @@
                              :status (.statusCode response)})))
           (json/read-str (.body response) :key-fn keyword))))))
 
+(defn- resource-origin [configuration]
+  (or (get-in configuration [:mcp :resource-origin])
+      (get-in configuration [:server :public-origin])))
+
 (defn resource-url [configuration]
-  (let [base (str/replace (get-in configuration [:server :public-origin])
+  (let [base (str/replace (resource-origin configuration)
                           #"/+$" "")
         uri (URI/create base)
         loopback? (contains? #{"localhost" "127.0.0.1" "::1"}
@@ -86,7 +90,7 @@
     (str base "/mcp")))
 
 (defn metadata-url [configuration]
-  (str (str/replace (get-in configuration [:server :public-origin]) #"/+$" "")
+  (str (str/replace (resource-origin configuration) #"/+$" "")
        "/.well-known/oauth-protected-resource/mcp"))
 
 (defn metadata [configuration]

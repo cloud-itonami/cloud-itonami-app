@@ -84,6 +84,9 @@
  ;; silently disabled funding and settlement.
  :mcp {:session-token-env "CLOUD_ITONAMI_MCP_SESSION"
        :human-session-token-env "CLOUD_ITONAMI_MCP_HUMAN_SESSION"
+       ;; Hosted resource servers can have a different origin from the local
+       ;; Passkey UI. nil preserves the server origin for a single-origin app.
+       :resource-origin nil
        ;; Streamable HTTP is served at /mcp. Origin is validated whenever a
        ;; browser supplies it; add trusted hosted control-plane origins here.
        :allowed-origins []

@@ -21,6 +21,18 @@
   (is (= ["header"] (:bearer_methods_supported
                       (oauth/metadata configuration)))))
 
+(deftest hosted-resource-origin-is-independent-from-passkey-origin
+  (let [split-origin (-> configuration
+                         (assoc-in [:server :public-origin]
+                                   "http://localhost:1338")
+                         (assoc-in [:mcp :resource-origin]
+                                   "https://mcp.itonami.cloud"))]
+    (is (= "https://mcp.itonami.cloud/mcp"
+           (oauth/resource-url split-origin)))
+    (is (= (str "Bearer resource_metadata=\"https://mcp.itonami.cloud/"
+                ".well-known/oauth-protected-resource/mcp\", scope=\"mcp:tools\"")
+           (oauth/challenge split-origin "mcp:tools")))))
+
 (deftest introspected-token-is-audience-and-scope-bound
   (let [previous @store/state
         claims {:active true :sub "user-a" :aud ["https://itonami.cloud/mcp"]
