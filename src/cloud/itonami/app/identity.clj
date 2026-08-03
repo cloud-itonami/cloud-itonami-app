@@ -4,8 +4,14 @@
   Public state contains metadata and Keychain references only. OAuth access
   and refresh tokens are written to macOS Keychain and never enter state.edn."
   (:require [cloud.itonami.app.did :as did]
+            [cloud.itonami.app.email-login :as email-login]
             [cloud.itonami.app.store :as store]
             [cloud.itonami.app.passkey :as passkey]
+            [authentication.core :as authn]
+            [authentication.model :as authn-model]
+            [authorization.core :as authz]
+            [authorization.model :as authz-model]
+            [authorization.ports :as authz-ports]
             [clojure.data.json :as json]
             [clojure.string :as str]
             [identity.directory :as directory]
@@ -24,6 +30,8 @@
 (def session-seconds (* 30 24 60 60))
 (def transaction-seconds 600)
 (def enrollment-seconds (* 24 60 60))
+(def email-login-seconds 600)
+(def email-login-cooldown-seconds 60)
 (def account-id-pattern #"^[a-z0-9](?:[a-z0-9._-]{1,30}[a-z0-9])?$")
 (def keychain-service "cloud-itonami-app.oauth")
 (def default-identity-profile
@@ -222,7 +230,8 @@
   See `cloud.itonami.app.agent-session` for why `:agent` exists and for what it
   still cannot do."
   ([user-id] (issue-session! user-id nil))
-  ([user-id {:keys [kind label issued-via ttl-seconds]}]
+  ([user-id {:keys [kind label issued-via ttl-seconds authn-level
+                    authn-decision authn-factors]}]
    (let [state (identity-state (store/snapshot))
          membership (some #(when (= user-id (:user-id %)) %)
                           (vals (:memberships state)))]
@@ -244,7 +253,10 @@
                  :revoked? false
                  :kind (or kind :passkey)}
           label (assoc :label label)
-          issued-via (assoc :issued-via issued-via)))
+          issued-via (assoc :issued-via issued-via)
+          authn-level (assoc :authn-level authn-level)
+          authn-decision (assoc :authn-decision authn-decision)
+          authn-factors (assoc :authn-factors authn-factors)))
        {:token token :expires-at expires-at :session-id session-id
         :csrf csrf}))))
 
@@ -850,8 +862,147 @@
   `passkey-enrolled?` directly. That is now a DELIBERATE difference, documented
   where it is made, rather than an oversight — see that namespace."
   [session]
-  (or (= :agent (:kind session))
-      (passkey-enrolled? session)))
+  (let [request (authz-model/request
+                 (str "authz-" (UUID/randomUUID))
+                 (:user-id session) :workspace/use :cloud-itonami-app
+                 {:context {:session session}})
+        port (reify authz-ports/IAuthorization
+               (decide! [_ request]
+                 (let [candidate (get-in request [:authz.request/context
+                                                  :session])
+                       allow? (case (:kind candidate)
+                                :agent true
+                                :email (and (= :email-magic-link
+                                               (:issued-via candidate))
+                                            (= :single-factor
+                                               (:authn-level candidate))
+                                            (= :authenticated
+                                               (:authn-decision candidate)))
+                                :passkey (passkey-enrolled? candidate)
+                                false)]
+                   (authz-model/decision
+                    request (if allow? :allow :deny)
+                    {:by :cloud-itonami/session-policy
+                     :reason (when-not allow? :insufficient-session-proof)
+                     :policy-ref :cloud-itonami/session-may-act
+                     :policy-version 1}))))]
+    (= :allow (:authz.decision/decision (authz/authorize port request)))))
+
+(defn- normalized-email [value]
+  (some-> value str str/trim str/lower-case not-empty))
+
+(defn- email-login-user [state email]
+  (let [matches (->> (:users state)
+                     vals
+                     (filter (fn [user]
+                               (contains? #{(normalized-email (:email user))
+                                            (normalized-email (:contact-email user))}
+                                          email)))
+                     (filter #(and (= :active (:status %))
+                                   (true? (:passkey-enrolled? %))))
+                     vec)]
+    (when (= 1 (count matches)) (first matches))))
+
+(defn start-email-authentication!
+  "Create and deliver a private one-time proof, while always returning the same
+  public result. Unknown, ambiguous, inactive and unrooted addresses do not
+  create a transaction or call the delivery adapter."
+  [configuration email]
+  (let [email (normalized-email email)
+        state (identity-state (store/snapshot))
+        user (when email (email-login-user state email))
+        now (System/currentTimeMillis)
+        cooldown-ms (* 1000 email-login-cooldown-seconds)
+        recent? (some (fn [transaction]
+                        (and (= (:id user)
+                                (:identity.email-challenge/user-id transaction))
+                             (not (:identity.email-challenge/consumed? transaction))
+                             (< (- now (:identity.email-challenge/created-at
+                                        transaction 0))
+                                cooldown-ms)))
+                      (vals (:email-login-transactions state)))]
+    (when (and user (not recent?))
+      (let [token (random-token 32)
+            transaction-id (str "email-login-" (UUID/randomUUID))
+            expires-at (+ now (* 1000 email-login-seconds))
+            destination (or (normalized-email (:contact-email user))
+                            (normalized-email (:email user)))
+            origin (str/replace (get-in configuration [:server :public-origin])
+                                #"/+$" "")]
+        (store/transact!
+         assoc-in [:identity :email-login-transactions transaction-id]
+         {:identity.email-challenge/id transaction-id
+          :identity.email-challenge/user-id (:id user)
+          :identity.email-challenge/token-digest (digest token)
+          :identity.email-challenge/created-at now
+          :identity.email-challenge/expires-at expires-at
+          :identity.email-challenge/consumed? false})
+        (try
+          (email-login/deliver!
+           configuration
+           {:to destination
+            :magic-link (str origin "/#email-login=" token)
+            :expires-at (str (Instant/ofEpochMilli expires-at))})
+          (catch Exception error
+            (store/transact!
+             update :events conj
+             {:type :identity/email-login-delivery-failed
+              :at (store/now) :user-id (:id user)
+              :transaction-id transaction-id
+              :reason (.getMessage error)})))))
+    {:accepted true}))
+
+(defn finish-email-authentication! [token]
+  (let [token (some-> token str str/trim not-empty)
+        token-digest (when token (digest token))
+        now (System/currentTimeMillis)
+        transaction
+        (some (fn [candidate]
+                (let [expected (:identity.email-challenge/token-digest candidate)]
+                  (when (and expected token-digest
+                             (MessageDigest/isEqual
+                              (.getBytes ^String expected StandardCharsets/UTF_8)
+                              (.getBytes ^String token-digest StandardCharsets/UTF_8))
+                             (not (:identity.email-challenge/consumed? candidate))
+                             (> (:identity.email-challenge/expires-at candidate 0)
+                                now))
+                    candidate)))
+              (vals (:email-login-transactions
+                     (identity-state (store/snapshot)))))]
+    (when-not transaction
+      (throw (ex-info "Email ログインリンクが無効または期限切れです。"
+                      {:type :email-login/invalid-token})))
+    (let [transaction-id (:identity.email-challenge/id transaction)
+          user-id (:identity.email-challenge/user-id transaction)]
+      (store/transact!
+       (fn [state]
+         (let [current (get-in state [:identity :email-login-transactions
+                                      transaction-id])]
+           (when (:identity.email-challenge/consumed? current)
+             (throw (ex-info "Email ログインリンクは使用済みです。"
+                             {:type :email-login/invalid-token})))
+           (-> state
+               (assoc-in [:identity :email-login-transactions transaction-id
+                          :identity.email-challenge/consumed?] true)
+               (assoc-in [:identity :email-login-transactions transaction-id
+                          :identity.email-challenge/consumed-at] now)))))
+      (let [request (authn-model/request
+                     (str "authn-" (UUID/randomUUID)) user-id
+                     {:required-level :single-factor
+                      :purpose :email-login :created-at (store/now)})
+            factor (authn-model/factor
+                    (str "factor-" (UUID/randomUUID)) :email true
+                    {:subject user-id :evidence-ref transaction-id
+                     :at (store/now)})
+            decision (authn/decide request [factor])]
+        (when-not (= :authenticated (:authn.decision/decision decision))
+          (throw (ex-info "Email 認証を完了できませんでした。"
+                          {:type :email-login/invalid-token})))
+        (issue-session!
+         user-id {:kind :email :issued-via :email-magic-link
+                  :authn-level (:authn.decision/level decision)
+                  :authn-decision (:authn.decision/decision decision)
+                  :authn-factors [:email]})))))
 
 (defn require-passkey!
   "Refuse a session that has not established who it is.

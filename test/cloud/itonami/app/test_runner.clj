@@ -52,6 +52,7 @@
             [cloud.itonami.app.data-isolation-test]
             [cloud.itonami.app.did-test]
             [cloud.itonami.app.documents-test]
+            [cloud.itonami.app.email-login-test]
             [cloud.itonami.app.workspace-reachability-test]
             [cloud.itonami.app.web-script-test]
             [cloud.itonami.app.esign-test]
@@ -118,6 +119,7 @@
     cloud.itonami.app.data-isolation-test
     cloud.itonami.app.did-test
     cloud.itonami.app.documents-test
+    cloud.itonami.app.email-login-test
     cloud.itonami.app.workspace-reachability-test
     cloud.itonami.app.web-script-test
     cloud.itonami.app.esign-test

@@ -9,6 +9,9 @@
             ;; Enable only when the deployment publishes a DID document for
             ;; every generated organization domain.
             :publish-did-web? false}
+ :email-login {:enabled? false
+               :delivery-endpoint nil
+               :access-token-env "CLOUD_ITONAMI_EMAIL_LOGIN_TOKEN"}
  :routing {:default-provider "ollama"
            :default-model "gemma4:e2b"
            :cloud-enabled? false}
