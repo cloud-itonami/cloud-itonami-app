@@ -10,24 +10,41 @@
   `search` that reads the body since it was written. The app called
   `deliver` and `search`.
 
-  ## Marks over an archive that does not change
+  ## One box, out of an archive and every connected account
 
-  The archive is files: the same for every reader and not ours to write. So
-  what is stored here is only the difference — per principal, per message id,
-  what they have marked — and the box is rebuilt by laying those marks over
-  `workspace/inbox-mailbox` with the model's own functions. Nothing here
-  reimplements what a label is.
+  There were two mailboxes in this app and only one of them was visible.
+  `mail-sync` pulled Gmail and Microsoft 365 into the store every minute; the
+  inbox was built here out of `workspace/inbox-mailbox`, which reads `.eml`
+  files off disk and knows nothing about any of that. So connecting Google
+  did work, and then appeared to do nothing at all, because the mail it
+  fetched had nowhere to surface.
+
+  `box` now folds both into one `mail.mailbox`: the on-disk archive, and
+  every message any connected account has synced. Threads, labels, search
+  and unread counts are the model's, and they now range over all of it —
+  which is the point of putting the two in one box rather than serving two
+  lists and calling that integration.
+
+  ## Marks over content this app does not own
+
+  Neither half is ours to write: the archive is files, and a synced message
+  is a copy of something living at a provider. So what is stored here is only
+  the difference — per principal, per message id, what they have marked — and
+  the box is rebuilt by laying those marks over the merged box with the
+  model's own functions. Nothing here reimplements what a label is.
 
   Two things follow, and both are said out loud in the interface. **Trashing
   does not delete anything**: it takes the message out of your inbox view and
-  the file stays exactly where it was, which is the honest meaning of a trash
-  over an archive somebody else owns. And **read is the default**, because
-  the archive has no read state and these messages were read years ago in
-  another program — marking one unread is a flag you raise, not a fact this
-  app recovered."
+  the message stays exactly where it was. And **read comes from wherever the
+  message came from** — the archive has no read state, so its messages arrive
+  read (they were read years ago, in another program), while a synced message
+  arrives with the read state its provider reports. A mark raised here wins
+  over both, because it is the more recent statement about the same message."
   (:require [clojure.string :as str]
+            [cloud.itonami.app.mail-sync :as mail-sync]
             [cloud.itonami.app.store :as store]
             [cloud.itonami.app.workspace :as workspace]
+            [mail.inbound :as inbound]
             [mail.mailbox :as mailbox]))
 
 (def schema "cloud.itonami.app.mailbox.v1")
@@ -53,7 +70,7 @@
   actor)
 
 (defn- known!
-  "Refuse a mark on a message that is not in the archive.
+  "Refuse a mark on a message this box does not have.
 
   Without this, a client could name any string and this would store a mark
   against it forever — a mailbox full of marks on messages that do not
@@ -87,11 +104,73 @@
    box
    marks))
 
+(defn- synced-entry
+  "One synced message as a `mail.mailbox` entry.
+
+  Through `mail.inbound/from-parts` and `mailbox/message-entry`, the same two
+  functions `workspace/inbox-mailbox` uses on an archived `.eml`, so a synced
+  message and an archived one are the same kind of thing by the time they
+  reach the box — and `search`, which reads the body, reads both."
+  [message]
+  (let [received (inbound/from-parts
+                  {:provider (:kind message)
+                   :provider-message-id (str (:provider-message-id message))
+                   :from (:from-email message)
+                   :to [(or (not-empty (str (:account-address message)))
+                            "local@cloud-itonami.invalid")]
+                   :subject (:subject message)
+                   ;; The body, not the snippet: `mailbox/search` searches the
+                   ;; message's parts, so what goes in here is the difference
+                   ;; between searching the mail and searching its first line.
+                   :text (or (not-empty (str (:body message)))
+                             (not-empty (str (:snippet message)))
+                             "")
+                   :received-at (:received-at message)})]
+    (assoc
+     (mailbox/message-entry
+      (:id message)
+      (or (not-empty (str (:thread-id message))) (:id message))
+      (:mail.inbound/message received)
+      {:received-at (:received-at message)
+       :size-bytes (or (:size-bytes message) 0)
+       ;; `:inbox` plus whatever the provider and `mail-sync/classify` said.
+       ;; Keywords, because that is what `mail.mailbox` labels are, and a
+       ;; string label here would never match a filter.
+       :labels (into #{:inbox}
+                     (map #(if (keyword? %) % (keyword (str %))))
+                     (:labels message))
+       ;; What the provider says, rather than the archive's hardcoded true.
+       :read? (boolean (:read? message))})
+     :available? true
+     :sender {:display (:from message) :email (:from-email message)}
+     :snippet (or (:snippet message) "")
+     :account-id (:account-id message))))
+
+(defn merged-box
+  "The archive and every synced account, in one `mail.mailbox`.
+
+  Read-only and the same for everyone — what one person has read or filed is
+  laid over the top by `box`, per principal.
+
+  Synced messages are delivered after the archive's, and `mailbox/deliver` is
+  idempotent by id, so the two cannot collide: an archived message is keyed
+  by its filename and a synced one by `account|provider-id`."
+  []
+  (let [archive (workspace/inbox-mailbox)
+        synced (mail-sync/messages)
+        box (reduce mailbox/deliver archive (map synced-entry synced))]
+    (assoc box
+           :mailbox/source (str (:mailbox/source archive)
+                                (when (seq synced)
+                                  (str " + " (count synced) " synced")))
+           :mailbox/file-count (+ (or (:mailbox/file-count archive) 0)
+                                  (count synced)))))
+
 (defn box
-  "The archive as `actor` sees it."
+  "Everything `actor` can see — archive and accounts — as they have marked it."
   [actor]
   (actor! actor)
-  (apply-marks (workspace/inbox-mailbox) (marks (store/snapshot) actor)))
+  (apply-marks (merged-box) (marks (store/snapshot) actor)))
 
 (defn view
   "The messages `actor` can see, filtered.
@@ -108,7 +187,10 @@
      {:schema schema :ok? true
       :source (:mailbox/source current)
       :model "kotoba-lang/mail"
-      :mode "archive"
+      ;; Not "archive" any more: this box is the archive *and* every connected
+      ;; account, and a client told "archive" would be right to hide the reply
+      ;; box it now has somewhere to send from.
+      :mode "unified"
       :sealed-receiver "net-kotobase/mail-worker"
       :count (:mailbox/file-count current)
       :label (name label)
@@ -132,7 +214,10 @@
 (defn- update-mark! [id actor f]
   (actor! actor)
   (locking write-lock
-    (known! (workspace/inbox-mailbox) id)
+    ;; The merged box, not just the archive: marking a synced message used to
+    ;; be refused as "そのメールはありません" because the check only knew about
+    ;; files on disk.
+    (known! (merged-box) id)
     (store/transact! update-in (conj (marks-path actor) id) (fnil f {}))
     {:schema schema :ok? true :id id
      :message (workspace/entry-view (get-in (box actor) [:mailbox/messages id]))}))

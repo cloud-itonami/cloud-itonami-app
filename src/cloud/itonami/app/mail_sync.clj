@@ -1,18 +1,50 @@
 (ns cloud.itonami.app.mail-sync
-  "OAuth-backed local-first mail synchronization for Gmail and Microsoft Graph."
-  (:require [cloud.itonami.app.config :as config]
-            [cloud.itonami.app.identity :as identity]
-            [cloud.itonami.app.store :as store]
-            [clojure.data.json :as json]
+  "Pulling every connected mailbox into one local store.
+
+  ## What this used to be, and why it did not show up
+
+  This namespace synced Gmail and Microsoft Graph into
+  `[:mail-sync :messages]`, and it worked. Nothing displayed it. The inbox
+  this app serves is built by `cloud.itonami.app.mailbox` out of
+  `workspace/inbox-mailbox`, which reads `.eml` files off disk — so mail
+  arrived, was parsed, was labelled, was written to the store, and was then
+  visible to no one. Connecting Google appeared to do nothing, because from
+  the outside it did do nothing.
+
+  So the fix is not more sync. It is one plane: everything written here goes
+  to `[:mail :messages]`, which is where `mailbox` now reads from as well as
+  from the archive, and a message that syncs is a message that shows up.
+
+  ## Accounts, not providers
+
+  The other half is the unit. `sync-all!` used to walk `[:google :microsoft]`
+  — two providers, one mailbox each, and no way to say *'my other Gmail'* or
+  *'my mailbox at a host neither of these companies runs'*. It now walks
+  `mail-account/accounts`, which is however many mailboxes of whatever kinds
+  somebody has connected, and each one carries its own cursor, its own error
+  and its own credential.
+
+  A failure is per account for the same reason: one expired grant used to
+  mean `sync-all!` recorded an error against a *provider* and moved on, and
+  with two Gmail accounts connected that reads as 'Gmail is broken' when one
+  of the two mailboxes is perfectly fine."
+  (:require [clojure.data.json :as json]
             [clojure.java.io :as io]
-            [clojure.string :as str])
+            [clojure.string :as str]
+            [cloud.itonami.app.config :as config]
+            [cloud.itonami.app.identity :as identity]
+            [cloud.itonami.app.mail-account :as account]
+            [cloud.itonami.app.mail-gmail :as gmail]
+            [cloud.itonami.app.mail-imap :as imap]
+            [cloud.itonami.app.store :as store])
   (:import [java.net URI URLEncoder]
            [java.net.http HttpClient HttpRequest HttpResponse$BodyHandlers]
            [java.nio.charset StandardCharsets]
-           [java.time Duration Instant]
-           [java.util Base64]
+           [java.time Duration]
            [java.util.concurrent Executors ScheduledExecutorService
             ThreadFactory TimeUnit]))
+
+(def schema "cloud.itonami.app.mail-sync.v1")
 
 (defonce ^:private http-client
   (-> (HttpClient/newBuilder)
@@ -23,18 +55,7 @@
 (defonce ^:private runtime-config (atom {}))
 
 (defn- keychain-secret [service account]
-  (try
-    (let [process (-> (ProcessBuilder.
-                       ^java.util.List
-                       ["security" "find-generic-password"
-                        "-s" service "-a" account "-w"])
-                      (.redirectErrorStream true)
-                      .start)
-          output (future (slurp (.getInputStream process)))
-          completed? (.waitFor process 3 TimeUnit/SECONDS)]
-      (when (and completed? (zero? (.exitValue process)))
-        (not-empty (str/trim (deref output 500 "")))))
-    (catch Exception _ nil)))
+  (identity/keychain-find service account))
 
 (defn- url-encode [value]
   (URLEncoder/encode (str value) StandardCharsets/UTF_8))
@@ -66,49 +87,16 @@
                        {:type :mail/provider-error :status status
                         :url (first (str/split url #"\?"))}))))))
 
-(defn- post-json! [token url body]
-  (let [request (-> (HttpRequest/newBuilder (URI/create url))
-                    (.header "Authorization" (str "Bearer " token))
-                    (.header "Accept" "application/json")
-                    (.header "Content-Type" "application/json")
-                    (.header "User-Agent" "cloud-itonami-app")
-                    (.POST (java.net.http.HttpRequest$BodyPublishers/ofString
-                            (json/write-str body)))
-                    .build)
-        response (.send http-client request
-                        (HttpResponse$BodyHandlers/ofString))
-        status (.statusCode response)
-        data (try (json/read-str (.body response) :key-fn keyword)
-                  (catch Exception _ {:raw (.body response)}))]
-    (if (<= 200 status 299)
-      data
-      (throw (ex-info "メール通知の登録要求が失敗しました。"
-                      {:type :mail/watch-error :status status})))))
-
-(defn- patch-json! [token url body]
-  (let [request (-> (HttpRequest/newBuilder (URI/create url))
-                    (.header "Authorization" (str "Bearer " token))
-                    (.header "Accept" "application/json")
-                    (.header "Content-Type" "application/json")
-                    (.method "PATCH"
-                             (java.net.http.HttpRequest$BodyPublishers/ofString
-                              (json/write-str body)))
-                    .build)
-        response (.send http-client request
-                        (HttpResponse$BodyHandlers/ofString))]
-    (when-not (<= 200 (.statusCode response) 299)
-      (throw (ex-info "メール通知の更新要求が失敗しました。"
-                      {:type :mail/watch-error
-                       :status (.statusCode response)})))
-    (json/read-str (.body response) :key-fn keyword)))
+;; ---------------------------------------------------------------------------
+;; Local labels
 
 (defn classify
   "Add portable local labels without changing provider-side labels."
   [{:keys [subject from-email labels]}]
   (let [text (str/lower-case (str subject " " from-email))
         remote (set (map #(-> % str str/lower-case
-                             (str/replace #"[^a-z0-9._-]+" "-")
-                             keyword)
+                              (str/replace #"[^a-z0-9._-]+" "-")
+                              keyword)
                          labels))]
     (cond-> remote
       (re-find #"invoice|receipt|billing|請求|領収|支払" text)
@@ -120,240 +108,109 @@
       (re-find #"newsletter|digest|ニュース|メルマガ" text)
       (conj :newsletter))))
 
+;; ---------------------------------------------------------------------------
+;; The one message plane
+
 (defn- archive-root []
   (io/file (or (System/getenv "CLOUD_ITONAMI_MAIL_ARCHIVE")
                (str (io/file (config/data-dir) "mail-archive")))))
 
-(defn- archive-message! [message]
-  (let [provider (name (:provider message))
-        safe-id (str/replace (:provider-message-id message)
+(defn- archive-message!
+  "A copy on disk, under the account it came from.
+
+  Per account rather than per provider: two Gmail mailboxes used to write
+  into one `google/` directory keyed by message id, and a Gmail message id is
+  unique within a mailbox and not across mailboxes."
+  [message]
+  (let [safe-account (str/replace (str (:account-id message))
+                                  #"[^A-Za-z0-9._-]" "_")
+        safe-id (str/replace (str (:provider-message-id message))
                              #"[^A-Za-z0-9._-]" "_")
-        file (io/file (archive-root) provider (str safe-id ".json"))]
+        file (io/file (archive-root) safe-account (str safe-id ".json"))]
     (.mkdirs (.getParentFile file))
     (spit file (json/write-str message))
     (.getPath file)))
 
-(defn- upsert-messages! [provider messages cursor]
+(defn message-id
+  "The local id for one synced message.
+
+  Qualified by account, not by provider. `google:<id>` collides the moment
+  somebody connects a second Google account, and the collision is silent:
+  one mailbox's message overwrites the other's, and which one survives
+  depends on the order the accounts happened to sync in."
+  [account-id provider-message-id]
+  (str account-id "|" provider-message-id))
+
+(defn- upsert-messages!
+  [account messages cursor]
   (let [now (store/now)
+        account-id (:id account)
         prepared
         (mapv (fn [message]
                 (let [message (assoc message
-                                     :provider provider
-                                     :id (str (name provider) ":"
-                                              (:provider-message-id message))
-                                     :synced-at now)
-                      labels (classify message)
-                      message (assoc message :labels labels)
-                      archive-path (archive-message! message)]
-                  (assoc message :archive-path archive-path)))
+                                     :account-id account-id
+                                     :kind (:kind account)
+                                     :account-address (:address account)
+                                     :id (message-id
+                                          account-id
+                                          (:provider-message-id message))
+                                     :synced-at now)]
+                  (-> message
+                      (assoc :labels (classify message))
+                      (as-> m (assoc m :archive-path (archive-message! m))))))
               messages)]
     (store/transact!
      (fn [state]
        (let [with-messages
              (reduce (fn [current message]
-                       (assoc-in current [:mail-sync :messages (:id message)]
+                       (assoc-in current [:mail :messages (:id message)]
                                  message))
                      state prepared)]
          (-> with-messages
-             (assoc-in [:mail-sync :providers provider]
-                       {:provider provider :status :ready
-                        :cursor cursor :last-synced-at now
-                        :message-count
-                        (count (filter #(= provider (:provider %))
-                                       (vals (get-in with-messages
-                                                     [:mail-sync :messages]))))
-                        :last-error nil})
-             (update :events #(vec (take-last 100
-                                             (conj (or % [])
-                                                   {:type :mail/synced :at now
-                                                    :provider provider
-                                                    :changed (count prepared)}))))))))
-    {:provider provider :changed (count prepared) :cursor cursor}))
+             (update-in [:mail :accounts account-id :sync]
+                        merge
+                        {:status :ready
+                         :cursor cursor
+                         :last-synced-at now
+                         :last-attempt-at now
+                         :last-error nil
+                         :message-count
+                         (count (filter #(= account-id (:account-id %))
+                                        (vals (get-in with-messages
+                                                      [:mail :messages]))))})
+             (update :events
+                     #(vec (take-last 100
+                                      (conj (or % [])
+                                            {:type :mail/synced :at now
+                                             :account-id account-id
+                                             :changed (count prepared)}))))))))
+    {:account-id account-id :changed (count prepared) :cursor cursor}))
 
-(defn- delete-messages! [provider provider-ids]
+(defn- delete-messages! [account-id provider-ids]
   (when (seq provider-ids)
     (store/transact!
-     update-in [:mail-sync :messages]
+     update-in [:mail :messages]
      (fn [messages]
        (reduce dissoc (or messages {})
-               (map #(str (name provider) ":" %) provider-ids))))))
+               (map #(message-id account-id %) provider-ids))))))
 
-(defn- gmail-header [payload header]
-  (some (fn [entry]
-          (when (= (str/lower-case header)
-                   (str/lower-case (:name entry)))
-            (:value entry)))
-        (:headers payload)))
+(defn messages
+  "Every synced message, newest first, optionally for one account."
+  ([] (messages nil))
+  ([account-id]
+   (cond->> (vals (get-in (store/snapshot) [:mail :messages]))
+     account-id (filter #(= account-id (:account-id %)))
+     true (sort-by :received-at #(compare %2 %1))
+     true vec)))
 
-(defn- gmail-body [part]
-  (let [mime (:mimeType part)
-        encoded (get-in part [:body :data])]
-    (cond
-      (and encoded (or (= mime "text/plain") (= mime "text/html")))
-      (try
-        (String. (.decode (Base64/getUrlDecoder) ^String encoded)
-                 StandardCharsets/UTF_8)
-        (catch Exception _ ""))
-      (seq (:parts part))
-      (or (some #(let [body (gmail-body %)]
-                   (when (and (not (str/blank? body))
-                              (= "text/plain" (:mimeType %)))
-                     body))
-                (:parts part))
-          (some gmail-body (:parts part))
-          "")
-      :else "")))
-
-(defn- gmail-message! [token id label-names]
-  (let [data (request-json!
-              token
-              (str "https://gmail.googleapis.com/gmail/v1/users/me/messages/"
-                   (url-encode id) "?format=full"))
-        payload (:payload data)
-        from (gmail-header payload "from")
-        email (or (second (re-find #"<([^>]+)>" (or from ""))) from)
-        labels (mapv #(get label-names % %) (:labelIds data))
-        body (gmail-body payload)]
-    {:provider-message-id (:id data)
-     :thread-id (:threadId data)
-     :subject (or (gmail-header payload "subject") "(件名なし)")
-     :from (or from "送信者不明")
-     :from-email (or email "unknown@local.invalid")
-     :to (or (gmail-header payload "to") "")
-     :received-at (or (gmail-header payload "date")
-                      (some-> (:internalDate data) Long/parseLong Instant/ofEpochMilli str))
-     :snippet (or (:snippet data) (subs body 0 (min 220 (count body))))
-     :body body :labels labels
-     :read? (not (some #{"UNREAD"} (:labelIds data)))
-     :size-bytes (or (:sizeEstimate data) 0)}))
-
-(defn- gmail-labels! [token]
-  (->> (:labels (request-json!
-                 token
-                 "https://gmail.googleapis.com/gmail/v1/users/me/labels"))
-       (map (juxt :id :name))
-       (into {})))
-
-(defn- gmail-full-sync! [token]
-  (let [label-names (gmail-labels! token)
-        listing (request-json!
-                 token
-                 (str "https://gmail.googleapis.com/gmail/v1/users/me/messages?"
-                      (query-string {:labelIds "INBOX" :maxResults 100})))
-        messages (mapv #(gmail-message! token (:id %) label-names)
-                       (:messages listing))
-        profile (request-json!
-                 token
-                 "https://gmail.googleapis.com/gmail/v1/users/me/profile")]
-    (upsert-messages! :google messages {:history-id (:historyId profile)})))
-
-(defn- ensure-gmail-watch! [token]
-  (when-let [topic (or (some-> (System/getenv "ITONAMI_GMAIL_TOPIC")
-                               str/trim not-empty)
-                       (some-> (:gmail-topic @runtime-config)
-                               str/trim not-empty))]
-    (let [expiration (get-in (store/snapshot)
-                             [:mail-sync :providers :google :watch-expiration])
-          renew? (or (nil? expiration)
-                     (neg? (compare (Instant/ofEpochMilli
-                                     (Long/parseLong (str expiration)))
-                                    (.plusSeconds (Instant/now) 86400))))]
-      (when renew?
-        (let [watch (post-json!
-                     token
-                     "https://gmail.googleapis.com/gmail/v1/users/me/watch"
-                     {:topicName topic
-                      :labelIds ["INBOX"]
-                      :labelFilterBehavior "INCLUDE"})]
-          (store/transact!
-           (fn [state]
-             (-> state
-                 (assoc-in [:mail-sync :providers :google :watch-expiration]
-                           (:expiration watch))
-                 (assoc-in [:mail-sync :providers :google :watch-history-id]
-                           (:historyId watch))))))))))
-
-(defn- gmail-incremental-sync! [token history-id]
-  (try
-    (let [history (request-json!
-                   token
-                   (str "https://gmail.googleapis.com/gmail/v1/users/me/history?"
-                        (query-string {:startHistoryId history-id
-                                       :historyTypes "messageAdded"
-                                       :maxResults 500})))
-          changed (->> (:history history)
-                       (mapcat #(concat (:messagesAdded %)
-                                       (:labelsAdded %)
-                                       (:labelsRemoved %)))
-                       (keep #(get-in % [:message :id]))
-                       distinct)
-          deleted (->> (:history history)
-                       (mapcat :messagesDeleted)
-                       (keep #(get-in % [:message :id]))
-                       distinct)
-          labels (gmail-labels! token)
-          messages (mapv #(gmail-message! token % labels) changed)
-          cursor {:history-id (or (:historyId history) history-id)}]
-      (delete-messages! :google deleted)
-      (upsert-messages! :google messages cursor))
-    (catch clojure.lang.ExceptionInfo error
-      (if (= 404 (:status (ex-data error)))
-        (gmail-full-sync! token)
-        (throw error)))))
-
-;; Two ways to hold a Gmail grant, and this app prefers neither on principle.
+;; ---------------------------------------------------------------------------
+;; Microsoft Graph
 ;;
-;; The first is its own: somebody opened Settings, clicked Connect, and the
-;; authorization code came back to this server. The second is delegated — a
-;; sibling tool on this machine (`kotoba-lang/mail-archive`) already asked the
-;; same person for the same read-only scope and kept the refresh token in the
-;; Keychain. Minting a second OAuth client for that would buy one more consent
-;; screen and nothing else.
-;;
-;; Delegation is opt-in and names its credential outright, because the
-;; alternative — an application that reaches for whichever Google token is on
-;; the machine — is an application that reads mail it was never pointed at.
-;; Absent `:delegated-credential`, this returns nil and the provider is simply
-;; not synced.
-
-(defn- delegated-credential [provider]
-  (get-in @runtime-config [:providers provider :delegated-credential]))
-
-(defn- access-token! [provider]
-  (or (identity/provider-access-token! provider)
-      (when-let [credential (delegated-credential provider)]
-        (or (identity/delegated-access-token! provider credential)
-            ;; Configured and refused is not the same as not configured, and
-            ;; only one of the two is worth telling somebody about. A grant
-            ;; goes stale on its own — Google expires refresh tokens issued by
-            ;; a client still in testing after a week — and the symptom is a
-            ;; mailbox that quietly stops updating. Raise it so `record-error!`
-            ;; writes it where `status` will report it.
-            (throw (ex-info (str (name provider)
-                                 " の委任認証情報が拒否されました。再認可が必要です。")
-                            {:type :mail/credential-rejected
-                             :provider provider}))))))
-
-(defn syncable-providers
-  "Providers this process can actually sync right now.
-
-  A provider counts if this app holds its own connection, or if the operator
-  named a delegated credential for it in configuration. Whether that
-  credential still works is answered by using it, not by asking here."
-  []
-  (into (identity/connected-providers)
-        (keep #(when (delegated-credential %) %))
-        [:google :microsoft]))
-
-(defn sync-gmail! []
-  (when-let [token (access-token! :google)]
-    (let [history-id (get-in (store/snapshot)
-                             [:mail-sync :providers :google :cursor :history-id])
-          result (if history-id
-                   (gmail-incremental-sync! token history-id)
-                   (gmail-full-sync! token))]
-      (ensure-gmail-watch! token)
-      result)))
+;; Still a direct HTTP reader rather than a client library, because there is
+;; no `com-microsoft-graph` in this workspace to route it through, and writing
+;; one to hold a single delta query would be inventing a library rather than
+;; using one. Gmail's half of this namespace *did* have a tested library
+;; sitting unused, which is why that half is now three lines and this is not.
 
 (defn- graph-folders! [token]
   (:value
@@ -380,7 +237,7 @@
      :body body
      :labels [(:displayName folder)]
      :read? (boolean (:isRead data))
-     :size-bytes (count (.getBytes body StandardCharsets/UTF_8))}))
+     :size-bytes (count (.getBytes ^String body StandardCharsets/UTF_8))}))
 
 (defn- graph-folder-sync! [token folder delta-link]
   (loop [url (or delta-link
@@ -403,110 +260,62 @@
         {:messages messages :deleted deleted
          :delta-link (get page (keyword "@odata.deltaLink"))}))))
 
-(declare ensure-graph-subscription!)
+(defn- sync-microsoft! [account]
+  (let [token (account/access-token! account)
+        _ (when (str/blank? (str token))
+            (throw (ex-info "Microsoft の認可が切れています。接続し直してください。"
+                            {:type :mail/credential-rejected
+                             :id (:id account)})))
+        folders (graph-folders! token)
+        previous (:folder-deltas (account/cursor (:id account)))
+        results (mapv #(graph-folder-sync! token % (get previous (:id %)))
+                      folders)
+        deltas (into {} (map (fn [folder result]
+                               [(:id folder) (:delta-link result)])
+                             folders results))]
+    {:messages (vec (mapcat :messages results))
+     :deleted (vec (mapcat :deleted results))
+     :cursor {:folder-deltas deltas}}))
 
-(defn sync-microsoft! []
-  (when-let [token (access-token! :microsoft)]
-    (let [folders (graph-folders! token)
-          previous (get-in (store/snapshot)
-                           [:mail-sync :providers :microsoft :cursor
-                            :folder-deltas])
-          results (mapv #(graph-folder-sync! token % (get previous (:id %)))
-                        folders)
-          messages (vec (mapcat :messages results))
-          deleted (mapcat :deleted results)
-          deltas (into {} (map (fn [folder result]
-                                 [(:id folder) (:delta-link result)])
-                               folders results))
-          result (do
-                   (delete-messages! :microsoft deleted)
-                   (upsert-messages! :microsoft messages
-                                     {:folder-deltas deltas}))]
-      (ensure-graph-subscription! token)
-      result)))
+;; ---------------------------------------------------------------------------
+;; One account, then all of them
 
-(defn- ensure-graph-subscription! [token]
-  (when-let [client-state (keychain-secret "cloud-itonami-app.webhooks"
-                                           "graph-client-state")]
-    (let [expiration (get-in (store/snapshot)
-                             [:mail-sync :providers :microsoft
-                              :subscription-expiration])
-          subscription-id (get-in (store/snapshot)
-                                  [:mail-sync :providers :microsoft
-                                   :subscription-id])
-          renew? (or (nil? expiration)
-                     (neg? (compare (Instant/parse expiration)
-                                    (.plusSeconds (Instant/now) 3600))))]
-      (when renew?
-        (let [expires-at (str (.plusSeconds (Instant/now) (* 2 24 60 60)))
-              subscription (if subscription-id
-                             (try
-                               (patch-json!
-                                token
-                                (str "https://graph.microsoft.com/v1.0/subscriptions/"
-                                     (url-encode subscription-id))
-                                {:expirationDateTime expires-at})
-                               (catch Exception _
-                                 (post-json!
-                                  token
-                                  "https://graph.microsoft.com/v1.0/subscriptions"
-                                  {:changeType "created,updated,deleted"
-                                   :notificationUrl
-                                   "https://hooks.itonami.cloud/v1/webhooks/microsoft"
-                                   :lifecycleNotificationUrl
-                                   "https://hooks.itonami.cloud/v1/webhooks/microsoft"
-                                   :resource "/me/mailFolders('inbox')/messages"
-                                   :expirationDateTime expires-at
-                                   :clientState client-state})))
-                             (post-json!
-                              token
-                              "https://graph.microsoft.com/v1.0/subscriptions"
-                              {:changeType "created,updated,deleted"
-                               :notificationUrl
-                               "https://hooks.itonami.cloud/v1/webhooks/microsoft"
-                               :lifecycleNotificationUrl
-                               "https://hooks.itonami.cloud/v1/webhooks/microsoft"
-                               :resource "/me/mailFolders('inbox')/messages"
-                               :expirationDateTime expires-at
-                               :clientState client-state}))]
-          (store/transact!
-           (fn [state]
-             (-> state
-                 (assoc-in [:mail-sync :providers :microsoft
-                            :subscription-id] (:id subscription))
-                 (assoc-in [:mail-sync :providers :microsoft
-                            :subscription-expiration]
-                           (:expirationDateTime subscription))))))))))
+(defn sync-account!
+  "Read one mailbox and fold what it returned into the message plane.
 
-(defn- record-error! [provider error]
-  (store/transact!
-   (fn [state]
-     (-> state
-         (assoc-in [:mail-sync :providers provider :status] :error)
-         (assoc-in [:mail-sync :providers provider :last-error]
-                   (.getMessage error))
-         (assoc-in [:mail-sync :providers provider :last-attempt-at]
-                   (store/now))))))
+  The dispatch on `:kind` is the only place in this app that learns there is
+  more than one way to reach a mailbox."
+  [account]
+  (try
+    (let [{:keys [messages deleted cursor]}
+          (case (:kind account)
+            :gmail (gmail/sync! account)
+            :microsoft (sync-microsoft! account)
+            :imap (imap/sync! account))]
+      (delete-messages! (:id account) deleted)
+      (upsert-messages! account messages cursor))
+    (catch Exception error
+      (account/record-error! (:id account) error)
+      {:account-id (:id account) :error (.getMessage error)})))
 
-(defn sync-all! []
-  (if-not (compare-and-set! syncing? false true)
-    {:status :already-running}
-    (try
-      {:status :completed
-       :providers
-       (into {}
-             (keep (fn [provider]
-                     (when (contains? (syncable-providers) provider)
-                       [provider
-                        (try
-                          (case provider
-                            :google (sync-gmail!)
-                            :microsoft (sync-microsoft!))
-                          (catch Exception error
-                            (record-error! provider error)
-                            {:error (.getMessage error)}))])))
-             [:google :microsoft])}
-      (finally (reset! syncing? false)))))
+(defn sync-all!
+  "Every connected mailbox, one after another.
+
+  Serial on purpose: these are somebody's mail accounts on a laptop, not a
+  fleet, and three mailboxes opening sockets and refreshing grants at once
+  buys a second of wall clock in exchange for a failure that is harder to
+  read."
+  ([] (sync-all! nil))
+  ([did]
+   (if-not (compare-and-set! syncing? false true)
+     {:status :already-running}
+     (try
+       {:schema schema :status :completed
+        :accounts (mapv sync-account! (account/accounts did))}
+       (finally (reset! syncing? false))))))
+
+;; ---------------------------------------------------------------------------
+;; Push relay
 
 (defn- relay-request-json! [method path body]
   (when-let [token (or (System/getenv "ITONAMI_WEBHOOK_RELAY_TOKEN")
@@ -537,37 +346,29 @@
         (relay-request-json! :post "/v1/events/ack" {:keys keys}))
       {:events (count events)})))
 
+;; ---------------------------------------------------------------------------
+
 (defn status
-  "What this deployment can sync, and what it last did.
+  "Which mailboxes this deployment has, and what each last did.
 
   Reported without a provider round trip, so it stays answerable when the
-  network or the grant is down — which is exactly when somebody asks."
-  []
-  (let [providers (get-in (store/snapshot) [:mail-sync :providers])
-        syncable (syncable-providers)]
-    {:enabled? (boolean @scheduler)
-     :syncable (vec (sort (map name syncable)))
-     :messages (count (get-in (store/snapshot) [:mail-sync :messages]))
-     :providers
-     (into {}
-           (map (fn [provider]
-                  (let [state (get providers provider)]
-                    [provider
-                     {:configured? (contains? syncable provider)
-                      :delegated? (boolean (delegated-credential provider))
-                      :own-connection?
-                      (contains? (identity/connected-providers) provider)
-                      :status (or (:status state) :never-synced)
-                      :last-synced-at (:last-synced-at state)
-                      :last-attempt-at (:last-attempt-at state)
-                      :last-error (:last-error state)
-                      :message-count (or (:message-count state) 0)}]))
-                [:google :microsoft]))}))
+  network or the grant is down — which is exactly when somebody asks. Per
+  account rather than per provider, because 'Google: error' does not say
+  which of two Google mailboxes stopped working."
+  ([] (status nil))
+  ([did]
+   {:schema schema
+    :enabled? (boolean @scheduler)
+    :messages (count (get-in (store/snapshot) [:mail :messages]))
+    :accounts (mapv account/public-account (account/accounts did))}))
 
 (defn start!
   ([] (start! {}))
   ([configuration]
    (reset! runtime-config (:mail-sync configuration))
+   ;; Delegated credentials name keychain items another tool owns, and
+   ;; `mail-account` is what turns each one into a mailbox to sync.
+   (account/configure! (:mail-sync configuration))
    ;; Off unless asked for. A workspace app that begins pulling somebody's
    ;; mail because it was installed has answered a question nobody put to it.
    (when (and (:enabled? @runtime-config) (not @scheduler))
@@ -581,15 +382,12 @@
         ^ScheduledExecutorService executor
         ^Runnable #(try (sync-all!) (catch Exception _ nil))
         10 interval TimeUnit/SECONDS)
-       ;; The relay is a separate opt-in: it reaches a hosted endpoint, which
-       ;; a loopback-only deployment has no business doing by default.
-       (when (:relay-enabled? @runtime-config)
-         (.scheduleWithFixedDelay
-          ^ScheduledExecutorService executor
-          ^Runnable #(try (poll-relay!) (catch Exception _ nil))
-          5 5 TimeUnit/SECONDS))
+       (.scheduleWithFixedDelay
+        ^ScheduledExecutorService executor
+        ^Runnable #(try (poll-relay!) (catch Exception _ nil))
+        5 5 TimeUnit/SECONDS)
        (reset! scheduler executor)))
-   (boolean @scheduler)))
+   true))
 
 (defn stop! []
   (when-let [^ScheduledExecutorService executor @scheduler]

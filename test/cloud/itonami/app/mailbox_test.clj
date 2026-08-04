@@ -6,6 +6,7 @@
   functions and none of these, so what is under test is mostly whether the
   app asks the model the right questions and stores only the difference."
   (:require [clojure.java.io :as io]
+            [clojure.string :as str]
             [clojure.test :refer [deftest is testing use-fixtures]]
             [cloud.itonami.app.mailbox :as app-mailbox]
             [cloud.itonami.app.store :as store]
@@ -144,3 +145,95 @@
   (let [seen (app-mailbox/view alice)]
     (is (= [b] (ids seen)))
     (is (every? :subject (:items seen)) "no entry with a label and no message")))
+
+;; --- the archive and the accounts, in one box -------------------------------
+;;
+;; The bug this closes: `mail-sync` pulled Gmail into the store every minute
+;; and the inbox was built only out of the on-disk archive, so mail arrived,
+;; was parsed, was labelled, was written — and was visible to nobody.
+;; Connecting Google appeared to do nothing because from outside it did
+;; nothing.
+
+(defn- put-synced!
+  [{:keys [id account-id subject from-email body read? received-at thread-id]}]
+  (swap! store/state assoc-in [:mail :messages id]
+         {:id id
+          :account-id (or account-id "gmail:1001")
+          :kind :gmail
+          :account-address "alice@work.example"
+          :provider-message-id (str/replace id #"^[^|]*\|" "")
+          :thread-id (or thread-id id)
+          :subject subject
+          :from "Someone"
+          :from-email from-email
+          :body body
+          :snippet (subs body 0 (min 220 (count body)))
+          :labels #{:inbox}
+          :read? (boolean read?)
+          :received-at (or received-at "2026-08-01T00:00:00Z")
+          :size-bytes (count body)}))
+
+(deftest a-synced-message-appears-in-the-inbox
+  (put-synced! {:id "gmail:1001|m1" :subject "同期されたメール"
+                :from-email "sync@example.com"
+                :body "これは Gmail から同期されたメールです。"})
+  (let [seen (app-mailbox/view alice)]
+    (is (contains? (set (ids seen)) "gmail:1001|m1")
+        "a message that syncs is a message that shows up — the whole point")
+    (is (= 3 (count (:items seen)))
+        "beside the two archived ones, not instead of them")))
+
+(deftest a-synced-message-keeps-the-read-state-its-provider-reported
+  (testing "the archive hardcodes read? true because files carry no read
+            state; a synced message genuinely has one and must not inherit
+            the archive's assumption"
+    (put-synced! {:id "gmail:1001|unread" :subject "未読"
+                  :from-email "a@example.com" :body "本文" :read? false})
+    (put-synced! {:id "gmail:1001|read" :subject "既読"
+                  :from-email "b@example.com" :body "本文" :read? true})
+    (is (= 1 (:unread (app-mailbox/view alice))))))
+
+(deftest a-synced-message-is-searched-by-its-body-not-its-snippet
+  (put-synced! {:id "gmail:1001|long" :subject "件名"
+                :from-email "a@example.com"
+                :body (str (apply str (repeat 30 "前置きの文章です。"))
+                           "決算の締め切り")})
+  (is (= ["gmail:1001|long"]
+         (ids (app-mailbox/view alice {:query "決算の締め切り"})))
+      "past the 220-character snippet, which is what the interface used to
+       filter on"))
+
+(deftest two-accounts-messages-do-not-collide-by-provider-id
+  (testing "Gmail message ids are unique within a mailbox, not across them —
+            keyed by provider alone, one account's message silently
+            overwrote the other's"
+    (put-synced! {:id "gmail:1001|same" :account-id "gmail:1001"
+                  :subject "仕事のメール" :from-email "work@example.com"
+                  :body "work"})
+    (put-synced! {:id "gmail:1002|same" :account-id "gmail:1002"
+                  :subject "個人のメール" :from-email "home@example.com"
+                  :body "home"})
+    (let [seen (app-mailbox/view alice)]
+      (is (= #{"gmail:1001|same" "gmail:1002|same"}
+             (set (filter #(str/ends-with? % "|same") (ids seen))))
+          "both mailboxes' messages, in one inbox"))))
+
+(deftest a-synced-message-can-be-marked
+  (testing "the mark check used to consult the archive alone, so marking a
+            synced message was refused as そのメールはありません"
+    (put-synced! {:id "gmail:1001|markable" :subject "印"
+                  :from-email "a@example.com" :body "本文" :read? true})
+    (app-mailbox/set-read! "gmail:1001|markable" false alice)
+    (is (= 1 (:unread (app-mailbox/view alice))))
+    (app-mailbox/set-label! "gmail:1001|markable" "starred" true alice)
+    (let [message (first (filter #(= "gmail:1001|markable" (:id %))
+                                 (:items (app-mailbox/view alice))))]
+      (is (contains? (set (:labels message)) "starred")))))
+
+(deftest a-synced-message-and-an-archived-one-thread-independently
+  (put-synced! {:id "gmail:1001|t1" :thread-id "thread-x" :subject "一通目"
+                :from-email "a@example.com" :body "one"})
+  (put-synced! {:id "gmail:1001|t2" :thread-id "thread-x" :subject "二通目"
+                :from-email "a@example.com" :body "two"})
+  (is (= #{"gmail:1001|t1" "gmail:1001|t2"}
+         (set (ids (app-mailbox/thread "thread-x" alice))))))

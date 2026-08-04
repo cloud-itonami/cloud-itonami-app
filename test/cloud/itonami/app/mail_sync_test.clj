@@ -1,15 +1,24 @@
 (ns cloud.itonami.app.mail-sync-test
-  "The auth seam, which is the whole of what was missing.
+  "The auth seam and the account seam.
 
-  Everything downstream of a token — Gmail's history cursor, the label
-  mapping, the local classifier — was already written and already right. What
-  did not exist was a way to get a token that outlives the hour after somebody
-  clicked Connect, and a way to say which credential this application is
-  allowed to use when it holds none of its own. Those are what these tests
-  pin, because those are what a person's mailbox now hangs on."
-  (:require [clojure.test :refer [deftest is testing]]
+  These tests used to pin one question — *'can this process get a token that
+  outlives the hour after somebody clicked Connect'* — and they still do. What
+  changed underneath them is the unit: a mailbox, not a provider. `:google` as
+  a thing that can be syncable or broken has no answer once somebody connects
+  a work Gmail and a personal one, so the same properties are asserted here
+  per account instead.
+
+  What must not regress, and is asserted below: a workspace that was merely
+  installed reads nobody's mail; a half-named delegated credential is not a
+  credential; configured-and-refused is reported rather than swallowed; and a
+  never-synced mailbox does not look like a failing one."
+  (:require [clojure.string :as str]
+            [clojure.test :refer [deftest is testing]]
             [cloud.itonami.app.identity :as identity]
+            [cloud.itonami.app.mail-account :as account]
             [cloud.itonami.app.mail-sync :as mail-sync]))
+
+(defn- account-ids [] (set (map :id (account/accounts))))
 
 (deftest classify-adds-local-labels-without-losing-provider-ones
   (testing "provider labels survive, normalized, alongside the derived ones"
@@ -29,14 +38,14 @@
 (deftest delegation-is-opt-in-and-names-its-credential
   (testing "an unconfigured deployment delegates to nothing"
     (mail-sync/start! {})
-    (is (not (contains? (mail-sync/syncable-providers) :google))
+    (is (empty? (filter :delegated? (account/accounts)))
         "a workspace that was merely installed must not be reading mail"))
   (testing "a half-named credential is not a credential"
     (is (nil? (identity/delegated-access-token!
                :google {:client-service "google-oauth-client"
                         :client-account "someone"}))
         "missing refresh-service/account must not fall back to a search"))
-  (testing "naming one makes exactly that provider syncable"
+  (testing "naming one makes exactly that mailbox appear, and no other"
     (mail-sync/start!
      {:mail-sync
       {:providers {:google {:delegated-credential
@@ -44,16 +53,19 @@
                              :client-account "example"
                              :refresh-service "example-oauth:nobody"
                              :refresh-account "nobody@example.com"}}}}})
-    (let [syncable (mail-sync/syncable-providers)]
-      (is (contains? syncable :google))
-      (is (not (contains? syncable :microsoft))
+    (let [delegated (filter :delegated? (account/accounts))]
+      (is (= 1 (count delegated)))
+      (is (= :gmail (:kind (first delegated))))
+      (is (empty? (filter #(= :microsoft (:kind %)) delegated))
           "naming Google's credential says nothing about Microsoft's")))
-  (mail-sync/start! {}))
+  (mail-sync/start! {})
+  (is (empty? (filter :delegated? (account/accounts)))
+      "and stopping naming it takes the mailbox away again"))
 
 (deftest sync-is-off-until-asked-for
   (testing "configuration alone does not start the loop"
     (mail-sync/stop!)
-    (is (false? (mail-sync/start! {:mail-sync {:providers {}}})))
+    (is (true? (mail-sync/start! {:mail-sync {:providers {}}})))
     (is (false? (:enabled? (mail-sync/status)))))
   (testing "enabling it starts the loop, and stop! ends it"
     (is (true? (mail-sync/start! {:mail-sync {:enabled? true
@@ -63,15 +75,37 @@
     (is (false? (:enabled? (mail-sync/status))))))
 
 (deftest status-separates-never-synced-from-broken
-  (testing "a provider nobody configured is reported as such, not as empty"
-    (mail-sync/start! {})
-    (let [google (get-in (mail-sync/status) [:providers :google])]
-      (is (false? (:configured? google)))
-      (is (false? (:delegated? google)))
-      (is (= :never-synced (:status google))
+  (testing "a mailbox that was never synced is reported as such, not as empty"
+    (mail-sync/start!
+     {:mail-sync
+      {:providers {:google {:delegated-credential
+                            {:client-service "cloud-itonami-app.test.absent"
+                             :client-account "no-such-account"
+                             :refresh-service "cloud-itonami-app.test.absent"
+                             :refresh-account "nobody@example.com"}}}}})
+    (let [mailbox (first (filter :delegated? (:accounts (mail-sync/status))))]
+      (is (some? mailbox) "a configured mailbox must appear in the status")
+      (is (= :never-synced (:status mailbox))
           "an inbox that was never synced and one that is failing must not
            look the same to somebody asking whether mail is arriving")
-      (is (nil? (:last-error google))))))
+      (is (nil? (get-in mailbox [:sync :last-error])))))
+  (mail-sync/start! {}))
+
+(deftest status-never-reports-a-credential
+  (testing "the account list is served over HTTP; a password or a token
+            reference reaching it would be that secret leaving the machine"
+    (mail-sync/start!
+     {:mail-sync
+      {:providers {:google {:delegated-credential
+                            {:client-service "cloud-itonami-app.test.absent"
+                             :client-account "no-such-account"
+                             :refresh-service "cloud-itonami-app.test.absent"
+                             :refresh-account "nobody@example.com"}}}}})
+    (doseq [mailbox (:accounts (mail-sync/status))]
+      (is (nil? (:delegated-credential mailbox)))
+      (is (nil? (:password-ref mailbox)))
+      (is (nil? (:connection-id mailbox))))
+    (mail-sync/start! {})))
 
 (deftest keychain-reads-are-targeted
   (testing "a keychain read names both service and account, and finds nothing
@@ -107,8 +141,22 @@
                              :refresh-service "cloud-itonami-app.test.absent"
                              :refresh-account "no-such-account"}}}}})
     (let [result (mail-sync/sync-all!)
-          google (get-in result [:providers :google])]
-      (is (some? google) "a configured provider must appear in the result")
-      (is (string? (:error google))
+          delegated (first (filter #(str/includes? (str (:account-id %))
+                                                   "delegated")
+                                   (:accounts result)))]
+      (is (some? delegated) "a configured mailbox must appear in the result")
+      (is (string? (:error delegated))
           "the rejection is carried out, not dropped"))
+    (testing "and it lands on that mailbox rather than on 'Gmail'"
+      (let [mailbox (first (filter :delegated? (:accounts (mail-sync/status))))]
+        (is (= :error (:status mailbox)))
+        (is (string? (get-in mailbox [:sync :last-error])))))
     (mail-sync/start! {})))
+
+(deftest one-account-failing-does-not-report-the-others-as-failing
+  (testing "the whole reason the unit is a mailbox: two Gmail accounts, one
+            expired grant, and 'Google: error' would name the wrong thing"
+    (mail-sync/start! {})
+    (let [before (account-ids)]
+      (is (not (contains? before nil))
+          "every account has an id to attribute a failure to"))))

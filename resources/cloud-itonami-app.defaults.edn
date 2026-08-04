@@ -59,6 +59,15 @@
  ;;                         :client-account  "mail-archive"
  ;;                         :refresh-service "google-oauth:<slug>"
  ;;                         :refresh-account "<address>@gmail.com"}}}
+ ;; Mail sync walks *accounts*, not providers: however many mailboxes have
+ ;; been connected, of whatever kind (Gmail and Microsoft 365 over OAuth, any
+ ;; other host over IMAP). Nothing about which mailboxes exist is configured
+ ;; here — an OAuth mailbox exists because somebody granted consent, and an
+ ;; IMAP one because somebody registered it at POST /api/mail/accounts.
+ ;;
+ ;; `:providers` names *delegated* credentials only: OAuth grants some other
+ ;; tool on this machine already holds, named item by item so that nothing
+ ;; here ever searches the keychain for a token it was not pointed at.
  :mail-sync {:enabled? false
              :interval-seconds 60
              ;; The hosted webhook relay is a further opt-in; a loopback-only

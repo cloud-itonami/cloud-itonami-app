@@ -1697,6 +1697,42 @@
               "読み取り権限を用途別に確認し、owner の操作で接続します。接続先の token は macOS Keychain に保存されます。"]
              [:div {:class "connector-list" :id "connector-list"}
               [:div {:class "skeleton"}]]]
+            ;; Mailboxes, listed one per account rather than one per provider:
+            ;; the same person's work Gmail and personal Gmail are two rows
+            ;; with two sync states, because "Google: エラー" does not say
+            ;; which of the two stopped working.
+            [:div {:class "local-card"}
+             (dds/heading 2 "メールアカウント" {:size "24"})
+             [:p {:class "view-lead"}
+              "Gmail と Microsoft 365 は上の「サービス接続」から、同じ提供者の2つ目以降のアカウントも同じ手順で追加できます。OAuth を持たないメールボックスは IMAP で接続します。"]
+             [:p {:class "source-note" :id "mail-account-state"}
+              "メールアカウントを確認中…"]
+             [:ul {:class "member-list" :id "mail-account-list"}]
+             [:form {:class "settings-form" :id "mail-account-form"}
+              (dds/heading 3 "IMAP でメールボックスを追加" {:size "16"})
+              [:div {:class "field"}
+               [:label {:for "mail-account-address"} "メールアドレス"]
+               [:input {:id "mail-account-address" :name "address"
+                        :type "email" :required true :autocomplete "email"
+                        :placeholder "me@example.com"}]]
+              [:div {:class "field"}
+               [:label {:for "mail-account-host"} "IMAP サーバー"]
+               [:input {:id "mail-account-host" :name "host" :required true
+                        :autocomplete "off" :placeholder "imap.example.com"}]]
+              [:div {:class "field"}
+               [:label {:for "mail-account-smtp-host"} "SMTP サーバー（任意）"]
+               [:input {:id "mail-account-smtp-host" :name "smtp-host"
+                        :autocomplete "off"
+                        :placeholder "空欄なら IMAP と同じホスト"}]]
+              [:div {:class "field"}
+               [:label {:for "mail-account-password"} "パスワード（アプリパスワード）"]
+               [:input {:id "mail-account-password" :name "password"
+                        :type "password" :required true
+                        :autocomplete "new-password"}]
+               [:span {:class "form-help"}
+                "macOS Keychain に保存します。state.edn には保存しません。"]]
+              [:button {:class "tool-button" :id "mail-account-submit"
+                        :type "submit"} "メールボックスを追加"]]]
             [:div {:class "security-callout"}
              [:strong "認証境界"]
              " Passkey は challenge・origin・RP ID・署名・user verification・counter をサーバーで検証します。OAuth は state を一度だけ使用し、PKCE S256 と10分の期限を適用します。"]]
