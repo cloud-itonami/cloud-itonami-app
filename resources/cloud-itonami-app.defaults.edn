@@ -63,7 +63,7 @@
  ;; been connected, of whatever kind (Gmail and Microsoft 365 over OAuth, any
  ;; other host over IMAP). Nothing about which mailboxes exist is configured
  ;; here — an OAuth mailbox exists because somebody granted consent, and an
- ;; IMAP one because somebody registered it at POST /api/mail/accounts.
+ ;; IMAP or POP3 one because somebody registered it at POST /api/mail/accounts.
  ;;
  ;; `:providers` names *delegated* credentials only: OAuth grants some other
  ;; tool on this machine already holds, named item by item so that nothing

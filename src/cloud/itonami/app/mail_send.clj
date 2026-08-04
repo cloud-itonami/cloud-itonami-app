@@ -143,25 +143,28 @@
     (when (str/blank? password)
       (throw (ex-info "このアカウントのパスワードが Keychain にありません。再登録してください。"
                       {:type :mail/missing-credential :id (:id account)})))
-    (let [recipients (emails (concat (:mail/to envelope) (:mail/cc envelope)))
-          session (-> (smtp/connect! host {:port port})
+    (let [session (-> (smtp/connect! host {:port port})
                       (smtp/ehlo! "cloud-itonami-app")
-                      (smtp/auth-login! username password)
+                      (smtp/authenticate! {:user username :password password})
                       (assoc :from (email (:mail/from envelope))))]
       (try
-        ;; One RCPT TO per recipient. `smtp.client/send-mail!` takes a single
-        ;; `:to`, so a message addressed to three people is three sends of the
-        ;; same body rather than one — which is what its README says it does
-        ;; and not something to work around by silently dropping recipients.
-        (doseq [recipient recipients]
-          (smtp/send-mail! session
-                           {:to recipient
-                            :subject (encode-header (:mail/subject envelope))
-                            :body (:mail.part/body
-                                   (first (:mail/parts envelope)))
-                            :in-reply-to (get-in envelope
-                                                 [:mail/headers "In-Reply-To"])}))
-        {:accepted recipients}
+        ;; **One transaction, every recipient.** This used to send once per
+        ;; recipient, because `smtp.client/send-mail!` took a single `:to` —
+        ;; and one send per recipient is not one message delivered three
+        ;; times: each copy carried only its own address in the header, so
+        ;; nobody could see who else received it and a reply-all reached one
+        ;; person. RFC 5321 §3.3 has one MAIL FROM and one or more RCPT TO,
+        ;; and the library now does that.
+        ;;
+        ;; `:raw` because the whole message — the RFC 2047 subject, the
+        ;; base64 body, the MIME headers — is built here and the library's
+        ;; own minimal builder would drop all of it.
+        (let [result (smtp/send-mail! session
+                                      {:to (emails (:mail/to envelope))
+                                       :cc (emails (:mail/cc envelope))
+                                       :raw (rfc2822 envelope)})]
+          {:accepted (:accepted result)
+           :rejected (:rejected result)})
         (finally
           (try (smtp/quit! session) (catch Exception _ nil)))))))
 

@@ -131,11 +131,18 @@ belongs to the client; the workspace reads sit behind the Passkey session on
 
 One inbox over however many mailboxes, of three kinds:
 
-| kind         | reached over              | credential                          |
-|--------------|---------------------------|-------------------------------------|
-| `:gmail`     | Gmail API v1 (`com-gmail`)| an OAuth grant, refreshed           |
-| `:microsoft` | Microsoft Graph           | an OAuth grant, refreshed           |
-| `:imap`      | IMAP4rev1 (`org-ietf-imap`)| a password, held in the Keychain   |
+| kind         | reached over               | credential                        |
+|--------------|----------------------------|-----------------------------------|
+| `:gmail`     | Gmail API v1 (`com-gmail`) | an OAuth grant, refreshed         |
+| `:microsoft` | Microsoft Graph            | an OAuth grant, refreshed         |
+| `:imap`      | IMAP4rev1 (`org-ietf-imap`)| a password, or XOAUTH2            |
+| `:pop3`      | POP3 (`org-ietf-pop3`)     | a password, or XOAUTH2            |
+
+Messages are parsed by **`org-ietf-mime`** (RFC 5322 / 2045–2047 / 2231), not
+here and not by the protocol clients: a `multipart/alternative` message shows
+the text its sender wrote rather than its own MIME boundaries, an
+`ISO-2022-JP` subject reads as Japanese rather than as mojibake, and an
+attachment called `請求書.pdf` keeps that name.
 
 The unit is an **account**, not a provider. One person can connect a work
 Gmail and a personal one and they are two mailboxes with two cursors, two
@@ -147,8 +154,11 @@ account in one `mail.mailbox`, so threads, labels, unread counts and the
 search that reads message bodies range over all of it.
 
 Sending goes out through whatever the account already proved: an OAuth
-account sends through its own provider API, an IMAP account over SMTP
-(`org-ietf-smtp`) with the password it was registered with.
+account sends through its own provider API, an IMAP or POP3 account over SMTP
+(`org-ietf-smtp`) with the password it was registered with. Every recipient
+goes in **one** SMTP transaction (RFC 5321 §3.3) — one send per recipient is
+not one message delivered several times, because each copy would carry only
+its own address in the header and a reply-all would reach one person.
 
 ```
 GET    /api/mail/accounts              every mailbox (never a credential)

@@ -25,8 +25,15 @@
   :each
   (fn [run]
     (let [before @store/state]
-      (try (account/configure! {}) (run)
-           (finally (reset! store/state before))))))
+      (try
+        (reset! store/state (store/initial-state))
+        ;; In memory: this suite has no business writing state.edn, and a
+        ;; fresh worktree has no target/test-data for it to write into.
+        (with-redefs [store/transact! (fn [f & args]
+                                        (apply swap! store/state f args))]
+          (account/configure! {})
+          (run))
+        (finally (reset! store/state before))))))
 
 (def ^:private imap-account
   {:id "imap:me@example.com@imap.example.com"
@@ -47,12 +54,15 @@
     (with-redefs [account/password (constantly "app-password")
                   smtp.client/connect! (fn [_host _opts] {:transport ::fake})
                   smtp.client/ehlo! (fn [session _domain] session)
-                  smtp.client/auth-login! (fn [session _u _p] session)
+                  smtp.client/authenticate! (fn [session _opts] session)
                   smtp.client/send-mail! (fn [session message]
                                            (swap! sent conj
                                                   (assoc message
                                                          :from (:from session)))
-                                           session)
+                                           (assoc session
+                                                  :accepted (vec (concat (:to message)
+                                                                         (:cc message)))
+                                                  :rejected []))
                   smtp.client/quit! (constantly nil)]
       (with-account imap-account
         #(let [result (mail-send/send! (:id imap-account) request
@@ -92,7 +102,7 @@
   (let [{:keys [sent]} (sent-payloads {:to "friend@example.com"
                                        :subject "見積もりの件"
                                        :text "よろしくお願いします。"})
-        subject (:subject (first sent))]
+        subject (second (re-find #"Subject: (.*)\r\n" (:raw (first sent))))]
     (is (str/starts-with? subject "=?UTF-8?B?")
         "RFC 2047, because a raw UTF-8 header is not legal and providers
          disagree about what to do with one")
@@ -107,17 +117,23 @@
             in clients that show raw headers, for nothing"
     (let [{:keys [sent]} (sent-payloads {:to "friend@example.com"
                                          :subject "lunch?" :text "hi"})]
-      (is (= "lunch?" (:subject (first sent)))))))
+      (is (re-find #"Subject: lunch\?\r\n" (:raw (first sent)))))))
 
-(deftest every-recipient-gets-the-message
-  (testing "`smtp.client/send-mail!` takes one `:to`, so a message addressed
-            to three people is three sends — silently dropping the other two
-            would be the easy way to make the types line up"
+(deftest every-recipient-goes-in-one-transaction
+  (testing "one send per recipient is not one message delivered three times:
+            each copy carries only its own address in the header, so nobody
+            can see who else received it and a reply-all reaches one person.
+            RFC 5321 §3.3 has one MAIL FROM and one or more RCPT TO"
     (let [{:keys [sent]} (sent-payloads {:to "a@example.com, b@example.com"
                                          :cc "c@example.com"
                                          :subject "s" :text "t"})]
-      (is (= ["a@example.com" "b@example.com" "c@example.com"]
-             (map :to sent))))))
+      (is (= 1 (count sent)) "one transaction")
+      (is (= ["a@example.com" "b@example.com"] (:to (first sent))))
+      (is (= ["c@example.com"] (:cc (first sent))))
+      (testing "and every recipient is named in the message, so a reply-all
+                reaches all of them"
+        (is (re-find #"To: a@example.com, b@example.com\r\n" (:raw (first sent))))
+        (is (re-find #"Cc: c@example.com\r\n" (:raw (first sent))))))))
 
 (deftest the-from-address-is-the-accounts-own
   (testing "and it is the address string, not `mail.message`'s address map —
@@ -126,7 +142,8 @@
     (let [{:keys [sent]} (sent-payloads {:to "a@example.com" :subject "s"
                                          :text "t"})]
       (is (= "me@example.com" (:from (first sent))))
-      (is (not (str/includes? (str (:from (first sent))) ":mail.address"))))))
+      (is (re-find #"From: me@example.com\r\n" (:raw (first sent))))
+      (is (not (str/includes? (str (:raw (first sent))) ":mail.address"))))))
 
 (deftest a-sent-message-is-recorded-with-an-id-that-says-where-it-came-from
   (testing "`mail.receipt` insists on a provider message-id and is right to —
