@@ -139,6 +139,78 @@
   (= :fresh (:funding/status freshness')))
 
 ;; ---------------------------------------------------------------------------
+;; scheduled debits -- pure
+;; ---------------------------------------------------------------------------
+
+(defn scheduled-debit
+  "What is known to be leaving this account, on or after the date its balance
+  was stated. PURE, so the gate that reads it is testable without a store.
+
+  `cycles` are `cloud.itonami.app.card-statement` billing cycles. This namespace
+  does not know what a card is; it knows that something else has said `this much
+  leaves this account on this date`, which is the only part a balance needs.
+
+  Returns one of
+    {:funding/status :never-recorded}
+    {:funding/status :known
+     :funding/amount-minor n
+     :funding/cycles [...]         ; counted
+     :funding/unreconciled [...]}  ; NOT counted -- see below
+
+  THREE RULES, and each exists because the obvious alternative is wrong.
+
+  1. `:provisional` is not counted. This month's running total moves every day
+     and is fixed by nobody, so counting it would make the funds gate tighten
+     as the month goes on and loosen the moment the issuer closed a period --
+     behaviour driven by their calendar, not by our money.
+
+  2. A cycle whose debit date is BEFORE the balance's own `:as-of` is not
+     subtracted. A balance stated after the debit date already reflects whether
+     the money left. Subtracting it again would double-count, and double-
+     counting refuses payments that would have cleared. Those cycles are
+     returned as `:funding/unreconciled` instead of dropped: nobody has said
+     whether they went through, and that is worth showing even though it must
+     not move the arithmetic.
+
+  3. NO CYCLE RECORDED AT ALL is `:never-recorded`, never zero. `available`
+     then declines to answer, rather than answering `balance`. An organization
+     that has never imported a statement does not thereby have no card."
+  [balance cycles]
+  (if (empty? cycles)
+    {:funding/status :never-recorded}
+    (let [as-of-date (let [s (str (:as-of balance))]
+                       ;; The DATE part of the instant the bank stated. A cycle
+                       ;; debits on a date, not at an instant, so the comparison
+                       ;; has to happen at the coarser of the two.
+                       (when (>= (count s) 10) (subs s 0 10)))
+          confirmed (filter #(= :confirmed (:status %)) cycles)
+          upcoming? (fn [c]
+                      (and (:debit-date c)
+                           (or (nil? as-of-date)
+                               (not (neg? (compare (str (:debit-date c)) as-of-date))))))
+          counted (filterv upcoming? confirmed)
+          unreconciled (filterv (complement upcoming?) confirmed)]
+      {:funding/status :known
+       :funding/amount-minor (reduce + 0 (map :amount-minor counted))
+       :funding/cycles (mapv :id counted)
+       :funding/unreconciled (mapv :id unreconciled)})))
+
+(defn available
+  "`balance - scheduled debits`, or nil when either side cannot answer. PURE.
+
+  NIL, NEVER `balance`. Falling back to the balance would silently restore the
+  exact gap this function exists to close, and it would do it in the case that
+  looks most normal -- an organization that has not imported a statement. A
+  caller that gets nil must judge on the balance alone AND record that it did
+  so, so a reader of the decision can see which of the two gates was actually
+  applied (ADR-2608041200 D5)."
+  [balance scheduled]
+  (when (and (integer? (:amount-minor balance))
+             (= :known (:funding/status scheduled))
+             (integer? (:funding/amount-minor scheduled)))
+    (- (:amount-minor balance) (:funding/amount-minor scheduled))))
+
+;; ---------------------------------------------------------------------------
 ;; store paths
 ;; ---------------------------------------------------------------------------
 

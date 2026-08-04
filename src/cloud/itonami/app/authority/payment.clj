@@ -22,13 +22,23 @@
     :balance             the last recorded balance  (server-computed)
     :balance-freshness   how old that balance is    (server-computed)
     :already-settled?    is this reference paid?    (server-computed)
+    :scheduled-debit     what is already leaving    (server-computed)
     :posture             cross-domain posture       (server-computed)
 
   That keeps it pure -- its answer cannot change between review and consent -- and
   it is also the enforcement point: `cloud.itonami.app.authority.api` OVERWRITES
-  all five, so a client cannot send `{:balance {...}}` and buy itself an
+  all six, so a client cannot send `{:balance {...}}` and buy itself an
   approval. Each is REQUIRED, and an absent one refuses. An absent balance is not
-  an unlimited one, and an absent settlement history is not a clean one."
+  an unlimited one, and an absent settlement history is not a clean one.
+
+  `:scheduled-debit` is required in a weaker sense than the others, and the
+  difference is deliberate (ADR-2608041200 D5). It must be STATED, so a caller
+  cannot skip it; but `{:funding/status :never-recorded}` is a legal answer that
+  does not refuse. Refusing it would mean no organization could propose a
+  payment until someone had imported a card statement -- including organizations
+  with no card -- which is a gate that breaks the ordinary case to guard the
+  rare one. What it does instead is travel onto the proposal, so a reader can
+  see that the funds gate ran on the balance alone."
   (:require [clojure.string :as str]
             [cloud.itonami.app.authority :as authority]
             [cloud.itonami.app.authority.posture :as posture]
@@ -76,7 +86,8 @@
   the wrong problem."
   [_configuration _session {:keys [op amount-minor currency payee reference
                                    due-date memo funding-account balance
-                                   balance-freshness already-settled?]
+                                   balance-freshness already-settled?
+                                   scheduled-debit]
                             posture' :posture}]
   (when-not (contains? ops op)
     (refuse :payment/op-unsupported (str "未対応の op です: " op)))
@@ -141,6 +152,25 @@
               (str "残高が不足しています: " (:amount-minor balance)
                    " < " amount-minor " " currency)))
 
+    ;; The second funds gate, and it looks FORWARD rather than at today. The
+    ;; balance can cover this payment and still not survive the card billing
+    ;; that is already fixed for next week -- which is the same failure as June
+    ;; 2026 arriving through a different door.
+    ;;
+    ;; Stated, not merely present: a caller who forgot to say what is scheduled
+    ;; must be refused, exactly as one who forgot `already-settled?` is. But
+    ;; `:never-recorded` is a legal statement and passes, on the balance alone.
+    (when-not (map? scheduled-debit)
+      (refuse :payment/scheduled-debit-unstated
+              "引き落とし予定が不明なままでは事前検査できません（不明なら :never-recorded と明示すること）"))
+    (let [available (funding/available balance scheduled-debit)]
+      (when (and available (< available amount-minor))
+        (refuse :payment/insufficient-available-funds
+                (str "確定済みの引き落とし予定を差し引くと残高が不足します: "
+                     (:amount-minor balance) " - "
+                     (:funding/amount-minor scheduled-debit) " = " available
+                     " < " amount-minor " " currency))))
+
     {:op op
      :funding-account-id (:id funding-account)
      :funding-account-label (:label funding-account)
@@ -157,7 +187,16 @@
      ;; judged on. It is NOT part of the digest -- see `material`.
      :balance-at-review {:amount-minor (:amount-minor balance)
                          :as-of (:as-of balance)
-                         :source (:source balance)}}))
+                         :source (:source balance)}
+     ;; And what was known to be leaving it. `:never-recorded` here is the
+     ;; record that the second gate did not run -- without it, a proposal judged
+     ;; on the balance alone is indistinguishable from one judged on both.
+     :scheduled-debit-at-review
+     {:status (:funding/status scheduled-debit)
+      :amount-minor (:funding/amount-minor scheduled-debit)
+      :cycles (:funding/cycles scheduled-debit)
+      :unreconciled (:funding/unreconciled scheduled-debit)
+      :available-minor (funding/available balance scheduled-debit)}}))
 
 (defn material
   "The consent-bound string. Fixed field order, never a printed map -- a map's

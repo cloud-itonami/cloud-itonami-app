@@ -15,8 +15,9 @@
      client could supply it, the cross-domain SIM-swap invariant would be
      advisory -- an attacker would simply send `{:authority/posture :normal}`. The
      payment adapter is the same shape and higher stakes: its balance, its
-     balance freshness and its settlement history all decide whether a human is
-     asked at all, so a client that could send `{:balance {:amount-minor 10^9}}`
+     balance freshness, its settlement history and what is already scheduled to
+     leave the account all decide whether a human is asked at all, so a client
+     that could send `{:balance {:amount-minor 10^9}}` -- or an empty schedule --
      would buy itself past the funds gate.
 
      So this namespace computes every one of them from the store and OVERWRITES
@@ -32,6 +33,7 @@
             [cloud.itonami.app.authority.posture :as posture]
             [cloud.itonami.app.authority.transport :as transport]
             [cloud.itonami.app.authority.voice :as voice]
+            [cloud.itonami.app.card-statement :as card-statement]
             [cloud.itonami.app.funding :as funding]
             [cloud.itonami.app.numbers :as numbers]
             [cloud.itonami.app.store :as store]
@@ -63,7 +65,7 @@
                     {:type :authority/disabled :authority authority-key}))))
 
 (defn- payment-facts
-  "The five facts the payment pre-check stands on, read from the store.
+  "The six facts the payment pre-check stands on, read from the store.
 
   `:funding-account-id` is taken from the request because naming the account
   money comes out of is the caller's decision -- but the ACCOUNT is looked up, so
@@ -84,6 +86,15 @@
            :balance-freshness (funding/freshness
                                balance (store/now)
                                (funding/max-age-seconds configuration))
+           ;; Computed here for the same reason the balance is: a caller that
+           ;; could send `{:funding/status :known :funding/amount-minor 0}`
+           ;; would turn the forward-looking gate off by saying so. The cycles
+           ;; come from the card-statement plane, which records what an issuer
+           ;; showed rather than what a client claims.
+           :scheduled-debit (funding/scheduled-debit
+                             balance
+                             (when account
+                               (card-statement/billing-cycles session (:id account))))
            ;; Always a boolean, never nil: the adapter refuses a non-boolean, and
            ;; that refusal is meant to catch a caller who forgot to state it --
            ;; not this function, which has read the history and knows.
