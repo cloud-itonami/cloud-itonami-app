@@ -16,6 +16,7 @@
             [cloud.itonami.app.cli-test]
             [cloud.itonami.app.loops-test]
             [cloud.itonami.app.lawfirm-test]
+            [cloud.itonami.app.kotobase-federation-test]
             [cloud.itonami.app.local-query-test]
             [cloud.itonami.app.fax-test]
             [cloud.itonami.app.metrics-test]
@@ -88,6 +89,7 @@
     cloud.itonami.app.cli-test
     cloud.itonami.app.loops-test
     cloud.itonami.app.lawfirm-test
+    cloud.itonami.app.kotobase-federation-test
     cloud.itonami.app.local-query-test
     cloud.itonami.app.fax-test
     cloud.itonami.app.metrics-test

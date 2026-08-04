@@ -140,6 +140,21 @@ output would rewrite the whole state file on every token. Output is capped at
 16,000 characters per run. Cancellation takes effect at the next streamed
 chunk, so a stalled provider request can stay open until it times out.
 
+## Kotobase Passkey federation
+
+Passkey browser session から、短命・一回限りの Kotobase 交換証明を発行します。
+
+```text
+POST /api/integrations/kotobase/assertion
+Origin: <this app origin>
+X-CLOUD-ITONAMI-CSRF: <session csrf>
+Cookie: cloud_itonami_identity=...
+```
+
+response の `cacao_b64` を `exchange_url` へ top-level form POST すると通常の
+Kotobase session が成立します。Datomic query と Git bundle read はその session
+を共有し、Git write は引き続き Nekko署名・委任・quorumを要求します。
+
 ## Identity and organizations
 
 First launch requires only a Passkey. The verified ES256/P-256 public key is
