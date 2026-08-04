@@ -32,9 +32,16 @@
    :account-type :ordinary :number "7654321"})
 
 (defn- request
-  "A settlement that passes every gate, with the five server-computed facts
+  "A settlement that passes every gate, with the six server-computed facts
   supplied explicitly so the pre-check can be exercised as the pure function it
-  is."
+  is.
+
+  `:scheduled-debit` is `:never-recorded` here rather than absent, because the
+  adapter requires the fact to be STATED even when it is unknown. That is the
+  distinction ADR-2608041200 D5 draws: an organization with no imported card
+  statement may still propose a payment -- judged on the balance alone -- but a
+  caller that simply forgot the field is refused. `cloud.itonami.app.card-
+  statement-test` covers both halves."
   [& {:as overrides}]
   (merge {:op :payment/settle
           :amount-minor 38500
@@ -48,6 +55,7 @@
                     :source :owner-attested}
           :balance-freshness {:funding/status :fresh :funding/age-seconds 0}
           :already-settled? false
+          :scheduled-debit {:funding/status :never-recorded}
           :posture {:authority/posture :normal}}
          overrides))
 

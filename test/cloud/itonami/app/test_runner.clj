@@ -13,6 +13,7 @@
             [cloud.itonami.app.agent-session-test]
             [cloud.itonami.app.business-http-test]
             [cloud.itonami.app.canvas-test]
+            [cloud.itonami.app.card-statement-test]
             [cloud.itonami.app.cli-test]
             [cloud.itonami.app.loops-test]
             [cloud.itonami.app.lawfirm-test]
@@ -85,6 +86,7 @@
     cloud.itonami.app.agent-session-test
     cloud.itonami.app.business-http-test
     cloud.itonami.app.canvas-test
+    cloud.itonami.app.card-statement-test
     cloud.itonami.app.cli-test
     cloud.itonami.app.loops-test
     cloud.itonami.app.lawfirm-test
