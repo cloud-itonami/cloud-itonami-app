@@ -78,6 +78,7 @@
             [cloud.itonami.app.tenant-connection-http-test]
             [cloud.itonami.app.tenant-repository-test]
             [cloud.itonami.app.oauth-resource-test]
+            [cloud.itonami.app.oauth-did-binding-test]
             [cloud.itonami.app.worker-http-test]))
 
 (def ^:private namespaces
@@ -151,6 +152,7 @@
     cloud.itonami.app.tenant-connection-http-test
     cloud.itonami.app.tenant-repository-test
     cloud.itonami.app.oauth-resource-test
+    cloud.itonami.app.oauth-did-binding-test
     cloud.itonami.app.worker-http-test])
 
 (defn- test-namespaces-on-disk
