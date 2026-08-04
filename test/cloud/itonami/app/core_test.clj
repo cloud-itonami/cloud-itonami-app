@@ -756,6 +756,15 @@
                                 :display-name "Owner"
                                 :email "owner@example.jp"})
               session (local-identity/session token)
+              ;; `register!` creates the owner provisionally; the DID arrives
+              ;; with Passkey enrollment. Connecting an external account is now
+              ;; bound to that DID and refuses without one, so this test — which
+              ;; is about PKCE/state binding and secret leakage, not about the
+              ;; DID rule — enrolls the owner the way a real one would before
+              ;; reaching the Connect button.
+              _ (store/transact!
+                 assoc-in [:identity :users (:user-id session) :did]
+                 "did:key:zOwnerTestOnly")
               result (local-identity/start-oauth!
                       session :github "http://127.0.0.1:1338")
               persisted (pr-str (store/snapshot))

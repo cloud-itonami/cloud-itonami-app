@@ -261,8 +261,13 @@
         :csrf csrf}))))
 
 (defn- public-connection [connection]
+  ;; :user-did is shown. Whose account a connection belongs to is exactly the
+  ;; question the old org-wide slot could not answer, and a settings screen
+  ;; listing "Microsoft 365 — connected" without saying connected-as is how a
+  ;; shared machine ends up syncing one person's mailbox under another's name.
   (select-keys connection [:id :provider :status :display-name :email
-                           :provider-subject :scopes :connected-at :last-error]))
+                           :provider-subject :user-did :scopes :connected-at
+                           :last-error]))
 
 (defn- public-organization [state membership]
   (let [organization (get-in state [:organizations
@@ -296,6 +301,17 @@
              (select-keys organization
                           [:id :organization-id :name :domain :did])))))))
 
+(defn user-did
+  "The `did:key` of a local User — the identity this application actually has.
+
+  A User's DID comes from the first P-256 public key its Passkey established
+  (`docs/tenant-model.md`), so holding one is the same statement as 'this
+  person has proved who they are on this machine'. Display name, mail address
+  and Organization can all change without changing it, which is what makes it
+  the right thing to bind an external account to."
+  [state user-id]
+  (get-in state [:users user-id :did]))
+
 (defn- derive-user-did [state user]
   (some (fn [credential]
           (when (= (:id user) (:user-id credential))
@@ -304,15 +320,29 @@
               (catch Exception _ nil))))
         (vals (:passkeys state))))
 
-(defn- migrate-did-links! []
+(defn ensure-did-links!
+  "Fill in DIDs that a store written by an older version does not carry:
+  Users, Organizations, and — since connections became person-bound — the
+  connections themselves.
+
+  Public because `public-state` is not the only entry that depends on it: a
+  caller resolving a token by DID needs the legacy connections stamped first,
+  or they read as \"not connected\"."
+  []
   (let [state (identity-state (store/snapshot))
         missing-user? (some #(and (:passkey-enrolled? %) (nil? (:did %)))
                             (vals (:users state)))
         missing-organization?
         (and (:publish-did-web? @runtime-identity-profile)
              (some #(and (:organization-id %) (nil? (:did %)))
-                   (vals (:organizations state))))]
-    (when (or missing-user? missing-organization?)
+                   (vals (:organizations state))))
+        ;; Connections written before connections were bound to a person.
+        ;; They carry :user-id, so the DID is derivable — and it has to be
+        ;; derived, because a connection with no :user-did is invisible to
+        ;; every DID-scoped lookup and would read as "not connected".
+        missing-connection? (some #(and (:user-id %) (nil? (:user-did %)))
+                                  (vals (:connections state)))]
+    (when (or missing-user? missing-organization? missing-connection?)
       (store/transact!
        (fn [current]
          (let [identity-state (identity-state current)
@@ -333,6 +363,18 @@
                 current
                 (:users identity-state))]
            (reduce
+            (fn [result [connection-id connection]]
+              (if (and (:user-id connection) (nil? (:user-did connection)))
+                ;; Read the DID out of the state being written, not the
+                ;; snapshot taken before it: a user whose DID is filled in by
+                ;; the pass above must be visible to this one, or a
+                ;; first-run migration leaves the connection unbound.
+                (if-let [did (get-in result [:identity :users
+                                             (:user-id connection) :did])]
+                  (assoc-in result [:identity :connections connection-id :user-did] did)
+                  result)
+                result))
+            (reduce
             (fn [result [organization-id organization]]
               (if (and (:organization-id organization)
                        (nil? (:did organization)))
@@ -350,7 +392,8 @@
                   result)
                 result))
             with-users
-            (:organizations identity-state))))))))
+            (:organizations identity-state))
+            (:connections identity-state))))))))
 
 (defn session-organization-did
   "The `did:web` of the organization this session belongs to, or nil.
@@ -427,7 +470,7 @@
           [:memberships (:membership-id session) :role]))
 
 (defn public-state [token]
-  (migrate-did-links!)
+  (ensure-did-links!)
   (let [state (identity-state (store/snapshot))
         session (session-by-token token)
         user (get-in state [:users (:user-id session)])
@@ -471,23 +514,37 @@
                                                                  :contact-email :display-name
                                                                  :status :passkey-enrolled?])
                                                    :role (:role member))))))))
+     ;; Scoped to the signed-in person, not to the Organization. Two people in
+     ;; one org each hold their own external grants, and listing a colleague's
+     ;; Microsoft connection under "your connections" is how somebody clicks
+     ;; Disconnect on an account that was never theirs.
      :connections (when session
-                    (->> (:connections state)
-                         vals
-                         (filter #(= (:organization-id session)
-                                     (:organization-id %)))
-                         (mapv public-connection)))
+                    (let [did (user-did state (:user-id session))]
+                      (->> (:connections state)
+                           vals
+                           (filter #(and (= (:organization-id session)
+                                            (:organization-id %))
+                                         (= did (:user-did %))))
+                           (mapv public-connection))))
      :providers
-     (mapv (fn [[provider config]]
-             (let [connection (some #(when (= provider (:provider %)) %)
-                                    (vals (:connections state)))
-                   provider (provider-config provider)]
-               {:id (name (:provider provider))
-                :name (:name config)
-                :configured? (:configured? provider)
-                :connected? (= :connected (:status connection))
-                :scopes (:scopes config)}))
-           provider-catalog)}))
+     (let [did (when session (user-did state (:user-id session)))]
+       (mapv (fn [[provider config]]
+               ;; `:connected?` used to be true if ANYBODY anywhere in the
+               ;; state had connected this provider — across organizations,
+               ;; not just across users. A second person then saw "connected"
+               ;; and never linked their own account, while every sync ran on
+               ;; the first person's grant.
+               (let [connection (some #(when (and (= provider (:provider %))
+                                                  (= did (:user-did %)))
+                                         %)
+                                      (vals (:connections state)))
+                     provider (provider-config provider)]
+                 {:id (name (:provider provider))
+                  :name (:name config)
+                  :configured? (:configured? provider)
+                  :connected? (= :connected (:status connection))
+                  :scopes (:scopes config)}))
+             provider-catalog))}))
 
 (declare require-passkey!)
 
@@ -1152,15 +1209,29 @@
 (defn- callback-uri [origin provider]
   (str origin "/api/oauth/" (name provider) "/callback"))
 
-(defn start-oauth! [session provider origin]
+(defn start-oauth!
+  "Begin binding an external account (Microsoft 365 / Google / GitHub) to the
+  signed-in person.
+
+  The connection is bound to that person's `did:key`, so it cannot begin before
+  there is one: a User without an enrolled Passkey has not proved who they are,
+  and an external grant attached to them would belong to whoever reached the
+  loopback server first. Refusing here rather than at the callback means the
+  consent screen never appears, so nobody hands Microsoft a password for a link
+  this app was never going to make."
+  [session provider origin]
   (let [{:keys [configured? client-id authorization-endpoint scopes
                 authorization-extra] :as config}
-        (provider-config provider)]
+        (provider-config provider)
+        did (user-did (identity-state (store/snapshot)) (:user-id session))]
     (when-not config
       (throw (ex-info "未対応の接続先です。" {:type :oauth/unsupported})))
     (when-not configured?
       (throw (ex-info "OAuth クライアントが未設定です。"
                       {:type :oauth/not-configured :provider provider})))
+    (when (str/blank? (str did))
+      (throw (ex-info "外部アカウントを接続する前に Passkey の登録が必要です。接続は did:key に結ばれます。"
+                      {:type :passkey/required :provider provider})))
     (let [state-value (random-token 32)
           nonce (random-token 24)
           verifier (random-token 48)
@@ -1192,6 +1263,11 @@
                     :state state-value :provider provider :nonce nonce
                     :verifier verifier :redirect-uri redirect-uri
                     :user-id (:user-id session)
+                    ;; Carried through the round trip so the callback binds to
+                    ;; the person who *started* it. Re-reading the session's
+                    ;; DID at callback time would bind whoever is signed in
+                    ;; when the browser comes back.
+                    :user-did did
                     :organization-id (:organization-id session)
                     :expires-at expires-at :used? false})))
       {:url url :provider provider :expires-at expires-at})))
@@ -1256,29 +1332,81 @@
 (defn- keychain-get [account]
   (keychain-find keychain-service account))
 
-(defn- connection-for [provider]
-  (->> (:connections (identity-state (store/snapshot)))
-       vals
-       (filter #(and (= provider (:provider %))
-                     (= :connected (:status %))))
-       first))
+(defn connections-for
+  "Every live connection for `provider`, optionally narrowed to one person's
+  `did:key`."
+  ([provider] (connections-for provider nil))
+  ([provider did]
+   (->> (:connections (identity-state (store/snapshot)))
+        vals
+        (filter #(and (= provider (:provider %))
+                      (= :connected (:status %))
+                      (or (nil? did) (= did (:user-did %)))))
+        (sort-by :id)
+        vec)))
+
+(defn connection-for
+  "The connection for `provider` belonging to `did`.
+
+  Called without a DID it resolves only when the answer is unambiguous — one
+  live connection — and returns nil when there are several. It used to take
+  `first`, which is the shape mail-sync's own comment warns about: *'an
+  application that reaches for whichever Google token is on the machine is an
+  application that reads mail it was never pointed at.'* That reasoning did not
+  stop at the machine boundary; picking the first of several connections inside
+  this app is the same act, and the caller cannot even tell it happened.
+
+  Refusing costs a single-user deployment nothing (there is one connection, and
+  it is returned) and costs a multi-user one an error where it used to get
+  somebody else's mailbox."
+  ([provider] (connection-for provider nil))
+  ([provider did]
+   (let [cs (connections-for provider did)]
+     (cond
+       (empty? cs) nil
+       (= 1 (count cs)) (first cs)
+       did (first cs)                    ; a DID already names exactly one person
+       :else (throw (ex-info (str (name provider)
+                                  " の接続が複数あります。どの利用者の接続を使うか指定してください。")
+                             {:type :oauth/ambiguous-connection
+                              :provider provider
+                              :dids (mapv :user-did cs)}))))))
+
+(defn- keychain-prefix
+  "Where this connection's tokens live.
+
+  Deliberately still `{org}:{user-id}:{provider}:` and NOT keyed by DID:
+  changing it would strand every token already in the Keychain behind a name
+  nothing looks up, and the symptom would be connections that report themselves
+  as connected while every sync fails. The DID governs *which connection* is
+  chosen; the Keychain account keeps naming the same secret it always named."
+  [connection]
+  (str (:organization-id connection) ":" (:user-id connection) ":"
+       (name (:provider connection)) ":"))
 
 (defn access-token
-  "Resolve the first connected provider token from Keychain. Never returns a
-  token reference or token through an HTTP/public view."
-  [provider]
-  (when-let [connection (connection-for provider)]
-    (keychain-get
-     (str (:organization-id connection) ":" (:user-id connection) ":"
-          (name provider) ":access"))))
+  "Resolve one person's provider token from Keychain. Never returns a token
+  reference or token through an HTTP/public view."
+  ([provider] (access-token provider nil))
+  ([provider did]
+   (when-let [connection (connection-for provider did)]
+     (keychain-get (str (keychain-prefix connection) "access")))))
 
 (defn connected-providers
-  "The providers this deployment currently holds a connection for."
-  []
-  (->> (:connections (identity-state (store/snapshot)))
-       vals
-       (keep #(when (= :connected (:status %)) (:provider %)))
-       set))
+  "The providers a connection exists for, optionally for one person only.
+
+  Without a `did` this stays deployment-wide because its callers
+  (`mail-sync/syncable-providers`) are asking what this process could sync at
+  all, not what any one person may see. The narrowing that matters happens at
+  token resolution, where `connection-for` refuses to pick between two people."
+  ([] (connected-providers nil))
+  ([did]
+   (->> (:connections (identity-state (store/snapshot)))
+        vals
+        (keep #(when (and (= :connected (:status %))
+                          (or (nil? did) (= did (:user-did %))))
+                 (:provider %)))
+        set)))
 
 ;; `access-token` hands back whatever the authorization-code exchange wrote,
 ;; which for Google stops working an hour after somebody clicked Connect.
@@ -1308,12 +1436,17 @@
   token)
 
 (defn refresh-access-token!
-  "Trade `refresh-token` for a fresh access token and cache it under `provider`.
+  "Trade `refresh-token` for a fresh access token and cache it.
 
   Returns the access token, or nil when the provider refuses — a revoked or
   expired grant is an ordinary outcome here, not an error worth unwinding a
-  background sync over, and the caller finds out by getting nil."
-  [provider refresh-token]
+  background sync over, and the caller finds out by getting nil.
+
+  `cache-key` defaults to `provider`, but a caller resolving one person's grant
+  passes `[provider did]`. Caching a per-person token under the bare provider
+  keyword would hand the next caller a token minted for somebody else."
+  ([provider refresh-token] (refresh-access-token! provider refresh-token provider))
+  ([provider refresh-token cache-key]
   (let [config (provider-config provider)]
     (when (and (:configured? config) (not (str/blank? refresh-token)))
       (try
@@ -1331,23 +1464,28 @@
               token (request-json! request)
               access (:access_token token)]
           (when-not (str/blank? access)
-            (cache-access-token! provider access (:expires_in token))))
-        (catch Exception _ nil)))))
+            (cache-access-token! cache-key access (:expires_in token))))
+        (catch Exception _ nil))))))
 
 (defn provider-access-token!
   "A currently-valid access token for `provider`, refreshing if it can.
 
   Prefers the refresh token this app stored at connect time. Falls back to
   the access token itself for providers whose grants do not expire (GitHub),
-  where there is nothing to refresh and the stored value is the answer."
-  [provider]
-  (or (cached-access-token provider)
-      (when-let [connection (connection-for provider)]
-        (let [prefix (str (:organization-id connection) ":"
-                          (:user-id connection) ":" (name provider) ":")]
-          (or (some->> (keychain-get (str prefix "refresh"))
-                       (refresh-access-token! provider))
-              (keychain-get (str prefix "access")))))))
+  where there is nothing to refresh and the stored value is the answer.
+
+  `did` names whose grant to use. Omitting it resolves only when there is
+  exactly one connection (see `connection-for`); the cache is keyed by the pair
+  so two people's tokens can never be served from one another's slot."
+  ([provider] (provider-access-token! provider nil))
+  ([provider did]
+   (let [cache-key [provider did]]
+     (or (cached-access-token cache-key)
+         (when-let [connection (connection-for provider did)]
+           (let [prefix (keychain-prefix connection)]
+             (or (some->> (keychain-get (str prefix "refresh"))
+                          (#(refresh-access-token! provider % cache-key)))
+                 (keychain-get (str prefix "access")))))))))
 
 ;; A delegated credential is one this application did not obtain and does not
 ;; own: an access grant some other tool on this machine already holds for the
@@ -1424,9 +1562,30 @@
                                     access-token)
           refresh-ref (keychain-put! (keychain-account transaction :refresh)
                                      (:refresh_token token))
-          connection-id (str (:organization-id transaction) ":" (name provider))
+          ;; Keyed by DID, not by organization alone. The old
+          ;; `{org}:{provider}` key gave a whole organization ONE slot per
+          ;; provider: the second person to connect Microsoft silently
+          ;; overwrote the first, whose Keychain entries then belonged to a
+          ;; connection record that no longer existed.
+          connection-id (str (:organization-id transaction) ":"
+                             (:user-did transaction) ":" (name provider))
           provider-subject (str (or (:sub profile) (:id profile)
                                     (:userPrincipalName profile)))
+          ;; One external account is one person. Binding the same Microsoft
+          ;; subject to a second DID would let two local users act as each
+          ;; other upstream, and nothing downstream could tell them apart —
+          ;; the provider sees one account either way.
+          _ (when-let [held (some (fn [c]
+                                    (when (and (= provider (:provider c))
+                                               (= provider-subject (:provider-subject c))
+                                               (:user-did c)
+                                               (not= (:user-did transaction) (:user-did c)))
+                                      c))
+                                  (vals (:connections current)))]
+              (throw (ex-info "この外部アカウントは既に別の利用者に接続されています。"
+                              {:type :oauth/subject-already-bound
+                               :provider provider
+                               :bound-to (:user-did held)})))
           email (normalize-email
                  (or (:email profile) (:mail profile)
                      (:userPrincipalName profile)))
@@ -1443,6 +1602,7 @@
                        {:id connection-id :provider provider :status :connected
                         :organization-id (:organization-id transaction)
                         :user-id (:user-id transaction)
+                        :user-did (:user-did transaction)
                         :provider-subject provider-subject :email email
                         :display-name display-name :scopes scopes
                         :access-token-ref access-ref :refresh-token-ref refresh-ref
