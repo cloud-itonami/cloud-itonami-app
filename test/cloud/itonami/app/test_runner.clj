@@ -32,6 +32,9 @@
             [cloud.itonami.app.mailbox-test]
             [cloud.itonami.app.mailbox-http-test]
             [cloud.itonami.app.mail-sync-test]
+            [cloud.itonami.app.mail-account-test]
+            [cloud.itonami.app.mail-imap-test]
+            [cloud.itonami.app.mail-send-test]
             [cloud.itonami.app.scheduler-test]
             [cloud.itonami.app.scheduler-http-test]
             [cloud.itonami.app.authority.adapters-test]
@@ -143,6 +146,9 @@
     cloud.itonami.app.mailbox-test
     cloud.itonami.app.mailbox-http-test
     cloud.itonami.app.mail-sync-test
+    cloud.itonami.app.mail-account-test
+    cloud.itonami.app.mail-imap-test
+    cloud.itonami.app.mail-send-test
     cloud.itonami.app.scheduler-test
     cloud.itonami.app.scheduler-http-test
     cloud.itonami.app.payment-tools-test

@@ -6212,7 +6212,124 @@
       renderConnectors(data);
       loadCloudAlias(data);
       loadTenantConnections();
+      loadMailAccounts();
     };
+    // Mailboxes, one row per account. Deliberately not grouped by provider:
+    // two Gmail accounts are two rows with two sync states, because a single
+    // "Google" row cannot say which of the two stopped working.
+    const mailKindNames = {gmail:'Gmail', microsoft:'Microsoft 365', imap:'IMAP'};
+    const mailStatusText = (account) => {
+      const sync = account.sync || {};
+      if (account.status === 'error' || sync['last-error']) {
+        return `同期エラー: ${sync['last-error'] || '原因不明'}`;
+      }
+      if (account.status === 'never-synced' || !sync['last-synced-at']) {
+        return 'まだ同期していません';
+      }
+      return `${sync['message-count'] || 0} 件 · 最終同期 ${sync['last-synced-at']}`;
+    };
+    const renderMailAccounts = (data) => {
+      const list = $('#mail-account-list');
+      const state = $('#mail-account-state');
+      if (!list || !state) return;
+      const accounts = data.accounts || [];
+      list.replaceChildren();
+      state.textContent = accounts.length
+        ? `${accounts.length} 個のメールボックスを統合しています。`
+        : 'メールボックスはまだありません。';
+      accounts.forEach((account) => {
+        const item = make('li', 'member-list__item');
+        const copy = make('div');
+        copy.append(
+          make('strong', null, account.address || account.id),
+          make('p', 'form-help',
+            `${mailKindNames[account.kind] || account.kind}${account['delegated?'] ? ' · 委任' : ''}`),
+          make('p', 'form-help', mailStatusText(account)));
+        const actions = make('div', 'record-actions');
+        const sync = make('button', 'tool-button', '今すぐ同期');
+        sync.type = 'button';
+        sync.addEventListener('click', async () => {
+          sync.disabled = true; sync.textContent = '同期中…';
+          try {
+            const request = await fetch(
+              `/api/mail/accounts/${encodeURIComponent(account.id)}/sync`,
+              {method:'POST', headers:identityHeaders(), body:'{}'});
+            const result = await request.json();
+            if (!request.ok) throw new Error(result?.error?.message || '同期できませんでした。');
+            if (result.error) throw new Error(result.error);
+            await loadMailAccounts();
+          } catch (error) {
+            state.textContent = error.message;
+          } finally {
+            sync.disabled = false; sync.textContent = '今すぐ同期';
+          }
+        });
+        actions.append(sync);
+        // Only an IMAP account can be forgotten here. An OAuth mailbox exists
+        // because a grant exists, so removing it means disconnecting the
+        // grant — a different act, and doing it from here would leave the
+        // connection live and the mailbox merely hidden.
+        if (account['removable?']) {
+          const remove = make('button', 'tool-button', '削除');
+          remove.type = 'button';
+          remove.addEventListener('click', async () => {
+            remove.disabled = true;
+            try {
+              const request = await fetch(
+                `/api/mail/accounts/${encodeURIComponent(account.id)}`,
+                {method:'DELETE', headers:identityHeaders()});
+              const result = await request.json();
+              if (!request.ok) throw new Error(result?.error?.message || '削除できませんでした。');
+              await loadMailAccounts();
+            } catch (error) {
+              state.textContent = error.message; remove.disabled = false;
+            }
+          });
+          actions.append(remove);
+        }
+        item.append(copy, actions);
+        list.append(item);
+      });
+    };
+    const loadMailAccounts = async () => {
+      const state = $('#mail-account-state');
+      if (!state) return;
+      try {
+        const request = await fetch('/api/mail/accounts', {headers:identityHeaders()});
+        if (!request.ok) return;
+        renderMailAccounts(await request.json());
+      } catch (error) {
+        state.textContent = 'メールアカウントを読み込めませんでした。';
+      }
+    };
+    $('#mail-account-form')?.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const state = $('#mail-account-state');
+      const button = $('#mail-account-submit');
+      button.disabled = true;
+      try {
+        const request = await fetch('/api/mail/accounts', {
+          method:'POST', headers:identityHeaders(),
+          body:JSON.stringify({
+            address: $('#mail-account-address').value.trim(),
+            host: $('#mail-account-host').value.trim(),
+            'smtp-host': $('#mail-account-smtp-host').value.trim(),
+            password: $('#mail-account-password').value
+          })
+        });
+        const result = await request.json();
+        if (!request.ok) throw new Error(result?.error?.message || 'メールボックスを追加できませんでした。');
+        // The password never goes back into the field: it is in the Keychain
+        // now, and leaving it in the DOM is leaving it where a screenshot or
+        // an autofill inspector finds it.
+        $('#mail-account-form').reset();
+        await loadMailAccounts();
+      } catch (error) {
+        state.textContent = error.message;
+      } finally {
+        button.disabled = false;
+      }
+    });
     const renderTenantConnections = (data) => {
       const list = $('#tenant-connection-list');
       const state = $('#tenant-connection-state');

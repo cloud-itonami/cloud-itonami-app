@@ -29,7 +29,8 @@ projects, or events.
 
 | Surface | Authority | Current contract |
 |---|---|---|
-| Inbox | `m365-archive` and `net-kotobase/mail-worker` | Lists archive metadata; sealed reception remains recipient-key controlled |
+| Inbox | `m365-archive`, every connected mail account, `net-kotobase/mail-worker` | One `mail.mailbox` over the on-disk archive and every synced account; sealed reception remains recipient-key controlled |
+| Mail accounts | `kotoba-lang/com-gmail`, Microsoft Graph, `kotoba-lang/org-ietf-imap` / `org-ietf-smtp` | One row per *mailbox*, not per provider: two Gmail accounts are two cursors, two credentials, two error states. Credentials live in the Keychain and never in `state.edn` |
 | Projects | `kotoba-lang/com-github` | Reads GitHub Projects v2; shows `permission-required` without `read:project` |
 | Drive (archive) | `m365-archive` OneDrive snapshot | Lists file state without silently materializing git-annex objects |
 | Drive (documents) | `kotoba-lang/drive` workspace + an object store | Creates and edits Sheets / Docs / Forms / Slides as office envelopes; per-user ACL, quota, versions and a reversible trash; a save the surface's own validator rejects is refused |

@@ -127,6 +127,49 @@ action, which does not survive translation to a protocol whose consent model
 belongs to the client; the workspace reads sit behind the Passkey session on
 `/api/*`, and a surface with no session must not reach around it.
 
+## Mail
+
+One inbox over however many mailboxes, of three kinds:
+
+| kind         | reached over              | credential                          |
+|--------------|---------------------------|-------------------------------------|
+| `:gmail`     | Gmail API v1 (`com-gmail`)| an OAuth grant, refreshed           |
+| `:microsoft` | Microsoft Graph           | an OAuth grant, refreshed           |
+| `:imap`      | IMAP4rev1 (`org-ietf-imap`)| a password, held in the Keychain   |
+
+The unit is an **account**, not a provider. One person can connect a work
+Gmail and a personal one and they are two mailboxes with two cursors, two
+credentials and two error states — `Google: error` does not say which of two
+Google mailboxes stopped working, so nothing reports it that way.
+
+`/api/workspace/inbox` serves the on-disk archive **and** every synced
+account in one `mail.mailbox`, so threads, labels, unread counts and the
+search that reads message bodies range over all of it.
+
+Sending goes out through whatever the account already proved: an OAuth
+account sends through its own provider API, an IMAP account over SMTP
+(`org-ietf-smtp`) with the password it was registered with.
+
+```
+GET    /api/mail/accounts              every mailbox (never a credential)
+POST   /api/mail/accounts              register one reached over IMAP
+DELETE /api/mail/accounts/{id}         forget an IMAP account
+POST   /api/mail/accounts/{id}/sync    one mailbox, now
+POST   /api/mail/send                  {:account-id :to :cc :subject :text}
+GET    /api/mail-sync                  what each mailbox last did
+POST   /api/mail-sync/sync             all of them
+```
+
+Sync is **off unless asked for** (`:mail-sync :enabled?`) — a workspace that
+was merely installed should not begin pulling somebody's mail. `:mail-sync
+:providers` names *delegated* credentials only: OAuth grants another tool on
+this machine already holds, named item by item, because an application that
+reaches for whichever Google token is lying around is an application that
+reads mail it was never pointed at.
+
+Passwords and tokens go to the Keychain and never to `state.edn`, which is a
+file that gets copied, read and backed up.
+
 ## Background worker runs
 
 The Worker tab queues prompts that take longer than an interactive turn. Runs

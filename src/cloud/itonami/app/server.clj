@@ -35,6 +35,8 @@
             [cloud.itonami.app.relay :as relay]
             [cloud.itonami.app.repos :as business-repos]
             [cloud.itonami.app.mailbox :as app-mailbox]
+            [cloud.itonami.app.mail-account :as mail-account]
+            [cloud.itonami.app.mail-send :as mail-send]
             [cloud.itonami.app.mail-sync :as mail-sync]
             [cloud.itonami.app.scheduler :as scheduler]
             [cloud.itonami.app.service :as service]
@@ -1664,6 +1666,68 @@
             (do
               (require-app-session! exchange)
               (send! exchange 200 (mail-sync/sync-all!)))
+
+            ;; Every mailbox this workspace has been pointed at. Read-only and
+            ;; credential-free: `public-account` is what decides that, and it
+            ;; selects the fields it hands out rather than removing the ones it
+            ;; remembers to.
+            (and (= method "GET") (= path "/api/mail/accounts"))
+            (let [session (require-app-session! exchange)]
+              (send! exchange 200
+                     {:schema mail-account/schema :ok? true
+                      :accounts (mapv mail-account/public-account
+                                      (mail-account/accounts
+                                       (:user-did session)))}))
+
+            ;; Registering a mailbox reached over IMAP — the kind OAuth cannot
+            ;; reach at all. A password crosses here, so this needs the same
+            ;; origin and CSRF checks as anything else that writes.
+            (and (= method "POST") (= path "/api/mail/accounts"))
+            (let [session (require-app-session! exchange)
+                  request (read-json exchange)]
+              (require-origin! exchange config)
+              (require-csrf! exchange session)
+              (send! exchange 200
+                     {:schema mail-account/schema :ok? true
+                      :account (mail-account/public-account
+                                (mail-account/add-imap-account!
+                                 request
+                                 {:user-did (:user-did session)}))}))
+
+            (and (= method "DELETE")
+                 (id-from-path path #"/api/mail/accounts/([^/]+)"))
+            (let [session (require-app-session! exchange)]
+              (require-origin! exchange config)
+              (require-csrf! exchange session)
+              (send! exchange 200
+                     (mail-account/remove-account!
+                      (id-from-path path #"/api/mail/accounts/([^/]+)"))))
+
+            ;; One mailbox, on demand. Somebody who has just connected an
+            ;; account should not have to wait out the sync interval to find
+            ;; out whether it works.
+            (and (= method "POST")
+                 (id-from-path path #"/api/mail/accounts/([^/]+)/sync"))
+            (let [session (require-app-session! exchange)]
+              (require-origin! exchange config)
+              (require-csrf! exchange session)
+              (send! exchange 200
+                     (mail-sync/sync-account!
+                      (mail-account/account!
+                       (id-from-path path #"/api/mail/accounts/([^/]+)/sync")
+                       (:user-did session)))))
+
+            ;; Sending. This app could not do it at all until now — it showed
+            ;; an inbox and had no way to answer anything in it.
+            (and (= method "POST") (= path "/api/mail/send"))
+            (let [session (require-app-session! exchange)
+                  request (read-json exchange)]
+              (require-origin! exchange config)
+              (require-csrf! exchange session)
+              (send! exchange 200
+                     (mail-send/send! (:account-id request)
+                                      request
+                                      {:user-did (:user-did session)})))
 
             ;; The archive, as this reader has marked it. Not through
             ;; `workspace/snapshot`: that cache is keyed per server, and what

@@ -88,8 +88,24 @@
     :authorization-endpoint "https://accounts.google.com/o/oauth2/v2/auth"
     :token-endpoint "https://oauth2.googleapis.com/token"
     :profile-endpoint "https://openidconnect.googleapis.com/v1/userinfo"
+    ;; `gmail.modify` rather than `gmail.readonly`, and `gmail.send` beside
+    ;; it. Read-only is the right default for a workspace that only shows you
+    ;; mail, and it was the wrong one the moment the inbox grew a reply box
+    ;; and a way to file a message: filing under a label and sending a reply
+    ;; are both writes, and with a read-only grant they fail at the provider
+    ;; with a 403 that no amount of local correctness prevents.
+    ;;
+    ;; `modify` covers reading, so this is one scope replacing one, not an
+    ;; addition on top. It deliberately stops short of `mail.google.com`
+    ;; (full account access, including permanent delete) — this app's trash
+    ;; is reversible on purpose and never needs it.
+    ;;
+    ;; Existing connections keep working on their old grant until the person
+    ;; reconnects; `prompt=consent` above means that reconnect actually
+    ;; re-asks rather than silently reissuing the narrower scope set.
     :scopes ["openid" "email" "profile"
-             "https://www.googleapis.com/auth/gmail.readonly"
+             "https://www.googleapis.com/auth/gmail.modify"
+             "https://www.googleapis.com/auth/gmail.send"
              "https://www.googleapis.com/auth/drive.metadata.readonly"
              "https://www.googleapis.com/auth/calendar.readonly"]
     :authorization-extra {"access_type" "offline"
@@ -103,8 +119,13 @@
     :authorization-endpoint "https://login.microsoftonline.com/organizations/oauth2/v2.0/authorize"
     :token-endpoint "https://login.microsoftonline.com/organizations/oauth2/v2.0/token"
     :profile-endpoint "https://graph.microsoft.com/v1.0/me"
+    ;; `Mail.ReadWrite`/`Mail.Send` for the same reason Google gets
+    ;; `gmail.modify`/`gmail.send`: `Mail.ReadBasic` cannot even read a
+    ;; message body — it is headers and preview only — so a mailbox synced
+    ;; under it arrives with nothing to show when somebody opens a message.
     :scopes ["openid" "email" "profile" "offline_access"
-             "User.Read" "Mail.ReadBasic" "Files.Read" "Calendars.ReadBasic"]}})
+             "User.Read" "Mail.ReadWrite" "Mail.Send"
+             "Files.Read" "Calendars.ReadBasic"]}})
 
 (defn- url-encode [value]
   (URLEncoder/encode (str value) StandardCharsets/UTF_8))
@@ -1310,9 +1331,25 @@
                     .GET .build)]
     (request-json! request)))
 
-(defn- keychain-account [transaction token-kind]
-  (str (:organization-id transaction) ":" (:user-id transaction) ":"
-       (name (:provider transaction)) ":" (name token-kind)))
+(defn- keychain-account
+  "Where one grant's token lives.
+
+  Qualified by the provider subject — the external account's own id — because
+  a person may hold more than one mailbox at the same provider and the two
+  grants are different secrets. Without the subject, connecting a second
+  Google account wrote its token over the first one's slot, and the first
+  connection went on reporting itself connected while every sync for it
+  returned the second account's mail.
+
+  `subject` is nil for a caller that has not read the profile yet; that
+  produces the historical unqualified name, which is what `keychain-prefix`
+  falls back to for grants stored before this was qualified."
+  ([transaction token-kind] (keychain-account transaction token-kind nil))
+  ([transaction token-kind subject]
+   (str (:organization-id transaction) ":" (:user-id transaction) ":"
+        (name (:provider transaction)) ":"
+        (when-not (str/blank? (str subject)) (str subject ":"))
+        (name token-kind))))
 
 (defn- keychain-put! [account token]
   (when-not (str/blank? token)
@@ -1375,14 +1412,40 @@
 (defn- keychain-prefix
   "Where this connection's tokens live.
 
-  Deliberately still `{org}:{user-id}:{provider}:` and NOT keyed by DID:
-  changing it would strand every token already in the Keychain behind a name
-  nothing looks up, and the symptom would be connections that report themselves
-  as connected while every sync fails. The DID governs *which connection* is
-  chosen; the Keychain account keeps naming the same secret it always named."
+  Still NOT keyed by DID — the DID governs *which connection* is chosen, and
+  renaming by it would strand every token already in the Keychain behind a
+  name nothing looks up. It IS keyed by the provider subject, because that
+  names the external account rather than the person, and one person may hold
+  two mailboxes at one provider. Those are two secrets and they need two
+  slots; sharing one was how the second Google account overwrote the first.
+
+  Returns the qualified prefix. `keychain-token` is what callers should use,
+  since it also knows the unqualified name grants stored before this change
+  are still sitting under."
+  [connection]
+  (str (:organization-id connection) ":" (:user-id connection) ":"
+       (name (:provider connection)) ":"
+       (when-not (str/blank? (str (:provider-subject connection)))
+         (str (:provider-subject connection) ":"))))
+
+(defn- legacy-keychain-prefix
+  "The unqualified name a grant was stored under before subjects qualified it."
   [connection]
   (str (:organization-id connection) ":" (:user-id connection) ":"
        (name (:provider connection)) ":"))
+
+(defn- keychain-token
+  "One of this connection's tokens, by the qualified name or the name it was
+  written under before subjects were part of it.
+
+  The fallback is deliberately one-way and read-only: nothing re-writes an old
+  grant under the new name, because doing so on a read would move a secret as a
+  side effect of looking at it. A reconnect writes the qualified name; until
+  then the old grant keeps working where it lies."
+  [connection token-kind]
+  (or (keychain-get (str (keychain-prefix connection) (name token-kind)))
+      (keychain-get (str (legacy-keychain-prefix connection)
+                         (name token-kind)))))
 
 (defn access-token
   "Resolve one person's provider token from Keychain. Never returns a token
@@ -1390,15 +1453,20 @@
   ([provider] (access-token provider nil))
   ([provider did]
    (when-let [connection (connection-for provider did)]
-     (keychain-get (str (keychain-prefix connection) "access")))))
+     (keychain-token connection :access))))
 
 (defn connected-providers
   "The providers a connection exists for, optionally for one person only.
 
-  Without a `did` this stays deployment-wide because its callers
-  (`mail-sync/syncable-providers`) are asking what this process could sync at
-  all, not what any one person may see. The narrowing that matters happens at
-  token resolution, where `connection-for` refuses to pick between two people."
+  Without a `did` this stays deployment-wide because its callers are asking
+  what this process could reach at all, not what any one person may see. The
+  narrowing that matters happens at token resolution, where `connection-for`
+  refuses to pick between two people.
+
+  Note that a *provider* is no longer the unit a mail sync walks — see
+  `mail-account/accounts`, which is per mailbox, because one person can hold
+  two Google accounts and 'is Google connected' stops being a useful question
+  at that point. This remains for callers asking the coarser question."
   ([] (connected-providers nil))
   ([did]
    (->> (:connections (identity-state (store/snapshot)))
@@ -1487,6 +1555,28 @@
                           (#(refresh-access-token! provider % cache-key)))
                  (keychain-get (str prefix "access")))))))))
 
+(defn connection-access-token!
+  "A currently-valid access token for one named connection.
+
+  The per-connection form of `provider-access-token!`, and the one a mail sync
+  wants. `provider-access-token!` answers *'the token for this provider'*,
+  which stops being a question with an answer as soon as a person connects two
+  Google accounts — `connection-for` is right to refuse to guess between them.
+  A sync that walks accounts already knows which one it is holding, so it
+  should not have to re-derive it from a provider name that no longer
+  identifies anything.
+
+  Keyed in the cache by connection id, so two mailboxes at one provider can
+  never be served from one another's slot."
+  [connection]
+  (when connection
+    (let [provider (:provider connection)
+          cache-key [:connection (:id connection)]]
+      (or (cached-access-token cache-key)
+          (some->> (keychain-token connection :refresh)
+                   (#(refresh-access-token! provider % cache-key)))
+          (keychain-token connection :access)))))
+
 ;; A delegated credential is one this application did not obtain and does not
 ;; own: an access grant some other tool on this machine already holds for the
 ;; same person and the same scope. Reusing one is how a local-first workspace
@@ -1558,19 +1648,28 @@
               (throw (ex-info "接続先からアクセストークンが返りませんでした。"
                               {:type :oauth/missing-token})))
           profile (profile! config access-token)
-          access-ref (keychain-put! (keychain-account transaction :access)
-                                    access-token)
-          refresh-ref (keychain-put! (keychain-account transaction :refresh)
-                                     (:refresh_token token))
-          ;; Keyed by DID, not by organization alone. The old
-          ;; `{org}:{provider}` key gave a whole organization ONE slot per
-          ;; provider: the second person to connect Microsoft silently
-          ;; overwrote the first, whose Keychain entries then belonged to a
-          ;; connection record that no longer existed.
-          connection-id (str (:organization-id transaction) ":"
-                             (:user-did transaction) ":" (name provider))
           provider-subject (str (or (:sub profile) (:id profile)
                                     (:userPrincipalName profile)))
+          access-ref (keychain-put! (keychain-account transaction :access
+                                                      provider-subject)
+                                    access-token)
+          refresh-ref (keychain-put! (keychain-account transaction :refresh
+                                                      provider-subject)
+                                     (:refresh_token token))
+          ;; Keyed by DID *and* by the external account. Keying by DID alone
+          ;; fixed one overwrite — the second person to connect Microsoft used
+          ;; to erase the first — and left the mirror image of it in place:
+          ;; one person with two Gmail accounts still had one slot, so the
+          ;; second mailbox they connected replaced the first, which went on
+          ;; showing as connected while syncing the other account's mail.
+          ;;
+          ;; The subject rather than the address, because an address can be
+          ;; reassigned and an alias can deliver to a mailbox whose primary
+          ;; address is something else; the subject is what the provider
+          ;; itself considers the account.
+          connection-id (str (:organization-id transaction) ":"
+                             (:user-did transaction) ":" (name provider)
+                             ":" provider-subject)
           ;; One external account is one person. Binding the same Microsoft
           ;; subject to a second DID would let two local users act as each
           ;; other upstream, and nothing downstream could tell them apart —
@@ -1598,6 +1697,23 @@
       (store/transact!
        (fn [state]
          (-> state
+             ;; The same account under its pre-subject id, if it is there.
+             ;; Reconnecting used to land on the identical key and replace the
+             ;; record; now that the key carries the subject it would leave the
+             ;; old one behind, and one mailbox would be listed — and synced —
+             ;; twice. Removed rather than migrated in place, because the
+             ;; record being written on the next line IS the migration.
+             (update-in [:identity :connections]
+                        (fn [connections]
+                          (into {}
+                                (remove (fn [[id c]]
+                                          (and (not= id connection-id)
+                                               (= provider (:provider c))
+                                               (= provider-subject
+                                                  (:provider-subject c))
+                                               (= (:user-did transaction)
+                                                  (:user-did c)))))
+                                connections)))
              (assoc-in [:identity :connections connection-id]
                        {:id connection-id :provider provider :status :connected
                         :organization-id (:organization-id transaction)
@@ -1610,4 +1726,5 @@
              (update :events conj {:type :oauth/connected :at now
                                    :provider provider
                                    :organization-id (:organization-id transaction)}))))
-      {:provider provider :connected? true})))
+      {:provider provider :connected? true
+       :connection-id connection-id :email email})))

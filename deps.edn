@@ -45,6 +45,28 @@
   io.github.kotoba-lang/mail
   {:git/url "https://github.com/kotoba-lang/mail.git"
    :git/sha "2a00bd8d63842dd2d1cf38d35bfb66ae377e98dc"}
+
+  ;; The three wire protocols a mailbox is actually reached over. Each one is
+  ;; an independently tested boundary with an injectable transport, which is
+  ;; the reason to depend on them rather than keep the hand-rolled
+  ;; `java.net.http` calls this app had: those could only ever be exercised
+  ;; against a live account, so they were never exercised.
+  ;;
+  ;; `org-ietf-imap` and `org-ietf-smtp` are additions, not replacements —
+  ;; before them this app could not read a mailbox that was not Google or
+  ;; Microsoft, and could not send mail at all.
+  io.github.kotoba-lang/com-gmail
+  {:git/url "https://github.com/kotoba-lang/com-gmail.git"
+   :git/sha "de7932b50979c3e2918ecb09f2b8543c93a37bcb"}
+  ;; Pinned to the commit that added whole-message reads (`fetch-message!` /
+  ;; `list-recent!`). The prior pin could fetch headers only, which is enough
+  ;; to triage a mailbox and not enough to show one.
+  io.github.kotoba-lang/org-ietf-imap
+  {:git/url "https://github.com/kotoba-lang/org-ietf-imap.git"
+   :git/sha "c79e3362b9bed526e5b2fd02e98eb00d00585620"}
+  io.github.kotoba-lang/org-ietf-smtp
+  {:git/url "https://github.com/kotoba-lang/org-ietf-smtp.git"
+   :git/sha "5423d0bab43facb84209a6f528dd2ff30f0ec0a2"}
   ;; advanced from 90eac285 (fast-forward): that pin predates
   ;; drive/object.cljc, which is the IObjectStore seam this app now fills. The
   ;; :dev alias overrides this to a :local/root, so this gap only appears in a
@@ -292,6 +314,11 @@
     io.github.kotoba-lang/kotoba {:local/root "../../kotoba-lang/kotoba"}
     io.github.kotoba-lang/calendar {:local/root "../../kotoba-lang/calendar"}
     io.github.kotoba-lang/mail {:local/root "../../kotoba-lang/mail"}
+    io.github.kotoba-lang/com-gmail {:local/root "../../kotoba-lang/com-gmail"}
+    io.github.kotoba-lang/org-ietf-imap
+    {:local/root "../../kotoba-lang/org-ietf-imap"}
+    io.github.kotoba-lang/org-ietf-smtp
+    {:local/root "../../kotoba-lang/org-ietf-smtp"}
     io.github.kotoba-lang/drive {:local/root "../../kotoba-lang/drive"}
     io.github.kotoba-lang/sheets {:local/root "../../kotoba-lang/sheets"}
     io.github.kotoba-lang/esim {:local/root "../../kotoba-lang/esim"}
