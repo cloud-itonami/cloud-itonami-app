@@ -1704,19 +1704,26 @@
             [:div {:class "local-card"}
              (dds/heading 2 "メールアカウント" {:size "24"})
              [:p {:class "view-lead"}
-              "Gmail と Microsoft 365 は上の「サービス接続」から、同じ提供者の2つ目以降のアカウントも同じ手順で追加できます。OAuth を持たないメールボックスは IMAP で接続します。"]
+              "Gmail と Microsoft 365 は上の「サービス接続」から、同じ提供者の2つ目以降のアカウントも同じ手順で追加できます。OAuth を持たないメールボックスは IMAP か POP3 で接続します。"]
              [:p {:class "source-note" :id "mail-account-state"}
               "メールアカウントを確認中…"]
              [:ul {:class "member-list" :id "mail-account-list"}]
              [:form {:class "settings-form" :id "mail-account-form"}
-              (dds/heading 3 "IMAP でメールボックスを追加" {:size "16"})
+              (dds/heading 3 "IMAP / POP3 でメールボックスを追加" {:size "16"})
+              [:div {:class "field"}
+               [:label {:for "mail-account-protocol"} "受信プロトコル"]
+               [:select {:id "mail-account-protocol" :name "protocol"}
+                [:option {:value "imap" :selected true} "IMAP（推奨）"]
+                [:option {:value "pop3"} "POP3"]]
+               [:span {:class "form-help"}
+                "POP3 はフォルダも既読状態もサーバーに持てません。IMAP が使えるなら IMAP を選んでください。"]]
               [:div {:class "field"}
                [:label {:for "mail-account-address"} "メールアドレス"]
                [:input {:id "mail-account-address" :name "address"
                         :type "email" :required true :autocomplete "email"
                         :placeholder "me@example.com"}]]
               [:div {:class "field"}
-               [:label {:for "mail-account-host"} "IMAP サーバー"]
+               [:label {:for "mail-account-host"} "受信サーバー"]
                [:input {:id "mail-account-host" :name "host" :required true
                         :autocomplete "off" :placeholder "imap.example.com"}]]
               [:div {:class "field"}

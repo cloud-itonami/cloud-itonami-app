@@ -6217,7 +6217,7 @@
     // Mailboxes, one row per account. Deliberately not grouped by provider:
     // two Gmail accounts are two rows with two sync states, because a single
     // "Google" row cannot say which of the two stopped working.
-    const mailKindNames = {gmail:'Gmail', microsoft:'Microsoft 365', imap:'IMAP'};
+    const mailKindNames = {gmail:'Gmail', microsoft:'Microsoft 365', imap:'IMAP', pop3:'POP3'};
     const mailStatusText = (account) => {
       const sync = account.sync || {};
       if (account.status === 'error' || sync['last-error']) {
@@ -6312,6 +6312,7 @@
           method:'POST', headers:identityHeaders(),
           body:JSON.stringify({
             address: $('#mail-account-address').value.trim(),
+            protocol: $('#mail-account-protocol').value,
             host: $('#mail-account-host').value.trim(),
             'smtp-host': $('#mail-account-smtp-host').value.trim(),
             password: $('#mail-account-password').value

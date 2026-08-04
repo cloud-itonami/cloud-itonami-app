@@ -36,6 +36,7 @@
             [cloud.itonami.app.mail-account :as account]
             [cloud.itonami.app.mail-gmail :as gmail]
             [cloud.itonami.app.mail-imap :as imap]
+            [cloud.itonami.app.mail-pop3 :as pop3]
             [cloud.itonami.app.store :as store])
   (:import [java.net URI URLEncoder]
            [java.net.http HttpClient HttpRequest HttpResponse$BodyHandlers]
@@ -291,7 +292,13 @@
           (case (:kind account)
             :gmail (gmail/sync! account)
             :microsoft (sync-microsoft! account)
-            :imap (imap/sync! account))]
+            :imap (imap/sync! account)
+            :pop3 (pop3/sync! account
+                              ;; POP3 has no 'what is new' — the only way to
+                              ;; avoid refetching the whole maildrop every
+                              ;; minute is to tell it what this app already
+                              ;; holds.
+                              {:known-uids (:uids (account/cursor (:id account)))}))]
       (delete-messages! (:id account) deleted)
       (upsert-messages! account messages cursor))
     (catch Exception error

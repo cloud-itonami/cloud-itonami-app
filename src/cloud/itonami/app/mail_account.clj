@@ -18,6 +18,7 @@
   | `:gmail`     | Gmail API v1 (com-gmail)| an OAuth grant, refreshed       |
   | `:microsoft` | Microsoft Graph         | an OAuth grant, refreshed       |
   | `:imap`      | IMAP4rev1 / SMTP        | a password, held in the Keychain|
+  | `:pop3`      | POP3 / SMTP             | a password, held in the Keychain|
 
   ## Two halves, kept apart on purpose
 
@@ -27,7 +28,7 @@
   them out of `identity/connections-for` every time rather than keeping a copy
   that could disagree with it.
 
-  An IMAP account is **declared**: somebody typed a host and a password, and
+  An IMAP or POP3 account is **declared**: somebody typed a host and a password, and
   that record has to live somewhere, so it lives in the store under
   `[:mail :accounts]`. Its password does not: that goes to the Keychain under
   this namespace's own service name, and only ever comes back one item at a
@@ -56,7 +57,7 @@
   different lifetimes and different blast radii."
   "cloud-itonami-app.mail")
 
-(def kinds #{:gmail :microsoft :imap})
+(def kinds #{:gmail :microsoft :imap :pop3})
 
 (def ^:private oauth-kind
   "Which provider backs which account kind. Only these two providers are
@@ -127,7 +128,7 @@
   otherwise disconnecting Google would leave its mailbox in the list forever."
   [state]
   (->> (vals (stored-accounts state))
-       (filter #(= :imap (:kind %)))))
+       (filter #(contains? #{:imap :pop3} (:kind %)))))
 
 (defn- delegated-account
   "A mailbox reached with a credential another tool on this machine owns."
@@ -267,7 +268,7 @@
 ;; ---------------------------------------------------------------------------
 ;; Declaring an IMAP account
 
-(def ^:private default-ports {:imap 993 :smtp 465})
+(def ^:private default-ports {:imap 993 :smtp 465 :pop3 995})
 
 (defn- require-text! [value field]
   (let [value (str/trim (str value))]
@@ -284,7 +285,7 @@
     port))
 
 (defn add-imap-account!
-  "Register a mailbox reached over IMAP, with SMTP for sending.
+  "Register a mailbox reached over IMAP or POP3, with SMTP for sending.
 
   The password is written to the Keychain and the record that goes to the
   store holds only a reference to it — the same division `identity` keeps for
@@ -292,28 +293,39 @@
   copied, read and backed up, and a password in it is a password in all of
   those places too.
 
-  SMTP defaults to the IMAP username and the submission port, because for
-  every host this is aimed at they are the same account; a host where they
-  differ can say so."
-  [{:keys [address host port username password
+  SMTP defaults to the reading host's username and the submission port,
+  because for every host this is aimed at they are the same account; a host
+  where they differ can say so.
+
+  `:protocol` is `\"imap\"` (the default) or `\"pop3\"`. POP3 is the lesser
+  of the two in every respect — no folders, no server-side flags, message
+  numbers that renumber on deletion — and is offered because plenty of ISP
+  and legacy hosting mailboxes still speak nothing else."
+  [{:keys [address host port username password protocol
            smtp-host smtp-port smtp-username display-name]}
    {:keys [user-did]}]
-  (let [address (str/lower-case (require-text! address "メールアドレス"))
-        host (require-text! host "IMAP サーバー")
+  (let [kind (if (= "pop3" (str/lower-case (str/trim (str (or protocol "imap")))))
+               :pop3 :imap)
+        address (str/lower-case (require-text! address "メールアドレス"))
+        host (require-text! host (if (= :pop3 kind) "POP3 サーバー" "IMAP サーバー"))
         username (str/trim (or (not-empty (str username)) address))
         password (require-text! password "パスワード")
         smtp-host (str/trim (or (not-empty (str smtp-host)) host))
-        id (account-id :imap (str username "@" host))
+        id (account-id kind (str username "@" host))
         now (store/now)
+        reading {:host host
+                 :port (port! port (get default-ports kind))
+                 :username username}
         record {:id id
-                :kind :imap
+                :kind kind
                 :address address
                 :display-name (or (not-empty (str display-name)) address)
                 :user-did user-did
                 :status :connected
-                :imap {:host host
-                       :port (port! port (:imap default-ports))
-                       :username username}
+                ;; Keyed by the protocol it is, so `mail-pop3` and
+                ;; `mail-imap` each read their own and neither has to check
+                ;; which kind of host it was handed.
+                (if (= :pop3 kind) :pop3 :imap) reading
                 :smtp {:host smtp-host
                        :port (port! smtp-port (:smtp default-ports))
                        :username (str/trim (or (not-empty (str smtp-username))
@@ -340,7 +352,7 @@
   live and the mailbox merely hidden."
   [id]
   (let [existing (get-in (store/snapshot) (conj (accounts-path) id))]
-    (when-not (= :imap (:kind existing))
+    (when-not (contains? #{:imap :pop3} (:kind existing))
       (throw (ex-info "OAuth で接続したアカウントはここでは削除できません。接続を解除してください。"
                       {:type :mail/not-removable :id id})))
     (keychain-delete! (keychain-account-name id :password))
@@ -389,12 +401,14 @@
   [account]
   (-> account
       (select-keys [:id :kind :address :display-name :status :sync :user-did])
-      (assoc :removable? (= :imap (:kind account))
+      (assoc :removable? (contains? #{:imap :pop3} (:kind account))
              :delegated? (boolean (:delegated? account))
              ;; Never-synced and failing must not look the same to somebody
              ;; asking whether their mail is arriving.
              :status (get-in account [:sync :status] :never-synced))
       (cond-> (:imap account)
         (assoc :imap (select-keys (:imap account) [:host :port :username])))
+      (cond-> (:pop3 account)
+        (assoc :pop3 (select-keys (:pop3 account) [:host :port :username])))
       (cond-> (:smtp account)
         (assoc :smtp (select-keys (:smtp account) [:host :port :username])))))

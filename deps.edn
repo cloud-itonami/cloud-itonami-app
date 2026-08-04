@@ -58,15 +58,27 @@
   io.github.kotoba-lang/com-gmail
   {:git/url "https://github.com/kotoba-lang/com-gmail.git"
    :git/sha "de7932b50979c3e2918ecb09f2b8543c93a37bcb"}
+
+  ;; The message format those protocols carry. Not optional: an IMAP or POP3
+  ;; account hands over raw RFC 5322 bytes, and turning those into a subject,
+  ;; a body and an attachment list is this library's whole job. Writing that
+  ;; here — which is what happened for one commit, inside org-ietf-imap — is
+  ;; how a multipart/alternative message comes out as its own MIME boundaries.
+  io.github.kotoba-lang/org-ietf-mime
+  {:git/url "https://github.com/kotoba-lang/org-ietf-mime.git"
+   :git/sha "71c93d49a7b7d53c847afcb2216332e80bcfcc35"}
+  io.github.kotoba-lang/org-ietf-pop3
+  {:git/url "https://github.com/kotoba-lang/org-ietf-pop3.git"
+   :git/sha "b180ebd1bf1ed4f8c251e3a66e0aaf82468e978c"}
   ;; Pinned to the commit that added whole-message reads (`fetch-message!` /
   ;; `list-recent!`). The prior pin could fetch headers only, which is enough
   ;; to triage a mailbox and not enough to show one.
   io.github.kotoba-lang/org-ietf-imap
   {:git/url "https://github.com/kotoba-lang/org-ietf-imap.git"
-   :git/sha "c79e3362b9bed526e5b2fd02e98eb00d00585620"}
+   :git/sha "dd14dc42ad8a1f7e1a1677342e3cb751a6ed9afc"}
   io.github.kotoba-lang/org-ietf-smtp
   {:git/url "https://github.com/kotoba-lang/org-ietf-smtp.git"
-   :git/sha "5423d0bab43facb84209a6f528dd2ff30f0ec0a2"}
+   :git/sha "71114b058326bfd7564c828957f990f61c3b42d4"}
   ;; advanced from 90eac285 (fast-forward): that pin predates
   ;; drive/object.cljc, which is the IObjectStore seam this app now fills. The
   ;; :dev alias overrides this to a :local/root, so this gap only appears in a
@@ -319,6 +331,10 @@
     {:local/root "../../kotoba-lang/org-ietf-imap"}
     io.github.kotoba-lang/org-ietf-smtp
     {:local/root "../../kotoba-lang/org-ietf-smtp"}
+    io.github.kotoba-lang/org-ietf-mime
+    {:local/root "../../kotoba-lang/org-ietf-mime"}
+    io.github.kotoba-lang/org-ietf-pop3
+    {:local/root "../../kotoba-lang/org-ietf-pop3"}
     io.github.kotoba-lang/drive {:local/root "../../kotoba-lang/drive"}
     io.github.kotoba-lang/sheets {:local/root "../../kotoba-lang/sheets"}
     io.github.kotoba-lang/esim {:local/root "../../kotoba-lang/esim"}
