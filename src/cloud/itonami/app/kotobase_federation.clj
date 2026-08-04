@@ -21,6 +21,7 @@
 (def git-read-resource "kotoba://can/kotobase:git-read")
 (def subject-prefix "urn:kotobase:federation:cloud-itonami:subject:")
 (def assertion-seconds 120)
+(def ^:private seed-lock (Object.))
 
 (defn subject-resource [subject-did]
   (str subject-prefix subject-did))
@@ -42,10 +43,11 @@
     seed))
 
 (defn issuer-seed []
-  (or (read-seed)
-      (write-seed! (let [seed (byte-array 32)]
-                     (.nextBytes (SecureRandom.) seed)
-                     seed))))
+  (locking seed-lock
+    (or (read-seed)
+        (write-seed! (let [seed (byte-array 32)]
+                       (.nextBytes (SecureRandom.) seed)
+                       seed)))))
 
 (defn issuer-did []
   (ed/did-key-from-seed (issuer-seed)))
