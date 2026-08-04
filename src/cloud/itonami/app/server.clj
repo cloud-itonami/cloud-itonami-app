@@ -25,6 +25,7 @@
             [cloud.itonami.app.identity :as identity]
             [cloud.itonami.app.fax :as fax]
             [cloud.itonami.app.lawfirm :as lawfirm]
+            [cloud.itonami.app.kotobase-federation :as kotobase-federation]
             [cloud.itonami.app.loops :as loops]
             [cloud.itonami.app.metrics :as business-metrics]
             [cloud.itonami.app.mcp :as mcp]
@@ -280,6 +281,12 @@
   [exchange session]
   (when-not (bearer-token exchange)
     (require-csrf-header! exchange session)))
+
+(defn- route-kotobase-federation! [exchange config]
+  (let [session (require-human-session! exchange)]
+    (require-origin! exchange config)
+    (require-csrf! exchange session)
+    (send! exchange 200 (kotobase-federation/mint-assertion session))))
 
 (defn- send-empty! [^HttpExchange exchange status headers]
   (doseq [[header value] headers]
@@ -3148,6 +3155,33 @@
             (send! exchange 500 {:error {:type "internal_error"
                                          :message (.getMessage error)}})))))))
 
+(defn- with-kotobase-federation [delegate config]
+  (reify HttpHandler
+    (handle [_ exchange]
+      (let [method (.getRequestMethod exchange)
+            path (.getPath (.getRequestURI exchange))]
+        (if (and (= method "POST")
+                 (= path "/api/integrations/kotobase/assertion"))
+          (try
+            (route-kotobase-federation! exchange config)
+            (catch clojure.lang.ExceptionInfo error
+              (send! exchange
+                     (case (:type (ex-data error))
+                       :identity/unauthenticated 401
+                       :identity/invalid-origin 403
+                       :identity/invalid-csrf 403
+                       :identity/agent-session-forbidden 403
+                       :kotobase-federation/passkey-required 403
+                       :kotobase-federation/no-subject-did 428
+                       400)
+                     {:error {:type (name (or (:type (ex-data error))
+                                             :kotobase-federation/error))
+                              :message (.getMessage error)}}))
+            (catch Exception error
+              (send! exchange 500 {:error {:type "internal_error"
+                                           :message (.getMessage error)}})))
+          (.handle ^HttpHandler delegate exchange))))))
+
 (defn start!
   ([] (start! (config/load-config)))
   ([configuration]
@@ -3164,7 +3198,9 @@
    (let [host (get-in configuration [:server :host])
          port (get-in configuration [:server :port])
          instance (HttpServer/create (InetSocketAddress. host (int port)) 0)]
-     (.createContext instance "/" (handler configuration))
+     (.createContext instance "/"
+                     (with-kotobase-federation (handler configuration)
+                                               configuration))
      (.setExecutor instance (executor/task-executor))
      (.start instance)
      (reset! server instance)
