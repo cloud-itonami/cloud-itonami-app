@@ -133,9 +133,24 @@ DataLad dataset (`-c text2git`) on first filing, so envelopes stay readable Git
 objects while encrypted bodies go to git-annex — a clone stays small, and the
 bytes can later be pushed to an encrypted remote.
 
+The key is resolved from four places, in order — environment, recipients file,
+**macOS Keychain**, **kagi**. A desktop app started by a double-click has no
+exported environment, so the last two are what actually answer:
+
+| Store | Item |
+|---|---|
+| kagi (item of record) | `itonami-mail-age`, compartment `personal`, a kagitaba item with `recipient` + `identity` |
+| macOS Keychain (mirror) | service `cloud-itonami-app.mail-age`, accounts `recipient` and `identity` |
+
+`GET /api/mail/projects` reports which one answered, because "filing works" and
+"filing is storing bodies" are different facts and the second fails silently.
+
+**The app reads only the recipient.** It writes mail and never reads it back, so
+it holds no identity. Decryption is a person's command:
+
 ```bash
-export CLOUD_ITONAMI_MAIL_AGE_RECIPIENTS=age1…            # or …_RECIPIENTS_FILE
-age -d -i ~/.age/identity.txt <project>/mail/2026/08/<id>.eml.age
+kagi get itonami-mail-age | grep -o 'AGE-SECRET-KEY-[A-Z0-9]*' > /tmp/id   # or Keychain
+age -d -i /tmp/id <project>/mail/2026/08/<id>.eml.age
 ```
 
 **Fail closed:** with no recipient configured the body is not written in the

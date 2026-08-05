@@ -34,6 +34,7 @@
             [cloud.itonami.app.oauth-resource :as oauth-resource]
             [cloud.itonami.app.messenger :as messenger]
             [cloud.itonami.app.portfolio :as portfolio]
+            [cloud.itonami.app.mail-age-key :as age-key]
             [cloud.itonami.app.mail-projects :as mail-projects]
             [cloud.itonami.app.project-repository :as project-repository]
             [cloud.itonami.app.organism-gateway :as organism-gateway]
@@ -1300,7 +1301,11 @@
     (and (= method "GET") (= path "/api/mail/projects"))
     (let [session (require-app-session! exchange)]
       (send! exchange 200
-             (mail-projects/overview (:organization-id session))))
+             (assoc (mail-projects/overview (:organization-id session))
+                    ;; Beside the counts, because "filing works" and "filing is
+                    ;; storing bodies" are different facts and the second is the
+                    ;; one that fails silently.
+                    :sealing (age-key/status))))
 
     (and (= method "GET") (= path "/api/mail/projects/unassigned"))
     (let [session (require-app-session! exchange)]
