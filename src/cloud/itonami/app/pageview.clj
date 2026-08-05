@@ -99,16 +99,18 @@
   needs that write to be atomic with the read. All of that to choose better
   than starting again, on a map of eight.
 
-  ## What this is under concurrency, said rather than assumed
+  ## One parse per document, even under concurrent readers
 
-  `swap!` makes the map safe: no entry is ever half-written and the count
-  never exceeds this. What it does NOT do is stop two requests parsing the
-  same document at once — both parse, both store, and the second store wins
-  with an equal value. That is wasted work and not a wrong answer, and the
-  fix for it (a promise per key, so the second waits) trades a bounded waste
-  for a way to deadlock a request thread on a parse that throws. Not worth
-  it at this size, and this paragraph is here so the trade is a decision
-  rather than an omission.
+  Each entry is a `delay`, so the map is what is shared and the PARSE is
+  what is guarded: two requests for one document both find the same delay
+  and the second blocks on the first rather than scanning the file again.
+  At 32 MiB a copy that is the difference between one parse and eight.
+
+  The reason this was left as duplicate work for a while — a promise per key
+  can strand a waiter when the parse throws — does not apply to a delay: it
+  propagates the exception to every caller. What a delay does instead is
+  REMEMBER the exception, which is exactly the failure that must not be
+  cached, so `cached-parse` removes a failed entry before rethrowing.
 
   The bound is on ENTRIES and each entry is a parsed PDF, so the real
   ceiling is eight times `render-limit-bytes` worth of object graph. That is
@@ -128,19 +130,33 @@
 
   A refusal is NOT cached. `parse!` throws for a file no decoder can read, and
   remembering that would make the answer permanent for the life of the
-  process — including across the deploy that adds the decoder.
+  process — including across the deploy that adds the decoder. A `delay`
+  remembers a thrown exception, so a failed entry is removed before the
+  throw is allowed out.
 
-  Concurrency: see `cache-limit`. Two callers may parse the same reference at
-  once and both store; neither can observe a partial entry."
+  The removal is conditional on the entry still being the one that failed.
+  Dropping whatever is there would evict a good parse that another thread
+  had already put in its place, which is a cache that gets slower the more
+  it is used."
   [ref parse!]
   (if-not ref
     (parse!)
-    (or (get @parse-cache ref)
-        (let [parsed (parse!)]
-          (swap! parse-cache
-                 (fn [cache]
-                   (assoc (if (>= (count cache) cache-limit) {} cache) ref parsed)))
-          parsed))))
+    (let [d (delay (parse!))
+          existing (-> (swap! parse-cache
+                              (fn [cache]
+                                (if (contains? cache ref)
+                                  cache
+                                  (assoc (if (>= (count cache) cache-limit) {} cache)
+                                         ref d))))
+                       (get ref))]
+      (try
+        @existing
+        (catch Throwable t
+          (swap! parse-cache (fn [cache]
+                               (if (identical? (get cache ref) existing)
+                                 (dissoc cache ref)
+                                 cache)))
+          (throw t))))))
 
 (defn forget-cached!
   "Drop everything. For tests, and for an operator who has a reason."
