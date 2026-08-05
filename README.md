@@ -92,6 +92,41 @@ WebAuthn user-verifying assertion, which no CLI and no agent can produce
 directory also needs the browser once, to enrol a Passkey and create the
 organization, before `auth login` will issue a session.
 
+## ローカル projects と、メールの振り分け
+
+Local projects are ordinary Git repositories this machine owns — one per
+organization/user/project. They are **not** `/api/workspace/projects`, which
+reads GitHub Projects v2 through `gh`. Mail is filed against them by
+deterministic rules (ADR-0019).
+
+```bash
+bin/itonami projects create --project finance --title "Finance"
+bin/itonami projects list
+
+# rules: sender, sender domain, subject substring, or a classify label.
+# every clause must hold; the first matching rule wins.
+bin/itonami mail projects rules --project finance --label finance
+bin/itonami mail projects rules --project travel  --from-domain jal.com
+
+bin/itonami mail projects apply        # -> {:assigned 20 :unmatched 88 …}
+bin/itonami mail projects              # rules + per-project counts
+bin/itonami mail projects unassigned   # the pile no rule caught, senders ranked
+bin/itonami projects mail --project finance
+
+bin/itonami mail projects assign --message <id> --project travel
+bin/itonami mail projects unassign --message <id>
+```
+
+Nothing is moved and nothing is deleted: assignment is a third plane over the
+message store and the per-person marks. A rule cannot name a project that does
+not exist, and a rule never overwrites a manual assignment.
+
+There is **no model in this path on purpose.** An LLM asked which project an
+invoice belongs to answers confidently for mail that belongs to none of them,
+and a wrong assignment is invisible in a way an unfiled message is not. So the
+unmatched count is reported and the unassigned senders are ranked — the backlog
+of rules to write is a number, not a guess.
+
 ## OpenAI-compatible clients
 
 Any tool that speaks the OpenAI chat API can use the local models through the

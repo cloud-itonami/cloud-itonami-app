@@ -34,6 +34,8 @@
             [cloud.itonami.app.oauth-resource :as oauth-resource]
             [cloud.itonami.app.messenger :as messenger]
             [cloud.itonami.app.portfolio :as portfolio]
+            [cloud.itonami.app.mail-projects :as mail-projects]
+            [cloud.itonami.app.project-repository :as project-repository]
             [cloud.itonami.app.organism-gateway :as organism-gateway]
             [cloud.itonami.app.organism-messenger-transport :as organism-messenger-transport]
             [cloud.itonami.app.relay :as relay]
@@ -603,6 +605,17 @@
 ;; will sign and a user with two Passkeys has two DIDs. `:principal` is still the
 ;; user id, because that is what the Drive's ACL is keyed on — `cloud.itonami.app.esign`
 ;; needs both and neither substitutes for the other.
+(defn- project-scope
+  "The organization/user/project triple `project-repository` addresses by.
+
+  `project-id` defaults to `default` rather than being required, because the
+  catalogue read has no project yet and `storage-owner` hashes all three — a nil
+  there would put every organization's listing in one storage owner."
+  [session project-id]
+  {:organization-id (:organization-id session)
+   :user-id (:user-id session)
+   :project-id (or (not-empty (str/trim (str project-id))) "default")})
+
 (defn- esign-who [session]
   {:principal (:user-id session)
    :did (get-in (store/snapshot) [:identity :users (:user-id session) :did])})
@@ -1275,6 +1288,140 @@
       (send! exchange 200 (messenger/mark-read! organization actor id)))
 
     :else (send! exchange 404 {:error "not found"})))
+
+(defn- handle-mail-projects!
+  "Filing mail against local projects.
+
+  Organization-scoped, because a project is shared — unlike `/api/workspace/inbox`,
+  whose marks are one person's. Nothing here moves or deletes a message; the
+  assignment is a third plane laid over the two that already exist."
+  [config exchange method path]
+  (cond
+    (and (= method "GET") (= path "/api/mail/projects"))
+    (let [session (require-app-session! exchange)]
+      (send! exchange 200
+             (mail-projects/overview (:organization-id session))))
+
+    (and (= method "GET") (= path "/api/mail/projects/unassigned"))
+    (let [session (require-app-session! exchange)]
+      (send! exchange 200
+             (mail-projects/unassigned (:organization-id session))))
+
+    (and (= method "POST") (= path "/api/mail/projects/rules"))
+    (let [session (require-app-session! exchange)
+          request (read-json exchange)]
+      (require-origin! exchange config)
+      (require-csrf! exchange session)
+      (send! exchange 201
+             (mail-projects/add-rule!
+              (:organization-id session)
+              {:project (:project request)
+               :match {:from (:from request)
+                       :from-domain (:from-domain request)
+                       :subject-contains (:subject-contains request)
+                       :label (:label request)}})))
+
+    (and (= method "POST")
+         (id-from-path path #"/api/mail/projects/rules/([^/]+)/remove"))
+    (let [session (require-app-session! exchange)
+          rule (id-from-path path #"/api/mail/projects/rules/([^/]+)/remove")]
+      (require-origin! exchange config)
+      (require-csrf! exchange session)
+      (send! exchange 200
+             (mail-projects/remove-rule! (:organization-id session) rule)))
+
+    (and (= method "POST") (= path "/api/mail/projects/apply"))
+    (let [session (require-app-session! exchange)]
+      (require-origin! exchange config)
+      (require-csrf! exchange session)
+      (send! exchange 200
+             (mail-projects/apply-rules! (:organization-id session))))
+
+    (and (= method "POST") (= path "/api/mail/projects/assign"))
+    (let [session (require-app-session! exchange)
+          request (read-json exchange)]
+      (require-origin! exchange config)
+      (require-csrf! exchange session)
+      (send! exchange 200
+             (mail-projects/assign! (:organization-id session)
+                                    (:message request)
+                                    (:project request)
+                                    (:user-id session))))
+
+    (and (= method "POST") (= path "/api/mail/projects/unassign"))
+    (let [session (require-app-session! exchange)
+          request (read-json exchange)]
+      (require-origin! exchange config)
+      (require-csrf! exchange session)
+      (send! exchange 200
+             (mail-projects/unassign! (:organization-id session)
+                                      (:message request))))
+
+    :else (send! exchange 404 {:error "not_found" :path path})))
+
+(defn- project-route?
+  "Both project prefixes, as ONE test.
+
+  Two `cond` clauses would be clearer to read and this app cannot afford them:
+  `handler`'s reify method is within a few hundred bytes of the JVM's 64 KB
+  bytecode limit, and adding the second clause pushed it over — the compiler
+  then refuses the whole namespace, not the clause. One predicate and one call
+  site is what fits."
+  [path]
+  (or (str/starts-with? path "/api/projects")
+      (str/starts-with? path "/api/mail/projects")))
+
+(defn- handle-projects!
+  "The LOCAL project catalogue, which is a different thing from
+  `/api/workspace/projects`.
+
+  That one reads GitHub Projects v2 through `gh`; these are ordinary Git
+  repositories this machine owns, one per organization/user/project, and they
+  answer with no network at all. Both are called \"projects\" by their own
+  sources, so neither name could be taken from the other — the paths say which
+  authority is being asked."
+  [config exchange method path]
+  (cond
+    (str/starts-with? path "/api/mail/projects")
+    (handle-mail-projects! config exchange method path)
+
+    (and (= method "GET") (= path "/api/projects"))
+    (let [session (require-app-session! exchange)]
+      (send! exchange 200
+             (project-repository/local-projects-snapshot
+              (project-scope session nil))))
+
+    (and (= method "POST") (= path "/api/projects"))
+    (let [session (require-app-session! exchange)
+          request (read-json exchange)]
+      (require-origin! exchange config)
+      (require-csrf! exchange session)
+      (send! exchange 201
+             {:schema "cloud.itonami.app.projects.v1"
+              :item (project-repository/create-project!
+                     (project-scope session (:project request))
+                     {:title (:title request)
+                      :description (:description request)})}))
+
+    ;; The mail filed against one project. Under /api/projects rather than
+    ;; /api/mail because the question is "what does this project have", and the
+    ;; project is what the caller already has in hand.
+    (and (= method "GET")
+         (id-from-path path #"/api/projects/([^/]+)/mail"))
+    (let [session (require-app-session! exchange)
+          project (id-from-path path #"/api/projects/([^/]+)/mail")]
+      (send! exchange 200
+             (mail-projects/project-mail (:organization-id session) project)))
+
+    (and (= method "GET")
+         (id-from-path path #"/api/projects/([^/]+)"))
+    (let [session (require-app-session! exchange)
+          project (id-from-path path #"/api/projects/([^/]+)")]
+      (send! exchange 200
+             (project-repository/project-board
+              (project-scope session project))))
+
+    :else (send! exchange 404 {:error "not_found" :path path})))
 
 (defn handler [config]
   (reify HttpHandler
@@ -2420,6 +2567,13 @@
               (require-app-session! exchange)
               (send! exchange 200
                      (workspace/snapshot :projects workspace/projects-snapshot)))
+
+            ;; Local Git projects. Kept outside this already-large JVM method for
+            ;; the same reason as governance and the messenger: adding these three
+            ;; clauses inline pushed `handler`'s reify method past the 64 KB
+            ;; bytecode limit and the compiler refused the whole namespace.
+            (project-route? path)
+            (handle-projects! config exchange method path)
 
             ;; The archive half of this is cached for a minute by
             ;; `workspace/snapshot`; the created documents are not, because a

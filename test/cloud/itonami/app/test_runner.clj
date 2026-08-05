@@ -23,6 +23,8 @@
             [cloud.itonami.app.fax-test]
             [cloud.itonami.app.metrics-test]
             [cloud.itonami.app.portfolio-test]
+            [cloud.itonami.app.mail-projects-test]
+            [cloud.itonami.app.project-repository-test]
             [cloud.itonami.app.repos-test]
             [cloud.itonami.app.repository-storage-test]
             [cloud.itonami.app.repository-qualification-test]
@@ -115,6 +117,8 @@
     cloud.itonami.app.fax-test
     cloud.itonami.app.metrics-test
     cloud.itonami.app.portfolio-test
+    cloud.itonami.app.mail-projects-test
+    cloud.itonami.app.project-repository-test
     cloud.itonami.app.repos-test
     cloud.itonami.app.repository-storage-test
     cloud.itonami.app.repository-qualification-test
