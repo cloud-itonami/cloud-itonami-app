@@ -295,6 +295,44 @@
         (testing "and bob still cannot read it, cache or no cache"
           (is (some? (error-type #(pageview/page (:id item) bob 0 object-store)))))))))
 
+(deftest one-parse-per-document-even-with-readers-racing
+  ;; Was duplicate work by decision; now it is not. Sixteen threads released
+  ;; together onto ONE document must produce one parse, not sixteen — at 32
+  ;; MiB a copy that is the whole point.
+  (with-state
+    (fn [_ object-store]
+      (let [item (upload! object-store (pdf-bytes "contended"))
+            parses (atom 0)
+            gate (java.util.concurrent.CountDownLatch. 1)
+            real pdf/parse]
+        (with-redefs [pdf/parse (fn [b]
+                                  (swap! parses inc)
+                                  ;; Wide enough for the other threads to
+                                  ;; arrive; without it they may serialise
+                                  ;; by luck and the test proves nothing.
+                                  (Thread/sleep 40)
+                                  (real b))]
+          (let [fs (doall (repeatedly 16 (fn [] (future (.await gate)
+                                                        (:ok? (pageview/page (:id item) alice 0
+                                                                             object-store))))))]
+            (.countDown gate)
+            (is (every? true? (mapv deref fs)))))
+        (is (= 1 @parses) (str "parsed " @parses " times"))))))
+
+(deftest a-failed-parse-leaves-no-entry-behind
+  ;; A `delay` remembers a thrown exception, which is exactly the answer
+  ;; that must not be cached — it would outlive the deploy that adds the
+  ;; decoder.
+  (with-state
+    (fn [_ object-store]
+      (let [item (upload! object-store (pdf-bytes "fine"))]
+        (with-redefs [pdf/parse (fn [_] (throw (Exception. "zlib: nope")))]
+          (dotimes [_ 3]
+            (is (= :pageview/undecodable
+                   (error-type #(pageview/page (:id item) alice 0 object-store))))))
+        (is (empty? @@#'pageview/parse-cache) "and nothing was left in the map")
+        (is (:ok? (pageview/page (:id item) alice 0 object-store)))))))
+
 (deftest a-refusal-is-not-remembered
   ;; Caching it would make the answer permanent for the life of the process,
   ;; including across the deploy that adds the decoder.
