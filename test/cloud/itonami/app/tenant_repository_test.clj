@@ -10,7 +10,11 @@
 (def tenant-id "org-a")
 (def agent-session
   {:id "agent-session" :kind :agent :user-id user-id :label "loop"})
-(def human {:id "human-session" :kind :passkey :user-id user-id})
+;; A Passkey session as a real ceremony mints it — `:kind :passkey` alone is
+;; what every browser token carries by default, and `may-act?` also requires
+;; the assurance markers.
+(def human {:id "human-session" :kind :passkey :user-id user-id
+            :issued-via :passkey :authn-level :phishing-resistant})
 
 (defn- fixture []
   (assoc (store/initial-state) :identity
