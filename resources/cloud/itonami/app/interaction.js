@@ -602,6 +602,19 @@
     const inboxActions = (item) => {
       const box = make('div', 'appointment');
       const row = make('div', 'appointment__answers');
+      // Reply prefills rather than sends: the account, the recipient and the
+      // threading headers are all derivable from the message being read, and
+      // making somebody retype them is how a reply ends up on no thread.
+      const reply = make('button', 'tool-button', '返信');
+      reply.type = 'button';
+      reply.addEventListener('click', () => openCompose({
+        accountId: item['account-id'],
+        to: item['from-email'],
+        subject: /^re:/i.test(item.subject || '') ? item.subject : `Re: ${item.subject || ''}`,
+        inReplyTo: item['message-id'],
+        threadId: item.thread
+      }));
+      row.append(reply);
       const starred = (item.labels || []).includes('starred');
       const trashed = (item.labels || []).includes('trash');
       const star = make('button', 'tool-button', starred ? 'スターを外す' : 'スターを付ける');
@@ -727,10 +740,99 @@
         $('#inbox-detail').append(inboxActions(selectedInbox));
       }
       else $('#inbox-detail').replaceChildren(make('div', 'empty-state', 'メールを選択してください。'));
+      if (!$('#mail-compose-account')?.options.length) composeAccounts();
       $('#inbox-visible-count').textContent = `${items.length} 件を表示`;
       $('#inbox-count').textContent = data.count;
       $('#inbox-source').textContent = `${data.source} · ${data.count} 件`;
     };
+
+    const mailKindNames = {gmail:'Gmail', microsoft:'Microsoft 365', imap:'IMAP', pop3:'POP3'};
+    // --- composing -----------------------------------------------------
+    //
+    // `POST /api/mail/send` existed from the day sending was implemented and
+    // nothing in the interface reached it. Which account sends is an explicit
+    // choice: with several mailboxes connected there is no "the" account, and
+    // sending a work reply from a personal address is a mistake an interface
+    // should not make on somebody's behalf.
+    const composeAccounts = async () => {
+      const select = $('#mail-compose-account');
+      const help = $('#mail-compose-account-help');
+      if (!select) return;
+      try {
+        const request = await fetch('/api/mail/accounts', {headers:identityHeaders()});
+        if (!request.ok) throw new Error('メールアカウントを取得できませんでした。');
+        const accounts = (await request.json()).accounts || [];
+        select.replaceChildren();
+        accounts.forEach((account) => {
+          const option = make('option', null,
+            `${account.address || account.id}（${mailKindNames[account.kind] || account.kind}）`);
+          option.value = account.id;
+          select.append(option);
+        });
+        help.textContent = accounts.length
+          ? 'どのメールボックスから送るかを選びます。'
+          : 'メールアカウントがありません。Settings で接続してください。';
+        $('#mail-compose-send').disabled = accounts.length === 0;
+      } catch (error) {
+        help.textContent = error.message;
+      }
+    };
+
+    const openCompose = (prefill = {}) => {
+      const box = $('#mail-compose');
+      if (!box) return;
+      box.open = true;
+      $('#mail-compose-to').value = prefill.to || '';
+      $('#mail-compose-cc').value = '';
+      $('#mail-compose-subject').value = prefill.subject || '';
+      $('#mail-compose-body').value = '';
+      $('#mail-compose-in-reply-to').value = prefill.inReplyTo || '';
+      $('#mail-compose-thread-id').value = prefill.threadId || '';
+      $('#mail-compose-status').textContent = '';
+      if (prefill.accountId) $('#mail-compose-account').value = prefill.accountId;
+      $('#mail-compose-body').focus();
+    };
+
+    $('#mail-compose-form')?.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const status = $('#mail-compose-status');
+      const button = $('#mail-compose-send');
+      button.disabled = true;
+      status.textContent = '送信中…';
+      try {
+        const body = {
+          'account-id': $('#mail-compose-account').value,
+          to: $('#mail-compose-to').value.trim(),
+          cc: $('#mail-compose-cc').value.trim(),
+          subject: $('#mail-compose-subject').value.trim(),
+          text: $('#mail-compose-body').value
+        };
+        const inReplyTo = $('#mail-compose-in-reply-to').value;
+        const threadId = $('#mail-compose-thread-id').value;
+        if (inReplyTo) body['in-reply-to'] = inReplyTo;
+        if (threadId) body['thread-id'] = threadId;
+        const request = await fetch('/api/mail/send', {
+          method:'POST', headers:identityHeaders(), body:JSON.stringify(body)
+        });
+        const result = await request.json();
+        if (!request.ok) throw new Error(result?.error?.message || '送信できませんでした。');
+        // The Sent copy is reported separately and never as a failure: the
+        // message has already left, so "sent, but not filed" is the honest
+        // thing to say rather than an error.
+        const copy = result['sent-copy'];
+        status.textContent = copy && copy['appended?'] === false
+          ? `送信しました（送信済みフォルダへの保存は失敗: ${copy.error || copy.reason}）`
+          : '送信しました。';
+        $('#mail-compose-form').reset();
+        $('#mail-compose-in-reply-to').value = '';
+        $('#mail-compose-thread-id').value = '';
+      } catch (error) {
+        status.textContent = error.message;
+      } finally {
+        button.disabled = false;
+      }
+    });
+
     let driveData = {items:[]};
     let selectedDrive = null;
     // Where in the tree the list is looking. Null is the root, which is
@@ -6938,7 +7040,6 @@
     // Mailboxes, one row per account. Deliberately not grouped by provider:
     // two Gmail accounts are two rows with two sync states, because a single
     // "Google" row cannot say which of the two stopped working.
-    const mailKindNames = {gmail:'Gmail', microsoft:'Microsoft 365', imap:'IMAP', pop3:'POP3'};
     const mailStatusText = (account) => {
       const sync = account.sync || {};
       if (account.status === 'error' || sync['last-error']) {

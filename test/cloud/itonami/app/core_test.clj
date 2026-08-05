@@ -777,16 +777,36 @@
       (finally
         (reset! store/state previous)))))
 
-;; REMOVED on 2026-08-05 while replaying ADR-0014 onto main:
-;;   (deftest legacy-provisional-owner-repairs-a-missing-webauthn-user-handle …)
-;;
-;; It asserts a repair path that PR #37's branch implemented and main does
-;; not: a legacy provisional owner with no WebAuthn user handle gets one
-;; minted. On main the handle stays nil. The test is not part of the kanban
-;; runtime being replayed here, and its source half was superseded, so it is
-;; removed rather than made to pass by porting a behaviour nobody reviewed.
-;; The gap it documents is real and is recorded in the PR #37 comment and in
-;; the session handoff — not silently dropped.
+(deftest legacy-provisional-owner-repairs-a-missing-webauthn-user-handle
+  (let [previous @store/state
+        captured (atom nil)]
+    (try
+      (reset! store/state
+              (assoc (store/initial-state)
+                     :identity
+                     {:users {"user-1" {:id "user-1"
+                                        :display-name "Owner"
+                                        :status :pending-passkey
+                                        :passkey-enrolled? false}}
+                      :memberships {}
+                      :passkeys {}}))
+      (with-redefs [passkey/start-registration!
+                    (fn [user _rp-id _origin]
+                      (reset! captured user)
+                      {:transaction-id "test-registration"})]
+        (is (= "test-registration"
+               (:transaction-id
+                (local-identity/start-passkey-registration!
+                 {:user-id "user-1"} "localhost"
+                 "http://localhost:1338"))))
+        (let [handle (:user-handle @captured)]
+          (is (string? handle))
+          (is (not (str/blank? handle)))
+          (is (= handle
+                 (get-in (store/snapshot)
+                         [:identity :users "user-1" :user-handle])))))
+      (finally
+        (reset! store/state previous)))))
 
 (deftest oauth-start-is-session-bound-pkce-and-secret-free-in-public-state
   (let [temporary (java.nio.file.Files/createTempDirectory
