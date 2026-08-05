@@ -51,7 +51,8 @@
             [hanmen.page :as hpage]
             [hanmen.pdf :as hpdf]
             [hanmen.svg :as hsvg]
-            [pdf.core :as pdf]))
+            [pdf.core :as pdf]
+            [png.encode :as png]))
 
 (def schema "cloud.itonami.app.pageview.v1")
 
@@ -84,6 +85,51 @@
   (boolean (and (:file? item)
                 (contains? viewable-media-types (str (:media-type item))))))
 
+;; ── the parse cache ──────────────────────────────────────────────────────────
+
+(def cache-limit
+  "How many parsed documents to keep.
+
+  Small on purpose. This exists so that turning to page 12 of a contract does
+  not re-scan the file — a session's worth of use by one person — not so that
+  the server holds everybody's documents. When it is full the whole map is
+  dropped rather than the least-recently-used entry evicted: an LRU needs an
+  access order, an access order needs a write on every READ, and a correct one
+  needs that write to be atomic with the read. All of that to choose better
+  than starting again, on a map of eight."
+  8)
+
+(defonce ^:private parse-cache (atom {}))
+
+(defn- cached-parse
+  "`(parse!)` for `ref`, remembered.
+
+  Keyed on the object reference, which is a PieceCID — it names the CONTENT.
+  The bytes for a given reference cannot change, so there is no invalidation
+  here because there is nothing to invalidate, and two people who uploaded the
+  same file share the entry without either being shown the other's: the key is
+  what the bytes are rather than who holds them.
+
+  A refusal is NOT cached. `parse!` throws for a file no decoder can read, and
+  remembering that would make the answer permanent for the life of the
+  process — including across the deploy that adds the decoder."
+  [ref parse!]
+  (if-not ref
+    (parse!)
+    (or (get @parse-cache ref)
+        (let [parsed (parse!)]
+          (swap! parse-cache
+                 (fn [cache]
+                   (assoc (if (>= (count cache) cache-limit) {} cache) ref parsed)))
+          parsed))))
+
+(defn forget-cached!
+  "Drop everything. For tests, and for an operator who has a reason."
+  []
+  (reset! parse-cache {}))
+
+;; ── reading the file ─────────────────────────────────────────────────────────
+
 (defn- parsed-of
   "The file, through the ACL, parsed.
 
@@ -91,11 +137,9 @@
   uploads), and `drive.object/read-item` inside it is what answers whether
   this principal may have the bytes at all. Nothing here consults the store.
 
-  Re-parsed per request. That is a real cost on a long document and it is
-  left as one rather than hidden behind a cache: the object reference is a
-  PieceCID, so the bytes for a given id are immutable and a memo keyed on it
-  would be trivially correct — which makes it a change to make deliberately,
-  with a bound on its size, and not a side effect of adding a viewer."
+  The cache is read AFTER that call, never before, and the ordering is the
+  whole security of it: a cache consulted first would answer faster and
+  wrong. What is saved is the parse, not the permission check."
   [id actor object-store]
   (let [out (documents/file-bytes id actor object-store)
         bytes (:bytes out)]
@@ -108,19 +152,23 @@
                :pageview/too-large
                {:item-id id :size-bytes (count bytes) :limit render-limit-bytes}))
     {:parsed
-     ;; A decoder saying no is its own answer, and `app-preview.source` named
-     ;; it first: `undecodable` is distinct from a refused grant because the
-     ;; fix is a decoder rather than a permission, and telling somebody to
-     ;; check something else sends them nowhere useful.
-     ;;
-     ;; Measured rather than anticipated: of thirty real PDFs on this
-     ;; machine, twenty-nine rendered and one threw `zlib: unsupported
-     ;; compression method` out of `org-ietf-deflate`. Without this it was a
-     ;; 500 with a zlib message in it, which reads as this app being broken.
-     (try (pdf/parse bytes)
-          (catch Exception e
-            (refuse! "このファイルを読み取れる復号器がありません。ダウンロードしてください。"
-                     :pageview/undecodable {:item-id id :cause (.getMessage e)})))
+     (cached-parse
+      (:object-ref out)
+      (fn []
+        ;; A decoder saying no is its own answer, and `app-preview.source`
+        ;; named it first: `undecodable` is distinct from a refused grant
+        ;; because the fix is a decoder rather than a permission, and telling
+        ;; somebody to check something else sends them nowhere useful.
+        ;;
+        ;; Measured rather than anticipated: of thirty real PDFs on this
+        ;; machine, twenty-nine rendered and one threw `zlib: unsupported
+        ;; compression method` out of `org-ietf-deflate`. Without this it was
+        ;; a 500 with a zlib message in it, which reads as this app being
+        ;; broken rather than as this file needing a decoder nobody wrote.
+        (try (pdf/parse bytes)
+             (catch Exception e
+               (refuse! "このファイルを読み取れる復号器がありません。ダウンロードしてください。"
+                        :pageview/undecodable {:item-id id :cause (.getMessage e)})))))
      :filename (:filename out)}))
 
 (defn document
@@ -133,6 +181,70 @@
        (refuse! "このファイルからページを読み取れませんでした。"
                 :pageview/no-pages {:item-id id}))
      {:schema schema :ok? true :id id :filename filename :count n})))
+
+;; ── images ───────────────────────────────────────────────────────────────────
+
+(defn- image-url
+  "Where page `page-index`'s image `index` is served from.
+
+  Built here, out of two integers and the item id the caller already holds.
+  `hanmen` never puts a document-supplied string in a URL — an `:image` item
+  carries an index precisely so that it cannot — and it refuses an href that
+  is not a same-origin path, so this is the narrow place where the shape of
+  that URL is decided."
+  [id page-index index]
+  (str "/api/workspace/drive/documents/"
+       (java.net.URLEncoder/encode ^String id java.nio.charset.StandardCharsets/UTF_8)
+       "/pages/" page-index "/images/" index))
+
+(defn- samples-per-pixel [bytes width height]
+  (when (and width height (pos? (long width)) (pos? (long height)))
+    (let [n (/ (double (count bytes)) (* (long width) (long height)))]
+      (when (== n (Math/floor n)) (long n)))))
+
+(defn image
+  "One image off a page, as bytes a browser can render.
+
+  `index` counts in `Do` order — the order `hanmen` reached the images while
+  walking the content stream, which is the order `:item/index` was assigned.
+  Resolving it through `hanmen.pdf/page-images` rather than the page's own
+  `/XObject` dictionary is what keeps those the same: the dictionary is in
+  resource order, and the two agree only on a document that never invokes a
+  form. Mixing them serves the wrong picture for the right box, on exactly
+  the documents whose pictures matter.
+
+  A `DCTDecode` XObject already IS a JPEG, so it passes through untouched —
+  decoding and re-encoding it would spend time and quality to arrive at the
+  same picture. Anything else is raw samples, and `png.encode` turns the
+  shapes it knows into a PNG. A shape it does not know — 16-bit, an indexed
+  palette, a CMYK separation — is refused BY NAME rather than encoded
+  wrongly, because a wrongly encoded image opens."
+  ([id actor page-index index]
+   (image id actor page-index index (documents/store-instance)))
+  ([id actor page-index index object-store]
+   (let [{:keys [parsed]} (parsed-of id actor object-store)
+         images (vec (hpdf/page-images parsed (max 0 (or page-index 0))))
+         {:keys [media-type bytes width height] :as found}
+         (nth images (or index -1) nil)]
+     (when-not found
+       (refuse! "その画像はこのページにありません。" :pageview/no-such-image
+                {:item-id id :page page-index :index index :available (count images)}))
+     (if media-type
+       {:schema schema :ok? true :media-type media-type
+        :bytes (byte-array (map unchecked-byte bytes))}
+       (let [color (case (samples-per-pixel bytes width height)
+                     1 :gray 3 :rgb 4 :rgba nil)]
+         (when-not color
+           (refuse! "この画像の形式は表示できません。" :pageview/unsupported-image
+                    {:item-id id :page page-index :index index
+                     :width width :height height :sample-bytes (count bytes)}))
+         {:schema schema :ok? true :media-type png/media-type
+          :bytes (byte-array
+                  (map unchecked-byte
+                       (png/encode bytes {:width width :height height
+                                          :color color})))})))))
+
+;; ── a page ───────────────────────────────────────────────────────────────────
 
 (defn page
   "One page, as SVG and as the facts a viewer puts around it.
@@ -155,9 +267,20 @@
         ;; The page in its own units, scaled by the browser — see
         ;; `hanmen.svg/emit`. A fixed pixel size here would mean re-rendering
         ;; on every resize.
-        :svg (hsvg/->svg p)
+        ;;
+        ;; `:image-href` is what turns an image from an outlined region into
+        ;; a picture. Passing it is this app's decision and not the library's
+        ;; default: without it the fragment loads nothing at all.
+        :svg (hsvg/->svg p {:image-href
+                            (fn [{image-index :index}]
+                              (image-url id index image-index))})
         ;; Said out loud so the pane can explain an empty search rather than
         ;; leaving the reader to conclude the search is broken —
         ;; `app-preview.model/scanned?` learned the same thing about a listing.
         :scanned? (hpage/scanned? p)
-        :text (hpage/text-of p)}))))
+        :text (hpage/text-of p)
+        ;; Both, because they answer different questions. `:text` is what the
+        ;; document says in the order it said it; `:reading-text` is a guess
+        ;; about how to read it — the one a person quoting the page wants and
+        ;; the one a diff of the file does not.
+        :reading-text (hpage/reading-text p)}))))
