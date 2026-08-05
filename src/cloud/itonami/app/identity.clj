@@ -3,7 +3,15 @@
 
   Public state contains metadata and Keychain references only. OAuth access
   and refresh tokens are written to macOS Keychain and never enter state.edn."
-  (:require [cloud.itonami.app.did :as did]
+  (:require [authentication.adapters.email :as auth-email]
+            [authentication.core :as authentication]
+            [authentication.model :as auth-model]
+            [authorization.adapters.policy :as authz-policy]
+            [authorization.adapters.rules :as authz-rules]
+            [authorization.core :as authorization]
+            [authorization.model :as authz-model]
+            [cloud.itonami.app.did :as did]
+            [cloud.itonami.app.email-login :as email-login]
             [cloud.itonami.app.store :as store]
             [cloud.itonami.app.passkey :as passkey]
             [clojure.data.json :as json]
@@ -23,6 +31,8 @@
 (def cookie-name "cloud_itonami_identity")
 (def session-seconds (* 30 24 60 60))
 (def transaction-seconds 600)
+(def email-login-seconds 600)
+(def email-login-cooldown-seconds 60)
 (def enrollment-seconds (* 24 60 60))
 (def account-id-pattern #"^[a-z0-9](?:[a-z0-9._-]{1,30}[a-z0-9])?$")
 (def keychain-service "cloud-itonami-app.oauth")
@@ -32,6 +42,7 @@
    :organization-domain-overrides {}
    :publish-did-web? false})
 (defonce runtime-identity-profile (atom default-identity-profile))
+(defonce runtime-email-login-config (atom {}))
 (defonce http-client (-> (HttpClient/newBuilder)
                          (.connectTimeout (Duration/ofSeconds 8))
                          .build))
@@ -40,7 +51,8 @@
   "Install the distribution/tenant profile for this process."
   [configuration]
   (reset! runtime-identity-profile
-          (merge default-identity-profile (:identity configuration))))
+          (merge default-identity-profile (:identity configuration)))
+  (reset! runtime-email-login-config (:email-login configuration)))
 
 (defn identity-profile []
   @runtime-identity-profile)
@@ -141,7 +153,7 @@
   (merge {:organizations {} :users {} :memberships {}
           :connections {} :oauth-transactions {} :sessions {}
           :passkeys {} :enrollments {} :organization-invitations {}
-          :webauthn-transactions {}}
+          :webauthn-transactions {} :email-login-transactions {}}
          (:identity state)))
 
 (defn- normalize-id [value]
@@ -180,19 +192,21 @@
   "Mint a session for `user-id` and return its token.
 
   `opts` marks non-browser sessions. A browser session takes none and is
-  `:kind :passkey` — the shape every caller had before agent sessions existed,
+  `:kind :passkey` — the shape every caller had before other session proofs,
   so an unmarked record read back from an older store is a browser session and
   is treated as one.
 
-    :kind        :passkey | :agent   what may present this token
+    :kind        :passkey | :email | :agent   what proved this session
     :label       free-form           what to call it when revoking
     :issued-via  :local-ownership    what was proved to get it
+    :authn-ref   authentication request id
+    :authn-level :single-factor | :multi-factor | :phishing-resistant
     :ttl-seconds                     defaults to `session-seconds`
 
   See `cloud.itonami.app.agent-session` for why `:agent` exists and for what it
   still cannot do."
   ([user-id] (issue-session! user-id nil))
-  ([user-id {:keys [kind label issued-via ttl-seconds]}]
+  ([user-id {:keys [kind label issued-via authn-ref authn-level ttl-seconds]}]
    (let [state (identity-state (store/snapshot))
          membership (some #(when (= user-id (:user-id %)) %)
                           (vals (:memberships state)))]
@@ -214,9 +228,163 @@
                  :revoked? false
                  :kind (or kind :passkey)}
           label (assoc :label label)
-          issued-via (assoc :issued-via issued-via)))
+          issued-via (assoc :issued-via issued-via)
+          authn-ref (assoc :authn-ref authn-ref)
+          authn-level (assoc :authn-level authn-level)))
        {:token token :expires-at expires-at :session-id session-id
         :csrf csrf}))))
+
+(defn email-login-configured? []
+  (email-login/configured? {:email-login @runtime-email-login-config}))
+
+(defn- email-user [email]
+  (let [address (normalize-email email)
+        candidates (when address
+                     (->> (vals (:users (identity-state (store/snapshot))))
+                          (filter #(and (= :active (:status %))
+                                        (or (= address (:contact-email %))
+                                            (= address (:email %)))))))]
+    ;; Ambiguity fails closed. A delivery to an address shared by two local
+    ;; users cannot establish which principal controls it.
+    (when (= 1 (count candidates)) (first candidates))))
+
+(defn start-email-authentication!
+  "Create and deliver a one-time sign-in link without revealing whether the
+  address exists. Only active, Passkey-rooted Users are eligible: email is an
+  alternate session proof, not a replacement identity root."
+  [configuration email origin]
+  (when-not (email-login/configured? configuration)
+    (throw (ex-info "Email ログインが設定されていません。"
+                    {:type :email-login/not-configured})))
+  (when-let [user (email-user email)]
+    (when (:passkey-enrolled? user)
+      (let [token (random-token 32)
+            transaction-id (str "email-login-" (UUID/randomUUID))
+            now (store/now)
+            cutoff (.minusSeconds (Instant/now) email-login-cooldown-seconds)
+            expires-at (str (.plusSeconds (Instant/now) email-login-seconds))
+            address (normalize-email email)
+            created? (atom false)]
+        (store/transact!
+         (fn [state]
+           (let [transactions (get-in state [:identity :email-login-transactions] {})
+                 cutoff-ms (.toEpochMilli cutoff)
+                 recent? (some #(and (= (:id user)
+                                          (:identity.email-challenge/subject %))
+                                     (not (:identity.email-challenge/used? %))
+                                     (> (:identity.email-challenge/created-at %)
+                                        cutoff-ms))
+                               (vals transactions))]
+             (if recent?
+               state
+               (do
+                 (reset! created? true)
+                 (let [state (reduce
+                              (fn [current [id transaction]]
+                                (if (and (= (:id user)
+                                            (:identity.email-challenge/subject
+                                             transaction))
+                                         (not (:identity.email-challenge/used?
+                                               transaction)))
+                                  (assoc-in current
+                                            [:identity :email-login-transactions id]
+                                            (auth-email/supersede
+                                             transaction (.toEpochMilli
+                                                          (Instant/now))))
+                                  current))
+                              state transactions)]
+                   (-> state
+                       (assoc-in
+                        [:identity :email-login-transactions transaction-id]
+                        (auth-email/challenge
+                         {:id transaction-id :subject (:id user)
+                          :purpose :login :email address
+                          :token-digest (digest token)
+                          :created-at (.toEpochMilli (Instant/parse now))
+                          :expires-at (.toEpochMilli (Instant/parse expires-at))}))
+                       (update :events conj
+                               {:type :email-login/requested :at now
+                                :user-id (:id user)
+                                :transaction-id transaction-id}))))))))
+        (when @created?
+          (try
+            (email-login/deliver!
+             configuration
+             {:to address
+              :magic-link (str (str/replace origin #"/$" "")
+                               "/#email-login=" token)
+              :expires-at expires-at})
+            (catch Exception error
+              ;; The public answer remains identical to the unknown-address case.
+              ;; Operators still get an honest durable failure record.
+              (store/transact!
+               (fn [state]
+                 (-> state
+                     (assoc-in [:identity :email-login-transactions transaction-id
+                                :identity.email-challenge/delivery-status] :failed)
+                     (update :events conj
+                             {:type :email-login/delivery-failed :at (store/now)
+                              :user-id (:id user)
+                              :transaction-id transaction-id
+                              :error-type (or (:type (ex-data error))
+                                              :email-login/delivery-failed)}))))))))))
+  {:accepted true})
+
+(defn finish-email-authentication!
+  "Consume a 256-bit email token once and mint an explicitly email-rooted
+  browser session. The raw token is never stored."
+  [token]
+  (let [token-digest (when-not (str/blank? token) (digest token))
+        consumed (atom nil)
+        now-instant (Instant/now)
+        now-ms (.toEpochMilli now-instant)
+        now (store/now)]
+    (when token-digest
+      (store/transact!
+       (fn [state]
+         (let [identity (identity-state state)
+               match (some
+                      (fn [[id transaction]]
+                        (let [factor
+                              (auth-email/verify
+                               transaction token-digest now-ms
+                               (fn [expected presented]
+                                 (MessageDigest/isEqual
+                                  (.getBytes ^String expected StandardCharsets/UTF_8)
+                                  (.getBytes ^String presented
+                                             StandardCharsets/UTF_8))))]
+                          (when (:authn.factor/ok? factor)
+                            [id transaction factor])))
+                      (:email-login-transactions identity))]
+           (if-let [[id transaction factor] match]
+             (let [user-id (:identity.email-challenge/subject transaction)
+                   user (get-in identity [:users user-id])
+                   request (auth-model/request
+                            (str "authn-" (UUID/randomUUID)) user-id
+                            {:required-level :single-factor
+                             :purpose :login :created-at now-ms})
+                   decision (authentication/decide request [factor])]
+               (if (and (= :active (:status user)) (:passkey-enrolled? user))
+                 (do (reset! consumed {:transaction transaction
+                                       :decision decision})
+                     (-> state
+                         (assoc-in [:identity :email-login-transactions id]
+                                   (auth-email/consume transaction now-ms))
+                         (update :events conj
+                                 {:type :email-login/authenticated :at now
+                                  :user-id user-id
+                                  :transaction-id id})))
+                 state))
+             state)))))
+    (when-not @consumed
+      (throw (ex-info "Email ログインリンクが無効、期限切れ、または使用済みです。"
+                      {:type :email-login/invalid-token})))
+    (let [{:keys [transaction decision]} @consumed]
+      (issue-session!
+       (:identity.email-challenge/subject transaction)
+       {:kind :email :issued-via :email-magic-link
+        :authn-ref (:authn.decision/request-id decision)
+        :authn-level (:authn.decision/level decision)}))))
 
 (defn- public-connection [connection]
   (select-keys connection [:id :provider :status :display-name :email
@@ -384,6 +552,8 @@
   (get-in (identity-state (store/snapshot))
           [:memberships (:membership-id session) :role]))
 
+(declare may-act?)
+
 (defn public-state [token]
   (migrate-did-links!)
   (let [state (identity-state (store/snapshot))
@@ -401,6 +571,12 @@
      :passkey-required? (and (boolean (seq (:users state)))
                              (empty? (:passkeys state)))
      :authenticated? (boolean session)
+     :may-act? (boolean (and session (may-act? session)))
+     :email-login-configured? (email-login-configured?)
+     :session (when session
+                {:kind (name (or (:kind session) :passkey))
+                 :issued-via (some-> (:issued-via session) name)
+                 :authn-level (some-> (:authn-level session) name)})
      :csrf (:csrf session)
      :user (when session (select-keys user [:id :did :account-id :email
                                             :contact-email :display-name :status
@@ -667,6 +843,13 @@
                    (valid-account-id? account-id))
       (throw (ex-info "有効なアカウントIDと表示名が必要です。"
                       {:type :identity/invalid-registration})))
+    (when (and contact-email
+               (some #(and (not= user-id (:id %))
+                           (or (= contact-email (:contact-email %))
+                               (= contact-email (:email %))))
+                     (vals (:users state))))
+      (throw (ex-info "この連絡先メールは別の User に登録されています。"
+                      {:type :identity/email-already-used})))
     (when (and existing-user
                (some #(and (= user-id (:user-id %))
                            (= (:id organization) (:organization-id %)))
@@ -787,8 +970,22 @@
 
 (defn start-passkey-registration!
   [session rp-id origin]
-  (let [user (get-in (identity-state (store/snapshot))
-                     [:users (:user-id session)])]
+  (let [state (identity-state (store/snapshot))
+        user-id (:user-id session)
+        user (get-in state [:users user-id])
+        ;; Stores created before profile-free onboarding (and one historical
+        ;; test-suite isolation failure) can lack the WebAuthn user handle.
+        ;; Reuse a credential's handle if one exists; otherwise mint it once.
+        user-handle (or (:user-handle user)
+                        (some #(when (= user-id (:user-id %))
+                                 (:user-handle %))
+                              (vals (:passkeys state)))
+                        (random-token 32))
+        user (assoc user :user-handle user-handle)]
+    (when-not (get-in state [:users user-id :user-handle])
+      (store/transact! assoc-in
+                       [:identity :users user-id :user-handle]
+                       user-handle))
     (passkey/start-registration! user rp-id origin)))
 
 (defn passkey-enrolled? [session]
@@ -808,6 +1005,29 @@
   [session]
   (not= :agent (:kind session)))
 
+(def ^:private app-session-policy
+  (authz-policy/policy-port
+   (authz-rules/rules-engine
+    [{:id :local-agent-ownership
+      :action :app/use :resource :workspace
+      :context {:kind :agent}
+      :decision :allow :by "cloud-itonami/session-policy"}
+     {:id :email-address-possession
+      :action :app/use :resource :workspace
+      :context {:kind :email :issued-via :email-magic-link
+                :authn-level :single-factor}
+      :decision :allow :by "cloud-itonami/session-policy"}
+     {:id :passkey-enrollment
+      :action :app/use :resource :workspace
+      :context {:kind :passkey :issued-via :passkey
+                :authn-level :phishing-resistant
+                :passkey-enrolled? true}
+      :decision :allow :by "cloud-itonami/session-policy"}]
+    {:policy-ref "cloud-itonami://policy/app-session"
+     :policy-version "2026-08-03"
+     :default-decision :deny})
+   {}))
+
 (defn may-act?
   "Whether this session has established who it is well enough to act.
 
@@ -820,11 +1040,28 @@
   `passkey-enrolled?` directly. That is now a DELIBERATE difference, documented
   where it is made, rather than an oversight — see that namespace."
   [session]
-  (or (= :agent (:kind session))
-      (passkey-enrolled? session)))
+  (if-not (:user-id session)
+    false
+    (let [kind (or (:kind session) :passkey)
+          request (authz-model/request
+                   (or (:id session) "unidentified-session")
+                   (:user-id session)
+                   :app/use :workspace
+                   {:context {:kind kind
+                              :issued-via (:issued-via session)
+                              :authn-level (:authn-level session)
+                              :passkey-enrolled? (and (= :passkey kind)
+                                                      (passkey-enrolled? session))}})]
+      (= :allow
+         (:authz.decision/decision
+          (authorization/authorize app-session-policy request))))))
 
 (defn require-passkey!
   "Refuse a session that has not established who it is.
+
+  The historical name remains because this was originally the only browser
+  proof. It now accepts an explicitly `:email` session minted from a consumed
+  magic link as well; it does not turn that proof into a Passkey.
 
   For a browser session that means an enrolled Passkey: the loopback server is
   reachable by every process and page on this machine, and a half-enrolled user
@@ -843,7 +1080,7 @@
   [session]
   (when-not (may-act? session)
     (throw (ex-info
-            "アプリを利用するには Passkey の登録が必要です。"
+            "アプリを利用するには Passkey または有効な Email ログインが必要です。"
             {:type :passkey/required})))
   session)
 
@@ -911,8 +1148,34 @@
        :account-id owner-account-id
        :email owner-email})))
 
+(defn- passkey-session-options [result purpose]
+  (let [factor (auth-model/factor
+                (:credential-id result) :passkey (:verified? result)
+                {:subject (:user-id result)
+                 :evidence-ref (:credential-id result)
+                 :assurance :user-verifying})
+        request (auth-model/request
+                 (str "authn-" (UUID/randomUUID)) (:user-id result)
+                 {:required-level :phishing-resistant
+                  :purpose purpose :created-at (store/now)})
+        decision (authentication/decide request [factor])]
+    (when-not (= :authenticated (:authn.decision/decision decision))
+      (throw (ex-info "Passkey 認証保証が不足しています。"
+                      {:type :passkey/verification-failed})))
+    {:kind :passkey :issued-via :passkey
+     :authn-ref (:authn.decision/request-id decision)
+     :authn-level (:authn.decision/level decision)}))
+
 (defn finish-passkey-registration! [session transaction-id response]
-  (passkey/finish-registration! transaction-id response (:user-id session)))
+  (let [result (passkey/finish-registration!
+                transaction-id response (:user-id session))
+        assurance (passkey-session-options result :registration)]
+    ;; Registration itself is a user-verifying WebAuthn ceremony. Upgrade the
+    ;; provisional/email session that initiated it rather than making the user
+    ;; perform an identical assertion immediately afterwards.
+    (store/transact!
+     update-in [:identity :sessions (:id session)] merge assurance)
+    result))
 
 (defn- valid-enrollment [account-id code]
   (let [state (identity-state (store/snapshot))
@@ -959,14 +1222,18 @@
              (assoc-in [:identity :enrollments enrollment-id :used?] true)
              (assoc-in [:identity :enrollments enrollment-id :used-at] now)
              (assoc-in [:identity :users (:user-id result) :status] :active))))
-      (merge result (issue-session! (:user-id result))))))
+      (merge result
+             (issue-session! (:user-id result)
+                             (passkey-session-options result :enrollment))))))
 
 (defn start-passkey-authentication! [rp-id origin]
   (passkey/start-authentication! rp-id origin))
 
 (defn finish-passkey-authentication! [transaction-id response]
   (let [result (passkey/finish-authentication! transaction-id response)]
-    (merge result (issue-session! (:user-id result)))))
+    (merge result
+           (issue-session! (:user-id result)
+                           (passkey-session-options result :login)))))
 
 (defn- callback-uri [origin provider]
   (str origin "/api/oauth/" (name provider) "/callback"))

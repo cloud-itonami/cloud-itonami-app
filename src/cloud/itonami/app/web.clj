@@ -10,9 +10,9 @@
   button{font:inherit}
   .local-app{max-width:100%;padding:0}
   .workspace{display:grid;grid-template-columns:17rem minmax(0,1fr);min-height:100vh}
-  .sidebar{position:sticky;top:0;height:100vh;box-sizing:border-box;padding:1.5rem 1rem;
+  .sidebar{position:sticky;top:0;height:100vh;box-sizing:border-box;padding:1rem;
     background:var(--color-neutral-white);border-right:1px solid var(--color-neutral-solid-gray-200);
-    display:flex;flex-direction:column;gap:1.5rem}
+    display:flex;flex-direction:column;gap:.75rem}
   .req-row{padding:.75rem 0;border-bottom:1px solid var(--color-neutral-solid-gray-200)}
   .req-row__head{display:flex;align-items:center;justify-content:space-between;gap:1rem}
   .req-row__detail{margin:.375rem 0 0;font-size:.875rem;line-height:1.7;
@@ -130,16 +130,42 @@
   .brand__mark{display:none}
   .brand__note{margin:.25rem 0 0;color:var(--color-neutral-solid-gray-600);
     font-size:.8125rem;line-height:1.6}
-  .local-nav{display:flex;flex-direction:column;gap:.25rem}
-  /* The menu separates what you work ON (a business) from what you work WITH
-     (chat, drive, scheduler). Twelve flat items had both kinds in one list. */
-  .local-nav__group{margin:.75rem 0 .125rem;padding:0 .75rem;font-size:.6875rem;
-    font-weight:700;letter-spacing:.08em;
+  .workspace-switcher{display:grid;gap:.25rem;padding:.625rem .75rem;border-radius:.75rem;
+    background:var(--color-neutral-solid-gray-50);
+    border:1px solid var(--color-neutral-solid-gray-200)}
+  .workspace-switcher__label{font-size:.6875rem;font-weight:700;letter-spacing:.06em;
     color:var(--color-neutral-solid-gray-600)}
-  .local-nav__group:first-child{margin-top:0}
+  .workspace-switcher select{min-height:2.5rem;width:100%;box-sizing:border-box;
+    border:1px solid var(--color-neutral-solid-gray-300);border-radius:.5rem;
+    padding:.5rem 2rem .5rem .625rem;background:var(--color-neutral-white);font:inherit;
+    font-weight:700;color:var(--color-neutral-solid-gray-800)}
+  .workspace-switcher__hint{font-size:.6875rem;line-height:1.5;
+    color:var(--color-neutral-solid-gray-600)}
+  .local-nav{display:flex;flex:1;min-height:0;flex-direction:column;gap:.25rem;
+    overflow-y:auto;overscroll-behavior:contain;scrollbar-gutter:stable;
+    padding-right:.25rem}
+  .nav-primary{display:grid;gap:.25rem}
+  .nav-overflow-panel{display:contents}
+  .nav-secondary{display:grid;gap:.25rem}
+  .mobile-menu-toggle,.mobile-nav-backdrop{display:none}
+  .nav-section{border-top:1px solid var(--color-neutral-solid-gray-100);
+    padding-top:.25rem}
+  .nav-section__summary{display:flex;align-items:center;gap:.75rem;min-height:2.5rem;
+    box-sizing:border-box;padding:.5rem .75rem;border-radius:.5rem;cursor:pointer;
+    color:var(--color-neutral-solid-gray-700);font-size:.8125rem;font-weight:700;
+    list-style:none}
+  .nav-section__summary::-webkit-details-marker{display:none}
+  .nav-section__summary:hover{background:var(--color-neutral-solid-gray-50)}
+  .nav-section__summary:focus-visible{outline:4px solid var(--color-primitive-yellow-300);
+    outline-offset:1px}
+  .nav-section__label{flex:1}.nav-section__chevron{font-size:.75rem;transition:transform .15s ease}
+  .nav-section[open] .nav-section__chevron{transform:rotate(180deg)}
+  .nav-section__items{display:grid;gap:.125rem;padding:.125rem 0 .375rem .75rem}
+  .nav-section__items .local-nav__item{min-height:2.5rem;padding:.375rem .625rem}
+  .sidebar__utility{padding-top:.5rem;border-top:1px solid var(--color-neutral-solid-gray-200)}
   .local-nav__item{width:100%;border:0;border-radius:.5rem;background:transparent;
     color:var(--color-neutral-solid-gray-800);display:flex;align-items:center;gap:.75rem;
-    min-height:3rem;padding:.625rem .75rem;text-align:left;cursor:pointer}
+    min-height:2.75rem;padding:.5rem .75rem;text-align:left;cursor:pointer}
   .local-nav__item:hover{background:var(--color-neutral-solid-gray-50)}
   .local-nav__item:disabled{cursor:not-allowed;opacity:.42;background:transparent}
   .local-nav__item:focus-visible{outline:4px solid var(--color-primitive-yellow-300);outline-offset:1px}
@@ -149,7 +175,7 @@
   .nav-icon{width:1.5rem;text-align:center;font-size:1.1rem}
   .nav-badge{margin-left:auto;min-width:1.5rem;padding:.1rem .4rem;border-radius:999px;
     background:var(--color-neutral-solid-gray-100);font-size:.75rem;text-align:center}
-  .sidebar__status{margin-top:auto;padding:.75rem;border-radius:.5rem;
+  .sidebar__status{padding:.625rem .75rem;border-radius:.5rem;
     background:var(--color-neutral-solid-gray-50);font-size:.8125rem;line-height:1.6}
   .sidebar__status strong{display:block;color:var(--color-semantic-success-2)}
   .main{min-width:0}
@@ -307,7 +333,7 @@
      is only tinted says nothing to anyone who cannot see the tint, and the
      mark has to survive next to the styling a cell may already carry. */
   .is-commented{position:relative}
-  .is-commented::after{content:"";position:absolute;top:2px;right:2px;
+  .is-commented::after{content:\"\";position:absolute;top:2px;right:2px;
     width:.5rem;height:.5rem;border-radius:50%;
     background:var(--color-semantic-error-1)}
   .surface-row.is-commented{outline:2px solid var(--color-semantic-error-2);
@@ -584,6 +610,40 @@
   .record-detail__body{margin:1.5rem 0 0;white-space:pre-wrap;overflow-wrap:anywhere;line-height:1.8}
   .record-detail__meta{margin-top:1.5rem;padding-top:1rem;
     border-top:1px solid var(--color-neutral-solid-gray-200)}
+  .messenger-view{max-width:none}
+  .messenger-shell{display:grid;grid-template-columns:minmax(14rem,.65fr) minmax(24rem,1.35fr) minmax(15rem,.7fr);
+    min-height:36rem;border:1px solid var(--color-neutral-solid-gray-200);border-radius:.75rem;
+    overflow:hidden;background:var(--color-neutral-white)}
+  .messenger-rail,.messenger-context{min-width:0;background:var(--color-neutral-solid-gray-50)}
+  .messenger-rail{border-right:1px solid var(--color-neutral-solid-gray-200)}
+  .messenger-context{border-left:1px solid var(--color-neutral-solid-gray-200);padding:1rem}
+  .messenger-pane__header{padding:1rem;border-bottom:1px solid var(--color-neutral-solid-gray-200)}
+  .messenger-pane__header h2,.messenger-context h3{margin:0;font-size:1rem}
+  .messenger-pane__header p,.messenger-context p{margin:.25rem 0 0;color:var(--color-neutral-solid-gray-600);
+    font-size:.75rem;line-height:1.5}
+  .messenger-create{display:grid;gap:.5rem;padding:1rem;border-bottom:1px solid var(--color-neutral-solid-gray-200)}
+  .messenger-create input,.messenger-create select,.messenger-composer textarea,.messenger-composer select{box-sizing:border-box;width:100%;
+    border:1px solid var(--color-neutral-solid-gray-300);border-radius:.5rem;background:var(--color-neutral-white);
+    padding:.625rem .75rem;font:inherit}
+  .messenger-create select[multiple]{min-height:6rem}
+  .messenger-thread{display:flex;min-width:0;flex-direction:column;min-height:36rem}
+  .messenger-messages{list-style:none;display:flex;flex:1;flex-direction:column;gap:1rem;
+    max-height:34rem;overflow:auto;margin:0;padding:1.25rem}
+  .messenger-message{max-width:85%;padding:.75rem 1rem;border-radius:.75rem;
+    background:var(--color-neutral-solid-gray-50);border:1px solid var(--color-neutral-solid-gray-200)}
+  .messenger-message[data-own='true']{align-self:flex-end;background:var(--color-key-50)}
+  .messenger-message__head{display:flex;justify-content:space-between;gap:1rem;font-size:.75rem}
+  .messenger-message__body{margin:.375rem 0 0;white-space:pre-wrap;overflow-wrap:anywhere;line-height:1.65}
+  .messenger-message__security{display:block;margin-top:.375rem;color:var(--color-neutral-solid-gray-600);
+    font-size:.6875rem}
+  .messenger-composer{display:grid;grid-template-columns:minmax(0,1fr) auto auto;gap:.5rem;
+    padding:1rem;border-top:1px solid var(--color-neutral-solid-gray-200)}
+  .messenger-composer textarea{min-height:3rem;resize:vertical}
+  .messenger-principals,.messenger-quarantine{list-style:none;margin:.75rem 0 1.25rem;padding:0}
+  .messenger-principals li,.messenger-quarantine li{padding:.625rem 0;
+    border-bottom:1px solid var(--color-neutral-solid-gray-200);font-size:.8125rem}
+  .messenger-principal__row{display:flex;align-items:center;justify-content:space-between;gap:.5rem}
+  .messenger-kind{color:var(--color-neutral-solid-gray-600);font-size:.6875rem}
   .date-rail{display:flex;gap:.5rem;overflow-x:auto;padding:.25rem 0 1rem}
   .date-button{flex:0 0 5.5rem;border:1px solid var(--color-neutral-solid-gray-200);
     border-radius:.625rem;background:var(--color-neutral-white);padding:.625rem .5rem;
@@ -622,6 +682,37 @@
     padding:.625rem .75rem;background:var(--color-neutral-white);font:inherit}
   .field input:focus,.field select:focus{outline:4px solid var(--color-primitive-yellow-300);
     outline-offset:1px;border-color:var(--color-key-600)}
+  .governance-editor{margin-top:1.25rem;padding-top:1.25rem;
+    border-top:1px solid var(--color-neutral-solid-gray-200)}
+  .governance-collection{display:grid;gap:.625rem}
+  .governance-row{display:grid;grid-template-columns:repeat(4,minmax(0,1fr)) auto;
+    gap:.5rem;align-items:end}
+  .governance-row--reporting{grid-template-columns:minmax(0,1fr) minmax(0,1fr) auto}
+  .governance-row input,.governance-row select{min-height:2.5rem;box-sizing:border-box;
+    width:100%;border:1px solid var(--color-neutral-solid-gray-300);border-radius:.5rem;
+    padding:.5rem .625rem;background:var(--color-neutral-white);font:inherit}
+  .governance-row label{display:grid;gap:.25rem;font-size:.75rem;font-weight:700}
+  .governance-remove{min-height:2.5rem}
+  .governance-status{min-height:1.5rem;margin:0;color:var(--color-neutral-solid-gray-600)}
+  .organization-studio__summary{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));
+    gap:.75rem;margin-bottom:1rem}
+  .organization-stat{padding:1rem;border:1px solid var(--color-neutral-solid-gray-200);
+    border-radius:.625rem;background:var(--color-neutral-white)}
+  .organization-stat strong{display:block;font-size:1.5rem}.organization-stat span{
+    color:var(--color-neutral-solid-gray-600);font-size:.8125rem}
+  .organization-studio__grid{display:grid;grid-template-columns:minmax(18rem,.8fr) minmax(0,1.2fr);
+    gap:1rem;align-items:start}.organization-studio__stack{display:grid;gap:1rem}
+  .organization-tree,.organization-tree ul{list-style:none;margin:0;padding-left:1rem}
+  .organization-tree{padding-left:0}.organization-tree li{position:relative;padding:.35rem 0 .35rem 1rem}
+  .organization-tree li::before{content:\"\";position:absolute;left:0;top:1rem;width:.65rem;
+    border-top:1px solid var(--color-neutral-solid-gray-300)}
+  .organization-tree__node{display:flex;justify-content:space-between;gap:.5rem;padding:.625rem;
+    border:1px solid var(--color-neutral-solid-gray-200);border-radius:.5rem;background:white}
+  .organization-tree__node small{color:var(--color-neutral-solid-gray-600)}
+  .organization-studio__directory{display:grid;gap:.5rem;list-style:none;margin:0;padding:0}
+  .organization-studio__directory li{display:grid;grid-template-columns:minmax(0,1fr) auto;
+    gap:.5rem;padding:.75rem;border-bottom:1px solid var(--color-neutral-solid-gray-200)}
+  .governance-row--wide{grid-template-columns:repeat(3,minmax(0,1fr)) auto}
   .sidebar__organization{padding:0 .5rem}.sidebar__organization select{
     min-height:2.5rem;width:100%;border:1px solid var(--color-neutral-solid-gray-300);
     border-radius:.5rem;background:var(--color-neutral-white);padding:.5rem;font:inherit}
@@ -639,6 +730,7 @@
     background:var(--color-key-50);font-size:.875rem;line-height:1.7}
   .settings-notice{margin-bottom:1rem;padding:.75rem 1rem;border-radius:.5rem;
     background:var(--color-primitive-green-50);color:var(--color-semantic-success-2)}
+  .settings-notice:empty{display:none}
   .settings-notice--error{background:var(--color-primitive-red-50);color:var(--color-semantic-error-1)}
   .member-list{list-style:none;margin:1rem 0 0;padding:0}
   .member-list li{display:flex;justify-content:space-between;gap:1rem;padding:.75rem 0;
@@ -665,26 +757,20 @@
     background:linear-gradient(90deg,var(--color-neutral-solid-gray-50),var(--color-neutral-solid-gray-100),var(--color-neutral-solid-gray-50));
     background-size:200% 100%;animation:pulse 1.4s infinite}
   @keyframes pulse{to{background-position:-200% 0}}
-  @media(max-width:64rem){.local-grid,.settings-grid{grid-template-columns:1fr}}
+  @media(max-width:64rem){.local-grid,.settings-grid,.organization-studio__grid{
+    grid-template-columns:1fr}.organization-studio__summary{grid-template-columns:1fr 1fr}
+    .governance-row{grid-template-columns:1fr 1fr}.governance-row>*:last-child{justify-self:start}
+    .messenger-shell{grid-template-columns:minmax(13rem,.65fr) minmax(22rem,1.35fr)}
+    .messenger-context{grid-column:1/-1;border-left:0;border-top:1px solid var(--color-neutral-solid-gray-200)}}
   @media(max-width:56rem){
-    .workspace{grid-template-columns:4.75rem minmax(0,1fr)}
-    .sidebar{position:sticky;top:0;height:100dvh;padding:.75rem .5rem;overflow:hidden;
-      border-right:1px solid var(--color-neutral-solid-gray-200);border-bottom:0;gap:1rem}
-    .brand{padding:.25rem 0;text-align:center}
-    .brand__eyebrow,.brand__name,.brand__note,.sidebar__status{display:none}
-    .sidebar__organization{display:none}
-    .brand__mark{display:block;margin:0;color:var(--color-key-900);font-size:1.125rem;
-      font-weight:700;line-height:2.5rem}
-    .local-nav{width:100%;flex-direction:column;overflow:visible}
-    .local-nav__item{width:100%;min-width:0;justify-content:center;padding:.625rem .25rem}
-    .local-nav__item[aria-current='page']{border-left:0;border-bottom:4px solid var(--color-key-900);
-      padding:.625rem .25rem .375rem}
-    .nav-label,.nav-badge{position:absolute;width:1px;height:1px;padding:0;margin:-1px;
-      overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
-    /* The labels are hidden here, so a group heading over icon-only buttons
-       would name a grouping the user cannot see. */
-    .local-nav__group{display:none}
-    .nav-icon{font-size:1.25rem}
+    .workspace{grid-template-columns:13rem minmax(0,1fr)}
+    .sidebar{padding:1rem .75rem;gap:.75rem}
+    .brand__eyebrow,.brand__note,.brand__mark,.sidebar__status{display:none}
+    .brand__name{font-size:1.125rem}
+    .workspace-switcher__hint{display:none}
+    .local-nav{padding-right:.125rem}
+    .local-nav__item{min-width:0}
+    .nav-badge{display:none}
     .topbar{min-height:auto;padding:.75rem 1rem}.topbar__meta{display:none}
     .view{padding:1rem}.view-header{display:block}.view-header .dads-button{margin-top:1rem}
     .chat-view{padding:0}.chat-shell{height:calc(100dvh - 3.75rem)}
@@ -697,6 +783,9 @@
     .integration-grid{grid-template-columns:1fr}.calendar-list .data-list__item{grid-template-columns:1fr}
     .record-browser{grid-template-columns:1fr}.record-list{border-right:0;
       border-bottom:1px solid var(--color-neutral-solid-gray-200)}
+    .messenger-shell{grid-template-columns:1fr}.messenger-rail{border-right:0;
+      border-bottom:1px solid var(--color-neutral-solid-gray-200)}
+    .messenger-context{grid-column:auto}.messenger-messages{min-height:20rem;max-height:28rem}
     .record-list__items{max-height:19rem}.record-detail{min-height:16rem}
     .workspace-toolbar{align-items:stretch}.workspace-search{width:100%}
     .worker-form{grid-template-columns:1fr}.worker-form .primary-action{width:100%}
@@ -704,6 +793,62 @@
     .form-grid{grid-template-columns:1fr}.connector-card{grid-template-columns:2.75rem 1fr}
     .connector-card .tool-button{grid-column:1/-1;width:100%}
     .local-actions{justify-content:stretch}.local-actions .dads-button{width:100%}
+  }
+  @media(max-width:40rem){
+    :root{--mobile-nav-height:calc(4.5rem + env(safe-area-inset-bottom))}
+    body.has-mobile-menu{overflow:hidden}
+    .workspace{display:block;min-height:100dvh;padding-bottom:var(--mobile-nav-height)}
+    .sidebar{position:fixed;inset:auto 0 0 0;z-index:40;width:auto;height:var(--mobile-nav-height);
+      display:block;padding:0;background:var(--color-neutral-white);
+      border:0;border-top:1px solid var(--color-neutral-solid-gray-200);overflow:visible}
+    .brand,.sidebar__status{display:none}
+    .workspace-switcher{position:fixed;z-index:31;top:calc(.625rem + env(safe-area-inset-top));right:.75rem;
+      width:7.5rem;padding:0;border:0;background:transparent}
+    .workspace-switcher__label,.workspace-switcher__hint{position:absolute;width:1px;height:1px;
+      padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
+    .workspace-switcher select{min-height:2.75rem;padding:.375rem 1.75rem .375rem .5rem;
+      background:var(--color-neutral-white);font-size:.75rem;text-overflow:ellipsis}
+    .local-nav{position:static;display:block;width:auto;overflow:visible;padding:0}
+    .nav-primary{position:fixed;z-index:44;left:0;right:20%;bottom:0;
+      height:var(--mobile-nav-height);display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:0;
+      padding-bottom:env(safe-area-inset-bottom);box-sizing:border-box;background:var(--color-neutral-white)}
+    .nav-primary .local-nav__item,.mobile-menu-toggle{min-height:4.5rem;height:4.5rem;
+      display:flex;flex-direction:column;align-items:center;justify-content:center;gap:.125rem;
+      padding:.375rem .125rem;border-radius:0;color:var(--color-neutral-solid-gray-700);
+      font-size:.6875rem;font-weight:700;line-height:1.2}
+    .nav-primary .local-nav__item[aria-current='page']{border:0;border-top:4px solid var(--color-key-900);
+      padding:.25rem .125rem .375rem;background:var(--color-key-50);color:var(--color-key-900)}
+    .nav-primary .nav-icon,.mobile-menu-toggle .nav-icon{width:auto;font-size:1.125rem;line-height:1.4}
+    .nav-primary .nav-label,.mobile-menu-toggle .nav-label{display:block;position:static;width:auto;height:auto;
+      padding:0;margin:0;overflow:visible;clip:auto;white-space:nowrap;border:0}
+    .nav-overflow-panel{display:none;position:fixed;z-index:43;left:.75rem;right:.75rem;
+      bottom:calc(var(--mobile-nav-height) + .75rem);max-height:calc(100dvh - var(--mobile-nav-height) - 2rem);
+      box-sizing:border-box;overflow-y:auto;padding:.75rem;border:1px solid var(--color-neutral-solid-gray-200);
+      border-radius:1rem;background:var(--color-neutral-white);box-shadow:0 .75rem 2rem rgb(0 0 0 / .18)}
+    .sidebar[data-mobile-menu-open='true'] .nav-overflow-panel{display:block}
+    .nav-secondary{display:grid;gap:.25rem}
+    .nav-section__summary{min-height:3rem;padding:.625rem .75rem}
+    .nav-section__items{padding:.125rem 0 .375rem .75rem}
+    .nav-section__items .local-nav__item{justify-content:flex-start;min-height:2.75rem;padding:.5rem .625rem}
+    .sidebar__utility{margin-top:.5rem;padding-top:.5rem;background:var(--color-neutral-white)}
+    .sidebar__utility .local-nav__item{justify-content:flex-start;min-height:3rem;padding:.625rem .75rem}
+    .mobile-menu-toggle{position:fixed;z-index:44;right:0;bottom:0;width:20%;
+      padding-bottom:calc(.375rem + env(safe-area-inset-bottom));border:0;border-top:4px solid transparent;
+      background:var(--color-neutral-white);cursor:pointer}
+    .mobile-menu-toggle[aria-expanded='true']{border-top-color:var(--color-key-900);
+      background:var(--color-key-50);color:var(--color-key-900)}
+    .mobile-nav-backdrop{position:fixed;z-index:42;inset:0 0 var(--mobile-nav-height);border:0;
+      background:rgb(0 0 0 / .32)}
+    .sidebar[data-mobile-menu-open='true'] .mobile-nav-backdrop{display:block}
+    .main{min-width:0}
+    .topbar{position:sticky;z-index:30;top:0;min-height:calc(4rem + env(safe-area-inset-top));
+      box-sizing:border-box;padding:calc(.75rem + env(safe-area-inset-top)) 8.75rem .75rem 1rem;
+      background:var(--color-neutral-white)}
+    .topbar__title{font-size:1rem;line-height:1.4;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+    .view{padding:1rem}.view-header h1{font-size:1.75rem;line-height:1.3}.view-lead{line-height:1.7}
+    .chat-shell{height:calc(100dvh - 4rem - var(--mobile-nav-height))}
+    .data-card,.settings-card{padding:1rem}
+    input,select,textarea,button{max-width:100%}
   }
   /* WCAG 2.3.3, and kotoba-uiux rule 7. Both animations in this stylesheet are
      INFINITE and decorative -- a typing indicator and a loading shimmer -- which
@@ -742,6 +887,12 @@
   third of a megabyte for each one would be work nobody asked for."
   (slurp (io/resource "cloud/itonami/app/interaction.js")))
 
+(def signal-js
+  "Browser-owned X25519/Ed25519, Double Ratchet, and group sender-key state.
+  Loaded before the interaction layer so the messenger never races crypto
+  initialization."
+  (slurp (io/resource "cloud/itonami/app/signal.js")))
+
 (defn- nav-item [view title icon badge-id]
   [:button {:class "local-nav__item" :type "button" :data-view view
             :data-title title :aria-label title
@@ -750,12 +901,13 @@
    [:span {:class "nav-label"} title]
    (when badge-id [:span {:class "nav-badge" :id badge-id} "—"])])
 
-(defn- nav-group
-  "A heading over one run of nav items. Presentational only — the buttons keep
-  carrying their own `data-view`, so `showView` is unchanged and a group cannot
-  become a thing that has to be opened before its items work."
-  [title]
-  [:p {:class "local-nav__group" :aria-hidden "true"} title])
+(defn- nav-section [id title icon items]
+  [:details {:class "nav-section" :data-nav-section id}
+   [:summary {:class "nav-section__summary" :aria-label title}
+    [:span {:class "nav-icon" :aria-hidden "true"} icon]
+    [:span {:class "nav-section__label"} title]
+    [:span {:class "nav-section__chevron" :aria-hidden "true"} "⌄"]]
+   (into [:div {:class "nav-section__items"}] items)])
 
 (defn- view-header [title lead]
   [:header {:class "view-header"}
@@ -772,7 +924,7 @@
     (page/->page
      {:title (str "Chat | " brand)
       :description "ローカル優先のAIワークスペース"
-      :css css :app-css app-css :head [[:script interaction-js]]}
+      :css css :app-css app-css :head [[:script signal-js] [:script interaction-js]]}
      [:div {:class "workspace" :data-brand brand}
       [:aside {:class "sidebar" :aria-label "メインメニュー"}
        [:div {:class "brand"}
@@ -780,36 +932,54 @@
         [:p {:class "brand__name"} brand]
         [:p {:class "brand__mark" :role "img" :aria-label brand} "ai"]
         [:p {:class "brand__note"} "Kotoba でつながる、手元の仕事場"]]
-       [:div {:class "field sidebar__organization"}
-        [:label {:for "organization-switcher"} "Organization"]
-        [:select {:id "organization-switcher" :disabled true}
-         [:option "確認中…"]]]
-       [:nav {:class "local-nav"}
-        ;; 対象（事業とその実装）と道具（chat・drive・scheduler）を分ける。
-        ;; ADR-2607309600 決定4。12 項目が平らに並んでいた状態では、事業を1つ
-        ;; 増やすことと道具を1つ増やすことが同じ操作に見えていた。
-        (nav-group "BUSINESS")
-        (nav-item "portfolio" "Portfolio" "▤" "portfolio-count")
-        (nav-item "canvas" "Canvas" "◱" "canvas-count")
-        (nav-item "loops" "Loops" "∞" "loops-count")
-        (nav-item "repos" "Repos" "⌗" "repos-count")
-        (nav-item "metrics" "Metrics" "⌸" "metrics-count")
-        (nav-item "fleet" "Fleet" "◉" "fleet-count")
-        (nav-item "operator" "\u4e8b\u696d\u8005" "◐" "operator-count")
-        (nav-item "contracts" "Contracts" "◫" "contracts-count")
-        (nav-group "WORKSPACE")
-        (nav-item "chat" "Chat" "✦" nil)
-        (nav-item "worker" "Worker" "◐" "worker-count")
-        (nav-item "organisms" "Organisms" "◎" "organism-count")
-        (nav-item "inbox" "Inbox" "□" "inbox-count")
-        (nav-item "projects" "Projects" "▦" "projects-count")
-        (nav-item "drive" "Drive" "◇" "drive-count")
-        (nav-item "esign" "eSign" "✍" "esign-count")
-        (nav-item "credentials" "Credentials" "▣" "credentials-count")
-        (nav-item "scheduler" "Scheduler" "○" "scheduler-count")
-        (nav-item "storage" "Storage" "◈" "storage-count")
-        (nav-group "SETTINGS")
-        (nav-item "settings" "Settings" "⚙" nil)]
+       [:section {:class "workspace-switcher" :aria-label "Organization切替"}
+        [:label {:class "workspace-switcher__label"
+                 :for "organization-switcher"} "現在のOrganization"]
+        [:select {:id "organization-switcher" :disabled true
+                  :aria-describedby "organization-switcher-hint"}
+         [:option "確認中…"]]
+        [:span {:class "workspace-switcher__hint"
+                :id "organization-switcher-hint"}
+         "作業対象の組織を切り替えます"]]
+       [:nav {:class "local-nav" :aria-label "機能メニュー"}
+        [:div {:class "nav-primary"}
+         (nav-item "chat" "Chat" "✦" nil)
+         (nav-item "messenger" "Messenger" "◇" "messenger-count")
+         (nav-item "projects" "Projects" "▦" "projects-count")
+         (nav-item "drive" "Drive" "◇" "drive-count")]
+        [:div {:class "nav-overflow-panel" :id "mobile-overflow-panel"}
+         [:div {:class "nav-secondary"}
+          (nav-section
+           "business-design" "事業設計" "◱"
+           [(nav-item "portfolio" "Portfolio" "▤" "portfolio-count")
+            (nav-item "canvas" "Canvas" "◱" "canvas-count")
+            (nav-item "loops" "Loops" "∞" "loops-count")
+            (nav-item "metrics" "Metrics" "⌸" "metrics-count")
+            (nav-item "repos" "Repos" "⌗" "repos-count")])
+          (nav-section
+          "operations" "運営" "◉"
+           [(nav-item "organization" "Organization" "⌘" "organization-count")
+            (nav-item "operator" "事業者" "◐" "operator-count")
+            (nav-item "inbox" "Mail archive" "□" "inbox-count")
+            (nav-item "fleet" "Fleet" "◉" "fleet-count")
+            (nav-item "worker" "Worker" "◐" "worker-count")
+            (nav-item "organisms" "Organisms" "◎" "organism-count")
+            (nav-item "scheduler" "Scheduler" "○" "scheduler-count")])
+          (nav-section
+           "trust-records" "信頼・記録" "▣"
+           [(nav-item "contracts" "Contracts" "◫" "contracts-count")
+            (nav-item "esign" "eSign" "✍" "esign-count")
+            (nav-item "credentials" "Credentials" "▣" "credentials-count")
+            (nav-item "storage" "Storage" "◈" "storage-count")])]
+         [:div {:class "sidebar__utility"}
+          (nav-item "settings" "Settings" "⚙" nil)]]
+        [:button {:class "mobile-menu-toggle" :type "button"
+                  :aria-controls "mobile-overflow-panel" :aria-expanded "false"
+                  :aria-label "その他のメニュー"}
+         [:span {:class "nav-icon" :aria-hidden "true"} "☰"]
+         [:span {:class "nav-label"} "その他"]]]
+       [:button {:class "mobile-nav-backdrop" :type "button"
+                 :aria-label "メニューを閉じる"}]
        [:div {:class "sidebar__status"}
         [:strong "● ローカルモード"]
         [:span {:id "workspace-status"} "既存サービスを確認中…"]]]
@@ -876,6 +1046,65 @@
            [:p {:class "visually-hidden" :id "request-status"
                 :role "status" :aria-live "polite"}
             "ローカルモデルを準備中です。"]]]]
+        [:section {:class "view messenger-view" :data-view-panel "messenger" :hidden true}
+         (view-header "Kaisya Messenger"
+                      "人間・agent・organismがそれぞれのmailboxで会話します。未許可の送信者は本文を表示せず隔離します。")
+         [:div {:class "workspace-toolbar"}
+          [:p {:class "source-note"}
+           [:span {:class "source-dot"}]
+           [:span {:id "messenger-source"} "mailboxを確認中…"]]
+          [:div {:class "button-row"}
+           [:span {:class "state-chip" :id "messenger-security"}
+            "Signal端末を準備中"]
+           [:button {:class "tool-button" :id "messenger-signal-device" :type "button"}
+            "端末鍵を準備"]]]
+         [:p {:class "drive-create__status" :id "messenger-status"
+              :role "status" :aria-live "polite"}]
+         [:div {:class "messenger-shell"}
+          [:aside {:class "messenger-rail" :aria-label "会話一覧"}
+           [:div {:class "messenger-pane__header"}
+            [:h2 "Mailboxes / conversations"]
+            [:p "DM・group・channelを同じ配送モデルで扱います。"]]
+           [:form {:class "messenger-create" :id "messenger-create-form"}
+            [:label {:class "visually-hidden" :for "messenger-title"} "会話名"]
+            [:input {:id "messenger-title" :name "title" :required true
+                     :maxlength 120 :placeholder "会話名" :autocomplete "off"}]
+            [:label {:class "visually-hidden" :for "messenger-kind"} "会話種別"]
+            [:select {:id "messenger-kind" :name "kind"}
+             [:option {:value "direct"} "Direct message"]
+             [:option {:value "group"} "Group"]
+             [:option {:value "channel"} "Channel"]]
+            [:label {:for "messenger-members"} "参加者（複数選択可）"]
+            [:select {:id "messenger-members" :name "members" :multiple true :required true}]
+            [:button {:class "primary-action" :type "submit"} "会話を作成"]]
+           [:ul {:class "record-list__items" :id "messenger-conversations"}
+            [:li {:class "skeleton"}]]]
+          [:section {:class "messenger-thread" :aria-label "メッセージ"}
+           [:div {:class "messenger-pane__header"}
+            [:h2 {:id "messenger-conversation-title"} "会話を選択"]
+            [:p {:id "messenger-conversation-meta"}
+             "通常messageは実行権限ではありません。"]]
+           [:ul {:class "messenger-messages" :id "messenger-messages"
+                 :role "log" :aria-live "polite"}
+            [:li {:class "empty-state"} "会話を選択してください。"]]
+           [:form {:class "messenger-composer" :id "messenger-message-form"}
+            [:label {:class "visually-hidden" :for "messenger-message"} "メッセージ"]
+           [:textarea {:id "messenger-message" :name "content" :required true
+                        :maxlength 8000 :placeholder "メッセージを書く" :disabled true}]
+            [:select {:id "messenger-encryption-mode" :aria-label "暗号化方式"}
+             [:option {:value "signal-v1"} "Signal E2EE"]
+             [:option {:value "local-plaintext"} "Local plaintext"]]
+            [:button {:class "primary-action" :id "messenger-message-submit"
+                      :type "submit" :disabled true} "送信"]]]
+          [:aside {:class "messenger-context" :aria-label "信頼と配送状態"}
+           [:h3 "Trust / participants"]
+           [:p "allowlistは受信mailboxごとです。許可は既存の隔離messageにも適用されます。"]
+           [:ul {:class "messenger-principals" :id "messenger-principals"}
+            [:li {:class "skeleton"}]]
+           [:h3 "Quarantine"]
+           [:p {:id "messenger-quarantine-count"} "確認中…"]
+           [:ul {:class "messenger-quarantine" :id "messenger-quarantine"}
+            [:li {:class "skeleton"}]]]]]
         [:section {:class "view" :data-view-panel "worker" :hidden true}
          (view-header "Worker"
                       "時間のかかる指示をキューに積み、チャットを離れても手元のモデルが順番に処理します。")
@@ -1302,6 +1531,13 @@
                      :aria-live "polite"}
            [:div {:class "empty-state"} "AO workerを読み込んでいます。"]]]
          [:div {:class "local-card"}
+          (dds/heading 2 "Messenger transport" {:size "24"})
+          [:p {:class "form-help" :id "organism-messenger-state"
+               :role "status" :aria-live "polite"}
+           "owner/adminがworker専用credentialを発行すると、外部supervisorがmailboxをpoll・返信できます。"]
+          [:button {:class "tool-button" :id "organism-messenger-issue"
+                    :type "button"} "Credentialを発行 / rotate"]]
+         [:div {:class "local-card"}
           (dds/heading 2 "Governed intent" {:size "24"})
           [:p {:class "form-help" :id "organism-intent-state"
                :role "status" :aria-live "polite"}
@@ -1367,7 +1603,127 @@
            [:button {:type "button" :aria-pressed "true"} "Table"]
            [:button {:type "button" :aria-pressed "false"} "Board"]
            [:button {:type "button" :aria-pressed "false"} "Roadmap"]]
-          [:ul {:class "data-list" :id "project-list"} [:li {:class "skeleton"}]]]]
+          [:ul {:class "data-list" :id "project-list"} [:li {:class "skeleton"}]]]
+         [:div {:class "local-card"}
+          [:div {:class "view-header" :style "margin-bottom:1rem"}
+           [:div
+            (dds/heading 2 "Governed AgentRun Kanban" {:size "24"})
+            [:p {:class "source-note"}
+             "lease・approval・receipt・source basis をEDNで追跡します。"]]
+           [:span {:class "state-chip" :id "work-governance-state"} "確認中"]]
+          [:ul {:class "data-list" :id "work-governance-list"}
+           [:li {:class "skeleton"}]]
+          [:div {:class "local-actions"}
+           [:button {:class "tool-button" :id "open-organization-studio"
+                     :type "button"} "Organization Studioで組織と権限を編集"]]]]
+        [:section {:class "view" :data-view-panel "organization" :hidden true}
+         (view-header "Organization Studio"
+                      "組織内組織、DoDAF Performer、Position、Role、Actor Assignmentと承認経路を分離して管理します。")
+         [:div {:class "view-header" :style "margin-bottom:1rem"}
+          [:p {:class "source-note"}
+           "上司関係は組織構造、承認権限はPolicyです。組織図だけから承認権限は発生しません。"]
+          [:span {:class "state-chip" :id "organization-studio-state"} "確認中"]]
+         [:div {:class "organization-studio__summary" :id "organization-studio-summary"}]
+         [:datalist {:id "organization-actor-options"}]
+         [:datalist {:id "organization-unit-options"}]
+         [:datalist {:id "organization-position-options"}]
+         [:datalist {:id "organization-performer-options"}]
+         [:div {:class "organization-studio__grid"}
+          [:div {:class "organization-studio__stack"}
+           [:section {:class "local-card"}
+            (dds/heading 2 "Organization Unit" {:size "20"})
+            [:p {:class "form-help"} "Organization → Division → Department → Teamを親子表示します。"]
+            [:ul {:class "organization-tree" :id "organization-studio-tree"}
+             [:li {:class "skeleton"}]]]
+           [:section {:class "local-card"}
+            (dds/heading 2 "Person & Actor directory" {:size "20"})
+            [:ul {:class "organization-studio__directory" :id "organization-studio-actors"}
+             [:li {:class "skeleton"}]]]]
+          [:div {:class "organization-studio__stack"}
+           [:section {:class "local-card"}
+            (dds/heading 2 "Assignment matrix" {:size "20"})
+            [:ul {:class "organization-studio__directory" :id "organization-studio-assignments"}
+             [:li {:class "skeleton"}]]]
+           [:section {:class "local-card"}
+            (dds/heading 2 "Approval routes" {:size "20"})
+            [:ul {:class "organization-studio__directory" :id "organization-studio-policies"}
+             [:li {:class "skeleton"}]]]]]
+         [:section {:class "local-card governance-editor"}
+          (dds/heading 2 "組織モデルを編集" {:size "24"})
+          [:form {:class "settings-form" :id "governance-organization-form"}
+            [:div {:class "form-grid"}
+             [:div {:class "field"}
+              [:label {:for "governance-org-id"} "Organization ID"]
+              [:input {:id "governance-org-id" :required true :autocomplete "off"}]]
+             [:div {:class "field"}
+              [:label {:for "governance-org-name"} "表示名"]
+              [:input {:id "governance-org-name" :required true
+                       :autocomplete "organization"}]]]
+            [:details {:open true}
+             [:summary "1. Organization Unit"]
+             [:div {:class "governance-collection" :id "governance-units"}]
+             [:button {:class "tool-button" :id "governance-add-unit"
+                       :type "button"} "Unitを追加"]]
+            [:details {:open true}
+             [:summary "2. Position & Role"]
+             (dds/heading 3 "Position" {:size "16"})
+             [:div {:class "governance-collection" :id "governance-positions"}]
+             [:button {:class "tool-button" :id "governance-add-position"
+                       :type "button"} "Positionを追加"]
+             (dds/heading 3 "Role" {:size "16"})
+             [:div {:class "governance-collection" :id "governance-roles"}]
+             [:button {:class "tool-button" :id "governance-add-role"
+                       :type "button"} "Roleを追加"]]
+            [:details {:open true}
+             [:summary "3. Person / Organization / System Actor"]
+            (dds/heading 3 "Performer (DoDAF Person / System)" {:size "16"})
+            [:div {:class "governance-collection" :id "governance-performers"}]
+            [:button {:class "tool-button" :id "governance-add-performer"
+                      :type "button"} "Performerを追加"]]
+            [:details {:open true}
+             [:summary "4. Assignment & Reporting line"]
+            (dds/heading 3 "Assignment" {:size "16"})
+            [:div {:class "governance-collection" :id "governance-assignments"}]
+            [:button {:class "tool-button" :id "governance-add-assignment"
+                      :type "button"} "Assignmentを追加"]
+            (dds/heading 3 "Reporting line" {:size "16"})
+            [:div {:class "governance-collection" :id "governance-reporting-lines"}]
+            [:button {:class "tool-button" :id "governance-add-reporting"
+                      :type "button"} "承認と独立した上司関係を追加"]
+            [:p {:class "form-help"}
+             "Reporting lineは組織図だけを表し、承認権限はPolicyからのみ付与されます。"]]
+            [:div {:class "local-actions"}
+             [:button {:class "primary-action" :type "submit"} "組織図を保存"]]
+            [:p {:class "governance-status" :id "governance-organization-status"
+                 :aria-live "polite"}]]]
+         [:section {:class "local-card governance-editor"}
+          (dds/heading 2 "Approval policyを編集" {:size "24"})
+           [:form {:class "settings-form" :id "governance-policy-form"}
+            [:div {:class "form-grid"}
+             [:div {:class "field"}
+              [:label {:for "governance-policy-id"} "Policy ID"]
+              [:input {:id "governance-policy-id" :required true}]]
+             [:div {:class "field"}
+              [:label {:for "governance-policy-capability"} "Capability"]
+              [:input {:id "governance-policy-capability" :required true
+                       :placeholder "repository/change"}]]
+             [:div {:class "field"}
+              [:label {:for "governance-policy-roles"} "承認可能role（カンマ区切り）"]
+              [:input {:id "governance-policy-roles" :required true
+                       :placeholder "reviewer, owner"}]]
+             [:div {:class "field"}
+              [:label {:for "governance-policy-minimum"} "必要承認数"]
+              [:input {:id "governance-policy-minimum" :type "number" :min 1
+                       :value 1 :required true}]]]
+            [:div {:class "local-actions"}
+             [:label [:input {:id "governance-policy-uv" :type "checkbox"
+                              :checked true}] " Passkey user verification必須"]
+             [:label [:input {:id "governance-policy-sod" :type "checkbox"
+                              :checked true}] " 職務分離必須"]]
+            [:div {:class "local-actions"}
+             [:button {:class "primary-action" :type "submit"} "Policyを保存"]]
+            [:p {:class "governance-status" :id "governance-policy-status"
+                 :aria-live "polite"}]]]]
         [:section {:class "view" :data-view-panel "drive" :hidden true}
          (view-header "Drive"
                       (str "kotoba-lang/drive のファイルモデルで、OneDrive アーカイブを"
@@ -1630,8 +1986,8 @@
            [:div {:class "empty-state"} "契約を選ぶと、解約手順と予告期限を表示します。"]]]]
         [:section {:class "view" :data-view-panel "settings" :hidden true}
          (view-header "Settings" "Cloud Itonami の組織・ユーザーと、外部サービスへの委任接続を管理します。")
-         [:p {:class "visually-hidden" :id "identity-status"
-              :role "status" :aria-live "polite"} "アカウント情報を確認中です。"]
+         [:p {:class "settings-notice" :id "identity-status"
+              :role "status" :aria-live "polite"} ""]
          [:div {:class "settings-notice" :id "connection-notice" :hidden true}]
          [:div {:class "security-callout" :id "passkey-gate-notice"
                 :role "status" :aria-live "polite"}
@@ -1648,6 +2004,16 @@
            [:button {:class "primary-action" :id "registration-submit"
                      :type "submit"} "Passkey で登録"]]
           [:div {:class "settings-stack" :id "registered-auth" :hidden true}
+           [:form {:class "settings-form" :id "email-login-form" :hidden true}
+            (dds/heading 3 "Email でサインイン" {:size "20"})
+            [:p {:class "form-help"}
+             "登録済みの連絡先へ、10分間・一回限りのログインリンクを送ります。"]
+            [:div {:class "field"}
+             [:label {:for "email-login-address"} "メールアドレス"]
+             [:input {:id "email-login-address" :name "email" :type "email"
+                      :required true :autocomplete "email"}]]
+            [:button {:class "tool-button" :id "email-login-submit"
+                      :type "submit"} "ログインリンクを送る"]]
            [:button {:class "primary-action" :id "passkey-signin" :type "button"}
             "Passkey でサインイン"]
            [:form {:class "settings-form" :id "enrollment-form"}

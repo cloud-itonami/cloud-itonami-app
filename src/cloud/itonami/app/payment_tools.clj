@@ -64,7 +64,8 @@
       ;;
       ;; This is not the approval gate either way — `approve/finish` needs a
       ;; WebAuthn user-verifying assertion and no agent can produce one.
-      (when (and s (identity/human-session? s) (identity/passkey-enrolled? s))
+      (when (and s (= :passkey (:kind s))
+                 (identity/human-session? s) (identity/may-act? s))
         s))))
 
 (defn available?

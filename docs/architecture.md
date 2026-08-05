@@ -45,11 +45,52 @@ it was created reads as a failed create. It is intentionally separate from
 model context: viewing a calendar or mailbox does not send its data to an AI
 provider.
 
+Kaisya Messenger is a separate organization-scoped mailbox ledger. Direct,
+group, and channel conversations fan out to per-principal deliveries for human,
+Agent session, and OrganismWorker addresses. Admission is an exact, deny-by-
+default sender allowlist; quarantine exposes no body and cannot become model
+context. Browser `itonami-signal-v1` keeps private device/ratchet keys in
+IndexedDB, uses X3DH + bounded Double Ratchet for device sessions and pairwise-
+wrapped sender keys for groups. The server holds public prekeys and ciphertext
+only. External OrganismWorkers authenticate with a rotated 0600-file bearer,
+poll their own mailbox and reply through `/api/ao/messenger/*`; ordinary
+messages still confer no intent, tool, approval, or effect authority.
+
 Creating and editing a document is the one mutation here, and it does not
 write to any of the external authorities above: it writes to a
 `drive.workspace` held in the app's own state and to an object store the app
-owns. Mutation adapters that write back to OneDrive, GitHub Projects or
-EventKit still require a later capability and approval design.
+owns. Mutation adapters that write back to OneDrive or EventKit still require a
+later capability and approval design. GitHub Projects is the narrow exception
+described below: its status projection has lease, receipt, and basis gates.
+
+Kanban execution has a pure integration contract in
+`cloud.itonami.app.work-governance`: WorkItems are joined to DoDAF performers,
+organization assignments, content-bound human approval, `yakuwari` policy and
+desired AgentRun capacity. `work-runtime` persists its leases and receipts,
+dispatches bounded runs through Agent Control, and is woken by the supervised
+`work-reconciler`. The optional `github-projects-writeback` adapter re-reads and
+compares the lease-time Projects v2 basis before mutation. Dispatch and GitHub
+write-back are independently disabled by default.
+
+The runtime control plane is exposed under `/api/work-governance` with
+organization-scoped reads and owner/admin mutations. Approval and independent
+review use operation-bound Passkey ceremonies. A file-elected leader performs
+ticks, while `state.edn.lock` serializes commits from standby/API processes.
+GitHub sources use cursor checkpoints, signed webhook wake-up, rate-limit
+backoff, post-mutation verification, projection receipts and dead-letter replay.
+Governed work is not stored in `state.edn`: `work-governance/manifest.edn` pins
+one atomic generation composed from a global EDN file and one owner-only EDN
+file per organization. The previous complete generation is retained for
+recovery; older/orphan generations are collected after a successful commit.
+The Projects view includes structured editors for performers, assignments,
+reporting lines and approval policies; JSON inputs are normalized back into the
+canonical namespaced-keyword/set EDN model at the HTTP boundary.
+The dedicated `#organization` Organization Studio is the primary editor. It
+projects nested Organization Units, Position/Role definitions, typed
+Person/System/Organization actors, effective-dated assignments, reporting
+lines, and approval-route previews from the active organization's same physical
+EDN partition. User, Agent session and OrganismWorker candidates are resolved
+server-side and exposed only for the active organization.
 
 A save is validated by the surface that owns the schema — `sheets.validate`,
 `docs.validate`, `forms.validate` — after the payload has been rehydrated out

@@ -17,6 +17,20 @@
     // there is no workspace content in it. Everything else stays gated.
     const publicViews = new Set(['settings', 'storage']);
     let currentView = 'settings';
+    const sidebar = $('.sidebar');
+    const mobileMenuToggle = $('.mobile-menu-toggle');
+    const mobileNavBackdrop = $('.mobile-nav-backdrop');
+    const setMobileMenuOpen = (open) => {
+      sidebar.dataset.mobileMenuOpen = String(open);
+      mobileMenuToggle.setAttribute('aria-expanded', String(open));
+      document.body.classList.toggle('has-mobile-menu', open);
+    };
+    mobileMenuToggle.addEventListener('click', () =>
+      setMobileMenuOpen(mobileMenuToggle.getAttribute('aria-expanded') !== 'true'));
+    mobileNavBackdrop.addEventListener('click', () => setMobileMenuOpen(false));
+    document.addEventListener('keydown', (event) => {
+      if (event.key === 'Escape') setMobileMenuOpen(false);
+    });
     // Assigned once the worker surface is defined further down; showView runs
     // before that, so it must not name the worker helpers directly.
     let onViewChange = () => {};
@@ -35,6 +49,9 @@
         'aria-current', item.dataset.view === name ? 'page' : 'false'));
       $$('.view').forEach((panel) => { panel.hidden = panel.dataset.viewPanel !== name; });
       const active = $(`.local-nav__item[data-view='${name}']`);
+      // A deep-linked or programmatically selected view must reveal its place
+      // in the information architecture, even when its section starts closed.
+      active?.closest('.nav-section')?.setAttribute('open', '');
       $('#current-view').textContent = active?.dataset.title || 'Chat';
       history.replaceState(null, '', `#${name}`);
       const brand = document.querySelector('.workspace')?.dataset.brand || 'Cloud Itonami';
@@ -43,7 +60,10 @@
       onViewChange(name);
     };
     $$('.local-nav__item').forEach((item) =>
-      item.addEventListener('click', () => showView(item.dataset.view)));
+      item.addEventListener('click', () => {
+        showView(item.dataset.view);
+        setMobileMenuOpen(false);
+      }));
     showView('settings');
 
     const form = $('#chat-form');
@@ -309,6 +329,230 @@
       row.append(button);
       return row;
     };
+    // ── Kaisya Messenger: conversation UI over per-principal mailboxes ────
+    let messengerData = {principals:[], conversations:[], quarantine:0};
+    let selectedMessengerConversation = null;
+    let messengerSignalReady = false;
+    let messengerSignalDevice = null;
+    const messengerStatus = (value) => { $('#messenger-status').textContent = value || ''; };
+    const initializeMessengerSignal = async () => {
+      if (!window.ItonamiSignal || !messengerData.principal) return false;
+      window.ItonamiSignal.configure({postJSON, principal:messengerData.principal, prefix:'/api/messenger'});
+      try {
+        messengerSignalDevice = await window.ItonamiSignal.initialize();
+        messengerSignalReady = true;
+        $('#messenger-security').textContent = `Signal E2EE · ${messengerSignalDevice.deviceId}`;
+        return true;
+      } catch (error) {
+        messengerSignalReady = false;
+        $('#messenger-security').textContent = 'Signal利用不可 · plaintextは手動選択';
+        messengerStatus(error.message); return false;
+      }
+    };
+    const renderMessengerPrincipals = () => {
+      const list = $('#messenger-principals');
+      const chooser = $('#messenger-members');
+      list.replaceChildren(); chooser.replaceChildren();
+      (messengerData.principals || []).forEach((principal) => {
+        if (principal.id !== messengerData.principal && principal.status !== 'inactive') {
+          const option = make('option', null, `${principal.name} · ${principal.kind}`);
+          option.value = principal.id;
+          chooser.append(option);
+        }
+        const item = make('li');
+        const row = make('div', 'messenger-principal__row');
+        const copy = make('div');
+        copy.append(make('strong', null, principal.name),
+          make('div', 'messenger-kind', `${principal.kind}${principal.did ? ` · ${principal.did}` : ''}`));
+        if (principal.id !== messengerData.principal) {
+          const trust = make('button', 'tool-button', principal.trusted ? '許可済み' : '許可する');
+          trust.type = 'button';
+          trust.setAttribute('aria-pressed', String(Boolean(principal.trusted)));
+          trust.addEventListener('click', async () => {
+            trust.disabled = true;
+            try {
+              await postJSON('/api/messenger/trust', {
+                'sender-id':principal.id, 'allowed?':!principal.trusted
+              }, true);
+              messengerStatus(principal.trusted
+                ? `${principal.name} の今後のmessageを隔離します。`
+                : `${principal.name} をallowlistに追加しました。`);
+              await loadMessenger();
+            } catch (error) { messengerStatus(error.message); }
+            finally { trust.disabled = false; }
+          });
+          const actions = make('div', 'button-row');
+          if ((principal.devices || 0) > 0) {
+            const verify = make('button', 'tool-button', '端末確認'); verify.type = 'button';
+            verify.addEventListener('click', async () => {
+              verify.disabled = true;
+              try {
+                const count = await window.ItonamiSignal.verifyPrincipal(principal.id,
+                  async ({deviceId, fingerprint, changed}) => window.confirm(
+                    `${principal.name} / ${deviceId}\n${changed ? '警告: 以前と異なる端末鍵です。\n' : ''}` +
+                    `安全番号: ${fingerprint}\n\n別経路で本人と照合しましたか？`));
+                messengerStatus(`${principal.name} の ${count} 端末を確認しました。`);
+              } catch (error) { messengerStatus(error.message); }
+              finally { verify.disabled = false; }
+            });
+            actions.append(verify);
+          }
+          actions.append(trust); row.append(copy, actions);
+        } else row.append(copy, make('span', 'state-chip', 'このmailbox'));
+        item.append(row); list.append(item);
+      });
+      if (!messengerData.principals?.length) {
+        list.append(make('li', 'empty-state', 'addressable principalがありません。'));
+      }
+    };
+    const loadMessengerQuarantine = async () => {
+      const request = await fetch('/api/messenger/quarantine');
+      const data = await request.json();
+      if (!request.ok) throw new Error(data?.error?.message || '隔離一覧を取得できません。');
+      const list = $('#messenger-quarantine'); list.replaceChildren();
+      (data.items || []).forEach((held) => {
+        const item = make('li');
+        item.append(make('strong', null, held.sender),
+          make('div', 'messenger-kind', `${formatDate(held['created-at'])} · 本文非表示`),
+          make('div', 'messenger-kind', held['content-digest']));
+        list.append(item);
+      });
+      if (!(data.items || []).length) list.append(make('li', 'empty-state', '隔離messageはありません。'));
+      $('#messenger-quarantine-count').textContent = `${data.count || 0} 件 · agent contextへ未投入`;
+    };
+    const loadMessengerMessages = async () => {
+      const list = $('#messenger-messages');
+      const input = $('#messenger-message');
+      const submit = $('#messenger-message-submit');
+      if (!selectedMessengerConversation) {
+        list.replaceChildren(make('li', 'empty-state', '会話を選択してください。'));
+        input.disabled = true; submit.disabled = true; return;
+      }
+      list.replaceChildren(make('li', 'skeleton'));
+      try {
+        const path = `/api/messenger/conversations/${encodeURIComponent(selectedMessengerConversation)}`;
+        const request = await fetch(`${path}/messages`);
+        const data = await request.json();
+        if (!request.ok) throw new Error(data?.error?.message || 'messageを取得できません。');
+        list.replaceChildren();
+        for (const message of (data.items || [])) {
+          const item = make('li', 'messenger-message');
+          item.dataset.own = String(message['sender-id'] === messengerData.principal);
+          const head = make('div', 'messenger-message__head');
+          head.append(make('strong', null, `${message.sender} · ${message['sender-kind'] || 'principal'}`),
+            make('time', null, formatDate(message['created-at'], true)));
+          const body = make('p', 'messenger-message__body', message.content ||
+            (message['sealed?'] ? 'Signal envelopeを復号中…' : '本文なし'));
+          if (message['sealed?'] && message.sealed) {
+            try {
+              if (!messengerSignalReady) await initializeMessengerSignal();
+              body.textContent = await window.ItonamiSignal.decryptEnvelope({
+                sealed:message.sealed, sender:message['sender-id'], conversationId:selectedMessengerConversation,
+                conversation:messengerData.conversations.find((item) => item.id === selectedMessengerConversation)
+              });
+            } catch (error) { body.textContent = `復号保留: ${error.message}`; }
+          }
+          const encryption = message.encryption || {};
+          const security = make('span', 'messenger-message__security',
+            encryption['e2ee?'] ? `${encryption.mode} · E2EE envelope` : 'local-plaintext · E2EEではありません');
+          item.append(head, body, security); list.append(item);
+        }
+        if (!(data.items || []).length) list.append(make('li', 'empty-state', 'まだmessageはありません。'));
+        const conversation = data.conversation || {};
+        $('#messenger-conversation-title').textContent = conversation.title || conversation['conversation/title'] || 'Conversation';
+        $('#messenger-conversation-meta').textContent =
+          `${conversation.kind || conversation['conversation/kind'] || 'conversation'} · ${(conversation.members || conversation['conversation/members'] || []).length} principals`;
+        input.disabled = false; submit.disabled = false;
+        await postJSON(`${path}/read`, {}, true);
+        list.scrollTop = list.scrollHeight;
+      } catch (error) {
+        list.replaceChildren(make('li', 'empty-state', error.message));
+        input.disabled = true; submit.disabled = true;
+      }
+    };
+    const renderMessenger = (data) => {
+      messengerData = data;
+      if (!(data.conversations || []).some((c) => c.id === selectedMessengerConversation)) {
+        selectedMessengerConversation = data.conversations?.[0]?.id || null;
+      }
+      const list = $('#messenger-conversations'); list.replaceChildren();
+      (data.conversations || []).forEach((conversation) => {
+        list.append(recordButton(conversation, conversation.id === selectedMessengerConversation,
+          (selected) => {
+            selectedMessengerConversation = selected.id;
+            renderMessenger(messengerData);
+          }, {title:conversation.title, time:conversation.unread ? String(conversation.unread) : '',
+              meta:`${conversation.kind} · ${conversation.members.length} principals`,
+              snippet:conversation.unread ? `${conversation.unread} unread` : '既読'}));
+      });
+      if (!(data.conversations || []).length) {
+        list.append(make('li', 'empty-state', '最初のDMまたはgroupを作成してください。'));
+      }
+      renderMessengerPrincipals();
+      const unread = (data.conversations || []).reduce((n, c) => n + (c.unread || 0), 0);
+      $('#messenger-count').textContent = unread || '—';
+      $('#messenger-count').dataset.tone = data.quarantine ? 'warn' : (unread ? 'ok' : '');
+      $('#messenger-source').textContent = `${data.principal} · ${(data.conversations || []).length} conversations`;
+      if (!messengerSignalReady) initializeMessengerSignal();
+      loadMessengerMessages();
+      loadMessengerQuarantine().catch((error) => messengerStatus(error.message));
+    };
+    const loadMessenger = async () => {
+      const request = await fetch('/api/messenger');
+      const data = await request.json();
+      if (!request.ok) throw new Error(data?.error?.message || 'Messengerを読み込めません。');
+      renderMessenger(data); return true;
+    };
+    $('#messenger-create-form').addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const button = event.submitter;
+      const members = [...$('#messenger-members').selectedOptions].map((option) => option.value);
+      button.disabled = true;
+      try {
+        const conversation = await postJSON('/api/messenger/conversations', {
+          title:$('#messenger-title').value.trim(), kind:$('#messenger-kind').value, members
+        }, true);
+        selectedMessengerConversation = conversation.id;
+        event.currentTarget.reset();
+        messengerStatus('会話を作成しました。各mailboxのallowlistに従って配送します。');
+        await loadMessenger();
+      } catch (error) { messengerStatus(error.message); }
+      finally { button.disabled = false; }
+    });
+    $('#messenger-signal-device').addEventListener('click', async (event) => {
+      event.currentTarget.disabled = true;
+      try {
+        if (await initializeMessengerSignal()) messengerStatus('端末秘密鍵をIndexedDBに保存し、公開prekeyを登録しました。');
+      } finally { event.currentTarget.disabled = false; }
+    });
+    $('#messenger-message-form').addEventListener('submit', async (event) => {
+      event.preventDefault();
+      if (!selectedMessengerConversation) return;
+      const input = $('#messenger-message');
+      const content = input.value.trim();
+      if (!content) return;
+      const button = event.submitter; button.disabled = true;
+      try {
+        const mode = $('#messenger-encryption-mode').value;
+        let requestBody;
+        if (mode === 'signal-v1') {
+          if (!messengerSignalReady && !(await initializeMessengerSignal())) {
+            throw new Error('Signal端末を初期化できません。');
+          }
+          const conversation = messengerData.conversations.find((item) => item.id === selectedMessengerConversation);
+          const sealed = await window.ItonamiSignal.encryptConversation({conversation, plaintext:content});
+          requestBody = {sealed, 'encryption-mode':'signal-v1'};
+        } else requestBody = {content, 'encryption-mode':'local-plaintext'};
+        await postJSON(`/api/messenger/conversations/${encodeURIComponent(selectedMessengerConversation)}/messages`,
+          requestBody, true);
+        input.value = '';
+        messengerStatus(mode === 'signal-v1'
+          ? 'Signal E2EE envelopeを配送しました。未許可mailboxではciphertextも隔離されます。'
+          : 'plaintextを配送しました。未許可のmailboxでは本文を隔離しています。');
+        await loadMessenger();
+      } catch (error) { messengerStatus(error.message); }
+      finally { button.disabled = false; }
+    });
     let inboxData = {items:[]};
     let selectedInbox = null;
     // ── what one person has done with the mail ────────────────────────────
@@ -4041,6 +4285,368 @@
       $('#projects-state').textContent = data.status === 'connected' ? '接続済み' : '権限確認が必要';
       $('#projects-state').className = `state-chip${data.status === 'connected' ? '' : ' state-chip--warn'}`;
     };
+    let governanceHydrated = false;
+    let governanceActorCandidates = [];
+    const governanceField = (label, value, field, type = 'text') => {
+      const wrapper = make('label');
+      wrapper.append(document.createTextNode(label));
+      const input = make(type === 'select' ? 'select' : 'input');
+      input.dataset.field = field;
+      if (type !== 'select') input.type = type;
+      input.value = value || '';
+      wrapper.append(input);
+      return input;
+    };
+    const governanceRemove = (row) => {
+      const button = make('button', 'tool-button governance-remove', '削除');
+      button.type = 'button';
+      button.addEventListener('click', () => row.remove());
+      return button;
+    };
+    const selectOptions = (input, options, selected) => {
+      options.forEach(([value, label]) => {
+        const option = make('option', null, label); option.value = value;
+        option.selected = value === selected; input.append(option);
+      });
+      return input;
+    };
+    const addGovernanceUnit = (value = {}) => {
+      const row = make('div', 'governance-row');
+      const id = governanceField('Unit ID', value['org.unit/id'], 'id');
+      const name = governanceField('表示名', value['org.unit/name'], 'name');
+      const kind = governanceField('種別', '', 'kind', 'select');
+      selectOptions(kind, [['organization','Organization'],['division','Division'],
+        ['department','Department'],['team','Team'],['program','Program']],
+      value['org.unit/kind'] || 'team');
+      const parent = governanceField('親Unit ID', value['org.unit/parent'], 'parent');
+      parent.setAttribute('list', 'organization-unit-options');
+      const performer = governanceField('Organization Performer',
+        value['org.unit/performer'], 'performer');
+      performer.setAttribute('list', 'organization-performer-options');
+      row.append(id.parentElement, name.parentElement, kind.parentElement,
+        parent.parentElement, performer.parentElement, governanceRemove(row));
+      $('#governance-units')?.append(row);
+    };
+    const addGovernancePosition = (value = {}) => {
+      const row = make('div', 'governance-row governance-row--wide');
+      const id = governanceField('Position ID', value['org.position/id'], 'id');
+      const name = governanceField('表示名', value['org.position/name'], 'name');
+      const unit = governanceField('Unit ID', value['org.position/unit'], 'unit');
+      unit.setAttribute('list', 'organization-unit-options');
+      row.append(id.parentElement, name.parentElement, unit.parentElement,
+        governanceRemove(row));
+      $('#governance-positions')?.append(row);
+    };
+    const addGovernanceRole = (value = {}) => {
+      const row = make('div', 'governance-row governance-row--wide');
+      const id = governanceField('Role ID', value['org.role/id'], 'id');
+      const name = governanceField('表示名', value['org.role/name'], 'name');
+      const capabilities = governanceField('Capabilities（カンマ区切り）',
+        (value['org.role/capabilities'] || []).join(', '), 'capabilities');
+      row.append(id.parentElement, name.parentElement, capabilities.parentElement,
+        governanceRemove(row));
+      $('#governance-roles')?.append(row);
+    };
+    const addGovernancePerformer = (value = {}) => {
+      const row = make('div', 'governance-row governance-row--wide');
+      const id = governanceField('ID', value['performer/id'], 'id');
+      const name = governanceField('表示名', value['performer/name'], 'name');
+      const kind = governanceField('DoDAF種別', '', 'kind', 'select');
+      selectOptions(kind, [['person','Person'],['system','System'],
+        ['organization','Organization']], value['performer/kind'] || 'person');
+      const actor = value['performer/actor'] || {};
+      const actorKind = governanceField('Actor種別', '', 'actor-kind', 'select');
+      selectOptions(actorKind, [['','未結合'],['user','Cloud Itonami User'],
+        ['agent','Agent session'],['organism-worker','OrganismWorker'],
+        ['external-system','External system'],['organization','Organization']],
+      actor['actor/kind'] || (value['performer/user-id'] ? 'user' : ''));
+      const actorId = governanceField('Actor ID', actor['actor/id'] ||
+        value['performer/user-id'], 'actor-id');
+      actorId.setAttribute('list', 'organization-actor-options');
+      actorId.addEventListener('change', () => {
+        const candidate = governanceActorCandidates.find((item) =>
+          item['actor/id'] === actorId.value);
+        if (candidate) actorKind.value = candidate['actor/kind'];
+      });
+      row.append(id.parentElement, name.parentElement, kind.parentElement,
+        actorKind.parentElement, actorId.parentElement, governanceRemove(row));
+      $('#governance-performers')?.append(row);
+    };
+    const addGovernanceAssignment = (value = {}) => {
+      const row = make('div', 'governance-row governance-row--wide');
+      const id = governanceField('ID', value['org.assignment/id'], 'id');
+      const performer = governanceField('Performer ID', value['org.assignment/performer'], 'performer');
+      const position = governanceField('Position ID', value['org.assignment/position'], 'position');
+      performer.setAttribute('list', 'organization-performer-options');
+      position.setAttribute('list', 'organization-position-options');
+      const roles = governanceField('Roles（カンマ区切り）',
+        (value['org.assignment/roles'] || []).join(', '), 'roles');
+      const from = governanceField('有効開始', value['org.assignment/effective-from'],
+        'effective-from', 'date');
+      const to = governanceField('有効終了', value['org.assignment/effective-to'],
+        'effective-to', 'date');
+      row.append(id.parentElement, performer.parentElement, position.parentElement,
+        roles.parentElement, from.parentElement, to.parentElement, governanceRemove(row));
+      $('#governance-assignments')?.append(row);
+    };
+    const addGovernanceReporting = (value = {}) => {
+      const row = make('div', 'governance-row governance-row--reporting');
+      const manager = governanceField('Manager assignment ID', value['reporting/manager'], 'manager');
+      const report = governanceField('Report assignment ID', value['reporting/report'], 'report');
+      row.append(manager.parentElement, report.parentElement, governanceRemove(row));
+      $('#governance-reporting-lines')?.append(row);
+    };
+    const rowValues = (selector) => [...document.querySelectorAll(selector)].map((row) =>
+      Object.fromEntries([...row.querySelectorAll('[data-field]')]
+        .map((input) => [input.dataset.field, input.value.trim()])));
+    const renderOrganizationStudio = (data) => {
+      const units = data['organization-units'] || [];
+      const performers = data.performers || [];
+      const assignments = data.assignments || [];
+      const roles = data['organization-roles'] || [];
+      const policies = data['approval-policies'] || [];
+      const summary = $('#organization-studio-summary');
+      if (!summary) return;
+      summary.replaceChildren();
+      [['Units',units.length],['People & Actors',performers.length],
+       ['Assignments',assignments.length],['Approval policies',policies.length]]
+        .forEach(([label, count]) => {
+          const card = make('div', 'organization-stat');
+          card.append(make('strong', null, String(count)), make('span', null, label));
+          summary.append(card);
+        });
+      $('#organization-count').textContent = units.length || performers.length || '—';
+      const tree = $('#organization-studio-tree'); tree.replaceChildren();
+      const children = new Map();
+      units.forEach((unit) => {
+        const parent = unit['org.unit/parent'] || '';
+        children.set(parent, [...(children.get(parent) || []), unit]);
+      });
+      const renderBranch = (parent, seen = new Set()) => {
+        const list = make('ul', parent ? null : 'organization-tree');
+        (children.get(parent) || []).forEach((unit) => {
+          const id = unit['org.unit/id']; if (seen.has(id)) return;
+          const item = make('li');
+          const node = make('div', 'organization-tree__node');
+          const copy = make('span');
+          copy.append(make('strong', null, unit['org.unit/name'] || id),
+            make('small', null, ` ${unit['org.unit/kind'] || 'team'}`));
+          const positionCount = (data.positions || [])
+            .filter((position) => position['org.position/unit'] === id).length;
+          node.append(copy, make('span', 'state-chip', `${positionCount} positions`));
+          item.append(node);
+          const branch = renderBranch(id, new Set([...seen, id]));
+          if (branch.childElementCount) item.append(branch);
+          list.append(item);
+        });
+        return list;
+      };
+      const roots = renderBranch('');
+      tree.append(...roots.children);
+      if (!tree.children.length) tree.append(make('li', 'empty-state', 'Organization Unitはありません。'));
+      const actors = $('#organization-studio-actors'); actors.replaceChildren();
+      performers.forEach((performer) => {
+        const actor = performer['performer/actor'];
+        const row = make('li');
+        const copy = make('div');
+        copy.append(make('strong', null, performer['performer/name'] || performer['performer/id']),
+          make('p', 'data-list__meta', actor
+            ? `${actor['actor/kind']} · ${actor['actor/id']}` : 'Actor未結合'));
+        row.append(copy, make('span', 'state-chip', performer['performer/kind'])); actors.append(row);
+      });
+      if (!performers.length) actors.append(make('li', 'empty-state', 'Performerはありません。'));
+      const assignmentList = $('#organization-studio-assignments');
+      assignmentList.replaceChildren();
+      assignments.forEach((assignment) => {
+        const performer = performers.find((p) =>
+          p['performer/id'] === assignment['org.assignment/performer']);
+        const row = make('li'); const copy = make('div');
+        copy.append(make('strong', null, performer?.['performer/name'] ||
+          assignment['org.assignment/performer']),
+        make('p', 'data-list__meta', `${assignment['org.assignment/position']} · ${
+          (assignment['org.assignment/roles'] || []).join(', ')}`));
+        row.append(copy, make('span', 'state-chip', assignment['org.assignment/status'] || 'active'));
+        assignmentList.append(row);
+      });
+      if (!assignments.length) assignmentList.append(make('li', 'empty-state', 'Assignmentはありません。'));
+      const policyList = $('#organization-studio-policies'); policyList.replaceChildren();
+      policies.forEach((policy) => {
+        const row = make('li'); const copy = make('div');
+        const eligibleRoles = policy['approval.policy/eligible-roles'] || [];
+        const eligiblePeople = assignments.filter((assignment) =>
+          (assignment['org.assignment/roles'] || []).some((role) => eligibleRoles.includes(role)))
+          .map((assignment) => performers.find((performer) =>
+            performer['performer/id'] === assignment['org.assignment/performer']))
+          .filter((performer) => performer?.['performer/kind'] === 'person')
+          .map((performer) => performer['performer/name'] || performer['performer/id']);
+        copy.append(make('strong', null, policy['approval.policy/capability']),
+          make('p', 'data-list__meta', `${eligibleRoles.join(', ')} · ${
+            policy['approval.policy/minimum']} approvals · ${eligiblePeople.join(', ') || 'eligible Personなし'}`));
+        row.append(copy, make('span', 'state-chip', policy['approval.policy/separation-of-duties?']
+          ? '職務分離' : '同一人物可')); policyList.append(row);
+      });
+      if (!policies.length) policyList.append(make('li', 'empty-state', 'Approval policyはありません。'));
+      const chip = $('#organization-studio-state');
+      chip.textContent = `${data['organization-id']} · EDN partition`;
+      chip.className = 'state-chip';
+    };
+    const hydrateGovernanceForms = (data) => {
+      if (governanceHydrated) return;
+      governanceHydrated = true;
+      const organization = data.organization || {};
+      governanceActorCandidates = data['actor-candidates'] || [];
+      const actorOptions = $('#organization-actor-options');
+      actorOptions.replaceChildren();
+      governanceActorCandidates.forEach((actor) => {
+        const option = make('option'); option.value = actor['actor/id'];
+        option.label = `${actor['actor/label']} (${actor['actor/kind']})`;
+        actorOptions.append(option);
+      });
+      const fillGovernanceOptions = (id, values, key, labelKey) => {
+        const list = $(id); list.replaceChildren();
+        values.forEach((value) => {
+          const option = make('option'); option.value = value[key];
+          option.label = value[labelKey] || value[key]; list.append(option);
+        });
+      };
+      fillGovernanceOptions('#organization-unit-options', data['organization-units'] || [],
+        'org.unit/id', 'org.unit/name');
+      fillGovernanceOptions('#organization-position-options', data.positions || [],
+        'org.position/id', 'org.position/name');
+      fillGovernanceOptions('#organization-performer-options', data.performers || [],
+        'performer/id', 'performer/name');
+      $('#governance-org-id').value = organization['org/id'] || data['organization-id'] || '';
+      $('#governance-org-name').value = organization['org/name'] || '';
+      $('#governance-units').replaceChildren();
+      (data['organization-units'] || []).forEach(addGovernanceUnit);
+      $('#governance-positions').replaceChildren();
+      (data.positions || []).forEach(addGovernancePosition);
+      $('#governance-roles').replaceChildren();
+      (data['organization-roles'] || []).forEach(addGovernanceRole);
+      $('#governance-performers').replaceChildren();
+      (data.performers || []).forEach(addGovernancePerformer);
+      $('#governance-assignments').replaceChildren();
+      (data.assignments || []).forEach(addGovernanceAssignment);
+      $('#governance-reporting-lines').replaceChildren();
+      (data['reporting-lines'] || []).forEach(addGovernanceReporting);
+      const policy = (data['approval-policies'] || [])[0];
+      if (policy) {
+        $('#governance-policy-id').value = policy['approval.policy/id'] || '';
+        $('#governance-policy-capability').value = policy['approval.policy/capability'] || '';
+        $('#governance-policy-roles').value = (policy['approval.policy/eligible-roles'] || []).join(', ');
+        $('#governance-policy-minimum').value = policy['approval.policy/minimum'] || 1;
+        $('#governance-policy-uv').checked = policy['approval.policy/requires-user-verification?'] !== false;
+        $('#governance-policy-sod').checked = policy['approval.policy/separation-of-duties?'] !== false;
+      }
+    };
+    const loadWorkGovernance = async () => {
+      const list = $('#work-governance-list');
+      const chip = $('#work-governance-state');
+      if (!list || !chip) return false;
+      try {
+        const response = await fetch('/api/work-governance');
+        const data = await response.json();
+        if (!response.ok || data.error) throw new Error(data.error?.message || '読み込めません');
+        list.replaceChildren();
+        (data['work-items'] || []).forEach((item) => list.append(listItem(
+          item['work.item/title'],
+          `${item['work.item/yakuwari']} · ${item['work.item/capability']}`,
+          item['work.item/status'])));
+        if (!(data['work-items'] || []).length) {
+          list.append(make('li', 'empty-state', 'Governed WorkItem はありません。'));
+        }
+        const runtime = data.runtime || {};
+        chip.textContent = `${runtime.ticks || 0} ticks · ${data['dead-letters']?.length || 0} dead`;
+        chip.className = `state-chip${(data['dead-letters'] || []).length ? ' state-chip--warn' : ''}`;
+        hydrateGovernanceForms(data);
+        renderOrganizationStudio(data);
+        return true;
+      } catch (error) {
+        list.replaceChildren(make('li', 'empty-state', error.message));
+        chip.textContent = '確認が必要';
+        chip.className = 'state-chip state-chip--warn';
+        return false;
+      }
+    };
+    $('#open-organization-studio')?.addEventListener('click', () => showView('organization'));
+    $('#governance-add-unit')?.addEventListener('click', () => addGovernanceUnit());
+    $('#governance-add-position')?.addEventListener('click', () => addGovernancePosition());
+    $('#governance-add-role')?.addEventListener('click', () => addGovernanceRole());
+    $('#governance-add-performer')?.addEventListener('click', () => addGovernancePerformer());
+    $('#governance-add-assignment')?.addEventListener('click', () => addGovernanceAssignment());
+    $('#governance-add-reporting')?.addEventListener('click', () => addGovernanceReporting());
+    $('#governance-organization-form')?.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const status = $('#governance-organization-status');
+      const organization = $('#governance-org-id').value.trim();
+      const csv = (value) => value.split(',').map((x) => x.trim()).filter(Boolean);
+      const units = rowValues('#governance-units .governance-row')
+        .filter((row) => row.id)
+        .map((row) => ({'org.unit/id':row.id, 'org.unit/organization':organization,
+          'org.unit/name':row.name, 'org.unit/kind':row.kind,
+          ...(row.parent ? {'org.unit/parent':row.parent} : {}),
+          ...(row.performer ? {'org.unit/performer':row.performer} : {})}));
+      const positions = rowValues('#governance-positions .governance-row')
+        .filter((row) => row.id)
+        .map((row) => ({'org.position/id':row.id,
+          'org.position/organization':organization,
+          'org.position/name':row.name, 'org.position/unit':row.unit}));
+      const organizationRoles = rowValues('#governance-roles .governance-row')
+        .filter((row) => row.id)
+        .map((row) => ({'org.role/id':row.id,
+          'org.role/organization':organization, 'org.role/name':row.name,
+          'org.role/capabilities':csv(row.capabilities)}));
+      const performers = rowValues('#governance-performers .governance-row')
+        .filter((row) => row.id)
+        .map((row) => ({'performer/id':row.id, 'performer/name':row.name,
+          'performer/kind':row.kind, 'performer/organization':organization,
+          ...(row['actor-kind'] && row['actor-id'] ? {'performer/actor':{
+            'actor/kind':row['actor-kind'], 'actor/id':row['actor-id']}} : {})}));
+      const assignments = rowValues('#governance-assignments .governance-row')
+        .filter((row) => row.id)
+        .map((row) => ({'org.assignment/id':row.id,
+          'org.assignment/organization':organization,
+          'org.assignment/performer':row.performer,
+          'org.assignment/position':row.position,
+          'org.assignment/roles':csv(row.roles),
+          ...(row['effective-from'] ? {'org.assignment/effective-from':row['effective-from']} : {}),
+          ...(row['effective-to'] ? {'org.assignment/effective-to':row['effective-to']} : {})}));
+      const reporting = rowValues('#governance-reporting-lines .governance-row')
+        .filter((row) => row.manager && row.report)
+        .map((row) => ({'reporting/manager':row.manager, 'reporting/report':row.report}));
+      status.textContent = '組織図を検証しています…';
+      try {
+        await postJSON('/api/work-governance/organizations', {
+          'org/id':organization, 'org/name':$('#governance-org-name').value.trim(),
+          'org/units':units, 'org/positions':positions, 'org/roles':organizationRoles,
+          'org/performers':performers, 'org/assignments':assignments,
+          'org/reporting-lines':reporting
+        }, true);
+        status.textContent = '組織図を保存しました。';
+        governanceHydrated = false; await loadWorkGovernance();
+      } catch (error) { status.textContent = error.message; }
+    });
+    $('#governance-policy-form')?.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const status = $('#governance-policy-status');
+      const roles = $('#governance-policy-roles').value.split(',')
+        .map((x) => x.trim()).filter(Boolean);
+      status.textContent = 'Policyを検証しています…';
+      try {
+        await postJSON('/api/work-governance/approval-policies', {
+          'approval.policy/id':$('#governance-policy-id').value.trim(),
+          'approval.policy/organization':$('#governance-org-id').value.trim(),
+          'approval.policy/capability':$('#governance-policy-capability').value.trim(),
+          'approval.policy/eligible-roles':roles,
+          'approval.policy/minimum':Number($('#governance-policy-minimum').value),
+          'approval.policy/requires-user-verification?':$('#governance-policy-uv').checked,
+          'approval.policy/separation-of-duties?':$('#governance-policy-sod').checked,
+          'approval.policy/rejection-mode':'veto'
+        }, true);
+        status.textContent = 'Approval policyを保存しました。';
+        governanceHydrated = false; await loadWorkGovernance();
+      } catch (error) { status.textContent = error.message; }
+    });
     let calendarData = {items:[], days:[]};
     let selectedDay = null;
     let selectedEvent = null;
@@ -4437,6 +5043,18 @@
       });
       scheduleOrganismPoll();
     };
+    $('#organism-messenger-issue').addEventListener('click', async (event) => {
+      const button = event.currentTarget;
+      if (!selectedOrganism) return;
+      button.disabled = true;
+      try {
+        const issued = await postJSON(
+          `/api/organism-workers/${encodeURIComponent(selectedOrganism.id)}/messenger-transport`, {}, true);
+        $('#organism-messenger-state').textContent =
+          `発行済み: ${issued['credential-file']} · clear tokenは0600 file内だけです。`;
+      } catch (error) { $('#organism-messenger-state').textContent = error.message; }
+      finally { button.disabled = false; }
+    });
     const loadOrganisms = async () => {
       const request = await fetch('/api/organism-workers');
       const data = await request.json();
@@ -4502,8 +5120,10 @@
         $('#organism-list').replaceChildren(make('li', 'empty-state', error.message));
       });
       Promise.all([
+        loadMessenger(),
         loadWorkspace('inbox', renderInbox),
         loadWorkspace('projects', renderProjects),
+        loadWorkGovernance(),
         loadWorkspace('drive', renderDrive),
         loadWorkspace('scheduler', renderCalendar),
         // Inside bootstrapApp, unlike loadFilecoin: this endpoint decrypts vault
@@ -6133,16 +6753,15 @@
     };
     const renderIdentity = (data) => {
       identityState = data;
-      const passkeyReady = Boolean(
-        data['authenticated?'] && data.user?.['passkey-enrolled?']);
-      appUnlocked = passkeyReady;
+      const identityReady = Boolean(data['authenticated?'] && data['may-act?']);
+      appUnlocked = identityReady;
       $$('.local-nav__item').forEach((item) => {
-        item.disabled = !passkeyReady && !publicViews.has(item.dataset.view);
+        item.disabled = !identityReady && !publicViews.has(item.dataset.view);
         item.setAttribute('aria-disabled', String(item.disabled));
       });
-      document.body.dataset.identityGate = passkeyReady ? 'ready' : 'required';
-      $('#passkey-gate-notice').hidden = passkeyReady;
-      if (!passkeyReady) {
+      document.body.dataset.identityGate = identityReady ? 'ready' : 'required';
+      $('#passkey-gate-notice').hidden = identityReady;
+      if (!identityReady) {
         // a public view the user actually asked for stays put
         showView(publicViews.has(requestedView) ? requestedView : 'settings');
         $('#current-view').textContent =
@@ -6157,6 +6776,8 @@
       onboarding.hidden = data['registered?'];
       workspace.hidden = !data['authenticated?'];
       $('#registered-auth').hidden = !(data['registered?'] && !data['authenticated?']);
+      $('#email-login-form').hidden = !(data['registered?'] &&
+        !data['authenticated?'] && data['email-login-configured?']);
       if (data['registered?'] && !data['authenticated?']) {
         onboarding.hidden = false;
         const pendingPasskey = data['passkey-required?'];
@@ -6314,8 +6935,9 @@
         organismCursor = null;
         organismWorkers = [];
         selectedOrganism = null;
+        governanceHydrated = false;
         renderIdentity(data);
-        await loadOrganisms();
+        await Promise.all([loadOrganisms(), loadWorkGovernance()]);
         $('#identity-status').textContent =
           `${data.organization.name} に切り替えました。`;
       } catch (error) {
@@ -6421,6 +7043,21 @@
       } catch (error) {
         $('#identity-status').textContent = error.message;
       } finally { button.disabled = false; }
+    });
+    $('#email-login-form').addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const button = $('#email-login-submit');
+      const fields = Object.fromEntries(new FormData(event.currentTarget));
+      button.disabled = true; button.textContent = '送信中…';
+      try {
+        await postJSON('/api/email-authenticate/start', fields);
+        $('#identity-status').textContent =
+          '登録済みの場合、ログインリンクを送信しました。メールを確認してください。';
+      } catch (error) {
+        $('#identity-status').textContent = error.message;
+      } finally {
+        button.disabled = false; button.textContent = 'ログインリンクを送る';
+      }
     });
     $('#enrollment-form').addEventListener('submit', async (event) => {
       event.preventDefault();
@@ -6862,7 +7499,21 @@
         ? `${initialParams.get('provider')} を接続しました。`
         : `${initialParams.get('provider')} の接続を完了できませんでした。`;
     }
-    loadIdentity();
+    const finishEmailLoginFromLink = async () => {
+      const token = new URLSearchParams(location.hash.slice(1)).get('email-login');
+      if (!token) return;
+      // Remove the bearer-like token from the address bar before doing any
+      // other work. It remains available in this closure for this one POST.
+      history.replaceState(null, '', `${location.pathname}${location.search}`);
+      try {
+        const data = await postJSON('/api/email-authenticate/finish', {token});
+        renderIdentity(data);
+        $('#identity-status').textContent = 'Email でサインインしました。';
+      } catch (error) {
+        $('#identity-status').textContent = error.message;
+      }
+    };
+    finishEmailLoginFromLink().finally(loadIdentity);
     // after every const above is defined — calling this next to the initial
     // showView() would hit `Cannot access 'loadFilecoin' before initialization`
     loadFilecoin();
@@ -6871,4 +7522,3 @@
         item.setAttribute('aria-pressed', item === button ? 'true' : 'false'));
     }));
   });
-  

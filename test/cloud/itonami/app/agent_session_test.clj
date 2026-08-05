@@ -22,6 +22,12 @@
 
 (def ^:private origin "http://localhost:1338")
 
+(def ^:private passkey-session-options
+  {:kind :passkey
+   :issued-via :passkey
+   :authn-ref "test-passkey-authn"
+   :authn-level :phishing-resistant})
+
 (def ^:private config
   {:brand {:name "Test"}
    :server {:host "127.0.0.1" :port 0 :public-origin origin
@@ -158,6 +164,27 @@
           (is (= 428 (:status r)))
           (is (= "required" (get-in r [:body :error :type])))))
 
+      (testing "enrolling the User does not retroactively turn an unproved
+                browser token into a Passkey-authenticated session"
+        (let [{:keys [token]} (identity/issue-session! "user-1")]
+          (store/transact! assoc-in
+                           [:identity :users "user-1" :passkey-enrolled?] true)
+          (is (= 428
+                 (:status
+                  (request :get "/api/business"
+                           {:headers
+                            {"Cookie" (str identity/cookie-name "=" token)}}))))))
+
+      (testing "the same enrolled User may act after a Passkey-authenticated
+                session records phishing-resistant assurance"
+        (let [{:keys [token]} (identity/issue-session!
+                               "user-1" passkey-session-options)]
+          (is (= 200
+                 (:status
+                  (request :get "/api/business"
+                           {:headers
+                            {"Cookie" (str identity/cookie-name "=" token)}}))))))
+
       (testing "an unknown bearer token is unauthenticated, not accepted"
         (let [r (bearer :get "/api/business" "not-a-real-token")]
           (is (= 401 (:status r))))))))
@@ -262,7 +289,8 @@
         (testing "a Passkey session reaches them, so the refusal is about :kind"
           (store/transact! assoc-in
                            [:identity :users "user-1" :passkey-enrolled?] true)
-          (let [{:keys [token]} (identity/issue-session! "user-1")
+          (let [{:keys [token]} (identity/issue-session!
+                                 "user-1" passkey-session-options)
                 r (request :get "/api/funding"
                            {:headers {"Cookie" (str identity/cookie-name "=" token)}})]
             (is (= 200 (:status r)))))))))
@@ -277,7 +305,8 @@
       (let [agent-token (get-in (enroll {:label "slot-probe"}) [:body :token])]
         (store/transact! assoc-in
                          [:identity :users "user-1" :passkey-enrolled?] true)
-        (let [human (:token (identity/issue-session! "user-1"))
+        (let [human (:token (identity/issue-session!
+                             "user-1" passkey-session-options))
               configuration {:mcp {:session-token-env "UNSET_A"
                                    :human-session-token-env "UNSET_B"}}]
           (testing "the two slots resolve independently"

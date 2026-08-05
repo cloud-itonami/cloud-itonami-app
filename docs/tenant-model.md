@@ -49,6 +49,14 @@ workers, and mutations cannot accidentally combine organizations. The
 organization switcher changes only that session's active membership after
 membership proof.
 
+Governed Kanban state adds a physical boundary to this logical ACL. Its
+organization graph, approval policy, WorkItems, decisions and receipts are
+stored in a generation-pinned EDN file dedicated to that organization under
+`data/work-governance/`. A global manifest is the atomic commit point. File
+partitioning does not replace membership checks: the HTTP projection still
+filters by the session's active organization, and owner/admin authority is
+required for graph and policy mutations.
+
 Authenticated users may create another Organization and become its owner.
 Inviting a new User into the active Organization continues to use a one-time
 enrollment code. When the account ID already identifies a registered User,

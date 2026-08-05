@@ -9,6 +9,20 @@
             ;; Enable only when the deployment publishes a DID document for
             ;; every generated organization domain.
             :publish-did-web? false}
+ ;; Passwordless email sign-in is an alternate proof for an already active,
+ ;; Passkey-rooted User. It never creates a User or a did:key and cannot replace
+ ;; the WebAuthn assertion required to approve money, signatures, or governed
+ ;; outward authority operations.
+ ;;
+ ;; The delivery endpoint receives JSON:
+ ;;   {:template "cloud-itonami-email-login"
+ ;;    :to "person@example.jp" :magicLink "https://…/#email-login=…"
+ ;;    :expiresAt "…"}
+ ;; It must return 2xx. The bearer token is read from the named environment
+ ;; variable at delivery time; never put the token itself in config.edn.
+ :email-login {:enabled? false
+               :delivery-endpoint nil
+               :access-token-env "CLOUD_ITONAMI_EMAIL_LOGIN_TOKEN"}
  :routing {:default-provider "ollama"
            :default-model "gemma4:e2b"
            :cloud-enabled? false}
@@ -42,6 +56,26 @@
  ;; local model with interactive chat.
  :worker {:max-concurrency 2
           :max-runs 50}
+
+ ;; Durable Kanban -> AgentRun reconciliation (ADR-0014). Disabled by default:
+ ;; enabling dispatch and enabling GitHub mutation are separate operator
+ ;; decisions. Leases and receipts remain durable even when write-back is off.
+ :work-governance {:enabled? false
+                   :interval-seconds 15
+                   :lease-ms 120000
+                   :receipt-signature-required? true
+                   :github-writeback-enabled? false
+                   ;; A source names one capability, and it must also appear
+                   ;; here before any GitHub mutation can occur.
+                   :github-write-capabilities #{}
+                   ;; An independent deny-by-default boundary for the live,
+                   ;; restoring adapter probe. Production project IDs do not
+                   ;; belong here.
+                   :github-sandbox-project-ids #{}
+                   :github-sources []
+                   :github-webhook
+                   {:enabled? false
+                    :secret-env "CLOUD_ITONAMI_GITHUB_WEBHOOK_SECRET"}}
 
  ;; The stdio MCP server. Fleet tools need no session; funding and settlement
  ;; tools need a real one, and appear in the manifest only when this token

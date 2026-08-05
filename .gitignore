@@ -8,3 +8,4 @@
 .env
 .env.*
 !.env.example
+/config/repository-production-evidence.edn

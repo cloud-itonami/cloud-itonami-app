@@ -110,13 +110,16 @@
   ;; it was gone failed intermittently in exactly that window (CI, 2026-07-30).
   ;; The `finally` still clears, for the paths that never reach here.
   (store/clear-session! (str "worker:" id))
-  (update-run! id
-               (fn [run]
-                 (-> (merge run extra)
-                     (assoc :status status :finished-at (now)))))
-  (let [run (find-run id)]
-    (swap! runs retain (retention-limit config))
-    (when run (record-event! run))))
+  (when-let [current (find-run id)]
+    (let [finished (-> (merge current extra)
+                       (assoc :status status :finished-at (now)))]
+      ;; Persist every observable consequence before publishing the terminal
+      ;; in-memory status. Cross-process state locking makes this write
+      ;; intentionally slower, so the old reverse order exposed a real race:
+      ;; await-idle! returned while the finished event was still absent.
+      (record-event! finished)
+      (update-run! id (constantly finished))
+      (swap! runs retain (retention-limit config)))))
 
 (defn- public-run [run]
   {:id (:id run)

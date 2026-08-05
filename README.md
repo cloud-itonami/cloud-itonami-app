@@ -124,8 +124,46 @@ empty, which is the same fail-closed default the agent capabilities have:
 Browser, computer, mail, calendar, drive and chat are deliberately **not**
 exposed. The device tools verify the frontmost application between approval and
 action, which does not survive translation to a protocol whose consent model
-belongs to the client; the workspace reads sit behind the Passkey session on
+belongs to the client; the workspace reads sit behind an authenticated session on
 `/api/*`, and a surface with no session must not reach around it.
+
+## Governed AgentRun Kanban
+
+The Projects view includes editors for the DoDAF organization graph
+(Person/System performers, assignments and reporting lines) and approval
+policies. Reporting lines are display structure only; approval authority comes
+from the policy's eligible roles. Mutations require the active Organization's
+owner/admin session and are stored as namespaced EDN.
+
+The primary editor is `http://localhost:1338/#organization`. Organization
+Studio provides the nested Unit tree, Person/Actor directory, assignment matrix,
+approval-route preview and editors for Unit, Position, Role, Performer,
+effective-dated Assignment, ReportingLine and ApprovalPolicy. Actor IDs use an
+active-organization-scoped picker populated from Users, Agent sessions and
+OrganismWorkers.
+
+Governed work is physically separated from `state.edn` under
+`data/work-governance/`: an atomic manifest selects a global fragment and one
+owner-only fragment per Organization. A legacy `:work-governance` root in
+`state.edn` is migrated on the next successful transaction.
+
+For a disposable GitHub Projects sandbox item, the live adapter can be checked
+with a restoring mutation. First enable governance and GitHub write-back in
+`data/config.edn`, and allowlist the capability used below. Connect GitHub from
+Settings, add the disposable project ID to `:github-sandbox-project-ids`, then
+set the sandbox IDs from `.env.example`. The explicit confirmation is mandatory:
+
+```sh
+CLOUD_ITONAMI_GITHUB_SANDBOX_CONFIRM=1 \
+clojure -M -m cloud.itonami.app.github-projects-sandbox
+```
+
+The probe reads the current basis, writes the configured sandbox Status option,
+verifies it, restores the original option, verifies restoration, and prints a
+content-addressed EDN receipt. It fails before mutation when IDs, capability,
+write-back configuration, confirmation, or connected OAuth credential are
+missing. A restoration failure is reported as
+`:github-projects/sandbox-restoration-required` for immediate inspection.
 
 ## Background worker runs
 
@@ -140,11 +178,41 @@ output would rewrite the whole state file on every token. Output is capped at
 16,000 characters per run. Cancellation takes effect at the next streamed
 chunk, so a stalled provider request can stay open until it times out.
 
+## Kotobase Passkey federation
+
+Passkey で成立した browser session から、短命・一回限りの Kotobase 交換証明を
+発行できます。
+
+```text
+POST /api/integrations/kotobase/assertion
+Origin: <this app origin>
+X-CLOUD-ITONAMI-CSRF: <session csrf>
+Cookie: cloud_itonami_identity=...
+```
+
+response の `cacao_b64` を `exchange_url` へ top-level form POST すると、
+Kotobase の通常 session が成立します。Datomic query と Git bundle read はその
+session を共有します。Git write は引き続き Nekko 署名・委任・quorum が必要です。
+
 ## Identity and organizations
 
 First launch requires only a Passkey. The verified ES256/P-256 public key is
 encoded as the stable User `did:key`; the private key remains in the
 authenticator. Organization information can be entered later.
+
+Returning active Users may also sign in through a ten-minute, single-use email
+magic link when `:email-login` delivery is configured. Email proves control of
+the registered address for that session; it does not create a User, replace the
+Passkey-rooted `did:key`, enroll an invited User, or approve a governed action.
+Money, signatures, and outward authorities continue to require their own
+operation-bound WebAuthn assertion.
+
+The session proof model is shared with `kotoba-lang/authentication` (email and
+Passkey factors, decisions, and assurance levels), and its default-deny access
+decision is evaluated by `kotoba-lang/authorization`. Cloud Itonami retains the
+runtime adapters—Yubico WebAuthn, mail delivery, cookies/CSRF, persistence—and
+the Tenant/Membership and operation-approval policy. See ADR-0012 for the exact
+library boundary.
 
 The default public profile uses managed addresses below `cloud-itonami.app`,
 but does **not** claim `did:web`. A deployment may enable Organization
@@ -560,6 +628,55 @@ distribution license gate.
 Runtime state is stored below `data/` and is ignored by Git. OAuth tokens use
 macOS Keychain; only references and non-secret metadata enter the local state.
 Provider and relay credentials are read from environment variables.
+
+Repository-backed private state follows
+[ADR-0013](docs/adr/0013-local-agent-queries-over-an-edn-projection-and-publishes-kagi-chunks.md):
+
+- `workspace/<opaque-user-storage-id>/state.edn` is local editable plaintext;
+- Kagi seals bounded EDN chunks and supplies non-interactive VMK/signing keys;
+- DataLad receives only CID-named ciphertext blocks and verifies the configured
+  remote before the Kotobase head advances;
+- `repository-storage/commit-workspace!` and `hydrate-workspace!` are the host
+  integration boundary; `migrate-legacy-state!` imports the old whole
+  `state.edn` without publishing it;
+- `repository-qualification/require-qualified!` denies cutover unless all
+  twelve security, capacity, recovery and compatibility gates have evidence.
+
+After initializing Kagi, creating/configuring the DataLad dataset and placing
+the Kotobase token in the process credential environment, the operator flow is:
+
+```bash
+clojure -M:repository migrate data/state.edn
+# edit data/workspace/<opaque-user-storage-id>/state.edn
+clojure -M:repository publish
+clojure -M:repository hydrate
+clojure -M:repository rotate-vmk
+clojure -M:repository measure 20
+clojure -M:repository usage
+clojure -M:repository qualify config/repository-production-evidence.edn
+clojure -M:repository audit secret-fixture-marker
+clojure -M:repository profiles
+```
+
+`publish` refuses a missing DataLad remote, incomplete remote verification,
+locked Kagi VMK, invalid signed head, stale epoch or merge conflict.
+`profiles` checks the explicit deployable-repository inventory in
+`config/repository-storage-inventory.edn`; CI fails closed if any listed repo is
+absent or weakens the shared storage contract.
+`measure` reports warm reconcile, local-view, sealing and configured-transport
+hydrate capacity over the current user's real workspace. It intentionally does
+not label a warm annex hit as cold-device RTO evidence; production peak-write,
+sustained remote sync and a cache-empty recovery drill remain separate inputs
+to the twelve-gate admission decision.
+Copy `config/repository-production-evidence.example.edn` to the ignored
+`config/repository-production-evidence.edn` and fill it only from production
+telemetry and a cache-empty recovery drill. `qualify` derives the repository
+inventory result, private-state leak markers and retained physical-byte
+reconciliation live; those values cannot be overridden by the evidence file.
+
+The signed head uses Kotobase's `encryptedGraph.put/get` expected-epoch CAS.
+The application intentionally refuses to downgrade it to independent IStore
+`put` and `append` calls.
 
 See [`.env.example`](.env.example), [the architecture](docs/architecture.md),
 and [the tenant model](docs/tenant-model.md).

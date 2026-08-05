@@ -155,16 +155,22 @@
                            "approved-not-actuated のいずれでもありません: "
                            (pr-str (:status payload)))})))
 
+(defn proposal-envelope
+  "The authority wire payload. Organization scope travels with the proposal so
+  an actor cannot deduplicate or decide a reference in the wrong tenant. Raw
+  session and CSRF credentials never cross this boundary."
+  [proposal]
+  {:proposal (select-keys proposal
+                          [:id :organization-id :authority :op :value :digest
+                           :status :approved-at :passkey-credential-id])})
+
 (defn- post-proposal!
   "POST the proposal to the actor's commit route. Returns the actor's own answer,
   or a :transport-failed refusal. Never throws -- a transport problem is an
   outcome to record, not an exception to leak into a route."
   [endpoint proposal header token]
   (try
-    (let [body {:proposal (select-keys proposal
-                                       [:id :authority :op :value :digest
-                                        :status :approved-at
-                                        :passkey-credential-id])}
+    (let [body (proposal-envelope proposal)
           request (-> (HttpRequest/newBuilder (URI/create (url endpoint "/commit")))
                       (.timeout (Duration/ofSeconds 20))
                       (.header "Accept" "application/json")

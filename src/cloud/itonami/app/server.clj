@@ -1,5 +1,6 @@
 (ns cloud.itonami.app.server
   (:require [clojure.data.json :as json]
+            [clojure.edn :as edn]
             [clojure.string :as str]
             [cloud.itonami.app.agent-session :as agent-session]
             [cloud.itonami.app.authority.api :as authority-api]
@@ -24,10 +25,13 @@
             [cloud.itonami.app.identity :as identity]
             [cloud.itonami.app.fax :as fax]
             [cloud.itonami.app.lawfirm :as lawfirm]
+            [cloud.itonami.app.kotobase-federation :as kotobase-federation]
             [cloud.itonami.app.loops :as loops]
             [cloud.itonami.app.metrics :as business-metrics]
+            [cloud.itonami.app.messenger :as messenger]
             [cloud.itonami.app.portfolio :as portfolio]
             [cloud.itonami.app.organism-gateway :as organism-gateway]
+            [cloud.itonami.app.organism-messenger-transport :as organism-messenger-transport]
             [cloud.itonami.app.relay :as relay]
             [cloud.itonami.app.repos :as business-repos]
             [cloud.itonami.app.mailbox :as app-mailbox]
@@ -36,17 +40,104 @@
             [cloud.itonami.app.store :as store]
             [cloud.itonami.app.web :as web]
             [cloud.itonami.app.worker :as worker]
+            [cloud.itonami.app.work-approval :as work-approval]
+            [cloud.itonami.app.work-reconciler :as work-reconciler]
+            [cloud.itonami.app.work-runtime :as work-runtime]
             [cloud.itonami.app.workspace :as workspace])
   (:import [com.sun.net.httpserver HttpExchange HttpHandler HttpServer]
            [java.io OutputStreamWriter]
            [java.net InetSocketAddress URLDecoder]
-           [java.nio.charset StandardCharsets]))
+           [java.nio.charset StandardCharsets]
+           [java.security MessageDigest]
+           [javax.crypto Mac]
+           [javax.crypto.spec SecretKeySpec]))
 
 (defonce server (atom nil))
 
 (defn- read-json [^HttpExchange exchange]
   (let [body (slurp (.getRequestBody exchange))]
     (if (str/blank? body) {} (json/read-str body :key-fn keyword))))
+
+(defn- read-governance-body [^HttpExchange exchange]
+  (let [body (slurp (.getRequestBody exchange))
+        content-type (or (.getFirst (.getRequestHeaders exchange)
+                                    "Content-Type") "")]
+    (if (str/includes? (str/lower-case content-type) "application/edn")
+      (if (str/blank? body) {} (edn/read-string body))
+      (if (str/blank? body) {} (json/read-str body :key-fn keyword)))))
+
+(defn- symbolic [value]
+  (if (string? value) (keyword value) value))
+
+(defn- organization-wire->edn [graph]
+  (update
+   (update graph :org/performers
+           (fn [performers]
+             (mapv (fn [performer]
+                     (cond-> (update performer :performer/kind symbolic)
+                       (:performer/actor performer)
+                       (update-in [:performer/actor :actor/kind] symbolic)
+                       (:performer/dodaf-types performer)
+                       (update :performer/dodaf-types
+                               (fn [types] (mapv symbolic types)))))
+                   performers)))
+   :org/assignments
+   (fn [assignments]
+     (mapv (fn [assignment]
+             (-> assignment
+                 (update :org.assignment/roles
+                         (fn [roles] (set (map symbolic roles))))
+                 (update :org.assignment/status symbolic)))
+           assignments))))
+
+(defn- organization-structure-wire->edn [graph]
+  (-> graph
+      (update :org/units
+              (fn [units]
+                (mapv #(update % :org.unit/kind symbolic) units)))
+      (update :org/roles
+              (fn [roles]
+                (mapv #(-> %
+                           (update :org.role/id symbolic)
+                           (update :org.role/capabilities
+                                   (fn [capabilities]
+                                     (set (map symbolic capabilities)))))
+                      roles)))))
+
+(defn- organization-body->edn [graph]
+  (-> graph organization-wire->edn organization-structure-wire->edn))
+
+(defn- approval-policy-wire->edn [policy]
+  (-> policy
+      (update :approval.policy/capability symbolic)
+      (update :approval.policy/eligible-roles
+              (fn [roles] (set (map symbolic roles))))
+      (update :approval.policy/rejection-mode symbolic)))
+
+(defn- webhook-signature [secret ^bytes body]
+  (let [mac (Mac/getInstance "HmacSHA256")]
+    (.init mac (SecretKeySpec. (.getBytes secret StandardCharsets/UTF_8)
+                               "HmacSHA256"))
+    (str "sha256="
+         (apply str (map #(format "%02x" (bit-and 0xff %))
+                         (.doFinal mac body))))))
+
+(defn- verify-github-webhook! [exchange config body]
+  (let [settings (get-in config [:work-governance :github-webhook])
+        secret (some-> (:secret-env settings) System/getenv)
+        supplied (.getFirst (.getRequestHeaders exchange)
+                            "X-Hub-Signature-256")]
+    (when-not (and (:enabled? settings) (not (str/blank? secret)))
+      (throw (ex-info "GitHub Projects webhook is disabled"
+                      {:type :github-projects/webhook-disabled})))
+    (when-not (and supplied
+                   (MessageDigest/isEqual
+                    (.getBytes supplied StandardCharsets/UTF_8)
+                    (.getBytes (webhook-signature secret body)
+                               StandardCharsets/UTF_8)))
+      (throw (ex-info "GitHub webhook signature is invalid"
+                      {:type :github-projects/webhook-signature-invalid})))
+    true))
 
 (defn- read-json-raw
   "The request body with its keys left alone.
@@ -264,7 +355,98 @@
                    (store/session-messages session-id))})
 
 (defn- identity-context [exchange]
-  (identity/public-state (cookie-value exchange identity/cookie-name)))
+  (identity/public-state (or (bearer-token exchange)
+                             (cookie-value exchange identity/cookie-name))))
+
+(defn- messenger-actor [session]
+  (if (= :agent (:kind session))
+    (str "agent:" (:id session))
+    (:user-id session)))
+
+(defn- organization-directory-principals [organization-id organization-slug]
+  (let [identity-state (:identity (store/snapshot))
+        humans (for [membership (vals (:memberships identity-state))
+                     :when (= organization-id (:organization-id membership))
+                     :let [user (get-in identity-state [:users (:user-id membership)])]
+                     :when user]
+                 [(:id user)
+                  {:id (:id user) :did (:did user)
+                   :name (or (:display-name user) (:email user) (:id user))
+                   :kind "human"}])
+        agents (for [agent (agent-session/sessions)
+                     :when (= organization-id (:organization-id agent))]
+                 [(str "agent:" (:id agent))
+                  {:id (str "agent:" (:id agent))
+                   :name (or (:label agent) (:id agent)) :kind "agent"
+                   :status (if (or (:revoked? agent) (:expired? agent))
+                             "inactive" "active")}])
+        organisms (for [worker (:items (organism-gateway/directory organization-slug))]
+                    [(str "organism:" (:ao.worker/id worker))
+                     {:id (str "organism:" (:ao.worker/id worker))
+                      :did (:ao.worker/subject worker)
+                      :name (:ao.worker/id worker) :kind "organism"
+                      :status (name (:ao.worker/status worker))}])]
+    (into {} (concat humans agents organisms))))
+
+(defn- messenger-principals
+  "The addressable identities in the active organization.
+
+  WorkerRuns are deliberately absent: they are restart-ephemeral executions,
+  not identities. Agent sessions and OrganismWorkers are stable enough to be
+  addressed independently and remain visibly non-human."
+  [exchange session]
+  (let [context (identity-context exchange)
+        organization-id (:active-organization-id context)
+        organization-slug (get-in context [:organization :organization-id])
+        context-humans
+        (into {}
+              (map (fn [user]
+                     [(:id user)
+                      {:id (:id user) :did (:did user)
+                       :name (or (:display-name user) (:email user) (:id user))
+                       :kind "human"}]))
+              (get-in context [:organization :users]))
+        principals (merge (organization-directory-principals
+                           organization-id organization-slug)
+                          context-humans)
+        actor (messenger-actor session)]
+    ;; A test or a newly enrolled session can be valid before its directory
+    ;; projection catches up. It may address itself, never somebody invented.
+    (cond-> principals
+      (not (contains? principals actor))
+      (assoc actor {:id actor
+                    :name (or (:label session) actor)
+                    :kind (if (= :agent (:kind session)) "agent" "human")}))))
+
+(defn- organism-messenger-context [exchange]
+  (let [transport (organism-messenger-transport/authenticate (bearer-token exchange))]
+    (when-not transport
+      (throw (ex-info "有効なOrganismWorker messenger credentialが必要です。"
+                      {:type :identity/unauthenticated})))
+    (let [organization (:organization transport)
+          organization-id
+          (some (fn [[id record]]
+                  (when (= organization (:organization-id record)) id))
+                (get-in (store/snapshot) [:identity :organizations]))
+          principals (organization-directory-principals organization-id organization)]
+      (assoc transport :principals
+             (cond-> principals
+               (not (contains? principals (:principal transport)))
+               (assoc (:principal transport)
+                      {:id (:principal transport)
+                       :name (:worker-id transport) :kind "organism"}))))))
+
+(defn- messenger-context [exchange]
+  (let [session (require-app-session! exchange)
+        context (identity-context exchange)
+        organization (get-in context [:organization :organization-id])]
+    (when (str/blank? (str organization))
+      (throw (ex-info "Messengerにはactive Organizationが必要です。"
+                      {:type :identity/organization-required})))
+    {:session session
+     :organization organization
+     :actor (messenger-actor session)
+     :principals (messenger-principals exchange session)}))
 
 (defn share-candidates
   "Who this actor could share a document with: the other members of their
@@ -283,7 +465,8 @@
   (get-in (identity-context exchange) [:organization :organization-id]))
 
 (defn- require-control-role! [context capability]
-  (when (and (#{:approval/submit :stop/request} capability)
+  (when (and (#{:approval/submit :stop/request :work-governance/admin}
+                capability)
              (not (#{:owner :admin}
                    (get-in context [:organization :role]))))
     (throw (ex-info "この操作にはOrganizationのownerまたはadmin権限が必要です。"
@@ -309,6 +492,14 @@
                (re-matches #"[a-z][a-z0-9.-]{0,62}/[a-z][a-z0-9.-]{0,62}"
                            value))
       (keyword value))))
+
+(defn- require-work-organization! [context value]
+  (let [active (get-in context [:organization :organization-id])]
+    (when-not (= active value)
+      (throw (ex-info "work governance organization boundary"
+                      {:type :work-governance/organization-boundary
+                       :expected active :actual value})))
+    active))
 
 (defn- decision-keyword [value]
   (case (some-> value str (str/replace #"^:" ""))
@@ -454,6 +645,353 @@
      :memory-datoms (count (:datoms state))
      :last-response (:last-response state)}))
 
+(defn- organization-actor-candidates [exchange]
+  (let [context (identity-context exchange)
+        tenant-id (:active-organization-id context)
+        organization (get-in context [:organization :organization-id])]
+    (vec
+     (concat
+      (map (fn [user]
+             {:actor/kind :user :actor/id (:id user)
+              :actor/label (or (:display-name user) (:email user) (:id user))})
+           (get-in context [:organization :users]))
+      (for [agent (agent-session/sessions)
+            :when (and (= tenant-id (:organization-id agent))
+                       (not (:revoked? agent)) (not (:expired? agent)))]
+        {:actor/kind :agent :actor/id (:id agent)
+         :actor/label (or (:label agent) (:id agent))})
+      (for [worker (if organization
+                     (:items (organism-gateway/directory organization)) [])]
+        {:actor/kind :organism-worker :actor/id (:ao.worker/id worker)
+         :actor/label (or (:ao.worker/name worker) (:ao.worker/id worker))})
+      (when organization
+        [{:actor/kind :organization :actor/id organization
+          :actor/label (or (get-in context [:organization :name]) organization)}])))))
+
+(defn- handle-work-governance!
+  "Keep the governed-work router outside the already-large HttpHandler JVM
+  method. The return value is sent here; authorization errors still flow into
+  the handler's common exception mapping."
+  [config exchange method path]
+  (cond
+    (and (= method "GET") (= path "/api/work-governance"))
+    (let [_session (require-app-session! exchange)
+          organization (active-organization-slug exchange)]
+      (send! exchange 200
+             (assoc (work-runtime/organization-view organization)
+                    :actor-candidates (organization-actor-candidates exchange))))
+
+    (and (= method "GET") (= path "/api/work-governance/health"))
+    (do (require-app-session! exchange)
+        (send! exchange 200 (work-runtime/health)))
+
+    (and (= method "POST") (= path "/api/work-governance/reconcile"))
+    (let [session (require-app-session! exchange)
+          context (identity-context exchange)]
+      (require-origin! exchange config)
+      (require-csrf! exchange session)
+      (require-control-role! context :work-governance/admin)
+      (send! exchange 200 (work-runtime/reconcile-once! config)))
+
+    (and (= method "POST")
+         (id-from-path path #"/api/work-governance/dead-letters/([^/]+)/replay"))
+    (let [session (require-app-session! exchange)
+          context (identity-context exchange)
+          dead-id (id-from-path path
+                                #"/api/work-governance/dead-letters/([^/]+)/replay")]
+      (require-origin! exchange config)
+      (require-csrf! exchange session)
+      (require-control-role! context :work-governance/admin)
+      (send! exchange 200
+             (work-runtime/replay-dead-letter! dead-id
+                                                (System/currentTimeMillis))))
+
+    (and (= method "POST") (= path "/api/work-governance/organizations"))
+    (let [session (require-app-session! exchange)
+          context (identity-context exchange)
+          body (read-governance-body exchange)]
+      (require-origin! exchange config)
+      (require-csrf! exchange session)
+      (require-control-role! context :work-governance/admin)
+      (require-work-organization! context (:org/id body))
+      (send! exchange 200
+             (work-runtime/put-organization! (organization-body->edn body))))
+
+    (and (= method "POST") (= path "/api/work-governance/roles"))
+    (let [session (require-app-session! exchange)
+          context (identity-context exchange)
+          body (read-governance-body exchange)]
+      (require-origin! exchange config)
+      (require-csrf! exchange session)
+      (require-control-role! context :work-governance/admin)
+      (require-work-organization! context (:yakuwari/organization body))
+      (send! exchange 200 (work-runtime/put-role! body)))
+
+    (and (= method "POST") (= path "/api/work-governance/approval-policies"))
+    (let [session (require-app-session! exchange)
+          context (identity-context exchange)
+          body (read-governance-body exchange)]
+      (require-origin! exchange config)
+      (require-csrf! exchange session)
+      (require-control-role! context :work-governance/admin)
+      (require-work-organization! context (:approval.policy/organization body))
+      (send! exchange 200
+             (work-runtime/put-approval-policy!
+              (approval-policy-wire->edn body))))
+
+    (and (= method "POST") (= path "/api/work-governance/work-items"))
+    (let [session (require-app-session! exchange)
+          context (identity-context exchange)
+          body (read-governance-body exchange)]
+      (require-origin! exchange config)
+      (require-csrf! exchange session)
+      (require-control-role! context :work-governance/admin)
+      (require-work-organization! context (:work.item/organization body))
+      (send! exchange 200 (work-runtime/put-work-item! body)))
+
+    (and (= method "POST")
+         (id-from-path path
+                       #"/api/work-governance/work-items/([^/]+)/approve/start"))
+    (let [session (require-human-session! exchange)
+          item-id (id-from-path
+                   path #"/api/work-governance/work-items/([^/]+)/approve/start")
+          body (read-json exchange)]
+      (require-origin! exchange config)
+      (require-csrf! exchange session)
+      (send! exchange 200
+             (work-approval/start!
+              session item-id (decision-keyword (:decision body))
+              (get-in config [:server :webauthn-rp-id])
+              (get-in config [:server :public-origin]))))
+
+    (and (= method "POST")
+         (id-from-path path
+                       #"/api/work-governance/work-items/([^/]+)/approve/finish"))
+    (let [session (require-human-session! exchange)
+          item-id (id-from-path
+                   path #"/api/work-governance/work-items/([^/]+)/approve/finish")
+          body (read-json exchange)]
+      (require-origin! exchange config)
+      (require-csrf! exchange session)
+      (send! exchange 200
+             (work-approval/finish! session item-id (:transaction-id body)
+                                    (:credential body))))
+
+    (and (= method "POST")
+         (id-from-path path
+                       #"/api/work-governance/work-items/([^/]+)/verifications"))
+    (let [session (require-app-session! exchange)
+          context (identity-context exchange)
+          item-id (id-from-path
+                   path #"/api/work-governance/work-items/([^/]+)/verifications")
+          body (assoc (read-governance-body exchange)
+                      :verification.receipt/work-item item-id)]
+      (require-origin! exchange config)
+      (require-csrf! exchange session)
+      (require-control-role! context :work-governance/admin)
+      (require-work-organization!
+       context (:work.item/organization
+                (get-in (work-runtime/ledger) [:work-items item-id])))
+      (when (= :review (:verification.receipt/kind body))
+        (throw (ex-info "review evidence requires the Passkey review route"
+                        {:type :work-approval/passkey-required})))
+      (send! exchange 200 (work-runtime/record-verification! body)))
+
+    (and (= method "POST")
+         (id-from-path path
+                       #"/api/work-governance/work-items/([^/]+)/review/start"))
+    (let [session (require-human-session! exchange)
+          item-id (id-from-path
+                   path #"/api/work-governance/work-items/([^/]+)/review/start")]
+      (require-origin! exchange config)
+      (require-csrf! exchange session)
+      (send! exchange 200
+             (work-approval/start-review!
+              session item-id (get-in config [:server :webauthn-rp-id])
+              (get-in config [:server :public-origin]))))
+
+    (and (= method "POST")
+         (id-from-path path
+                       #"/api/work-governance/work-items/([^/]+)/review/finish"))
+    (let [session (require-human-session! exchange)
+          item-id (id-from-path
+                   path #"/api/work-governance/work-items/([^/]+)/review/finish")
+          body (read-json exchange)]
+      (require-origin! exchange config)
+      (require-csrf! exchange session)
+      (send! exchange 200
+             (work-approval/finish-review! session item-id
+                                           (:transaction-id body)
+                                           (:credential body))))
+
+    (and (= method "POST")
+         (id-from-path path
+                       #"/api/work-governance/work-items/([^/]+)/complete"))
+    (let [session (require-app-session! exchange)
+          context (identity-context exchange)
+          item-id (id-from-path
+                   path #"/api/work-governance/work-items/([^/]+)/complete")]
+      (require-origin! exchange config)
+      (require-csrf! exchange session)
+      (require-control-role! context :work-governance/admin)
+      (require-work-organization!
+       context (:work.item/organization
+                (get-in (work-runtime/ledger) [:work-items item-id])))
+      (send! exchange 200
+             (work-runtime/complete-work! item-id (System/currentTimeMillis))))
+
+    :else (send! exchange 404 {:error "not found"})))
+
+(defn- handle-ao-messenger! [exchange method path]
+  (cond
+    (and (= method "GET") (= path "/api/ao/messenger"))
+    (let [{:keys [organization principal principals]}
+          (organism-messenger-context exchange)]
+      (send! exchange 200 (messenger/overview organization principal principals)))
+
+    (and (= method "GET") (= path "/api/ao/messenger/poll"))
+    (let [{:keys [organization principal principals]}
+          (organism-messenger-context exchange)
+          params (query-params exchange)]
+      (send! exchange 200
+             (messenger/poll organization principal principals (:cursor params)
+                             (try (Long/parseLong (or (:limit params) "50"))
+                                  (catch Exception _ 50)))))
+
+    (and (= method "POST") (= path "/api/ao/messenger/ack"))
+    (let [{:keys [organization principal]} (organism-messenger-context exchange)]
+      (send! exchange 200
+             (messenger/acknowledge! organization principal
+                                     (:message-ids (read-json exchange)))))
+
+    (and (= method "POST") (= path "/api/ao/messenger/trust"))
+    (let [{:keys [organization principal principals]}
+          (organism-messenger-context exchange)
+          request (read-json exchange)]
+      (send! exchange 200
+             (messenger/set-trust! organization principal principals
+                                   (:sender-id request)
+                                   (if (contains? request :allowed?)
+                                     (:allowed? request) true))))
+
+    (and (= method "POST") (= path "/api/ao/messenger/devices"))
+    (let [{:keys [organization principal principals]}
+          (organism-messenger-context exchange)]
+      (send! exchange 200
+             (messenger/register-device! organization principal principals
+                                         (read-json exchange))))
+
+    (and (= method "POST") (= path "/api/ao/messenger/prekey-bundles"))
+    (let [{:keys [organization principal principals]}
+          (organism-messenger-context exchange)
+          request (read-json exchange)]
+      (send! exchange 200
+             (messenger/consume-prekey-bundles!
+              organization principal principals (:principal request))))
+
+    (and (= method "POST") (= path "/api/ao/messenger/device-directory"))
+    (let [{:keys [organization principals]} (organism-messenger-context exchange)
+          request (read-json exchange)
+          target (:principal request)]
+      (when-not (contains? principals target)
+        (throw (ex-info "target is not in this organization"
+                        {:type :messenger/unknown-principal})))
+      (send! exchange 200 (messenger/device-directory organization target)))
+
+    (and (= method "POST")
+         (id-from-path path #"/api/ao/messenger/conversations/([^/]+)/messages"))
+    (let [{:keys [organization principal]} (organism-messenger-context exchange)
+          conversation-id
+          (id-from-path path #"/api/ao/messenger/conversations/([^/]+)/messages")]
+      (send! exchange 202
+             (messenger/send-message! organization principal conversation-id
+                                      (read-json exchange))))
+
+    :else (send! exchange 404 {:error "not found"})))
+
+(defn- handle-app-messenger! [config exchange method path]
+  (cond
+    (and (= method "GET") (= path "/api/messenger"))
+    (let [{:keys [organization actor principals]} (messenger-context exchange)]
+      (send! exchange 200 (messenger/overview organization actor principals)))
+
+    (and (= method "GET") (= path "/api/messenger/quarantine"))
+    (let [{:keys [organization actor principals]} (messenger-context exchange)]
+      (send! exchange 200 (messenger/quarantine organization actor principals)))
+
+    (and (= method "GET") (= path "/api/messenger/devices"))
+    (let [{:keys [organization actor]} (messenger-context exchange)]
+      (send! exchange 200 (messenger/device-directory organization actor)))
+
+    (and (= method "POST") (= path "/api/messenger/devices"))
+    (let [{:keys [session organization actor principals]} (messenger-context exchange)]
+      (require-origin! exchange config) (require-csrf! exchange session)
+      (send! exchange 200
+             (messenger/register-device! organization actor principals
+                                         (read-json exchange))))
+
+    (and (= method "POST") (= path "/api/messenger/prekey-bundles"))
+    (let [{:keys [session organization actor principals]} (messenger-context exchange)
+          request (read-json exchange)]
+      (require-origin! exchange config) (require-csrf! exchange session)
+      (send! exchange 200
+             (messenger/consume-prekey-bundles!
+              organization actor principals (:principal request))))
+
+    (and (= method "POST") (= path "/api/messenger/device-directory"))
+    (let [{:keys [session organization principals]} (messenger-context exchange)
+          request (read-json exchange)
+          target (:principal request)]
+      (require-origin! exchange config) (require-csrf! exchange session)
+      (when-not (contains? principals target)
+        (throw (ex-info "target is not in this organization"
+                        {:type :messenger/unknown-principal})))
+      (send! exchange 200 (messenger/device-directory organization target)))
+
+    (and (= method "POST") (= path "/api/messenger/trust"))
+    (let [{:keys [session organization actor principals]} (messenger-context exchange)
+          request (read-json exchange)]
+      (require-origin! exchange config) (require-csrf! exchange session)
+      (send! exchange 200
+             (messenger/set-trust! organization actor principals (:sender-id request)
+                                   (if (contains? request :allowed?)
+                                     (:allowed? request) true))))
+
+    (and (= method "POST") (= path "/api/messenger/conversations"))
+    (let [{:keys [session organization actor principals]} (messenger-context exchange)
+          request (read-json exchange)]
+      (require-origin! exchange config) (require-csrf! exchange session)
+      (let [conversation (messenger/create-conversation!
+                          organization actor principals request)]
+        (send! exchange 201
+               {:schema messenger/schema :id (:conversation/id conversation)
+                :kind (name (:conversation/kind conversation))
+                :title (:conversation/title conversation)
+                :members (:conversation/members conversation)})))
+
+    (and (= method "GET")
+         (id-from-path path #"/api/messenger/conversations/([^/]+)/messages"))
+    (let [{:keys [organization actor principals]} (messenger-context exchange)
+          id (id-from-path path #"/api/messenger/conversations/([^/]+)/messages")]
+      (send! exchange 200 (messenger/messages organization actor id principals)))
+
+    (and (= method "POST")
+         (id-from-path path #"/api/messenger/conversations/([^/]+)/messages"))
+    (let [{:keys [session organization actor]} (messenger-context exchange)
+          id (id-from-path path #"/api/messenger/conversations/([^/]+)/messages")]
+      (require-origin! exchange config) (require-csrf! exchange session)
+      (send! exchange 202
+             (messenger/send-message! organization actor id (read-json exchange))))
+
+    (and (= method "POST")
+         (id-from-path path #"/api/messenger/conversations/([^/]+)/read"))
+    (let [{:keys [session organization actor]} (messenger-context exchange)
+          id (id-from-path path #"/api/messenger/conversations/([^/]+)/read")]
+      (require-origin! exchange config) (require-csrf! exchange session)
+      (send! exchange 200 (messenger/mark-read! organization actor id)))
+
+    :else (send! exchange 404 {:error "not found"})))
+
 (defn handler [config]
   (reify HttpHandler
     (handle [_ exchange]
@@ -467,6 +1005,25 @@
             (and (= method "GET") (= path "/health"))
             (send! exchange 200 {:ok true :service "cloud-itonami-app"
                                  :schema "cloud.itonami.app.health.v1"})
+
+            (and (= method "POST") (= path "/api/webhooks/github/projects"))
+            (let [body (read-body-bytes exchange)
+                  _ (verify-github-webhook! exchange config body)
+                  event (.getFirst (.getRequestHeaders exchange)
+                                   "X-GitHub-Event")]
+              (when (contains? #{"projects_v2" "projects_v2_item"} event)
+                (work-reconciler/wake!))
+              (send! exchange 202 {:accepted true :event event}))
+
+            ;; Exchange material for authn.kotobase.net.  This is a mutation:
+            ;; it creates a signed bearer assertion, so it has the same
+            ;; origin+CSRF boundary as credential issuance and additionally
+            ;; requires a human passkey session (email/agent are refused).
+            (and (= method "POST") (= path "/api/integrations/kotobase/assertion"))
+            (let [session (require-human-session! exchange)]
+              (require-origin! exchange config)
+              (require-csrf! exchange session)
+              (send! exchange 200 (kotobase-federation/mint-assertion session)))
 
             ;; Public by necessity, like /health. A DID document is the public
             ;; half of a key pair plus the purposes it may be used for; a
@@ -1127,6 +1684,25 @@
                        {"Set-Cookie"
                         (session-cookie token)})))
 
+            (and (= method "POST")
+                 (= path "/api/email-authenticate/start"))
+            (let [request (read-json exchange)]
+              (require-origin! exchange config)
+              (send! exchange 202
+                     (identity/start-email-authentication!
+                      config (:email request) (origin config))))
+
+            (and (= method "POST")
+                 (= path "/api/email-authenticate/finish"))
+            (let [request (read-json exchange)
+                  result (do
+                           (require-origin! exchange config)
+                           (identity/finish-email-authentication!
+                            (:token request)))]
+              (send! exchange 200
+                     (identity/public-state (:token result))
+                     {"Set-Cookie" (session-cookie (:token result))}))
+
             (and (= method "POST") (= path "/api/identity/users"))
             (let [session (require-app-session! exchange)]
               (require-origin! exchange config)
@@ -1301,6 +1877,14 @@
             (do
               (require-app-session! exchange)
               (send! exchange 200 (workspace/snapshot)))
+
+            (str/starts-with? path "/api/ao/messenger")
+            (handle-ao-messenger! exchange method path)
+
+            ;; Messages are speech, never execution authority. Kept outside
+            ;; this already-large JVM method for the same reason as governance.
+            (str/starts-with? path "/api/messenger")
+            (handle-app-messenger! config exchange method path)
 
             ;; The archive, as this reader has marked it. Not through
             ;; `workspace/snapshot`: that cache is keyed per server, and what
@@ -2343,6 +2927,11 @@
               (require-app-session! exchange)
               (send! exchange 200 (worker/snapshot config)))
 
+            ;; Kept outside this JVM method because the main HTTP router is
+            ;; near the bytecode limit; governance has its own bounded router.
+            (str/starts-with? path "/api/work-governance")
+            (handle-work-governance! config exchange method path)
+
             (and (= method "GET") (= path "/api/organism-workers"))
             (do
               (require-app-session! exchange)
@@ -2386,6 +2975,21 @@
               (require-app-session! exchange)
               (require-visible-worker! exchange worker-id)
               (send! exchange 200 (organism-gateway/receipts worker-id)))
+
+            (and (= method "POST")
+                 (id-from-path path #"/api/organism-workers/([^/]+)/messenger-transport"))
+            (let [worker-id
+                  (id-from-path path
+                                #"/api/organism-workers/([^/]+)/messenger-transport")
+                  session (require-app-session! exchange)
+                  context (identity-context exchange)]
+              (require-origin! exchange config)
+              (require-csrf! exchange session)
+              (require-visible-worker! exchange worker-id)
+              (require-control-role! context :work-governance/admin)
+              (send! exchange 201
+                     (organism-messenger-transport/issue!
+                      worker-id (active-organization-slug exchange))))
 
             (and (= method "POST")
                  (id-from-path path #"/api/organism-workers/([^/]+)/intents"))
@@ -2542,11 +3146,16 @@
                      :identity/already-member 409
                      :identity/invalid-registration 400
                      :identity/invalid-invitation 400
+                     :identity/email-already-used 409
                      :passkey/invalid-transaction 400
                      :passkey/invalid-enrollment 400
                      :passkey/user-verification-required 403
                      :passkey/verification-failed 403
                      :passkey/required 428
+                     :email-login/not-configured 503
+                     :email-login/invalid-token 400
+                     :kotobase-federation/passkey-required 403
+                     :kotobase-federation/no-subject-did 428
                      ;; 403 rather than 428: a Passkey is required and this
                      ;; caller can never present one, so telling it to go and
                      ;; enrol would be an instruction it cannot follow.
@@ -2607,8 +3216,26 @@
                      :credential-trust/document-unparseable 502
                      :credential-trust/document-too-large 502
                      :ao.worker/not-found 404
+                     :ao.messenger/invalid 400
+                     :ao.messenger/inactive 409
                      :ao.intent/invalid 400
                      :ao.intent/rejected 409
+                     :github-projects/webhook-disabled 503
+                     :github-projects/webhook-signature-invalid 403
+                     :work-governance/organization-boundary 403
+                     :work-governance/invalid-approval-policy 422
+                     :work-runtime/invalid-organization 422
+                     :work-runtime/unknown-approval-role 422
+                     :work-runtime/organization-policy-role-conflict 409
+                     :work-approval/organization-boundary 403
+                     :work-approval/not-found 404
+                     :work-approval/person-required 403
+                     :work-approval/not-eligible 403
+                     :work-approval/passkey-required 428
+                     :work-approval/assertion-mismatch 403
+                     :work-runtime/not-in-review 409
+                     :work-runtime/verification-required 409
+                     :work-runtime/success-receipt-required 409
                      :identity/organization-required 409
                      :worker/invalid-request 400
                      :worker/not-found 404
@@ -2681,6 +3308,11 @@
                      ;; request was understood and names a place rather than
                      ;; a label, which is a bad request and not a refusal.
                      :mail/reserved-label 400
+                     ;; ---- messenger ----
+                     :messenger/invalid 400
+                     :messenger/unknown-principal 400
+                     :messenger/not-found 404
+                     :messenger/forbidden 403
                      ;; ---- sheets ----
                      :sheets/invalid-range 400
                      ;; The request was understood and the range is one this
@@ -2797,9 +3429,11 @@
      (.setExecutor instance (executor/task-executor))
      (.start instance)
      (reset! server instance)
+     (work-reconciler/start! configuration)
      {:host host :port port})))
 
 (defn stop! []
+  (work-reconciler/stop!)
   (when-let [instance @server]
     (.stop instance 0)
     (reset! server nil)))

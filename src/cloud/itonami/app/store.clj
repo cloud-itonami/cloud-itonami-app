@@ -2,8 +2,10 @@
   (:require [clojure.edn :as edn]
             [clojure.java.io :as io]
             [cloud.itonami.app.config :as config]
+            [cloud.itonami.app.work-partition-store :as work-partitions]
             [kotoba.kgraph :as kgraph])
-  (:import [java.nio.file Files StandardCopyOption]
+  (:import [java.nio.channels FileChannel]
+           [java.nio.file Files StandardCopyOption StandardOpenOption]
            [java.time Instant]
            [java.util UUID]))
 
@@ -27,29 +29,72 @@
 
 (defn- load-state []
   (let [file (state-file)]
-    (if (.isFile file)
-      (merge (initial-state) (edn/read-string (slurp file)))
-      (initial-state))))
+    (let [main (if (.isFile file)
+                 (merge (initial-state) (edn/read-string (slurp file)))
+                 (initial-state))]
+      (if-let [work (work-partitions/load-ledger (:work-governance main))]
+        (assoc main :work-governance work)
+        main))))
 
 (defonce state (atom (load-state)))
+(defonce ^:private last-committed-state (atom @state))
 
 (defn snapshot [] @state)
 
 (defn- persist! [value]
   (let [file (state-file)
-        temporary (io/file (.getParentFile file) "state.edn.tmp")]
+        temporary (io/file (.getParentFile file) "state.edn.tmp")
+        work (:work-governance value)]
     (.mkdirs (.getParentFile file))
-    (spit temporary (pr-str value))
+    ;; Governed work has an independent physical tenant boundary. Persist it
+    ;; before the main store: a crash may leave an unreferenced AgentRun, but
+    ;; can never leave an AgentRun dispatch without its durable intent.
+    (when work (work-partitions/persist-ledger! work))
+    (spit temporary (pr-str (dissoc value :work-governance)))
     (Files/move (.toPath temporary) (.toPath file)
                 (into-array StandardCopyOption
                             [StandardCopyOption/REPLACE_EXISTING
                              StandardCopyOption/ATOMIC_MOVE])))
   value)
 
+(defn- transaction-lock-file []
+  (io/file (config/data-dir) "state.edn.lock"))
+
+(defn- cross-process-rebase? []
+  (= "1" (System/getenv "CLOUD_ITONAMI_MULTI_PROCESS")))
+
 (defn transact! [f & args]
   (locking state
-    (let [next-value (apply swap! state f args)]
-      (persist! next-value))))
+    (let [lock-file (transaction-lock-file)]
+      (.mkdirs (.getParentFile lock-file))
+      (with-open [channel (FileChannel/open
+                           (.toPath lock-file)
+                           (into-array StandardOpenOption
+                                       [StandardOpenOption/CREATE
+                                        StandardOpenOption/WRITE]))
+                  _lock (.lock channel)]
+        ;; Another process may have committed since this process loaded its
+        ;; atom. Rebase under the cross-process lock before applying `f`.
+        ;; A deliberately replaced in-memory atom (tests and recovery tools)
+        ;; is treated as the caller's new base rather than silently discarded.
+        (when (and (cross-process-rebase?)
+                   (= @state @last-committed-state))
+          (reset! state (load-state)))
+        (let [next-value (apply swap! state f args)]
+          (persist! next-value)
+          (reset! last-committed-state next-value))))))
+
+(defn update-agent-control!
+  "Atomically update the durable Agent Control partition.
+
+  Agent Control used this seam before it was reachable from the server.  Keep
+  the partition update inside the same state.edn transaction as every other
+  app record so an AgentRun cannot be visible only in memory."
+  [f & args]
+  (transact!
+   (fn [s]
+     (assoc s :agent-control
+            (apply f (or (:agent-control s) {}) args)))))
 
 (defn new-id [prefix]
   (str prefix "-" (UUID/randomUUID)))
