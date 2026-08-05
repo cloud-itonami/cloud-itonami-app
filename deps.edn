@@ -367,7 +367,7 @@
     io.github.kotoba-lang/transit {:local/root "../../kotoba-lang/transit"}
     io.github.kotoba-lang/identity {:local/root "../../kotoba-lang/identity"}
     io.github.kotoba-lang/authentication
-    {:local/root "../../kotoba-lang/authentication/modules/email"}
+    {:local/root "../../kotoba-lang/authentication"}
     io.github.kotoba-lang/authorization
     {:local/root "../../kotoba-lang/authorization"}
     io.github.kotoba-lang/kotobase {:local/root "../../kotoba-lang/kotobase"}
