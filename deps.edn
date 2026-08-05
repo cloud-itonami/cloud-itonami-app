@@ -166,7 +166,7 @@
   ;; that keeps uploaded bytes from being served inline.
   io.github.kotoba-lang/hanmen
   {:git/url "https://github.com/kotoba-lang/hanmen.git"
-   :git/sha "01f519bd803f9781a49ec659073c400b22894c36"}
+   :git/sha "cffae2dc0ef7cc59da0e7d1cc081cd149285ad34"}
   ;; What a composite font's CIDs mean when it ships no /ToUnicode. Adobe's
   ;; published tables, vendored — a megabyte of resource, which is why
   ;; `hanmen` takes the resolver rather than owning it.
