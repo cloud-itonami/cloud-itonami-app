@@ -203,6 +203,19 @@
 
 ;; ── images ───────────────────────────────────────────────────────────────────
 
+(def ^:private encoding->cmap
+  "A predefined `/Encoding` as the two halves `hanmen` needs.
+
+  Memoised on the name: each one parses a CMap file and composes it with a
+  collection table, and a document that uses an encoding uses it on every
+  page. Immutable classpath resources, so nothing to invalidate — the same
+  argument as the parse cache and a much smaller object."
+  (memoize
+   (fn [name]
+     (when-let [e (adobe-cmap/encoding name)]
+       {:split #(adobe-cmap/split-codes (:codespace e) %)
+        :text (adobe-cmap/code->unicode name)}))))
+
 (defn- image-url
   "Where page `page-index`'s image `index` is served from.
 
@@ -365,7 +378,12 @@
            ;; /ToUnicode. A Japanese contract out of InDesign is exactly
            ;; this case — measured: 254 undecodable runs became 6.
            ;; `/ToUnicode` still wins when the font has one.
-           p (hpdf/page-at parsed index {:cid->unicode adobe-cmap/cid->unicode})]
+           p (hpdf/page-at parsed index
+                           {:cid->unicode adobe-cmap/cid->unicode
+                            ;; A font whose codes are Shift-JIS rather than
+                            ;; CIDs — measured at two Japanese legal PDFs
+                            ;; whose entire text was unreadable without it.
+                            :encoding->cmap encoding->cmap})]
        {:schema schema :ok? true :id id :filename filename
         :count n
         :page (hpage/summary p)
