@@ -47,7 +47,14 @@
   "Resident server address for an HTTP MCP request invoking its own API."
   nil)
 
-(defn- remote-api-url []
+(defn remote-api-url
+  "The hosted control plane this process was pointed at, or nil for the local
+  one.
+
+  Public because `server-process` must not start a local server for a CLI that
+  was aimed somewhere else: spawning one would boot a second install against
+  this data directory and then send the command to a machine that never saw it."
+  []
   (when-let [value (some-> (*environment* "CLOUD_ITONAMI_API_URL") str/trim not-empty)]
     (let [uri (URI/create value)
           scheme (.getScheme uri)
