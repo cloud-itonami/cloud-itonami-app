@@ -3103,6 +3103,12 @@
         (is (= :drive/not-a-document
                (:type (try (documents/content (:id item) alice object-store)
                            (catch clojure.lang.ExceptionInfo e (ex-data e))))))
+        ;; The same answer from the other reader of the same bytes. This one
+        ;; had no guard, so the two disagreed about what a document is and
+        ;; `esign/create!` — its only caller — produced that 500 instead.
+        (is (= :drive/not-a-document
+               (:type (try (documents/source-bytes (:id item) alice object-store)
+                           (catch clojure.lang.ExceptionInfo e (ex-data e))))))
         ;; And a document is not a file.
         (let [doc (:item (documents/create! :docs "設計" alice object-store))]
           (is (= :drive/not-a-file

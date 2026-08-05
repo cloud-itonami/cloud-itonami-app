@@ -1173,11 +1173,28 @@
 
   Everything about permission is `drive.object/read-item`'s answer, exactly as
   in `content` — this is a second reader of the same bytes, not a second path
-  to them."
+  to them.
+
+  And exactly as in `content`, an uploaded file is refused rather than
+  decoded. `content` grew that guard and this did not, which made the two
+  readers of the same bytes disagree about what a document is: `esign/create!`
+  on an uploaded PDF reached `decode-stored` and came back as
+  `JSON error (unexpected character): %` — a parse error standing in for
+  \"that is not a document\", on a path the eSign pane offered.
+
+  A `:drive/not-a-document` refusal is the honest answer and it is not the
+  whole one: a PDF is a thing people sign, and what is missing is a
+  presentation for it. `esign.commitment/outline` enumerates every scalar of
+  a *resource*, which is what makes \"there is nothing here you were not
+  shown\" a property of the format; a PDF has no resource, so signing one
+  needs a presentation decided on purpose rather than a guard removed."
   ([id actor] (source-bytes id actor (store-instance)))
   ([id actor object-store]
    (let [{:keys [workspace owner own?] :as found} (locate (store/snapshot) actor id)
          _ (when-not found (refuse! {:reason :no-such-item :item-id id}))
+         _ (when-not (:drive/resource-kind (ws/item workspace id))
+             (throw (ex-info "これはドキュメントではないため、署名できません。"
+                             {:type :drive/not-a-document :item-id id})))
          result (object/read-item workspace object-store id actor)]
      (if (:ok? result)
        (let [item (ws/item workspace id)]
