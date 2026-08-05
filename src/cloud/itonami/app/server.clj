@@ -22,6 +22,7 @@
             [cloud.itonami.app.filecoin :as filecoin]
             [cloud.itonami.app.fleet :as fleet]
             [cloud.itonami.app.operator :as operator]
+            [cloud.itonami.app.pageview :as pageview]
             [cloud.itonami.app.funding :as funding]
             [cloud.itonami.app.identity :as identity]
             [cloud.itonami.app.fax :as fax]
@@ -515,6 +516,35 @@
 
 (defn- id-from-path [path pattern]
   (some-> (re-matches pattern path) second))
+
+;; ── one page of an uploaded PDF, as markup ───────────────────────────────────
+;;
+;; Out of the request `cond` rather than in it, and that is a fact about the
+;; JVM rather than a preference: the `cond` compiles to one method, a method
+;; is capped at 64 KB of bytecode, and writing these two routes inline is what
+;; first exceeded it. The `cond` keeps one delegating clause.
+;;
+;; JSON rather than an `image/svg+xml` response, which is the whole difference
+;; from `/preview`. An SVG *document* served from this origin is the hazard
+;; `documents/previewable-media-types` exists to avoid; a JSON field the client
+;; puts into the page is markup this server generated — the same category as
+;; the workbook charts `sheets.chart` already draws. `pageview` says why the
+;; fragment is inert and why no CSP had to be widened for it.
+
+(def ^:private pages-pattern #"/api/workspace/drive/documents/([^/]+)/pages")
+(def ^:private page-pattern #"/api/workspace/drive/documents/([^/]+)/pages/(\d+)")
+
+(defn- page-route? [method path]
+  (and (= method "GET")
+       (or (re-matches pages-pattern path) (re-matches page-pattern path))
+       true))
+
+(defn- page-routes! [exchange path]
+  (let [session (require-app-session! exchange)]
+    (if-let [[_ id index] (re-matches page-pattern path)]
+      (send! exchange 200 (pageview/page id (:user-id session) (parse-long index)))
+      (send! exchange 200 (pageview/document (id-from-path path pages-pattern)
+                                             (:user-id session))))))
 
 ;; /api/authority/<authority>/... -- the authority key is a path segment so a
 ;; disabled or unknown authority is refused by name rather than by inspecting a
@@ -2888,6 +2918,13 @@
                     (with-open [o (.getResponseBody exchange)]
                       (.write o ^bytes (:bytes out))))))
 
+            ;; One page of an uploaded PDF. One clause, delegating, because
+            ;; this `cond` compiles to a single method and the JVM caps one
+            ;; at 64 KB — the two routes written out here were what first
+            ;; exceeded it (`Method code too large!`, measured, not feared).
+            ;; The bodies live in `page-routes` above.
+            (page-route? method path) (page-routes! exchange path)
+
             ;; Served as an attachment with a fixed octet-stream type,
             ;; whatever the file claims to be. Bytes uploaded by one person
             ;; and served from this origin to another are stored XSS if the
@@ -3672,6 +3709,21 @@
                      :drive/not-a-document 409
                      :drive/not-a-file 409
                      :drive/not-previewable 415
+                     ;; Asking a spreadsheet, or a zip, to be pages. The
+                     ;; request is about the wrong kind of thing.
+                     :pageview/not-viewable 415
+                     ;; Readable, claimed to be a PDF, and no page came out.
+                     ;; 422 rather than 500: the server understood the
+                     ;; request and the entity is what it cannot process.
+                     :pageview/no-pages 422
+                     ;; A decoder said no. Same status, different sentence:
+                     ;; the fix is a decoder, not a permission and not a
+                     ;; different file.
+                     :pageview/undecodable 422
+                     ;; The file is fine; showing it is what this refuses.
+                     ;; 413 names the size as the reason, which is what the
+                     ;; message tells the reader too.
+                     :pageview/too-large 413
                      ;; The paragraph moved under the proposal. 409 for the
                      ;; same reason a stale save is: the client has to
                      ;; re-read before it can win.

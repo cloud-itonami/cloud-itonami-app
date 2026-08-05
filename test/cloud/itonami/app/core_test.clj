@@ -230,7 +230,13 @@
   ;; var's docstring and everything after it the value. The page still has a
   ;; large stylesheet and later component rules, but its shell silently falls
   ;; back to browser-default block layout.
-  (is (nil? (:doc (meta #'web/app-css))))
+  ;;
+  ;; On `base-css`, which is where the raw literal lives now: `app-css` is
+  ;; that string plus `hanmen`'s, so it is a `str` call and a docstring on it
+  ;; is a docstring rather than a truncation. Following the hazard rather
+  ;; than the name — an assertion left on `app-css` would have passed while
+  ;; guarding nothing.
+  (is (nil? (:doc (meta #'web/base-css))))
   (is (str/includes? web/app-css
                      ".workspace{display:grid;grid-template-columns:17rem"))
   (is (str/includes? web/app-css

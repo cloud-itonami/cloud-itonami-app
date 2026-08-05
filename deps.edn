@@ -159,6 +159,14 @@
   io.github.kotoba-lang/org-w3-did
   {:git/url "https://github.com/kotoba-lang/org-w3-did.git"
    :git/sha "c61e6c95515cd6b66ef19550876d40b7356fc6a7"}
+  ;; Showing an uploaded PDF. `hanmen` walks the content stream into placed
+  ;; marks and emits SVG from a closed vocabulary; `org-iso-pdf` comes with
+  ;; it as the object model underneath. Neither serves the file — see
+  ;; `cloud.itonami.app.pageview` for why this does not widen the allowlist
+  ;; that keeps uploaded bytes from being served inline.
+  io.github.kotoba-lang/hanmen
+  {:git/url "https://github.com/kotoba-lang/hanmen.git"
+   :git/sha "5f493d470bfb6a4a8f12cd3dc54703f578386337"}
   io.github.kotoba-lang/drive
   {:git/url "https://github.com/kotoba-lang/drive.git"
    :git/sha "20f6f4940a60061b692aa53ae501e2d36f8bf010"}

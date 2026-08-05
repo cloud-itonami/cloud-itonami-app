@@ -83,6 +83,7 @@
             [cloud.itonami.app.namespaces-test]
             [cloud.itonami.app.fleet-tools-test]
             [cloud.itonami.app.openai-compat-test]
+            [cloud.itonami.app.pageview-test]
             [cloud.itonami.app.passkey-test]
             [cloud.itonami.app.payment-settlement-actor-test]
             [cloud.itonami.app.payment-tools-test]
@@ -161,6 +162,7 @@
     cloud.itonami.app.namespaces-test
     cloud.itonami.app.fleet-tools-test
     cloud.itonami.app.openai-compat-test
+    cloud.itonami.app.pageview-test
     cloud.itonami.app.passkey-test
     cloud.itonami.app.payment-settlement-actor-test
     cloud.itonami.app.mailbox-test
