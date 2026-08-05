@@ -8,6 +8,7 @@
   (:require [clojure.edn :as edn]
             [clojure.java.io :as io]
             [clojure.string :as str]
+            [cloud.itonami.app.mail-age-key :as age-key]
             [cloud.itonami.app.config :as config]
             [cloud.itonami.app.documents :as documents]
             [cloud.itonami.app.repository-runtime :as runtime]
@@ -715,30 +716,18 @@
 (defn age-recipients
   "Who the body is encrypted to.
 
+  Resolution lives in `mail-age-key`: environment, then a recipients file, then
+  the macOS Keychain, then kagi. It moved out of this namespace when the answer
+  stopped being 'an environment variable' — a desktop app started by a
+  double-click has no exported environment, so the key has to be somewhere a GUI
+  process can reach without a shell.
+
   Public because whether a deployment can store mail bodies at all is a fact
   about its configuration that the status surface and the tests both need to
   read — and a deployment that thinks it is filing bodies and is not should be
-  able to find that out without reading this file.
-
-  From `CLOUD_ITONAMI_MAIL_AGE_RECIPIENTS` (comma-separated age recipients) or a
-  recipients file at `CLOUD_ITONAMI_MAIL_AGE_RECIPIENTS_FILE`. Absent means this
-  deployment has not said who may read filed mail, and the body is then not
-  written at all — see `seal-body!`."
+  able to find that out without reading this file."
   []
-  (let [inline (some->> (env "CLOUD_ITONAMI_MAIL_AGE_RECIPIENTS")
-                        (#(str/split % #","))
-                        (map str/trim)
-                        (remove str/blank?)
-                        seq)
-        file (some-> (env "CLOUD_ITONAMI_MAIL_AGE_RECIPIENTS_FILE") io/file)]
-    (cond
-      inline (vec inline)
-      (and file (.isFile file))
-      (->> (str/split-lines (slurp file))
-           (map str/trim)
-           (remove #(or (str/blank? %) (str/starts-with? % "#")))
-           vec)
-      :else [])))
+  (age-key/recipients))
 
 (defn- age-binary []
   ;; The blank guard is not decoration: with no override the first candidate is
