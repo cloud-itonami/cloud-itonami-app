@@ -79,6 +79,73 @@
 
     (throw (ex-info "unsupported provider kind" {:provider provider}))))
 
+(defn- tool-definition [{:keys [name description parameters]}]
+  {:type "function"
+   :function {:name name :description description :parameters parameters}})
+
+(defn- provider-message [message]
+  (let [calls (:tool-calls message)]
+    (cond-> (dissoc message :tool-calls :tool-call-id)
+      (seq calls)
+      (assoc :tool_calls
+             (mapv (fn [{:keys [id name input]}]
+                     {:id id :type "function"
+                      :function {:name name
+                                 :arguments (json/write-str input)}})
+                   calls))
+
+      (:tool-call-id message)
+      (assoc :tool_call_id (:tool-call-id message)))))
+
+(defn- parse-arguments [value]
+  (cond
+    (map? value) value
+    (str/blank? (str value)) {}
+    :else (try
+            (json/read-str value :key-fn keyword)
+            (catch Exception error
+              (throw (ex-info "model returned invalid tool arguments"
+                              {:type :provider/invalid-tool-arguments}
+                              error))))))
+
+(defn- normalize-tool-calls [calls]
+  (mapv (fn [index call]
+          {:id (or (:id call) (str "tool-call-" index))
+           :name (get-in call [:function :name])
+           :input (parse-arguments (get-in call [:function :arguments]))})
+        (range) (or calls [])))
+
+(defn agent-turn
+  "One non-streaming tool-capable model turn, normalized for Agent Control."
+  [provider {:keys [model messages tools temperature]}]
+  (let [body {:model model
+              :messages (mapv provider-message messages)
+              :tools (mapv tool-definition tools)
+              :stream false
+              :temperature (or temperature 0.2)}]
+    (case (:kind provider)
+      :ollama
+      (let [result (request-json :post (str (:base-url provider) "/api/chat")
+                                 (-> body
+                                     (dissoc :temperature)
+                                     (assoc :options {:temperature
+                                                      (or temperature 0.2)})))
+            message (:message result)]
+        {:content (:content message)
+         :tool-calls (normalize-tool-calls (:tool_calls message))})
+
+      :openai-compatible
+      (let [result (request-json
+                    :post
+                    (str (str/replace (:base-url provider) #"/$" "")
+                         "/chat/completions")
+                    body (config/env-secret provider))
+            message (get-in result [:choices 0 :message])]
+        {:content (:content message)
+         :tool-calls (normalize-tool-calls (:tool_calls message))})
+
+      (throw (ex-info "unsupported provider kind" {:provider provider})))))
+
 (defn- streaming-response [url body api-key]
   (let [builder (-> (HttpRequest/newBuilder (URI/create url))
                     (.timeout (Duration/ofSeconds 120))

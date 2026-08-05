@@ -7,6 +7,7 @@
   (:require [cloud.itonami.app.did :as did]
             [cloud.itonami.app.store :as store]
             [clojure.data.json :as json]
+            [clojure.string :as str]
             [identity.model :as identity])
   (:import [com.yubico.webauthn AssertionRequest CredentialRepository
             FinishAssertionOptions FinishRegistrationOptions RegisteredCredential
@@ -124,9 +125,19 @@
 
 (defn start-registration!
   [{:keys [id email display-name user-handle]} rp-id origin]
-  (let [rp (relying-party rp-id origin)
+  (let [user-name (or (some-> email str/trim not-empty)
+                      (some-> id str str/trim not-empty))
+        display-name (or (some-> display-name str/trim not-empty)
+                         user-name)]
+    (when-not (and user-name display-name user-handle)
+      (throw (ex-info "Passkey 登録に必要なUser情報がありません。"
+                      {:type :passkey/invalid-user})))
+    (let [rp (relying-party rp-id origin)
         user (-> (UserIdentity/builder)
-                 (.name email)
+                 ;; First registration intentionally precedes account-id and
+                 ;; email setup. WebAuthn still requires a non-null stable
+                 ;; name, so the immutable local User id is the fallback.
+                 (.name user-name)
                  (.displayName display-name)
                  (.id (webauthn-bytes user-handle))
                  .build)
@@ -157,7 +168,7 @@
     {:transaction-id transaction-id
      :options (json/read-str (.toCredentialsCreateJson options)
                              :key-fn keyword)
-     :expires-at expires-at}))
+     :expires-at expires-at})))
 
 (defn- aaguid->string
   "The AAGUID as a canonical lowercase UUID string, or nil.

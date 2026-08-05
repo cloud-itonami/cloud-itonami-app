@@ -239,6 +239,10 @@
   io.github.kotoba-lang/identity
   {:git/url "https://github.com/kotoba-lang/identity.git"
    :git/sha "5cf94e38c816ced6857ef62de344f6adea9fc050"}
+  ;; (`authentication` / `authorization` are declared once at the top of this
+  ;; map, as `authentication-email` + `authorization` at these same SHAs. The
+  ;; ADR-0014 replay re-added them here under the pre-rename key, which is a
+  ;; duplicate map key and makes deps.edn unreadable.)
 
   ;; The contract surface. This app stores nothing about a contract itself —
   ;; kagi owns the vault (E2E on disk and in kotobase.net, ADR-2607170500) and
@@ -275,6 +279,22 @@
   io.github.kotoba-lang/com-github
   {:git/url "https://github.com/kotoba-lang/com-github.git"
    :git/sha "5beea7514b4791f6aae33cb0b75d49f0ec53437c"}
+  ;; Durable organizational roles and desired-capacity reconciliation. Kanban
+  ;; work in this app supplies goals; yakuwari remains the authority for how
+  ;; many bounded AgentRuns a role should keep alive and which capabilities
+  ;; require a human.
+  io.github.kotoba-lang/yakuwari
+  {:git/url "https://github.com/kotoba-lang/yakuwari.git"
+   :git/sha "23410f1b70fda6c260f449c4d73c3dacc97a344c"}
+  ;; Bounded executions dispatched by the durable WorkItem reconciler. Agent
+  ;; owns the lifecycle vocabulary; HIL owns the human decision envelope used
+  ;; by Agent Control when a run reaches a device/tool gate.
+  io.github.kotoba-lang/agent
+  {:git/url "https://github.com/kotoba-lang/agent.git"
+   :git/sha "12d100bed062f4461b55266b79b7dc9310a41ea1"}
+  kotoba-lang/hil
+  {:git/url "https://github.com/kotoba-lang/hil.git"
+   :git/sha "75f5b9ed3ed00161f331f868a224d3a71e5db00e"}
   io.github.kotoba-lang/jp-go-digital-design-system
   {:git/url "https://github.com/kotoba-lang/jp-go-digital-design-system.git"
    :git/sha "277e8c38648a3030014637d11fcbefc4f5535ae7"}
@@ -294,6 +314,7 @@
 
  :aliases
  {:server {:main-opts ["-m" "cloud.itonami.app.server"]}
+  :ao-messenger {:main-opts ["-m" "cloud.itonami.app.organism-messenger-client"]}
   :repository {:main-opts ["-m" "cloud.itonami.app.repository-runtime"]}
   ;; The MCP server speaks JSON-RPC on stdout, so nothing else may print there:
   ;; run it with this alias, never alongside :server in one process.
@@ -311,6 +332,7 @@
   ;; an exported CLOUD_ITONAMI_DATA_DIR cannot redirect the suite back onto a
   ;; real store.
   :test {:extra-paths ["test"]
+         :extra-deps {datascript/datascript {:mvn/version "1.7.8"}}
          :jvm-opts ["-Dcloud.itonami.data-dir=target/test-data"]
          :main-opts ["-m" "cloud.itonami.app.test-runner"]}
   :lint {:replace-deps {clj-kondo/clj-kondo {:mvn/version "2024.11.14"}}
@@ -344,10 +366,21 @@
     io.github.kotoba-lang/forms {:local/root "../../kotoba-lang/forms"}
     io.github.kotoba-lang/transit {:local/root "../../kotoba-lang/transit"}
     io.github.kotoba-lang/identity {:local/root "../../kotoba-lang/identity"}
+    io.github.kotoba-lang/authentication
+    {:local/root "../../kotoba-lang/authentication/modules/email"}
+    io.github.kotoba-lang/authorization
+    {:local/root "../../kotoba-lang/authorization"}
     io.github.kotoba-lang/kotobase {:local/root "../../kotoba-lang/kotobase"}
     io.github.kotoba-lang/kagi {:local/root "../../kotoba-lang/kagi"}
     io.github.kotoba-lang/langchain {:local/root "../../kotoba-lang/langchain"}
+    io.github.kotoba-lang/langgraph {:local/root "../../kotoba-lang/langgraph"}
+    io.github.kotoba-lang/kagitaba {:local/root "../../kotoba-lang/kagitaba"}
+    io.github.kotoba-lang/html {:local/root "../../kotoba-lang/html"}
+    io.github.kotoba-lang/css {:local/root "../../kotoba-lang/css"}
     io.github.kotoba-lang/oauth {:local/root "../../kotoba-lang/oauth"}
     io.github.kotoba-lang/com-github {:local/root "../../kotoba-lang/com-github"}
+    io.github.kotoba-lang/yakuwari {:local/root "../../kotoba-lang/yakuwari"}
+    io.github.kotoba-lang/agent {:local/root "../../kotoba-lang/agent"}
+    kotoba-lang/hil {:local/root "../../kotoba-lang/hil"}
     io.github.kotoba-lang/jp-go-digital-design-system
     {:local/root "../../kotoba-lang/jp-go-digital-design-system"}}}}}

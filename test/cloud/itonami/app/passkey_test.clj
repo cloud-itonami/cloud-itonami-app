@@ -62,6 +62,16 @@
    (passkey/start-authorization! (:id user) {:digest "abc" :proposal "p-1"}
                                  rp-id origin)))
 
+(deftest first-passkey-registration-does-not-require-email-or-profile
+  (let [profile-free (dissoc user :email :display-name)
+        started (passkey/start-registration! profile-free rp-id origin)
+        options (:options started)]
+    (is (string? (:transaction-id started)))
+    (is (= "u-1" (get-in options [:publicKey :user :name])))
+    (is (= "u-1" (get-in options [:publicKey :user :displayName])))
+    (is (= :registration
+           (:kind (transaction (:transaction-id started)))))))
+
 ;; ---------------------------------------------------------------------------
 ;; the operation context is this server's record, not the client's word
 ;; ---------------------------------------------------------------------------
