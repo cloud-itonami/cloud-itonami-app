@@ -13,6 +13,9 @@
             [clojure.set :as set]
             [clojure.string :as str]
             [clojure.test :refer [deftest is testing]]
+            [cloud.itonami.app.agent-session :as agent-session]
+            [cloud.itonami.app.app-client :as client]
+            [cloud.itonami.app.cli :as cli]
             [cloud.itonami.app.commands :as commands]
             [cloud.itonami.app.route-scan :as scan]))
 
@@ -120,3 +123,70 @@
       (is (= routes (+ commands human-only unauthenticated))
           "every route is either a command, human-only, or unauthenticated")
       (is (= commands (count (commands/all)))))))
+
+;; ---------------------------------------------------------------------------
+;; the CLI over the registry
+
+(deftest dispatch-does-not-start-a-server
+  (testing "`run` is dispatch, and `-main` is what starts a process.
+
+            This is a regression test with a date. When `ensure-server!` was
+            first written it sat inside `run`, and `cli-test` — which calls
+            `run` directly with a stub transport and a configuration naming no
+            server — made the suite try to spawn `clojure -M:server` and block
+            for the whole 300s startup budget. The suite did not fail; it hung,
+            which is worse, because a hang reads as a slow machine."
+    (is (false? (cli/needs-server? ["up"])))
+    (is (false? (cli/needs-server? ["down"])))
+    (is (false? (cli/needs-server? ["status"])))
+    (is (false? (cli/needs-server? ["commands" "drive"])))
+    (is (true? (cli/needs-server? ["workspace" "inbox"])))
+    (is (true? (cli/needs-server? ["business" "list"]))))
+
+  (testing "a lifecycle command answers without any server at all"
+    (let [answer (cli/run {} ["commands" "esign"])]
+      (is (pos? (:matched answer)))
+      (is (= (count (commands/all)) (get-in answer [:coverage :commands]))))))
+
+(deftest a-generated-command-becomes-one-request
+  (testing "words and flags reach the route the registry names, with the token"
+    (let [calls (atom [])]
+      (with-redefs [agent-session/session-token (constantly "agent-token")
+                    client/call (fn [_ method path request]
+                                  (swap! calls conj [method path request])
+                                  {:status 200 :body {:ok true}})]
+        (is (= {:ok true}
+               (cli/run {} ["workspace" "drive" "documents" "rename"
+                            "--document" "doc-1" "--title" "New"])))
+        (let [[method path request] (first @calls)]
+          (is (= :post method))
+          (is (= "/api/workspace/drive/documents/doc-1/rename" path))
+          (is (= {:title "New"} (:body request)))
+          (is (= "agent-token" (:token request)))))))
+
+  (testing "a path parameter given positionally reaches the same place"
+    (let [calls (atom [])]
+      (with-redefs [agent-session/session-token (constantly "agent-token")
+                    client/call (fn [_ method path request]
+                                  (swap! calls conj [method path request])
+                                  {:status 200 :body {:ok true}})]
+        (cli/run {} ["esign" "envelopes" "show" "env-1"])
+        (is (= "/api/esign/envelopes/env-1" (second (first @calls)))))))
+
+  (testing "--json carries a body the flags cannot express"
+    (let [calls (atom [])]
+      (with-redefs [agent-session/session-token (constantly "agent-token")
+                    client/call (fn [_ method path request]
+                                  (swap! calls conj [method path request])
+                                  {:status 200 :body {:ok true}})]
+        (cli/run {} ["workspace" "drive" "documents" "rename"
+                     "--document" "doc-1"
+                     "--json" "{\"title\":[\"a\",\"b\"]}"])
+        (is (= {:title ["a" "b"]} (:body (nth (first @calls) 2))))))))
+
+(deftest an-unknown-command-says-where-to-look
+  (with-redefs [agent-session/session-token (constantly "agent-token")]
+    (let [error (try (cli/run {} ["wrokspace" "inbox"])
+                     (catch clojure.lang.ExceptionInfo e e))]
+      (is (= :cli/usage (:type (ex-data error))))
+      (is (str/includes? (ex-message error) "itonami commands wrokspace")))))

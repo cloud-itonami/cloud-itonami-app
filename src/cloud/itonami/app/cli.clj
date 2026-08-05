@@ -183,14 +183,31 @@
 ;; server lifecycle
 ;; ---------------------------------------------------------------------------
 
-(defn- ensure-server!
+(defn ensure-server!
   "A server to talk to, started headless if there is not one.
 
-  Every command that makes a request goes through here first. That is what makes
-  'works without opening the app' true rather than aspirational — and it is one
-  call site, so a command added later cannot forget it."
+  Called by `-main`, not by `run`. Starting a process is something the PROGRAM
+  does, not something dispatching a command does — and the difference is not
+  bookkeeping: `cli-test` drives `run` directly with a stub transport and a
+  configuration that names no server, so an `ensure-server!` inside `run` made
+  the suite spawn `clojure -M:server` and block for the full startup budget.
+  Measured, on the first run after this landed."
   [configuration]
   (server-process/ensure-running! configuration))
+
+(def lifecycle-commands
+  "The commands that must NOT start a server to answer.
+
+  `down` would otherwise start one in order to stop it, `status` would report a
+  server it had just created rather than the one that was there, and `commands`
+  reads a resource off the classpath and needs nothing running at all. `up`
+  starts one itself."
+  #{"up" "down" "status" "commands"})
+
+(defn needs-server?
+  "Whether these arguments describe a command that will make a request."
+  [args]
+  (not (contains? lifecycle-commands (first (words args)))))
 
 (defn up [configuration]
   (let [started (ensure-server! configuration)]
@@ -492,9 +509,9 @@
 (defn run
   "Dispatch. Returns the value to print, or throws with a message to show.
 
-  The lifecycle commands come first and do NOT start a server: `down` would
-  otherwise start one in order to stop it, and `commands` reads a resource on the
-  classpath and needs nothing running at all."
+  Dispatch only. It does not start a server — `-main` does that first, for the
+  commands that need one — so this stays callable from a test with a stub
+  transport."
   [configuration args]
   (let [flags (parse-flags args)
         named (words args)]
@@ -505,13 +522,16 @@
       "down" (down configuration)
       "status" (status configuration)
       "commands" (list-commands (rest named))
-      (do (ensure-server! configuration)
-          (run-server-command configuration args flags)))))
+      (run-server-command configuration args flags))))
 
 (defn -main [& args]
   (try
-    (println (json/write-str (run (config/load-config) (vec args))
-                             :escape-unicode false))
+    (let [configuration (config/load-config)
+          args (vec args)]
+      (when (and (seq (words args)) (needs-server? args))
+        (ensure-server! configuration))
+      (println (json/write-str (run configuration args)
+                               :escape-unicode false)))
     (System/exit 0)
     (catch clojure.lang.ExceptionInfo e
       (binding [*out* *err*] (println (ex-message e)))
