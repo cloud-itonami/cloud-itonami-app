@@ -26,6 +26,7 @@
             [clojure.string :as str]
             [cloud.itonami.app.mail-account :as account]
             [cloud.itonami.app.mail-gmail :as gmail]
+            [cloud.itonami.app.mail-imap :as imap]
             [cloud.itonami.app.store :as store]
             [mail.message :as message]
             [mail.receipt :as receipt]
@@ -225,10 +226,34 @@
   (let [account (account/account! account-id user-did)
         envelope (draft! account request)
         result (case (:kind account)
-                 :imap (send-over-smtp! account envelope)
+                 ;; POP3 reads over POP3 and sends over SMTP, exactly as an
+                 ;; IMAP account does — `add-imap-account!` gives both kinds
+                 ;; the same `:smtp` block. Without this clause `case` threw
+                 ;; `No matching clause` and a POP3 account could be
+                 ;; registered but never sent from.
+                 (:imap :pop3) (send-over-smtp! account envelope)
                  :gmail (send-over-gmail! account envelope
                                           (:thread-id request))
                  :microsoft (send-over-graph! account envelope))
+        ;; A copy in the sender's own Sent folder.
+        ;;
+        ;; Only IMAP needs this. Gmail's `users.messages.send` files the
+        ;; message under SENT itself, and Graph's `sendMail` was already
+        ;; asked for `saveToSentItems`. POP3 has no folders at all, so there
+        ;; is nowhere to put one — mail sent from a POP3 account exists at
+        ;; the recipient and in this app's own `[:mail :sent]` record, and
+        ;; that is the whole of what the protocol allows.
+        ;;
+        ;; **A failure here does not fail the send.** The message has already
+        ;; left; refusing to return would tell the caller their mail did not
+        ;; go when it did. The outcome is reported instead.
+        filed (when (= :imap (:kind account))
+                (try
+                  (imap/append-sent! account (rfc2822 envelope))
+                  (catch Exception error
+                    {:appended? false
+                     :reason :append-failed
+                     :error (.getMessage error)})))
         now (store/now)
         ;; `mail.receipt` insists on a provider message-id and is right to:
         ;; a receipt whose id is nil cannot be matched to anything later. The
@@ -250,6 +275,7 @@
                        :cc (emails (:mail/cc envelope))
                        :subject (:mail/subject envelope)
                        :thread-id (or (:thread-id result) (:thread-id request))
+                       :filed-to-sent (:mailbox filed)
                        :sent-at now})
            (update :events conj {:type :mail/sent :at now
                                  :account-id account-id}))))
@@ -259,4 +285,9 @@
      :to (emails (:mail/to envelope))
      :subject (:mail/subject envelope)
      :thread-id (or (:thread-id result) (:thread-id request))
+     ;; nil for the kinds that file their own copy (Gmail, Graph) and for
+     ;; POP3, which has nowhere to file one. A map with `:appended? false`
+     ;; means the mail went but the copy did not — worth showing, never
+     ;; worth failing the send over.
+     :sent-copy filed
      :sent-at now}))

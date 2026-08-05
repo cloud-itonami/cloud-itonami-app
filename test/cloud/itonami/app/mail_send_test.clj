@@ -17,6 +17,7 @@
             [cloud.itonami.app.mail-account :as account]
             [cloud.itonami.app.mail-send :as mail-send]
             [cloud.itonami.app.store :as store]
+            [cloud.itonami.app.mail-imap :as mail-imap]
             [smtp.client])
   (:import [java.nio.charset StandardCharsets]
            [java.util Base64]))
@@ -168,3 +169,78 @@
                                          {:user-did "did:key:alice"})
                         (catch clojure.lang.ExceptionInfo e (ex-data e)))]
          (is (= :mail/missing-credential (:type error)))))))
+
+;; --- the copy in the sender's own Sent folder --------------------------------
+
+(def ^:private pop3-account
+  {:id "pop3:me@example.com@pop.example.com"
+   :kind :pop3
+   :address "me@example.com"
+   :user-did "did:key:alice"
+   :pop3 {:host "pop.example.com" :port 995 :username "me@example.com"}
+   :smtp {:host "smtp.example.com" :port 465 :username "me@example.com"}})
+
+(deftest an-imap-account-files-a-copy-into-its-sent-folder
+  (testing "without it the mail exists at the recipient and nowhere in the
+            sender's own mailbox, so every other client the account is opened
+            in shows an empty Sent folder for everything sent from here"
+    (let [appended (atom nil)]
+      (with-redefs [account/password (constantly "app-password")
+                    smtp.client/connect! (fn [_h _o] {:transport ::fake})
+                    smtp.client/ehlo! (fn [s _d] s)
+                    smtp.client/authenticate! (fn [s _o] s)
+                    smtp.client/send-mail! (fn [s m] (assoc s :accepted (:to m) :rejected []))
+                    smtp.client/quit! (constantly nil)
+                    mail-imap/append-sent! (fn [_account raw]
+                                             (reset! appended raw)
+                                             {:appended? true :mailbox "INBOX/Sent"})]
+        (with-account imap-account
+          #(let [result (mail-send/send! (:id imap-account)
+                                         {:to "a@example.com" :subject "件名"
+                                          :text "本文"}
+                                         {:user-did "did:key:alice"})]
+             (is (= "INBOX/Sent" (get-in result [:sent-copy :mailbox])))
+             (testing "and what is filed is the same message that was sent"
+               (is (re-find #"To: a@example.com" @appended))
+               (is (re-find #"Subject: =\?UTF-8\?B\?" @appended)))))))))
+
+(deftest a-failed-sent-copy-does-not-fail-the-send
+  (testing "the message has already left; refusing to return would tell the
+            caller their mail did not go when it did"
+    (with-redefs [account/password (constantly "app-password")
+                  smtp.client/connect! (fn [_h _o] {:transport ::fake})
+                  smtp.client/ehlo! (fn [s _d] s)
+                  smtp.client/authenticate! (fn [s _o] s)
+                  smtp.client/send-mail! (fn [s m] (assoc s :accepted (:to m) :rejected []))
+                  smtp.client/quit! (constantly nil)
+                  mail-imap/append-sent! (fn [_ _] (throw (ex-info "IMAP down" {})))]
+      (with-account imap-account
+        #(let [result (mail-send/send! (:id imap-account)
+                                       {:to "a@example.com" :subject "s" :text "t"}
+                                       {:user-did "did:key:alice"})]
+           (is (true? (:ok? result)) "the send still succeeded")
+           (is (false? (get-in result [:sent-copy :appended?])))
+           (is (= :append-failed (get-in result [:sent-copy :reason]))))))))
+
+(deftest a-pop3-account-can-send
+  (testing "POP3 reads over POP3 and sends over SMTP — `add-imap-account!`
+            gives both kinds the same :smtp block. Without a :pop3 clause
+            `case` threw `No matching clause`, so a POP3 account could be
+            registered and never sent from"
+    (let [sent (atom [])]
+      (with-redefs [account/password (constantly "app-password")
+                    smtp.client/connect! (fn [_h _o] {:transport ::fake})
+                    smtp.client/ehlo! (fn [s _d] s)
+                    smtp.client/authenticate! (fn [s _o] s)
+                    smtp.client/send-mail! (fn [s m]
+                                             (swap! sent conj m)
+                                             (assoc s :accepted (:to m) :rejected []))
+                    smtp.client/quit! (constantly nil)]
+        (with-account pop3-account
+          #(let [result (mail-send/send! (:id pop3-account)
+                                         {:to "a@example.com" :subject "s" :text "t"}
+                                         {:user-did "did:key:alice"})]
+             (is (true? (:ok? result)))
+             (is (= ["a@example.com"] (:to (first @sent))))
+             (testing "and no Sent copy is attempted — POP3 has no folders"
+               (is (nil? (:sent-copy result))))))))))
