@@ -121,6 +121,18 @@ Nothing is moved and nothing is deleted: assignment is a third plane over the
 message store and the per-person marks. A rule cannot name a project that does
 not exist, and a rule never overwrites a manual assignment.
 
+Filing also writes the message **into** the project, and commits (ADR-0020):
+
+```
+<project>/mail/2026/08/<id>.edn    tracked   envelope, labels, sha256 of the body
+<project>/.mail/2026/08/<id>.txt   ignored   the body, for tools in the project
+```
+
+**The body never enters Git** — the same line `.conversations/` draws, and what
+lets these repositories safely gain a remote later. The envelope does, because a
+directory of opaque digests would not be an artifact. One commit per filing run,
+and only for what changed.
+
 There is **no model in this path on purpose.** An LLM asked which project an
 invoice belongs to answers confidently for mail that belongs to none of them,
 and a wrong assignment is invisible in a way an unfiled message is not. So the

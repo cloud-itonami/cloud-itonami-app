@@ -95,9 +95,15 @@
     (.mkdirs directory)
     (when-not (.isDirectory (io/file directory ".git"))
       (run-command! directory ["/usr/bin/git" "init" "-q" "--initial-branch=main"]))
-    (when-not (.isFile (io/file directory ".gitignore"))
-      (spit (io/file directory ".gitignore")
-            ".itonami/runtime/\n.conversations/\n"))
+    (let [gitignore (io/file directory ".gitignore")
+          current (if (.isFile gitignore) (slurp gitignore) "")]
+      ;; Appended line by line rather than written once. A project created
+      ;; before mail filing existed already HAS a .gitignore, so a
+      ;; `when-not .isFile` branch would never reach it — and the first filed
+      ;; message would put a mail body into an ordinary Git repository.
+      (doseq [line [".itonami/runtime/" ".conversations/" ".mail/"]]
+        (when-not (str/includes? current line)
+          (spit gitignore (str line "\n") :append true))))
     (when-not (and (.isFile local-exclude)
                    (str/includes? (slurp local-exclude) ".itonami/runtime/"))
       (.mkdirs (.getParentFile local-exclude))
@@ -653,6 +659,109 @@
                        (seq messages))]
       (project-drive-artifacts! session-scope messages retained-id))
     {:projects (count local-projects) :conversations (count sessions)}))
+
+(defn- git-commit!
+  "Commit whatever is staged, if anything is.
+
+  Identity is passed per invocation rather than configured into the repository:
+  these repositories are created by the app on somebody's machine, and writing a
+  global-looking `user.email` into them would put this app's name on commits a
+  person may later make by hand.
+
+  A repository with nothing staged is not an error — filing the same message
+  twice is expected, and it should be quiet rather than fail."
+  [directory message]
+  ;; `run-command!` merges stderr into stdout so that a failure reports what git
+  ;; said. That means anything git writes to stderr for reasons of its own is in
+  ;; this output too — measured on this machine, a repeated
+  ;; `error: could not read IPC response` from the filesystem monitor. So the
+  ;; porcelain is read by shape and the SHA by pattern, rather than by trusting
+  ;; the whole output: taken literally, that noise reads as a dirty tree and as
+  ;; a commit id that is not one.
+  (let [status (run-command! directory ["/usr/bin/git" "status" "--porcelain"])
+        changed? (some #(re-matches #"[ MADRCU?!]{2} .+" %)
+                       (str/split-lines status))]
+    (when changed?
+      (run-command! directory ["/usr/bin/git" "add" "-A"])
+      (run-command! directory
+                    ["/usr/bin/git"
+                     "-c" "user.name=Cloud Itonami"
+                     "-c" "user.email=itonami@localhost"
+                     "commit" "-q" "-m" message])
+      (some->> (run-command! directory ["/usr/bin/git" "rev-parse" "HEAD"])
+               str/split-lines
+               (some #(re-matches #"[0-9a-f]{40}" (str/trim %)))))))
+
+(defn- mail-envelope
+  "What goes into Git: who wrote, when, about what — and a digest of the body.
+
+  The body itself does not. That is the same line `.conversations/` draws, for
+  the same reason: this is an ordinary Git repository, it may gain a remote, and
+  a message body is both the sensitive part and the large part. The digest is
+  what lets the tracked record be checked against the plaintext beside it."
+  [message assignment]
+  {:schema "cloud.itonami.app.project-mail.v1"
+   :mail/id (:id message)
+   :mail/message-id (:message-id message)
+   :mail/from (:from message)
+   :mail/from-email (:from-email message)
+   :mail/subject (:subject message)
+   :mail/received-at (:received-at message)
+   :mail/labels (vec (sort (map name (or (:labels message) []))))
+   :mail/body-sha256 (digest (str (:body message)))
+   :mail/body-bytes (count (.getBytes (str (:body message))
+                                      StandardCharsets/UTF_8))
+   :filed/project (:project-id assignment)
+   :filed/by (some-> (:by assignment) name)
+   :filed/rule (:rule-id assignment)
+   :filed/at (:at assignment)})
+
+(defn- mail-paths [directory message]
+  (let [received (str (or (:received-at message) "unknown"))
+        year (if (>= (count received) 4) (subs received 0 4) "unknown")
+        month (if (>= (count received) 7) (subs received 5 7) "unknown")
+        safe (str/replace (str (:id message)) #"[^A-Za-z0-9._-]+" "_")
+        safe (subs safe (max 0 (- (count safe) 80)))]
+    {:envelope (io/file directory "mail" year month (str safe ".edn"))
+     :body (io/file directory ".mail" year month (str safe ".txt"))}))
+
+(defn file-mail!
+  "Write filed messages into the project's repository and commit them.
+
+  Two destinations, which is the boundary this namespace already draws between
+  project source and conversation history:
+
+  - `mail/<yyyy>/<mm>/<id>.edn` is **tracked**: the envelope and a digest of the
+    body. It is the project's own record of what it holds, diffable and
+    reviewable like any other source.
+  - `.mail/<yyyy>/<mm>/<id>.txt` is **git-ignored**: the body in plaintext, for
+    tools working inside the project — the same status, and the same reason, as
+    the read-only attachment copies `prepare-attachments!` materializes.
+
+  One commit per call, not per message: filing a hundred messages should read as
+  one act in the history, because it was one."
+  [scope messages]
+  (let [project (ensure-git-project! scope)
+        directory (:directory project)
+        written (doall
+                 (for [{:keys [message assignment]} messages
+                       :when (and message (:id message))]
+                   (let [{:keys [envelope body]} (mail-paths directory message)]
+                     (atomic-edn! envelope (mail-envelope message assignment))
+                     (.mkdirs (.getParentFile body))
+                     (spit body (str (:body message)))
+                     (.getPath envelope))))
+        commit (when (seq written)
+                 (git-commit! directory
+                              (str "mail: file " (count written)
+                                   " message" (if (= 1 (count written)) "" "s")
+                                   " into " (:project-id scope))))]
+    {:schema "cloud.itonami.app.project-mail.v1"
+     :project-id (:project-id scope)
+     :project-slug (:project-slug project)
+     :directory directory
+     :written (count written)
+     :commit commit}))
 
 (defn persist-conversation!
   "Persist a completed conversation locally and publish sealed blocks when the

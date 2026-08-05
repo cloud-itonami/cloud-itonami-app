@@ -101,10 +101,10 @@ i.e. exactly the case a model would have cheerfully misfiled.
   method is within a few hundred bytes of the JVM's 64 KB bytecode limit; a
   second clause pushed it over and the compiler refused the whole namespace,
   twice, during this work. New route families belong in a sub-router.
-- Assignment does not yet reach the project's Git repository — a filed message
-  is a record in the store, not a commit in the project. Whether mail should
-  become an artifact in the project repo (it already has an issue model) is the
-  obvious next question and is deliberately not answered here.
+- ~~Assignment does not yet reach the project's Git repository.~~ **Answered by
+  ADR-0020 (2026-08-05):** a filed message is now written into the project and
+  committed — the envelope tracked, the body git-ignored, on the same boundary
+  this codebase already drew between project source and conversation history.
 - The other rescued untracked namespaces from that tree — `automation`,
   `git_session`, `ux_score` — are archived and still present in the working
   tree, and are **not** landed here. They are unrelated to this work and would

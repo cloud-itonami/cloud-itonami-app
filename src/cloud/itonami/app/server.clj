@@ -1335,7 +1335,8 @@
       (require-origin! exchange config)
       (require-csrf! exchange session)
       (send! exchange 200
-             (mail-projects/apply-rules! (:organization-id session))))
+             (mail-projects/apply-rules! (:organization-id session)
+                                         (:user-id session))))
 
     (and (= method "POST") (= path "/api/mail/projects/assign"))
     (let [session (require-app-session! exchange)

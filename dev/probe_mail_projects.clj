@@ -3,7 +3,9 @@
 
   Read-only against Gmail — it fetches and files locally. Nothing is sent,
   nothing is labelled provider-side, nothing is deleted."
-  (:require [cloud.itonami.app.config :as config]
+  (:require [clojure.java.io :as io]
+            [clojure.string :as str]
+            [cloud.itonami.app.config :as config]
             [cloud.itonami.app.mail-account :as account]
             [cloud.itonami.app.mail-projects :as mail-projects]
             [cloud.itonami.app.mail-sync :as mail-sync]
@@ -12,6 +14,14 @@
 
 (def organization "org-probe")
 (def user "user-probe")
+
+(defn- git [directory & args]
+  (let [builder (doto (ProcessBuilder. ^java.util.List (into ["/usr/bin/git"] args))
+                  (.directory directory))
+        process (.start builder)
+        output (slurp (.getInputStream process))]
+    (.waitFor process)
+    output))
 
 (defn- scope [project-id]
   {:organization-id organization :user-id user :project-id project-id})
@@ -72,7 +82,42 @@
     (println "\n== 9. manual assignment survives a re-apply ==")
     (let [id (:id (first (:items (mail-projects/unassigned organization))))]
       (mail-projects/assign! organization id "travel" user)
-      (mail-projects/apply-rules! organization)
+      (mail-projects/apply-rules! organization user)
       (println "   " id "->"
-               (get (mail-projects/assignments organization) id))))
+               (get (mail-projects/assignments organization) id)))
+
+    (println "\n== 10. the artifacts in the project repositories ==")
+    (doseq [id ["finance" "travel" "shopping"]]
+      (let [directory (->> (file-seq (io/file (config/data-dir) "projects"))
+                           (filter #(and (.isDirectory %) (= id (.getName %))))
+                           first)]
+        (when directory
+          (println "  " id)
+          (println "     commits :"
+                   (str/trim (first (str/split-lines
+                                     (git directory "log" "--oneline")))))
+          (println "     tracked :"
+                   (count (remove str/blank?
+                                  (str/split-lines
+                                   (git directory "ls-files" "mail")))) "envelopes")
+          (println "     ignored :"
+                   (count (filter #(.isFile %)
+                                  (file-seq (io/file directory ".mail")))) "bodies")
+          (println "     body in git? :"
+                   (if (str/blank? (git directory "grep" "-r" "本文" "HEAD"))
+                     "no" "YES — LEAK")))))
+
+    (println "\n== 11. one envelope, as committed ==")
+    (let [directory (->> (file-seq (io/file (config/data-dir) "projects"))
+                         (filter #(and (.isDirectory %) (= "finance" (.getName %))))
+                         first)
+          envelope (->> (file-seq (io/file directory "mail"))
+                        (filter #(str/ends-with? (.getName %) ".edn"))
+                        first)]
+      (when envelope
+        (let [written (read-string (slurp envelope))]
+          (doseq [k [:mail/from-email :mail/subject :mail/received-at
+                     :mail/labels :mail/body-sha256 :mail/body-bytes
+                     :filed/project :filed/by :filed/rule]]
+            (println "    " k (get written k)))))))
   (shutdown-agents))
