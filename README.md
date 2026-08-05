@@ -160,6 +160,31 @@ reported with its reason. One commit per filing run, and only for what changed.
 Note that git-annex object directories are read-only, so a project repository
 needs `chmod -R u+w` before `rm -rf`.
 
+### Pushing the bodies to B2
+
+The annexed bodies exist on one disk until you push them (ADR-0022):
+
+```bash
+bin/itonami projects push --project finance     # git annex copy --to b2
+bin/itonami projects remote --project finance   # annexed / pushed / unpushed
+```
+
+The special remote is `encryption=none` **because the content is already age
+ciphertext** — B2 receives what it would have received had you uploaded the
+`.age` file by hand. Layering git-annex's GPG on top would add a second key to
+lose for no additional secrecy. B2 sees object count, sizes, and that they are
+age envelopes; the envelopes carrying subjects are ordinary Git objects and are
+never annexed, so they never reach the bucket.
+
+Objects land under `cloud-itonami-mail/<organization>/<project>/` in the shared
+`gftdcojp-m365-annex` bucket. Credentials resolve from `B2_KEY_ID`/`B2_APP_KEY`
+or the Keychain item `b2:gftdcojp-m365-annex`, and are never written to the
+repository.
+
+**Pushing is explicit.** Filing mail does not touch the network. And B2 is
+durability against disk loss, not key loss — the bucket copy is exactly as
+unreadable as the local one without the age identity.
+
 There is **no model in this path on purpose.** An LLM asked which project an
 invoice belongs to answers confidently for mail that belongs to none of them,
 and a wrong assignment is invisible in a way an unfiled message is not. So the
