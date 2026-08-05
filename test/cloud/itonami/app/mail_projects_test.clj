@@ -506,3 +506,69 @@
       (let [result (cloud.itonami.app.mail-sync/sync-all!)]
         (is (= :completed (:status result)))
         (is (= "annex exploded" (:error (:filed result))))))))
+
+;; ---------------------------------------------------------------------------
+;; Apple private relay
+
+(deftest a-relay-address-is-read-back-to-its-real-sender
+  (testing "measured on this inbox: 37% of messages arrive through Apple's
+            relay, and to a rule matching on domain they all look like one
+            sender called icloud.com"
+    (is (= "notify.cloudflare.com"
+           (mail-projects/relay-origin
+            "noreply_at_notify_cloudflare_com_2kwm5vmzyx9343_388566c2@icloud.com")))
+    (is (= "mailmagazine.asoview.com"
+           (mail-projects/relay-origin
+            "noreply_at_mailmagazine_asoview_com_kmv9c9ghdw@icloud.com")))
+    (is (= "ticketboard.jp"
+           (mail-projects/relay-origin
+            "pr_tickebo_at_ticketboard_jp_gfb2tabcwp_46s@icloud.com"))))
+
+  (testing "a two-part suffix stays whole — cutting at the first TLD segment
+            would turn example.co.jp into example.co"
+    (is (= "example.co.jp"
+           (mail-projects/relay-origin
+            "someone_at_example_co_jp_zzz@privaterelay.appleid.com"))))
+
+  (testing "and a hostname of several labels keeps all of them"
+    (is (= "mk.ooedoonsen.jp"
+           (mail-projects/relay-origin
+            "iifuro_at_mk_ooedoonsen_jp_wpgabc123gvx2e_1ehz@icloud.com"))))
+
+  (testing "anything that is not a relay address is left alone"
+    (is (nil? (mail-projects/relay-origin "plain@rakuten-bank.co.jp")))
+    (is (nil? (mail-projects/relay-origin "nothing-encoded@icloud.com")))
+    (is (nil? (mail-projects/relay-origin nil)))))
+
+(deftest a-domain-rule-matches-through-the-relay
+  (project! (fresh "relay"))
+  (let [rule (:rule (mail-projects/add-rule!
+                     organization
+                     {:project (fresh "relay")
+                      :match {:from-domain "cloudflare.com"}}))]
+    (testing "the rule names the real domain and never has to know about Apple"
+      (is (mail-projects/matches?
+           rule
+           (message "m1"
+                    "noreply_at_notify_cloudflare_com_2kwm5vmzyx9343_388@icloud.com"
+                    "Your domain"))))
+
+    (testing "and it still does not match a different sender behind the same relay"
+      (is (not (mail-projects/matches?
+                rule
+                (message "m2"
+                         "noreply_at_service_alibaba_com_b8m7kvtbzk_x@icloud.com"
+                         "Order")))))))
+
+(deftest relay-mail-is-grouped-by-its-real-sender-in-the-unassigned-report
+  (testing "the report exists to say which rule to write next, and one bucket
+            called icloud.com is the one answer that helps nobody"
+    (seed-messages!
+     (message "m1" "noreply_at_notify_cloudflare_com_aaa@icloud.com" "one")
+     (message "m2" "noreply_at_notify_cloudflare_com_bbb@icloud.com" "two")
+     (message "m3" "noreply_at_service_alibaba_com_ccc@icloud.com" "three"))
+    (let [senders (:senders (mail-projects/unassigned organization))
+          by-domain (into {} (map (juxt :from-domain :count)) senders)]
+      (is (= 2 (get by-domain "notify.cloudflare.com")))
+      (is (= 1 (get by-domain "service.alibaba.com")))
+      (is (nil? (get by-domain "icloud.com"))))))
