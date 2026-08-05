@@ -103,9 +103,12 @@ it is not should say so and drop the field.
 - **These repositories can no longer be removed with `rm -rf`.** git-annex object
   directories are read-only by design; deleting one needs `chmod -R u+w` first.
   This bit the test fixtures before it could bite an operator.
-- No remote is configured and nothing pushes. Sending annexed bodies to B2 —
-  where git-annex's own `encryption=` would apply on top of age — is the next
-  step and is not taken here.
+- ~~No remote is configured and nothing pushes.~~ **Done in ADR-0022
+  (2026-08-05):** each project dataset takes B2 as a git-annex special remote and
+  `itonami projects push` copies its bodies there. Note the correction: that ADR
+  uses `encryption=none` rather than layering git-annex's own encryption, because
+  the content handed to the annex is already age ciphertext and a second layer
+  would be a second key to lose rather than more secrecy.
 - Losing every age identity means losing every filed body. The ciphertext is in
   Git and the key is not; that is the point, and it is also the risk. Key custody
   is a deployment concern this ADR does not decide.

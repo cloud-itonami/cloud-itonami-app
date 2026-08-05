@@ -37,6 +37,7 @@
             [cloud.itonami.app.mail-age-key :as age-key]
             [cloud.itonami.app.mail-projects :as mail-projects]
             [cloud.itonami.app.project-repository :as project-repository]
+            [cloud.itonami.app.project-remote :as project-remote]
             [cloud.itonami.app.organism-gateway :as organism-gateway]
             [cloud.itonami.app.organism-messenger-transport :as organism-messenger-transport]
             [cloud.itonami.app.relay :as relay]
@@ -1412,6 +1413,29 @@
     ;; The mail filed against one project. Under /api/projects rather than
     ;; /api/mail because the question is "what does this project have", and the
     ;; project is what the caller already has in hand.
+    ;; Send this project's annexed mail bodies to B2. A write, so it takes the
+    ;; same origin+CSRF boundary as any other; and POST rather than GET because
+    ;; it moves bytes off this machine.
+    (and (= method "POST")
+         (id-from-path path #"/api/projects/([^/]+)/push"))
+    (let [session (require-app-session! exchange)
+          project (id-from-path path #"/api/projects/([^/]+)/push")]
+      (require-origin! exchange config)
+      (require-csrf! exchange session)
+      (if-let [location (project-repository/project-location
+                         (project-scope session project))]
+        (send! exchange 200 (project-remote/push! (:directory location) location))
+        (send! exchange 404 {:error "no_such_project" :project project})))
+
+    (and (= method "GET")
+         (id-from-path path #"/api/projects/([^/]+)/remote"))
+    (let [session (require-app-session! exchange)
+          project (id-from-path path #"/api/projects/([^/]+)/remote")]
+      (if-let [location (project-repository/project-location
+                         (project-scope session project))]
+        (send! exchange 200 (project-remote/status (:directory location) location))
+        (send! exchange 404 {:error "no_such_project" :project project})))
+
     (and (= method "GET")
          (id-from-path path #"/api/projects/([^/]+)/mail"))
     (let [session (require-app-session! exchange)

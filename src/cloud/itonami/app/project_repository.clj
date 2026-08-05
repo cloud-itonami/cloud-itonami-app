@@ -936,6 +936,23 @@
                           "CLOUD_ITONAMI_MAIL_AGE_RECIPIENTS_FILE を設定してください"))
       )))
 
+(defn project-location
+  "The directory and identity of an existing project, without creating one.
+
+  `ensure-git-project!` would also make it, which is wrong for a push: pushing a
+  project nobody has filed into should report that there is nothing there, not
+  quietly bring one into being."
+  [scope]
+  (let [{:keys [projects-root]} (roots)
+        org-id (organization-storage-id scope)
+        slug (project-slug (:project-id scope))
+        directory (io/file projects-root org-id slug)]
+    (when (.isDirectory directory)
+      {:directory (.getCanonicalPath directory)
+       :organization-storage-id org-id
+       :project-slug slug
+       :project-id (:project-id scope)})))
+
 (defn persist-conversation!
   "Persist a completed conversation locally and publish sealed blocks when the
   operator configured the remote/Kotobase boundary. A remote failure never
