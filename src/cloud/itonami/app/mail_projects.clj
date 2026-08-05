@@ -284,6 +284,31 @@
 ;; ---------------------------------------------------------------------------
 ;; reading
 
+(defn organizations-with-rules
+  "Every organization that has said how its mail should be filed.
+
+  The rule set is what says an organization wants filing, so it is also what
+  says whose rules to run after a sync. An organization with no rules is not a
+  gap to fill — it is a deployment that has not asked for this, and running over
+  it would be work with no possible outcome."
+  []
+  (vec (keys (get-in (store/snapshot) [:mail :project-rules] {}))))
+
+(defn apply-all!
+  "Run every organization's rules. Called after a sync.
+
+  Returns one entry per organization rather than a total: two organizations
+  whose rules behave differently is exactly the case a single number hides."
+  ([] (apply-all! nil))
+  ([actor]
+   (let [organizations (organizations-with-rules)]
+     {:schema schema :ok? true
+      :organizations (count organizations)
+      :results (mapv (fn [organization-id]
+                       (assoc (apply-rules! organization-id actor)
+                              :organization-id organization-id))
+                     organizations)})))
+
 (defn- summarize [message assignment]
   {:id (:id message)
    :subject (:subject message)
