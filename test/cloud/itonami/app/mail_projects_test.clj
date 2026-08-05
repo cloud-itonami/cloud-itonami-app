@@ -9,6 +9,8 @@
             [clojure.test :refer [deftest is testing use-fixtures]]
             [cloud.itonami.app.config :as config]
             [cloud.itonami.app.mail-projects :as mail-projects]
+            [cloud.itonami.app.mail-account]
+            [cloud.itonami.app.mail-sync]
             [cloud.itonami.app.project-repository :as projects]
             [cloud.itonami.app.store :as store]))
 
@@ -439,3 +441,68 @@
         (is (= "git exploded" (:error (first (:artifacts result))))))))
   (is (= "resilient"
          (:project-id (get (mail-projects/assignments organization) "m1")))))
+
+;; ---------------------------------------------------------------------------
+;; filing as mail arrives
+
+(deftest only-organizations-with-rules-are-run
+  (testing "the rule set is what says an organization wants filing, so it is
+            also what says whose rules to run after a sync"
+    (is (empty? (mail-projects/organizations-with-rules)))
+    (project! (fresh "auto"))
+    (mail-projects/add-rule! organization
+                             {:project (fresh "auto")
+                              :match {:from-domain "example.com"}})
+    (is (= [organization] (mail-projects/organizations-with-rules)))))
+
+(deftest apply-all-reports-per-organization
+  (project! (fresh "auto"))
+  (mail-projects/add-rule! organization
+                           {:project (fresh "auto")
+                            :match {:from-domain "example.com"}})
+  (seed-messages! (message "m1" "a@example.com" "one")
+                  (message "m2" "b@elsewhere.jp" "two"))
+  (let [result (mail-projects/apply-all! "user-1")]
+    (is (= 1 (:organizations result)))
+    (let [[only] (:results result)]
+      (is (= organization (:organization-id only))
+          "a total would hide two organizations whose rules behave differently")
+      (is (= 1 (:assigned only)))
+      (is (= 1 (:unmatched only))))))
+
+(deftest apply-all-with-no-rules-anywhere-does-nothing
+  (let [result (mail-projects/apply-all!)]
+    (is (= 0 (:organizations result)))
+    (is (empty? (:results result)))))
+
+(deftest a-sync-files-what-it-just-fetched
+  (testing "the wiring itself: sync-all! must reach the rules, or mail syncs
+            every minute and is filed whenever a person remembers"
+    (project! (fresh "on-sync"))
+    (mail-projects/add-rule! organization
+                             {:project (fresh "on-sync")
+                              :match {:from-domain "example.com"}})
+    (with-redefs [cloud.itonami.app.mail-account/accounts (constantly [])]
+      ;; No accounts, so nothing is fetched — but the filing half must still run
+      ;; and report, which is what proves it is wired rather than reachable.
+      (let [result (cloud.itonami.app.mail-sync/sync-all!)]
+        (is (= :completed (:status result)))
+        (is (some? (:filed result)))
+        (is (= 1 (:organizations (:filed result))))))
+
+    (testing "and mail already in the store is filed by that run"
+      (seed-messages! (message "m1" "a@example.com" "arrived"))
+      (with-redefs [cloud.itonami.app.mail-account/accounts (constantly [])]
+        (cloud.itonami.app.mail-sync/sync-all!))
+      (is (= (fresh "on-sync")
+             (:project-id (get (mail-projects/assignments organization) "m1")))))))
+
+(deftest a-filing-failure-does-not-fail-the-sync
+  (testing "the mail is already in the store; losing that because a project
+            repository was busy would be the wrong trade"
+    (with-redefs [cloud.itonami.app.mail-account/accounts (constantly [])
+                  mail-projects/apply-all!
+                  (fn [& _] (throw (ex-info "annex exploded" {})))]
+      (let [result (cloud.itonami.app.mail-sync/sync-all!)]
+        (is (= :completed (:status result)))
+        (is (= "annex exploded" (:error (:filed result))))))))

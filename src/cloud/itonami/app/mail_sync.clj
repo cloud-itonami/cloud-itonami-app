@@ -317,8 +317,27 @@
    (if-not (compare-and-set! syncing? false true)
      {:status :already-running}
      (try
-       {:schema schema :status :completed
-        :accounts (mapv sync-account! (account/accounts did))}
+       (let [accounts (mapv sync-account! (account/accounts did))]
+         {:schema schema :status :completed
+          :accounts accounts
+          ;; Filed as it arrives. Without this, rules ran only when somebody
+          ;; asked, so mail synced every minute and was filed whenever a person
+          ;; remembered — which is a filing system that works in a demo and
+          ;; silently stops working in use.
+          ;;
+          ;; Resolved at call time rather than required: `mail-projects` pulls in
+          ;; `project-repository`, and a hard dependency would put DataLad and
+          ;; git-annex in the load path of every sync, including deployments that
+          ;; file nothing.
+          :filed (try
+                   (when-let [apply-all! (requiring-resolve
+                                          'cloud.itonami.app.mail-projects/apply-all!)]
+                     (apply-all!))
+                   (catch Exception error
+                     ;; Filing is downstream of the sync. The mail is already in
+                     ;; the store and losing that because a project repository
+                     ;; was busy would be the wrong trade.
+                     {:ok? false :error (.getMessage error)}))})
        (finally (reset! syncing? false))))))
 
 ;; ---------------------------------------------------------------------------
