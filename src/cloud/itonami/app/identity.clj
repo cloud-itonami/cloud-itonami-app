@@ -906,10 +906,38 @@
        :invitation-id (:id invitation)})))
 
 (defn start-passkey-registration!
+  "Begin a WebAuthn registration ceremony, repairing a missing user handle.
+
+  `passkey/start-registration!` refuses a user with no `:user-handle` —
+  WebAuthn requires a stable, opaque user id and there is nothing sensible to
+  invent at that layer. Stores written before profile-free onboarding can lack
+  it, and such a user could not enrol at all: the ceremony threw
+  `:passkey/invalid-user` every time.
+
+  That was survivable while merely *being enrolled* let a session act. It is
+  not now — `may-act?` requires a session minted BY a ceremony, so a user who
+  cannot start one cannot act at all. The repair is what keeps this from being
+  a permanent lockout rather than a stale record.
+
+  An existing credential's handle is reused before a new one is minted:
+  registering a second authenticator for the same person must land on the same
+  WebAuthn user, or the two credentials describe two users to the platform."
   [session rp-id origin]
-  (let [user (get-in (identity-state (store/snapshot))
-                     [:users (:user-id session)])]
-    (passkey/start-registration! user rp-id origin)))
+  (let [state (identity-state (store/snapshot))
+        user-id (:user-id session)
+        user (get-in state [:users user-id])
+        user-handle (or (:user-handle user)
+                        (some #(when (= user-id (:user-id %)) (:user-handle %))
+                              (vals (:passkeys state)))
+                        (random-token 32))]
+    ;; Persist before the ceremony, and only when it was actually absent: the
+    ;; handle the authenticator is about to bind a credential to has to be the
+    ;; one this store will still hold when the assertion comes back.
+    (when-not (:user-handle user)
+      (store/transact! assoc-in [:identity :users user-id :user-handle]
+                       user-handle))
+    (passkey/start-registration! (assoc user :user-handle user-handle)
+                                 rp-id origin)))
 
 (defn passkey-enrolled? [session]
   (true? (get-in (identity-state (store/snapshot))

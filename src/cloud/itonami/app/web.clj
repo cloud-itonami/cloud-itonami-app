@@ -1608,6 +1608,44 @@
          [:div {:class "drive-import-choice" :id "inbox-labels"
                 :role "group" :aria-label "ラベルで絞り込む"}]
          [:p {:class "drive-create__status" :id "inbox-status" :aria-live "polite"}]
+         ;; Composing. The inbox had a reply affordance and no way to answer
+         ;; anything in it: `POST /api/mail/send` existed and nothing in the
+         ;; interface reached it.
+         ;;
+         ;; Which account sends is an explicit choice, not a default. With
+         ;; several mailboxes connected there is no "the" account, and sending
+         ;; a work reply from a personal address is the kind of mistake an
+         ;; interface should not be able to make on somebody's behalf.
+         [:details {:class "local-card" :id "mail-compose"}
+          [:summary "メールを作成"]
+          [:form {:class "settings-form" :id "mail-compose-form"}
+           [:div {:class "field"}
+            [:label {:for "mail-compose-account"} "差出人"]
+            [:select {:id "mail-compose-account" :name "account-id" :required true}]
+            [:span {:class "form-help" :id "mail-compose-account-help"}
+             "メールアカウントを読み込み中…"]]
+           [:div {:class "field"}
+            [:label {:for "mail-compose-to"} "宛先"]
+            [:input {:id "mail-compose-to" :name "to" :required true
+                     :autocomplete "off"
+                     :placeholder "a@example.com, b@example.com"}]]
+           [:div {:class "field"}
+            [:label {:for "mail-compose-cc"} "Cc（任意）"]
+            [:input {:id "mail-compose-cc" :name "cc" :autocomplete "off"}]]
+           [:div {:class "field"}
+            [:label {:for "mail-compose-subject"} "件名"]
+            [:input {:id "mail-compose-subject" :name "subject" :required true
+                     :autocomplete "off"}]]
+           [:div {:class "field"}
+            [:label {:for "mail-compose-body"} "本文"]
+            [:textarea {:id "mail-compose-body" :name "text" :rows "8"
+                        :required true}]]
+           [:input {:id "mail-compose-in-reply-to" :type "hidden"}]
+           [:input {:id "mail-compose-thread-id" :type "hidden"}]
+           [:p {:class "drive-create__status" :id "mail-compose-status"
+                :aria-live "polite"}]
+           [:button {:class "primary-action" :id "mail-compose-send"
+                     :type "submit"} "送信"]]]
          [:div {:class "record-browser"}
           [:div {:class "record-list"}
            [:ul {:class "record-list__items" :id "inbox-list"}

@@ -144,7 +144,11 @@
      :available? true
      :sender {:display (:from message) :email (:from-email message)}
      :snippet (or (:snippet message) "")
-     :account-id (:account-id message))))
+     :account-id (:account-id message)
+     ;; The RFC 5322 `Message-ID`, which is what a reply's `In-Reply-To` has
+     ;; to name. Without it a reply is a new conversation that happens to
+     ;; share a subject line.
+     :message-id (:message-id message))))
 
 (defn merged-box
   "The archive and every synced account, in one `mail.mailbox`.

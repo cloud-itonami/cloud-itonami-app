@@ -237,3 +237,30 @@
                 :from-email "a@example.com" :body "two"})
   (is (= #{"gmail:1001|t1" "gmail:1001|t2"}
          (set (ids (app-mailbox/thread "thread-x" alice))))))
+
+(deftest a-synced-message-carries-what-a-reply-needs
+  (testing "the reply button prefills the account to send from and the
+            Message-ID to thread against; without either, a reply is a new
+            conversation sent from whichever mailbox the interface guessed"
+    (swap! store/state assoc-in [:mail :messages "gmail:1001|reply-me"]
+           {:id "gmail:1001|reply-me"
+            :account-id "gmail:1001"
+            :kind :gmail
+            :account-address "alice@work.example"
+            :provider-message-id "reply-me"
+            :thread-id "thread-r"
+            :message-id "<original@example.com>"
+            :subject "見積もりの件"
+            :from "Sender" :from-email "sender@example.com"
+            :body "本文" :snippet "本文"
+            :labels #{:inbox} :read? true
+            :received-at "2026-08-01T00:00:00Z" :size-bytes 4})
+    (let [item (first (filter #(= "gmail:1001|reply-me" (:id %))
+                              (:items (app-mailbox/view alice))))]
+      (is (= "gmail:1001" (:account-id item)))
+      (is (= "<original@example.com>" (:message-id item)))
+      (is (= "thread-r" (:thread item)))))
+  (testing "an archived .eml has neither — it belongs to no live account and
+            there is nothing to send a reply from"
+    (let [archived (first (filter #(= a (:id %)) (:items (app-mailbox/view alice))))]
+      (is (nil? (:account-id archived))))))

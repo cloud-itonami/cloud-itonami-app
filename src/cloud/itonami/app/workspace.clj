@@ -266,6 +266,12 @@
      :received-at (:mailbox.message/received-at entry)
      :snippet (get entry :snippet)
      :size-bytes (:mailbox.message/size-bytes entry)
+     ;; Which mailbox this arrived in, and the `Message-ID` a reply threads
+     ;; against. Both are nil for an archived `.eml` — that half is files on
+     ;; disk belonging to no live account, and a reply to one has no account
+     ;; to send from and no conversation to join.
+     :account-id (get entry :account-id)
+     :message-id (get entry :message-id)
      :available? (get entry :available?)
      :read? (boolean (:mailbox.message/read? entry))
      :labels (vec (sort (map name (:mailbox.message/labels entry))))}))
