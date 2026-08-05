@@ -166,7 +166,7 @@
   ;; that keeps uploaded bytes from being served inline.
   io.github.kotoba-lang/hanmen
   {:git/url "https://github.com/kotoba-lang/hanmen.git"
-   :git/sha "f4ffe8bda5a25b8a38845443f1633857f79fe224"}
+   :git/sha "482b0b63e222fdec534f09f01700ddd5f8c5353c"}
   ;; Raw samples out of a PDF image XObject are not a picture until something
   ;; encodes them. `png.encode` landed for exactly this.
   io.github.kotoba-lang/org-w3-png
