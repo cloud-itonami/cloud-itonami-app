@@ -2,7 +2,13 @@
 
 ## Status
 
-Accepted. 2026-08-05. Answers the question ADR-0019 left open.
+**Superseded in part by ADR-0021 (2026-08-05).** The decision that a filed
+message is an artifact in the project stands. The decision to keep the body OUT
+of Git does not: keeping it out kept it out of everything Git gives you — it did
+not travel with the project, appeared in no history, and a `datalad push` would
+never have moved it. ADR-0021 keeps the same boundary and moves the line from
+*exclude* to *encrypt*: the body is now tracked as age ciphertext held by
+git-annex. Read the two together; where they disagree, ADR-0021 is current.
 
 ## Context
 

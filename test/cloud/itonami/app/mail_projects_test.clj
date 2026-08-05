@@ -308,6 +308,15 @@
         (is (= (fresh "artifacts") (:filed/project written)))
         (is (= "manual" (:filed/by written)))))
 
+    (testing "the commit is the app's, not the operator's.
+
+              DataLad has no `-c` of its own and picks up whatever git config
+              the machine has — measured, it signed as the owner's personal
+              iCloud relay address. Filing mail must not write a person's name
+              into a commit they did not author."
+      (is (= "Cloud Itonami <itonami@localhost>"
+             (str/trim (git directory "log" "-1" "--pretty=%an <%ae>")))))
+
     (testing "and there is a commit, not just a file"
       (is (str/includes? (git directory "log" "--oneline") "file 1 message"))
       (is (str/blank? (str/trim (git directory "status" "--porcelain")))))))

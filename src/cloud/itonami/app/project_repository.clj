@@ -60,10 +60,13 @@
                   (io/file (or (env "CLOUD_ITONAMI_DATALAD_DATASET")
                                (io/file (config/data-dir) "datalad"))))})
 
-(defn- run-command! [directory argv]
+(defn- run-command!
+  ([directory argv] (run-command! directory argv {}))
+  ([directory argv environment]
   (let [builder (doto (ProcessBuilder. ^java.util.List (vec argv))
                   (.directory (io/file directory))
                   (.redirectErrorStream true))
+        _ (doseq [[k v] environment] (.put (.environment builder) k v))
         process (.start builder)
         output (slurp (.getInputStream process))
         exit (.waitFor process)]
@@ -72,7 +75,7 @@
                       {:type :project-repository/command-failed
                        :argv (vec argv) :exit exit
                        :output (subs output 0 (min 4000 (count output)))})))
-    output))
+    output)))
 
 (defn- atomic-edn! [file value]
   (let [file (io/file file)
@@ -664,6 +667,19 @@
       (project-drive-artifacts! session-scope messages retained-id))
     {:projects (count local-projects) :conversations (count sessions)}))
 
+(def ^:private commit-identity
+  "Whose name goes on commits this app makes.
+
+  Not the person's. These repositories are created by the app on somebody's
+  machine, and their git config is whatever they use for their own work — so
+  without this, filing mail writes the operator's real name and address into
+  every project repository, in a commit they did not author. Measured: a
+  `datalad save` here signed as the owner's personal iCloud relay address."
+  {"GIT_AUTHOR_NAME" "Cloud Itonami"
+   "GIT_AUTHOR_EMAIL" "itonami@localhost"
+   "GIT_COMMITTER_NAME" "Cloud Itonami"
+   "GIT_COMMITTER_EMAIL" "itonami@localhost"})
+
 (defn- git-commit!
   "Commit whatever is staged, if anything is.
 
@@ -828,7 +844,8 @@
                      (throw (ex-info "DataLad is not installed"
                                      {:type :project-repository/datalad-unavailable})))]
       (run-command! directory
-                    [binary "create" "--force" "-c" "text2git" "."])))
+                    [binary "create" "--force" "-c" "text2git" "."]
+                    commit-identity)))
   directory)
 
 (defn- datalad-save!
@@ -845,7 +862,8 @@
         changed? (some #(re-matches #"[ MADRCU?!]{2} .+" %)
                        (str/split-lines status))]
     (when changed?
-      (run-command! directory [binary "save" "-m" message "."])
+      ;; DataLad has no `-c` of its own, so the identity travels as environment.
+      (run-command! directory [binary "save" "-m" message "."] commit-identity)
       (some->> (run-command! directory ["/usr/bin/git" "rev-parse" "HEAD"])
                str/split-lines
                (some #(re-matches #"[0-9a-f]{40}" (str/trim %)))))))

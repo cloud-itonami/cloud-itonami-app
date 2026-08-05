@@ -121,17 +121,29 @@ Nothing is moved and nothing is deleted: assignment is a third plane over the
 message store and the per-person marks. A rule cannot name a project that does
 not exist, and a rule never overwrites a manual assignment.
 
-Filing also writes the message **into** the project, and commits (ADR-0020):
+Filing also writes the message **into** the project, and commits (ADR-0021):
 
 ```
-<project>/mail/2026/08/<id>.edn    tracked   envelope, labels, sha256 of the body
-<project>/.mail/2026/08/<id>.txt   ignored   the body, for tools in the project
+<project>/mail/2026/08/<id>.edn       git      envelope, labels, sha256 of the body
+<project>/mail/2026/08/<id>.eml.age   annex    the body, encrypted with age
 ```
 
-**The body never enters Git** — the same line `.conversations/` draws, and what
-lets these repositories safely gain a remote later. The envelope does, because a
-directory of opaque digests would not be an artifact. One commit per filing run,
-and only for what changed.
+Both are tracked. The body is tracked as **ciphertext**: the project becomes a
+DataLad dataset (`-c text2git`) on first filing, so envelopes stay readable Git
+objects while encrypted bodies go to git-annex — a clone stays small, and the
+bytes can later be pushed to an encrypted remote.
+
+```bash
+export CLOUD_ITONAMI_MAIL_AGE_RECIPIENTS=age1…            # or …_RECIPIENTS_FILE
+age -d -i ~/.age/identity.txt <project>/mail/2026/08/<id>.eml.age
+```
+
+**Fail closed:** with no recipient configured the body is not written in the
+clear as a fallback — the envelope lands, the body is skipped, and the skip is
+reported with its reason. One commit per filing run, and only for what changed.
+
+Note that git-annex object directories are read-only, so a project repository
+needs `chmod -R u+w` before `rm -rf`.
 
 There is **no model in this path on purpose.** An LLM asked which project an
 invoice belongs to answers confidently for mail that belongs to none of them,
