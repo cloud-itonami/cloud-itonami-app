@@ -96,7 +96,22 @@
   dropped rather than the least-recently-used entry evicted: an LRU needs an
   access order, an access order needs a write on every READ, and a correct one
   needs that write to be atomic with the read. All of that to choose better
-  than starting again, on a map of eight."
+  than starting again, on a map of eight.
+
+  ## What this is under concurrency, said rather than assumed
+
+  `swap!` makes the map safe: no entry is ever half-written and the count
+  never exceeds this. What it does NOT do is stop two requests parsing the
+  same document at once — both parse, both store, and the second store wins
+  with an equal value. That is wasted work and not a wrong answer, and the
+  fix for it (a promise per key, so the second waits) trades a bounded waste
+  for a way to deadlock a request thread on a parse that throws. Not worth
+  it at this size, and this paragraph is here so the trade is a decision
+  rather than an omission.
+
+  The bound is on ENTRIES and each entry is a parsed PDF, so the real
+  ceiling is eight times `render-limit-bytes` worth of object graph. That is
+  the number to look at if this ever needs raising, not the eight."
   8)
 
 (defonce ^:private parse-cache (atom {}))
@@ -112,7 +127,10 @@
 
   A refusal is NOT cached. `parse!` throws for a file no decoder can read, and
   remembering that would make the answer permanent for the life of the
-  process — including across the deploy that adds the decoder."
+  process — including across the deploy that adds the decoder.
+
+  Concurrency: see `cache-limit`. Two callers may parse the same reference at
+  once and both store; neither can observe a partial entry."
   [ref parse!]
   (if-not ref
     (parse!)
@@ -202,6 +220,86 @@
     (let [n (/ (double (count bytes)) (* (long width) (long height)))]
       (when (== n (Math/floor n)) (long n)))))
 
+(defn- narrow-16-bit
+  "Two bytes per sample down to one, big-endian high byte.
+
+  Truncation and not scaling, because 16-bit PNG samples are linear in the
+  same range: the high byte IS the 8-bit value. A screen shows 8 bits, and a
+  scan that ships 16 is shipping precision for print.
+
+  This throws away real data and says so here rather than pretending the
+  image was 8-bit all along — an archival copy comes from `/download`, which
+  hands over the file untouched."
+  [bytes]
+  (into [] (take-nth 2) bytes))
+
+(defn- expand-indexed
+  "An indexed image's codes through its palette, into RGB.
+
+  The palette is `[/Indexed base hival lookup]` and `lookup` is a string or
+  a stream of `base`-many components per entry. Only an RGB base is expanded
+  — a palette over CMYK or a separation needs the same conversion the CMYK
+  branch below refuses to guess at, and one wrong palette produces an image
+  in confidently wrong colours, which is worse than no image.
+
+  A code past the end of the palette becomes black rather than throwing: a
+  malformed index in one pixel should not lose the page."
+  [codes palette]
+  (when (seq palette)
+    (into []
+          (mapcat (fn [code]
+                    (let [at (* 3 (long code))]
+                      (if (< (+ at 2) (count palette))
+                        [(nth palette at) (nth palette (+ at 1)) (nth palette (+ at 2))]
+                        [0 0 0]))))
+          codes)))
+
+(defn- cmyk->rgb
+  "Naive CMYK, which is what a screen wants and what nobody should print
+  from. The same conversion `hanmen` uses for a fill colour, so a CMYK image
+  and a CMYK rule agree about what a colour is."
+  [bytes]
+  (into []
+        (mapcat (fn [[c m y k]]
+                  (let [f (fn [v] (long (* 255 (- 1.0 (/ (double v) 255.0))
+                                          (- 1.0 (/ (double (or k 0)) 255.0)))))]
+                    [(f c) (f m) (f (or y 0))])))
+        (partition-all 4 bytes)))
+
+(defn- to-png-shape
+  "An image XObject's samples in a shape `png.encode` can write, or nil.
+
+  The four this understands, in the order a file is likely to be them:
+  8-bit gray/RGB/RGBA straight through, 16-bit narrowed, indexed expanded
+  through an RGB palette, and CMYK converted. Anything else — a separation,
+  a 1-bit bilevel scan, a JPX — returns nil and the caller refuses BY NAME,
+  because a wrongly encoded image opens and looks like a corrupt document
+  rather than an unsupported one."
+  [{:keys [bytes width height bits colorspace palette]}]
+  (let [w (long (or width 0)) h (long (or height 0))]
+    (when (and (pos? w) (pos? h))
+      (let [px (* w h)
+            bytes (if (= 16 bits) (narrow-16-bit bytes) bytes)
+            ;; An EXACT multiple, not integer division. Five bytes over four
+            ;; pixels is not "one sample per pixel with a spare" — it is a
+            ;; shape this does not understand, and rounding it down hands
+            ;; the encoder a sample count that does not fit the geometry.
+            ;; Measured: it did, and `png.encode` refused it with its own
+            ;; error instead of this one naming the image.
+            n (when (and (pos? px) (zero? (rem (count bytes) px)))
+                (quot (count bytes) px))]
+        (cond
+          (and (= :indexed colorspace) palette (= 1 n))
+          {:pixels (expand-indexed bytes palette) :color :rgb}
+
+          (and (= :cmyk colorspace) (= 4 n))
+          {:pixels (cmyk->rgb bytes) :color :rgb}
+
+          (= 1 n) {:pixels (vec bytes) :color :gray}
+          (= 3 n) {:pixels (vec bytes) :color :rgb}
+          (= 4 n) {:pixels (vec bytes) :color :rgba}
+          :else nil)))))
+
 (defn image
   "One image off a page, as bytes a browser can render.
 
@@ -232,17 +330,19 @@
      (if media-type
        {:schema schema :ok? true :media-type media-type
         :bytes (byte-array (map unchecked-byte bytes))}
-       (let [color (case (samples-per-pixel bytes width height)
-                     1 :gray 3 :rgb 4 :rgba nil)]
-         (when-not color
+       (let [shaped (to-png-shape found)]
+         (when-not shaped
            (refuse! "この画像の形式は表示できません。" :pageview/unsupported-image
                     {:item-id id :page page-index :index index
-                     :width width :height height :sample-bytes (count bytes)}))
+                     :width width :height height
+                     :bits (:bits found) :colorspace (:colorspace found)
+                     :samples-per-pixel (samples-per-pixel bytes width height)}))
          {:schema schema :ok? true :media-type png/media-type
           :bytes (byte-array
                   (map unchecked-byte
-                       (png/encode bytes {:width width :height height
-                                          :color color})))})))))
+                       (png/encode (:pixels shaped)
+                                   {:width width :height height
+                                    :color (:color shaped)})))})))))
 
 ;; ── a page ───────────────────────────────────────────────────────────────────
 

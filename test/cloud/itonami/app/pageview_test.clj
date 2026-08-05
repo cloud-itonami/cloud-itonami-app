@@ -307,6 +307,97 @@
         (is (:ok? (pageview/page (:id item) alice 0 object-store))
             "the next call parses again rather than repeating the refusal")))))
 
+(deftest the-cache-is-bounded-and-safe-under-concurrent-readers
+  ;; The bound and the thread-safety were both claims and neither was
+  ;; measured. Sixteen readers over more documents than the cache holds:
+  ;; every answer must be right and the map must never exceed its limit.
+  (with-state
+    (fn [_ object-store]
+      (let [items (mapv (fn [i]
+                          {:id (:id (upload! object-store (pdf-bytes (str "doc" i))
+                                             {:name (str i ".pdf")}))
+                           :want (str "doc" i)})
+                        (range 20))
+            answers (->> (repeatedly 16
+                                     (fn []
+                                       (future
+                                         (mapv (fn [{:keys [id want]}]
+                                                 (= [want]
+                                                    (:text (pageview/page id alice 0
+                                                                          object-store))))
+                                               items))))
+                         doall
+                         (mapv deref))]
+        (is (every? #(every? true? %) answers)
+            "every reader got the document it asked for, not a neighbour's")
+        (is (<= (count @@#'pageview/parse-cache) pageview/cache-limit)
+            "and the cache never grew past its bound")))))
+
+;; ── image shapes ─────────────────────────────────────────────────────────────
+
+(defn- image-xobject [extra body]
+  (xobject-pdf (str "<< /Type /XObject /Subtype /Image /Width 2 /Height 2 "
+                    extra " /Length " (count body) " >>\nstream\n" body
+                    "\nendstream")))
+
+(deftest a-sixteen-bit-scan-is-narrowed-rather-than-refused
+  ;; A screen shows 8 bits; a scan that ships 16 is shipping precision for
+  ;; print. Truncating the low byte is not scaling — 16-bit samples are
+  ;; linear in the same range, so the high byte IS the 8-bit value.
+  (with-state
+    (fn [_ object-store]
+      (let [item (upload! object-store
+                          (image-xobject "/BitsPerComponent 16 /ColorSpace /DeviceGray"
+                                         "\u0000\u0001\u0040\u0002\u0080\u0003\u00ff\u0004"))
+            out (pageview/image (:id item) alice 0 0 object-store)]
+        (is (= "image/png" (:media-type out)))
+        (let [img (javax.imageio.ImageIO/read
+                   (java.io.ByteArrayInputStream. ^bytes (:bytes out)))]
+          (is (= 2 (.getWidth img)))
+          (is (= 0 (bit-and (.getRGB img 0 0) 0xff)) "the high byte, not the low"))))))
+
+(deftest an-indexed-image-goes-through-its-palette
+  (with-state
+    (fn [_ object-store]
+      (let [item (upload! object-store
+                          (image-xobject
+                           (str "/BitsPerComponent 8 "
+                                "/ColorSpace [/Indexed /DeviceRGB 1 <FF000000FF00>]")
+                           "\u0000\u0001\u0000\u0001"))
+            out (pageview/image (:id item) alice 0 0 object-store)
+            img (javax.imageio.ImageIO/read
+                 (java.io.ByteArrayInputStream. ^bytes (:bytes out)))]
+        (is (= "image/png" (:media-type out)))
+        (is (= 0xFF0000 (bit-and (.getRGB img 0 0) 0xFFFFFF)) "code 0 is the red entry")
+        (is (= 0x00FF00 (bit-and (.getRGB img 1 0) 0xFFFFFF)) "code 1 is the green one")))))
+
+(deftest a-cmyk-image-is-converted-the-same-way-a-cmyk-rule-is
+  ;; So an image and a fill in the same document agree about what a colour
+  ;; is. Naive conversion, which is what a screen wants and what nobody
+  ;; should print from.
+  (with-state
+    (fn [_ object-store]
+      (let [item (upload! object-store
+                          (image-xobject "/BitsPerComponent 8 /ColorSpace /DeviceCMYK"
+                                         (apply str (repeat 16 "\u0000"))))
+            out (pageview/image (:id item) alice 0 0 object-store)]
+        (is (= "image/png" (:media-type out)))
+        (let [img (javax.imageio.ImageIO/read
+                   (java.io.ByteArrayInputStream. ^bytes (:bytes out)))]
+          (is (= 0xFFFFFF (bit-and (.getRGB img 0 0) 0xFFFFFF))
+              "all zero ink is white"))))))
+
+(deftest a-shape-nothing-can-encode-is-still-refused-by-name
+  ;; A wrongly encoded image OPENS, and looks like a corrupt document rather
+  ;; than an unsupported one.
+  (with-state
+    (fn [_ object-store]
+      (let [item (upload! object-store
+                          (image-xobject "/BitsPerComponent 8 /ColorSpace /DeviceN"
+                                         "ABCDEFGHIJ"))]
+        (is (= :pageview/unsupported-image
+               (error-type #(pageview/image (:id item) alice 0 0 object-store))))))))
+
 ;; ── the report the pane renders ──────────────────────────────────────────────
 
 (deftest a-page-with-no-text-says-so
