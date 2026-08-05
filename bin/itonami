@@ -1,0 +1,43 @@
+#!/usr/bin/env nbb
+;; The `itonami` command: run this app's CLI from anywhere.
+;;
+;; ## Why a launcher exists at all
+;;
+;; `clojure -M:cli` only works from the app's own directory, because that is
+;; where `deps.edn` is. So every documented invocation began with a `cd`, and an
+;; operator or an agent in some other directory could not run one command without
+;; first knowing where the app was installed.
+;;
+;; This resolves the app directory from its own path — the script lives in
+;; `bin/`, so the app is its parent — and runs the CLI there with the arguments
+;; it was given. Nothing else. It is deliberately not a second front end: it does
+;; not parse a flag, add a default, or interpret a result, because a launcher
+;; that understood the commands would be a second place for them to be wrong.
+;;
+;; Written in nbb rather than shell, per the workspace rule that new scripts are
+;; ClojureScript.
+(ns itonami
+  (:require ["node:child_process" :as child-process]
+            ["node:path" :as path]
+            [nbb.core :refer [*file*]]))
+
+(def app-directory (path/resolve (path/dirname *file*) ".."))
+
+(def result
+  (child-process/spawnSync
+   "clojure"
+   (into-array (concat ["-M:cli"] (drop 3 (js->clj js/process.argv))))
+   #js {:cwd app-directory
+        :stdio "inherit"
+        ;; The CLI starts a headless server when there is not one, and that child
+        ;; must outlive this process. `spawnSync` waits for the CLI, not for its
+        ;; grandchild, so nothing here needs to keep the launcher alive.
+        :env (js/Object.assign #js {} js/process.env
+                               #js {"CLOUD_ITONAMI_APP_DIR" app-directory})}))
+
+(when-let [error (.-error result)]
+  (binding [*print-fn* *print-err-fn*]
+    (println (str "itonami: clojure を実行できませんでした: " (.-message error))))
+  (set! (.-exitCode js/process) 127))
+
+(set! (.-exitCode js/process) (or (.-status result) 0))

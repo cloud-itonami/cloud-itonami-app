@@ -53,6 +53,45 @@ The server binds to `127.0.0.1` by default. The browser intentionally uses
 `http://localhost:1338`, which is required for the WebAuthn localhost
 development exception.
 
+## `itonami` — the command line, without opening the app
+
+`bin/itonami` runs any of the app's operations from any directory. It starts a
+headless server if one is not already running, so nothing here needs the desktop
+window (ADR-0018).
+
+```bash
+bin/itonami up                    # start a headless server (no window)
+bin/itonami status                # where the server is, and whether you can act
+bin/itonami commands              # every command, with the coverage counts
+bin/itonami commands drive        # just the ones matching "drive"
+bin/itonami down                  # stop the server this data directory started
+
+bin/itonami auth login --label claude-code
+bin/itonami workspace inbox
+bin/itonami workspace drive search --q invoice
+bin/itonami workspace drive documents rename --document doc-1 --title "New"
+bin/itonami esign envelopes show env-1          # positional path parameters work too
+```
+
+The commands are generated from the routes `server.clj` serves, not written by
+hand — `commands-test` re-derives them and fails if the checked-in registry has
+fallen behind, so `itonami commands` reports real coverage rather than a claim.
+Regenerate after adding a route:
+
+```bash
+nbb --classpath src dev/gen_commands.cljs
+```
+
+Flags the registry does not know about are passed through; `--json '{…}'` sends a
+whole body. A read puts leftover flags in the query string, a write puts them in
+the body.
+
+**Funding, settlement and governed approval are not commands.** They need a
+WebAuthn user-verifying assertion, which no CLI and no agent can produce
+(ADR-0006). `itonami commands` prints how many routes that is. A brand-new data
+directory also needs the browser once, to enrol a Passkey and create the
+organization, before `auth login` will issue a session.
+
 ## OpenAI-compatible clients
 
 Any tool that speaks the OpenAI chat API can use the local models through the
