@@ -5,7 +5,8 @@
   The former is an ordinary Git repository. The latter is plaintext only in
   the local editable workspace and enters DataLad solely through the existing
   Kagi sealed-block pipeline."
-  (:require [clojure.java.io :as io]
+  (:require [clojure.edn :as edn]
+            [clojure.java.io :as io]
             [clojure.string :as str]
             [cloud.itonami.app.config :as config]
             [cloud.itonami.app.documents :as documents]
@@ -101,6 +102,9 @@
       ;; before mail filing existed already HAS a .gitignore, so a
       ;; `when-not .isFile` branch would never reach it — and the first filed
       ;; message would put a mail body into an ordinary Git repository.
+      ;; `.mail/` is here for projects that were filed into before bodies were
+      ;; encrypted: that directory may still hold plaintext, and it must not
+      ;; start being tracked now that `mail/` is.
       (doseq [line [".itonami/runtime/" ".conversations/" ".mail/"]]
         (when-not (str/includes? current line)
           (spit gitignore (str line "\n") :append true))))
@@ -692,6 +696,67 @@
                str/split-lines
                (some #(re-matches #"[0-9a-f]{40}" (str/trim %)))))))
 
+(defn age-recipients
+  "Who the body is encrypted to.
+
+  Public because whether a deployment can store mail bodies at all is a fact
+  about its configuration that the status surface and the tests both need to
+  read — and a deployment that thinks it is filing bodies and is not should be
+  able to find that out without reading this file.
+
+  From `CLOUD_ITONAMI_MAIL_AGE_RECIPIENTS` (comma-separated age recipients) or a
+  recipients file at `CLOUD_ITONAMI_MAIL_AGE_RECIPIENTS_FILE`. Absent means this
+  deployment has not said who may read filed mail, and the body is then not
+  written at all — see `seal-body!`."
+  []
+  (let [inline (some->> (env "CLOUD_ITONAMI_MAIL_AGE_RECIPIENTS")
+                        (#(str/split % #","))
+                        (map str/trim)
+                        (remove str/blank?)
+                        seq)
+        file (some-> (env "CLOUD_ITONAMI_MAIL_AGE_RECIPIENTS_FILE") io/file)]
+    (cond
+      inline (vec inline)
+      (and file (.isFile file))
+      (->> (str/split-lines (slurp file))
+           (map str/trim)
+           (remove #(or (str/blank? %) (str/starts-with? % "#")))
+           vec)
+      :else [])))
+
+(defn- age-binary []
+  ;; The blank guard is not decoration: with no override the first candidate is
+  ;; the empty string, `(io/file "")` answers `canExecute` true on this JVM, and
+  ;; the result is `Cannot run program ""` from inside a `try` that reports it as
+  ;; "the body could not be written" — measured. `datalad-binary` above has
+  ;; carried the same guard since it was written.
+  (some #(when (and (not (str/blank? %)) (.canExecute (io/file %))) %)
+        [(or (env "CLOUD_ITONAMI_AGE_BIN") "") "/opt/homebrew/bin/age" "/usr/bin/age"
+         "/usr/local/bin/age"]))
+
+(defn- age-encrypt!
+  "Encrypt PLAINTEXT to FILE for RECIPIENTS.
+
+  The plaintext goes in on stdin and never becomes a temporary file: a body
+  written to disk in the clear, even briefly, is the thing this is avoiding."
+  [file recipients ^bytes plaintext]
+  (let [binary (or (age-binary)
+                   (throw (ex-info "age が見つかりません。本文を暗号化できません。"
+                                   {:type :project-repository/age-unavailable})))
+        argv (into [binary] (concat (mapcat (fn [r] ["-r" r]) recipients)
+                                    ["-o" (.getPath file)]))]
+    (.mkdirs (.getParentFile file))
+    (let [process (.start (doto (ProcessBuilder. ^java.util.List (vec argv))
+                            (.redirectErrorStream true)))]
+      (with-open [out (.getOutputStream process)]
+        (.write out plaintext))
+      (let [output (slurp (.getInputStream process))
+            exit (.waitFor process)]
+        (when-not (zero? exit)
+          (throw (ex-info (str "age failed: " (str/trim output))
+                          {:type :project-repository/age-failed :exit exit})))))
+    file))
+
 (defn- mail-envelope
   "What goes into Git: who wrote, when, about what — and a digest of the body.
 
@@ -711,6 +776,8 @@
    :mail/body-sha256 (digest (str (:body message)))
    :mail/body-bytes (count (.getBytes (str (:body message))
                                       StandardCharsets/UTF_8))
+   :mail/body-encryption "age"
+   :mail/body-recipients (vec (age-recipients))
    :filed/project (:project-id assignment)
    :filed/by (some-> (:by assignment) name)
    :filed/rule (:rule-id assignment)
@@ -723,45 +790,144 @@
         safe (str/replace (str (:id message)) #"[^A-Za-z0-9._-]+" "_")
         safe (subs safe (max 0 (- (count safe) 80)))]
     {:envelope (io/file directory "mail" year month (str safe ".edn"))
-     :body (io/file directory ".mail" year month (str safe ".txt"))}))
+     ;; Beside the envelope and TRACKED, not in an ignored directory. It is
+     ;; ciphertext, so what Git carries is unreadable without an age identity —
+     ;; and git-annex holds the bytes, so the repository stays small.
+     :body (io/file directory "mail" year month (str safe ".eml.age"))}))
+
+(defn- already-filed?
+  "Whether this exact filing is already written.
+
+  Compared on the project rather than the whole envelope: `:filed/at` moves on
+  every call, so equality of the record would never hold and every run would
+  rewrite everything."
+  [envelope assignment]
+  (and (.isFile envelope)
+       (try
+         (= (:project-id assignment)
+            (:filed/project (edn/read-string (slurp envelope))))
+         (catch Exception _ false))))
+
+(defn- dataset?
+  "Whether this project directory is already a DataLad dataset with an annex."
+  [directory]
+  (.isDirectory (io/file directory ".git" "annex")))
+
+(defn- ensure-dataset!
+  "Turn the project's Git repository into a DataLad dataset, once.
+
+  `--force` because the repository already exists and already has commits; that
+  is the documented way to place a dataset over one. `-c text2git` is the part
+  that matters for what lands where: the `.edn` envelopes stay ordinary Git
+  objects, diffable in a `git show`, while binary content — the encrypted
+  bodies — goes to the annex. Annexing the envelopes too would turn every
+  project's mail index into a directory of symlinks nobody can read."
+  [directory]
+  (when-not (dataset? directory)
+    (let [binary (or (datalad-binary)
+                     (throw (ex-info "DataLad is not installed"
+                                     {:type :project-repository/datalad-unavailable})))]
+      (run-command! directory
+                    [binary "create" "--force" "-c" "text2git" "."])))
+  directory)
+
+(defn- datalad-save!
+  "Commit through DataLad, so annexed content is added as annexed content.
+
+  `git commit` would work for the envelopes and would store an encrypted body as
+  an ordinary blob — which is the one outcome this design exists to avoid, and
+  it would be invisible until the repository had grown by every mail it holds."
+  [directory message]
+  (let [binary (or (datalad-binary)
+                   (throw (ex-info "DataLad is not installed"
+                                   {:type :project-repository/datalad-unavailable})))
+        status (run-command! directory ["/usr/bin/git" "status" "--porcelain"])
+        changed? (some #(re-matches #"[ MADRCU?!]{2} .+" %)
+                       (str/split-lines status))]
+    (when changed?
+      (run-command! directory [binary "save" "-m" message "."])
+      (some->> (run-command! directory ["/usr/bin/git" "rev-parse" "HEAD"])
+               str/split-lines
+               (some #(re-matches #"[0-9a-f]{40}" (str/trim %)))))))
 
 (defn file-mail!
   "Write filed messages into the project's repository and commit them.
 
-  Two destinations, which is the boundary this namespace already draws between
-  project source and conversation history:
+  Both halves are tracked, and the body is tracked as CIPHERTEXT:
 
-  - `mail/<yyyy>/<mm>/<id>.edn` is **tracked**: the envelope and a digest of the
-    body. It is the project's own record of what it holds, diffable and
-    reviewable like any other source.
-  - `.mail/<yyyy>/<mm>/<id>.txt` is **git-ignored**: the body in plaintext, for
-    tools working inside the project — the same status, and the same reason, as
-    the read-only attachment copies `prepare-attachments!` materializes.
+  - `mail/<yyyy>/<mm>/<id>.edn` — the envelope, an ordinary Git object, diffable
+    in a `git show`.
+  - `mail/<yyyy>/<mm>/<id>.eml.age` — the body, encrypted to this deployment's
+    age recipients and held by git-annex.
 
-  One commit per call, not per message: filing a hundred messages should read as
-  one act in the history, because it was one."
+  An earlier version kept the body as plaintext in a git-ignored directory. That
+  kept it out of Git at the cost of keeping it out of everything Git gives you:
+  it did not travel with the project, it was not in any history, and a `datalad
+  push` would not have carried it. Encrypting instead of excluding means the
+  body is in the repository and still unreadable without an identity — and,
+  being annexed, its bytes do not sit in every clone.
+
+  **Fail closed.** With no recipients configured the body is NOT written in the
+  clear as a fallback; the envelope lands, the body is skipped, and the skip is
+  reported with its reason. A filing system that silently downgrades to
+  plaintext is worse than one that refuses, because nothing about the result
+  looks different.
+
+  One commit per call: filing a hundred messages should read as one act in the
+  history, because it was one."
   [scope messages]
   (let [project (ensure-git-project! scope)
         directory (:directory project)
-        written (doall
-                 (for [{:keys [message assignment]} messages
-                       :when (and message (:id message))]
-                   (let [{:keys [envelope body]} (mail-paths directory message)]
-                     (atomic-edn! envelope (mail-envelope message assignment))
-                     (.mkdirs (.getParentFile body))
-                     (spit body (str (:body message)))
-                     (.getPath envelope))))
-        commit (when (seq written)
-                 (git-commit! directory
-                              (str "mail: file " (count written)
-                                   " message" (if (= 1 (count written)) "" "s")
-                                   " into " (:project-id scope))))]
-    {:schema "cloud.itonami.app.project-mail.v1"
-     :project-id (:project-id scope)
-     :project-slug (:project-slug project)
-     :directory directory
-     :written (count written)
-     :commit commit}))
+        recipients (age-recipients)
+        _ (when (seq recipients) (ensure-dataset! directory))
+        results (doall
+                 (keep (fn [{:keys [message assignment]}]
+                         (when (and message (:id message))
+                           (let [{:keys [envelope body]} (mail-paths directory message)]
+                             ;; Already here, filed to the same project: nothing
+                             ;; to do. Rewriting would re-encrypt — age uses a
+                             ;; fresh ephemeral key every time, so identical
+                             ;; plaintext produces different ciphertext and every
+                             ;; re-file would look like a change and add a
+                             ;; revision holding nothing new.
+                             (when-not (already-filed? envelope assignment)
+                               ;; Deleted, not overwritten. An annexed file is a
+                               ;; read-only symlink into `.git/annex/objects` by
+                               ;; design, and writing through it fails with
+                               ;; `permission denied` — measured, when a message
+                               ;; was filed to a second project.
+                               (.delete envelope)
+                               (.delete body)
+                               (atomic-edn! envelope (mail-envelope message assignment))
+                               (if (seq recipients)
+                                 (do (age-encrypt! body recipients
+                                                   (.getBytes (str (:body message))
+                                                              StandardCharsets/UTF_8))
+                                     {:envelope (.getPath envelope)
+                                      :body (.getPath body)})
+                                 {:envelope (.getPath envelope) :body nil})))))
+                       messages))
+        commit (when (seq results)
+                 (let [text (str "mail: file " (count results)
+                                 " message" (if (= 1 (count results)) "" "s")
+                                 " into " (:project-id scope))]
+                   (if (seq recipients)
+                     (datalad-save! directory text)
+                     (git-commit! directory text))))]
+    (cond-> {:schema "cloud.itonami.app.project-mail.v1"
+             :project-id (:project-id scope)
+             :project-slug (:project-slug project)
+             :directory directory
+             :written (count results)
+             :bodies (count (filter :body results))
+             :encryption (when (seq recipients) "age")
+             :commit commit}
+      (empty? recipients)
+      (assoc :bodies-skipped (count results)
+             :reason (str "age recipients が設定されていないため本文を保存しませんでした。"
+                          "CLOUD_ITONAMI_MAIL_AGE_RECIPIENTS または "
+                          "CLOUD_ITONAMI_MAIL_AGE_RECIPIENTS_FILE を設定してください"))
+      )))
 
 (defn persist-conversation!
   "Persist a completed conversation locally and publish sealed blocks when the
