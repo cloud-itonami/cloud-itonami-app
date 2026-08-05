@@ -242,8 +242,23 @@
     (doto (.getResponseHeaders exchange)
       (.set "Content-Type" "text/html; charset=utf-8")
       (.set "Cache-Control" "no-store")
+      ;; `img-src 'self'` — and only 'self'.
+      ;;
+      ;; It was absent, so `default-src 'none'` applied and this page could
+      ;; not display an image at all. That made `documents/previewable?`, the
+      ;; `/preview` route and the whole allowlist behind it dead code in the
+      ;; browser: an uploaded PNG has been offered as a preview and rendered
+      ;; as a broken image since the day it shipped. Found while working out
+      ;; what a PDF page would need, which is the only reason anybody looked.
+      ;;
+      ;; `'self'` rather than `data:`, which is the narrower of the two and
+      ;; the one ADR-0007 left open. A same-origin path can only reach a
+      ;; route on this server, and every route that returns an image requires
+      ;; the session and answers through the Drive ACL. `data:` would let any
+      ;; string in the page become an image, which is a larger permission for
+      ;; no gain here.
       (.set "Content-Security-Policy"
-            "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'self'; form-action 'self'; base-uri 'none'")
+            "default-src 'none'; img-src 'self'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'self'; form-action 'self'; base-uri 'none'")
       (.set "Permissions-Policy"
             "publickey-credentials-create=(self), publickey-credentials-get=(self)"))
     (.sendResponseHeaders exchange 200 (alength bytes))
@@ -533,18 +548,45 @@
 
 (def ^:private pages-pattern #"/api/workspace/drive/documents/([^/]+)/pages")
 (def ^:private page-pattern #"/api/workspace/drive/documents/([^/]+)/pages/(\d+)")
+(def ^:private page-image-pattern
+  #"/api/workspace/drive/documents/([^/]+)/pages/(\d+)/images/(\d+)")
 
 (defn- page-route? [method path]
   (and (= method "GET")
-       (or (re-matches pages-pattern path) (re-matches page-pattern path))
+       (or (re-matches pages-pattern path)
+           (re-matches page-pattern path)
+           (re-matches page-image-pattern path))
        true))
 
 (defn- page-routes! [exchange path]
   (let [session (require-app-session! exchange)]
-    (if-let [[_ id index] (re-matches page-pattern path)]
-      (send! exchange 200 (pageview/page id (:user-id session) (parse-long index)))
-      (send! exchange 200 (pageview/document (id-from-path path pages-pattern)
-                                             (:user-id session))))))
+    (if-let [[_ id page index] (re-matches page-image-pattern path)]
+      ;; Bytes, not JSON, and that is the one place this differs from the
+      ;; page itself. The picture is already an image format — a JPEG
+      ;; straight out of the file, or a PNG this encoded — so base64 inside
+      ;; a JSON field would cost a third of its size to say nothing. The SVG
+      ;; goes the other way for a reason that does not apply here: an SVG
+      ;; DOCUMENT served from this origin can carry script and a raster
+      ;; cannot.
+      (let [out (pageview/image id (:user-id session)
+                                (parse-long page) (parse-long index))]
+        (doto (.getResponseHeaders exchange)
+          (.set "Content-Type" (:media-type out))
+          (.set "Cache-Control" "no-store")
+          (.set "X-Content-Type-Options" "nosniff")
+          ;; The same belt and braces as `/preview`: even for bytes this
+          ;; server generated, nothing in this response may load or run
+          ;; anything.
+          (.set "Content-Security-Policy"
+                "default-src 'none'; style-src 'unsafe-inline'; sandbox")
+          (.set "Content-Disposition" "inline"))
+        (.sendResponseHeaders exchange 200 (alength ^bytes (:bytes out)))
+        (with-open [o (.getResponseBody exchange)]
+          (.write o ^bytes (:bytes out))))
+      (if-let [[_ id index] (re-matches page-pattern path)]
+        (send! exchange 200 (pageview/page id (:user-id session) (parse-long index)))
+        (send! exchange 200 (pageview/document (id-from-path path pages-pattern)
+                                               (:user-id session)))))))
 
 ;; /api/authority/<authority>/... -- the authority key is a path segment so a
 ;; disabled or unknown authority is refused by name rather than by inspecting a
@@ -3720,6 +3762,13 @@
                      ;; the fix is a decoder, not a permission and not a
                      ;; different file.
                      :pageview/undecodable 422
+                     ;; A page has fewer images than the client asked for.
+                     :pageview/no-such-image 404
+                     ;; The image is there and this cannot encode it — a
+                     ;; colour space or bit depth `png.encode` does not
+                     ;; write. Named rather than encoded wrongly, because a
+                     ;; wrongly encoded image opens.
+                     :pageview/unsupported-image 415
                      ;; The file is fine; showing it is what this refuses.
                      ;; 413 names the size as the reason, which is what the
                      ;; message tells the reader too.
