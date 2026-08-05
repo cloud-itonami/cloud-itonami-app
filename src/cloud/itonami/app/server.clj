@@ -34,6 +34,7 @@
             [cloud.itonami.app.oauth-resource :as oauth-resource]
             [cloud.itonami.app.messenger :as messenger]
             [cloud.itonami.app.portfolio :as portfolio]
+            [cloud.itonami.app.project-repository :as project-repository]
             [cloud.itonami.app.organism-gateway :as organism-gateway]
             [cloud.itonami.app.organism-messenger-transport :as organism-messenger-transport]
             [cloud.itonami.app.relay :as relay]
@@ -603,6 +604,17 @@
 ;; will sign and a user with two Passkeys has two DIDs. `:principal` is still the
 ;; user id, because that is what the Drive's ACL is keyed on — `cloud.itonami.app.esign`
 ;; needs both and neither substitutes for the other.
+(defn- project-scope
+  "The organization/user/project triple `project-repository` addresses by.
+
+  `project-id` defaults to `default` rather than being required, because the
+  catalogue read has no project yet and `storage-owner` hashes all three — a nil
+  there would put every organization's listing in one storage owner."
+  [session project-id]
+  {:organization-id (:organization-id session)
+   :user-id (:user-id session)
+   :project-id (or (not-empty (str/trim (str project-id))) "default")})
+
 (defn- esign-who [session]
   {:principal (:user-id session)
    :did (get-in (store/snapshot) [:identity :users (:user-id session) :did])})
@@ -1275,6 +1287,45 @@
       (send! exchange 200 (messenger/mark-read! organization actor id)))
 
     :else (send! exchange 404 {:error "not found"})))
+
+(defn- handle-projects!
+  "The LOCAL project catalogue, which is a different thing from
+  `/api/workspace/projects`.
+
+  That one reads GitHub Projects v2 through `gh`; these are ordinary Git
+  repositories this machine owns, one per organization/user/project, and they
+  answer with no network at all. Both are called \"projects\" by their own
+  sources, so neither name could be taken from the other — the paths say which
+  authority is being asked."
+  [config exchange method path]
+  (cond
+    (and (= method "GET") (= path "/api/projects"))
+    (let [session (require-app-session! exchange)]
+      (send! exchange 200
+             (project-repository/local-projects-snapshot
+              (project-scope session nil))))
+
+    (and (= method "POST") (= path "/api/projects"))
+    (let [session (require-app-session! exchange)
+          request (read-json exchange)]
+      (require-origin! exchange config)
+      (require-csrf! exchange session)
+      (send! exchange 201
+             {:schema "cloud.itonami.app.projects.v1"
+              :item (project-repository/create-project!
+                     (project-scope session (:project request))
+                     {:title (:title request)
+                      :description (:description request)})}))
+
+    (and (= method "GET")
+         (id-from-path path #"/api/projects/([^/]+)"))
+    (let [session (require-app-session! exchange)
+          project (id-from-path path #"/api/projects/([^/]+)")]
+      (send! exchange 200
+             (project-repository/project-board
+              (project-scope session project))))
+
+    :else (send! exchange 404 {:error "not_found" :path path})))
 
 (defn handler [config]
   (reify HttpHandler
@@ -2420,6 +2471,13 @@
               (require-app-session! exchange)
               (send! exchange 200
                      (workspace/snapshot :projects workspace/projects-snapshot)))
+
+            ;; Local Git projects. Kept outside this already-large JVM method for
+            ;; the same reason as governance and the messenger: adding these three
+            ;; clauses inline pushed `handler`'s reify method past the 64 KB
+            ;; bytecode limit and the compiler refused the whole namespace.
+            (str/starts-with? path "/api/projects")
+            (handle-projects! config exchange method path)
 
             ;; The archive half of this is cached for a minute by
             ;; `workspace/snapshot`; the created documents are not, because a
