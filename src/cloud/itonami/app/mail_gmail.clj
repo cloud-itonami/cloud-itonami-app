@@ -90,14 +90,43 @@
   (let [thread (threads/get-thread thread-id (opts token))]
     (mapv #(message->normalized label-names %) (:messages thread))))
 
+(def ^:private default-thread-limit
+  "How many inbox threads a full sync reads when nobody says.
+
+  Not a page: `full-sync!` follows `nextPageToken` until it has this many, so
+  this is a budget rather than a boundary. It was one page, and one page is a
+  boundary that looks like a budget — an inbox of four thousand threads synced
+  the newest hundred and reported success, and nothing anywhere said the other
+  thirty-nine hundred existed."
+  1000)
+
+(defn- list-inbox-threads
+  "Inbox threads, newest first, following pagination up to `limit`.
+
+  Gmail caps `maxResults` at 500 per call and answers with a `nextPageToken`
+  when there is more. Reading one page and stopping is what made a full sync
+  quietly partial."
+  [token limit]
+  (loop [collected [] page-token nil]
+    (let [remaining (- limit (count collected))
+          listing (threads/list-threads
+                   (cond-> (assoc (opts token)
+                                  :q "in:inbox"
+                                  :max-results (min 500 remaining))
+                     page-token (assoc :page-token page-token)))
+          collected (into collected (:threads listing))
+          next-token (:nextPageToken listing)]
+      (if (and next-token (< (count collected) limit) (seq (:threads listing)))
+        (recur collected next-token)
+        collected))))
+
 (defn- full-sync!
-  [token {:keys [limit] :or {limit page-size}}]
+  [token {:keys [limit] :or {limit default-thread-limit}}]
   (let [names (label-names token)
-        listing (threads/list-threads (assoc (opts token)
-                                             :q "in:inbox"
-                                             :max-results limit))
+        threads (list-inbox-threads token limit)
+        listing {:threads threads}
         messages (vec (mapcat #(thread-messages token names (:id %))
-                              (:threads listing)))]
+                              threads))]
     {:messages messages
      ;; The cursor comes from the newest thread this sync actually saw.
      ;; Gmail's profile historyId is the mailbox's *current* position, which

@@ -38,6 +38,7 @@
             [cloud.itonami.app.mailbox-http-test]
             [cloud.itonami.app.mail-sync-test]
             [cloud.itonami.app.mail-account-test]
+            [cloud.itonami.app.mail-gmail-test]
             [cloud.itonami.app.mail-imap-test]
             [cloud.itonami.app.mail-pop3-test]
             [cloud.itonami.app.mail-send-test]
@@ -179,6 +180,7 @@
     cloud.itonami.app.mailbox-http-test
     cloud.itonami.app.mail-sync-test
     cloud.itonami.app.mail-account-test
+    cloud.itonami.app.mail-gmail-test
     cloud.itonami.app.mail-imap-test
     cloud.itonami.app.mail-pop3-test
     cloud.itonami.app.mail-send-test
