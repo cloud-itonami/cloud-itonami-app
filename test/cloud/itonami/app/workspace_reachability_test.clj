@@ -40,7 +40,17 @@
   {"history"
    (str "The same versions the pane already shows, in an addressable form. "
         "The pane reads them from the item payload it already has, so this "
-        "is a second door to a room the interface is standing in.")})
+        "is a second door to a room the interface is standing in.")
+
+   "pages/images"
+   (str "Reached by the BROWSER and never by this JavaScript. The page "
+        "rendering is SVG the server built, and `hanmen` puts the href in "
+        "it from an integer index — so the URL exists in a response body "
+        "rather than in a source file, which is exactly the case a static "
+        "scan of the interface cannot see. Putting a copy of the path in "
+        "the JS to satisfy this list would be writing dead code to make a "
+        "test pass, and would also create a second place the URL is "
+        "spelled. `pageview-test` asserts the rendering points at it.")})
 
 (defn- source [path]
   (slurp (io/file "src/cloud/itonami/app" path)))

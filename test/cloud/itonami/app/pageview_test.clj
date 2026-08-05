@@ -6,7 +6,7 @@
   a string is an assertion that the string this test put at those coordinates
   came back out."
   (:require [clojure.string :as str]
-            [clojure.test :refer [deftest is testing]]
+            [clojure.test :refer [deftest is testing use-fixtures]]
             [cloud.itonami.app.documents :as documents]
             [cloud.itonami.app.pageview :as pageview]
             [cloud.itonami.app.store :as store]
@@ -40,6 +40,9 @@
 (defn- error-type [f]
   (:type (try (f) (catch clojure.lang.ExceptionInfo e (ex-data e)))))
 
+;; A parse cache lives across calls now, so each test starts from cold.
+(use-fixtures :each (fn [f] (pageview/forget-cached!) (f)))
+
 ;; ── the page ─────────────────────────────────────────────────────────────────
 
 (deftest a-pdf-in-the-drive-can-be-looked-at
@@ -56,6 +59,7 @@
           (is (str/includes? (:svg out) "viewBox=\"0 0 595 842\"")))
         (testing "and the text is available beside it, for search"
           (is (= ["Master Agreement"] (:text out)))
+          (is (= "Master Agreement" (:reading-text out)))
           (is (false? (:scanned? out))))))))
 
 (deftest the-rendering-loads-nothing-and-runs-nothing
@@ -177,6 +181,131 @@
       (let [item (upload! object-store (pdf-bytes "private"))]
         (is (some? (error-type #(pageview/page (:id item) bob 0 object-store)))
             "bob cannot page alice's upload")))))
+
+
+;; ── images ───────────────────────────────────────────────────────────────────
+
+(defn- xobject-pdf
+  "A one-page PDF with one image XObject, hand-written because
+  `write-document` emits none. `pdf.core` finds objects by scanning and
+  stream ends by searching, so neither the xref nor `/Length` has to be
+  right — which is what keeps this fixture short enough to read."
+  [image-body]
+  (let [text (str "%PDF-1.4\n"
+                  "1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n"
+                  "2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n"
+                  "3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 100] "
+                  "/Resources << /XObject << /X1 5 0 R >> >> /Contents 4 0 R >>\nendobj\n"
+                  "4 0 obj\n<< /Length 40 >>\nstream\n"
+                  "q 60 0 0 40 10 30 cm /X1 Do Q\nendstream\nendobj\n"
+                  "5 0 obj\n" image-body "\nendobj\n"
+                  "trailer\n<< /Size 6 /Root 1 0 R >>\n%%EOF\n")]
+    (.getBytes ^String text "ISO-8859-1")))
+
+(def ^:private jpeg-xobject
+  (str "<< /Type /XObject /Subtype /Image /Width 2 /Height 2 "
+       "/BitsPerComponent 8 /ColorSpace /DeviceRGB "
+       "/Filter /DCTDecode /Length 9 >>\nstream\nJPEGBYTES\nendstream"))
+
+(deftest a-jpeg-in-the-page-is-served-as-one-without-being-decoded
+  ;; A DCTDecode XObject IS a JPEG. Decoding and re-encoding it would spend
+  ;; time and quality to arrive at the same picture.
+  (with-state
+    (fn [_ object-store]
+      (let [item (upload! object-store (xobject-pdf jpeg-xobject))
+            out (pageview/image (:id item) alice 0 0 object-store)]
+        (is (= "image/jpeg" (:media-type out)))
+        (is (= "JPEGBYTES" (String. ^bytes (:bytes out) "ISO-8859-1"))
+            "passed through, byte for byte")))))
+
+(deftest raw-samples-become-a-png-a-real-decoder-can-read
+  (with-state
+    (fn [_ object-store]
+      ;; 2×2 grey, no /Filter, so the stored bytes ARE the samples.
+      (let [item (upload! object-store
+                          (xobject-pdf
+                           (str "<< /Type /XObject /Subtype /Image /Width 2 /Height 2 "
+                                "/BitsPerComponent 8 /ColorSpace /DeviceGray "
+                                "/Length 4 >>\nstream\nABCD\nendstream")))
+            out (pageview/image (:id item) alice 0 0 object-store)]
+        (is (= "image/png" (:media-type out)))
+        (let [img (javax.imageio.ImageIO/read
+                   (java.io.ByteArrayInputStream. ^bytes (:bytes out)))]
+          (is (some? img) "javax.imageio read what png.encode wrote")
+          (is (= 2 (.getWidth img)))
+          (is (= 2 (.getHeight img))))))))
+
+(deftest an-image-shape-this-cannot-encode-is-named-not-guessed
+  ;; A wrongly encoded image OPENS, which is why this refuses instead. Five
+  ;; bytes over four pixels is not 1, 3 or 4 samples per pixel.
+  (with-state
+    (fn [_ object-store]
+      (let [item (upload! object-store
+                          (xobject-pdf
+                           (str "<< /Type /XObject /Subtype /Image /Width 2 /Height 2 "
+                                "/BitsPerComponent 8 /ColorSpace /DeviceN "
+                                "/Length 5 >>\nstream\nABCDE\nendstream")))]
+        (is (= :pageview/unsupported-image
+               (error-type #(pageview/image (:id item) alice 0 0 object-store))))))))
+
+(deftest an-image-index-that-is-not-there-is-refused-not-a-crash
+  (with-state
+    (fn [_ object-store]
+      (let [item (upload! object-store (pdf-bytes "no pictures here"))]
+        (is (= :pageview/no-such-image
+               (error-type #(pageview/image (:id item) alice 0 0 object-store))))))))
+
+(deftest somebody-else-s-image-is-not-readable-either
+  ;; The image route reaches the same ACL the page does. Worth its own
+  ;; assertion: an image endpoint that skipped it would be a way around the
+  ;; Drive.
+  (with-state
+    (fn [_ object-store]
+      (let [item (upload! object-store (xobject-pdf jpeg-xobject))]
+        (is (some? (error-type #(pageview/image (:id item) bob 0 0 object-store))))))))
+
+(deftest the-rendering-points-at-this-server-and-nowhere-else
+  ;; `hanmen` refuses an href that is not a same-origin path, so this asserts
+  ;; that the app passes one — and that the URL is built from integers rather
+  ;; than from anything the document supplied.
+  (with-state
+    (fn [_ object-store]
+      (let [item (upload! object-store (xobject-pdf jpeg-xobject))
+            svg (:svg (pageview/page (:id item) alice 0 object-store))]
+        (is (str/includes? svg "<image "))
+        (is (re-find #"href=\"/api/workspace/drive/documents/[^\"]+/pages/0/images/0\"" svg))
+        (is (nil? (re-find #"href=\"[a-zA-Z]+:" svg)) "no scheme anywhere")))))
+
+;; ── the parse cache ──────────────────────────────────────────────────────────
+
+(deftest the-parse-is-remembered-and-the-permission-check-is-not
+  ;; The ordering IS the security of the cache: `file-bytes` answers whether
+  ;; this principal may have the bytes, and a cache consulted first would
+  ;; answer faster and wrong.
+  (with-state
+    (fn [_ object-store]
+      (let [item (upload! object-store (pdf-bytes "one" "two"))
+            parses (atom 0)
+            real pdf/parse]
+        (with-redefs [pdf/parse (fn [b] (swap! parses inc) (real b))]
+          (pageview/page (:id item) alice 0 object-store)
+          (pageview/page (:id item) alice 1 object-store)
+          (pageview/page (:id item) alice 0 object-store)
+          (is (= 1 @parses) "three page requests, one parse"))
+        (testing "and bob still cannot read it, cache or no cache"
+          (is (some? (error-type #(pageview/page (:id item) bob 0 object-store)))))))))
+
+(deftest a-refusal-is-not-remembered
+  ;; Caching it would make the answer permanent for the life of the process,
+  ;; including across the deploy that adds the decoder.
+  (with-state
+    (fn [_ object-store]
+      (let [item (upload! object-store (pdf-bytes "fine"))]
+        (with-redefs [pdf/parse (fn [_] (throw (Exception. "zlib: nope")))]
+          (is (= :pageview/undecodable
+                 (error-type #(pageview/page (:id item) alice 0 object-store)))))
+        (is (:ok? (pageview/page (:id item) alice 0 object-store))
+            "the next call parses again rather than repeating the refusal")))))
 
 ;; ── the report the pane renders ──────────────────────────────────────────────
 
