@@ -10,7 +10,12 @@
 (def agent-session {:id "session-agent" :kind :agent :label "loop-a"
                     :user-id user-id :membership-id membership-id
                     :organization-id tenant-id})
+;; A Passkey session as a real ceremony mints it. `:kind :passkey` alone is
+;; what every browser token carries by default; `may-act?` additionally
+;; requires the assurance markers, so a literal without them is a session that
+;; proved nothing.
 (def human-session {:id "session-human" :kind :passkey :user-id user-id
+                    :issued-via :passkey :authn-level :phishing-resistant
                     :membership-id membership-id :organization-id tenant-id})
 
 (defn- state []

@@ -956,7 +956,33 @@
                                                (:authn-level candidate))
                                             (= :authenticated
                                                (:authn-decision candidate)))
-                                :passkey (passkey-enrolled? candidate)
+                                ;; A Passkey session must have been minted BY
+                                ;; a Passkey ceremony, not merely belong to
+                                ;; somebody who has one.
+                                ;;
+                                ;; This asked only `passkey-enrolled?`, which is
+                                ;; a fact about the USER. Every browser session
+                                ;; defaults to `:kind :passkey` (see
+                                ;; `issue-session!`), so a token minted at
+                                ;; registration — proving only that a browser
+                                ;; holds it — started passing the moment its
+                                ;; owner enrolled. Enrolment is not
+                                ;; authentication, and it is certainly not
+                                ;; retroactive authentication of a token that
+                                ;; already existed.
+                                ;;
+                                ;; The markers are minted only by
+                                ;; `passkey-session-options`, which derives them
+                                ;; from the WebAuthn result through
+                                ;; `authn/decide` — so a caller that never did
+                                ;; the ceremony cannot set them.
+                                ;; `passkey-enrolled?` stays too: a ceremony
+                                ;; against a credential since removed is not a
+                                ;; live proof.
+                                :passkey (and (= :passkey (:issued-via candidate))
+                                              (= :phishing-resistant
+                                                 (:authn-level candidate))
+                                              (passkey-enrolled? candidate))
                                 false)]
                    (authz-model/decision
                     request (if allow? :allow :deny)
@@ -1170,8 +1196,55 @@
        :account-id owner-account-id
        :email owner-email})))
 
+(defn- passkey-session-options
+  "The session markers a Passkey ceremony earns, or a refusal.
+
+  `may-act?` requires `:issued-via :passkey` and
+  `:authn-level :phishing-resistant` on a `:kind :passkey` session, and this is
+  the only thing that mints them — so a caller that did not complete a ceremony
+  cannot set them.
+
+  The level is not asserted, it is DECIDED: the WebAuthn result becomes an
+  `authentication` factor carrying its own `:verified?` and assurance, and
+  `authn/decide` is asked whether that reaches `:phishing-resistant`. A ceremony
+  that came back unverified therefore throws here rather than producing a
+  session that merely claims the level. Same shape
+  `finish-email-authentication!` already uses for the magic-link factor."
+  [result purpose]
+  (let [factor (authn-model/factor
+                (:credential-id result) :passkey (boolean (:verified? result))
+                {:subject (:user-id result)
+                 :evidence-ref (:credential-id result)
+                 :assurance :user-verifying})
+        request (authn-model/request
+                 (str "authn-" (UUID/randomUUID)) (:user-id result)
+                 {:required-level :phishing-resistant
+                  :purpose purpose
+                  :created-at (store/now)})
+        decision (authn/decide request [factor])]
+    (when-not (= :authenticated (:authn.decision/decision decision))
+      (throw (ex-info "Passkey 認証保証が不足しています。"
+                      {:type :passkey/verification-failed})))
+    {:kind :passkey
+     :issued-via :passkey
+     :authn-ref (:authn.decision/request-id decision)
+     :authn-level (:authn.decision/level decision)
+     :authn-decision (:authn.decision/decision decision)
+     :authn-factors [:passkey]}))
+
 (defn finish-passkey-registration! [session transaction-id response]
-  (passkey/finish-registration! transaction-id response (:user-id session)))
+  (let [result (passkey/finish-registration!
+                transaction-id response (:user-id session))
+        assurance (passkey-session-options result :registration)]
+    ;; Registration itself IS a user-verifying WebAuthn ceremony, so the
+    ;; session that initiated it is upgraded in place rather than making
+    ;; somebody perform an identical assertion one second later. Without this
+    ;; the whole onboarding path — register, create a credential, configure the
+    ;; organization — would be locked out by the rule above, since the browser
+    ;; still holds the token `register!` minted.
+    (store/transact!
+     update-in [:identity :sessions (:id session)] merge assurance)
+    result))
 
 (defn- valid-enrollment [account-id code]
   (let [state (identity-state (store/snapshot))
@@ -1218,14 +1291,16 @@
              (assoc-in [:identity :enrollments enrollment-id :used?] true)
              (assoc-in [:identity :enrollments enrollment-id :used-at] now)
              (assoc-in [:identity :users (:user-id result) :status] :active))))
-      (merge result (issue-session! (:user-id result))))))
+      (merge result (issue-session! (:user-id result)
+                                    (passkey-session-options result :enrollment))))))
 
 (defn start-passkey-authentication! [rp-id origin]
   (passkey/start-authentication! rp-id origin))
 
 (defn finish-passkey-authentication! [transaction-id response]
   (let [result (passkey/finish-authentication! transaction-id response)]
-    (merge result (issue-session! (:user-id result)))))
+    (merge result (issue-session! (:user-id result)
+                                  (passkey-session-options result :login)))))
 
 (defn- callback-uri [origin provider]
   (str origin "/api/oauth/" (name provider) "/callback"))
