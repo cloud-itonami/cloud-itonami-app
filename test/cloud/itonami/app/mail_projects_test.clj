@@ -14,6 +14,18 @@
 
 (def ^:private organization "org-mail-test")
 
+(def ^:private run-id
+  "A suffix making each run's project directories fresh.
+
+  Filing is idempotent — a message already filed to the same project is not
+  rewritten — so a test asserting 'three messages were written' passes once and
+  then reports zero forever after. `target/test-data` survives between runs, and
+  annexed object directories are read-only, so they are not casually deleted
+  either. A new project per run is cheaper than fighting either fact."
+  (subs (str (random-uuid)) 0 8))
+
+(defn- fresh [name] (str name "-" run-id))
+
 (defn- message [id from subject & [labels]]
   {:id id :from-email from :from from :subject subject
    :body (str "body of " id " — 本文")
@@ -44,8 +56,16 @@
     (.waitFor process)
     output))
 
-(defn- commit-count [directory]
-  (count (remove str/blank? (str/split-lines (git directory "log" "--oneline")))))
+(defn- filing-commits
+  "Commits this code made, not every commit in the repository.
+
+  `datalad create` contributes two of its own — the dataset and the text2git
+  configuration — so a plain total measures DataLad's initialization as well as
+  the filing, and the number changes if DataLad ever changes its setup."
+  [directory]
+  (->> (str/split-lines (git directory "log" "--oneline"))
+       (filter #(str/includes? % "mail: file"))
+       count))
 
 (defn- seed-messages! [& messages]
   (store/transact! assoc-in [:mail :messages]
@@ -58,7 +78,33 @@
          (update :mail dissoc :messages :project-rules :project-assignments)
          (dissoc :chat-projects :project-workspaces :drive-artifacts)))))
 
-(use-fixtures :each (fn [run] (reset!) (run) (reset!)))
+(defn- age-keygen!
+  "A throwaway age identity for the suite.
+
+  Generated once per run rather than checked in: a committed private key is a
+  committed private key even when it only ever guarded test fixtures."
+  []
+  (let [directory (io/file (config/data-dir) "age-test")
+        identity-file (io/file directory "identity.txt")]
+    (when-not (.isFile identity-file)
+      (.mkdirs directory)
+      (let [process (.start (doto (ProcessBuilder.
+                                   ^java.util.List ["/opt/homebrew/bin/age-keygen"
+                                                    "-o" (.getPath identity-file)])
+                              (.redirectErrorStream true)))]
+        (slurp (.getInputStream process))
+        (.waitFor process)))
+    (let [recipient (->> (str/split-lines (slurp identity-file))
+                         (some #(second (re-matches #"# public key: (age1\S+)" %))))]
+      {:identity (.getPath identity-file) :recipient recipient})))
+
+(def ^:private age-key (delay (age-keygen!)))
+
+(defn- with-recipients [run]
+  (with-redefs [projects/age-recipients (constantly [(:recipient @age-key)])]
+    (run)))
+
+(use-fixtures :each (fn [run] (reset!) (with-recipients run) (reset!)))
 
 (defn- project! [id]
   (projects/create-project! {:organization-id organization
@@ -248,10 +294,10 @@
 ;; artifacts
 
 (deftest filing-writes-the-message-into-the-project-and-commits
-  (project! "artifacts")
+  (project! (fresh "artifacts"))
   (seed-messages! (message "m1" "a@example.com" "Quarterly invoice"))
-  (mail-projects/assign! organization "m1" "artifacts" "user-1")
-  (let [directory (project-directory "artifacts")
+  (mail-projects/assign! organization "m1" (fresh "artifacts") "user-1")
+  (let [directory (project-directory (fresh "artifacts"))
         envelopes (->> (file-seq (io/file directory "mail"))
                        (filter #(str/ends-with? (.getName %) ".edn")))]
     (testing "the envelope is tracked source"
@@ -259,75 +305,127 @@
       (let [written (read-string (slurp (first envelopes)))]
         (is (= "m1" (:mail/id written)))
         (is (= "Quarterly invoice" (:mail/subject written)))
-        (is (= "artifacts" (:filed/project written)))
+        (is (= (fresh "artifacts") (:filed/project written)))
         (is (= "manual" (:filed/by written)))))
+
+    (testing "the commit is the app's, not the operator's.
+
+              DataLad has no `-c` of its own and picks up whatever git config
+              the machine has — measured, it signed as the owner's personal
+              iCloud relay address. Filing mail must not write a person's name
+              into a commit they did not author."
+      (is (= "Cloud Itonami <itonami@localhost>"
+             (str/trim (git directory "log" "-1" "--pretty=%an <%ae>")))))
 
     (testing "and there is a commit, not just a file"
       (is (str/includes? (git directory "log" "--oneline") "file 1 message"))
       (is (str/blank? (str/trim (git directory "status" "--porcelain")))))))
 
-(deftest the-body-never-enters-git
-  (project! "private")
+(deftest the-body-is-in-git-and-is-ciphertext
+  (project! (fresh "private"))
   (seed-messages! (message "m1" "a@example.com" "Subject line"))
-  (mail-projects/assign! organization "m1" "private" "user-1")
-  (let [directory (project-directory "private")
+  (mail-projects/assign! organization "m1" (fresh "private") "user-1")
+  (let [directory (project-directory (fresh "private"))
         tracked (git directory "ls-files")]
-    (testing "the plaintext body is on disk for tools working in the project"
-      (let [bodies (->> (file-seq (io/file directory ".mail"))
-                        (filter #(.isFile %)))]
-        (is (= 1 (count bodies)))
-        (is (str/includes? (slurp (first bodies)) "本文"))))
+    (testing "the body IS tracked — encrypting it is what let it stop being
+              excluded, and an excluded body travels with nothing"
+      (is (str/includes? tracked ".eml.age"))
+      (is (str/includes? tracked "mail/")))
 
-    (testing "but Git tracks the envelope only — this is the same line
-              `.conversations/` draws, and the reason this repository may
-              safely gain a remote"
-      (is (str/includes? tracked "mail/"))
-      (is (not (str/includes? tracked ".mail/")))
-      (is (not (str/includes? (git directory "grep" "-r" "本文" "HEAD") "本文"))))
+    (testing "and git-annex holds it, so the bytes are not in every clone"
+      (is (str/includes? (git directory "check-attr" "-a"
+                              (->> (str/split-lines tracked)
+                                   (filter #(str/ends-with? % ".eml.age"))
+                                   first))
+                         "annex")))
 
-    (testing "and what Git holds instead is a digest of the body"
+    (testing "what Git carries is unreadable: the plaintext is not in HEAD"
+      (is (str/blank? (git directory "grep" "-r" "本文" "HEAD"))))
+
+    (testing "the file on disk is an age envelope, not the message"
+      (let [body (->> (file-seq (io/file directory "mail"))
+                      (filter #(str/ends-with? (.getName %) ".eml.age"))
+                      first)
+            ;; Annexed content is a symlink into .git/annex; follow it.
+            content (slurp body)]
+        (is (str/starts-with? content "age-encryption.org/v1"))
+        (is (not (str/includes? content "本文")))))
+
+    (testing "and it decrypts back to exactly what arrived"
+      (let [body (->> (file-seq (io/file directory "mail"))
+                      (filter #(str/ends-with? (.getName %) ".eml.age"))
+                      first)
+            process (.start (doto (ProcessBuilder.
+                                   ^java.util.List
+                                   ["/opt/homebrew/bin/age" "-d"
+                                    "-i" (:identity @age-key)
+                                    (.getCanonicalPath body)])
+                              (.redirectErrorStream true)))
+            plaintext (slurp (.getInputStream process))]
+        (.waitFor process)
+        (is (= "body of m1 — 本文" (str/trim plaintext)))))
+
+    (testing "and the envelope says how it was sealed and to whom"
       (let [written (->> (file-seq (io/file directory "mail"))
                          (filter #(str/ends-with? (.getName %) ".edn"))
                          first slurp read-string)]
-        (is (string? (:mail/body-sha256 written)))
-        (is (= 64 (count (:mail/body-sha256 written))))
-        (is (pos? (:mail/body-bytes written)))))))
+        (is (= "age" (:mail/body-encryption written)))
+        (is (= [(:recipient @age-key)] (:mail/body-recipients written)))
+        (is (= 64 (count (:mail/body-sha256 written))))))))
+
+(deftest with-no-recipient-the-body-is-skipped-not-written-in-the-clear
+  (project! (fresh "norecipient"))
+  (seed-messages! (message "m1" "a@example.com" "Subject line"))
+  (with-redefs [projects/age-recipients (constantly [])]
+    (let [result (mail-projects/assign! organization "m1" (fresh "norecipient") "user-1")
+          artifact (first (:artifacts result))]
+      (testing "a filing system that silently downgrades to plaintext is worse
+                than one that refuses, because nothing about the result looks
+                different"
+        (is (= 1 (:written artifact)))
+        (is (= 0 (:bodies artifact)))
+        (is (= 1 (:bodies-skipped artifact)))
+        (is (str/includes? (:reason artifact) "AGE_RECIPIENTS")))))
+  (let [directory (project-directory (fresh "norecipient"))]
+    (is (not (str/includes? (git directory "ls-files") ".eml.age")))
+    (is (str/blank? (git directory "grep" "-r" "本文" "HEAD")))))
 
 (deftest a-project-made-before-mail-filing-still-ignores-bodies
   (testing "such a project already HAS a .gitignore, so a write-if-absent branch
             would never reach it and the first filed body would land in Git"
-    (project! "legacy")
-    (let [directory (project-directory "legacy")
+    (project! (fresh "legacy"))
+    (let [directory (project-directory (fresh "legacy"))
           gitignore (io/file directory ".gitignore")]
       (spit gitignore ".itonami/runtime/\n.conversations/\n")
       (seed-messages! (message "m1" "a@example.com" "x"))
-      (mail-projects/assign! organization "m1" "legacy" "user-1")
+      (mail-projects/assign! organization "m1" (fresh "legacy") "user-1")
       (is (str/includes? (slurp gitignore) ".mail/"))
       (is (not (str/includes? (git directory "ls-files") ".mail/"))))))
 
 (deftest applying-rules-commits-once-per-project-and-only-what-changed
-  (project! "bulk")
+  (project! (fresh "bulk"))
   (mail-projects/add-rule! organization
-                           {:project "bulk" :match {:from-domain "example.com"}})
+                           {:project (fresh "bulk") :match {:from-domain "example.com"}})
   (seed-messages! (message "m1" "a@example.com" "one")
                   (message "m2" "b@example.com" "two")
                   (message "m3" "c@example.com" "three"))
-  (let [directory (project-directory "bulk")
+  (let [directory (project-directory (fresh "bulk"))
         ;; Counted as a DELTA. `target/test-data` survives between runs, so the
         ;; repository may already carry commits from an earlier one — an
         ;; absolute count tests the machine's history, not this code.
-        before (commit-count directory)
+        before (filing-commits directory)
         result (mail-projects/apply-rules! organization "user-1")]
+    (is (nil? (:error (first (:artifacts result)))))
     (is (= 3 (:written (first (:artifacts result)))))
     (testing "three messages, one commit — it was one act"
-      (is (= 1 (- (commit-count directory) before))))
+      (is (= 1 (- (filing-commits directory) before))))
 
     (testing "re-applying writes nothing, or every sync would add an empty
               revision to every project"
       (let [again (mail-projects/apply-rules! organization "user-1")]
         (is (= 0 (:changed again)))
         (is (empty? (:artifacts again))))
-      (is (= 1 (- (commit-count directory) before))))))
+      (is (= 1 (- (filing-commits directory) before))))))
 
 (deftest a-git-failure-does-not-lose-the-assignment
   (project! "resilient")

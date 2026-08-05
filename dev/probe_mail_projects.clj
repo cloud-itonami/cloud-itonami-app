@@ -100,12 +100,25 @@
                    (count (remove str/blank?
                                   (str/split-lines
                                    (git directory "ls-files" "mail")))) "envelopes")
-          (println "     ignored :"
-                   (count (filter #(.isFile %)
-                                  (file-seq (io/file directory ".mail")))) "bodies")
-          (println "     body in git? :"
-                   (if (str/blank? (git directory "grep" "-r" "本文" "HEAD"))
-                     "no" "YES — LEAK")))))
+          (println "     annexed :"
+                   (count (remove str/blank?
+                                  (str/split-lines
+                                   (git directory "ls-files" "mail"))))
+                   "tracked (envelopes + .age bodies)")
+          (println "     ciphertext? :"
+                   (let [body (->> (file-seq (io/file directory "mail"))
+                                   (filter #(str/ends-with? (.getName %) ".eml.age"))
+                                   first)]
+                     (if body
+                       (if (str/starts-with? (slurp body) "age-encryption.org/v1")
+                         "yes (age envelope)" "NOT ENCRYPTED")
+                       "none")))
+          (println "     annex?  :"
+                   (let [link (->> (file-seq (io/file directory "mail"))
+                                   (filter #(str/ends-with? (.getName %) ".eml.age"))
+                                   first)]
+                     (if (and link (java.nio.file.Files/isSymbolicLink (.toPath link)))
+                       "yes (git-annex symlink)" "regular file — NOT annexed"))))))
 
     (println "\n== 11. one envelope, as committed ==")
     (let [directory (->> (file-seq (io/file (config/data-dir) "projects"))
