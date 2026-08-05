@@ -59,10 +59,16 @@
       (is (= "optional" (get-in snapshot [:integration :github :mode]))))))
 
 (deftest creating-a-project-makes-a-real-git-repository
-  (let [item (projects/create-project! (scope "alpha")
+  ;; A project id unique to this test. The directory is
+  ;; `projects/<organization-storage-id>/<slug>` and that middle segment is a
+  ;; private hash, so the only way to assert "exactly one was made" without
+  ;; recomputing it is to pick a slug no other test uses — measured, when
+  ;; `mail-projects-test` created its own `alpha` under a different
+  ;; organization and this counted two.
+  (let [item (projects/create-project! (scope "alpha-on-disk")
                                        {:title "Alpha" :description "first"})]
     (testing "the record says what it is"
-      (is (= "alpha" (:project-id item)))
+      (is (= "alpha-on-disk" (:project-id item)))
       (is (= "Alpha" (:title item)))
       (is (true? (:git-initialized? item))))
 
@@ -84,7 +90,7 @@
     (testing "the catalogue now lists it, with its counts"
       (let [items (:items (projects/local-projects-snapshot (scope)))]
         (is (= 1 (count items)))
-        (is (= "alpha" (:project-id (first items))))
+        (is (= "alpha-on-disk" (:project-id (first items))))
         (is (= 0 (:repository-count (first items))))
         (is (= 0 (:issue-count (first items))))))))
 
