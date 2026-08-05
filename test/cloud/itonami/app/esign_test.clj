@@ -354,6 +354,33 @@
                                    :actor alice
                                    :object-store object-store}))))))
 
+(deftest an-uploaded-file-is-refused-rather-than-parsed
+  ;; A PDF in the Drive is bytes with a media type, not one of the four
+  ;; surfaces — so there is no resource for `commitment/outline` to enumerate
+  ;; and nothing to show a signer. `documents/content` said so already; this
+  ;; path did not, and the eSign pane offered every workspace item, so
+  ;; choosing an uploaded PDF reached the JSON reader and came back as
+  ;; "unexpected character: %".
+  ;;
+  ;; The assertion is on the TYPE rather than on "it threw", because throwing
+  ;; is what it did before.
+  (let [object-store (memory/store)
+        auth (enrol! (authenticator) alice
+                     "adce0002-35bc-c60a-648b-0b25f1f05503")
+        file (:item (documents/upload!
+                     "見積.pdf" "application/pdf"
+                     (.getBytes "%PDF-1.4\nquote\n%%EOF" StandardCharsets/UTF_8)
+                     alice object-store))]
+    (is (= :drive/not-a-document
+           (:type (try (esign/create! {:document-id (:id file)
+                                       :purpose :contract/execute
+                                       :signer-dids [(:did auth)]
+                                       :actor alice
+                                       :object-store object-store})
+                       (catch clojure.lang.ExceptionInfo e (ex-data e))))))
+    (testing "and no envelope was written for it"
+      (is (empty? (get-in (store/snapshot) [:esign :envelopes]))))))
+
 ;; ── the evidence record ──────────────────────────────────────────────────────
 
 (defn- signed-envelope!

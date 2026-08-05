@@ -4208,8 +4208,14 @@
       // Only documents this Drive can actually freeze a version of. An archive
       // item has no object reference to digest, so offering one would produce a
       // request that fails after the user chose it.
+      //
+      // `file?` is the same exclusion for the same reason: an uploaded PDF is
+      // bytes with a media type, not one of the four surfaces, and there is no
+      // outline to show a signer. The server refuses it — this is why it is
+      // never chosen, not the check that it is refused.
       (driveData.items || [])
-        .filter((item) => item.origin === 'workspace' && !item['trashed?'])
+        .filter((item) => item.origin === 'workspace' && !item['trashed?']
+                          && !item['file?'])
         .forEach((item) => {
           const option = make('option', null, item.name);
           option.value = item.id;

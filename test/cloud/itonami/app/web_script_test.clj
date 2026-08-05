@@ -100,3 +100,14 @@
     (is (str/includes? js "const cellAnchor = (tab, row, col)"))
     (is (= 2 (count (re-seq #"cellAnchor\(" (str/replace js "const cellAnchor" ""))))
         "and both the grid and the comment box call it")))
+
+(deftest the-signing-picker-does-not-offer-a-file
+  ;; `item['file?']` is the server's own answer to "is this one of the four
+  ;; surfaces", and the eSign picker has to ask it: an uploaded PDF has no
+  ;; resource to outline, so offering one is offering a signature nobody can
+  ;; be shown what they are making. `documents/source-bytes` refuses it —
+  ;; this is why it is never chosen, not the check that it is refused.
+  (let [js (slurp (io/file "resources/cloud/itonami/app/interaction.js"))
+        picker (second (re-find #"(?s)const refreshEsignDocuments = \(\) => \{(.*?)\n    \};" js))]
+    (is (some? picker) "refreshEsignDocuments is still spelled that way")
+    (is (str/includes? picker "!item['file?']"))))
