@@ -61,6 +61,29 @@
       (is (empty? (set/intersection human covered)))
       (is (= (count human) (:human-only (commands/counts)))))))
 
+(deftest routes-behind-a-named-pattern-are-found
+  (testing "a route reached through `(def page-pattern #\"/api/…\")` is scanned
+            like a literal one.
+
+            Invisible is worse than wrong here. When these landed upstream the
+            scanner read only regex literals, so the clause was never seen — no
+            command was generated AND no test reported one missing, because the
+            gate compares the registry against this same scanner. The three of
+            them are pinned by name so a regression is a failure rather than a
+            silence."
+    (let [covered (set (map :template (commands/all)))]
+      (is (contains? covered "/api/workspace/drive/documents/{document}/pages"))
+      (is (contains? covered "/api/workspace/drive/documents/{document}/pages/{page}"))
+      (is (contains? covered
+                     "/api/workspace/drive/documents/{document}/pages/{page}/images/{image}"))))
+
+  (testing "a clause serving a family yields every one of its routes, not the
+            longest — the rule that kept only the longest deleted two of these"
+    (let [family (->> (scan/routes (source))
+                      (filter #(str/includes? (:route %) "/pages"))
+                      (map :route) set)]
+      (is (= 3 (count family))))))
+
 (deftest command-names-are-unique
   (testing "two routes sharing a name would make one of them unreachable"
     (is (empty? (->> (commands/all)

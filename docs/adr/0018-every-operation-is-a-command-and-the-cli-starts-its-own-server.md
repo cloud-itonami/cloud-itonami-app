@@ -9,7 +9,7 @@ Accepted. 2026-08-05.
 Two separate things made the terminal a second-class way to use this app, and
 each hid the other.
 
-**The CLI covered almost nothing.** `server.clj` serves 222 routes. The CLI had
+**The CLI covered almost nothing.** `server.clj` serves 225 routes. The CLI had
 seventeen commands. Nothing anywhere reported that difference, because the
 commands were a hand-written list, and a hand-written list of what an app can do
 drifts in exactly one direction: a route lands, nobody adds the command, and the
@@ -122,9 +122,30 @@ nbb, per the workspace rule that new scripts are ClojureScript.
   would weaken a gate the app means. Widening the CLI does not re-decide that:
   the operator runs the CLI, a client's model runs MCP.
 
+## What building it caught
+
+Two defects worth recording, because both were invisible failures rather than
+loud ones.
+
+**Routes behind a named pattern were not scanned at all.** `page-route?` matches
+three paths through `(def ^:private page-pattern #"…")`, and a scanner reading
+only regex literals never saw the clause. No command was generated *and no test
+reported one missing*, because the gate compares the registry against the same
+scanner. A gate that shares a blind spot with the thing it checks is not a gate.
+`expand-pattern-vars` inlines the definitions first, and the three routes are now
+pinned by name in the test.
+
+**The two runtimes scanned different routes.** On the JVM, `str/replace` reads
+`\` and `$` in a *replacement string* as escapes, so a pattern containing
+`(\d+)` came back as `(d+)`; ClojureScript substituted it literally. The nbb
+generator called the registry current and the JVM test called it stale — which is
+precisely the disagreement the shared `.cljc` exists to make visible, and it
+showed up the first time the two had anything to disagree about. A function
+replacement is literal in both.
+
 ## Consequences
 
-- 155 of 222 routes are commands, up from 17, and the remaining 67 are accounted
+- 158 of 225 routes are commands, up from 17, and the remaining 67 are accounted
   for by category and count rather than left unexamined.
 - A route added without regenerating the registry breaks the suite. Coverage is a
   maintained property rather than a claim made once.

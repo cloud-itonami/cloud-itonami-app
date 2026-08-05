@@ -71,18 +71,62 @@
                          (re-seq #"\"([A-Z]+)\"")
                          (map second))))))
 
-(defn path-of
-  "The route this clause serves: the literal path, or the regex it matches.
+(defn paths-of
+  "Every route this clause serves.
 
-  When a test names two regexes — a guard and the one the body destructures with
-  — they describe the same route, so length picks the specific one rather than a
-  prefix that would collide with a sibling."
+  Usually one, occasionally a family: `page-route?` answers three paths from one
+  predicate — a document's pages, one page, and one image on a page. Taking only
+  the longest, as this did first, dropped the other two silently, and the gate
+  could not notice because the gate compares the registry against this scanner
+  and both were blind in the same place.
+
+  All of them, then, rather than a rule about which to prefer. A first version
+  discarded any pattern that was a prefix of another, on the theory that a clause
+  might name a cheap guard before matching properly. Measured across this file:
+  exactly one clause names more than one pattern, and it is the three-route
+  family above. The rule existed to solve a case that does not occur, and it
+  silently deleted two real routes."
   [test]
-  (or (some-> (re-find #"\(= path \"([^\"]+)\"\)" test) second)
-      (some->> (re-seq #"#\"(/[^\"]+)\"" test)
-               (map second)
-               (sort-by count >)
-               first)))
+  (let [literal (some-> (re-find #"\(= path \"([^\"]+)\"\)" test) second)]
+    (if literal
+      [literal]
+      (vec (distinct (map second (re-seq #"#\"(/[^\"]+)\"" test)))))))
+
+(defn path-of
+  "The single route a clause serves, or the most specific when it names several."
+  [test]
+  (first (sort-by count > (paths-of test))))
+
+(def ^:private pattern-definition
+  #"\(def\s+(?:\^:private\s+)?([a-z][a-z0-9?*!<>=-]*)\s+#\"(/[^\"]+)\"\s*\)")
+
+(defn expand-pattern-vars
+  "Inline `(def ^:private page-pattern #\"/api/…\")` at every use.
+
+  Routes reached through a named pattern are invisible to a scanner that only
+  reads regex literals, and invisible is worse than wrong here: the clause is
+  never seen, so no command is generated AND no test reports one missing.
+  Measured 2026-08-05, when `/api/workspace/drive/documents/{document}/pages`
+  and its two siblings landed upstream and this scanner did not notice.
+
+  The replacement is a FUNCTION, not a string, and that is not a style choice.
+  On the JVM `str/replace` reads `\\` and `$` in a replacement string as escapes,
+  so a pattern containing `(\\d+)` came back as `(d+)` — while ClojureScript
+  substituted it literally. The two runtimes then scanned different routes, the
+  nbb generator called the registry current, and the JVM test called it stale.
+  A function replacement is literal in both. Measured 2026-08-05; it is the first
+  thing the shared `.cljc` caught that two hand-written scanners would have
+  hidden from each other."
+  [source]
+  (reduce (fn [text [_ name pattern]]
+            (let [literal (str "#\"" pattern "\"")]
+              (str/replace text
+                           (re-pattern (str "(?<![A-Za-z0-9?*!<>=-])"
+                                            name
+                                            "(?![A-Za-z0-9?*!<>=-])"))
+                           (fn [_] literal))))
+          source
+          (re-seq pattern-definition source)))
 
 (defn gate-of
   "Which session the clause demands.
@@ -214,22 +258,27 @@
 ;; ---------------------------------------------------------------------------
 
 (defn routes
-  "Every route in `source`, in the order the `cond` tests them."
+  "Every route in `source`, in the order the `cond` tests them.
+
+  Named patterns are inlined first, so a route reached through `page-pattern` is
+  read exactly like one written as a literal."
   [source]
-  (let [starts (clause-starts source)]
+  (let [source (expand-pattern-vars source)
+        starts (clause-starts source)]
     (->> (map vector starts (concat (rest starts) [(count source)]))
          (keep (fn [[start next-start]]
                  (let [end (form-end source start)
                        test (subs source start end)
                        body (subs source end (min next-start (count source)))
-                       path (path-of test)
+                       paths (paths-of test)
                        methods (methods-of test)]
-                   (when (and path (seq methods))
-                     (for [method methods]
+                   (when (and (seq paths) (seq methods))
+                     (for [method methods path paths]
                        (merge {:method method :route path :gate (gate-of body)
                                :flags (flags-of body)}
                               (parse-path path)))))))
          (apply concat)
+         distinct
          vec)))
 
 (defn registry
