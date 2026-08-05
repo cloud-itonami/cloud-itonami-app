@@ -13,6 +13,19 @@
   Nothing is moved and nothing is deleted. Unassigning a message puts it back in
   the inbox it never left.
 
+  ## Filing also writes the message into the project
+
+  An assignment that existed only in this store would be a filing system whose
+  filing you cannot see: the project is a Git repository, and a message that
+  belongs to it should be IN it. `project-repository/file-mail!` writes the
+  envelope as tracked source and the body as a git-ignored plaintext copy, then
+  commits — the same boundary that namespace already draws between project
+  source and conversation history.
+
+  The write is best-effort and reported, never fatal. The assignment is the
+  decision; the artifact is its projection, and a Git failure must not lose the
+  decision it was projecting.
+
   ## Rules are deterministic, and that is the point
 
   A rule matches on the envelope: sender address, sender domain, a substring of
@@ -171,6 +184,31 @@
 (defn- message-by-id [id]
   (get-in (store/snapshot) [:mail :messages id]))
 
+(defn- materialize!
+  "Project assignments into the projects' repositories, grouped by project.
+
+  Grouped, so filing twenty messages across three projects is three commits
+  rather than twenty. Failures are collected per project rather than thrown: the
+  decision is already recorded, and losing it because Git was busy would be the
+  wrong trade."
+  [organization-id user-id assignment-pairs]
+  (->> assignment-pairs
+       (group-by (comp :project-id second))
+       (mapv (fn [[project-id pairs]]
+               (try
+                 (projects/file-mail!
+                  {:organization-id organization-id
+                   :user-id user-id
+                   :project-id project-id}
+                  (keep (fn [[message-id assignment]]
+                          (when-let [message (message-by-id message-id)]
+                            {:message message :assignment assignment}))
+                        pairs))
+                 (catch Exception error
+                   {:project-id project-id
+                    :written 0
+                    :error (.getMessage error)}))))))
+
 (defn assign!
   "File a message against a project by hand.
 
@@ -193,7 +231,9 @@
         (store/transact! assoc-in
                          (conj (assignments-path organization-id) message-id)
                          assignment))
-      {:schema schema :ok? true :message message-id :assignment assignment})))
+      {:schema schema :ok? true :message message-id :assignment assignment
+       :artifacts (materialize! organization-id actor
+                                [[message-id assignment]])})))
 
 (defn unassign!
   "Take a message out of its project. It returns to the inbox it never left."
@@ -208,33 +248,38 @@
 
   Returns what changed and what did not, because 'applied' with no numbers is
   indistinguishable from a rule set that matches nothing."
-  [organization-id]
-  (let [rules (rules organization-id)
-        current (assignments organization-id)
-        candidates (remove #(= :manual (:by (get current (:id %)))) (messages))
-        decided (keep (fn [message]
-                        (when-let [rule (first-match rules message)]
-                          [(:id message)
-                           {:project-id (:rule/project rule)
-                            :by :rule
-                            :rule-id (:rule/id rule)
-                            :at (store/now)}]))
-                      candidates)
-        changed (remove (fn [[id assignment]]
-                          (= (:project-id assignment)
-                             (:project-id (get current id))))
-                        decided)]
-    (locking write-lock
-      (when (seq decided)
-        (store/transact! update-in (assignments-path organization-id)
-                         (fn [existing] (into (or existing {}) decided)))))
-    {:schema schema :ok? true
-     :rules (count rules)
-     :considered (count candidates)
-     :assigned (count decided)
-     :changed (count changed)
-     :unmatched (- (count candidates) (count decided))
-     :manual (count (filter #(= :manual (:by %)) (vals current)))}))
+  ([organization-id] (apply-rules! organization-id nil))
+  ([organization-id actor]
+   (let [rules (rules organization-id)
+         current (assignments organization-id)
+         candidates (remove #(= :manual (:by (get current (:id %)))) (messages))
+         decided (keep (fn [message]
+                         (when-let [rule (first-match rules message)]
+                           [(:id message)
+                            {:project-id (:rule/project rule)
+                             :by :rule
+                             :rule-id (:rule/id rule)
+                             :at (store/now)}]))
+                       candidates)
+         changed (remove (fn [[id assignment]]
+                           (= (:project-id assignment)
+                              (:project-id (get current id))))
+                         decided)]
+     (locking write-lock
+       (when (seq decided)
+         (store/transact! update-in (assignments-path organization-id)
+                          (fn [existing] (into (or existing {}) decided)))))
+     {:schema schema :ok? true
+      ;; Only what CHANGED is written into a repository. Re-running the rules
+      ;; over mail that is already filed should produce no commit at all, or
+      ;; every sync would add an empty-but-noisy revision to every project.
+      :artifacts (materialize! organization-id actor changed)
+      :rules (count rules)
+      :considered (count candidates)
+      :assigned (count decided)
+      :changed (count changed)
+      :unmatched (- (count candidates) (count decided))
+      :manual (count (filter #(= :manual (:by %)) (vals current)))})))
 
 ;; ---------------------------------------------------------------------------
 ;; reading

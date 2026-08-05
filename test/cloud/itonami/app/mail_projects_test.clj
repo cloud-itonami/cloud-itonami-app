@@ -4,7 +4,10 @@
   The behaviours worth pinning are the refusals and the arithmetic, not the
   happy path: a filing system is trusted in proportion to how loudly it admits
   what it did not file."
-  (:require [clojure.test :refer [deftest is testing use-fixtures]]
+  (:require [clojure.java.io :as io]
+            [clojure.string :as str]
+            [clojure.test :refer [deftest is testing use-fixtures]]
+            [cloud.itonami.app.config :as config]
             [cloud.itonami.app.mail-projects :as mail-projects]
             [cloud.itonami.app.project-repository :as projects]
             [cloud.itonami.app.store :as store]))
@@ -13,8 +16,36 @@
 
 (defn- message [id from subject & [labels]]
   {:id id :from-email from :from from :subject subject
+   :body (str "body of " id " — 本文")
    :received-at (str "2026-08-0" (inc (mod (count id) 9)) "T00:00:00Z")
    :labels (set (or labels []))})
+
+(defn- project-directory
+  "Where a project's Git repository is, found by walking for its slug: the path
+  is `projects/<organization-storage-id>/<slug>` and that middle segment is a
+  private hash."
+  [project-id]
+  (->> (file-seq (io/file (config/data-dir) "projects"))
+       (filter #(and (.isDirectory %) (= project-id (.getName %))))
+       first))
+
+(defn- git
+  "Run git and read only its stdout.
+
+  Deliberately NOT merging stderr: this machine's git prints
+  `error: could not read IPC response` from its filesystem monitor, and merged
+  in it makes a clean tree look dirty and a log look one line longer."
+  [directory & args]
+  (let [builder (doto (ProcessBuilder.
+                       ^java.util.List (into ["/usr/bin/git"] args))
+                  (.directory directory))
+        process (.start builder)
+        output (slurp (.getInputStream process))]
+    (.waitFor process)
+    output))
+
+(defn- commit-count [directory]
+  (count (remove str/blank? (str/split-lines (git directory "log" "--oneline")))))
 
 (defn- seed-messages! [& messages]
   (store/transact! assoc-in [:mail :messages]
@@ -212,3 +243,101 @@
   (mail-projects/assign! organization "m1" "alpha" "user-1")
   (is (empty? (mail-projects/assignments "org-other")))
   (is (= 0 (:assigned (mail-projects/overview "org-other")))))
+
+;; ---------------------------------------------------------------------------
+;; artifacts
+
+(deftest filing-writes-the-message-into-the-project-and-commits
+  (project! "artifacts")
+  (seed-messages! (message "m1" "a@example.com" "Quarterly invoice"))
+  (mail-projects/assign! organization "m1" "artifacts" "user-1")
+  (let [directory (project-directory "artifacts")
+        envelopes (->> (file-seq (io/file directory "mail"))
+                       (filter #(str/ends-with? (.getName %) ".edn")))]
+    (testing "the envelope is tracked source"
+      (is (= 1 (count envelopes)))
+      (let [written (read-string (slurp (first envelopes)))]
+        (is (= "m1" (:mail/id written)))
+        (is (= "Quarterly invoice" (:mail/subject written)))
+        (is (= "artifacts" (:filed/project written)))
+        (is (= "manual" (:filed/by written)))))
+
+    (testing "and there is a commit, not just a file"
+      (is (str/includes? (git directory "log" "--oneline") "file 1 message"))
+      (is (str/blank? (str/trim (git directory "status" "--porcelain")))))))
+
+(deftest the-body-never-enters-git
+  (project! "private")
+  (seed-messages! (message "m1" "a@example.com" "Subject line"))
+  (mail-projects/assign! organization "m1" "private" "user-1")
+  (let [directory (project-directory "private")
+        tracked (git directory "ls-files")]
+    (testing "the plaintext body is on disk for tools working in the project"
+      (let [bodies (->> (file-seq (io/file directory ".mail"))
+                        (filter #(.isFile %)))]
+        (is (= 1 (count bodies)))
+        (is (str/includes? (slurp (first bodies)) "本文"))))
+
+    (testing "but Git tracks the envelope only — this is the same line
+              `.conversations/` draws, and the reason this repository may
+              safely gain a remote"
+      (is (str/includes? tracked "mail/"))
+      (is (not (str/includes? tracked ".mail/")))
+      (is (not (str/includes? (git directory "grep" "-r" "本文" "HEAD") "本文"))))
+
+    (testing "and what Git holds instead is a digest of the body"
+      (let [written (->> (file-seq (io/file directory "mail"))
+                         (filter #(str/ends-with? (.getName %) ".edn"))
+                         first slurp read-string)]
+        (is (string? (:mail/body-sha256 written)))
+        (is (= 64 (count (:mail/body-sha256 written))))
+        (is (pos? (:mail/body-bytes written)))))))
+
+(deftest a-project-made-before-mail-filing-still-ignores-bodies
+  (testing "such a project already HAS a .gitignore, so a write-if-absent branch
+            would never reach it and the first filed body would land in Git"
+    (project! "legacy")
+    (let [directory (project-directory "legacy")
+          gitignore (io/file directory ".gitignore")]
+      (spit gitignore ".itonami/runtime/\n.conversations/\n")
+      (seed-messages! (message "m1" "a@example.com" "x"))
+      (mail-projects/assign! organization "m1" "legacy" "user-1")
+      (is (str/includes? (slurp gitignore) ".mail/"))
+      (is (not (str/includes? (git directory "ls-files") ".mail/"))))))
+
+(deftest applying-rules-commits-once-per-project-and-only-what-changed
+  (project! "bulk")
+  (mail-projects/add-rule! organization
+                           {:project "bulk" :match {:from-domain "example.com"}})
+  (seed-messages! (message "m1" "a@example.com" "one")
+                  (message "m2" "b@example.com" "two")
+                  (message "m3" "c@example.com" "three"))
+  (let [directory (project-directory "bulk")
+        ;; Counted as a DELTA. `target/test-data` survives between runs, so the
+        ;; repository may already carry commits from an earlier one — an
+        ;; absolute count tests the machine's history, not this code.
+        before (commit-count directory)
+        result (mail-projects/apply-rules! organization "user-1")]
+    (is (= 3 (:written (first (:artifacts result)))))
+    (testing "three messages, one commit — it was one act"
+      (is (= 1 (- (commit-count directory) before))))
+
+    (testing "re-applying writes nothing, or every sync would add an empty
+              revision to every project"
+      (let [again (mail-projects/apply-rules! organization "user-1")]
+        (is (= 0 (:changed again)))
+        (is (empty? (:artifacts again))))
+      (is (= 1 (- (commit-count directory) before))))))
+
+(deftest a-git-failure-does-not-lose-the-assignment
+  (project! "resilient")
+  (seed-messages! (message "m1" "a@example.com" "x"))
+  (with-redefs [projects/file-mail!
+                (fn [& _] (throw (ex-info "git exploded" {:type :test/boom})))]
+    (let [result (mail-projects/assign! organization "m1" "resilient" "user-1")]
+      (testing "the decision is recorded and the failure is reported, not thrown —
+                the artifact is a projection of the decision, not the decision"
+        (is (:ok? result))
+        (is (= "git exploded" (:error (first (:artifacts result))))))))
+  (is (= "resilient"
+         (:project-id (get (mail-projects/assignments organization) "m1")))))
