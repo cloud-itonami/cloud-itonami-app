@@ -74,6 +74,16 @@
         (is (zero? exit) (str source " does not parse under node " version ":\n" err))))
     (println "web-script-test: node is not on PATH, so the interaction layer was not parsed.")))
 
+(deftest organization-studio-is-a-dedicated-single-editor-surface
+  (let [html (with-redefs [store/snapshot (constantly (store/initial-state))]
+               (web/page-html config))]
+    (is (= 1 (count (re-seq #"data-view-panel=\"organization\"" html))))
+    (is (= 1 (count (re-seq #"id=\"governance-organization-form\"" html))))
+    (doseq [id ["organization-studio-tree" "organization-studio-actors"
+                "organization-studio-assignments" "organization-studio-policies"
+                "governance-units" "governance-positions" "governance-roles"]]
+      (is (str/includes? html (str "id=\"" id "\"")) id))))
+
 (deftest a-cell-anchor-is-spelled-in-one-place
   ;; The grid writes `Sheet1!B3` onto every cell as `data-anchor`, and the
   ;; comment box reads it back to put a dot where a comment points. Two

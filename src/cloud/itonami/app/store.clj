@@ -2,6 +2,7 @@
   (:require [clojure.edn :as edn]
             [clojure.java.io :as io]
             [cloud.itonami.app.config :as config]
+            [cloud.itonami.app.work-partition-store :as work-partitions]
             [kotoba.kgraph :as kgraph]
             [langchain.edn-persist :as edn-persist])
   (:import [java.nio.file Files StandardCopyOption]
@@ -37,9 +38,12 @@
 
 (defn- load-state []
   (let [file (state-file)]
-    (if (.isFile file)
-      (merge (initial-state) (edn/read-string (slurp file)))
-      (initial-state))))
+    (let [main (if (.isFile file)
+                 (merge (initial-state) (edn/read-string (slurp file)))
+                 (initial-state))]
+      (if-let [work (work-partitions/load-ledger (:work-governance main))]
+        (assoc main :work-governance work)
+        main))))
 
 (defonce state (atom (load-state)))
 
@@ -47,9 +51,14 @@
 
 (defn- persist! [value]
   (let [file (state-file)
-        temporary (io/file (.getParentFile file) "state.edn.tmp")]
+        temporary (io/file (.getParentFile file) "state.edn.tmp")
+        work (:work-governance value)]
     (.mkdirs (.getParentFile file))
-    (spit temporary (pr-str value))
+    ;; Governed work has an independent physical tenant boundary. Persist it
+    ;; before the main store: a crash may leave an unreferenced AgentRun, but
+    ;; can never leave an AgentRun dispatch without its durable intent.
+    (when work (work-partitions/persist-ledger! work))
+    (spit temporary (pr-str (dissoc value :work-governance)))
     (Files/move (.toPath temporary) (.toPath file)
                 (into-array StandardCopyOption
                             [StandardCopyOption/REPLACE_EXISTING
@@ -68,6 +77,25 @@
     (locking state
       (let [next-value (apply swap! state f args)]
         (persist! next-value)))))
+
+(defn update-agent-control!
+  "Atomically update the durable Agent Control partition.
+
+  Agent Control used this seam before it was reachable from the server. Keep
+  the partition update inside the same state.edn transaction as every other
+  app record so an AgentRun cannot be visible only in memory.
+
+  Kept when ADR-0014's kanban runtime was replayed onto main: main's
+  `transact!` had moved to `langchain.edn-persist`'s cross-process lock, which
+  is the newer of the two, but nothing had ever defined this var — so
+  `cloud.itonami.app.agent-control` called it at four sites and could not
+  compile. It is listed in `namespaces_test`'s `known-broken` for exactly that
+  reason."
+  [f & args]
+  (transact!
+   (fn [s]
+     (assoc s :agent-control
+            (apply f (or (:agent-control s) {}) args)))))
 
 (defn new-id [prefix]
   (str prefix "-" (UUID/randomUUID)))

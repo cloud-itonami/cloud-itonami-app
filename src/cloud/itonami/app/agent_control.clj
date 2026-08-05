@@ -452,6 +452,9 @@
       (update :agent/approval
               #(when % (select-keys % [:id :title :summary :action :impact])))
       (select-keys [:agent.run/id :agent.run/goal :agent.run/status
+                    :agent.run/yakuwari :agent.run/work-item
+                    :agent.run/actor :agent/executor :agent/provider-id
+                    :agent/model
                     :agent.run/required-capabilities :agent.run/budget
                     :agent.run/created-at :agent.run/updated-at
                     :agent/result :agent/error :agent/approval
@@ -464,6 +467,75 @@
 
 (defn run-by-id [run-id]
   (some-> (get-in (store/snapshot) [:agent-control :runs run-id]) public-run))
+
+(declare transition save-run!)
+
+(defn record-dispatch-failure!
+  "Persist a dispatch failure as a real terminal AgentRun. Repeating the same
+  id is idempotent and returns the first durable outcome."
+  [run-id {:keys [goal yakuwari work-item actor]} error]
+  (if-let [existing (run-by-id run-id)]
+    existing
+    (let [queued (cond->
+                  (agent-run/agent-run
+                   {:id run-id :goal goal :mode :local :actor actor
+                    :capabilities #{} :budget {:max-turns 1 :max-tool-calls 1}}
+                   (now-ms))
+                   yakuwari (assoc :agent.run/yakuwari yakuwari)
+                   work-item (assoc :agent.run/work-item work-item))
+          failed (-> queued
+                     (transition :leased {})
+                     (transition :running {})
+                     (transition :failed
+                                 {:agent/error
+                                  {:type (or (:type (ex-data error))
+                                             :dispatch/error)
+                                   :message (.getMessage error)}}))]
+      (save-run! failed)
+      (public-run failed))))
+
+(defn record-external-admission!
+  "Persist an externally supervised execution after its intent inbox returns an
+  admission receipt. Admission is held, never success."
+  [run-id {:keys [goal yakuwari work-item actor]} admission-receipt]
+  (if-let [existing (run-by-id run-id)]
+    existing
+    (let [queued (cond->
+                  (agent-run/agent-run
+                   {:id run-id :goal goal :mode :remote :actor actor
+                    :capabilities #{} :budget {}}
+                   (now-ms))
+                   yakuwari (assoc :agent.run/yakuwari yakuwari)
+                   work-item (assoc :agent.run/work-item work-item))
+          held (-> queued
+                   (transition :leased {})
+                   (transition :running
+                               {:agent/executor :organism-worker})
+                   (transition :held
+                               {:agent/result admission-receipt
+                                :agent/external-receipt admission-receipt}))]
+      (save-run! held)
+      (public-run held))))
+
+(defn record-external-outcome!
+  "Advance a held external AgentRun from a supervisor receipt."
+  [run-id status result]
+  (let [run (get-in (store/snapshot) [:agent-control :runs run-id])]
+    (when-not run
+      (throw (ex-info "external AgentRun was not found"
+                      {:type :agent/not-found :run-id run-id})))
+    (if (= status (:agent.run/status run))
+      (public-run run)
+      (let [running (if (= :held (:agent.run/status run))
+                      (-> run (transition :leased {})
+                          (transition :running {}))
+                      run)
+            finished (transition running status
+                                 (if (= :failed status)
+                                   {:agent/error result}
+                                   {:agent/result result}))]
+        (save-run! finished)
+        (public-run finished)))))
 
 (defn- save-run! [run]
   (store/update-agent-control! assoc-in [:runs (:agent.run/id run)] run)
@@ -571,7 +643,7 @@
              error))))
 
 (defn- create-cli-run!
-  [configuration {:keys [goal model provider]} actor]
+  [configuration {:keys [id goal model provider yakuwari work-item]} actor]
   (let [s (settings configuration)
         cli (:cli s)
         selected (policy/select-provider configuration provider)
@@ -590,11 +662,14 @@
                 :name "cli_agent"
                 :input {:goal goal :model model :provider (:id selected)
                         :workspace workspace :access (name access)}}
-          queued (agent-run/agent-run
-                  {:goal goal :mode :local :model model :actor actor
-                   :capabilities #{:workspace/use}
-                   :budget {:max-turns 1 :max-tool-calls 1}}
-                  (now-ms))
+          queued (cond->
+                  (agent-run/agent-run
+                   {:id id :goal goal :mode :local :model model :actor actor
+                    :capabilities #{:workspace/use}
+                    :budget {:max-turns 1 :max-tool-calls 1}}
+                   (now-ms))
+                   yakuwari (assoc :agent.run/yakuwari yakuwari)
+                   work-item (assoc :agent.run/work-item work-item))
           held (-> queued
                    (transition :leased {})
                    (transition :running
@@ -612,10 +687,14 @@
       (save-run! held)
       (public-run held))))
 
-(defn create-run! [configuration {:keys [goal model provider mode] :as request} actor]
-  (if (= "cli" mode)
-    (create-cli-run! configuration request actor)
-  (let [s (settings configuration)]
+(defn create-run!
+  [configuration {:keys [id goal model provider mode yakuwari work-item]
+                  :as request} actor]
+  (if-let [existing (and id (run-by-id id))]
+    existing
+    (if (= "cli" mode)
+      (create-cli-run! configuration request actor)
+      (let [s (settings configuration)]
     (when-not (:enabled? s)
       (throw (ex-info "端末AgentはSettingsで無効です。"
                       {:type :agent/disabled})))
@@ -632,12 +711,15 @@
             (get-in s [:browser :enabled?]) (conj :browser/use)
             (get-in s [:computer :enabled?]) (conj :computer/use))
           queued
-          (agent-run/agent-run
-           {:goal goal :mode :local :model configuration-model
-            :actor actor :capabilities capabilities
-            :budget {:max-turns (:max-turns s)
-                     :max-tool-calls (:max-tool-calls s)}}
-           (now-ms))
+          (cond->
+           (agent-run/agent-run
+            {:id id :goal goal :mode :local :model configuration-model
+             :actor actor :capabilities capabilities
+             :budget {:max-turns (:max-turns s)
+                      :max-tool-calls (:max-tool-calls s)}}
+            (now-ms))
+            yakuwari (assoc :agent.run/yakuwari yakuwari)
+            work-item (assoc :agent.run/work-item work-item))
           running
           (-> queued
               (transition :leased {})
@@ -654,8 +736,8 @@
                             {:role "user" :content (str "Task: " goal)}]
                            :agent/turn-count 0
                            :agent/tool-count 0}))]
-      (save-run! running)
-      (advance! configuration running)))))
+        (save-run! running)
+        (advance! configuration running))))))
 
 (defn decide! [configuration run-id decision]
   (let [run (get-in (store/snapshot) [:agent-control :runs run-id])]

@@ -21,6 +21,12 @@
   {:mcp {:human-session-token-env "CLOUD_ITONAMI_TEST_TOKEN_DELIBERATELY_UNSET"}
    :authorities {:payment {:enabled? true :endpoint nil}}})
 
+(def ^:private passkey-session-options
+  {:kind :passkey
+   :issued-via :passkey
+   :authn-ref "test-passkey-authn"
+   :authn-level :phishing-resistant})
+
 (defn- refuses [f]
   (try (f) nil (catch clojure.lang.ExceptionInfo e (:type (ex-data e)))))
 
@@ -40,7 +46,8 @@
             :sessions {}}
            :authority {:proposals {}}
            :funding {:accounts {} :balances {}}))
-  (:token (identity/issue-session! "user-1")))
+  (:token (identity/issue-session!
+           "user-1" (when passkey? passkey-session-options))))
 
 (defn- linked!
   "A session with a funded account, and the account id."

@@ -36,6 +36,10 @@
             [cloud.itonami.app.mail-imap-test]
             [cloud.itonami.app.mail-pop3-test]
             [cloud.itonami.app.mail-send-test]
+            [cloud.itonami.app.messenger-test]
+            [cloud.itonami.app.messenger-http-test]
+            [cloud.itonami.app.organism-messenger-transport-test]
+            [cloud.itonami.app.signal-browser-test]
             [cloud.itonami.app.scheduler-test]
             [cloud.itonami.app.scheduler-http-test]
             [cloud.itonami.app.authority.adapters-test]
@@ -57,10 +61,17 @@
             [cloud.itonami.app.credential-assurance-test]
             [cloud.itonami.app.data-isolation-test]
             [cloud.itonami.app.did-test]
-            [cloud.itonami.app.documents-test]
             [cloud.itonami.app.email-login-test]
+            [cloud.itonami.app.documents-test]
             [cloud.itonami.app.workspace-reachability-test]
             [cloud.itonami.app.web-script-test]
+            [cloud.itonami.app.work-governance-test]
+            [cloud.itonami.app.github-projects-writeback-test]
+            [cloud.itonami.app.github-projects-source-test]
+            [cloud.itonami.app.work-runtime-test]
+            [cloud.itonami.app.work-partition-store-test]
+            [cloud.itonami.app.work-approval-test]
+            [cloud.itonami.app.work-organism-dispatch-test]
             [cloud.itonami.app.esign-test]
             [cloud.itonami.app.esign-retention-test]
             [cloud.itonami.app.filecoin-test]
@@ -127,10 +138,18 @@
     cloud.itonami.app.credential-assurance-test
     cloud.itonami.app.data-isolation-test
     cloud.itonami.app.did-test
+    cloud.itonami.app.email-login-test
     cloud.itonami.app.documents-test
     cloud.itonami.app.email-login-test
     cloud.itonami.app.workspace-reachability-test
     cloud.itonami.app.web-script-test
+    cloud.itonami.app.work-governance-test
+    cloud.itonami.app.github-projects-writeback-test
+    cloud.itonami.app.github-projects-source-test
+    cloud.itonami.app.work-runtime-test
+    cloud.itonami.app.work-partition-store-test
+    cloud.itonami.app.work-approval-test
+    cloud.itonami.app.work-organism-dispatch-test
     cloud.itonami.app.esign-test
     cloud.itonami.app.esign-retention-test
     cloud.itonami.app.filecoin-test
@@ -151,6 +170,10 @@
     cloud.itonami.app.mail-imap-test
     cloud.itonami.app.mail-pop3-test
     cloud.itonami.app.mail-send-test
+    cloud.itonami.app.messenger-test
+    cloud.itonami.app.messenger-http-test
+    cloud.itonami.app.organism-messenger-transport-test
+    cloud.itonami.app.signal-browser-test
     cloud.itonami.app.scheduler-test
     cloud.itonami.app.scheduler-http-test
     cloud.itonami.app.payment-tools-test
