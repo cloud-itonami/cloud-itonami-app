@@ -51,6 +51,7 @@
             [hanmen.page :as hpage]
             [hanmen.pdf :as hpdf]
             [hanmen.svg :as hsvg]
+            [adobe.cmap.core :as adobe-cmap]
             [pdf.core :as pdf]
             [png.encode :as png]))
 
@@ -360,7 +361,11 @@
        (refuse! "このファイルからページを読み取れませんでした。"
                 :pageview/no-pages {:item-id id}))
      (let [index (max 0 (min (dec n) (or index 0)))
-           p (hpdf/page-at parsed index)]
+           ;; What a composite font's CIDs mean when it shipped no
+           ;; /ToUnicode. A Japanese contract out of InDesign is exactly
+           ;; this case — measured: 254 undecodable runs became 6.
+           ;; `/ToUnicode` still wins when the font has one.
+           p (hpdf/page-at parsed index {:cid->unicode adobe-cmap/cid->unicode})]
        {:schema schema :ok? true :id id :filename filename
         :count n
         :page (hpage/summary p)

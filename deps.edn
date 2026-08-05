@@ -166,7 +166,13 @@
   ;; that keeps uploaded bytes from being served inline.
   io.github.kotoba-lang/hanmen
   {:git/url "https://github.com/kotoba-lang/hanmen.git"
-   :git/sha "02fecb2332ef37c813ec57a6e5efe91035eacc36"}
+   :git/sha "94a86b9b00b29b6deea978c82b1825115950bcbe"}
+  ;; What a composite font's CIDs mean when it ships no /ToUnicode. Adobe's
+  ;; published tables, vendored — a megabyte of resource, which is why
+  ;; `hanmen` takes the resolver rather than owning it.
+  io.github.kotoba-lang/com-adobe-cmap
+  {:git/url "https://github.com/kotoba-lang/com-adobe-cmap.git"
+   :git/sha "c39a7b63d2a0affceb5985dff48d6b880f7ce5d6"}
   ;; Raw samples out of a PDF image XObject are not a picture until something
   ;; encodes them. `png.encode` landed for exactly this.
   io.github.kotoba-lang/org-w3-png
