@@ -1,10 +1,11 @@
 (ns cloud.itonami.app.web
   "DADS-backed WebKit workspace hosted by kotoba-lang/shell."
   (:require [clojure.java.io :as io]
+            [hanmen.svg :as hanmen-svg]
             [jp-go-dds.core :as dds]
             [jp-go-dds.page :as page]))
 
-(def app-css
+(def base-css
   "
   body{background:var(--color-neutral-solid-gray-50)}
   button{font:inherit}
@@ -384,6 +385,18 @@
   .file-preview{margin:.5rem 0;max-width:100%}
   .file-preview__image{display:block;max-width:100%;max-height:24rem;
     width:auto;height:auto;border-radius:.5rem}
+  /* One page of an uploaded PDF. Bounded like the slide stage, and with a
+     paper surface behind it — a rendering that inherits the pane's
+     background stops looking like a page and starts looking like text that
+     happens to be arranged oddly. */
+  .page-view{margin:.5rem 0;max-width:min(100%,34rem)}
+  .page-view__figure{border-radius:.5rem;overflow:auto;max-height:32rem;
+    border:1px solid var(--color-neutral-solid-gray-300, #d0d7de);
+    background:var(--color-neutral-solid-gray-50, #f6f8fa)}
+  /* `hanmen` paints in currentColor and picks no colour of its own, which is
+     what makes one rendering right in both themes — so the ink is this
+     pane's text colour and the paper is a token, decided here. */
+  .page-view__figure .hanmen-page{--hanmen-paper:var(--color-neutral-solid-white, #fff)}
   /* Bounded like the chart: a slide is 10 inches wide and the pane is not. */
   .slide-preview{margin:.5rem 0;max-width:min(100%,28rem);border-radius:.5rem;
     border:1px solid var(--color-neutral-solid-gray-300, #d0d7de);overflow:hidden}
@@ -869,6 +882,17 @@
     .skeleton{animation:none;background:var(--color-neutral-solid-gray-100)}
   }
   ")
+
+(def app-css
+  "The app's own rules, plus the ones `hanmen` needs for a rendered page to
+  look like a page.
+
+  Taken from the library rather than copied here, so that a rule it adds
+  arrives with the version that emits the markup needing it. It brings no
+  colour and no font — everything in it is `currentColor` and `inherit`,
+  which is why this can concatenate it without checking it against the
+  tokens `core-test` guards."
+  (str base-css "\n  " hanmen-svg/stylesheet "\n"))
 
 (def interaction-js
   "The page's interaction layer, which is JavaScript and now lives in a

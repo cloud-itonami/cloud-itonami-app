@@ -2631,6 +2631,93 @@
     };
     const surfacePreviews = {forms:formsPreview, docs:docsPreview, sheets:sheetsPreview,
                              slides:slidesPreview};
+
+    // ── an uploaded PDF, page by page ──────────────────────────────────────
+    //
+    // Keyed by item id and kept outside the pane, for the same reason the
+    // document editor's state is: the detail pane is rebuilt on every
+    // keystroke in the search box, so a page number that lived in the
+    // element would reset to 1 while the reader was typing.
+    const pageViews = {};
+    const pageState = (id) => (pageViews[id] ||= {index:0, doc:null, loading:false,
+                                                 failed:null});
+    const pagePanel = (item) => {
+      const state = pageState(item.id);
+      const panel = make('div', 'page-view');
+      const figure = make('div', 'page-view__figure');
+      const status = make('p', 'form-help');
+      const bar = make('div', 'toolbar-row');
+      const prev = make('button', 'tool-button', '前のページ');
+      const next = make('button', 'tool-button', '次のページ');
+      prev.type = 'button'; next.type = 'button';
+      const label = make('span', 'data-list__meta');
+
+      const draw = () => {
+        const doc = state.doc;
+        if (state.failed) {
+          // The server's own sentence. It distinguishes "too large to show"
+          // from "not a PDF" from "no pages came out", and replacing all
+          // three with "表示できません" would send the reader to fix the
+          // wrong thing.
+          status.textContent = state.failed;
+          figure.replaceChildren();
+          label.textContent = '';
+          prev.disabled = next.disabled = true;
+          return;
+        }
+        if (!doc) { status.textContent = 'ページを読み込んでいます…'; return; }
+        // The server built this string from the parsed page out of a closed
+        // vocabulary of three item kinds; no element it may emit takes a
+        // URL. Same category as the workbook charts above, and not markup
+        // arriving from anywhere else.
+        figure.innerHTML = doc.svg;
+        label.textContent = `${doc.page['page/label']} / ${doc.count}`;
+        prev.disabled = state.index <= 0;
+        next.disabled = state.index >= doc.count - 1;
+        status.textContent = doc['scanned?']
+          // Named rather than left to be discovered by a search that finds
+          // nothing — the same answer `app-preview` gives about a listing.
+          ? 'このページには抽出できるテキストがありません（スキャン画像）。'
+          : '';
+      };
+
+      const load = () => {
+        if (state.loading) return;
+        state.loading = true;
+        fetch(`/api/workspace/drive/documents/${encodeURIComponent(item.id)}`
+              + `/pages/${state.index}`)
+          .then(async (r) => {
+            const body = await r.json().catch(() => null);
+            if (!r.ok) throw new Error(body?.error?.message || 'ページを表示できません。');
+            return body;
+          })
+          .then((body) => { state.doc = body; state.failed = null; state.loading = false;
+                            draw(); })
+          .catch((error) => { state.failed = error.message; state.loading = false;
+                              draw(); });
+      };
+
+      const go = (delta) => {
+        const count = state.doc?.count ?? 1;
+        const wanted = Math.max(0, Math.min(count - 1, state.index + delta));
+        if (wanted === state.index) return;
+        state.index = wanted;
+        state.doc = null;
+        draw();
+        load();
+      };
+      prev.addEventListener('click', () => go(-1));
+      next.addEventListener('click', () => go(1));
+
+      bar.append(prev, next, label);
+      panel.append(figure, bar, status);
+      draw();
+      // Guarded on all three, for the same reason the document open is: the
+      // pane is rebuilt per keystroke, and an unguarded fetch here is one
+      // PDF parse per character typed in the search box.
+      if (!state.doc && !state.loading && !state.failed) load();
+      return panel;
+    };
     // The detail pane is rebuilt on every render — a keystroke in the search
     // box is enough — so an open editor's text cannot live in the element.
     // It lived there until this was measured: typing in search while editing
@@ -2687,6 +2774,13 @@
           image.loading = 'lazy';
           figure.append(image);
           actions.append(figure);
+        } else if (item['media-type'] === 'application/pdf') {
+          // A PDF is shown as pages rather than only offered as a download.
+          // Not through the image path above: that one serves the FILE, and
+          // a PDF is exactly what may not be served inline from this origin.
+          // What arrives here is markup the server built out of the parsed
+          // page — see `cloud.itonami.app.pageview`.
+          actions.append(pagePanel(item));
         }
         const download = make('a', 'tool-button', 'ダウンロード');
         download.href = `/api/workspace/drive/documents/${encodeURIComponent(item.id)}/download`;
