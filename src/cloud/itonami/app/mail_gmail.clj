@@ -15,6 +15,7 @@
             [gmail.history :as history]
             [gmail.labels :as labels]
             [gmail.mime :as mime]
+            [cloud.itonami.app.mail-authentication :as authentication]
             [gmail.threads :as threads]
             [gmail.client :as gmail]
             [cloud.itonami.app.mail-account :as account])
@@ -73,6 +74,18 @@
      ;; Display names, not Gmail's opaque label ids: `Label_17` means nothing
      ;; to a reader, and the ids differ between accounts, so two mailboxes
      ;; with a label of the same name would otherwise file under two labels.
+     ;; The receiving server's own SPF/DKIM/DMARC verdict, kept because
+     ;; nothing else can answer "is this from who it says". Dropping these is
+     ;; what made impersonation detection structurally impossible rather than
+     ;; merely unimplemented — see mail-authentication, and the :gaps entry it
+     ;; closes in yabai's abuse ledger. Three headers, not all of them: keeping
+     ;; the whole envelope would put somebody's entire mail metadata in the
+     ;; store to answer one question.
+     :headers (into {}
+                    (keep (fn [name]
+                            (when-let [value (header payload name)]
+                              [name value])))
+                    (keys authentication/retained-headers))
      :labels (mapv #(get label-names % %) label-ids)
      :read? (not (some #{"UNREAD"} label-ids))
      :size-bytes (or (:sizeEstimate message) 0)}))
