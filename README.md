@@ -42,12 +42,19 @@ clojure -M:server
 open http://localhost:1338
 ```
 
-On macOS, `bin/cloud-itonami-app` uses a sibling `kotoba-lang/shell` checkout
-or `CLOUD_ITONAMI_SHELL_DIR` when available and otherwise opens the web surface.
+`bin/cloud-itonami-app` opens the web surface as an application window — no tab
+strip, no address bar — and starts the server only when nothing already answers
+on 1338, since it is commonly already resident.
 
 ```bash
 bin/cloud-itonami-app
 ```
+
+There is one user interface, the web surface, built on jp-go-dds. A second
+`kotoba:dom` surface rendered by the `kotoba-lang/shell` AppKit host was retired
+on 2026-08-06: it had become the older of the two while remaining the one the
+launcher preferred, so running the app showed the older interface.
+`kotoba-lang/shell` is still a dependency for EventKit and Keychain.
 
 The server binds to `127.0.0.1` by default. The browser intentionally uses
 `http://localhost:1338`, which is required for the WebAuthn localhost
