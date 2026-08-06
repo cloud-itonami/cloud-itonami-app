@@ -832,6 +832,22 @@ The included gftd profile maps:
 - public addresses to `@gftd.ai`;
 - relay calls to `https://relay.gftd.ai`.
 
+The included itonami profile turns email sign-in on and points it at
+`https://itonami.cloud/api/auth/magic-link/deliver`:
+
+```bash
+CLOUD_ITONAMI_EMAIL_LOGIN_TOKEN=<bearer> CLOUD_ITONAMI_PROFILE=itonami \
+  clojure -M:server
+```
+
+Email sign-in stays off in the shipped defaults, and that is not an oversight.
+ADR-0012 left delivery to "a deployment-owned HTTPS endpoint", and until one
+existed the form was never shown — a complete feature nothing could reach. A
+tenant-neutral install that mailed through somebody else's sending reputation
+would be choosing for the operator, and a bounce would land on a domain they do
+not own. The bearer must match the endpoint's `MAGIC_LINK_DELIVERY_TOKEN`
+secret; it is read from the environment per call and never persisted.
+
 Enabling `:publish-did-web?` is a deployment assertion: the operator must
 actually serve the DID documents over HTTPS.
 
