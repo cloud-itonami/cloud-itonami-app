@@ -218,6 +218,97 @@
 (defn- canonical-email [account-id]
   (str account-id "@" (account-domain)))
 
+(defn- tenant-kind
+  "`:personal` or `:organization` (ADR-0023).
+
+  A tenant written before that ADR carries no kind, and this answers
+  `:organization` for it. The migration stamps the same value rather than
+  guessing which existing tenant was somebody's personal namespace — see
+  `ensure-personal-tenants!`."
+  [organization]
+  (or (:tenant/kind organization) :organization))
+
+(defn- personal-tenant
+  "The one tenant a User owns as their own namespace, or nil."
+  [state user-id]
+  (some (fn [membership]
+          (when (= user-id (:user-id membership))
+            (let [organization (get-in state [:organizations
+                                              (:organization-id membership)])]
+              (when (= :personal (tenant-kind organization))
+                organization))))
+        (vals (:memberships state))))
+
+(defn- slug-claimed-by
+  "Who already holds `slug` in the single owner namespace, or nil.
+
+  A slug names a tenant or a User, never both: one derives
+  `<slug>.<organization-domain-suffix>` and the other `<slug>@<account-domain>`,
+  and two owners behind one string is how a person's public address and somebody
+  else's organization end up naming each other. `:tenant-id` and `:user-id`
+  exempt the claimant itself — a personal tenant holds its owner's handle by
+  construction, which is the one case where the same string legitimately names
+  both."
+  [state slug {:keys [tenant-id user-id]}]
+  (or (some (fn [organization]
+              (when (and (= slug (:organization-id organization))
+                         (not= tenant-id (:id organization)))
+                {:kind :tenant :id (:id organization)}))
+            (vals (:organizations state)))
+      (some (fn [user]
+              (when (and (= slug (:account-id user))
+                         (not= user-id (:id user)))
+                {:kind :user :id (:id user)}))
+            (vals (:users state)))))
+
+(defn- personal-tenant-record
+  "The tenant record for `user-id`'s own namespace.
+
+  Claims `account-id` as its slug when the namespace is free. When it is not —
+  a deployment where an organization already answers to that name, including
+  the ones the pre-ADR-0023 code created by handing an owner their
+  organization's slug as a handle — the tenant is created without one rather
+  than renaming anything that already exists."
+  [state {:keys [tenant-id user-id account-id now]}]
+  (let [slug (when (and account-id
+                        (not (slug-claimed-by state account-id
+                                              {:user-id user-id})))
+               account-id)
+        did (when slug (organization-did slug))]
+    {:id tenant-id
+     :tenant/kind :personal
+     :organization-id slug
+     :did did
+     ;; Named by the handle, like the namespace it is. "Personal" is the
+     ;; placeholder `configure-organization!` replaces when the slug is claimed.
+     :name (or slug "Personal")
+     :domain (when slug (organization-domain slug))
+     :status (if slug :active :pending-profile)
+     :subject (identity/subject (or did tenant-id) :organization
+                                {:did did :labels #{:local :personal}})
+     :created-at now}))
+
+(defn- memberships-for-user [state user-id]
+  (->> (:memberships state)
+       vals
+       (filter #(= user-id (:user-id %)))
+       (sort-by (juxt :created-at :id))
+       vec))
+
+(defn- default-membership
+  "Where a new session for `user-id` lands.
+
+  The User's `:default-membership-id` — the tenant they last selected — or the
+  oldest membership. This used to be the first hit of `(vals memberships)`,
+  which is the whole deployment's membership table in map order: array-map
+  order below nine entries and unspecified above it, so which organization a
+  person signed in to was decided by insertion order they never saw. ADR-0023."
+  [state user-id]
+  (let [memberships (memberships-for-user state user-id)
+        preferred (get-in state [:users user-id :default-membership-id])]
+    (or (some #(when (= preferred (:id %)) %) memberships)
+        (first memberships))))
+
 (defn registered? []
   (boolean (seq (:users (identity-state (store/snapshot))))))
 
@@ -254,8 +345,7 @@
   ([user-id {:keys [kind label issued-via ttl-seconds authn-level
                     authn-decision authn-factors]}]
    (let [state (identity-state (store/snapshot))
-         membership (some #(when (= user-id (:user-id %)) %)
-                          (vals (:memberships state)))]
+         membership (default-membership state user-id)]
      (when-not membership
        (throw (ex-info "組織 membership が見つかりません。"
                        {:type :identity/unauthenticated})))
@@ -295,16 +385,10 @@
                                     (:organization-id membership)])]
     (assoc (select-keys organization [:id :organization-id :did :name :domain
                                       :contact-domain :status])
+           :kind (name (tenant-kind organization))
            :profile-complete? (boolean (:organization-id organization))
            :role (:role membership)
            :active? false)))
-
-(defn- memberships-for-user [state user-id]
-  (->> (:memberships state)
-       vals
-       (filter #(= user-id (:user-id %)))
-       (sort-by (juxt :created-at :id))
-       vec))
 
 (defn- public-organization-invitations [state user-id]
   (->> (:organization-invitations state)
@@ -416,6 +500,64 @@
             (:organizations identity-state))
             (:connections identity-state))))))))
 
+(defn ensure-personal-tenants!
+  "Give every User the personal tenant ADR-0023 says they own, and stamp
+  `:tenant/kind` on the tenants written before it.
+
+  Every pre-existing tenant becomes `:organization`. The alternative —
+  inferring that whichever tenant the `:identity/registered` event names was
+  somebody's personal namespace — is what `project-repository/chat-context`
+  used to do, and it is wrong for every deployment whose first tenant was a
+  real company, which is the ordinary case here.
+
+  So a person who has been working in two organizations gains an empty third
+  tenant that is theirs, and neither organization is reclassified."
+  []
+  (let [state (identity-state (store/snapshot))
+        unstamped (remove #(:tenant/kind %) (vals (:organizations state)))
+        without-personal (remove #(personal-tenant state (:id %))
+                                 (vals (:users state)))]
+    (when (or (seq unstamped) (seq without-personal))
+      (store/transact!
+       (fn [current]
+         (let [now (store/now)
+               stamped
+               (reduce (fn [result tenant]
+                         (assoc-in result
+                                   [:identity :organizations (:id tenant)
+                                    :tenant/kind]
+                                   :organization))
+                       current
+                       unstamped)]
+           (reduce
+            (fn [result user]
+              ;; Claims are resolved against the state being written, not the
+              ;; snapshot: two Users migrated in one pass must not both be
+              ;; handed the same slug.
+              (let [written (identity-state result)
+                    tenant-id (str "org-" (UUID/randomUUID))
+                    membership-id (str "membership-" (UUID/randomUUID))
+                    tenant (personal-tenant-record
+                            written {:tenant-id tenant-id
+                                     :user-id (:id user)
+                                     :account-id (:account-id user)
+                                     :now now})]
+                (-> result
+                    (assoc-in [:identity :organizations tenant-id] tenant)
+                    (assoc-in [:identity :memberships membership-id]
+                              {:id membership-id
+                               :organization-id tenant-id
+                               :user-id (:id user)
+                               :role :owner
+                               :created-at now})
+                    (update :events conj
+                            {:type :identity/personal-tenant-created
+                             :at now
+                             :organization-id tenant-id
+                             :user-id (:id user)}))))
+            stamped
+            without-personal)))))))
+
 (defn session-organization-did
   "The `did:web` of the organization this session belongs to, or nil.
 
@@ -439,14 +581,21 @@
   Returns the domain of the single configured organization. A deployment hosting
   several organizations serves one document per domain and cannot use this; that
   is production multi-tenant hosting, which `docs/tenant-model.md` already scopes
-  out of this application."
+  out of this application.
+
+  Since ADR-0023 every User also owns a personal tenant, so \"the single
+  configured tenant\" is no longer the same statement as \"the organization\":
+  an organization is preferred, and a personal tenant answers only when there is
+  no organization to name."
   []
   (when (:publish-did-web? @runtime-identity-profile)
-    (let [state (identity-state (store/snapshot))]
-      (some (fn [organization]
-              (when (:organization-id organization)
-                (:domain organization)))
-            (vals (:organizations state))))))
+    (let [state (identity-state (store/snapshot))
+          named (filter :organization-id (vals (:organizations state)))]
+      (or (some (fn [tenant]
+                  (when (= :organization (tenant-kind tenant))
+                    (:domain tenant)))
+                named)
+          (some :domain named)))))
 
 (defn membership-credential-context
   "Everything `cloud.itonami.app.credential` needs to issue a membership
@@ -491,6 +640,7 @@
           [:memberships (:membership-id session) :role]))
 
 (defn public-state [token]
+  (ensure-personal-tenants!)
   (ensure-did-links!)
   (let [state (identity-state (store/snapshot))
         session (session-by-token token)
@@ -519,6 +669,7 @@
                      (assoc (select-keys organization [:id :organization-id
                                                        :did :name :domain
                                                        :contact-domain :status])
+                            :kind (name (tenant-kind organization))
                             :profile-complete?
                             (boolean (:organization-id organization))
                             :role (:role membership)
@@ -580,8 +731,8 @@
     (when-not (valid-account-id? organization-slug)
       (throw (ex-info "有効な Organization ID を入力してください。"
                       {:type :identity/invalid-registration})))
-    (when (some #(= organization-slug (:organization-id %))
-                (vals (:organizations state)))
+    ;; Checked against Users as well as tenants: one owner namespace (ADR-0023).
+    (when (slug-claimed-by state organization-slug {})
       (throw (ex-info "この Organization ID は既に使用されています。"
                       {:type :identity/already-registered})))
     (let [organization-record-id (str "org-" (UUID/randomUUID))
@@ -595,6 +746,7 @@
              (assoc-in
               [:identity :organizations organization-record-id]
               {:id organization-record-id
+               :tenant/kind :organization
                :organization-id organization-slug
                :did organization-did
                :name (or (some-> organization-name str str/trim not-empty)
@@ -626,7 +778,8 @@
        :did organization-did})))
 
 (defn switch-organization!
-  "Change only this session's active organization after membership proof."
+  "Change this session's active organization after membership proof, and
+  remember it as where this User's next session lands (ADR-0023)."
   [session {:keys [organization-id]}]
   (require-passkey! session)
   (let [state (identity-state (store/snapshot))
@@ -652,6 +805,9 @@
                       {:organization-id (:organization-id membership)
                        :membership-id (:id membership)
                        :updated-at (store/now)})
+           (assoc-in [:identity :users (:user-id session)
+                      :default-membership-id]
+                     (:id membership))
            (update :events conj
                    {:type :identity/organization-switched
                     :at (store/now)
@@ -663,7 +819,14 @@
 
 (defn register!
   "Create a provisional local owner. Profile fields are optional because the
-  first trust-bearing operation is Passkey registration."
+  first trust-bearing operation is Passkey registration.
+
+  The owner always gets a personal tenant (ADR-0023). An organization is
+  created beside it only when this call actually names one — a registration
+  with no organization identity used to produce a tenant called \"Personal\"
+  that was an organization in every other respect, which is the conflation this
+  ADR removes. When both exist the session lands on the organization, since
+  that is what the caller asked for."
   [{:keys [organization-name organization-id domain display-name
            account-id contact-email email]}]
   (when (registered?)
@@ -683,9 +846,14 @@
                               (canonical-email account-id)
                               (str "pending-" (normalize-id (random-token 8))
                                    "@" (account-domain)))
-          organization-record-id (str "org-" (UUID/randomUUID))
+          now (store/now)
+          organization-name (some-> organization-name str/trim not-empty)
+          organization? (boolean (or organization-slug organization-name))
+          organization-record-id (when organization? (str "org-" (UUID/randomUUID)))
+          personal-tenant-id (str "org-" (UUID/randomUUID))
           user-id (str "user-" (UUID/randomUUID))
-          membership-id (str "membership-" (UUID/randomUUID))
+          membership-id (when organization? (str "membership-" (UUID/randomUUID)))
+          personal-membership-id (str "membership-" (UUID/randomUUID))
           organization-domain (when organization-slug
                                 (organization-domain organization-slug))
           organization-did (when organization-slug
@@ -694,7 +862,9 @@
           contact-email (normalize-email (or contact-email email))
           owner-name (or (some-> display-name str/trim not-empty)
                          "Passkey user")
-          directory-model (directory/directory organization-record-id
+          primary-tenant-id (or organization-record-id personal-tenant-id)
+          primary-membership-id (or membership-id personal-membership-id)
+          directory-model (directory/directory primary-tenant-id
                                                 (account-domain))
           directory-user (directory/user user-id canonical-address
                                          {:display-name owner-name
@@ -704,39 +874,62 @@
                             :organization
                             {:did organization-did
                              :labels #{:local :organization}})
+          organization-record
+          (when organization?
+            {:id organization-record-id
+             :tenant/kind :organization
+             :organization-id organization-slug
+             :did organization-did
+             :name (or organization-name organization-slug)
+             :domain organization-domain
+             :contact-domain contact-domain
+             :status (if organization-slug :active :pending-profile)
+             :subject organization-subject :created-at now})
           user-subject (identity/subject user-id :person
                                         {:labels #{:local :owner}})
           user-handle (random-token 32)
-          now (store/now)]
+          ;; Resolved against the organization this same call is about to
+          ;; create, so a registration that names the owner's handle and the
+          ;; organization identically does not hand one string to two owners.
+          personal-record
+          (personal-tenant-record
+           {:organizations (if organization?
+                             {organization-record-id organization-record}
+                             {})
+            :users {}}
+           {:tenant-id personal-tenant-id :user-id user-id
+            :account-id account-id :now now})]
       (directory/add-user directory-model directory-user)
       (store/transact!
        (fn [state]
-         (-> state
-             (assoc-in [:identity :organizations organization-record-id]
-                       {:id organization-record-id
-                        :organization-id organization-slug
-                        :did organization-did
-                        :name (or (some-> organization-name str/trim not-empty)
-                                  "Personal")
-                        :domain organization-domain
-                        :contact-domain contact-domain
-                        :status (if organization-slug :active :pending-profile)
-                        :subject organization-subject :created-at now})
-             (assoc-in [:identity :users user-id]
-                       {:id user-id :did nil
-                        :account-id account-id :email canonical-address
-                        :contact-email contact-email
-                        :display-name owner-name
-                        :user-handle user-handle :passkey-enrolled? false
-                        :status :pending-passkey
-                        :subject user-subject :created-at now})
-             (assoc-in [:identity :memberships membership-id]
-                       {:id membership-id
-                        :organization-id organization-record-id
-                        :user-id user-id :role :owner :created-at now})
-             (update :events conj {:type :identity/registered :at now
-                                   :organization-id organization-record-id
-                                   :user-id user-id}))))
+         (cond-> state
+           organization?
+           (-> (assoc-in [:identity :organizations organization-record-id]
+                         organization-record)
+               (assoc-in [:identity :memberships membership-id]
+                         {:id membership-id
+                          :organization-id organization-record-id
+                          :user-id user-id :role :owner :created-at now}))
+
+           :always
+           (-> (assoc-in [:identity :organizations personal-tenant-id]
+                         personal-record)
+               (assoc-in [:identity :memberships personal-membership-id]
+                         {:id personal-membership-id
+                          :organization-id personal-tenant-id
+                          :user-id user-id :role :owner :created-at now})
+               (assoc-in [:identity :users user-id]
+                         {:id user-id :did nil
+                          :account-id account-id :email canonical-address
+                          :contact-email contact-email
+                          :display-name owner-name
+                          :user-handle user-handle :passkey-enrolled? false
+                          :status :pending-passkey
+                          :default-membership-id primary-membership-id
+                          :subject user-subject :created-at now})
+               (update :events conj {:type :identity/registered :at now
+                                     :organization-id primary-tenant-id
+                                     :user-id user-id})))))
       (assoc (issue-session! user-id)
              :user-id user-id :email canonical-address))))
 
@@ -780,6 +973,12 @@
         invitation-id (str "organization-invitation-" (UUID/randomUUID))
         expires-at (str (.plusSeconds (Instant/now) enrollment-seconds))
         now (store/now)]
+    ;; A personal tenant has exactly one member, its owner (ADR-0023). It is
+    ;; the one tenant whose slug is also a person's handle, so a second member
+    ;; there would be working inside somebody else's name.
+    (when (= :personal (tenant-kind organization))
+      (throw (ex-info "個人テナントに他の User は追加できません。Organization を作成してください。"
+                      {:type :identity/personal-tenant})))
     (when-not (:organization-id organization)
       (throw (ex-info "User を追加する前に Organization ID を設定してください。"
                       {:type :identity/organization-required})))
@@ -894,6 +1093,11 @@
                         merge {:organization-id (:organization-id invitation)
                                :membership-id membership-id
                                :updated-at now})
+             ;; Accepting is a deliberate "work here now", so it is also where
+             ;; the next session lands (ADR-0023).
+             (assoc-in [:identity :users (:user-id session)
+                        :default-membership-id]
+                       membership-id)
              (update :events conj
                      {:type :identity/organization-invitation-accepted
                       :at now
@@ -1161,13 +1365,21 @@
   session)
 
 (defn configure-organization!
-  "Claim the public Organization ID after the owner has enrolled a Passkey."
+  "Claim this session's tenant slug after the owner has enrolled a Passkey.
+
+  Which name is being claimed depends on what the tenant is (ADR-0023). On a
+  personal tenant the slug IS the owner's handle — one string, one owner — so
+  the User's `:account-id` and public address are claimed with it. On an
+  organization the owner's handle is left alone: filling it in from the
+  organization's slug, which is what this did before, is how a person ends up
+  addressed as their employer and how one string acquires two owners."
   [session {:keys [organization-id]}]
   (require-passkey! session)
   (let [state (identity-state (store/snapshot))
         membership (get-in state [:memberships (:membership-id session)])
         organization (get-in state [:organizations (:organization-id session)])
         owner (get-in state [:users (:user-id session)])
+        personal? (= :personal (tenant-kind organization))
         organization-slug (normalize-id organization-id)]
     (when-not (= :owner (:role membership))
       (throw (ex-info "Organization ID の設定には owner 権限が必要です。"
@@ -1175,49 +1387,63 @@
     (when-not (valid-account-id? organization-slug)
       (throw (ex-info "有効な Organization ID を入力してください。"
                       {:type :identity/invalid-registration})))
-    (when (some #(and (= organization-slug (:organization-id %))
-                      (not= (:id organization) (:id %)))
-                (vals (:organizations state)))
+    (when (slug-claimed-by state organization-slug
+                           (cond-> {:tenant-id (:id organization)}
+                             personal? (assoc :user-id (:id owner))))
       (throw (ex-info "この Organization ID は既に使用されています。"
                       {:type :identity/already-registered})))
     (when (and (:organization-id organization)
                (not= organization-slug (:organization-id organization)))
       (throw (ex-info "Organization ID は設定後に変更できません。"
                       {:type :identity/organization-id-immutable})))
+    (when (and personal?
+               (:account-id owner)
+               (not= organization-slug (:account-id owner)))
+      (throw (ex-info "個人テナントの ID はアカウント ID と同じである必要があります。"
+                      {:type :identity/invalid-registration})))
     (let [domain (organization-domain organization-slug)
           organization-did (organization-did organization-slug)
-          owner-account-id (or (:account-id owner) organization-slug)
-          owner-email (canonical-email owner-account-id)
+          owner-account-id (if personal?
+                             organization-slug
+                             (:account-id owner))
+          owner-email (if owner-account-id
+                        (canonical-email owner-account-id)
+                        (:email owner))
           now (store/now)]
       (store/transact!
        (fn [current]
-         (-> current
-             (update-in [:identity :organizations (:id organization)]
-                        merge
-                        {:organization-id organization-slug
-                         :did organization-did
-                         :name (if (= "Personal" (:name organization))
-                                 organization-slug
-                                 (:name organization))
-                         :domain domain
-                         :status :active
-                         :subject
-                         (identity/subject
-                          (or organization-did (:id organization))
-                          :organization
-                          {:did organization-did
-                           :labels #{:local :organization}})
-                         :updated-at now})
-             (update-in [:identity :users (:id owner)]
-                        merge
-                        {:account-id owner-account-id
-                         :email owner-email
-                         :updated-at now})
-             (update :events conj
-                     {:type :identity/organization-configured :at now
-                      :organization-id (:id organization)
-                      :organization-did organization-did
-                      :user-id (:id owner)}))))
+         (cond-> current
+           :always
+           (-> (update-in [:identity :organizations (:id organization)]
+                          merge
+                          {:organization-id organization-slug
+                           :did organization-did
+                           :name (if (= "Personal" (:name organization))
+                                   organization-slug
+                                   (:name organization))
+                           :domain domain
+                           :status :active
+                           :subject
+                           (identity/subject
+                            (or organization-did (:id organization))
+                            :organization
+                            {:did organization-did
+                             :labels (if personal?
+                                       #{:local :personal}
+                                       #{:local :organization})})
+                           :updated-at now})
+               (update :events conj
+                       {:type :identity/organization-configured :at now
+                        :organization-id (:id organization)
+                        :organization-did organization-did
+                        :user-id (:id owner)}))
+
+           personal?
+           (update-in [:identity :users (:id owner)]
+                      merge
+                      {:account-id owner-account-id
+                       :email owner-email
+                       :updated-at now}))))
       {:organization-id organization-slug
        :domain domain
        :did organization-did
