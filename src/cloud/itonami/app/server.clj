@@ -36,6 +36,7 @@
             [cloud.itonami.app.messenger :as messenger]
             [cloud.itonami.app.portfolio :as portfolio]
             [cloud.itonami.app.mail-age-key :as age-key]
+            [cloud.itonami.app.mail-authentication :as authentication]
             [cloud.itonami.app.mail-projects :as mail-projects]
             [cloud.itonami.app.project-repository :as project-repository]
             [cloud.itonami.app.project-remote :as project-remote]
@@ -1324,6 +1325,14 @@
                     ;; storing bodies" are different facts and the second is the
                     ;; one that fails silently.
                     :sealing (age-key/status))))
+
+    ;; What the receiving server decided about each message's authenticity.
+    ;; A read, and organization-scoped like the rest of this router.
+    (and (= method "GET") (= path "/api/mail/projects/authentication"))
+    (let [_ (require-app-session! exchange)]
+      (send! exchange 200
+             (authentication/summarize
+              (vals (get-in (store/snapshot) [:mail :messages] {})))))
 
     (and (= method "GET") (= path "/api/mail/projects/unassigned"))
     (let [session (require-app-session! exchange)]
