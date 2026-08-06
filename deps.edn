@@ -39,6 +39,14 @@
   {:git/url "https://github.com/kotoba-lang/kotoba.git"
    :git/tag "v0.6.29"
    :git/sha "42ae4941089a5be3d06e46d440680589e781f19f"}
+  ;; yotei — the scheduling domain, which used to be src/.../scheduler.clj here.
+  ;; Both halves of scheduling (予約 = a stranger takes a published slot,
+  ;; appointment = an organizer proposes a time) now answer "do these overlap"
+  ;; from one implementation instead of two. scheduler.clj is the adapter over
+  ;; this app's store; the rules are yotei.schedule's.
+  io.github.cloud-itonami/yotei
+  {:git/url "https://github.com/cloud-itonami/yotei.git"
+   :git/sha "7d19a55d3bf7e14ebccefc76478d361b14111c74"}
   io.github.kotoba-lang/calendar
   {:git/url "https://github.com/kotoba-lang/calendar.git"
    :git/sha "2d9b9fc5efe80ea42afaa30bbdf8915fe4d9540f"}
