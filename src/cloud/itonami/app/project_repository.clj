@@ -439,11 +439,14 @@
 (defn create-issue!
   ([scope request]
    (create-issue! scope request (set (map :id (:agents (store/snapshot))))))
-  ([scope {:keys [title description column repository-ids blocker-ids agent-id]} known-agents]
+  ([scope {:keys [title description column repository-ids blocker-ids agent-id
+                  mail-ids]}
+    known-agents]
   (let [title (not-empty (str/trim (str title)))
         column (or (not-empty (str column)) "backlog")
         repository-ids (vec (distinct (remove str/blank? (map str repository-ids))))
-        blocker-ids (vec (distinct (remove str/blank? (map str blocker-ids))))]
+        blocker-ids (vec (distinct (remove str/blank? (map str blocker-ids))))
+        mail-ids (vec (distinct (remove str/blank? (map str mail-ids))))]
     (when-not title
       (throw (ex-info "Issue のタイトルを入力してください。"
                       {:type :project/invalid-issue})))
@@ -469,6 +472,11 @@
                    :description (or (not-empty (str/trim (str description))) "")
                    :column column :repository-ids repository-ids
                    :blocker-ids blocker-ids
+                   ;; What this issue is about, when mail is what caused it.
+                   ;; Ids into the message plane rather than copied subjects, so
+                   ;; the issue keeps pointing at the thing even after the body
+                   ;; has been dropped from the annex and lives only on B2.
+                   :mail-ids mail-ids
                    :agent-id (not-empty (str agent-id))
                    :created-at (store/now) :updated-at (store/now)}]
         (store/transact!

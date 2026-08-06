@@ -1361,8 +1361,35 @@
       (require-origin! exchange config)
       (require-csrf! exchange session)
       (send! exchange 200
+             ;; A project may be named to remove one filing; without it the
+             ;; message leaves every project, which is what the single-filing
+             ;; version meant.
              (mail-projects/unassign! (:organization-id session)
-                                      (:message request))))
+                                      (:message request)
+                                      (:project request))))
+
+    ;; A conversation is the unit a person files. Nobody decides that the third
+    ;; reply belongs to `legal` and the fourth does not.
+    (and (= method "POST") (= path "/api/mail/projects/assign-thread"))
+    (let [session (require-app-session! exchange)
+          request (read-json exchange)]
+      (require-origin! exchange config)
+      (require-csrf! exchange session)
+      (send! exchange 200
+             (mail-projects/assign-thread! (:organization-id session)
+                                           (:thread request)
+                                           (:project request)
+                                           (:user-id session))))
+
+    (and (= method "GET")
+         (id-from-path path #"/api/mail/projects/messages/([^/]+)"))
+    (let [session (require-app-session! exchange)
+          message (id-from-path path #"/api/mail/projects/messages/([^/]+)")]
+      (send! exchange 200
+             {:schema "cloud.itonami.app.mail-projects.v1"
+              :message message
+              :projects (mail-projects/projects-of (:organization-id session)
+                                                   message)}))
 
     :else (send! exchange 404 {:error "not_found" :path path})))
 
