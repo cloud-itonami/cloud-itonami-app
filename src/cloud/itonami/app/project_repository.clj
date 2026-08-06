@@ -232,13 +232,12 @@
         user (get-in state [:identity :users (:user-id scope)])
         organization (get-in state [:identity :organizations
                                     (:organization-id scope)])
-        tenant-kind (or (:tenant/kind organization)
-                        (when (some #(and (= :identity/registered (:type %))
-                                          (= (:organization-id scope)
-                                             (:organization-id %)))
-                                    (:events state))
-                          :personal)
-                        :organization)
+        ;; `:tenant/kind` is written by `identity` now (ADR-0023), including a
+        ;; migration for stores that predate it. This used to guess instead —
+        ;; the tenant named by `:identity/registered` was called personal —
+        ;; which is wrong for every deployment whose first tenant was a real
+        ;; organization, and there was nothing to correct it with.
+        tenant-kind (or (:tenant/kind organization) :organization)
         membership (some #(when (and (= (:user-id scope) (:user-id %))
                                      (= (:organization-id scope)
                                         (:organization-id %))) %)

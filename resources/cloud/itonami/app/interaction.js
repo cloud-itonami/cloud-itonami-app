@@ -7007,8 +7007,15 @@
       $('#passkey-register').textContent = data.user['passkey-enrolled?']
         ? '別の Passkey を追加' : 'Passkey を登録';
       const organizationReady = Boolean(data.organization?.['profile-complete?']);
+      // A personal tenant is a tenant like any other; what it is not is a place
+      // other people can be added to, so the switcher and the ID form say which
+      // one you are standing in rather than calling both "Organization".
+      const personalTenant = data.organization?.kind === 'personal';
       $('#organization-name').textContent =
-        organizationReady ? data.organization.name : 'Organization ID 未設定';
+        organizationReady
+          ? (personalTenant ? `${data.organization.name} · 個人`
+             : data.organization.name)
+          : (personalTenant ? '個人テナント ID 未設定' : 'Organization ID 未設定');
       $('#organization-domain').textContent = organizationReady
         ? `${data.organization.domain} · ${data.organization.role}`
         : 'Passkey 登録後に設定できます';
@@ -7019,8 +7026,10 @@
       (data.organizations || []).forEach((organization) => {
         const option = document.createElement('option');
         option.value = organization.id;
-        option.textContent = organization.name || organization['organization-id']
+        const label = organization.name || organization['organization-id']
           || organization.id;
+        option.textContent = organization.kind === 'personal'
+          ? `${label} · 個人` : label;
         option.selected = Boolean(organization['active?']);
         organizationSwitcher.append(option);
       });
@@ -7030,7 +7039,11 @@
         ? `${invitations.length}件の参加待ち招待があります。コードを入力して参加できます。`
         : '参加待ちの招待はありません。';
       $('#organization-form').hidden = organizationReady;
-      $('#member-card').hidden = !organizationReady;
+      $('#organization-submit').textContent = personalTenant
+        ? 'アカウント ID を設定' : 'Organization ID を設定';
+      // Members belong to organizations. A personal tenant has exactly one
+      // member by construction, so the card that adds them stays away.
+      $('#member-card').hidden = !organizationReady || personalTenant;
       renderMembers(data.organization);
       renderConnectors(data);
       loadCloudAlias(data);

@@ -8,7 +8,7 @@ Installation ── Session ── User (did:key)
                             │
                        Membership
                             │
-                         Tenant
+                         Tenant ── kind: personal | organization
                       ┌─────┴─────┐
                       │           │
            Organization profile  WorkerAssignment
@@ -17,6 +17,11 @@ Installation ── Session ── User (did:key)
                                       │
                                Artificial organism
 ```
+
+A Tenant is either a person's own namespace or an organization. Both are
+Tenants, so everything scoped by tenant — workspaces, connections, governed
+Kanban partitions, repository owner ids — behaves the same in either. What
+differs is who may be in one. See ADR-0023.
 
 ## User
 
@@ -30,6 +35,25 @@ DID.
 A Tenant has an internal UUID. This remains stable even if its Organization
 ID, legal name, domain, or branding changes. Memberships always reference the
 internal Tenant ID.
+
+## Personal tenant
+
+Every User owns exactly one personal tenant, created with the User. It is the
+person's own namespace and it stands beside organizations rather than inside
+one — the arrangement GitHub has, where a personal account is an owner in the
+same namespace as an organization. There is no "primary organization".
+
+Its slug is the User's account ID: one string, one owner. A slug names a Tenant
+or a User and never both, because `<slug>.<organization-domain-suffix>` and
+`<slug>@<account-domain>` are derived from those two and would otherwise
+address two different parties. The personal tenant is the single exception, and
+only because it holds its owner's handle by construction.
+
+A personal tenant has exactly one member. `add-user!` refuses it: a second
+person inside a tenant named after the first would be working under someone
+else's name. Moving work between a personal tenant and an organization uses a
+tenant connection (ADR-0014) — approved, capability-scoped, expiring — not a
+membership.
 
 ## Worker assignment
 
@@ -48,6 +72,12 @@ one active membership at a time, so workspace reads, OAuth connections, AO
 workers, and mutations cannot accidentally combine organizations. The
 organization switcher changes only that session's active membership after
 membership proof.
+
+Where a *new* session lands is the User's `:default-membership-id`: the tenant
+they last selected, set at registration and updated by the switcher and by
+accepting an invitation. It falls back to the oldest membership. It is never
+map order — which is what it was before ADR-0023, so which organization a
+person signed in to was decided by an insertion order they never saw.
 
 Governed Kanban state adds a physical boundary to this logical ACL. Its
 organization graph, approval policy, WorkItems, decisions and receipts are
@@ -68,8 +98,9 @@ Matching an email address alone never grants Membership.
 ## Organization ID and domain
 
 An Organization ID is a globally reserved human-readable slug within a
-deployment. It may be used to derive a managed domain. A custom or apex domain
-must pass deployment-specific DNS/HTTPS verification.
+deployment — reserved against User account IDs as well as other Tenants, since
+they share one namespace. It may be used to derive a managed domain. A custom or
+apex domain must pass deployment-specific DNS/HTTPS verification.
 
 `did:web` remains absent until the deployment is configured to publish DID
 documents for managed domains. Configuration alone does not prove ownership.

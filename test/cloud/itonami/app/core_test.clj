@@ -505,7 +505,13 @@
           (let [before (local-identity/public-state token)
                 etzhayyim (some #(when (= "etzhayyim" (:organization-id %)) %)
                                 (:organizations before))]
-            (is (= 2 (count (:organizations before))))
+            ;; Three: the two organizations, plus the personal tenant ADR-0023
+            ;; migrates this pre-existing User into. Neither seeded tenant is
+            ;; reclassified — a tenant called "Personal" is still an
+            ;; organization if that is how it was created.
+            (is (= 3 (count (:organizations before))))
+            (is (= ["organization" "organization" "personal"]
+                   (sort (map :kind (:organizations before)))))
             (is (= 1 (count (filter :active? (:organizations before)))))
             (local-identity/switch-organization!
              (local-identity/session token)
@@ -515,7 +521,80 @@
                      (get-in after [:organization :organization-id])))
               (is (= (:id etzhayyim) (:active-organization-id after)))
               (is (= #{"personal" "etzhayyim"}
-                     (set (map :organization-id (:organizations after)))))))))
+                     (->> (:organizations after)
+                          (filter #(= "organization" (:kind %)))
+                          (map :organization-id)
+                          set)))))))
+      (finally
+        (reset! store/state previous)))))
+
+(deftest a-personal-tenant-is-the-users-own-namespace-and-landing-is-deliberate
+  (let [temporary (java.nio.file.Files/createTempDirectory
+                   "cloud-itonami-personal-tenant-test"
+                   (make-array java.nio.file.attribute.FileAttribute 0))
+        previous @store/state]
+    (try
+      (reset! store/state (store/initial-state))
+      (with-redefs [config-loader/data-dir (fn [] (.toFile temporary))
+                    local-identity/provider-config
+                    (fn [provider]
+                      {:provider provider :name (name provider)
+                       :configured? false :scopes []})]
+        (let [{:keys [token user-id]} (local-identity/register!
+                                       {:display-name "Owner"})
+              session (local-identity/session token)]
+          ;; A registration that names no organization produces exactly one
+          ;; tenant, and it is the person's own — not an organization called
+          ;; "Personal", which is what it used to be.
+          (let [public (local-identity/public-state token)]
+            (is (= ["personal"] (mapv :kind (:organizations public))))
+            (is (false? (get-in public [:organization :profile-complete?]))))
+          (store/transact!
+           (fn [state]
+             (-> state
+                 (assoc-in [:identity :users user-id :passkey-enrolled?] true)
+                 (assoc-in [:identity :users user-id :did] "did:key:zOwner")
+                 (update-in [:identity :sessions (:id session)]
+                            merge passkey-session-options))))
+          ;; Claiming the personal tenant's slug claims the handle: one string,
+          ;; one owner.
+          (local-identity/configure-organization!
+           (local-identity/session token) {:organization-id "owner"})
+          (let [public (local-identity/public-state token)]
+            (is (= "owner" (get-in public [:user :account-id])))
+            (is (= "owner@cloud-itonami.app" (get-in public [:user :email])))
+            (is (= "owner" (get-in public [:organization :organization-id])))
+            (is (= "personal" (get-in public [:organization :kind]))))
+          ;; and that name is then unavailable to an organization
+          (is (thrown-with-msg?
+               clojure.lang.ExceptionInfo #"既に使用"
+               (local-identity/create-organization!
+                (local-identity/session token)
+                {:organization-id "owner" :organization-name "Owner Inc"})))
+          ;; nobody else works inside a person's name
+          (is (thrown-with-msg?
+               clojure.lang.ExceptionInfo #"個人テナント"
+               (local-identity/add-user!
+                (local-identity/session token)
+                {:display-name "Member" :email "member@example.jp"
+                 :role "member"})))
+          ;; the organization stands beside the personal tenant, and the switch
+          ;; decides where the NEXT session lands rather than map order
+          (let [created (local-identity/create-organization!
+                         (local-identity/session token)
+                         {:organization-id "etzhayyim"
+                          :organization-name "Etzhayyim"})]
+            (local-identity/switch-organization!
+             (local-identity/session token)
+             {:organization-id (:organization-id created)})
+            (let [next-token (:token (local-identity/issue-session!
+                                      user-id passkey-session-options))]
+              (is (= "etzhayyim"
+                     (get-in (local-identity/public-state next-token)
+                             [:organization :organization-id])))
+              (is (= "organization"
+                     (get-in (local-identity/public-state next-token)
+                             [:organization :kind])))))))
       (finally
         (reset! store/state previous)))))
 
@@ -567,7 +646,9 @@
           (is (= :organization-invitation (:kind invitation)))
           (is (string? code))
           (is (not (str/includes? (pr-str (store/snapshot)) code)))
-          (is (= 1
+          ;; The seeded tenant plus the personal one ADR-0023 migrates this
+          ;; User into; the invitation is still to a third.
+          (is (= 2
                  (count (:organizations
                          (local-identity/public-state member-token)))))
           (is (= 1
@@ -584,7 +665,9 @@
           (let [accepted (local-identity/public-state member-token)]
             (is (= "etzhayyim"
                    (get-in accepted [:organization :organization-id])))
-            (is (= 2 (count (:organizations accepted))))
+            (is (= 3 (count (:organizations accepted))))
+            (is (= 1 (count (filter #(= "personal" (:kind %))
+                                    (:organizations accepted)))))
             (is (empty? (:organization-invitations accepted))))
           (is (thrown-with-msg?
                clojure.lang.ExceptionInfo #"無効"
