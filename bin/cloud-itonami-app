@@ -1,14 +1,18 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Opens the web surface as an application window.
+# Opens the web surface in the native application window.
 #
-# There used to be a second surface here: a kotoba/dom program rendered by the
-# kotoba-lang/shell AppKit host and styled with liquid-glass. It was retired on
-# 2026-08-06, because it had become the older of the two user interfaces while
-# remaining the one this launcher preferred — so running the app showed the
-# older one. The web surface, built on jp-go-dds, is the only surface now.
-# kotoba-lang/shell remains a dependency for EventKit and Keychain.
+# What the window is called, what it shows in the Dock and how large it opens
+# are declared in app.kotoba.edn and nowhere else. This file decides only
+# whether a server needs starting first.
+#
+# There used to be a second surface: a kotoba/dom program rendered by the same
+# AppKit host and styled with liquid-glass. It was retired on 2026-08-06,
+# because it had become the older of the two user interfaces while remaining the
+# one this launcher preferred — so running the app showed the older one. The web
+# surface, built on jp-go-dds, is the only surface now; the native host carries
+# it, which is also where EventKit and Keychain come from.
 #
 # The server is usually already resident under launchd (dev.cloud-itonami.app,
 # out of ~/.cloud-itonami/app). A second one only loses the bind on 1338, so
@@ -28,10 +32,24 @@ trap cleanup EXIT INT TERM
 
 healthy() { curl -fsS http://127.0.0.1:1338/health >/dev/null 2>&1; }
 
+shell_dir="${CLOUD_ITONAMI_SHELL_DIR:-}"
+if [[ -z "$shell_dir" && -d "$app_dir/../../kotoba-lang/shell" ]]; then
+  shell_dir="$(CDPATH= cd -- "$app_dir/../../kotoba-lang/shell" && pwd)"
+fi
+
 open_window() {
+  # The native host is the application window: app.kotoba.edn gives it the name,
+  # the icon and the window, so the Dock shows Cloud Itonami rather than a
+  # browser. The manifest is the only place any of that is written down.
+  if [[ -n "$shell_dir" && -x "$shell_dir/bin/kotoba-shell" ]]; then
+    "$shell_dir/bin/kotoba-shell" app run --target macos \
+      --manifest "$app_dir/app.kotoba.edn" --execute
+    return
+  fi
+  # Without a shell checkout the surface is still reachable, but as a browser
+  # window: same page, no application identity.
+  printf 'kotoba-lang/shell not found; opening %s in the browser instead.\n' "$url"
   local chrome="/Applications/Google Chrome.app"
-  # An app-mode window has no tab strip and no address bar, so the surface owns
-  # the whole frame. The fallback still shows the same page.
   if [[ -d "$chrome" ]]; then
     open -na "$chrome" --args --app="$url" --new-window
   else

@@ -1,0 +1,29 @@
+;; The desktop application, declared rather than assembled at the call site.
+;;
+;; `bin/cloud-itonami-app` passes this file to `kotoba-shell app run`, which
+;; turns it into the native host's arguments. Changing the name, the icon or the
+;; window here changes the running application; nothing needs to be edited in
+;; the launcher, and no other file names the title or the icon.
+;;
+;; A file named here that does not exist fails the run with
+;; :shell/app-icon-missing rather than launching with the generic host icon,
+;; because an icon that quietly does not apply looks exactly like one that was
+;; never set.
+;;
+;; :kotoba/web is the surface: the window is the loopback web surface, which is
+;; the application's only interface. A `kotoba:dom` surface was retired on
+;; 2026-08-06 (see README) and is not what this manifest describes.
+{:app/id "cloud.itonami.app"
+ :app/name "Cloud Itonami"
+ :app/version "0.1.0"
+ :app/icon "resources/cloud/itonami/app/icon.png"
+ :runtime {:surface :kotoba/web
+           :window {:web-url "http://localhost:1338/"
+                    :width 1100 :height 860
+                    :min-width 720 :min-height 600}}
+ :local/contracts
+ {:language :kotoba
+  :shell :kotoba/web
+  :api [:openai/chat-completions :openai/models :management/state]
+  :memory :kotoba/kgraph
+  :egress :explicit-cloud-opt-in}}

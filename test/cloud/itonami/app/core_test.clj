@@ -1,5 +1,6 @@
 (ns cloud.itonami.app.core-test
   (:require [clojure.test :refer [deftest is]]
+            [clojure.edn :as edn]
             [clojure.java.io :as io]
             [clojure.set :as set]
             [clojure.string :as str]
@@ -152,9 +153,31 @@
       (finally
         (reset! store/state previous)))))
 
+(deftest desktop-manifest-declares-the-window-the-shell-will-open
+  (let [manifest (edn/read-string (slurp (io/file "app.kotoba.edn")))
+        icon (io/file (:app/icon manifest))]
+    (is (= "Cloud Itonami" (:app/name manifest)))
+    ;; The icon is the one thing here that can be declared and still not exist.
+    ;; kotoba-shell fails the run in that case, so catch it at this distance
+    ;; instead of at launch.
+    (is (.isFile icon) (str "app.kotoba.edn names a missing icon: " (:app/icon manifest)))
+    (is (= :kotoba/web (get-in manifest [:runtime :surface])))
+    ;; The window must point at the surface this server actually serves; the
+    ;; port is load-bearing for WebAuthn and cannot drift.
+    (is (= "http://localhost:1338/" (get-in manifest [:runtime :window :web-url])))))
+
+(deftest web-surface-serves-the-same-icon-the-manifest-gives-the-window
+  (let [manifest (edn/read-string (slurp (io/file "app.kotoba.edn")))]
+    (is (= "cloud/itonami/app/icon.png"
+           (str/replace (:app/icon manifest) #"^resources/" ""))
+        "the icon route reads this from the classpath, so the paths must agree")
+    (is (some? (io/resource "cloud/itonami/app/icon.png")))))
+
 (deftest web-surface-uses-jp-go-digital-design-system
   (with-redefs [store/snapshot (constantly (store/initial-state))]
     (let [html (web/page-html config)]
+      (is (re-find #"rel=\"icon\"" html))
+      (is (re-find #"apple-touch-icon" html))
       (is (re-find #"class=\"dads-heading\"" html))
       (is (re-find #"class=\"composer\"" html))
       (is (re-find #"id=\"chat-thread\"" html))

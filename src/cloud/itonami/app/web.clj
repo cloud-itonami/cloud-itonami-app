@@ -948,7 +948,10 @@
     (page/->page
      {:title (str "Chat | " brand)
       :description "ローカル優先のAIワークスペース"
-      :css css :app-css app-css :head [[:script signal-js] [:script interaction-js]]}
+      :css css :app-css app-css
+      :head [[:link {:rel "icon" :type "image/png" :href "/icon.png"}]
+             [:link {:rel "apple-touch-icon" :href "/icon.png"}]
+             [:script signal-js] [:script interaction-js]]}
      [:div {:class "workspace" :data-brand brand}
       [:aside {:class "sidebar" :aria-label "メインメニュー"}
        [:div {:class "brand"}
