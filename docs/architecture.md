@@ -13,8 +13,8 @@ its Swift implementation.
 
 | Harness responsibility | cloud-itonami-app authority |
 |---|---|
-| Desktop lifecycle and input | `kotoba-lang/shell` native host |
-| UI semantics | pure `kotoba:dom` surface program |
+| Desktop calendar and Keychain | `kotoba-lang/shell` native host |
+| UI semantics | web surface on jp-go-dds |
 | Provider selection | safe `.kotoba` policy + host-side mirror |
 | Local/cloud model transport | localhost service adapters |
 | Session memory | `kotoba.kgraph` EAV datoms + durable EDN |
@@ -1279,17 +1279,16 @@ membership to be an Organization owner or admin.
 
 ## Runtime boundaries
 
-The desktop process cannot call arbitrary remote URLs. It emits typed action
-events to `bin/cloud-itonami-app-action`, which only calls the fixed loopback API.
-The server selects a provider after policy evaluation. The default
-configuration binds only to `127.0.0.1`, enables only Ollama, and denies cloud
-egress.
+The application window cannot call arbitrary remote URLs. It is an app-mode
+window over the loopback web surface, and its content security policy admits
+only that origin. The server selects a provider after policy evaluation. The
+default configuration binds only to `127.0.0.1`, enables only Ollama, and
+denies cloud egress.
 
 ```text
-native window ── action event ──> fixed action adapter
-      ▲                                  │
-      │ kotoba:dom                       ▼
- pure app entry <── durable state <── loopback server
+application window ── loopback only ──> web surface (jp-go-dds)
+                                          │
+                                   durable state
                                           │
                                    provider policy
                                      │          │

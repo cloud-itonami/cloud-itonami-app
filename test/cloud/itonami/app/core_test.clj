@@ -3,7 +3,6 @@
             [clojure.java.io :as io]
             [clojure.set :as set]
             [clojure.string :as str]
-            [cloud.itonami.app.app :as app]
             [cloud.itonami.app.config :as config-loader]
             [cloud.itonami.app.did :as did]
             [cloud.itonami.app.documents :as documents]
@@ -152,18 +151,6 @@
                  (mapv :content (store/session-messages "stream"))))))
       (finally
         (reset! store/state previous)))))
-
-(deftest shell-surface-is-a-local-kotoba-dom-program
-  (with-redefs [config-loader/load-config (constantly config)
-                store/snapshot (constantly (store/initial-state))]
-    (let [ops (:kotoba.app/surface-ops (app/start))
-          attrs (filter #(= :dom/set-attr (first %)) ops)]
-      (is (seq ops))
-      (is (= [:dom/set-root 1] (last ops)))
-      (is (some #(and (= :data-action (nth % 2 nil))
-                      (= "local/chat" (nth % 3 nil)))
-                attrs))
-      (is (not-any? #(= :data-endpoint (nth % 2 nil)) attrs)))))
 
 (deftest web-surface-uses-jp-go-digital-design-system
   (with-redefs [store/snapshot (constantly (store/initial-state))]
