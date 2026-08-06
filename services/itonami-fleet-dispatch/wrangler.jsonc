@@ -11,12 +11,24 @@
   // 2026-07-30.
   "dispatch_namespaces": [
     { "binding": "FLEET", "namespace": "ai-gftd-repository-dispatch" }
-  ]
+  ],
 
-  // No route and no custom domain yet: reachable on workers.dev while exactly
-  // one real actor is behind it. Binding a hostname is a separate decision
-  // from proving the path works, and doing both at once makes a rollback
-  // ambiguous.
+  // app.itonami.cloud, bound 2026-08-06. The condition the earlier note set —
+  // "while exactly one real actor is behind it" — is now met: `yotei` is
+  // deployed in the namespace and was driven end to end through this router
+  // (openings page, select, propose, and a confirmed 予約 correctly removing
+  // its slot and returning 409).
+  //
+  // This is the host itonami.cloud's default apps are mounted under, one path
+  // segment each. The segment is the repository name, which is also what
+  // manifest.edn's :app/mount says in each app's repo — they agree by being
+  // the same string rather than through a table kept here.
+  //
+  // Still no per-app routes: adding an app is uploading a Worker into the
+  // namespace, not editing this file.
+  "routes": [
+    { "pattern": "app.itonami.cloud", "custom_domain": true }
+  ]
   //
   // No secrets. This router authenticates nothing — each actor gates its own
   // writes, and a second admission rule here would be a weaker copy of every
