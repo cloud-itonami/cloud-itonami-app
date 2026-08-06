@@ -34,7 +34,7 @@
 
   io.github.kotoba-lang/shell
   {:git/url "https://github.com/kotoba-lang/shell.git"
-   :git/sha "b2118bafb83f74a1d3c67e91314f67be87125df2"}
+   :git/sha "61e8b9b89dcef1746f927205f1cfd88db73241d0"}
   io.github.kotoba-lang/kotoba
   {:git/url "https://github.com/kotoba-lang/kotoba.git"
    :git/tag "v0.6.29"
