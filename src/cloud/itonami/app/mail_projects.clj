@@ -53,6 +53,7 @@
   typo would otherwise file mail into a project nobody can open, and it would
   look like it worked."
   (:require [clojure.string :as str]
+            [cloud.itonami.app.mail-origins :as origins]
             [cloud.itonami.app.project-repository :as projects]
             [cloud.itonami.app.store :as store]))
 
@@ -434,16 +435,40 @@
          ;; belongs in billing and in legal, and stopping at the first match is
          ;; what made that impossible to express — the rule order then had to
          ;; encode a priority nobody had decided on.
+         ;; The registry's pre-labels, then this organization's rules. Both
+         ;; file; neither excludes the other. The registry says what a domain
+         ;; IS, which is the same for everyone and worth publishing; the rules
+         ;; say where THIS organization files it, and a rule naming a project
+         ;; the registry did not is not a conflict — a message simply belongs to
+         ;; both.
+         from-registry (fn [message]
+                         (map (fn [project-id]
+                                {:project-id project-id :by :origin
+                                 :origin (domain-of (:from-email message))
+                                 :at (store/now)})
+                              (or (origins/routes-for (domain-of (:from-email message)))
+                                  [])))
+         from-rules (fn [message]
+                      (map (fn [rule]
+                             {:project-id (:rule/project rule) :by :rule
+                              :rule-id (:rule/id rule) :at (store/now)})
+                           (matching-rules rules message)))
          decided (mapcat (fn [message]
-                           (keep (fn [rule]
-                                   (let [project-id (:rule/project rule)]
-                                     (when-not (manual? (:id message) project-id)
-                                       [(:id message) project-id
-                                        {:project-id project-id
-                                         :by :rule
-                                         :rule-id (:rule/id rule)
-                                         :at (store/now)}])))
-                                 (matching-rules rules message)))
+                           (->> (concat (from-rules message) (from-registry message))
+                                ;; A rule and the registry naming one project is
+                                ;; one filing, and the rule wins the attribution
+                                ;; because somebody in this organization wrote it.
+                                (reduce (fn [acc a]
+                                          (if (contains? acc (:project-id a))
+                                            acc
+                                            (assoc acc (:project-id a) a)))
+                                        {})
+                                vals
+                                (keep (fn [assignment]
+                                        (when-not (manual? (:id message)
+                                                           (:project-id assignment))
+                                          [(:id message) (:project-id assignment)
+                                           assignment])))))
                          candidates)
          changed (remove (fn [[message-id project-id _]]
                            (get-in current [message-id project-id]))
