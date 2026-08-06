@@ -1,6 +1,7 @@
 (ns cloud.itonami.app.server
   (:require [clojure.data.json :as json]
             [clojure.edn :as edn]
+            [clojure.java.io :as io]
             [clojure.string :as str]
             [cloud.itonami.app.agent-session :as agent-session]
             [cloud.itonami.app.app-client :as app-client]
@@ -240,6 +241,22 @@
     (.set "Referrer-Policy" "no-referrer"))
   (.sendResponseHeaders exchange 303 -1)
   (.close exchange))
+
+(defn- send-icon! [^HttpExchange exchange]
+  (if-let [resource (io/resource "cloud/itonami/app/icon.png")]
+    (let [bytes (with-open [in (io/input-stream resource)
+                            out (java.io.ByteArrayOutputStream.)]
+                  (io/copy in out)
+                  (.toByteArray out))]
+      (doto (.getResponseHeaders exchange)
+        (.set "Content-Type" "image/png")
+        ;; The icon changes only when the manifest's does, and a stale tab icon
+        ;; is a poor reason to re-read half a megabyte on every load.
+        (.set "Cache-Control" "public, max-age=86400"))
+      (.sendResponseHeaders exchange 200 (alength bytes))
+      (with-open [out (.getResponseBody exchange)]
+        (.write out bytes)))
+    (send! exchange 404 {:error "icon-missing"})))
 
 (defn- send-html! [^HttpExchange exchange html]
   (let [bytes (.getBytes html StandardCharsets/UTF_8)]
@@ -4179,6 +4196,14 @@
      (.createContext instance "/"
                      (with-kotobase-federation (handler configuration)
                                                configuration))
+     ;; Its own context rather than another branch in `handler`: that method is
+     ;; already at the JVM's 64 KB ceiling, and two more lines in its `cond`
+     ;; failed to compile with "Method code too large". A longer prefix wins over
+     ;; "/" in com.sun.net.httpserver, so this takes the route regardless.
+     (.createContext instance "/icon.png"
+                     (reify HttpHandler
+                       (handle [_ exchange]
+                         (send-icon! exchange))))
      (.setExecutor instance (executor/task-executor))
      (.start instance)
      (reset! server instance)
