@@ -223,8 +223,19 @@
   (let [result (mail-projects/apply-rules! organization)]
     (testing "filing something by hand would otherwise last until the next sync"
       (is (= "beta" (:project-id (get (mail-projects/assignments organization) "m1"))))
-      (is (= 0 (:considered result)))
-      (is (= 1 (:manual result))))))
+      (is (= 1 (:manual result))))
+
+    (testing "the message IS considered now — exclusion moved from the message
+              to the filing, so a hand-filed message can still be picked up by a
+              rule aimed at a DIFFERENT project. What must not change is the
+              hand-filed project itself."
+      (is (= 1 (:considered result)))
+      (is (= "alpha" (:project-id (get-in (mail-projects/filings organization)
+                                          ["m1" "alpha"])))
+          "the rule filed into its own project")
+      (is (= :manual (:by (get-in (mail-projects/filings organization)
+                                  ["m1" "beta"])))
+          "and left the human decision alone"))))
 
 ;; ---------------------------------------------------------------------------
 ;; manual assignment
@@ -572,3 +583,125 @@
       (is (= 2 (get by-domain "notify.cloudflare.com")))
       (is (= 1 (get by-domain "service.alibaba.com")))
       (is (nil? (get by-domain "icloud.com"))))))
+
+;; ---------------------------------------------------------------------------
+;; a message belongs to more than one project
+
+(deftest a-message-can-be-filed-into-several-projects
+  (testing "an invoice from a law firm belongs in billing AND legal, and filing
+            it once means whoever opens the other project does not have it"
+    (project! (fresh "billing"))
+    (project! (fresh "legal"))
+    (seed-messages! (message "m1" "billing@lawfirm.example" "Invoice"))
+    (mail-projects/assign! organization "m1" (fresh "billing") "user-1")
+    (mail-projects/assign! organization "m1" (fresh "legal") "user-1")
+    (is (= [(fresh "billing") (fresh "legal")]
+           (mail-projects/projects-of organization "m1")))
+    (testing "and each project lists it"
+      (is (= 1 (count (:items (mail-projects/project-mail
+                               organization (fresh "billing"))))))
+      (is (= 1 (count (:items (mail-projects/project-mail
+                               organization (fresh "legal")))))))))
+
+(deftest unassigning-names-which-project
+  (project! (fresh "a"))
+  (project! (fresh "b"))
+  (seed-messages! (message "m1" "x@example.com" "both"))
+  (mail-projects/assign! organization "m1" (fresh "a") "user-1")
+  (mail-projects/assign! organization "m1" (fresh "b") "user-1")
+
+  (testing "removing one filing leaves the other"
+    (mail-projects/unassign! organization "m1" (fresh "a"))
+    (is (= [(fresh "b")] (mail-projects/projects-of organization "m1"))))
+
+  (testing "and removing with no project removes it from all — what the
+            single-filing version meant"
+    (mail-projects/unassign! organization "m1")
+    (is (empty? (mail-projects/projects-of organization "m1")))
+    (is (some? (get-in (store/snapshot) [:mail :messages "m1"]))
+        "the message itself is still there")))
+
+(deftest every-matching-rule-files-not-only-the-first
+  (project! (fresh "billing"))
+  (project! (fresh "legal"))
+  (mail-projects/add-rule! organization
+                           {:project (fresh "billing")
+                            :match {:subject-contains "invoice"}})
+  (mail-projects/add-rule! organization
+                           {:project (fresh "legal")
+                            :match {:from-domain "lawfirm.example"}})
+  (seed-messages! (message "m1" "billing@lawfirm.example" "Your invoice"))
+  (let [result (mail-projects/apply-rules! organization "user-1")]
+    (testing "stopping at the first match made rule ORDER encode a priority
+              nobody had decided on"
+      (is (= 2 (:filings result)))
+      (is (= 1 (:messages-filed result)))
+      (is (= [(fresh "billing") (fresh "legal")]
+             (mail-projects/projects-of organization "m1"))))))
+
+(deftest two-rules-for-one-project-file-once
+  (project! (fresh "one"))
+  (mail-projects/add-rule! organization
+                           {:project (fresh "one") :match {:from-domain "example.com"}})
+  (mail-projects/add-rule! organization
+                           {:project (fresh "one") :match {:subject-contains "hello"}})
+  (seed-messages! (message "m1" "a@example.com" "hello there"))
+  (let [result (mail-projects/apply-rules! organization "user-1")]
+    (is (= 1 (:filings result)))
+    (is (= [(fresh "one")] (mail-projects/projects-of organization "m1")))))
+
+(deftest a-manual-filing-does-not-stop-rules-filing-elsewhere
+  (project! (fresh "byhand"))
+  (project! (fresh "byrule"))
+  (seed-messages! (message "m1" "a@example.com" "x"))
+  (mail-projects/assign! organization "m1" (fresh "byhand") "user-1")
+  (mail-projects/add-rule! organization
+                           {:project (fresh "byrule")
+                            :match {:from-domain "example.com"}})
+  (mail-projects/apply-rules! organization "user-1")
+  (testing "excluding the message whole meant filing it by hand into one project
+            stopped the rules from ever filing it into another"
+    (is (= [(fresh "byhand") (fresh "byrule")]
+           (mail-projects/projects-of organization "m1"))))
+  (testing "and the manual filing is still manual"
+    (is (= :manual (:by (get-in (mail-projects/filings organization)
+                                ["m1" (fresh "byhand")]))))))
+
+(deftest the-old-single-filing-shape-is-still-readable
+  (testing "988 messages were filed before the shape changed; a one-shot rewrite
+            of somebody's filing is a worse risk than reading both shapes"
+    (store/transact! assoc-in [:mail :project-assignments organization "old"]
+                     {:project-id "legacy" :by :rule :rule-id "r-1" :at "then"})
+    (is (= ["legacy"] (mail-projects/projects-of organization "old")))
+    (is (= "legacy" (:project-id (get (mail-projects/assignments organization)
+                                      "old"))))))
+
+;; ---------------------------------------------------------------------------
+;; threads
+
+(deftest a-whole-conversation-is-filed-at-once
+  (project! (fresh "thread"))
+  (store/transact! assoc-in [:mail :messages "t1"]
+                   {:id "t1" :thread-id "T" :from-email "a@x.com" :from "a"
+                    :subject "first" :body "1" :received-at "2026-08-01T00:00:00Z"
+                    :labels #{}})
+  (store/transact! assoc-in [:mail :messages "t2"]
+                   {:id "t2" :thread-id "T" :from-email "b@x.com" :from "b"
+                    :subject "Re: first" :body "2" :received-at "2026-08-02T00:00:00Z"
+                    :labels #{}})
+  (store/transact! assoc-in [:mail :messages "other"]
+                   {:id "other" :thread-id "U" :from-email "c@x.com" :from "c"
+                    :subject "unrelated" :body "3" :received-at "2026-08-03T00:00:00Z"
+                    :labels #{}})
+  (let [result (mail-projects/assign-thread! organization "T" (fresh "thread") "user-1")]
+    (is (= 2 (:messages result))
+        "nobody decides that the third reply belongs to legal and the fourth
+         does not")
+    (is (= [(fresh "thread")] (mail-projects/projects-of organization "t1")))
+    (is (= [(fresh "thread")] (mail-projects/projects-of organization "t2")))
+    (is (empty? (mail-projects/projects-of organization "other")))))
+
+(deftest an-unknown-thread-is-refused
+  (is (thrown-with-msg? clojure.lang.ExceptionInfo #"そのスレッドはありません"
+                        (mail-projects/assign-thread! organization "nope"
+                                                      "p" "user-1"))))

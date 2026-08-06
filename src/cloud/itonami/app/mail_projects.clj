@@ -77,10 +77,58 @@
   [organization-id]
   (vec (get-in (store/snapshot) (rules-path organization-id) [])))
 
-(defn assignments
-  "message id -> assignment, for this organization."
+(defn- migrate-assignment
+  "One message's filings, from either shape.
+
+  The first version of this stored `message-id -> assignment`: one project per
+  message. That was wrong about the subject matter, not merely limiting — an
+  invoice from a law firm belongs in `billing` AND `legal`, and filing it once
+  means whoever opens the other project does not have it. The shape is now
+  `message-id -> {project-id assignment}`.
+
+  Read through rather than migrated in a batch: 988 messages had been filed
+  before the shape changed, and a one-shot rewrite of somebody's filing is a
+  worse risk than a branch that will be dead once they are all rewritten by
+  ordinary use."
+  [value]
+  (cond
+    (nil? value) {}
+    ;; New shape: a map of project-id -> assignment.
+    (and (map? value) (every? map? (vals value))) value
+    ;; Old shape: a single assignment map.
+    (and (map? value) (:project-id value)) {(:project-id value) value}
+    :else {}))
+
+(defn filings
+  "message id -> {project-id assignment}, for this organization.
+
+  A message may be filed against several projects, so the value is a map rather
+  than one assignment."
   [organization-id]
-  (get-in (store/snapshot) (assignments-path organization-id) {}))
+  (into {}
+        (map (fn [[message-id value]] [message-id (migrate-assignment value)]))
+        (get-in (store/snapshot) (assignments-path organization-id) {})))
+
+(defn projects-of
+  "Every project this message is filed against."
+  [organization-id message-id]
+  (vec (sort (keys (get (filings organization-id) message-id)))))
+
+(defn assignments
+  "message id -> ONE assignment, for callers that want a single answer.
+
+  Kept because the reports read this way and because most mail is filed once.
+  When a message has several filings it answers with the manual one if there is
+  one, and otherwise the first by project id — a stable choice rather than a
+  meaningful one, which is why anything that cares reads `filings`."
+  [organization-id]
+  (into {}
+        (keep (fn [[message-id by-project]]
+                (when-let [chosen (or (first (filter #(= :manual (:by %))
+                                                     (vals by-project)))
+                                      (first (vals (into (sorted-map) by-project))))]
+                  [message-id chosen])))
+        (filings organization-id)))
 
 ;; ---------------------------------------------------------------------------
 ;; matching
@@ -173,6 +221,26 @@
   "The first rule that matches, or nil. Order is the organization's own."
   [rules message]
   (some #(when (matches? % message) %) rules))
+
+(defn matching-rules
+  "Every rule that matches, one per project.
+
+  All of them, because a message can belong to more than one project and
+  stopping at the first match made the rule ORDER encode a priority nobody had
+  decided on — a law firm's invoice went to whichever of `billing` and `legal`
+  happened to be written first.
+
+  Deduplicated by project so two rules aimed at the same project file once; the
+  earlier rule wins, which keeps `:rule-id` pointing at the one an operator
+  would find by reading the list top to bottom."
+  [rules message]
+  (->> rules
+       (filter #(matches? % message))
+       (reduce (fn [acc rule]
+                 (if (contains? (set (map :rule/project acc)) (:rule/project rule))
+                   acc
+                   (conj acc rule)))
+               [])))
 
 ;; ---------------------------------------------------------------------------
 ;; rules
@@ -282,20 +350,69 @@
     (let [assignment {:project-id project-id :by :manual
                       :actor actor :at (store/now)}]
       (locking write-lock
-        (store/transact! assoc-in
+        (store/transact! update-in
                          (conj (assignments-path organization-id) message-id)
-                         assignment))
+                         (fn [current]
+                           (assoc (migrate-assignment current)
+                                  project-id assignment))))
       {:schema schema :ok? true :message message-id :assignment assignment
+       :projects (projects-of organization-id message-id)
        :artifacts (materialize! organization-id actor
                                 [[message-id assignment]])})))
 
 (defn unassign!
-  "Take a message out of its project. It returns to the inbox it never left."
-  [organization-id message-id]
-  (locking write-lock
-    (store/transact! update-in (assignments-path organization-id)
-                     (fn [current] (dissoc (or current {}) message-id))))
-  {:schema schema :ok? true :message message-id :assignment nil})
+  "Take a message out of one project, or out of all of them.
+
+  A message may be filed several times, so removing it needs to say from where.
+  Without `project-id` it is removed from all — which is what the old
+  single-filing behaviour meant, and what somebody typing `unassign` with no
+  project almost certainly wants."
+  ([organization-id message-id] (unassign! organization-id message-id nil))
+  ([organization-id message-id project-id]
+   (let [project-id (not-empty (str/trim (str project-id)))]
+     (locking write-lock
+       (store/transact!
+        update-in (assignments-path organization-id)
+        (fn [current]
+          (let [current (or current {})
+                remaining (when project-id
+                            (dissoc (migrate-assignment (get current message-id))
+                                    project-id))]
+            (if (seq remaining)
+              (assoc current message-id remaining)
+              (dissoc current message-id))))))
+     {:schema schema :ok? true :message message-id
+      :removed-from (or project-id :all)
+      :projects (projects-of organization-id message-id)})))
+
+(defn thread-messages
+  "Every message in one conversation.
+
+  Gmail gives a thread id and this app has carried it since the first sync
+  without ever grouping by it. A conversation is the unit a person files —
+  nobody decides that the third reply belongs to `legal` and the fourth does
+  not."
+  [thread-id]
+  (let [thread-id (str thread-id)]
+    (->> (messages)
+         (filter #(= thread-id (str (:thread-id %))))
+         (sort-by :received-at)
+         vec)))
+
+(defn assign-thread!
+  "File a whole conversation, not one message of it.
+
+  Returns per message, because a thread whose later replies arrived after the
+  rules last ran is a normal state and the count is how somebody notices."
+  [organization-id thread-id project-id actor]
+  (let [in-thread (thread-messages thread-id)]
+    (when (empty? in-thread)
+      (throw (ex-info (str "そのスレッドはありません: " thread-id)
+                      {:type :mail/not-found :thread thread-id})))
+    {:schema schema :ok? true :thread thread-id :project-id project-id
+     :messages (count in-thread)
+     :results (mapv #(assign! organization-id (:id %) project-id actor)
+                    in-thread)}))
 
 (defn apply-rules!
   "Run the rules over every message this organization has not filed by hand.
@@ -305,35 +422,64 @@
   ([organization-id] (apply-rules! organization-id nil))
   ([organization-id actor]
    (let [rules (rules organization-id)
-         current (assignments organization-id)
-         candidates (remove #(= :manual (:by (get current (:id %)))) (messages))
-         decided (keep (fn [message]
-                         (when-let [rule (first-match rules message)]
-                           [(:id message)
-                            {:project-id (:rule/project rule)
-                             :by :rule
-                             :rule-id (:rule/id rule)
-                             :at (store/now)}]))
-                       candidates)
-         changed (remove (fn [[id assignment]]
-                           (= (:project-id assignment)
-                              (:project-id (get current id))))
+         current (filings organization-id)
+         manual? (fn [message-id project-id]
+                   (= :manual (:by (get-in current [message-id project-id]))))
+         ;; Every message is a candidate. Exclusion is per PROJECT, in the
+         ;; `manual?` check below — excluding the whole message is what made
+         ;; filing something by hand into one project stop the rules from ever
+         ;; filing it into another.
+         candidates (messages)
+         ;; EVERY matching rule files, not only the first. A law firm's invoice
+         ;; belongs in billing and in legal, and stopping at the first match is
+         ;; what made that impossible to express — the rule order then had to
+         ;; encode a priority nobody had decided on.
+         decided (mapcat (fn [message]
+                           (keep (fn [rule]
+                                   (let [project-id (:rule/project rule)]
+                                     (when-not (manual? (:id message) project-id)
+                                       [(:id message) project-id
+                                        {:project-id project-id
+                                         :by :rule
+                                         :rule-id (:rule/id rule)
+                                         :at (store/now)}])))
+                                 (matching-rules rules message)))
+                         candidates)
+         changed (remove (fn [[message-id project-id _]]
+                           (get-in current [message-id project-id]))
                          decided)]
      (locking write-lock
        (when (seq decided)
-         (store/transact! update-in (assignments-path organization-id)
-                          (fn [existing] (into (or existing {}) decided)))))
+         (store/transact!
+          update-in (assignments-path organization-id)
+          (fn [existing]
+            (reduce (fn [acc [message-id project-id assignment]]
+                      (update acc message-id
+                              #(assoc (migrate-assignment %) project-id assignment)))
+                    (or existing {})
+                    decided)))))
      {:schema schema :ok? true
       ;; Only what CHANGED is written into a repository. Re-running the rules
       ;; over mail that is already filed should produce no commit at all, or
       ;; every sync would add an empty-but-noisy revision to every project.
-      :artifacts (materialize! organization-id actor changed)
+      :artifacts (materialize! organization-id actor
+                               (map (fn [[message-id _ assignment]]
+                                      [message-id assignment])
+                                    changed))
       :rules (count rules)
       :considered (count candidates)
-      :assigned (count decided)
+      ;; Filings, not messages: a message filed into two projects is two, and
+      ;; reporting it as one would make the numbers disagree with the projects.
+      :filings (count decided)
+      ;; `:assigned` has always meant "messages filed" and consumers read it;
+      ;; `:filings` is the new number, and one message in two projects is two
+      ;; filings and one assignment.
+      :assigned (count (distinct (map first decided)))
+      :messages-filed (count (distinct (map first decided)))
       :changed (count changed)
-      :unmatched (- (count candidates) (count decided))
-      :manual (count (filter #(= :manual (:by %)) (vals current)))})))
+      :unmatched (- (count candidates) (count (distinct (map first decided))))
+      :manual (count (filter #(= :manual (:by %))
+                             (mapcat vals (vals current))))})))
 
 ;; ---------------------------------------------------------------------------
 ;; reading
@@ -380,32 +526,39 @@
   `unassigned` is reported rather than left to be inferred from a subtraction:
   the pile the rules do not catch is the thing worth looking at."
   [organization-id]
-  (let [current (assignments organization-id)
+  (let [current (filings organization-id)
+        filed (into {} (remove (comp empty? val)) current)
         all (messages)]
     {:schema schema :ok? true
      :rules (rules organization-id)
      :messages (count all)
-     :assigned (count current)
-     :unassigned (- (count all) (count current))
-     :projects (->> current
-                    (group-by (comp :project-id val))
+     :assigned (count filed)
+     ;; Filings exceed assignments once a message is in two projects, and the
+     ;; per-project counts below sum to this rather than to `:assigned`.
+     :filings (reduce + 0 (map count (vals filed)))
+     :unassigned (- (count all) (count filed))
+     :projects (->> (mapcat vals (vals filed))
+                    (group-by :project-id)
                     (map (fn [[project-id entries]]
                            {:project-id project-id
                             :count (count entries)
-                            :manual (count (filter #(= :manual (:by (val %)))
-                                                   entries))}))
+                            :manual (count (filter #(= :manual (:by %)) entries))}))
                     (sort-by :project-id)
                     vec)}))
 
 (defn project-mail
-  "Every message filed against one project, newest first."
+  "Every message filed against one project, newest first.
+
+  Reads `filings` rather than the single-answer view: a message filed into two
+  projects appeared in only one of them while this asked `assignments`, which is
+  the bug that made multi-project filing look like it had not worked."
   [organization-id project-id]
-  (let [current (assignments organization-id)]
+  (let [current (filings organization-id)]
     {:schema schema :ok? true
      :project-id project-id
      :items (->> current
-                 (keep (fn [[message-id assignment]]
-                         (when (= project-id (:project-id assignment))
+                 (keep (fn [[message-id by-project]]
+                         (when-let [assignment (get by-project project-id)]
                            (when-let [message (message-by-id message-id)]
                              (summarize message assignment)))))
                  (sort-by :received-at)
@@ -416,8 +569,8 @@
   "Mail no rule has caught. The senders are grouped, because the useful next
   action is almost always one more rule for a domain that keeps appearing."
   [organization-id]
-  (let [current (assignments organization-id)
-        loose (remove #(contains? current (:id %)) (messages))]
+  (let [current (filings organization-id)
+        loose (remove #(seq (get current (:id %))) (messages))]
     {:schema schema :ok? true
      :count (count loose)
      :senders (->> loose
