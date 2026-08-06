@@ -24,6 +24,7 @@
             [cloud.itonami.app.metrics-test]
             [cloud.itonami.app.portfolio-test]
             [cloud.itonami.app.mail-age-key-test]
+            [cloud.itonami.app.mail-origins-test]
             [cloud.itonami.app.mail-projects-test]
             [cloud.itonami.app.project-repository-test]
             [cloud.itonami.app.project-remote-test]
@@ -121,6 +122,7 @@
     cloud.itonami.app.metrics-test
     cloud.itonami.app.portfolio-test
     cloud.itonami.app.mail-age-key-test
+    cloud.itonami.app.mail-origins-test
     cloud.itonami.app.mail-projects-test
     cloud.itonami.app.project-repository-test
     cloud.itonami.app.project-remote-test
