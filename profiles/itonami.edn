@@ -1,0 +1,34 @@
+;; itonami.cloud deployment profile.
+;;
+;; What this profile is FOR is the one thing the tenant-neutral distribution
+;; cannot ship: a working sign-in-link delivery endpoint.
+;;
+;; ADR-0012 designed email sign-in as an alternate session proof and left
+;; delivery to "a deployment-owned HTTPS endpoint". No such endpoint existed
+;; anywhere in the fleet, so `:email-login` stayed `:enabled? false` and the
+;; form was never shown — the feature was complete and unreachable. The
+;; endpoint now exists (`cloud-itonami.edge.email-login/on-request-post-deliver`
+;; on itonami.cloud, backed by that deployment's Resend sender), and this
+;; profile is what points at it.
+;;
+;; It stays out of the shipped defaults on purpose. A tenant-neutral install
+;; that emailed through somebody else's sending reputation would be making a
+;; choice on the operator's behalf, and a bounce or a spam complaint would land
+;; on a domain they do not own.
+;;
+;;   CLOUD_ITONAMI_EMAIL_LOGIN_TOKEN=<bearer>  CLOUD_ITONAMI_PROFILE=itonami \
+;;     clojure -M:server
+;;
+;; The bearer must equal the endpoint's `MAGIC_LINK_DELIVERY_TOKEN` Worker
+;; secret. It is read from the environment at call time and never persisted —
+;; `cloud.itonami.app.email-login/access-token` reads it per request and the
+;; adapter refuses to run without it.
+;;
+;; What this does NOT change: email remains a session proof, not an identity
+;; root. Only an active User who has already enrolled a Passkey can receive a
+;; link, and an email session still cannot finish a payment, an e-signature, or
+;; an outward-authority approval (ADR-0012, Authority boundary).
+{:email-login
+ {:enabled? true
+  :delivery-endpoint "https://itonami.cloud/api/auth/magic-link/deliver"
+  :access-token-env "CLOUD_ITONAMI_EMAIL_LOGIN_TOKEN"}}

@@ -1,5 +1,7 @@
 (ns cloud.itonami.app.email-login-test
   (:require [clojure.data.json :as json]
+            [clojure.edn :as edn]
+            [clojure.java.io :as io]
             [clojure.string :as str]
             [clojure.test :refer [deftest is testing]]
             [cloud.itonami.app.config :as config-loader]
@@ -150,3 +152,44 @@
           (is (= 400 (:status
                       (post! "/api/email-authenticate/finish" {:token token}))))
           (is (empty? (get-in (store/snapshot) [:identity :sessions]))))))))
+
+;; ---------------------------------------------------------------------------
+;; the shipped profile
+;; ---------------------------------------------------------------------------
+;;
+;; ADR-0012 left delivery to "a deployment-owned HTTPS endpoint" and no such
+;; endpoint existed, so `:email-login` stayed disabled and the form was never
+;; shown: a complete feature nothing could reach. `profiles/itonami.edn` is what
+;; makes it reachable, which means a typo in that file reproduces exactly the
+;; state it was written to end -- and reproduces it silently, because a disabled
+;; feature looks identical to a feature nobody used.
+
+(defn- profile [name]
+  (edn/read-string (slurp (io/file "profiles" (str name ".edn")))))
+
+(deftest the-shipped-defaults-keep-email-sign-in-off
+  (let [defaults (edn/read-string
+                  (slurp (io/resource "cloud-itonami-app.defaults.edn")))]
+    (is (false? (get-in defaults [:email-login :enabled?]))
+        "a tenant-neutral install must not mail through somebody else's sending reputation")
+    (is (nil? (get-in defaults [:email-login :delivery-endpoint])))))
+
+(deftest the-itonami-profile-actually-turns-delivery-on
+  (let [p (profile "itonami")]
+    (is (true? (get-in p [:email-login :enabled?])))
+    (testing "the endpoint passes the adapter's own safety rule"
+      ;; `configured?` also requires the bearer, which a JVM cannot put into its
+      ;; own environment. Naming the env var is what the profile is responsible
+      ;; for; holding the secret is the operator's.
+      (is (email-login/configured?
+           (assoc-in p [:email-login :access-token-env] "PATH"))
+          "https endpoint, no userinfo, no fragment"))
+    (is (= "CLOUD_ITONAMI_EMAIL_LOGIN_TOKEN"
+           (get-in p [:email-login :access-token-env])))))
+
+(deftest a-profile-cannot-smuggle-a-plaintext-token
+  ;; The adapter reads the bearer from the environment at call time. A profile
+  ;; that carried the secret itself would put it in git and in every backup.
+  (doseq [name ["itonami" "gftd"]]
+    (is (nil? (get-in (profile name) [:email-login :access-token]))
+        name)))
