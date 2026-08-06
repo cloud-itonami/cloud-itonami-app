@@ -160,3 +160,32 @@
     (let [before (account-ids)]
       (is (not (contains? before nil))
           "every account has an id to attribute a failure to"))))
+
+;; ---------------------------------------------------------------------------
+;; a slow sync must not wedge every later one
+
+(deftest a-sync-that-holds-the-lock-too-long-can-be-taken-over
+  (testing "measured 2026-08-06: a full sync of 1000 threads held the flag past
+            forty minutes, and because the scheduler asks every 300 seconds and
+            gets `already-running` immediately, NOTHING synced in that window.
+            The mailbox looked healthy and was frozen."
+    (let [claim! #'cloud.itonami.app.mail-sync/claim-sync!
+          release! #'cloud.itonami.app.mail-sync/release-sync!
+          started @#'cloud.itonami.app.mail-sync/sync-started-at
+          lease @#'cloud.itonami.app.mail-sync/sync-lease-ms]
+      (release!)
+      (is (true? (claim!)) "a free lock is taken")
+      (is (false? (claim!)) "and is then held — this is the normal case")
+
+      (testing "a holder that is still inside the lease keeps it"
+        (reset! started (- (System/currentTimeMillis) (quot lease 2)))
+        (is (false? (claim!))))
+
+      (testing "one past the lease loses the right to keep others out"
+        (reset! started (- (System/currentTimeMillis) (inc lease)))
+        (is (true? (claim!))))
+
+      (release!)
+      (is (nil? @started) "releasing clears the stamp, not only the flag")
+      (is (true? (claim!)))
+      (release!))))

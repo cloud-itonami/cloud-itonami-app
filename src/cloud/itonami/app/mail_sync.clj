@@ -281,6 +281,40 @@
 ;; ---------------------------------------------------------------------------
 ;; One account, then all of them
 
+(defonce ^:private sync-started-at (atom nil))
+
+(def ^:private sync-lease-ms
+  "How long a sync may hold the lock before another may take it.
+
+  Not a timeout on the work — nothing is cancelled — but a bound on how long a
+  wedged run can keep every later one out. Measured 2026-08-06: a full sync of
+  1000 threads held the flag past 40 minutes, and because the scheduler asks
+  every 300 seconds and gets `already-running` immediately, NOTHING synced in
+  that window. The mailbox looked healthy and was frozen.
+
+  Twenty minutes is longer than any full sync observed and shorter than a person
+  would take to notice."
+  (* 20 60 1000))
+
+(defn- claim-sync!
+  "Take the sync lock, or take it back from a run that has held it too long."
+  []
+  (if (compare-and-set! syncing? false true)
+    (do (reset! sync-started-at (System/currentTimeMillis)) true)
+    (let [started @sync-started-at]
+      (boolean
+       (when (and started
+                  (> (- (System/currentTimeMillis) started) sync-lease-ms))
+         ;; The previous holder is not stopped — it may still be making progress,
+         ;; and killing it mid-flight would lose what it fetched. What is taken
+         ;; back is only the right to start another.
+         (reset! sync-started-at (System/currentTimeMillis))
+         true)))))
+
+(defn- release-sync! []
+  (reset! sync-started-at nil)
+  (reset! syncing? false))
+
 (defn sync-account!
   "Read one mailbox and fold what it returned into the message plane.
 
@@ -314,8 +348,8 @@
   read."
   ([] (sync-all! nil))
   ([did]
-   (if-not (compare-and-set! syncing? false true)
-     {:status :already-running}
+   (if-not (claim-sync!)
+     {:status :already-running :since @sync-started-at}
      (try
        (let [accounts (mapv sync-account! (account/accounts did))]
          {:schema schema :status :completed
@@ -338,7 +372,7 @@
                      ;; the store and losing that because a project repository
                      ;; was busy would be the wrong trade.
                      {:ok? false :error (.getMessage error)}))})
-       (finally (reset! syncing? false))))))
+       (finally (release-sync!))))))
 
 ;; ---------------------------------------------------------------------------
 ;; Push relay
