@@ -43,7 +43,8 @@
   model context."
   (:require [clojure.edn :as edn]
             [clojure.java.io :as io]
-            [clojure.string :as str]))
+            [clojure.string :as str]
+            [cloud.itonami.app.mail-authentication :as authentication]))
 
 (def schema "cloud-itonami.mail-origins.v1")
 
@@ -128,6 +129,19 @@
 ;; ---------------------------------------------------------------------------
 ;; building the registry from what a deployment has actually received
 
+(defn- authentication-summary
+  "Per-domain counts of the receiver's verdict.
+
+  `:unknown` is counted, not dropped. Most of any corpus predates header
+  retention, and a summary that hid those would say a domain was fully checked
+  when almost none of it was."
+  [group]
+  (let [verdicts (frequencies (map (comp :verdict authentication/verdict) group))]
+    {:authenticated (get verdicts :authenticated 0)
+     :unaligned (get verdicts :unaligned 0)
+     :impersonation-suspected (get verdicts :impersonation-suspected 0)
+     :unknown (get verdicts :unknown 0)}))
+
 (defn observe
   "Fold messages into registry entries.
 
@@ -159,6 +173,17 @@
                     :observed/messages (count group)
                     :observed/first (first received)
                     :observed/last (last received)
+                    ;; What the RECEIVING server decided about this domain's
+                    ;; mail. An origin fact, not a trust decision: DMARC passing
+                    ;; says the sender is who it claims, which is a different
+                    ;; and much narrower statement than the sender being worth
+                    ;; trusting. A verified spammer is verified.
+                    ;;
+                    ;; It does justify one thing, and it is the reason to record
+                    ;; it here: a rule naming a domain that consistently
+                    ;; authenticates cannot be fooled by somebody impersonating
+                    ;; it.
+                    :observed/authentication (authentication-summary group)
                     :route/projects []
                     :trust/level (if relay? :self-registered :unverified)
                     :trust/evidence (if relay?

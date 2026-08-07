@@ -143,3 +143,31 @@
                         ;; curated :trusted entries are a human's evidence
                         (not= :unverified (:trust/level e))))
                   entries)))))
+
+(deftest authentication-is-an-origin-fact-not-a-trust-decision
+  (testing "DMARC passing says the sender IS who it claims — a different and
+            much narrower statement than the sender being worth trusting.
+            A verified spammer is verified."
+    (let [pass {"authentication-results" "mx.google.com; dmarc=pass"
+                "return-path" "<a@example.com>"}
+          entry (first (origins/observe
+                        [(assoc (message "a@example.com" "2026-08-06T00:00:00Z")
+                                :headers pass)
+                         (message "b@example.com" "2026-08-06T00:00:00Z")]
+                        domain-of))]
+      (is (= 1 (get-in entry [:observed/authentication :authenticated])))
+      (is (= 1 (get-in entry [:observed/authentication :unknown]))
+          "the unevaluated message is counted, not dropped")
+      (testing "and none of it moved the trust level"
+        (is (= :unverified (:trust/level entry)))
+        (is (empty? (:trust/evidence entry)))))))
+
+(deftest an-impersonated-domain-is-recorded-against-the-domain-it-claims
+  (testing "the count belongs to the domain in From:, because that is the domain
+            somebody would write a rule for and the one being abused"
+    (let [entry (first (origins/observe
+                        [(assoc (message "support@paypal.com" "2026-08-06T00:00:00Z")
+                                :headers {"authentication-results"
+                                          "mx.google.com; dmarc=fail"})]
+                        domain-of))]
+      (is (= 1 (get-in entry [:observed/authentication :impersonation-suspected]))))))
