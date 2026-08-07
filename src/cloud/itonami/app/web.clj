@@ -125,8 +125,11 @@
   .nav-badge[data-tone='ok']{color:var(--color-semantic-success-1)}
   .field--checkbox label{font-weight:400}
   .brand{padding:.25rem .75rem}
-  .brand__eyebrow{margin:0 0 .25rem;color:var(--color-key-900);font-size:.75rem;
+  .brand__eyebrow{display:flex;align-items:center;gap:.35em;
+    margin:0 0 .25rem;color:var(--color-key-900);font-size:.75rem;
     font-weight:700;letter-spacing:.08em}
+  .brand__safety-mark{width:.9em;height:.9em;flex:0 0 auto;
+    fill:var(--color-semantic-success-1)}
   .brand__name{margin:0;font-size:1.25rem;font-weight:700;line-height:1.5}
   .brand__mark{display:none}
   .brand__note{margin:.25rem 0 0;color:var(--color-neutral-solid-gray-600);
@@ -933,6 +936,14 @@
     [:span {:class "nav-section__chevron" :aria-hidden "true"} "⌄"]]
    (into [:div {:class "nav-section__items"}] items)])
 
+(def ^:private green-cross
+  "緑十字 — 労働安全衛生の安全第一マーク。SVG で描くのは、`✚` や `十`
+  の字形がフォント依存で十字に見えないことがあるため。色は
+  `--color-semantic-success-1`（DADS の意味づけされた緑）で、生の hex は
+  持たない。装飾なので `aria-hidden`：意味は隣の SAFETY FIRST が担う。"
+  [:svg {:class "brand__safety-mark" :viewBox "0 0 12 12" :aria-hidden "true"}
+   [:path {:d "M4.5 0h3v4.5H12v3H7.5V12h-3V7.5H0v-3h4.5Z"}]])
+
 (defn- view-header [title lead]
   [:header {:class "view-header"}
    [:div {:class "view-header__copy"}
@@ -947,7 +958,7 @@
         css (slurp (io/resource "jp_go_dds/dds.css"))]
     (page/->page
      {:title (str "Chat | " brand)
-      :description "ローカル優先のAIワークスペース"
+      :description "安全第一（緑十字）のAIワークスペース"
       :css css :app-css app-css
       :head [[:link {:rel "icon" :type "image/png" :href "/icon.png"}]
              [:link {:rel "apple-touch-icon" :href "/icon.png"}]
@@ -955,7 +966,7 @@
      [:div {:class "workspace" :data-brand brand}
       [:aside {:class "sidebar" :aria-label "メインメニュー"}
        [:div {:class "brand"}
-        [:p {:class "brand__eyebrow"} "LOCAL-FIRST"]
+        [:p {:class "brand__eyebrow"} green-cross "SAFETY FIRST"]
         [:p {:class "brand__name"} brand]
         [:p {:class "brand__mark" :role "img" :aria-label brand} "ai"]
         [:p {:class "brand__note"} "Kotoba でつながる、手元の仕事場"]]
