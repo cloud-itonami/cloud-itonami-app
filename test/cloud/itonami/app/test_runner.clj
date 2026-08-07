@@ -29,6 +29,7 @@
             [cloud.itonami.app.mail-projects-test]
             [cloud.itonami.app.project-repository-test]
             [cloud.itonami.app.project-remote-test]
+            [cloud.itonami.app.project-transfer-test]
             [cloud.itonami.app.repos-test]
             [cloud.itonami.app.repository-storage-test]
             [cloud.itonami.app.repository-qualification-test]
@@ -128,6 +129,7 @@
     cloud.itonami.app.mail-projects-test
     cloud.itonami.app.project-repository-test
     cloud.itonami.app.project-remote-test
+    cloud.itonami.app.project-transfer-test
     cloud.itonami.app.repos-test
     cloud.itonami.app.repository-storage-test
     cloud.itonami.app.repository-qualification-test

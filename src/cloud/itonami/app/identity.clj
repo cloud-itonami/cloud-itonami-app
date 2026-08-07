@@ -571,31 +571,53 @@
           [:organizations (:organization-id session) :did]))
 
 (defn organization-domain-for-did-web
-  "The domain whose `did:web` document this deployment should serve, or nil.
+  "The one domain this whole deployment can be named by, or nil.
 
-  nil in two distinct cases that both mean \"do not serve one\": the profile has
-  `:publish-did-web? false`, or no Organization ID has been claimed yet. They are
-  collapsed on purpose — a DID document for an organization that does not exist
-  would name a key as belonging to nobody.
+  Used for deployment-level artifacts — the revocation status list, which is a
+  single signed list covering every credential issued here, whichever tenant
+  issued it. A per-tenant issuer is `membership-credential-context`'s job.
 
-  Returns the domain of the single configured organization. A deployment hosting
-  several organizations serves one document per domain and cannot use this; that
-  is production multi-tenant hosting, which `docs/tenant-model.md` already scopes
-  out of this application.
-
-  Since ADR-0023 every User also owns a personal tenant, so \"the single
-  configured tenant\" is no longer the same statement as \"the organization\":
-  an organization is preferred, and a personal tenant answers only when there is
-  no organization to name."
+  nil in three cases that all mean \"name the `did:key` instead\": the profile
+  has `:publish-did-web? false`, no tenant has claimed a slug, or **more than
+  one has**. The last is the ADR-0025 case. This used to return the first named
+  tenant it found, which after ADR-0023 gave every deployment with a claimed
+  personal tenant an arbitrary answer — and an arbitrary answer here is a status
+  list that names one tenant as the issuer of another tenant's revocations. The
+  `did:key` is always resolvable and belongs to no tenant in particular, which is
+  exactly what a deployment-level artifact needs."
   []
   (when (:publish-did-web? @runtime-identity-profile)
     (let [state (identity-state (store/snapshot))
           named (filter :organization-id (vals (:organizations state)))]
+      (when (= 1 (count named))
+        (:domain (first named))))))
+
+(defn did-web-domain-for-host
+  "The tenant domain whose DID document belongs at this request's `Host`, or nil.
+
+  `did:web:<domain>` resolves to `https://<domain>/.well-known/did.json`, so the
+  document served depends on which name was asked for. Answering with \"the
+  deployment's organization\" was safe while a deployment had one tenant and is
+  not now: every User owns a personal tenant (ADR-0023), so several tenants can
+  carry domains and the first one found is not the one the verifier asked about.
+
+  Falls back to the single named tenant when the Host matches nothing — a
+  request to `localhost` is how this is developed, and refusing it would make
+  the document unreachable exactly where it is being written. With more than
+  one named tenant there is no such fallback: guessing which organization a
+  verifier meant is how a key gets published under somebody else's name."
+  [host]
+  (when (:publish-did-web? @runtime-identity-profile)
+    (let [state (identity-state (store/snapshot))
+          hostname (-> (str host) str/trim str/lower-case
+                       (str/replace #":\d+$" ""))
+          named (filter :domain (vals (:organizations state)))]
       (or (some (fn [tenant]
-                  (when (= :organization (tenant-kind tenant))
+                  (when (= hostname (str/lower-case (str (:domain tenant))))
                     (:domain tenant)))
                 named)
-          (some :domain named)))))
+          (when (= 1 (count named))
+            (:domain (first named)))))))
 
 (defn membership-credential-context
   "Everything `cloud.itonami.app.credential` needs to issue a membership
@@ -630,7 +652,13 @@
      ;; nil until the deployment publishes did:web — `credential` falls back to
      ;; the issuer did:key rather than naming an address that answers nothing.
      :organization-did (:did organization)
-     :organization-domain (organization-domain-for-did-web)
+     ;; THIS tenant's domain, not the deployment's. It used to be
+     ;; `organization-domain-for-did-web`, which answers with the first tenant
+     ;; carrying a domain — so a credential issued while acting in one
+     ;; organization could name a different one as its issuer, and the
+     ;; signature would be perfectly valid on the wrong claim. ADR-0025.
+     :organization-domain (when (:publish-did-web? @runtime-identity-profile)
+                            (:domain organization))
      :organization-name (:name organization)}))
 
 (defn membership-role
@@ -638,6 +666,27 @@
   [session]
   (get-in (identity-state (store/snapshot))
           [:memberships (:membership-id session) :role]))
+
+(defn tenant-membership
+  "`{:membership … :tenant …}` for the membership `user-id` holds in `tenant`, or
+  nil.
+
+  `tenant` is an internal Tenant id or an Organization ID — the same two forms
+  `switch-organization!` accepts, because a caller naming a tenant it is not
+  standing in has only ever seen one of them. Public because authority over a
+  tenant is not always a question about the *active* one: moving a project
+  between two tenants is a question about both, and `membership-role` can only
+  answer for the session (ADR-0024)."
+  [user-id tenant]
+  (let [state (identity-state (store/snapshot))
+        wanted (normalize-id tenant)]
+    (some (fn [membership]
+            (let [record (get-in state [:organizations
+                                        (:organization-id membership)])]
+              (when (or (= tenant (:id record))
+                        (and wanted (= wanted (:organization-id record))))
+                {:membership membership :tenant record})))
+          (memberships-for-user state user-id))))
 
 (defn public-state [token]
   (ensure-personal-tenants!)
@@ -986,6 +1035,14 @@
                    (valid-account-id? account-id))
       (throw (ex-info "有効なアカウントIDと表示名が必要です。"
                       {:type :identity/invalid-registration})))
+    ;; The other direction of the one owner namespace (ADR-0023): a handle may
+    ;; not be a name a tenant already answers to. `existing-user` covers the
+    ;; case where another person holds it.
+    (when (and (not existing-user)
+               (some #(= account-id (:organization-id %))
+                     (vals (:organizations state))))
+      (throw (ex-info "このアカウントIDは Organization ID として使用されています。"
+                      {:type :identity/already-registered})))
     (when (and existing-user
                (some #(and (= user-id (:user-id %))
                            (= (:id organization) (:organization-id %)))
@@ -1016,7 +1073,18 @@
         {:id invitation-id :kind :organization-invitation
          :account-id account-id :email (:email existing-user)
          :invitation-code enrollment-code :expires-at expires-at})
-      (do
+      (let [personal-tenant-id (str "org-" (UUID/randomUUID))
+            personal-membership-id (str "membership-" (UUID/randomUUID))
+            ;; Created here rather than left to `ensure-personal-tenants!`:
+            ;; the migration would give them one on their first page load, but
+            ;; until then they are a User with no namespace of their own, and
+            ;; two memberships stamped at the same instant would leave
+            ;; `default-membership` breaking the tie on a UUID. ADR-0023.
+            personal-record (personal-tenant-record
+                             state {:tenant-id personal-tenant-id
+                                    :user-id user-id
+                                    :account-id account-id
+                                    :now now})]
         (directory/add-user model user-model)
         (store/transact!
          (fn [current]
@@ -1028,7 +1096,16 @@
                           :display-name (str/trim display-name)
                           :user-handle user-handle
                           :passkey-enrolled? false
+                          ;; They were invited to work in the organization, so
+                          ;; that is where their first session lands.
+                          :default-membership-id membership-id
                           :status :invited :created-at now})
+               (assoc-in [:identity :organizations personal-tenant-id]
+                         personal-record)
+               (assoc-in [:identity :memberships personal-membership-id]
+                         {:id personal-membership-id
+                          :organization-id personal-tenant-id
+                          :user-id user-id :role :owner :created-at now})
                (assoc-in [:identity :memberships membership-id]
                          {:id membership-id :organization-id (:id organization)
                           :user-id user-id :role role :created-at now})

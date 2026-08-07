@@ -40,6 +40,7 @@
             [cloud.itonami.app.mail-projects :as mail-projects]
             [cloud.itonami.app.project-repository :as project-repository]
             [cloud.itonami.app.project-remote :as project-remote]
+            [cloud.itonami.app.project-transfer :as project-transfer]
             [cloud.itonami.app.organism-gateway :as organism-gateway]
             [cloud.itonami.app.organism-messenger-transport :as organism-messenger-transport]
             [cloud.itonami.app.relay :as relay]
@@ -1489,6 +1490,28 @@
         (send! exchange 200 (project-remote/status (:directory location) location))
         (send! exchange 404 {:error "no_such_project" :project project})))
 
+    ;; Move a project to another of the caller's tenants (ADR-0024). Gated to a
+    ;; browser session rather than any app session: this changes who owns
+    ;; something, and an agent session that could move a project into a tenant
+    ;; it already holds a connection to would be granting itself access by
+    ;; moving the target. That also keeps it out of the generated command
+    ;; registry, where it would be a command certain to refuse.
+    ;;
+    ;; (Deliberately not naming the gate function in this comment: `route-scan`
+    ;; reads a clause's body as the text up to the NEXT clause, so a leading
+    ;; comment belongs to the clause ABOVE it, and naming a stricter gate here
+    ;; silently restricts the route before this one.)
+    (and (= method "POST")
+         (id-from-path path #"/api/projects/([^/]+)/transfer"))
+    (let [session (require-human-session! exchange)
+          request (read-json exchange)
+          project (id-from-path path #"/api/projects/([^/]+)/transfer")]
+      (require-origin! exchange config)
+      (require-csrf! exchange session)
+      (send! exchange 200
+             (project-transfer/transfer-project!
+              session {:project-id project :to-tenant (:tenant request)})))
+
     (and (= method "GET")
          (id-from-path path #"/api/projects/([^/]+)/mail"))
     (let [session (require-app-session! exchange)
@@ -1550,8 +1573,14 @@
             ;; and nothing here makes DNS point at this process. Until it does,
             ;; `credential/issuer-verification-method` names the `did:key`
             ;; instead, so issued credentials stay verifiable either way.
+            ;; Resolved from the Host, because that is what `did:web:<domain>`
+            ;; asked for. A deployment now holds several tenants with domains
+            ;; (every User owns a personal one, ADR-0023), so serving whichever
+            ;; came first would publish a key under a name nobody asked about.
+            ;; ADR-0025.
             (and (= method "GET") (= path "/.well-known/did.json"))
-            (let [domain (identity/organization-domain-for-did-web)]
+            (let [domain (identity/did-web-domain-for-host
+                          (.getFirst (.getRequestHeaders exchange) "Host"))]
               (if (str/blank? (str domain))
                 (send! exchange 404
                        {:error "この deployment は did:web を発行していません。"

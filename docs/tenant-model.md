@@ -51,9 +51,17 @@ only because it holds its owner's handle by construction.
 
 A personal tenant has exactly one member. `add-user!` refuses it: a second
 person inside a tenant named after the first would be working under someone
-else's name. Moving work between a personal tenant and an organization uses a
-tenant connection (ADR-0014) — approved, capability-scoped, expiring — not a
-membership.
+else's name. Agent access across a tenant boundary uses a tenant connection
+(ADR-0014) — approved, capability-scoped, expiring — not a membership.
+
+Handing work *over* is a different act from reading across, and it has its own
+operation: `POST /api/projects/{project}/transfer` moves one project to another
+tenant the caller administers (ADR-0024). It requires owner or admin on both
+sides and a browser Passkey session — an agent holding a connection to a tenant
+must not be able to move a project into it — and refuses a project anything has
+been published from, because that ciphertext is encrypted under a key bound to
+the storage owner it would be leaving. Mail filed against the project stays in
+the tenant it was filed in, and the receipt says how much.
 
 ## Worker assignment
 
@@ -108,7 +116,11 @@ documents for managed domains. Configuration alone does not prove ownership.
 The application now *serves* that document: with `:publish-did-web? true` and an
 Organization ID claimed, `GET /.well-known/did.json` returns a DID document whose
 `assertionMethod` is the Ed25519 key credentials are signed with
-(`cloud.itonami.app.credential/did-web-document`). What is still a deployment
+(`cloud.itonami.app.credential/did-web-document`). **Which** document depends on
+the request's `Host`, because that is what `did:web:<domain>` asked for; with
+several named tenants an unmatched Host gets nothing rather than a guess, and a
+membership credential names the tenant it was issued in rather than the first
+one this deployment happens to hold (ADR-0025). What is still a deployment
 responsibility is making `https://<domain>/.well-known/did.json` actually resolve
 to this process — serving a document and controlling the domain that names it are
 different things, and only the second proves ownership.

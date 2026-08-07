@@ -1,5 +1,5 @@
 (ns cloud.itonami.app.core-test
-  (:require [clojure.test :refer [deftest is]]
+  (:require [clojure.test :refer [deftest is testing]]
             [clojure.edn :as edn]
             [clojure.java.io :as io]
             [clojure.set :as set]
@@ -596,6 +596,122 @@
                      (get-in (local-identity/public-state next-token)
                              [:organization :kind])))))))
       (finally
+        (reset! store/state previous)))))
+
+(deftest an-added-user-gets-their-own-tenant-and-lands-in-the-organization
+  (let [temporary (java.nio.file.Files/createTempDirectory
+                   "cloud-itonami-added-user-tenant"
+                   (make-array java.nio.file.attribute.FileAttribute 0))
+        previous @store/state]
+    (try
+      (reset! store/state (store/initial-state))
+      (with-redefs [config-loader/data-dir (fn [] (.toFile temporary))
+                    local-identity/provider-config
+                    (fn [provider]
+                      {:provider provider :name (name provider)
+                       :configured? false :scopes []})]
+        (let [{:keys [token]} (local-identity/register!
+                               {:organization-name "Example Org"
+                                :organization-id "example"
+                                :display-name "Owner"
+                                :email "owner@example.jp"})
+              session (local-identity/session token)
+              added (local-identity/add-user!
+                     session {:display-name "Member" :account-id "member"
+                              :role "member"})
+              state (:identity (store/snapshot))
+              member (get-in state [:users (:id added)])
+              memberships (filter #(= (:id added) (:user-id %))
+                                  (vals (:memberships state)))
+              personal (some (fn [membership]
+                               (let [tenant (get-in state [:organizations
+                                                           (:organization-id
+                                                            membership)])]
+                                 (when (= :personal (:tenant/kind tenant))
+                                   tenant)))
+                             memberships)]
+          ;; Not left to the migration: until it ran they would be a User with
+          ;; no namespace, and two memberships stamped in the same instant
+          ;; would leave the landing tenant decided by a UUID comparison.
+          (is (= 2 (count memberships)))
+          (is (some? personal))
+          (is (= "member" (:organization-id personal)))
+          (is (= :organization
+                 (get-in state [:organizations
+                                (get-in state [:memberships
+                                               (:default-membership-id member)
+                                               :organization-id])
+                                :tenant/kind]))
+              "an invited person lands in the organization that invited them")
+          ;; The other direction of the one owner namespace.
+          (is (thrown-with-msg?
+               clojure.lang.ExceptionInfo #"Organization ID として使用"
+               (local-identity/add-user!
+                session {:display-name "Clash" :account-id "example"
+                         :role "member"})))))
+      (finally
+        (reset! store/state previous)))))
+
+(deftest did-web-answers-for-the-tenant-that-was-asked-about
+  (let [temporary (java.nio.file.Files/createTempDirectory
+                   "cloud-itonami-did-web-per-tenant"
+                   (make-array java.nio.file.attribute.FileAttribute 0))
+        previous @store/state
+        previous-profile (local-identity/identity-profile)
+        now (store/now)]
+    (try
+      (local-identity/configure!
+       {:identity {:account-domain "example.test"
+                   :organization-domain-suffix "example.test"
+                   :publish-did-web? true}})
+      (reset! store/state
+              (assoc (store/initial-state)
+                     :identity
+                     {:organizations
+                      {"org-personal" {:id "org-personal" :tenant/kind :personal
+                                       :organization-id "owner"
+                                       :domain "owner.example.test"
+                                       :name "owner" :status :active}
+                       "org-etzhayyim" {:id "org-etzhayyim"
+                                        :tenant/kind :organization
+                                        :organization-id "etzhayyim"
+                                        :domain "etzhayyim.example.test"
+                                        :name "Etzhayyim" :status :active}}
+                      :users {"user-1" {:id "user-1" :did "did:key:zOwner"
+                                        :display-name "Owner"
+                                        :passkey-enrolled? true}}
+                      :memberships
+                      {"membership-personal"
+                       {:id "membership-personal" :organization-id "org-personal"
+                        :user-id "user-1" :role :owner :created-at now}
+                       "membership-etzhayyim"
+                       {:id "membership-etzhayyim"
+                        :organization-id "org-etzhayyim"
+                        :user-id "user-1" :role :owner :created-at now}}}))
+      (with-redefs [config-loader/data-dir (fn [] (.toFile temporary))]
+        (testing "the document served depends on the name that was asked for"
+          (is (= "etzhayyim.example.test"
+                 (local-identity/did-web-domain-for-host
+                  "etzhayyim.example.test")))
+          (is (= "owner.example.test"
+                 (local-identity/did-web-domain-for-host "owner.example.test:8787")))
+          (is (nil? (local-identity/did-web-domain-for-host "localhost:8787"))
+              "with two named tenants there is nothing to fall back to"))
+        (testing "a deployment-level artifact names no tenant when several exist"
+          (is (nil? (local-identity/organization-domain-for-did-web))))
+        (testing "a credential's issuer is the tenant it was issued in"
+          (is (= "etzhayyim.example.test"
+                 (:organization-domain
+                  (local-identity/membership-credential-context
+                   {:user-id "user-1" :membership-id "membership-etzhayyim"
+                    :organization-id "org-etzhayyim"}))))
+          (is (= "owner.example.test"
+                 (:organization-domain
+                  (local-identity/membership-credential-context
+                   {:user-id "user-1" :membership-id "membership-personal"
+                    :organization-id "org-personal"}))))))
+      (finally
+        (local-identity/configure! {:identity previous-profile})
         (reset! store/state previous)))))
 
 (deftest existing-user-accepts-an-organization-bound-invitation

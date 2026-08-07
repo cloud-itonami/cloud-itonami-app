@@ -6998,8 +6998,13 @@
       $('#identity-avatar').textContent =
         (data.user['display-name'] || 'U').slice(0, 2);
       $('#identity-name').textContent = data.user['display-name'] || 'Passkey user';
-      $('#identity-email').textContent =
-        data.user['account-id'] ? data.user.email : 'Organization ID 未設定';
+      // Says where to go, not just that something is missing. A handle is
+      // claimed by naming your personal tenant (ADR-0023), and somebody who
+      // named an organization first has no other route to one — the previous
+      // text pointed at the Organization ID form, which no longer sets it.
+      $('#identity-email').textContent = data.user['account-id']
+        ? data.user.email
+        : 'アカウント ID 未設定 — 個人テナントに切り替えて設定します';
       $('#identity-did').textContent = data.user.did || 'Passkey 登録後に発行';
       $('#passkey-state').textContent = data.user['passkey-enrolled?']
         ? 'Passkey 登録済み'
@@ -7034,6 +7039,23 @@
         organizationSwitcher.append(option);
       });
       organizationSwitcher.disabled = (data.organizations || []).length < 2;
+      // Where a project can be moved to: your other tenants, owner/admin only.
+      // The server checks both sides again — this only keeps the list from
+      // offering a destination it is going to refuse.
+      const transferTargets = $('#project-transfer-tenant');
+      const eligible = (data.organizations || []).filter((organization) =>
+        !organization['active?'] && ['owner', 'admin'].includes(organization.role));
+      transferTargets.replaceChildren();
+      eligible.forEach((organization) => {
+        const option = document.createElement('option');
+        option.value = organization.id;
+        const label = organization.name || organization['organization-id']
+          || organization.id;
+        option.textContent = organization.kind === 'personal'
+          ? `${label} · 個人` : label;
+        transferTargets.append(option);
+      });
+      $('#project-transfer-form').hidden = !eligible.length;
       const invitations = data['organization-invitations'] || [];
       $('#organization-invitation-state').textContent = invitations.length
         ? `${invitations.length}件の参加待ち招待があります。コードを入力して参加できます。`
@@ -7327,6 +7349,32 @@
         $('#identity-status').textContent = error.message;
       } finally {
         button.disabled = false; button.textContent = 'Organizationを追加';
+      }
+    });
+    $('#project-transfer-form').addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const button = $('#project-transfer-submit');
+      const fields = Object.fromEntries(new FormData(event.currentTarget));
+      button.disabled = true; button.textContent = '移動中…';
+      try {
+        const data = await postJSON(
+          `/api/projects/${encodeURIComponent(fields.project)}/transfer`,
+          {tenant: fields.tenant}, true);
+        event.currentTarget.reset();
+        // The receipt names what did NOT move, so say it here too. Mail filed
+        // against the project stays with the tenant it was filed in, and
+        // finding that out later is how somebody concludes the move was
+        // partial and broken (ADR-0024).
+        const stayed = data['stayed-behind'] || {};
+        const left = (stayed['filed-messages'] || 0) + (stayed['filing-rules'] || 0);
+        $('#identity-status').textContent =
+          `${data['project-id']} を ${data.to.name} へ移動しました。`
+          + (left ? ` メール ${stayed['filed-messages'] || 0} 件と振り分け規則 `
+             + `${stayed['filing-rules'] || 0} 件は移動元に残ります。` : '');
+      } catch (error) {
+        $('#identity-status').textContent = error.message;
+      } finally {
+        button.disabled = false; button.textContent = '移動する';
       }
     });
     $('#organization-switcher').addEventListener('change', async (event) => {
