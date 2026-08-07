@@ -2,7 +2,7 @@
  :note
  "このファイルは受信の観測から生成される。件数と日付は毎回上書きされ、:origin/kind :route/projects :trust/level は人が書いた値が保持される。trust は件数から推論しない。",
  :counts
- {:domains 166, :messages 1127, :classified 70, :self-registered 41},
+ {:domains 174, :messages 1151, :classified 70, :self-registered 43},
  :origins
  [{:route/projects ["dev"],
    :observed/first "2026-06-22T08:34:53Z",
@@ -15,6 +15,11 @@
    :observed/last "2026-08-05T19:37:14Z",
    :origin/registrable "github.com",
    :origin/domain "github.com",
+   :observed/authentication
+   {:authenticated 520,
+    :unaligned 0,
+    :impersonation-suspected 0,
+    :unknown 2},
    :origin/display-names ["GitHub" "jp-co-gftd"],
    :origin/kind :developer-tool}
   {:route/projects ["infra"],
@@ -28,6 +33,11 @@
    :observed/last "2026-08-04T09:07:53Z",
    :origin/registrable "cloudflare.com",
    :origin/domain "notify.cloudflare.com",
+   :observed/authentication
+   {:authenticated 34,
+    :unaligned 0,
+    :impersonation-suspected 0,
+    :unknown 5},
    :origin/display-names ["Cloudflare Registrar" "Cloudflare"],
    :origin/kind :infrastructure}
   {:route/projects ["personal"],
@@ -41,9 +51,30 @@
    :observed/last "2026-08-06T00:20:05Z",
    :origin/registrable "gmail.com",
    :origin/domain "gmail.com",
+   :observed/authentication
+   {:authenticated 5,
+    :unaligned 0,
+    :impersonation-suspected 0,
+    :unknown 26},
    :origin/display-names
    ["Kawasaki" "URIZIP TOKYO" "miyakojima 24north" "Raju Dandigam"],
    :origin/kind :person}
+  {:route/projects ["banking"],
+   :observed/first "2026-06-23T14:00:33Z",
+   :trust/level :unverified,
+   :observed/messages 26,
+   :origin/via-relay? false,
+   :trust/evidence [],
+   :observed/last "2026-08-06T11:42:04Z",
+   :origin/registrable "paypay-bank.co.jp",
+   :origin/domain "cc.paypay-bank.co.jp",
+   :observed/authentication
+   {:authenticated 24,
+    :unaligned 0,
+    :impersonation-suspected 0,
+    :unknown 2},
+   :origin/display-names ["＜PayPay銀行＞"],
+   :origin/kind :bank}
   {:route/projects ["tax"],
    :observed/first "2026-01-21T10:48:02Z",
    :trust/level :self-registered,
@@ -55,19 +86,30 @@
    :observed/last "2026-07-01T02:47:06Z",
    :origin/registrable "yashin.co.jp",
    :origin/domain "yashin.co.jp",
+   :observed/authentication
+   {:authenticated 25,
+    :unaligned 0,
+    :impersonation-suspected 0,
+    :unknown 0},
    :origin/display-names ["福本 淳司"],
    :origin/kind :tax}
-  {:route/projects ["banking"],
-   :observed/first "2026-06-23T14:00:33Z",
+  {:route/projects ["billing"],
+   :observed/first "2026-06-22T18:21:33Z",
    :trust/level :unverified,
-   :observed/messages 23,
+   :observed/messages 21,
    :origin/via-relay? false,
    :trust/evidence [],
-   :observed/last "2026-08-06T00:14:05Z",
-   :origin/registrable "paypay-bank.co.jp",
-   :origin/domain "cc.paypay-bank.co.jp",
-   :origin/display-names ["＜PayPay銀行＞"],
-   :origin/kind :bank}
+   :observed/last "2026-08-06T05:11:34Z",
+   :origin/registrable "stripe.com",
+   :origin/domain "stripe.com",
+   :observed/authentication
+   {:authenticated 19,
+    :unaligned 0,
+    :impersonation-suspected 0,
+    :unknown 2},
+   :origin/display-names
+   ["Stripe" "Stripe Atlas" "Hume AI" "Fly.io, Inc."],
+   :origin/kind :payment}
   {:route/projects ["infra"],
    :observed/first "2026-06-26T10:14:29Z",
    :trust/level :unverified,
@@ -77,24 +119,17 @@
    :observed/last "2026-08-03T14:00:20Z",
    :origin/registrable "google.com",
    :origin/domain "google.com",
+   :observed/authentication
+   {:authenticated 20,
+    :unaligned 0,
+    :impersonation-suspected 0,
+    :unknown 0},
    :origin/display-names
    ["The Google Workspace Team"
     "Google Ads"
     "Google Payments"
     "The Google Workspace Team "],
    :origin/kind :infrastructure}
-  {:route/projects ["billing"],
-   :observed/first "2026-06-22T18:21:33Z",
-   :trust/level :unverified,
-   :observed/messages 20,
-   :origin/via-relay? false,
-   :trust/evidence [],
-   :observed/last "2026-08-01T15:11:29Z",
-   :origin/registrable "stripe.com",
-   :origin/domain "stripe.com",
-   :origin/display-names
-   ["Stripe" "Stripe Atlas" "Hume AI" "Fly.io, Inc."],
-   :origin/kind :payment}
   {:route/projects ["personal"],
    :observed/first "2026-06-28T08:19:47Z",
    :trust/level :unverified,
@@ -104,6 +139,11 @@
    :observed/last "2026-08-03T14:21:02Z",
    :origin/registrable "apple.com",
    :origin/domain "email.apple.com",
+   :observed/authentication
+   {:authenticated 16,
+    :unaligned 0,
+    :impersonation-suspected 0,
+    :unknown 0},
    :origin/display-names ["iCloud" "Find My" "Apple Developer"],
    :origin/kind :infrastructure}
   {:route/projects ["billing"],
@@ -115,6 +155,11 @@
    :observed/last "2026-08-05T23:30:13Z",
    :origin/registrable "amazon.co.jp",
    :origin/domain "amazon.co.jp",
+   :observed/authentication
+   {:authenticated 10,
+    :unaligned 0,
+    :impersonation-suspected 0,
+    :unknown 4},
    :origin/display-names
    ["amazon.co.jp" "Amazon.co.jp" "Amazon Business" "Amazon定期おトク便"],
    :origin/kind :marketplace}
@@ -127,6 +172,11 @@
    :observed/last "2026-08-06T01:03:35Z",
    :origin/registrable "paidy.com",
    :origin/domain "paidy.com",
+   :observed/authentication
+   {:authenticated 14,
+    :unaligned 0,
+    :impersonation-suspected 0,
+    :unknown 0},
    :origin/display-names ["ペイディ"],
    :origin/kind :payment}
   {:route/projects ["banking"],
@@ -138,6 +188,11 @@
    :observed/last "2026-08-05T17:07:02Z",
    :origin/registrable "mercury.com",
    :origin/domain "mercury.com",
+   :observed/authentication
+   {:authenticated 12,
+    :unaligned 0,
+    :impersonation-suspected 0,
+    :unknown 0},
    :origin/display-names ["Mercury" "The Mercury Team"],
    :origin/kind :bank}
   {:route/projects ["newsletter"],
@@ -149,6 +204,11 @@
    :observed/last "2026-08-01T00:01:42Z",
    :origin/registrable "emerging-future.org",
    :origin/domain "emerging-future.org",
+   :observed/authentication
+   {:authenticated 0,
+    :unaligned 11,
+    :impersonation-suspected 0,
+    :unknown 0},
    :origin/display-names
    ["株式会社esse-sense 臨時株主総会事務局" "ミラツク / esse-sense" "株式会社esse-sense"],
    :origin/kind :newsletter}
@@ -161,6 +221,11 @@
    :observed/last "2026-08-05T19:05:34Z",
    :origin/registrable "bitgo.com",
    :origin/domain "go.bitgo.com",
+   :observed/authentication
+   {:authenticated 10,
+    :unaligned 0,
+    :impersonation-suspected 0,
+    :unknown 0},
    :origin/display-names ["BitGo"],
    :origin/kind :bank}
   {:route/projects [],
@@ -172,6 +237,11 @@
    :observed/last "2026-08-04T19:19:30Z",
    :origin/registrable "mit.edu",
    :origin/domain "mail.learn.mit.edu",
+   :observed/authentication
+   {:authenticated 9,
+    :unaligned 0,
+    :impersonation-suspected 0,
+    :unknown 1},
    :origin/display-names ["MIT Learn"],
    :origin/kind :unknown}
   {:route/projects ["personal"],
@@ -183,8 +253,29 @@
    :observed/last "2026-08-04T02:02:04Z",
    :origin/registrable "mercari.jp",
    :origin/domain "mercari.jp",
+   :observed/authentication
+   {:authenticated 9,
+    :unaligned 0,
+    :impersonation-suspected 0,
+    :unknown 1},
    :origin/display-names ["メルカリ" "メルコイン"],
    :origin/kind :marketplace}
+  {:route/projects ["learning"],
+   :observed/first "2026-06-25T09:02:33Z",
+   :trust/level :unverified,
+   :observed/messages 9,
+   :origin/via-relay? false,
+   :trust/evidence [],
+   :observed/last "2026-08-06T03:06:13Z",
+   :origin/registrable "signate.jp",
+   :origin/domain "signate.jp",
+   :observed/authentication
+   {:authenticated 9,
+    :unaligned 0,
+    :impersonation-suspected 0,
+    :unknown 0},
+   :origin/display-names ["SIGNATE事務局"],
+   :origin/kind :education}
   {:route/projects ["dev"],
    :observed/first "2026-07-07T23:57:36Z",
    :trust/level :unverified,
@@ -194,20 +285,32 @@
    :observed/last "2026-08-02T18:50:46Z",
    :origin/registrable "clojureverse.org",
    :origin/domain "clojureverse.org",
+   :observed/authentication
+   {:authenticated 0,
+    :unaligned 8,
+    :impersonation-suspected 0,
+    :unknown 0},
    :origin/display-names
    ["Arne Brasseur" "ClojureVerse" "Jack Rusher"],
    :origin/kind :developer-tool}
-  {:route/projects ["learning"],
-   :observed/first "2026-06-25T09:02:33Z",
-   :trust/level :unverified,
+  {:route/projects ["personal"],
+   :observed/first "2026-06-26T10:13:01Z",
+   :trust/level :self-registered,
    :observed/messages 8,
-   :origin/via-relay? false,
-   :trust/evidence [],
-   :observed/last "2026-08-05T03:01:31Z",
-   :origin/registrable "signate.jp",
-   :origin/domain "signate.jp",
-   :origin/display-names ["SIGNATE事務局"],
-   :origin/kind :education}
+   :origin/via-relay? true,
+   :trust/evidence
+   [#:evidence{:kind :apple-private-relay,
+               :note "この所有者がこの相手のために作成したリレー宛先で受信"}],
+   :observed/last "2026-08-06T09:09:00Z",
+   :origin/registrable "yoasobi-fc.com",
+   :origin/domain "yoasobi-fc.com",
+   :observed/authentication
+   {:authenticated 8,
+    :unaligned 0,
+    :impersonation-suspected 0,
+    :unknown 0},
+   :origin/display-names ["magazine@yoasobi-fc.com"],
+   :origin/kind :media}
   {:route/projects ["dev"],
    :observed/first "2026-06-27T01:14:20Z",
    :trust/level :unverified,
@@ -217,6 +320,11 @@
    :observed/last "2026-08-06T00:00:32Z",
    :origin/registrable "apify.com",
    :origin/domain "apify.com",
+   :observed/authentication
+   {:authenticated 6,
+    :unaligned 0,
+    :impersonation-suspected 0,
+    :unknown 1},
    :origin/display-names ["Apify"],
    :origin/kind :developer-tool}
   {:route/projects ["learning"],
@@ -228,6 +336,11 @@
    :observed/last "2026-08-04T14:32:11Z",
    :origin/registrable "isc2.org",
    :origin/domain "connect.isc2.org",
+   :observed/authentication
+   {:authenticated 6,
+    :unaligned 0,
+    :impersonation-suspected 0,
+    :unknown 1},
    :origin/display-names ["ISC2 Japan" "ISC2 Asia-Pacific" "ISC2"],
    :origin/kind :education}
   {:route/projects ["dev"],
@@ -239,6 +352,11 @@
    :observed/last "2026-07-27T21:03:01Z",
    :origin/registrable "claude.com",
    :origin/domain "email.claude.com",
+   :observed/authentication
+   {:authenticated 7,
+    :unaligned 0,
+    :impersonation-suspected 0,
+    :unknown 0},
    :origin/display-names ["Claude Team"],
    :origin/kind :developer-tool}
   {:route/projects ["dev"],
@@ -252,6 +370,11 @@
    :observed/last "2026-08-03T23:58:12Z",
    :origin/registrable "fal.ai",
    :origin/domain "fal.ai",
+   :observed/authentication
+   {:authenticated 7,
+    :unaligned 0,
+    :impersonation-suspected 0,
+    :unknown 0},
    :origin/display-names ["Team fal"],
    :origin/kind :developer-tool}
   {:route/projects ["personal"],
@@ -263,6 +386,11 @@
    :observed/last "2026-07-23T01:52:56Z",
    :origin/registrable "fulltimesystem.jp",
    :origin/domain "fulltimesystem.jp",
+   :observed/authentication
+   {:authenticated 5,
+    :unaligned 0,
+    :impersonation-suspected 0,
+    :unknown 2},
    :origin/display-names ["fts-center@fulltimesystem.jp"],
    :origin/kind :logistics}
   {:route/projects ["billing"],
@@ -276,21 +404,13 @@
    :observed/last "2026-08-04T01:36:52Z",
    :origin/registrable "withorb.com",
    :origin/domain "withorb.com",
+   :observed/authentication
+   {:authenticated 7,
+    :unaligned 0,
+    :impersonation-suspected 0,
+    :unknown 0},
    :origin/display-names ["fal - Features & Labels, Inc."],
    :origin/kind :payment}
-  {:route/projects ["personal"],
-   :observed/first "2026-06-26T10:13:01Z",
-   :trust/level :self-registered,
-   :observed/messages 7,
-   :origin/via-relay? true,
-   :trust/evidence
-   [#:evidence{:kind :apple-private-relay,
-               :note "この所有者がこの相手のために作成したリレー宛先で受信"}],
-   :observed/last "2026-08-06T01:10:53Z",
-   :origin/registrable "yoasobi-fc.com",
-   :origin/domain "yoasobi-fc.com",
-   :origin/display-names ["magazine@yoasobi-fc.com"],
-   :origin/kind :media}
   {:route/projects ["dev" "security"],
    :observed/first "2026-07-06T04:45:57Z",
    :trust/level :unverified,
@@ -300,6 +420,11 @@
    :observed/last "2026-07-13T02:36:51Z",
    :origin/registrable "1password.com",
    :origin/domain "1password.com",
+   :observed/authentication
+   {:authenticated 6,
+    :unaligned 0,
+    :impersonation-suspected 0,
+    :unknown 0},
    :origin/display-names ["1Password"],
    :origin/kind :developer-tool}
   {:route/projects ["banking"],
@@ -311,6 +436,11 @@
    :observed/last "2026-08-01T00:03:20Z",
    :origin/registrable "bitgo.com",
    :origin/domain "bitgo.com",
+   :observed/authentication
+   {:authenticated 6,
+    :unaligned 0,
+    :impersonation-suspected 0,
+    :unknown 0},
    :origin/display-names ["BitGo"],
    :origin/kind :bank}
   {:route/projects ["learning"],
@@ -322,7 +452,29 @@
    :observed/last "2026-07-31T12:39:16Z",
    :origin/registrable "eccouncil.org",
    :origin/domain "eccouncil.org",
+   :observed/authentication
+   {:authenticated 6,
+    :unaligned 0,
+    :impersonation-suspected 0,
+    :unknown 0},
    :origin/display-names ["Priyanka Naik"],
+   :origin/kind :education}
+  {:route/projects ["learning"],
+   :observed/first "2026-08-03T17:47:26Z",
+   :trust/level :unverified,
+   :observed/messages 6,
+   :origin/via-relay? false,
+   :trust/evidence [],
+   :observed/last "2026-08-06T08:01:16Z",
+   :origin/registrable "lr.academy",
+   :origin/domain "lr.academy",
+   :observed/authentication
+   {:authenticated 6,
+    :unaligned 0,
+    :impersonation-suspected 0,
+    :unknown 0},
+   :origin/display-names
+   ["Brian Rose - London Real" "Brian Rose at London Real"],
    :origin/kind :education}
   {:route/projects ["infra"],
    :observed/first "2026-06-23T09:37:56Z",
@@ -335,6 +487,11 @@
    :observed/last "2026-08-01T05:28:49Z",
    :origin/registrable "microsoft.com",
    :origin/domain "accountprotection.microsoft.com",
+   :observed/authentication
+   {:authenticated 4,
+    :unaligned 0,
+    :impersonation-suspected 0,
+    :unknown 1},
    :origin/display-names ["Microsoft account team"],
    :origin/kind :infrastructure}
   {:route/projects ["personal"],
@@ -348,6 +505,11 @@
    :observed/last "2026-07-14T07:08:42Z",
    :origin/registrable "applied-net.co.jp",
    :origin/domain "applied-net.co.jp",
+   :observed/authentication
+   {:authenticated 5,
+    :unaligned 0,
+    :impersonation-suspected 0,
+    :unknown 0},
    :origin/display-names ["アプライド通信販売" "アプライドネット"],
    :origin/kind :retail}
   {:route/projects ["billing"],
@@ -359,20 +521,29 @@
    :observed/last "2026-07-14T05:47:24Z",
    :origin/registrable "coinpayments.net",
    :origin/domain "coinpayments.net",
+   :observed/authentication
+   {:authenticated 5,
+    :unaligned 0,
+    :impersonation-suspected 0,
+    :unknown 0},
    :origin/display-names ["CoinPayments.net"],
    :origin/kind :payment}
-  {:route/projects ["learning"],
-   :observed/first "2026-08-03T17:47:26Z",
+  {:route/projects ["newsletter"],
+   :observed/first "2026-07-02T04:07:02Z",
    :trust/level :unverified,
    :observed/messages 5,
    :origin/via-relay? false,
    :trust/evidence [],
-   :observed/last "2026-08-05T17:50:32Z",
-   :origin/registrable "lr.academy",
-   :origin/domain "lr.academy",
-   :origin/display-names
-   ["Brian Rose - London Real" "Brian Rose at London Real"],
-   :origin/kind :education}
+   :observed/last "2026-08-06T04:16:14Z",
+   :origin/registrable "f6s.com",
+   :origin/domain "f6s.com",
+   :observed/authentication
+   {:authenticated 5,
+    :unaligned 0,
+    :impersonation-suspected 0,
+    :unknown 0},
+   :origin/display-names ["Alex from F6S"],
+   :origin/kind :newsletter}
   {:route/projects ["dev"],
    :observed/first "2026-07-10T01:48:27Z",
    :trust/level :unverified,
@@ -382,6 +553,11 @@
    :observed/last "2026-07-10T01:51:50Z",
    :origin/registrable "nvidia.com",
    :origin/domain "nvidia.com",
+   :observed/authentication
+   {:authenticated 5,
+    :unaligned 0,
+    :impersonation-suspected 0,
+    :unknown 0},
    :origin/display-names
    ["noreply-cloud-accounts@nvidia.com"
     "NVIDIA Accounts"
@@ -396,6 +572,11 @@
    :observed/last "2026-07-19T09:33:11Z",
    :origin/registrable "pypi.org",
    :origin/domain "pypi.org",
+   :observed/authentication
+   {:authenticated 5,
+    :unaligned 0,
+    :impersonation-suspected 0,
+    :unknown 0},
    :origin/display-names ["PyPI"],
    :origin/kind :developer-tool}
   {:route/projects ["dev"],
@@ -407,8 +588,31 @@
    :observed/last "2026-07-28T09:13:11Z",
    :origin/registrable "squarespace.com",
    :origin/domain "squarespace.com",
+   :observed/authentication
+   {:authenticated 4,
+    :unaligned 0,
+    :impersonation-suspected 0,
+    :unknown 1},
    :origin/display-names ["Squarespace"],
    :origin/kind :infrastructure}
+  {:route/projects ["personal"],
+   :observed/first "2026-06-27T00:42:03Z",
+   :trust/level :self-registered,
+   :observed/messages 5,
+   :origin/via-relay? true,
+   :trust/evidence
+   [#:evidence{:kind :apple-private-relay,
+               :note "この所有者がこの相手のために作成したリレー宛先で受信"}],
+   :observed/last "2026-08-06T07:29:20Z",
+   :origin/registrable "ticketboard.jp",
+   :origin/domain "ticketboard.jp",
+   :observed/authentication
+   {:authenticated 3,
+    :unaligned 0,
+    :impersonation-suspected 0,
+    :unknown 2},
+   :origin/display-names ["ticket board"],
+   :origin/kind :media}
   {:route/projects ["billing"],
    :observed/first "2026-06-24T23:56:57Z",
    :trust/level :unverified,
@@ -418,6 +622,11 @@
    :observed/last "2026-08-06T01:08:57Z",
    :origin/registrable "suidoapp.jp",
    :origin/domain "tokyo.suidoapp.jp",
+   :observed/authentication
+   {:authenticated 5,
+    :unaligned 0,
+    :impersonation-suspected 0,
+    :unknown 0},
    :origin/display-names ["東京都水道局"],
    :origin/kind :utility}
   {:route/projects ["legal" "contracts"],
@@ -431,19 +640,29 @@
    :observed/last "2026-07-30T10:21:30Z",
    :origin/registrable "ts-expertholland.com",
    :origin/domain "ts-expertholland.com",
+   :observed/authentication
+   {:authenticated 2,
+    :unaligned 3,
+    :impersonation-suspected 0,
+    :unknown 0},
    :origin/display-names ["T Todani"],
    :origin/kind :legal}
-  {:route/projects ["newsletter"],
-   :observed/first "2026-07-02T04:07:02Z",
+  {:route/projects [],
+   :observed/first "2026-06-30T11:00:35Z",
    :trust/level :unverified,
    :observed/messages 4,
    :origin/via-relay? false,
    :trust/evidence [],
-   :observed/last "2026-07-30T04:10:27Z",
-   :origin/registrable "f6s.com",
-   :origin/domain "f6s.com",
-   :origin/display-names ["Alex from F6S"],
-   :origin/kind :newsletter}
+   :observed/last "2026-08-06T05:10:45Z",
+   :origin/registrable "fundinno.com",
+   :origin/domain "fundinno.com",
+   :observed/authentication
+   {:authenticated 4,
+    :unaligned 0,
+    :impersonation-suspected 0,
+    :unknown 0},
+   :origin/display-names ["FUNDINNO"],
+   :origin/kind :unknown}
   {:route/projects ["billing"],
    :observed/first "2026-07-14T01:40:18Z",
    :trust/level :self-registered,
@@ -455,6 +674,11 @@
    :observed/last "2026-07-14T06:49:45Z",
    :origin/registrable "jaccs.co.jp",
    :origin/domain "jaccs.co.jp",
+   :observed/authentication
+   {:authenticated 4,
+    :unaligned 0,
+    :impersonation-suspected 0,
+    :unknown 0},
    :origin/display-names ["webby@jaccs.co.jp"],
    :origin/kind :card}
   {:route/projects ["personal"],
@@ -468,6 +692,11 @@
    :observed/last "2026-02-27T08:55:51Z",
    :origin/registrable "junkawasaki.com",
    :origin/domain "junkawasaki.com",
+   :observed/authentication
+   {:authenticated 1,
+    :unaligned 3,
+    :impersonation-suspected 0,
+    :unknown 0},
    :origin/display-names ["yamada m"],
    :origin/kind :person}
   {:route/projects ["personal"],
@@ -479,21 +708,47 @@
    :observed/last "2026-07-16T23:58:20Z",
    :origin/registrable "kuronekoyamato.co.jp",
    :origin/domain "kuronekoyamato.co.jp",
+   :observed/authentication
+   {:authenticated 4,
+    :unaligned 0,
+    :impersonation-suspected 0,
+    :unknown 0},
    :origin/display-names ["ヤマト運輸株式会社"],
    :origin/kind :logistics}
   {:route/projects ["personal"],
-   :observed/first "2026-06-27T00:42:03Z",
+   :observed/first "2026-08-05T09:58:32Z",
    :trust/level :self-registered,
    :observed/messages 4,
    :origin/via-relay? true,
    :trust/evidence
    [#:evidence{:kind :apple-private-relay,
                :note "この所有者がこの相手のために作成したリレー宛先で受信"}],
-   :observed/last "2026-08-05T10:07:21Z",
-   :origin/registrable "ticketboard.jp",
-   :origin/domain "ticketboard.jp",
-   :origin/display-names ["ticket board"],
-   :origin/kind :media}
+   :observed/last "2026-08-06T09:12:16Z",
+   :origin/registrable "asoview.com",
+   :origin/domain "mailmagazine.asoview.com",
+   :observed/authentication
+   {:authenticated 1,
+    :unaligned 0,
+    :impersonation-suspected 0,
+    :unknown 3},
+   :origin/display-names ["アソビュー！"],
+   :origin/kind :travel}
+  {:route/projects ["learning"],
+   :observed/first "2026-07-27T03:13:49Z",
+   :trust/level :unverified,
+   :observed/messages 4,
+   :origin/via-relay? false,
+   :trust/evidence [],
+   :observed/last "2026-08-06T03:06:14Z",
+   :origin/registrable "globis.co.jp",
+   :origin/domain "unlimited.globis.co.jp",
+   :observed/authentication
+   {:authenticated 4,
+    :unaligned 0,
+    :impersonation-suspected 0,
+    :unknown 0},
+   :origin/display-names ["GLOBIS学び放題事務局" "GLOBIS学び放題 事務局"],
+   :origin/kind :education}
   {:route/projects ["legal"],
    :observed/first "2026-06-26T05:07:30Z",
    :trust/level :self-registered,
@@ -505,6 +760,11 @@
    :observed/last "2026-07-15T03:56:26Z",
    :origin/registrable "zelojapan.com",
    :origin/domain "zelojapan.com",
+   :observed/authentication
+   {:authenticated 4,
+    :unaligned 0,
+    :impersonation-suspected 0,
+    :unknown 0},
    :origin/display-names ["水野雄介MIZUNO, Yusuke" "竹下晴哉"],
    :origin/kind :legal}
   {:route/projects ["personal"],
@@ -516,6 +776,11 @@
    :observed/last "2026-08-05T11:49:24Z",
    :origin/registrable "nintendo.com",
    :origin/domain "accounts.nintendo.com",
+   :observed/authentication
+   {:authenticated 0,
+    :unaligned 0,
+    :impersonation-suspected 0,
+    :unknown 3},
    :origin/display-names ["Nintendo"],
    :origin/kind :media}
   {:route/projects ["personal"],
@@ -529,6 +794,11 @@
    :observed/last "2026-08-03T13:01:17Z",
    :origin/registrable "bsize.com",
    :origin/domain "bsize.com",
+   :observed/authentication
+   {:authenticated 3,
+    :unaligned 0,
+    :impersonation-suspected 0,
+    :unknown 0},
    :origin/display-names ["BoTサポートセンター"],
    :origin/kind :retail}
   {:route/projects ["legal" "contracts"],
@@ -540,6 +810,11 @@
    :observed/last "2026-07-15T05:23:19Z",
    :origin/registrable "cloudsign.jp",
    :origin/domain "cloudsign.jp",
+   :observed/authentication
+   {:authenticated 3,
+    :unaligned 0,
+    :impersonation-suspected 0,
+    :unknown 0},
    :origin/display-names ["クラウドサイン"],
    :origin/kind :legal}
   {:route/projects ["learning"],
@@ -551,6 +826,11 @@
    :observed/last "2026-06-28T10:04:39Z",
    :origin/registrable "doshisha-web.com",
    :origin/domain "doshisha-web.com",
+   :observed/authentication
+   {:authenticated 0,
+    :unaligned 3,
+    :impersonation-suspected 0,
+    :unknown 0},
    :origin/display-names ["ルミナスクラブ本店"],
    :origin/kind :education}
   {:route/projects ["learning"],
@@ -564,19 +844,13 @@
    :observed/last "2026-07-31T14:29:28Z",
    :origin/registrable "drtraining.jp",
    :origin/domain "drtraining.jp",
+   :observed/authentication
+   {:authenticated 3,
+    :unaligned 0,
+    :impersonation-suspected 0,
+    :unknown 0},
    :origin/display-names ["ドクタートレーニング恵比寿"],
    :origin/kind :education}
-  {:route/projects [],
-   :observed/first "2026-06-30T11:00:35Z",
-   :trust/level :unverified,
-   :observed/messages 3,
-   :origin/via-relay? false,
-   :trust/evidence [],
-   :observed/last "2026-08-03T11:00:12Z",
-   :origin/registrable "fundinno.com",
-   :origin/domain "fundinno.com",
-   :origin/display-names ["FUNDINNO"],
-   :origin/kind :unknown}
   {:route/projects [],
    :observed/first "2026-07-07T10:17:49Z",
    :trust/level :unverified,
@@ -586,6 +860,11 @@
    :observed/last "2026-07-24T02:01:50Z",
    :origin/registrable "huggingface.co",
    :origin/domain "huggingface.co",
+   :observed/authentication
+   {:authenticated 3,
+    :unaligned 0,
+    :impersonation-suspected 0,
+    :unknown 0},
    :origin/display-names ["huggingface"],
    :origin/kind :unknown}
   {:route/projects ["personal"],
@@ -597,6 +876,11 @@
    :observed/last "2026-08-04T08:02:47Z",
    :origin/registrable "jal.com",
    :origin/domain "jalmail.jal.com",
+   :observed/authentication
+   {:authenticated 3,
+    :unaligned 0,
+    :impersonation-suspected 0,
+    :unknown 0},
    :origin/display-names ["JALマイレージバンク"],
    :origin/kind :travel}
   {:route/projects ["personal"],
@@ -608,6 +892,11 @@
    :observed/last "2026-07-31T01:02:02Z",
    :origin/registrable "kartie.jp",
    :origin/domain "kartie.jp",
+   :observed/authentication
+   {:authenticated 3,
+    :unaligned 0,
+    :impersonation-suspected 0,
+    :unknown 0},
    :origin/display-names ["Dr.トレーニング恵比寿店"],
    :origin/kind :retail}
   {:route/projects [],
@@ -619,6 +908,11 @@
    :observed/last "2026-07-23T00:06:58Z",
    :origin/registrable "anthropic.com",
    :origin/domain "mail.anthropic.com",
+   :observed/authentication
+   {:authenticated 3,
+    :unaligned 0,
+    :impersonation-suspected 0,
+    :unknown 0},
    :origin/display-names ["Anthropic" "Anthropic, PBC"],
    :origin/kind :unknown}
   {:route/projects ["dev"],
@@ -630,6 +924,11 @@
    :observed/last "2026-08-02T02:43:17Z",
    :origin/registrable "modal.com",
    :origin/domain "modal.com",
+   :observed/authentication
+   {:authenticated 3,
+    :unaligned 0,
+    :impersonation-suspected 0,
+    :unknown 0},
    :origin/display-names ["Modal Labs, Inc"],
    :origin/kind :infrastructure}
   {:route/projects ["dev"],
@@ -643,6 +942,11 @@
    :observed/last "2026-06-29T14:50:59Z",
    :origin/registrable "mouser.com",
    :origin/domain "mouser.com",
+   :observed/authentication
+   {:authenticated 3,
+    :unaligned 0,
+    :impersonation-suspected 0,
+    :unknown 0},
    :origin/display-names ["Mouser Order Update" "mymouser@mouser.com"],
    :origin/kind :retail}
   {:route/projects [],
@@ -656,6 +960,11 @@
    :observed/last "2026-08-05T23:05:28Z",
    :origin/registrable "pasona.co.jp",
    :origin/domain "pasona.co.jp",
+   :observed/authentication
+   {:authenticated 3,
+    :unaligned 0,
+    :impersonation-suspected 0,
+    :unknown 0},
    :origin/display-names ["佐藤 実来/パソナ" "宮地 佑果/パソナ" "株式会社パソナ"],
    :origin/kind :unknown}
   {:route/projects [],
@@ -667,6 +976,11 @@
    :observed/last "2026-07-15T05:32:17Z",
    :origin/registrable "propertyaccess.com",
    :origin/domain "propertyaccess.com",
+   :observed/authentication
+   {:authenticated 0,
+    :unaligned 3,
+    :impersonation-suspected 0,
+    :unknown 0},
    :origin/display-names ["emika noda"],
    :origin/kind :unknown}
   {:route/projects [],
@@ -678,6 +992,11 @@
    :observed/last "2026-08-06T00:01:01Z",
    :origin/registrable "revolut.com",
    :origin/domain "revolut.com",
+   :observed/authentication
+   {:authenticated 3,
+    :unaligned 0,
+    :impersonation-suspected 0,
+    :unknown 0},
    :origin/display-names ["Revolut"],
    :origin/kind :unknown}
   {:route/projects ["personal"],
@@ -689,6 +1008,11 @@
    :observed/last "2026-08-05T06:05:14Z",
    :origin/registrable "tiktok.com",
    :origin/domain "shop.tiktok.com",
+   :observed/authentication
+   {:authenticated 3,
+    :unaligned 0,
+    :impersonation-suspected 0,
+    :unknown 0},
    :origin/display-names ["TikTok Shop"],
    :origin/kind :marketplace}
   {:route/projects ["tax"],
@@ -700,19 +1024,13 @@
    :observed/last "2026-07-30T01:22:49Z",
    :origin/registrable "total-office.jp",
    :origin/domain "total-office.jp",
+   :observed/authentication
+   {:authenticated 3,
+    :unaligned 0,
+    :impersonation-suspected 0,
+    :unknown 0},
    :origin/display-names ["水鳥智仁"],
    :origin/kind :tax}
-  {:route/projects ["learning"],
-   :observed/first "2026-07-27T03:13:49Z",
-   :trust/level :unverified,
-   :observed/messages 3,
-   :origin/via-relay? false,
-   :trust/evidence [],
-   :observed/last "2026-08-04T03:13:42Z",
-   :origin/registrable "globis.co.jp",
-   :origin/domain "unlimited.globis.co.jp",
-   :origin/display-names ["GLOBIS学び放題 事務局" "GLOBIS学び放題事務局"],
-   :origin/kind :education}
   {:route/projects ["billing"],
    :observed/first "2026-07-13T05:02:47Z",
    :trust/level :unverified,
@@ -722,6 +1040,11 @@
    :observed/last "2026-07-30T11:23:13Z",
    :origin/registrable "vpass.ne.jp",
    :origin/domain "vpass.ne.jp",
+   :observed/authentication
+   {:authenticated 3,
+    :unaligned 0,
+    :impersonation-suspected 0,
+    :unknown 0},
    :origin/display-names ["三井住友カード"],
    :origin/kind :card}
   {:route/projects ["dev"],
@@ -735,6 +1058,11 @@
    :observed/last "2026-07-01T00:16:13Z",
    :origin/registrable "vultr.com",
    :origin/domain "vultr.com",
+   :observed/authentication
+   {:authenticated 2,
+    :unaligned 0,
+    :impersonation-suspected 0,
+    :unknown 1},
    :origin/display-names ["Vultr Support"],
    :origin/kind :infrastructure}
   {:route/projects ["infra"],
@@ -746,6 +1074,11 @@
    :observed/last "2026-07-31T15:41:48Z",
    :origin/registrable "google.com",
    :origin/domain "accounts.google.com",
+   :observed/authentication
+   {:authenticated 2,
+    :unaligned 0,
+    :impersonation-suspected 0,
+    :unknown 0},
    :origin/display-names ["Google"],
    :origin/kind :infrastructure}
   {:route/projects [],
@@ -759,6 +1092,11 @@
    :observed/last "2026-07-29T08:09:16Z",
    :origin/registrable "amazon.com",
    :origin/domain "amazon.com",
+   :observed/authentication
+   {:authenticated 2,
+    :unaligned 0,
+    :impersonation-suspected 0,
+    :unknown 0},
    :origin/display-names ["AmazonPay" "new-seller-jp"],
    :origin/kind :unknown}
   {:route/projects ["personal"],
@@ -772,6 +1110,11 @@
    :observed/last "2026-08-02T13:16:24Z",
    :origin/registrable "asoview.com",
    :origin/domain "asoview.com",
+   :observed/authentication
+   {:authenticated 2,
+    :unaligned 0,
+    :impersonation-suspected 0,
+    :unknown 0},
    :origin/display-names ["アソビュー"],
    :origin/kind :travel}
   {:route/projects [],
@@ -783,6 +1126,11 @@
    :observed/last "2026-08-04T07:48:38Z",
    :origin/registrable "chubb.com",
    :origin/domain "chubb.com",
+   :observed/authentication
+   {:authenticated 2,
+    :unaligned 0,
+    :impersonation-suspected 0,
+    :unknown 0},
    :origin/display-names ["policyservicefulfillment.th@chubb.com"],
    :origin/kind :unknown}
   {:route/projects ["billing"],
@@ -794,6 +1142,11 @@
    :observed/last "2026-07-23T04:04:39Z",
    :origin/registrable "vpass.ne.jp",
    :origin/domain "contact.vpass.ne.jp",
+   :observed/authentication
+   {:authenticated 2,
+    :unaligned 0,
+    :impersonation-suspected 0,
+    :unknown 0},
    :origin/display-names ["三井住友カード"],
    :origin/kind :card}
   {:route/projects [],
@@ -805,6 +1158,11 @@
    :observed/last "2026-07-29T23:07:27Z",
    :origin/registrable "coralcap.co",
    :origin/domain "coralcap.co",
+   :observed/authentication
+   {:authenticated 0,
+    :unaligned 2,
+    :impersonation-suspected 0,
+    :unknown 0},
    :origin/display-names ["James Riney"],
    :origin/kind :unknown}
   {:route/projects [],
@@ -816,6 +1174,11 @@
    :observed/last "2026-07-30T08:34:48Z",
    :origin/registrable "crowdworks.jp",
    :origin/domain "crowdworks.jp",
+   :observed/authentication
+   {:authenticated 2,
+    :unaligned 0,
+    :impersonation-suspected 0,
+    :unknown 0},
    :origin/display-names ["crowdworks.jp"],
    :origin/kind :unknown}
   {:route/projects [],
@@ -829,7 +1192,30 @@
    :observed/last "2026-08-03T00:01:58Z",
    :origin/registrable "d-reserve.jp",
    :origin/domain "d-reserve.jp",
+   :observed/authentication
+   {:authenticated 2,
+    :unaligned 0,
+    :impersonation-suspected 0,
+    :unknown 0},
    :origin/display-names ["ホテルアトールエメラルド宮古島"],
+   :origin/kind :unknown}
+  {:route/projects [],
+   :observed/first "2026-08-06T03:59:14Z",
+   :trust/level :self-registered,
+   :observed/messages 2,
+   :origin/via-relay? true,
+   :trust/evidence
+   [#:evidence{:kind :apple-private-relay,
+               :note "この所有者がこの相手のために作成したリレー宛先で受信"}],
+   :observed/last "2026-08-06T10:13:49Z",
+   :origin/registrable "cloudflare.com",
+   :origin/domain "em1.cloudflare.com",
+   :observed/authentication
+   {:authenticated 2,
+    :unaligned 0,
+    :impersonation-suspected 0,
+    :unknown 0},
+   :origin/display-names ["Cloudflare"],
    :origin/kind :unknown}
   {:route/projects [],
    :observed/first "2026-07-30T15:21:27Z",
@@ -840,7 +1226,28 @@
    :observed/last "2026-08-04T18:17:27Z",
    :origin/registrable "sevenrooms.com",
    :origin/domain "email.sevenrooms.com",
+   :observed/authentication
+   {:authenticated 2,
+    :unaligned 0,
+    :impersonation-suspected 0,
+    :unknown 0},
    :origin/display-names ["FERDI" "Cool Inc Restaurants"],
+   :origin/kind :unknown}
+  {:route/projects [],
+   :observed/first "2026-07-30T03:53:43Z",
+   :trust/level :unverified,
+   :observed/messages 2,
+   :origin/via-relay? false,
+   :trust/evidence [],
+   :observed/last "2026-08-06T05:03:46Z",
+   :origin/registrable "financie.io",
+   :origin/domain "financie.io",
+   :observed/authentication
+   {:authenticated 2,
+    :unaligned 0,
+    :impersonation-suspected 0,
+    :unknown 0},
+   :origin/display-names ["FiNANCiE"],
    :origin/kind :unknown}
   {:route/projects [],
    :observed/first "2026-05-14T01:11:24Z",
@@ -851,6 +1258,11 @@
    :observed/last "2026-07-29T01:45:57Z",
    :origin/registrable "googlemail.com",
    :origin/domain "googlemail.com",
+   :observed/authentication
+   {:authenticated 2,
+    :unaligned 0,
+    :impersonation-suspected 0,
+    :unknown 0},
    :origin/display-names ["Mail Delivery Subsystem"],
    :origin/kind :unknown}
   {:route/projects [],
@@ -862,6 +1274,11 @@
    :observed/last "2026-07-31T05:07:51Z",
    :origin/registrable "isct.ac.jp",
    :origin/domain "isc.ens.isct.ac.jp",
+   :observed/authentication
+   {:authenticated 2,
+    :unaligned 0,
+    :impersonation-suspected 0,
+    :unknown 0},
    :origin/display-names ["東京科学大cumot事務"],
    :origin/kind :unknown}
   {:route/projects [],
@@ -873,6 +1290,11 @@
    :observed/last "2026-06-30T10:10:56Z",
    :origin/registrable "japanpost.jp",
    :origin/domain "jp-bank.japanpost.jp",
+   :observed/authentication
+   {:authenticated 2,
+    :unaligned 0,
+    :impersonation-suspected 0,
+    :unknown 0},
    :origin/display-names ["【ゆうちょ銀行】"],
    :origin/kind :unknown}
   {:route/projects [],
@@ -884,6 +1306,11 @@
    :observed/last "2026-08-03T04:01:17Z",
    :origin/registrable "keiocard.com",
    :origin/domain "keiocard.com",
+   :observed/authentication
+   {:authenticated 2,
+    :unaligned 0,
+    :impersonation-suspected 0,
+    :unknown 0},
    :origin/display-names ["慶應カード事務局"],
    :origin/kind :unknown}
   {:route/projects [],
@@ -895,6 +1322,11 @@
    :observed/last "2026-08-05T20:25:03Z",
    :origin/registrable "llamaindex.ai",
    :origin/domain "llamaindex.ai",
+   :observed/authentication
+   {:authenticated 1,
+    :unaligned 0,
+    :impersonation-suspected 0,
+    :unknown 1},
    :origin/display-names ["LlamaIndex"],
    :origin/kind :unknown}
   {:route/projects [],
@@ -906,6 +1338,11 @@
    :observed/last "2026-07-30T11:54:37Z",
    :origin/registrable "qatarairways.com",
    :origin/domain "loyalty.qatarairways.com",
+   :observed/authentication
+   {:authenticated 2,
+    :unaligned 0,
+    :impersonation-suspected 0,
+    :unknown 0},
    :origin/display-names ["Qatar Airways Privilege Club"],
    :origin/kind :unknown}
   {:route/projects ["personal"],
@@ -917,6 +1354,11 @@
    :observed/last "2026-08-02T08:22:15Z",
    :origin/registrable "nitori-net.jp",
    :origin/domain "mail.nitori-net.jp",
+   :observed/authentication
+   {:authenticated 2,
+    :unaligned 0,
+    :impersonation-suspected 0,
+    :unknown 0},
    :origin/display-names ["info@mail.nitori-net.jp"],
    :origin/kind :retail}
   {:route/projects [],
@@ -928,6 +1370,11 @@
    :observed/last "2026-07-24T08:50:20Z",
    :origin/registrable "tokyo-gas.co.jp",
    :origin/domain "mail.tokyo-gas.co.jp",
+   :observed/authentication
+   {:authenticated 1,
+    :unaligned 0,
+    :impersonation-suspected 0,
+    :unknown 1},
    :origin/display-names ["東京ガスからのお知らせ"],
    :origin/kind :unknown}
   {:route/projects [],
@@ -939,21 +1386,13 @@
    :observed/last "2026-08-02T15:17:10Z",
    :origin/registrable "wholefoodsmarket.com",
    :origin/domain "mail.wholefoodsmarket.com",
+   :observed/authentication
+   {:authenticated 2,
+    :unaligned 0,
+    :impersonation-suspected 0,
+    :unknown 0},
    :origin/display-names ["Whole Foods Market"],
    :origin/kind :unknown}
-  {:route/projects ["personal"],
-   :observed/first "2026-08-05T09:58:32Z",
-   :trust/level :self-registered,
-   :observed/messages 2,
-   :origin/via-relay? true,
-   :trust/evidence
-   [#:evidence{:kind :apple-private-relay,
-               :note "この所有者がこの相手のために作成したリレー宛先で受信"}],
-   :observed/last "2026-08-05T10:58:43Z",
-   :origin/registrable "asoview.com",
-   :origin/domain "mailmagazine.asoview.com",
-   :origin/display-names ["アソビュー！"],
-   :origin/kind :travel}
   {:route/projects [],
    :observed/first "2025-10-28T13:43:24Z",
    :trust/level :unverified,
@@ -963,6 +1402,11 @@
    :observed/last "2026-07-14T20:21:55Z",
    :origin/registrable "makelaarbert.nu",
    :origin/domain "makelaarbert.nu",
+   :observed/authentication
+   {:authenticated 2,
+    :unaligned 0,
+    :impersonation-suspected 0,
+    :unknown 0},
    :origin/display-names ["Bas Smit"],
    :origin/kind :unknown}
   {:route/projects [],
@@ -974,8 +1418,31 @@
    :observed/last "2026-07-15T14:10:27Z",
    :origin/registrable "mit.edu",
    :origin/domain "mit.edu",
+   :observed/authentication
+   {:authenticated 2,
+    :unaligned 0,
+    :impersonation-suspected 0,
+    :unknown 0},
    :origin/display-names ["MIT Sloan School of Management"],
    :origin/kind :unknown}
+  {:route/projects ["personal"],
+   :observed/first "2026-08-05T11:23:12Z",
+   :trust/level :self-registered,
+   :observed/messages 2,
+   :origin/via-relay? true,
+   :trust/evidence
+   [#:evidence{:kind :apple-private-relay,
+               :note "この所有者がこの相手のために作成したリレー宛先で受信"}],
+   :observed/last "2026-08-06T11:37:52Z",
+   :origin/registrable "ooedoonsen.jp",
+   :origin/domain "mk.ooedoonsen.jp",
+   :observed/authentication
+   {:authenticated 1,
+    :unaligned 0,
+    :impersonation-suspected 0,
+    :unknown 1},
+   :origin/display-names ["大江戸温泉物語グループ"],
+   :origin/kind :travel}
   {:route/projects [],
    :observed/first "2026-07-25T01:10:44Z",
    :trust/level :unverified,
@@ -985,6 +1452,11 @@
    :observed/last "2026-07-31T09:24:45Z",
    :origin/registrable "maisonmargiela.com",
    :origin/domain "newsletter.maisonmargiela.com",
+   :observed/authentication
+   {:authenticated 2,
+    :unaligned 0,
+    :impersonation-suspected 0,
+    :unknown 0},
    :origin/display-names ["Maison Margiela"],
    :origin/kind :unknown}
   {:route/projects [],
@@ -996,6 +1468,11 @@
    :observed/last "2026-07-10T11:16:31Z",
    :origin/registrable "nuro.jp",
    :origin/domain "nuro.jp",
+   :observed/authentication
+   {:authenticated 2,
+    :unaligned 0,
+    :impersonation-suspected 0,
+    :unknown 0},
    :origin/display-names ["NURO 光 お知らせ"],
    :origin/kind :unknown}
   {:route/projects [],
@@ -1007,6 +1484,11 @@
    :observed/last "2026-07-17T09:36:22Z",
    :origin/registrable "resalon-inc.com",
    :origin/domain "resalon-inc.com",
+   :observed/authentication
+   {:authenticated 2,
+    :unaligned 0,
+    :impersonation-suspected 0,
+    :unknown 0},
    :origin/display-names ["be my flora / RESALON 公式オンラインショップ"],
    :origin/kind :unknown}
   {:route/projects ["personal"],
@@ -1018,6 +1500,11 @@
    :observed/last "2026-08-03T08:40:17Z",
    :origin/registrable "sakuratravel.jp",
    :origin/domain "sakuratravel.jp",
+   :observed/authentication
+   {:authenticated 2,
+    :unaligned 0,
+    :impersonation-suspected 0,
+    :unknown 0},
    :origin/display-names ["さくらトラベル"],
    :origin/kind :travel}
   {:route/projects ["personal"],
@@ -1029,6 +1516,11 @@
    :observed/last "2026-08-05T03:49:16Z",
    :origin/registrable "jal.com",
    :origin/domain "skyinfo.jal.com",
+   :observed/authentication
+   {:authenticated 2,
+    :unaligned 0,
+    :impersonation-suspected 0,
+    :unknown 0},
    :origin/display-names ["JAL_INFO"],
    :origin/kind :travel}
   {:route/projects [],
@@ -1040,6 +1532,11 @@
    :observed/last "2026-07-31T01:12:07Z",
    :origin/registrable "binance.com",
    :origin/domain "smailer1.binance.com",
+   :observed/authentication
+   {:authenticated 2,
+    :unaligned 0,
+    :impersonation-suspected 0,
+    :unknown 0},
    :origin/display-names ["Binance"],
    :origin/kind :unknown}
   {:route/projects ["personal"],
@@ -1051,6 +1548,11 @@
    :observed/last "2026-07-31T08:38:15Z",
    :origin/registrable "square-enix.com",
    :origin/domain "square-enix.com",
+   :observed/authentication
+   {:authenticated 2,
+    :unaligned 0,
+    :impersonation-suspected 0,
+    :unknown 0},
    :origin/display-names ["FINAL FANTASY XIV"],
    :origin/kind :media}
   {:route/projects [],
@@ -1064,6 +1566,11 @@
    :observed/last "2026-06-24T06:00:04Z",
    :origin/registrable "kyoto-u.ac.jp",
    :origin/domain "st.kyoto-u.ac.jp",
+   :observed/authentication
+   {:authenticated 2,
+    :unaligned 0,
+    :impersonation-suspected 0,
+    :unknown 0},
    :origin/display-names ["kawai.toshio.37e@st.kyoto-u.ac.jp"],
    :origin/kind :unknown}
   {:route/projects [],
@@ -1075,6 +1582,11 @@
    :observed/last "2026-07-21T09:03:41Z",
    :origin/registrable "sumitclub.jp",
    :origin/domain "sumitclub.jp",
+   :observed/authentication
+   {:authenticated 1,
+    :unaligned 0,
+    :impersonation-suspected 0,
+    :unknown 1},
    :origin/display-names ["Sumitclub Collection"],
    :origin/kind :unknown}
   {:route/projects [],
@@ -1086,6 +1598,11 @@
    :observed/last "2026-07-02T14:12:22Z",
    :origin/registrable "playstation.com",
    :origin/domain "txn-email03.playstation.com",
+   :observed/authentication
+   {:authenticated 1,
+    :unaligned 0,
+    :impersonation-suspected 0,
+    :unknown 1},
    :origin/display-names ["PlayStation"],
    :origin/kind :unknown}
   {:route/projects [],
@@ -1097,6 +1614,11 @@
    :observed/last "2026-08-05T23:53:47Z",
    :origin/registrable "uber.com",
    :origin/domain "uber.com",
+   :observed/authentication
+   {:authenticated 0,
+    :unaligned 0,
+    :impersonation-suspected 0,
+    :unknown 2},
    :origin/display-names ["Uber の領収書"],
    :origin/kind :unknown}
   {:route/projects [],
@@ -1108,6 +1630,11 @@
    :observed/last "2026-07-27T18:18:41Z",
    :origin/registrable "vanderlinden.nl",
    :origin/domain "vanderlinden.nl",
+   :observed/authentication
+   {:authenticated 2,
+    :unaligned 0,
+    :impersonation-suspected 0,
+    :unknown 0},
    :origin/display-names ["Makelaardij Van der Linden"],
    :origin/kind :unknown}
   {:route/projects [],
@@ -1119,6 +1646,11 @@
    :observed/last "2026-08-02T10:30:03Z",
    :origin/registrable "yandsons.com",
    :origin/domain "yandsons.com",
+   :observed/authentication
+   {:authenticated 0,
+    :unaligned 2,
+    :impersonation-suspected 0,
+    :unknown 0},
    :origin/display-names ["Y. & SONS 京都"],
    :origin/kind :unknown}
   {:route/projects [],
@@ -1130,6 +1662,11 @@
    :observed/last "2026-08-04T06:07:05Z",
    :origin/registrable "bengo4.com",
    :origin/domain "1.bengo4.com",
+   :observed/authentication
+   {:authenticated 1,
+    :unaligned 0,
+    :impersonation-suspected 0,
+    :unknown 0},
    :origin/display-names ["弁護士ドットコム 企画制作チーム"],
    :origin/kind :unknown}
   {:route/projects ["infra"],
@@ -1141,6 +1678,11 @@
    :observed/last "2026-07-28T14:18:24Z",
    :origin/registrable "google.com",
    :origin/domain "ads.google.com",
+   :observed/authentication
+   {:authenticated 1,
+    :unaligned 0,
+    :impersonation-suspected 0,
+    :unknown 0},
    :origin/display-names ["Google Ads"],
    :origin/kind :infrastructure}
   {:route/projects [],
@@ -1152,6 +1694,11 @@
    :observed/last "2026-07-18T03:00:25Z",
    :origin/registrable "airdo.co.jp",
    :origin/domain "airdo.co.jp",
+   :observed/authentication
+   {:authenticated 1,
+    :unaligned 0,
+    :impersonation-suspected 0,
+    :unknown 0},
    :origin/display-names ["My AIRDO"],
    :origin/kind :unknown}
   {:route/projects [],
@@ -1163,6 +1710,11 @@
    :observed/last "2026-06-27T19:53:23Z",
    :origin/registrable "amazon.jp",
    :origin/domain "amazon.jp",
+   :observed/authentication
+   {:authenticated 1,
+    :unaligned 0,
+    :impersonation-suspected 0,
+    :unknown 0},
    :origin/display-names ["AmazonPay"],
    :origin/kind :unknown}
   {:route/projects [],
@@ -1174,6 +1726,11 @@
    :observed/last "2026-08-06T00:00:54Z",
    :origin/registrable "cmoa.jp",
    :origin/domain "and.cmoa.jp",
+   :observed/authentication
+   {:authenticated 1,
+    :unaligned 0,
+    :impersonation-suspected 0,
+    :unknown 0},
    :origin/display-names ["コミックシーモア "],
    :origin/kind :unknown}
   {:route/projects ["dev"],
@@ -1187,8 +1744,29 @@
    :observed/last "2026-07-12T14:37:55Z",
    :origin/registrable "arrow.com",
    :origin/domain "arrow.com",
+   :observed/authentication
+   {:authenticated 1,
+    :unaligned 0,
+    :impersonation-suspected 0,
+    :unknown 0},
    :origin/display-names ["Arrow Create Account"],
    :origin/kind :retail}
+  {:route/projects [],
+   :observed/first "2026-08-06T01:52:39Z",
+   :trust/level :unverified,
+   :observed/messages 1,
+   :origin/via-relay? false,
+   :trust/evidence [],
+   :observed/last "2026-08-06T01:52:39Z",
+   :origin/registrable "bitflyer.com",
+   :origin/domain "bitflyer.com",
+   :observed/authentication
+   {:authenticated 0,
+    :unaligned 0,
+    :impersonation-suspected 0,
+    :unknown 1},
+   :origin/display-names ["no-reply@bitflyer.com"],
+   :origin/kind :unknown}
   {:route/projects ["billing"],
    :observed/first "2026-07-30T23:15:46Z",
    :trust/level :unverified,
@@ -1198,6 +1776,11 @@
    :observed/last "2026-07-30T23:15:46Z",
    :origin/registrable "amazon.co.jp",
    :origin/domain "business.amazon.co.jp",
+   :observed/authentication
+   {:authenticated 1,
+    :unaligned 0,
+    :impersonation-suspected 0,
+    :unknown 0},
    :origin/display-names ["Amazon Business"],
    :origin/kind :marketplace}
   {:route/projects [],
@@ -1209,6 +1792,11 @@
    :observed/last "2026-07-30T21:52:00Z",
    :origin/registrable "clerk.com",
    :origin/domain "clerk.com",
+   :observed/authentication
+   {:authenticated 1,
+    :unaligned 0,
+    :impersonation-suspected 0,
+    :unknown 0},
    :origin/display-names ["Emily from Clerk"],
    :origin/kind :unknown}
   {:route/projects [],
@@ -1220,6 +1808,11 @@
    :observed/last "2026-07-01T03:00:50Z",
    :origin/registrable "crypto-city.net",
    :origin/domain "crypto-city.net",
+   :observed/authentication
+   {:authenticated 1,
+    :unaligned 0,
+    :impersonation-suspected 0,
+    :unknown 0},
    :origin/display-names ["Gtax"],
    :origin/kind :unknown}
   {:route/projects [],
@@ -1231,6 +1824,11 @@
    :observed/last "2026-08-03T03:03:16Z",
    :origin/registrable "lululemon.com",
    :origin/domain "e.lululemon.com",
+   :observed/authentication
+   {:authenticated 1,
+    :unaligned 0,
+    :impersonation-suspected 0,
+    :unknown 0},
    :origin/display-names ["lululemon"],
    :origin/kind :unknown}
   {:route/projects [],
@@ -1242,6 +1840,11 @@
    :observed/last "2026-07-23T08:01:25Z",
    :origin/registrable "eki-net.com",
    :origin/domain "eki-net.com",
+   :observed/authentication
+   {:authenticated 1,
+    :unaligned 0,
+    :impersonation-suspected 0,
+    :unknown 0},
    :origin/display-names ["えきねっと"],
    :origin/kind :unknown}
   {:route/projects [],
@@ -1253,6 +1856,11 @@
    :observed/last "2026-06-27T06:42:59Z",
    :origin/registrable "anthropic.com",
    :origin/domain "email.anthropic.com",
+   :observed/authentication
+   {:authenticated 1,
+    :unaligned 0,
+    :impersonation-suspected 0,
+    :unknown 0},
    :origin/display-names ["Anthropic Team"],
    :origin/kind :unknown}
   {:route/projects [],
@@ -1264,6 +1872,11 @@
    :observed/last "2026-06-30T03:48:41Z",
    :origin/registrable "playstation.com",
    :origin/domain "email.playstation.com",
+   :observed/authentication
+   {:authenticated 1,
+    :unaligned 0,
+    :impersonation-suspected 0,
+    :unknown 0},
    :origin/display-names ["PlayStation"],
    :origin/kind :unknown}
   {:route/projects [],
@@ -1275,6 +1888,11 @@
    :observed/last "2026-07-31T01:58:18Z",
    :origin/registrable "tokyo-gas.co.jp",
    :origin/domain "email.tokyo-gas.co.jp",
+   :observed/authentication
+   {:authenticated 1,
+    :unaligned 0,
+    :impersonation-suspected 0,
+    :unknown 0},
    :origin/display-names ["東京ガス"],
    :origin/kind :unknown}
   {:route/projects [],
@@ -1286,6 +1904,11 @@
    :observed/last "2026-06-26T19:04:35Z",
    :origin/registrable "ethglobal.com",
    :origin/domain "ethglobal.com",
+   :observed/authentication
+   {:authenticated 1,
+    :unaligned 0,
+    :impersonation-suspected 0,
+    :unknown 0},
    :origin/display-names ["ETHGlobal"],
    :origin/kind :unknown}
   {:route/projects [],
@@ -1297,6 +1920,11 @@
    :observed/last "2026-07-13T02:42:45Z",
    :origin/registrable "etzhayyim.com",
    :origin/domain "etzhayyim.com",
+   :observed/authentication
+   {:authenticated 1,
+    :unaligned 0,
+    :impersonation-suspected 0,
+    :unknown 0},
    :origin/display-names ["tomoshibi (灯)"],
    :origin/kind :unknown}
   {:route/projects [],
@@ -1308,18 +1936,12 @@
    :observed/last "2026-07-08T17:35:21Z",
    :origin/registrable "facebookmail.com",
    :origin/domain "facebookmail.com",
+   :observed/authentication
+   {:authenticated 1,
+    :unaligned 0,
+    :impersonation-suspected 0,
+    :unknown 0},
    :origin/display-names ["Meta"],
-   :origin/kind :unknown}
-  {:route/projects [],
-   :observed/first "2026-07-30T03:53:43Z",
-   :trust/level :unverified,
-   :observed/messages 1,
-   :origin/via-relay? false,
-   :trust/evidence [],
-   :observed/last "2026-07-30T03:53:43Z",
-   :origin/registrable "financie.io",
-   :origin/domain "financie.io",
-   :origin/display-names ["FiNANCiE"],
    :origin/kind :unknown}
   {:route/projects [],
    :observed/first "2026-06-23T19:16:36Z",
@@ -1330,6 +1952,11 @@
    :observed/last "2026-06-23T19:16:36Z",
    :origin/registrable "flyasiana.com",
    :origin/domain "flyasiana.com",
+   :observed/authentication
+   {:authenticated 1,
+    :unaligned 0,
+    :impersonation-suspected 0,
+    :unknown 0},
    :origin/display-names ["아시아나항공"],
    :origin/kind :unknown}
   {:route/projects [],
@@ -1341,6 +1968,11 @@
    :observed/last "2026-07-28T02:41:41Z",
    :origin/registrable "fts.co.jp",
    :origin/domain "fts.co.jp",
+   :observed/authentication
+   {:authenticated 1,
+    :unaligned 0,
+    :impersonation-suspected 0,
+    :unknown 0},
    :origin/display-names ["宅配ロッカー フルタイムシステム"],
    :origin/kind :unknown}
   {:route/projects ["banking" "legal"],
@@ -1352,6 +1984,11 @@
    :observed/last "2026-07-21T18:09:51Z",
    :origin/registrable "ftx.com",
    :origin/domain "ftx.com",
+   :observed/authentication
+   {:authenticated 1,
+    :unaligned 0,
+    :impersonation-suspected 0,
+    :unknown 0},
    :origin/display-names ["FTX Support"],
    :origin/kind :bank}
   {:route/projects [],
@@ -1363,6 +2000,11 @@
    :observed/last "2026-07-24T04:39:25Z",
    :origin/registrable "highreso.co.jp",
    :origin/domain "highreso.co.jp",
+   :observed/authentication
+   {:authenticated 1,
+    :unaligned 0,
+    :impersonation-suspected 0,
+    :unknown 0},
    :origin/display-names ["soroban_support@highreso.co.jp"],
    :origin/kind :unknown}
   {:route/projects [],
@@ -1374,6 +2016,11 @@
    :observed/last "2026-06-28T11:19:29Z",
    :origin/registrable "hume.ai",
    :origin/domain "hume.ai",
+   :observed/authentication
+   {:authenticated 0,
+    :unaligned 1,
+    :impersonation-suspected 0,
+    :unknown 0},
    :origin/display-names ["Platform"],
    :origin/kind :unknown}
   {:route/projects [],
@@ -1387,6 +2034,11 @@
    :observed/last "2026-06-28T08:21:30Z",
    :origin/registrable "icloud.com",
    :origin/domain "icloud.com",
+   :observed/authentication
+   {:authenticated 1,
+    :unaligned 0,
+    :impersonation-suspected 0,
+    :unknown 0},
    :origin/display-names ["Mouser Electronics"],
    :origin/kind :unknown}
   {:route/projects [],
@@ -1398,7 +2050,44 @@
    :observed/last "2026-07-02T20:01:21Z",
    :origin/registrable "vercel.com",
    :origin/domain "info.vercel.com",
+   :observed/authentication
+   {:authenticated 1,
+    :unaligned 0,
+    :impersonation-suspected 0,
+    :unknown 0},
    :origin/display-names ["v0 Team"],
+   :origin/kind :unknown}
+  {:route/projects [],
+   :observed/first "2026-08-06T04:23:05Z",
+   :trust/level :unverified,
+   :observed/messages 1,
+   :origin/via-relay? false,
+   :trust/evidence [],
+   :observed/last "2026-08-06T04:23:05Z",
+   :origin/registrable "ing.nl",
+   :origin/domain "ing.nl",
+   :observed/authentication
+   {:authenticated 1,
+    :unaligned 0,
+    :impersonation-suspected 0,
+    :unknown 0},
+   :origin/display-names ["ING"],
+   :origin/kind :unknown}
+  {:route/projects [],
+   :observed/first "2026-08-06T08:09:48Z",
+   :trust/level :unverified,
+   :observed/messages 1,
+   :origin/via-relay? false,
+   :trust/evidence [],
+   :observed/last "2026-08-06T08:09:48Z",
+   :origin/registrable "docomo.ne.jp",
+   :origin/domain "kikito.docomo.ne.jp",
+   :observed/authentication
+   {:authenticated 1,
+    :unaligned 0,
+    :impersonation-suspected 0,
+    :unknown 0},
+   :origin/display-names ["kikito"],
    :origin/kind :unknown}
   {:route/projects ["personal"],
    :observed/first "2026-07-10T12:48:57Z",
@@ -1409,6 +2098,11 @@
    :observed/last "2026-07-10T12:48:57Z",
    :origin/registrable "linkedin.com",
    :origin/domain "linkedin.com",
+   :observed/authentication
+   {:authenticated 1,
+    :unaligned 0,
+    :impersonation-suspected 0,
+    :unknown 0},
    :origin/display-names ["LinkedIn"],
    :origin/kind :social}
   {:route/projects [],
@@ -1420,6 +2114,11 @@
    :observed/last "2026-08-02T17:47:23Z",
    :origin/registrable "londonreal.tv",
    :origin/domain "londonreal.tv",
+   :observed/authentication
+   {:authenticated 1,
+    :unaligned 0,
+    :impersonation-suspected 0,
+    :unknown 0},
    :origin/display-names ["Brian Rose - London Real"],
    :origin/kind :unknown}
   {:route/projects [],
@@ -1431,6 +2130,11 @@
    :observed/last "2026-08-04T17:47:25Z",
    :origin/registrable "londonrealacademy.com",
    :origin/domain "londonrealacademy.com",
+   :observed/authentication
+   {:authenticated 1,
+    :unaligned 0,
+    :impersonation-suspected 0,
+    :unknown 0},
    :origin/display-names ["Brian Rose at London Real"],
    :origin/kind :unknown}
   {:route/projects [],
@@ -1442,6 +2146,11 @@
    :observed/last "2026-08-05T20:25:31Z",
    :origin/registrable "higgsfield.ai",
    :origin/domain "m.higgsfield.ai",
+   :observed/authentication
+   {:authenticated 1,
+    :unaligned 0,
+    :impersonation-suspected 0,
+    :unknown 0},
    :origin/display-names ["The Higgsfield Team"],
    :origin/kind :unknown}
   {:route/projects [],
@@ -1455,6 +2164,11 @@
    :observed/last "2026-08-06T00:01:21Z",
    :origin/registrable "parallels.com",
    :origin/domain "m.parallels.com",
+   :observed/authentication
+   {:authenticated 0,
+    :unaligned 0,
+    :impersonation-suspected 0,
+    :unknown 1},
    :origin/display-names ["Parallels"],
    :origin/kind :unknown}
   {:route/projects [],
@@ -1466,6 +2180,11 @@
    :observed/last "2026-08-05T15:02:34Z",
    :origin/registrable "nar.realtor",
    :origin/domain "mail.nar.realtor",
+   :observed/authentication
+   {:authenticated 1,
+    :unaligned 0,
+    :impersonation-suspected 0,
+    :unknown 0},
    :origin/display-names ["National Association of REALTORS®"],
    :origin/kind :unknown}
   {:route/projects [],
@@ -1479,6 +2198,11 @@
    :observed/last "2026-08-05T22:09:06Z",
    :origin/registrable "poke-m.com",
    :origin/domain "mail.poke-m.com",
+   :observed/authentication
+   {:authenticated 0,
+    :unaligned 0,
+    :impersonation-suspected 0,
+    :unknown 1},
    :origin/display-names ["ポケマル編集部"],
    :origin/kind :unknown}
   {:route/projects [],
@@ -1490,6 +2214,11 @@
    :observed/last "2026-08-05T06:23:07Z",
    :origin/registrable "rakuten-bank.co.jp",
    :origin/domain "mail.rakuten-bank.co.jp",
+   :observed/authentication
+   {:authenticated 1,
+    :unaligned 0,
+    :impersonation-suspected 0,
+    :unknown 0},
    :origin/display-names ["楽天銀行株式会社"],
    :origin/kind :unknown}
   {:route/projects [],
@@ -1501,6 +2230,11 @@
    :observed/last "2026-08-02T05:09:09Z",
    :origin/registrable "sride.co.jp",
    :origin/domain "mail.sride.co.jp",
+   :observed/authentication
+   {:authenticated 1,
+    :unaligned 0,
+    :impersonation-suspected 0,
+    :unknown 0},
    :origin/display-names ["S.RIDE"],
    :origin/kind :unknown}
   {:route/projects [],
@@ -1514,6 +2248,11 @@
    :observed/last "2026-05-18T14:44:07Z",
    :origin/registrable "jalcard.co.jp",
    :origin/domain "mail01.jalcard.co.jp",
+   :observed/authentication
+   {:authenticated 0,
+    :unaligned 0,
+    :impersonation-suspected 0,
+    :unknown 1},
    :origin/display-names ["thanks@mail01.jalcard.co.jp"],
    :origin/kind :unknown}
   {:route/projects [],
@@ -1525,6 +2264,11 @@
    :observed/last "2026-07-18T13:30:16Z",
    :origin/registrable "mermaid.ai",
    :origin/domain "mermaid.ai",
+   :observed/authentication
+   {:authenticated 1,
+    :unaligned 0,
+    :impersonation-suspected 0,
+    :unknown 0},
    :origin/display-names ["Mermaid"],
    :origin/kind :unknown}
   {:route/projects [],
@@ -1536,6 +2280,11 @@
    :observed/last "2026-07-18T00:30:00Z",
    :origin/registrable "minimaid.co.jp",
    :origin/domain "minimaid.co.jp",
+   :observed/authentication
+   {:authenticated 1,
+    :unaligned 0,
+    :impersonation-suspected 0,
+    :unknown 0},
    :origin/display-names ["ミニメイドカスタマーセンター"],
    :origin/kind :unknown}
   {:route/projects [],
@@ -1549,21 +2298,13 @@
    :observed/last "2026-07-09T00:42:26Z",
    :origin/registrable "miyakojima-rentacar.net",
    :origin/domain "miyakojima-rentacar.net",
+   :observed/authentication
+   {:authenticated 1,
+    :unaligned 0,
+    :impersonation-suspected 0,
+    :unknown 0},
    :origin/display-names ["宮古島レンタカー"],
    :origin/kind :unknown}
-  {:route/projects ["personal"],
-   :observed/first "2026-08-05T11:23:12Z",
-   :trust/level :self-registered,
-   :observed/messages 1,
-   :origin/via-relay? true,
-   :trust/evidence
-   [#:evidence{:kind :apple-private-relay,
-               :note "この所有者がこの相手のために作成したリレー宛先で受信"}],
-   :observed/last "2026-08-05T11:23:12Z",
-   :origin/registrable "ooedoonsen.jp",
-   :origin/domain "mk.ooedoonsen.jp",
-   :origin/display-names ["大江戸温泉物語グループ"],
-   :origin/kind :travel}
   {:route/projects [],
    :observed/first "2026-08-03T03:01:18Z",
    :trust/level :unverified,
@@ -1573,6 +2314,11 @@
    :observed/last "2026-08-03T03:01:18Z",
    :origin/registrable "sumitclub.info",
    :origin/domain "ml.sumitclub.info",
+   :observed/authentication
+   {:authenticated 1,
+    :unaligned 0,
+    :impersonation-suspected 0,
+    :unknown 0},
    :origin/display-names ["ダイナースクラブ - Diners Club"],
    :origin/kind :unknown}
   {:route/projects [],
@@ -1584,6 +2330,11 @@
    :observed/last "2026-07-27T06:17:06Z",
    :origin/registrable "nikkei.com",
    :origin/domain "namail.nikkei.com",
+   :observed/authentication
+   {:authenticated 1,
+    :unaligned 0,
+    :impersonation-suspected 0,
+    :unknown 0},
    :origin/display-names ["Nikkei Asia"],
    :origin/kind :unknown}
   {:route/projects [],
@@ -1597,6 +2348,11 @@
    :observed/last "2026-06-23T14:52:59Z",
    :origin/registrable "nodit.org",
    :origin/domain "nodit.org",
+   :observed/authentication
+   {:authenticated 0,
+    :unaligned 0,
+    :impersonation-suspected 0,
+    :unknown 1},
    :origin/display-names ["Nodit"],
    :origin/kind :unknown}
   {:route/projects [],
@@ -1610,6 +2366,11 @@
    :observed/last "2026-06-29T14:24:36Z",
    :origin/registrable "alibabacloud.com",
    :origin/domain "notice.alibabacloud.com",
+   :observed/authentication
+   {:authenticated 1,
+    :unaligned 0,
+    :impersonation-suspected 0,
+    :unknown 0},
    :origin/display-names ["Alibaba Cloud"],
    :origin/kind :unknown}
   {:route/projects [],
@@ -1621,6 +2382,11 @@
    :observed/last "2026-07-16T22:56:25Z",
    :origin/registrable "resend.com",
    :origin/domain "notifications.resend.com",
+   :observed/authentication
+   {:authenticated 1,
+    :unaligned 0,
+    :impersonation-suspected 0,
+    :unknown 0},
    :origin/display-names ["Resend"],
    :origin/kind :unknown}
   {:route/projects [],
@@ -1632,6 +2398,11 @@
    :observed/last "2026-07-01T09:26:46Z",
    :origin/registrable "openrouter.ai",
    :origin/domain "openrouter.ai",
+   :observed/authentication
+   {:authenticated 1,
+    :unaligned 0,
+    :impersonation-suspected 0,
+    :unknown 0},
    :origin/display-names ["OpenRouter"],
    :origin/kind :unknown}
   {:route/projects [],
@@ -1645,6 +2416,11 @@
    :observed/last "2026-07-21T07:15:49Z",
    :origin/registrable "orix.jp",
    :origin/domain "orix.jp",
+   :observed/authentication
+   {:authenticated 1,
+    :unaligned 0,
+    :impersonation-suspected 0,
+    :unknown 0},
    :origin/display-names ["ict1customer4t_2@orix.jp"],
    :origin/kind :unknown}
   {:route/projects [],
@@ -1658,6 +2434,11 @@
    :observed/last "2026-08-04T06:28:04Z",
    :origin/registrable "pasona-masters.co.jp",
    :origin/domain "pasona-masters.co.jp",
+   :observed/authentication
+   {:authenticated 1,
+    :unaligned 0,
+    :impersonation-suspected 0,
+    :unknown 0},
    :origin/display-names ["田中 敦子/パソナマスターズ"],
    :origin/kind :unknown}
   {:route/projects [],
@@ -1669,7 +2450,30 @@
    :observed/last "2026-07-29T08:41:12Z",
    :origin/registrable "paysera.com",
    :origin/domain "paysera.com",
+   :observed/authentication
+   {:authenticated 1,
+    :unaligned 0,
+    :impersonation-suspected 0,
+    :unknown 0},
    :origin/display-names ["Paysera"],
+   :origin/kind :unknown}
+  {:route/projects [],
+   :observed/first "2026-08-06T05:21:47Z",
+   :trust/level :self-registered,
+   :observed/messages 1,
+   :origin/via-relay? true,
+   :trust/evidence
+   [#:evidence{:kind :apple-private-relay,
+               :note "この所有者がこの相手のために作成したリレー宛先で受信"}],
+   :observed/last "2026-08-06T05:21:47Z",
+   :origin/registrable "peatix.com",
+   :origin/domain "peatix.com",
+   :observed/authentication
+   {:authenticated 0,
+    :unaligned 0,
+    :impersonation-suspected 0,
+    :unknown 1},
+   :origin/display-names ["Peatix Event Information"],
    :origin/kind :unknown}
   {:route/projects [],
    :observed/first "2026-06-22T23:59:09Z",
@@ -1680,6 +2484,11 @@
    :observed/last "2026-06-22T23:59:09Z",
    :origin/registrable "pornhub.com",
    :origin/domain "pornhub.com",
+   :observed/authentication
+   {:authenticated 0,
+    :unaligned 0,
+    :impersonation-suspected 0,
+    :unknown 1},
    :origin/display-names ["Pornhub"],
    :origin/kind :unknown}
   {:route/projects [],
@@ -1693,6 +2502,11 @@
    :observed/last "2026-08-05T21:50:19Z",
    :origin/registrable "appleid.com",
    :origin/domain "privaterelay.appleid.com",
+   :observed/authentication
+   {:authenticated 0,
+    :unaligned 0,
+    :impersonation-suspected 0,
+    :unknown 1},
    :origin/display-names ["OpenAI Ads Platform"],
    :origin/kind :unknown}
   {:route/projects [],
@@ -1704,6 +2518,11 @@
    :observed/last "2026-07-17T00:02:17Z",
    :origin/registrable "rentio.jp",
    :origin/domain "rentio.jp",
+   :observed/authentication
+   {:authenticated 1,
+    :unaligned 0,
+    :impersonation-suspected 0,
+    :unknown 0},
    :origin/display-names ["レンティオ カスタマーサポート窓口"],
    :origin/kind :unknown}
   {:route/projects [],
@@ -1715,7 +2534,28 @@
    :observed/last "2026-08-05T08:11:45Z",
    :origin/registrable "sailco.com",
    :origin/domain "sailco.com",
+   :observed/authentication
+   {:authenticated 0,
+    :unaligned 0,
+    :impersonation-suspected 0,
+    :unknown 1},
    :origin/display-names ["葉山セーリングクラブ"],
+   :origin/kind :unknown}
+  {:route/projects [],
+   :observed/first "2026-08-06T09:25:26Z",
+   :trust/level :unverified,
+   :observed/messages 1,
+   :origin/via-relay? false,
+   :trust/evidence [],
+   :observed/last "2026-08-06T09:25:26Z",
+   :origin/registrable "scrapingbee.com",
+   :origin/domain "scrapingbee.com",
+   :observed/authentication
+   {:authenticated 1,
+    :unaligned 0,
+    :impersonation-suspected 0,
+    :unknown 0},
+   :origin/display-names ["Karolis from ScrapingBee"],
    :origin/kind :unknown}
   {:route/projects [],
    :observed/first "2026-06-30T07:43:24Z",
@@ -1726,6 +2566,11 @@
    :observed/last "2026-06-30T07:43:24Z",
    :origin/registrable "netsuite.com",
    :origin/domain "sent-via.netsuite.com",
+   :observed/authentication
+   {:authenticated 1,
+    :unaligned 0,
+    :impersonation-suspected 0,
+    :unknown 0},
    :origin/display-names ["Accounts Receivable (ar@bitgo.com)"],
    :origin/kind :unknown}
   {:route/projects ["personal"],
@@ -1739,6 +2584,11 @@
    :observed/last "2026-08-05T08:47:39Z",
    :origin/registrable "alibaba.com",
    :origin/domain "service.alibaba.com",
+   :observed/authentication
+   {:authenticated 0,
+    :unaligned 0,
+    :impersonation-suspected 0,
+    :unknown 1},
    :origin/display-names ["Alibaba Remind"],
    :origin/kind :marketplace}
   {:route/projects [],
@@ -1752,6 +2602,11 @@
    :observed/last "2026-07-20T05:44:15Z",
    :origin/registrable "shakeshack.jp",
    :origin/domain "shakeshack.jp",
+   :observed/authentication
+   {:authenticated 1,
+    :unaligned 0,
+    :impersonation-suspected 0,
+    :unknown 0},
    :origin/display-names ["mobileorder@shakeshack.jp"],
    :origin/kind :unknown}
   {:route/projects [],
@@ -1763,7 +2618,28 @@
    :observed/last "2026-07-30T06:04:11Z",
    :origin/registrable "shineikai.org",
    :origin/domain "shineikai.org",
+   :observed/authentication
+   {:authenticated 1,
+    :unaligned 0,
+    :impersonation-suspected 0,
+    :unknown 0},
    :origin/display-names ["渋谷365メンタルクリニック"],
+   :origin/kind :unknown}
+  {:route/projects [],
+   :observed/first "2026-08-06T09:01:44Z",
+   :trust/level :unverified,
+   :observed/messages 1,
+   :origin/via-relay? false,
+   :trust/evidence [],
+   :observed/last "2026-08-06T09:01:44Z",
+   :origin/registrable "rakuten.co.jp",
+   :origin/domain "shop.rakuten.co.jp",
+   :observed/authentication
+   {:authenticated 1,
+    :unaligned 0,
+    :impersonation-suspected 0,
+    :unknown 0},
+   :origin/display-names ["FOR365 by 仙台勝山館 "],
    :origin/kind :unknown}
   {:route/projects [],
    :observed/first "2026-08-02T01:27:17Z",
@@ -1776,6 +2652,11 @@
    :observed/last "2026-08-02T01:27:17Z",
    :origin/registrable "smoothcontact.jp",
    :origin/domain "smoothcontact.jp",
+   :observed/authentication
+   {:authenticated 1,
+    :unaligned 0,
+    :impersonation-suspected 0,
+    :unknown 0},
    :origin/display-names ["24°NORTH｜宮古島"],
    :origin/kind :unknown}
   {:route/projects [],
@@ -1787,7 +2668,28 @@
    :observed/last "2026-07-07T13:15:39Z",
    :origin/registrable "stardog.com",
    :origin/domain "stardog.com",
+   :observed/authentication
+   {:authenticated 1,
+    :unaligned 0,
+    :impersonation-suspected 0,
+    :unknown 0},
    :origin/display-names ["The Stardog Team"],
+   :origin/kind :unknown}
+  {:route/projects [],
+   :observed/first "2026-08-06T03:18:38Z",
+   :trust/level :unverified,
+   :observed/messages 1,
+   :origin/via-relay? false,
+   :trust/evidence [],
+   :observed/last "2026-08-06T03:18:38Z",
+   :origin/registrable "studio.design",
+   :origin/domain "studio.design",
+   :observed/authentication
+   {:authenticated 1,
+    :unaligned 0,
+    :impersonation-suspected 0,
+    :unknown 0},
+   :origin/display-names ["Studio"],
    :origin/kind :unknown}
   {:route/projects [],
    :observed/first "2026-07-20T01:45:22Z",
@@ -1798,6 +2700,11 @@
    :observed/last "2026-07-20T01:45:22Z",
    :origin/registrable "studio.site",
    :origin/domain "studio.site",
+   :observed/authentication
+   {:authenticated 1,
+    :unaligned 0,
+    :impersonation-suspected 0,
+    :unknown 0},
    :origin/display-names ["Studio"],
    :origin/kind :unknown}
   {:route/projects [],
@@ -1809,6 +2716,11 @@
    :observed/last "2026-07-10T21:34:06Z",
    :origin/registrable "supabase.com",
    :origin/domain "supabase.com",
+   :observed/authentication
+   {:authenticated 1,
+    :unaligned 0,
+    :impersonation-suspected 0,
+    :unknown 0},
    :origin/display-names ["Supabase"],
    :origin/kind :unknown}
   {:route/projects [],
@@ -1822,6 +2734,11 @@
    :observed/last "2026-07-05T06:45:09Z",
    :origin/registrable "wise.com",
    :origin/domain "support.wise.com",
+   :observed/authentication
+   {:authenticated 1,
+    :unaligned 0,
+    :impersonation-suspected 0,
+    :unknown 0},
    :origin/display-names ["Wise Support"],
    :origin/kind :unknown}
   {:route/projects [],
@@ -1835,6 +2752,11 @@
    :observed/last "2026-08-03T09:33:08Z",
    :origin/registrable "supportru.com",
    :origin/domain "supportru.com",
+   :observed/authentication
+   {:authenticated 1,
+    :unaligned 0,
+    :impersonation-suspected 0,
+    :unknown 0},
    :origin/display-names ["オオサカ堂-CS"],
    :origin/kind :unknown}
   {:route/projects [],
@@ -1846,6 +2768,11 @@
    :observed/last "2026-07-26T19:03:57Z",
    :origin/registrable "higgsfield.ai",
    :origin/domain "t.higgsfield.ai",
+   :observed/authentication
+   {:authenticated 1,
+    :unaligned 0,
+    :impersonation-suspected 0,
+    :unknown 0},
    :origin/display-names ["The Higgsfield Team"],
    :origin/kind :unknown}
   {:route/projects [],
@@ -1857,6 +2784,11 @@
    :observed/last "2026-07-27T04:31:36Z",
    :origin/registrable "tver.jp",
    :origin/domain "tver.jp",
+   :observed/authentication
+   {:authenticated 1,
+    :unaligned 0,
+    :impersonation-suspected 0,
+    :unknown 0},
    :origin/display-names ["TVer"],
    :origin/kind :unknown}
   {:route/projects [],
@@ -1868,6 +2800,11 @@
    :observed/last "2026-07-02T12:57:50Z",
    :origin/registrable "playstation.com",
    :origin/domain "txn-email.playstation.com",
+   :observed/authentication
+   {:authenticated 1,
+    :unaligned 0,
+    :impersonation-suspected 0,
+    :unknown 0},
    :origin/display-names ["PlayStation"],
    :origin/kind :unknown}
   {:route/projects [],
@@ -1879,6 +2816,11 @@
    :observed/last "2026-08-05T17:37:02Z",
    :origin/registrable "dquyzjfd.shop",
    :origin/domain "uforxzhi.dquyzjfd.shop",
+   :observed/authentication
+   {:authenticated 0,
+    :unaligned 0,
+    :impersonation-suspected 0,
+    :unknown 1},
    :origin/display-names [" アマゾン"],
    :origin/kind :unknown}
   {:route/projects [],
@@ -1890,6 +2832,11 @@
    :observed/last "2026-07-29T00:40:04Z",
    :origin/registrable "uniformnext.com",
    :origin/domain "uniformnext.com",
+   :observed/authentication
+   {:authenticated 1,
+    :unaligned 0,
+    :impersonation-suspected 0,
+    :unknown 0},
    :origin/display-names ["ユニフォームネクスト"],
    :origin/kind :unknown}
   {:route/projects [],
@@ -1901,6 +2848,11 @@
    :observed/last "2026-07-24T10:56:19Z",
    :origin/registrable "resend.com",
    :origin/domain "updates.resend.com",
+   :observed/authentication
+   {:authenticated 1,
+    :unaligned 0,
+    :impersonation-suspected 0,
+    :unknown 0},
    :origin/display-names ["Zeno from Resend"],
    :origin/kind :unknown}
   {:route/projects [],
@@ -1912,6 +2864,11 @@
    :observed/last "2026-07-30T07:36:53Z",
    :origin/registrable "webx-asia.com",
    :origin/domain "webx-asia.com",
+   :observed/authentication
+   {:authenticated 1,
+    :unaligned 0,
+    :impersonation-suspected 0,
+    :unknown 0},
    :origin/display-names ["CoinPostイベントチーム"],
    :origin/kind :unknown}
   {:route/projects [],
@@ -1923,5 +2880,10 @@
    :observed/last "2026-07-22T10:41:51Z",
    :origin/registrable "x-brg.us",
    :origin/domain "x-brg.us",
+   :observed/authentication
+   {:authenticated 1,
+    :unaligned 0,
+    :impersonation-suspected 0,
+    :unknown 0},
    :origin/display-names ["Sama Elsherbiny"],
    :origin/kind :unknown}]}
