@@ -122,3 +122,23 @@ with them. A personal tenant does not have that failure.
 
 **Reclassify the first tenant as personal during migration.** One line shorter
 and wrong: the first tenant here is `gftd`, a real company with real members.
+
+## Verified
+
+`clojure -M:test` — 1216 tests, 4968 assertions, 0 failures, 0 errors.
+`clojure -M:lint` — 0 errors (10 warnings, all pre-existing and elsewhere).
+
+Covering this ADR: `core-test/a-personal-tenant-is-the-users-own-namespace-and-landing-is-deliberate`
+(one tenant after a registration that names no organization, and it is personal;
+claiming its slug claims the handle; that name is then closed to an
+organization; a second member is refused; a switch decides where the *next*
+session lands), `one-user-can-belong-to-and-switch-between-organizations` (the
+migration adds a third tenant and reclassifies neither seeded one),
+`an-added-user-gets-their-own-tenant-and-lands-in-the-organization`, and
+`existing-user-accepts-an-organization-bound-invitation`.
+
+**Not verified: the browser.** The switcher's `· 個人` label and the identity
+card's handle notice are not exercised end to end, because reaching that screen
+needs a WebAuthn user-verifying ceremony on real hardware. What is checked is
+that the page's scripts parse — `web-script-test` renders the page and hands
+every `<script>` to `node --check`.

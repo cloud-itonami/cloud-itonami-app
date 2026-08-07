@@ -103,3 +103,23 @@ first edit, and no answer to which one the mail filings mean.
 a real operation and a much larger one — it needs the destination's key epoch, a
 new head chain, and a story for the old head. Refusing published projects is the
 honest interim, and it says so rather than moving bytes that will not decrypt.
+
+## Verified
+
+`clojure -M:test` — 1216 tests, 4968 assertions, 0 failures, 0 errors.
+`clojure -M:lint` — 0 errors. `dev/gen_commands.cljs` regenerated: 242 routes,
+174 commands, 19 human-passkey-only (the transfer is the nineteenth), 49
+unauthenticated — `commands-test` fails if that drifts.
+
+`project-transfer-test` covers the move itself (store keys, both directories,
+the rewritten `.itonami/project.edn`, the receipt), each refusal separately —
+a member of the destination, an agent session, a published project, a tenant
+the caller does not belong to — and asserts that a refused move leaves the disk
+untouched. `what-does-not-move-is-reported-rather-than-discovered` pins the mail
+counts and that the filings stay in the source tenant.
+
+**Not verified end to end**: the Settings form. It posts to a route the suite
+exercises directly, and reaching the form needs a WebAuthn ceremony; the script
+containing it is parsed by `web-script-test`. Also unverified by test: a
+transfer on a deployment that actually publishes, since that needs a Kagi vault
+and a Kotobase token. The refusal path is what the suite covers there.

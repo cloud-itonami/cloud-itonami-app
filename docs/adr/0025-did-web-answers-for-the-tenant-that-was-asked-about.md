@@ -67,3 +67,18 @@ deployment-level artifact needs.
 - Nothing here makes this multi-tenant hosting. One process still holds one data
   directory and one issuer key. What changed is that it no longer *claims* a
   tenant it was not asked about.
+
+## Verified
+
+`clojure -M:test` — 1216 tests, 4968 assertions, 0 failures, 0 errors.
+
+`core-test/did-web-answers-for-the-tenant-that-was-asked-about` seeds two named
+tenants and asserts each Host resolves to its own domain, that a port is
+stripped, that an unmatched Host resolves to nothing, that the deployment-level
+function names no tenant, and that a membership credential issued in either
+tenant names that tenant. `credential-http-test` still covers the route itself
+end to end over HTTP, including the 404 while `publish-did-web?` is false.
+
+**Not verified: a real resolution.** `did:web:<domain>` resolving to this
+process is a DNS and TLS fact, and no test here can establish it — which is the
+same boundary the document already had before this ADR.
