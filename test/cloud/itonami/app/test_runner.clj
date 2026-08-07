@@ -66,7 +66,6 @@
             [cloud.itonami.app.credential-sd-jwt-test]
             [cloud.itonami.app.credential-test]
             [cloud.itonami.app.credential-trust-test]
-            [cloud.itonami.app.credential-assurance-test]
             [cloud.itonami.app.data-isolation-test]
             [cloud.itonami.app.did-test]
             [cloud.itonami.app.email-login-test]
@@ -151,7 +150,6 @@
     cloud.itonami.app.credential-sd-jwt-test
     cloud.itonami.app.credential-test
     cloud.itonami.app.credential-trust-test
-    cloud.itonami.app.credential-assurance-test
     cloud.itonami.app.data-isolation-test
     cloud.itonami.app.did-test
     cloud.itonami.app.email-login-test

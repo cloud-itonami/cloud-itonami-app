@@ -263,6 +263,14 @@
   io.github.kotoba-lang/io-storj-node
   {:git/url "https://github.com/kotoba-lang/io-storj-node.git"
    :git/sha "a9c81cc4a8704f87f059a1972fcf1ac49f9e10b1"}
+  ;; webauthn.assurance — 「この passkey は実際に何を証明しているか」の 4 段階。
+  ;; 2026-08-07 まではこの repo の cloud.itonami.app.credential-assurance に
+  ;; 在ったが、cloud-itonami（edge）に等価物が無く、同じプロダクトの 2 つの面が
+  ;; パスキーの強さについて別々のことを言う状態だった。judgement は共有面へ。
+  io.github.kotoba-lang/webauthn
+  {:git/url "https://github.com/kotoba-lang/webauthn.git"
+   :git/sha "15b2610652390298b5009697c9efba61e0745911"}
+
   io.github.kotoba-lang/identity
   {:git/url "https://github.com/kotoba-lang/identity.git"
    :git/sha "5cf94e38c816ced6857ef62de344f6adea9fc050"}
