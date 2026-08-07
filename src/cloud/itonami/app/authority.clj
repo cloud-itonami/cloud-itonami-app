@@ -43,7 +43,7 @@
   section), so a committed proposal here means a governed proposal was recorded --
   NOT that a card was issued, a profile downloaded, or a call answered. Callers
   and UI must not present it as more than that."
-  (:require [cloud.itonami.app.credential-assurance :as assurance]
+  (:require [webauthn.assurance :as assurance]
             [cloud.itonami.app.passkey :as passkey]
             [cloud.itonami.app.store :as store])
   (:import [java.nio.charset StandardCharsets]
@@ -260,7 +260,9 @@
     (if-not record
       [{:passkey/issue :credential/not-found}]
       (assurance/policy-issues record
-                               (assurance/policy-for configuration authority-key)))))
+                               (assurance/policy-for
+                                (get-in configuration
+                                        [:authorities authority-key :credential-policy]))))))
 
 (defn finish-approval!
   "Complete the assertion and mark the proposal approved.

@@ -14,7 +14,7 @@
             [cloud.itonami.app.credential-sd-jwt :as credential-sd-jwt]
             [cloud.itonami.app.credential-trust :as credential-trust]
             [cloud.itonami.app.presentation-request :as presentation-request]
-            [cloud.itonami.app.credential-assurance :as credential-assurance]
+            [webauthn.assurance :as credential-assurance]
             [cloud.itonami.app.documents :as documents]
             [docs.html :as docs-html]
             [cloud.itonami.app.esign :as esign]
@@ -1766,12 +1766,14 @@
                       :authorities
                       (into {}
                             (for [k (sort (keys authority-api/adapters))]
-                              [k {:policy (credential-assurance/policy-for config k)
+                              [k {:policy (credential-assurance/policy-for
+                                                (get-in config [:authorities k :credential-policy]))
                                   :accepted
                                   (mapv :credential-id
                                         (filter #(empty?
                                                   (credential-assurance/policy-issues
-                                                   % (credential-assurance/policy-for config k)))
+                                                   % (credential-assurance/policy-for
+                                                (get-in config [:authorities k :credential-policy]))))
                                                 credentials))}]))}))
 
             ;; ---- fleet directory + 事業者としての参与 ----

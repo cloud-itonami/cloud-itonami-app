@@ -96,7 +96,7 @@
   `cloud.itonami.app.filecoin` staging is not in this path."
   (:require [clojure.string :as str]
             [cloud.itonami.app.credential :as credential]
-            [cloud.itonami.app.credential-assurance :as assurance]
+            [webauthn.assurance :as assurance]
             [cloud.itonami.app.did :as did]
             [cloud.itonami.app.documents :as documents]
             [cloud.itonami.app.esign.assertion :as assertion]
