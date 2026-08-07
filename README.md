@@ -1,10 +1,13 @@
 # Cloud Itonami App
 
-Cloud Itonami is a local-first AI workspace built with
+Cloud Itonami is a safety-first (緑十字) AI workspace built with
 [`kotoba-lang/kotoba`](https://github.com/kotoba-lang/kotoba) and
 [`kotoba-lang/shell`](https://github.com/kotoba-lang/shell). It combines chat,
 mail, projects, drive, calendar, Passkey identity, and delegated service
 connections while keeping local data and cloud authority boundaries explicit.
+Keeping data local is one of the ways it is safe, not the point in itself: the
+policy is fail-closed, so anything that would leave this machine has to be
+named before it can happen.
 
 The repository is the tenant-neutral application. `gftd.ai` is represented by
 the optional [`profiles/gftd.edn`](profiles/gftd.edn) distribution profile, not
