@@ -159,6 +159,13 @@
                        :west-managed? false
                        :datalad-initialized? (:initialized? datalad)
                        :sync-state (if (:remote datalad) :configured :local-only)
+                       ;; Whether anything has actually been published from this
+                       ;; project, as opposed to whether the deployment COULD.
+                       ;; `:sync-state` only ever answered the second, so it
+                       ;; cannot tell a mover whether ciphertext exists under
+                       ;; this project's storage owner. `:none` from creation;
+                       ;; `persist-conversation!` sets `:published`. ADR-0024.
+                       :publication-state (or (:publication-state existing) :none)
                        :created-at (or (:created-at existing) timestamp)
                        :updated-at (or (:updated-at existing) timestamp)})]
     (store/transact! assoc-in [:chat-projects key] public)
@@ -943,6 +950,63 @@
                           "CLOUD_ITONAMI_MAIL_AGE_RECIPIENTS_FILE を設定してください"))
       )))
 
+(defn publication-barrier
+  "Why this project may not move to another tenant, or nil (ADR-0024).
+
+  `:published` — ciphertext exists under this project's storage owner, and that
+  owner is a hash of the tenant it is leaving. Moving the directory would move
+  bytes encrypted under a key the destination does not hold; re-keying them is a
+  re-publication, not a move.
+
+  `:publication-unknown` — the deployment can publish and this project predates
+  the record that says whether it did. Refusing is the conservative direction:
+  the alternative is moving ciphertext that nobody at the destination can read
+  and finding out later.
+
+  A deployment with no publication configured returns nil for both, because
+  nothing can have been published from it."
+  [project]
+  (cond
+    (or (:published-at project) (= :published (:publication-state project)))
+    :published
+
+    (and (publish-configured?) (not= :none (:publication-state project)))
+    :publication-unknown))
+
+(defn project-paths
+  "Where this scope's project lives on disk, whether or not it is there yet.
+
+  Two directories, because a project is two things stored differently: the Git
+  project is addressed by organization and slug, and the editable workspace by
+  `storage-owner`, which hashes the organization, the user AND the project.
+  A transfer has to move both, and `project-location` answers only about the
+  first and only when it already exists (ADR-0024).
+
+  Both are canonical paths, and the `.itonami/project.edn` inside the Git
+  project names the organization storage id — so a mover has to rewrite it
+  rather than only rename the directory."
+  [scope]
+  (let [{:keys [projects-root workspace-root]} (roots)
+        org-id (organization-storage-id scope)
+        slug (project-slug (:project-id scope))
+        owner (storage-owner scope)]
+    {:organization-storage-id org-id
+     :project-slug slug
+     :storage-owner owner
+     :project-directory (.getCanonicalFile (io/file projects-root org-id slug))
+     :workspace-directory (.getCanonicalFile
+                           (io/file workspace-root owner))
+     :metadata-file (.getCanonicalFile
+                     (io/file projects-root org-id slug ".itonami" "project.edn"))}))
+
+(defn rewrite-project-metadata!
+  "Point an already-moved project's `.itonami/project.edn` at its new tenant."
+  [metadata-file organization-storage-id]
+  (when (.isFile metadata-file)
+    (let [current (edn/read-string (slurp metadata-file))]
+      (atomic-edn! metadata-file
+                   (assoc current :organization/storage-id organization-storage-id)))))
+
 (defn project-location
   "The directory and identity of an existing project, without creating one.
 
@@ -985,6 +1049,14 @@
               published (repository/commit-workspace!
                          (assoc (runtime/production-context owner)
                                 :workspace-root workspace-root))]
+          ;; Recorded on the project, not only returned: ciphertext now exists
+          ;; under this project's storage owner, and a later transfer has to
+          ;; know that without being able to read the head registry (ADR-0024).
+          (store/transact!
+           update-in [:chat-projects [(:organization-id scope) (:project-id scope)]]
+           merge {:publication-state :published
+                  :published-at (store/now)
+                  :head-cid (get-in published [:head :head/cid])})
           (assoc local :state :published
                  :head-cid (get-in published [:head :head/cid])
                  :revision (get-in published [:receipt :revision])))

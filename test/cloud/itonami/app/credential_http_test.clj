@@ -83,6 +83,10 @@
                      local-identity/configure! (fn [_] nil)
                      local-identity/membership-role (fn [_] role)
                      local-identity/organization-domain-for-did-web (fn [] domain)
+                     ;; The route resolves the document from the request's Host
+                     ;; since ADR-0025; the deployment-level function still
+                     ;; answers for the status list.
+                     local-identity/did-web-domain-for-host (fn [_] domain)
                      local-identity/membership-credential-context
                      (fn [_] {:subject-did subject-did
                               :role :member

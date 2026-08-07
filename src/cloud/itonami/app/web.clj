@@ -2206,6 +2206,25 @@
                         :placeholder "etzhayyim"}]]
               [:button {:class "tool-button" :id "organization-create"
                         :type "submit"} "Organizationを追加"]]
+             ;; Here rather than in the Projects panel: that panel reads GitHub
+             ;; Projects v2, and this moves a LOCAL project between tenants —
+             ;; a question about tenants, which is what this card is (ADR-0024).
+             [:form {:class "settings-form" :id "project-transfer-form"}
+              (dds/heading 3 "Project を別の tenant へ移動" {:size "16"})
+              [:div {:class "field"}
+               [:label {:for "project-transfer-project"} "Project ID"]
+               [:input {:id "project-transfer-project" :name "project"
+                        :required true :autocomplete "off"
+                        :placeholder "my-project"}]]
+              [:div {:class "field"}
+               [:label {:for "project-transfer-tenant"} "移動先"]
+               [:select {:id "project-transfer-tenant" :name "tenant"
+                         :required true}]
+               [:span {:class "form-help" :id "project-transfer-help"}
+                (str "両方の tenant で owner または admin 権限が必要です。"
+                     "公開済みの Project は移動できません。")]]
+              [:button {:class "tool-button" :id "project-transfer-submit"
+                        :type "submit"} "移動する"]]
              [:form {:class "settings-form"
                      :id "organization-invitation-form"}
               (dds/heading 3 "既存Organizationへ参加" {:size "16"})

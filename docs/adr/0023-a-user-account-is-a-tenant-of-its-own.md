@@ -92,7 +92,16 @@ what it was created as is a fact and its display name is not evidence.
 - Configuring an *organization* no longer fills in a missing owner handle. A
   person who registered with no email and named an organization first keeps
   their `pending-…@` address until they claim a handle on their personal tenant.
-  That is one more step than before and one less conflation.
+  That is one more step than before and one less conflation. The identity card
+  says so in place of the old "Organization ID 未設定", which pointed at a form
+  that no longer sets it.
+- `add-user!` creates the invited person's personal tenant with them, rather
+  than leaving it to the migration on their first page load, and points their
+  `:default-membership-id` at the organization that invited them. Two
+  memberships stamped in the same instant would otherwise leave
+  `default-membership` breaking the tie on a UUID. It also refuses a handle that
+  a tenant already answers to — the other direction of the one owner namespace,
+  which `create-organization!` had and this did not.
 - `organization-domain-for-did-web` still assumes a single-tenant deployment,
   but now prefers an organization and answers with a personal tenant only when
   there is no organization to name. Multi-tenant `did:web` publication remains
