@@ -1,4 +1,4 @@
-# ADR-0026: Local folders synchronize through the Drive boundary
+# ADR-0027: Local folders synchronize through the Drive boundary
 
 ## Status
 
