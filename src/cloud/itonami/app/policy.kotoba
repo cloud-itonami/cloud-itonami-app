@@ -1,13 +1,86 @@
-(ns cloud.itonami.app.policy)
+;; The routing policy's DECISION CORE — the part that is a judgement rather
+;; than a lookup.
+;;
+;; `policy.cljc` keeps the halves that are not decisions: reading a provider out
+;; of a config map, walking `:providers`, comparing ids. Those need maps and a
+;; closure, and both are deliberately absent here. What is left is exactly two
+;; questions — is this host loopback, and may this provider be used — and both
+;; answer from scalars.
+;;
+;; The two implementations do not call each other. `policy-kotoba-parity-test`
+;; is what binds them: it compiles this file and runs both over the same inputs.
+;; Before that test existed, `policy.cljc` merely CLAIMED in a docstring to be
+;; "the host-side mirror of policy.kotoba", while the two files did not share a
+;; single function — this one exported a `select-provider-tier` that no caller
+;; anywhere referenced, and the cljc's `provider-allowed?` had no counterpart.
+;; A claimed mirror that nothing checks is two implementations, and only one of
+;; them gets fixed.
+;;
+;; ## Why it is written this narrowly
+;;
+;; Everything here stays inside the native word-typed slice
+;; (`kotoba.kir/only-native-word-typed-features?`): `:string` and `:bool`
+;; scalars, a sealed all-scalar record, `string=?`, `or`, and `if`.
+;;
+;; Two things are avoided, and only two. **A set literal** — the three loopback
+;; names would naturally be `#{...}` with `contains?`, and that is refused
+;; (measured 2026-08-08: `operation has no admitted lowering`). **A bare
+;; `:bool` parameter** — hence the record, rather than four boolean arguments;
+;; compiler ADR 0219 records that refusal as "a real gap … in the INTERPRETER,
+;; not in either backend".
+;;
+;; **Both are temporary, not a house style.** map, set and closure are
+;; `:implemented-partial` on `#{:compiler :kotoba-wasm :kotoba-cljs}` and absent
+;; on native only because the backend has not reached them (ADR-2608650000).
+;;
+;; `and` / `or` are NOT among the restrictions — they desugar to nested
+;; `let`/`if` and compile on both native ISAs. Measured, because the first draft
+;; of this file assumed otherwise and spelled both functions as `if` chains for
+;; no reason. **Do not add a self-restriction here without compiling for
+;; `:x86_64-kotoba-v1` first.**
+;;
+;; They do come with one sharp edge, which is why both bodies end in
+;; `... true false)`: **`and` / `or` produce `:i64`, not `:bool`**, so a
+;; `:bool`-declared function must fold the result through an `if`. Without it
+;; the compile fails with `expression type mismatch: expected bool, got i64`
+;; (measured here; the same trap is recorded in the superproject CLAUDE.md from
+;; the `kotoba-lang/css` port).
+;;
+;; **Removal condition**: when the native backend admits set literals,
+;; `loopback-host?` becomes a membership test, and when a bare `:bool`
+;; parameter is admitted, `provider-allowed?` can take its four booleans
+;; directly and the record goes away. Neither rewrite changes the decision, and
+;; the parity test is what makes that safe to check.
 
-;; Return a provider tier. 0 denies egress, 1 selects a local provider,
-;; and 2 selects an explicitly enabled cloud provider.
-(defn select-provider-tier [local-ready cloud-requested cloud-enabled]
-  (if (pos? local-ready)
-    1
-    (if (and (pos? cloud-requested) (pos? cloud-enabled))
-      2
-      0)))
+(ns cloud.itonami.app.policy
+  (:schemas {;; Everything `provider-allowed?` needs, flattened out of the two
+             ;; maps the cljc reads it from. `cloud-enabled` is the global gate
+             ;; (`[:routing :cloud-enabled?]`) and `cloud-reviewed` is the
+             ;; privacy gate (`[:privacy :allow-cloud-without-review?]`); they
+             ;; are separate fields because they come from separate places and
+             ;; either one alone must not admit a cloud provider.
+             :policy/provider
+             [:record :policy/provider
+              [[:enabled :bool] [:local :bool]
+               [:cloud-enabled :bool] [:cloud-reviewed :bool]]]})
+  (:export [loopback-host? provider-allowed?]))
 
-(defn main []
-  (select-provider-tier 1 0 0))
+;; The three spellings of "this machine". A set literal would be the natural
+;; form; see the header for why it is a disjunction instead.
+(defn loopback-host? [host :string] :bool
+  (if (or (string=? host "127.0.0.1")
+          (string=? host "localhost")
+          (string=? host "::1"))
+    true
+    false))
+
+;; A local provider is admitted by being enabled. A cloud provider needs BOTH
+;; gates. There is deliberately no fallback from local to cloud: a disabled
+;; local provider denies, it does not escalate.
+(defn provider-allowed? [p [:ref :policy/provider]] :bool
+  (if (and (record-get p :enabled)
+           (or (record-get p :local)
+               (and (record-get p :cloud-enabled)
+                    (record-get p :cloud-reviewed))))
+    true
+    false))

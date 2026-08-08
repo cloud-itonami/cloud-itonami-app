@@ -374,6 +374,41 @@
   ;; real store.
   :test {:extra-paths ["test"]
          :extra-deps {datascript/datascript {:mvn/version "1.7.8"}}
+         ;; `kotoba-lang/compiler` is TEST-ONLY here, for the decision-core
+         ;; parity gate (`policy-kotoba-parity-test` over
+         ;; `src/cloud/itonami/app/policy.kotoba`). No `src/` namespace requires
+         ;; it — measured 2026-08-08, zero matches for `kotoba.compiler` /
+         ;; `kotoba.kir` outside the test — so this override cannot change what
+         ;; the application does.
+         ;;
+         ;; It is an OVERRIDE rather than an addition because `kotoba` already
+         ;; brings a compiler transitively, at `94f29b24`. That pin is profile-4
+         ;; era and CANNOT express the decision core: `:schemas` is refused in ns
+         ;; clauses ("only a bounded :export vector is admitted"), entryless
+         ;; libraries are refused off the kotoba-script web target, and
+         ;; `string=?` still returns i64 so a `:bool` result is a type mismatch.
+         ;; All three measured directly against it on 2026-08-08.
+         ;;
+         ;; Pinned to the same commit `manifest/west.yml` pins, so the parity
+         ;; gate measures the compiler this workspace actually ships — the same
+         ;; discipline compiler ADR 0221 applied to itself.
+         ;;
+         ;; `io-multiformats` is named here for a reason that is not optional.
+         ;; The compiler pin above drags its own, OLDER `io-multiformats`
+         ;; (`b3b157e6`) into the tree, and resolution silently preferred it over
+         ;; the `dc520032` this app already resolves — which removed
+         ;; `mf/sha384` and made `org-w3-rdf-canon` fail to LOAD, so the entire
+         ;; test suite died before a single assertion ran. Measured 2026-08-08:
+         ;; `clojure -M:test -e "(println :ok)"` → `No such var: mf/sha384`.
+         ;; Holding it at the app's own pin keeps the parity gate from changing
+         ;; what every other test in this repo is compiled against.
+         :override-deps
+         {io.github.kotoba-lang/compiler
+          {:git/url "https://github.com/kotoba-lang/compiler.git"
+           :git/sha "4c9650ee1a3ebaefb9a5a449e1b6ad37b009d2bf"}
+          io.github.kotoba-lang/io-multiformats
+          {:git/url "https://github.com/kotoba-lang/io-multiformats.git"
+           :git/sha "dc5200329d2fabce6edb7ca5c87c477cec0ea162"}}
          :jvm-opts ["-Dcloud.itonami.data-dir=target/test-data"]
          :main-opts ["-m" "cloud.itonami.app.test-runner"]}
   :lint {:replace-deps {clj-kondo/clj-kondo {:mvn/version "2024.11.14"}}

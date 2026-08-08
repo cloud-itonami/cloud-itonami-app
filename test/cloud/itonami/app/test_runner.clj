@@ -26,6 +26,7 @@
             [cloud.itonami.app.freebusy-test]
             [cloud.itonami.app.metrics-test]
             [cloud.itonami.app.portfolio-test]
+            [cloud.itonami.app.policy-kotoba-parity-test]
             [cloud.itonami.app.mail-age-key-test]
             [cloud.itonami.app.mail-authentication-test]
             [cloud.itonami.app.mail-origins-test]
@@ -128,6 +129,7 @@
     cloud.itonami.app.freebusy-test
     cloud.itonami.app.metrics-test
     cloud.itonami.app.portfolio-test
+    cloud.itonami.app.policy-kotoba-parity-test
     cloud.itonami.app.mail-age-key-test
     cloud.itonami.app.mail-authentication-test
     cloud.itonami.app.mail-origins-test
