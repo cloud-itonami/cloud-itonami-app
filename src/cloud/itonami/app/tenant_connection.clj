@@ -172,6 +172,10 @@
   (identity/require-passkey! session)
   (let [state (identity-state)]
     {:schema schema
+     ;; Sent once so the Fleet view can show what an app is asking for before
+     ;; anything is granted. Without it the UI would need its own copy of the
+     ;; wording, which is the drift `capability-catalog` exists to prevent.
+     :capability-catalog (into {} (map (fn [[k v]] [k v])) capability-catalog)
      :connections (->> (:tenant-connections state)
                        vals
                        (filter #(= (:user-id session) (:user-id %)))

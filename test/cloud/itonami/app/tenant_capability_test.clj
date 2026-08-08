@@ -47,6 +47,15 @@
     (is (= "made.up.capability" (:label (second d))))
     (is (= :unknown (:direction (second d))))))
 
+(deftest the-wording-is-published-once
+  ;; ADR-2608093000 D4: the Fleet view shows what an app asks for before
+  ;; anything is granted, and it must not keep its own copy of the sentences.
+  ;; If this stops being sent, the UI silently falls back to identifiers and
+  ;; a consent screen goes back to reading like a config file.
+  (let [cat tc/capability-catalog]
+    (is (contains? cat "calendar.freebusy.read"))
+    (is (every? (fn [[_ v]] (and (:label v) (:direction v))) cat))))
+
 (deftest an-unknown-capability-is-still-refused-at-request
   ;; describe- is lenient for display; validation is not.
   (is (thrown? clojure.lang.ExceptionInfo
