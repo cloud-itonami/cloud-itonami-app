@@ -21,6 +21,7 @@
             [cloud.itonami.app.kotobase-federation-test]
             [cloud.itonami.app.local-query-test]
             [cloud.itonami.app.fax-test]
+            [cloud.itonami.app.freebusy-test]
             [cloud.itonami.app.metrics-test]
             [cloud.itonami.app.portfolio-test]
             [cloud.itonami.app.mail-age-key-test]
@@ -120,6 +121,7 @@
     cloud.itonami.app.kotobase-federation-test
     cloud.itonami.app.local-query-test
     cloud.itonami.app.fax-test
+    cloud.itonami.app.freebusy-test
     cloud.itonami.app.metrics-test
     cloud.itonami.app.portfolio-test
     cloud.itonami.app.mail-age-key-test
