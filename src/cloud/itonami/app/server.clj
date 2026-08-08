@@ -3,6 +3,7 @@
             [clojure.edn :as edn]
             [clojure.java.io :as io]
             [clojure.string :as str]
+            [cloud.itonami.app.kaiyu-local :as kaiyu-local]
             [cloud.itonami.app.agent-session :as agent-session]
             [cloud.itonami.app.app-client :as app-client]
             [cloud.itonami.app.authority.api :as authority-api]
@@ -261,6 +262,15 @@
     (send! exchange 404 {:error "icon-missing"})))
 
 (defn- send-html! [^HttpExchange exchange html]
+  ;; 回遊 (local only): every HTML surface this app serves passes through here,
+  ;; so the counter lives here rather than in `handler`'s dispatch — one place
+  ;; instead of one per route, and the dispatch method is already at the JVM's
+  ;; 64 KB ceiling (adding two branches there failed to compile, which is how
+  ;; this landed in the right place).
+  ;;
+  ;; Nothing in cloud.itonami.app.kaiyu-local has a network writer; its own
+  ;; test asserts the absence rather than trusting the docstring.
+  (kaiyu-local/record-view! (.getPath (.getRequestURI exchange)))
   (let [bytes (.getBytes html StandardCharsets/UTF_8)]
     (doto (.getResponseHeaders exchange)
       (.set "Content-Type" "text/html; charset=utf-8")
