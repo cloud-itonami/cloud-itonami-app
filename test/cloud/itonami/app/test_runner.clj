@@ -17,6 +17,7 @@
             [cloud.itonami.app.card-statement-test]
             [cloud.itonami.app.cli-test]
             [cloud.itonami.app.commands-test]
+            [cloud.itonami.app.connectors-test]
             [cloud.itonami.app.loops-test]
             [cloud.itonami.app.lawfirm-test]
             [cloud.itonami.app.kotobase-federation-test]
@@ -119,6 +120,7 @@
     cloud.itonami.app.card-statement-test
     cloud.itonami.app.cli-test
     cloud.itonami.app.commands-test
+    cloud.itonami.app.connectors-test
     cloud.itonami.app.loops-test
     cloud.itonami.app.lawfirm-test
     cloud.itonami.app.kotobase-federation-test
