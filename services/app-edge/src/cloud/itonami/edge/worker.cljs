@@ -119,8 +119,15 @@
 (defn- fleet-facets [env ^js url]
   (let [field (.get (.-searchParams url) "field")]
     (if (str/blank? field)
-      (problem 400 "facets/field-required"
-               "field= is required, e.g. ?field=domain")
+      ;; js/Promise.resolve, not a bare Response. Every route here returns a
+      ;; promise because `app` attaches .catch to whatever comes back — and a
+      ;; Response has no .catch, so returning one raw turned this deliberate
+      ;; 400 into a TypeError and a Cloudflare 1042. Found by calling the
+      ;; deployed Worker; the release build compiled clean and the dry-run
+      ;; was happy, because neither of them calls the route.
+      (js/Promise.resolve
+       (problem 400 "facets/field-required"
+                "field= is required, e.g. ?field=domain"))
       (-> (load-catalog! env)
           (.then (fn [c]
                    (json {:field field
