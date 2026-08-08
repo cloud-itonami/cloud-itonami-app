@@ -188,6 +188,9 @@
     align-items:center;justify-content:space-between;gap:1rem;box-sizing:border-box}
   .topbar__title{margin:0;font-size:1.25rem;line-height:1.5}
   .topbar__meta{margin:0;color:var(--color-neutral-solid-gray-600);font-size:.875rem}
+  .topbar__context{display:flex;align-items:center;gap:.75rem}
+  .project-select{min-height:2.5rem;max-width:18rem;border:1px solid var(--color-neutral-solid-gray-300);
+    border-radius:.625rem;background:var(--color-neutral-white);padding:.4rem 2rem .4rem .75rem;font:inherit}
   .view{padding:clamp(1rem,4vw,3rem);max-width:78rem}
   [hidden]{display:none!important}
   .view[hidden]{display:none}
@@ -698,6 +701,16 @@
     padding:.625rem .75rem;background:var(--color-neutral-white);font:inherit}
   .field input:focus,.field select:focus{outline:4px solid var(--color-primitive-yellow-300);
     outline-offset:1px;border-color:var(--color-key-600)}
+  .site-layout{display:grid;grid-template-columns:minmax(16rem,.65fr) minmax(0,1.35fr);gap:1rem;align-items:start}
+  .site-editor{width:100%;min-height:24rem;box-sizing:border-box;resize:vertical;
+    border:1px solid var(--color-neutral-solid-gray-300);border-radius:.625rem;padding:1rem;
+    background:#111827;color:#e5e7eb;font:13px/1.65 ui-monospace,SFMono-Regular,Menlo,monospace}
+  .site-preview{width:100%;min-height:30rem;border:1px solid var(--color-neutral-solid-gray-200);
+    border-radius:.75rem;background:white}
+  .project-board{display:grid;grid-template-columns:repeat(5,minmax(12rem,1fr));gap:.75rem;overflow-x:auto}
+  .project-column{min-height:10rem;padding:.75rem;border-radius:.625rem;background:var(--color-neutral-solid-gray-50)}
+  .project-column h3{margin:.25rem 0 .75rem;font-size:.875rem}.project-column ul{list-style:none;margin:0;padding:0;display:grid;gap:.5rem}
+  .project-issue{padding:.75rem;border:1px solid var(--color-neutral-solid-gray-200);border-radius:.5rem;background:white;font-size:.8125rem}
   .governance-editor{margin-top:1.25rem;padding-top:1.25rem;
     border-top:1px solid var(--color-neutral-solid-gray-200)}
   .governance-collection{display:grid;gap:.625rem}
@@ -773,7 +786,7 @@
     background:linear-gradient(90deg,var(--color-neutral-solid-gray-50),var(--color-neutral-solid-gray-100),var(--color-neutral-solid-gray-50));
     background-size:200% 100%;animation:pulse 1.4s infinite}
   @keyframes pulse{to{background-position:-200% 0}}
-  @media(max-width:64rem){.local-grid,.settings-grid,.organization-studio__grid{
+  @media(max-width:64rem){.local-grid,.settings-grid,.organization-studio__grid,.site-layout{
     grid-template-columns:1fr}.organization-studio__summary{grid-template-columns:1fr 1fr}
     .governance-row{grid-template-columns:1fr 1fr}.governance-row>*:last-child{justify-self:start}
     .messenger-shell{grid-template-columns:minmax(13rem,.65fr) minmax(22rem,1.35fr)}
@@ -812,6 +825,7 @@
   }
   @media(max-width:40rem){
     :root{--mobile-nav-height:calc(4.5rem + env(safe-area-inset-bottom))}
+    .project-select{max-width:9rem}
     body.has-mobile-menu{overflow:hidden}
     .workspace{display:block;min-height:100dvh;padding-bottom:var(--mobile-nav-height)}
     .sidebar{position:fixed;inset:auto 0 0 0;z-index:40;width:auto;height:var(--mobile-nav-height);
@@ -984,6 +998,7 @@
          (nav-item "chat" "Chat" "✦" nil)
          (nav-item "messenger" "Messenger" "◇" "messenger-count")
          (nav-item "projects" "Projects" "▦" "projects-count")
+         (nav-item "sites" "Sites" "▦" "sites-count")
          (nav-item "drive" "Drive" "◇" "drive-count")]
         [:div {:class "nav-overflow-panel" :id "mobile-overflow-panel"}
          [:div {:class "nav-secondary"}
@@ -1024,7 +1039,11 @@
       [:div {:class "main"}
        [:header {:class "topbar"}
         [:h2 {:class "topbar__title" :id "current-view"} "Chat"]
-        [:p {:class "topbar__meta"} "データは許可された接続先からのみ読み込みます"]]
+        [:div {:class "topbar__context"}
+         [:label {:class "visually-hidden" :for "active-project-select"} "現在のProject"]
+         [:select {:class "project-select" :id "active-project-select"}
+          [:option {:value ""} "Projectを選択"]]
+         [:p {:class "topbar__meta"} "許可された接続先のみ"]]]
        [:main {:id "main-content"}
         [:section {:class "view chat-view" :data-view-panel "chat"}
          [:div {:class "chat-shell" :id "chat-shell"}
@@ -1667,7 +1686,37 @@
           [:article {:class "record-detail" :id "inbox-detail" :aria-live "polite"}
            [:div {:class "empty-state"} "メールを読み込んでいます。"]]]]
         [:section {:class "view" :data-view-panel "projects" :hidden true}
-         (view-header "Projects" "GitHub Projects と同じデータを、Table・Board・Roadmap の視点で整理します。")
+         (view-header "Projects" "ProjectごとにChat・Issue・Site・Git repositoryをまとめます。")
+         [:div {:class "local-grid"}
+          [:div {:class "local-card"}
+           (dds/heading 2 "新しいProject" {:size "24"})
+           [:form {:class "settings-form" :id "local-project-create-form"}
+            [:div {:class "field"}
+             [:label {:for "local-project-id"} "Project ID"]
+             [:input {:id "local-project-id" :name "project" :required true
+                      :pattern "[A-Za-z0-9._-]{1,80}" :placeholder "website-redesign"}]]
+            [:div {:class "field"}
+             [:label {:for "local-project-title"} "表示名"]
+             [:input {:id "local-project-title" :name "title" :required true
+                      :placeholder "Website redesign"}]]
+            [:div {:class "field"}
+             [:label {:for "local-project-description"} "説明"]
+             [:input {:id "local-project-description" :name "description"}]]
+            [:button {:class "primary-action" :type "submit"} "Projectを作成"]]
+           [:p {:class "form-help" :id "local-project-create-status" :aria-live "polite"}]]
+          [:div {:class "local-card"}
+           (dds/heading 2 "このOrganizationのProjects" {:size "24"})
+           [:ul {:class "record-list__items" :id "local-project-list"}
+            [:li {:class "skeleton"}]]]]
+         [:div {:class "local-card" :id "local-project-board-card" :hidden true}
+          [:div {:class "view-header" :style "margin-bottom:1rem"}
+           [:div
+            (dds/heading 2 "Project Board" {:size "24"})
+            [:p {:class "source-note" :id "local-project-board-source"}]]
+           [:form {:class "local-actions" :id "project-issue-create-form"}
+            [:input {:name "title" :required true :placeholder "新しいIssue"}]
+            [:button {:class "tool-button" :type "submit"} "Issueを追加"]]]
+          [:div {:class "project-board" :id "local-project-board"}]]
          [:div {:class "local-card"}
           [:div {:class "view-header" :style "margin-bottom:1rem"}
            [:div
@@ -1692,6 +1741,39 @@
           [:div {:class "local-actions"}
            [:button {:class "tool-button" :id "open-organization-studio"
                      :type "button"} "Organization Studioで組織と権限を編集"]]]]
+        [:section {:class "view" :data-view-panel "sites" :hidden true}
+         (view-header "Sites" "選択中のProjectから静的サイトを作成し、確認して公開します。")
+         [:div {:class "site-layout"}
+          [:div {:class "settings-stack"}
+           [:div {:class "local-card"}
+            (dds/heading 2 "新しいSite" {:size "24"})
+            [:form {:class "settings-form" :id "site-create-form"}
+             [:div {:class "field"}
+              [:label {:for "site-title"} "Site名"]
+              [:input {:id "site-title" :name "title" :required true :placeholder "Product site"}]]
+             [:div {:class "field"}
+              [:label {:for "site-slug"} "slug"]
+              [:input {:id "site-slug" :name "slug" :required true
+                       :pattern "[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?" :placeholder "product"}]]
+             [:button {:class "primary-action" :type "submit"} "Siteを作成"]]
+            [:p {:class "form-help" :id "site-create-status" :aria-live "polite"}]]
+           [:div {:class "local-card"}
+            (dds/heading 2 "Project Sites" {:size "24"})
+            [:ul {:class "record-list__items" :id "site-list"}
+             [:li {:class "empty-state"} "Projectを選択してください。"]]]]
+          [:div {:class "settings-stack" :id "site-editor-panel" :hidden true}
+           [:div {:class "local-card"}
+            [:div {:class "view-header" :style "margin-bottom:1rem"}
+             [:div
+              (dds/heading 2 "HTML Editor" {:size "24"})
+              [:p {:class "source-note" :id "site-editor-meta"}]]
+             [:div {:class "local-actions"}
+              [:button {:class "tool-button" :id "site-save-button" :type "button"} "保存"]
+              [:button {:class "primary-action" :id "site-publish-button" :type "button"} "公開"]]]
+            [:textarea {:class "site-editor" :id "site-html" :spellcheck "false"}]
+            [:p {:class "form-help" :id "site-editor-status" :aria-live "polite"}]]
+           [:iframe {:class "site-preview" :id "site-preview" :title "Site preview"
+                     :sandbox ""}]]]]
         [:section {:class "view" :data-view-panel "organization" :hidden true}
          (view-header "Organization Studio"
                       "組織内組織、DoDAF Performer、Position、Role、Actor Assignmentと承認経路を分離して管理します。")
