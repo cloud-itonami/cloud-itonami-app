@@ -11,6 +11,7 @@
             [cloud.itonami.app.authority-test]
             [cloud.itonami.app.business-test]
             [cloud.itonami.app.agent-session-test]
+            [cloud.itonami.app.kaiyu-local-test]
             [cloud.itonami.app.business-http-test]
             [cloud.itonami.app.canvas-test]
             [cloud.itonami.app.card-statement-test]
@@ -111,6 +112,7 @@
   '[cloud.itonami.app.authority-test
     cloud.itonami.app.business-test
     cloud.itonami.app.agent-session-test
+    cloud.itonami.app.kaiyu-local-test
     cloud.itonami.app.business-http-test
     cloud.itonami.app.canvas-test
     cloud.itonami.app.card-statement-test
