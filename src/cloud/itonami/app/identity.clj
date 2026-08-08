@@ -3,7 +3,8 @@
 
   Public state contains metadata and Keychain references only. OAuth access
   and refresh tokens are written to macOS Keychain and never enter state.edn."
-  (:require [cloud.itonami.app.did :as did]
+  (:require [cloud.itonami.app.connectors :as connectors]
+            [cloud.itonami.app.did :as did]
             [cloud.itonami.app.email-login :as email-login]
             [cloud.itonami.app.store :as store]
             [cloud.itonami.app.passkey :as passkey]
@@ -71,61 +72,25 @@
     (str "did:web:" (organization-domain organization-id))))
 
 (def provider-catalog
-  {:github
-   {:name "GitHub"
-    :credential-service "gftd.github"
-    :client-id-env "GITHUB_CLIENT_ID"
-    :client-secret-env "GITHUB_CLIENT_SECRET"
-    :authorization-endpoint "https://github.com/login/oauth/authorize"
-    :token-endpoint "https://github.com/login/oauth/access_token"
-    :profile-endpoint "https://api.github.com/user"
-    :scopes ["read:user" "user:email" "read:org" "read:project"]}
-   :google
-   {:name "Google Workspace"
-    :credential-service "gftd.google"
-    :client-id-env "GOOGLE_CLIENT_ID"
-    :client-secret-env "GOOGLE_CLIENT_SECRET"
-    :authorization-endpoint "https://accounts.google.com/o/oauth2/v2/auth"
-    :token-endpoint "https://oauth2.googleapis.com/token"
-    :profile-endpoint "https://openidconnect.googleapis.com/v1/userinfo"
-    ;; `gmail.modify` rather than `gmail.readonly`, and `gmail.send` beside
-    ;; it. Read-only is the right default for a workspace that only shows you
-    ;; mail, and it was the wrong one the moment the inbox grew a reply box
-    ;; and a way to file a message: filing under a label and sending a reply
-    ;; are both writes, and with a read-only grant they fail at the provider
-    ;; with a 403 that no amount of local correctness prevents.
-    ;;
-    ;; `modify` covers reading, so this is one scope replacing one, not an
-    ;; addition on top. It deliberately stops short of `mail.google.com`
-    ;; (full account access, including permanent delete) — this app's trash
-    ;; is reversible on purpose and never needs it.
-    ;;
-    ;; Existing connections keep working on their old grant until the person
-    ;; reconnects; `prompt=consent` above means that reconnect actually
-    ;; re-asks rather than silently reissuing the narrower scope set.
-    :scopes ["openid" "email" "profile"
-             "https://www.googleapis.com/auth/gmail.modify"
-             "https://www.googleapis.com/auth/gmail.send"
-             "https://www.googleapis.com/auth/drive.metadata.readonly"
-             "https://www.googleapis.com/auth/calendar.readonly"]
-    :authorization-extra {"access_type" "offline"
-                          "prompt" "consent"
-                          "include_granted_scopes" "true"}}
-   :microsoft
-   {:name "Microsoft 365"
-    :credential-service "gftd.m365"
-    :client-id-env "M365_CLIENT_ID"
-    :client-secret-env "M365_CLIENT_SECRET"
-    :authorization-endpoint "https://login.microsoftonline.com/organizations/oauth2/v2.0/authorize"
-    :token-endpoint "https://login.microsoftonline.com/organizations/oauth2/v2.0/token"
-    :profile-endpoint "https://graph.microsoft.com/v1.0/me"
-    ;; `Mail.ReadWrite`/`Mail.Send` for the same reason Google gets
-    ;; `gmail.modify`/`gmail.send`: `Mail.ReadBasic` cannot even read a
-    ;; message body — it is headers and preview only — so a mailbox synced
-    ;; under it arrives with nothing to show when somebody opens a message.
-    :scopes ["openid" "email" "profile" "offline_access"
-             "User.Read" "Mail.ReadWrite" "Mail.Send"
-             "Files.Read" "Calendars.ReadBasic"]}})
+  "Derived from `connector.registry` — see `cloud.itonami.app.connectors`.
+
+  This was a literal until ADR-2608097000: three providers, each with one scope
+  list, so adding a fourth meant editing this namespace and a deployment that
+  only wanted to search a mailbox also held permission to file and relabel it
+  (`gmail.modify` covers reading, and one entry could not say less).
+
+  The shape is unchanged, so every caller below is untouched. What changed is
+  where it comes from: each connector repository declares its own tools, each
+  tool declares the scopes IT needs, and the catalogue asks for the scopes the
+  ENABLED tools need. `connectors-test` proves the derived scopes are a subset
+  of what this application requested before, so wiring it in cannot widen
+  anybody's grant on their next reconnect.
+
+  A var rather than a function because every call site treats it as one, and a
+  build's connector set does not change while it runs. A deployment that
+  narrows or widens it does so in configuration, read by
+  `connectors/provider-catalog`."
+  (connectors/provider-catalog))
 
 (defn- url-encode [value]
   (URLEncoder/encode (str value) StandardCharsets/UTF_8))

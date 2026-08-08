@@ -38,6 +38,39 @@
   {:git/url "https://github.com/kotoba-lang/dynamics.git"
    :git/sha "439d8cec415ab2c49bd8915ce271ccdb69051f03"}
 
+  ;; Connectors (ADR-2608097000). `identity/provider-catalog` is derived from
+  ;; these rather than written here, so adding an integration is adding a
+  ;; dependency. Each connector declares its own tools and each tool declares
+  ;; the scopes it needs -- which is what lets a deployment ask for less than
+  ;; the single gmail.modify entry this application used to hold.
+  ;;
+  ;; com-github is NOT listed here: this app already depended on it for
+  ;; github.workflow, and its pin above carries github.connector now.
+  io.github.kotoba-lang/connector
+  {:git/url "https://github.com/kotoba-lang/connector.git"
+   :git/sha "019f6f646ac7dee353957fedc7158e9f4ef078ee"}
+  io.github.kotoba-lang/com-google-calendar
+  {:git/url "https://github.com/kotoba-lang/com-google-calendar.git"
+   :git/sha "2e9b9ab253e51dbd55eae3d3a84aef1b62c31d00"}
+  io.github.kotoba-lang/com-google-drive
+  {:git/url "https://github.com/kotoba-lang/com-google-drive.git"
+   :git/sha "8fe811c50204150fe397815d380a9fccb0269978"}
+  io.github.kotoba-lang/com-google-gmail
+  {:git/url "https://github.com/kotoba-lang/com-google-gmail.git"
+   :git/sha "ec110ecbddcbaab463bdde5ee61cce975e6c6982"}
+  io.github.kotoba-lang/com-microsoft-graph
+  {:git/url "https://github.com/kotoba-lang/com-microsoft-graph.git"
+   :git/sha "fd36c90a864f8cddd957f91fd7a83d1c540e2aa3"}
+  io.github.kotoba-lang/com-slack
+  {:git/url "https://github.com/kotoba-lang/com-slack.git"
+   :git/sha "e78e185bab52ffef6478500a6f747a99469e9eff"}
+  io.github.kotoba-lang/com-notion
+  {:git/url "https://github.com/kotoba-lang/com-notion.git"
+   :git/sha "d2b2469f14b571fefe45f579343b18ba3ba028de"}
+  io.github.kotoba-lang/com-google-chat
+  {:git/url "https://github.com/kotoba-lang/com-google-chat.git"
+   :git/sha "8b5b0154a630d2f0d54fa451b5bc89ddfa0a6486"}
+
   io.github.kotoba-lang/shell
   {:git/url "https://github.com/kotoba-lang/shell.git"
    :git/sha "ad5b2dfd85bca83901bd440992628d674189bcb4"}
@@ -317,9 +350,11 @@
   io.github.kotoba-lang/oauth
   {:git/url "https://github.com/kotoba-lang/oauth.git"
    :git/sha "e47999a48cbc79e831c0690bac6681bda0b52785"}
+  ;; Bumped for github.connector (ADR-2608097000). github.workflow, which this
+  ;; app already used, is unchanged by that commit.
   io.github.kotoba-lang/com-github
   {:git/url "https://github.com/kotoba-lang/com-github.git"
-   :git/sha "5beea7514b4791f6aae33cb0b75d49f0ec53437c"}
+   :git/sha "b27e8834a48cc4eecdc1169f8c224817d181ee0d"}
   ;; Durable organizational roles and desired-capacity reconciliation. Kanban
   ;; work in this app supplies goals; yakuwari remains the authority for how
   ;; many bounded AgentRuns a role should keep alive and which capabilities

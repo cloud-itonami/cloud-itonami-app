@@ -218,7 +218,7 @@
       (is (re-find #"id=\"worker-count\"" html))
       (is (re-find #"color-scheme\" content=\"light\"" html))
       (is (re-find #"id=\"request-status\"[^>]*role=\"status\"" html))
-      (doseq [view ["Worker" "Inbox" "Projects" "Drive" "Scheduler"]]
+      (doseq [view ["Worker" "Inbox" "Projects" "Sites" "Drive" "Scheduler"]]
         (is (re-find (re-pattern (str ">" view "<")) html)))
       (is (re-find #"data-view-panel=\"scheduler\"" html)))))
 
@@ -236,6 +236,18 @@
     (is (empty? missing)
         (str "app-css references design tokens that jp-go-dds does not define: "
              (pr-str (sort missing))))))
+
+(deftest chat-session-ids-are-isolated-by-organization-user-and-project
+  (let [scope (ns-resolve 'cloud.itonami.app.server 'scoped-chat-session-id)
+        session {:organization-id "org-a" :user-id "user-a"}]
+    (is (= "desktop" (scope session "desktop" nil))
+        "legacy chat without a Project keeps its existing session id")
+    (is (not= (scope session "desktop" "alpha")
+              (scope session "desktop" "beta")))
+    (is (not= (scope session "desktop" "alpha")
+              (scope (assoc session :user-id "user-b") "desktop" "alpha")))
+    (is (not= (scope session "desktop" "alpha")
+              (scope (assoc session :organization-id "org-b") "desktop" "alpha")))))
 
 (deftest app-css-keeps-the-layout-rules-before-css-string-quotes
   ;; A raw `"` inside this Clojure string makes everything before it the

@@ -52,6 +52,7 @@
             [cloud.itonami.app.mail-sync :as mail-sync]
             [cloud.itonami.app.scheduler :as scheduler]
             [cloud.itonami.app.service :as service]
+            [cloud.itonami.app.sites :as sites]
             [cloud.itonami.app.store :as store]
             [cloud.itonami.app.tenant-connection :as tenant-connection]
             [cloud.itonami.app.tenant-repository :as tenant-repository]
@@ -295,6 +296,28 @@
       (.set "Permissions-Policy"
             "publickey-credentials-create=(self), publickey-credentials-get=(self)"))
     (.sendResponseHeaders exchange 200 (alength bytes))
+    (with-open [out (.getResponseBody exchange)]
+      (.write out bytes))))
+
+(defn- send-site-html!
+  "Serve authored markup without granting it the application's origin authority.
+
+  A CSP sandbox on the response applies even when the site is opened as a top
+  level document. Script stays disabled in this first Sites contract; styles,
+  HTTPS images and links are enough for a static project site without exposing
+  the Passkey session to authored code."
+  [^HttpExchange exchange status html]
+  (let [bytes (.getBytes (str html) StandardCharsets/UTF_8)]
+    (doto (.getResponseHeaders exchange)
+      (.set "Content-Type" "text/html; charset=utf-8")
+      (.set "Cache-Control" "no-store")
+      (.set "X-Content-Type-Options" "nosniff")
+      (.set "Referrer-Policy" "no-referrer")
+      (.set "Content-Security-Policy"
+            (str "sandbox; default-src 'none'; style-src 'unsafe-inline'; "
+                 "img-src data: https:; font-src data: https:; "
+                 "form-action 'none'; base-uri 'none'; frame-ancestors 'self'")))
+    (.sendResponseHeaders exchange status (alength bytes))
     (with-open [out (.getResponseBody exchange)]
       (.write out bytes))))
 
@@ -656,6 +679,14 @@
    :id session-id
    :messages (mapv #(select-keys % [:id :role :content :at])
                    (store/session-messages session-id))})
+
+(defn- scoped-chat-session-id [session logical-id project-id]
+  (let [logical-id (or (not-empty (str/trim (str logical-id))) "desktop")
+        project-id (not-empty (str/trim (str project-id)))]
+    (if project-id
+      (str "project\u0000" (:organization-id session) "\u0000" (:user-id session)
+           "\u0000" project-id "\u0000" logical-id)
+      logical-id)))
 
 (defn- identity-context [exchange]
   (identity/public-state (or (bearer-token exchange)
@@ -1502,6 +1533,28 @@
                      {:title (:title request)
                       :description (:description request)})}))
 
+    (and (= method "POST")
+         (id-from-path path #"/api/projects/([^/]+)/issues"))
+    (let [session (require-app-session! exchange)
+          project (id-from-path path #"/api/projects/([^/]+)/issues")
+          request (read-json exchange)]
+      (require-origin! exchange config)
+      (require-csrf! exchange session)
+      (send! exchange 201
+             (project-repository/create-issue!
+              (project-scope session project) request)))
+
+    (and (= method "POST")
+         (re-matches #"/api/projects/([^/]+)/issues/([^/]+)" path))
+    (let [session (require-app-session! exchange)
+          [_ project issue] (re-matches #"/api/projects/([^/]+)/issues/([^/]+)" path)
+          request (read-json exchange)]
+      (require-origin! exchange config)
+      (require-csrf! exchange session)
+      (send! exchange 200
+             (project-repository/update-issue!
+              (project-scope session project) issue request)))
+
     ;; The mail filed against one project. Under /api/projects rather than
     ;; /api/mail because the question is "what does this project have", and the
     ;; project is what the caller already has in hand.
@@ -1566,6 +1619,112 @@
               (project-scope session project))))
 
     :else (send! exchange 404 {:error "not_found" :path path})))
+
+(defn- site-route? [path]
+  (or (str/starts-with? path "/api/sites")
+      (str/starts-with? path "/s/")))
+
+(defn- handle-sites! [config exchange method path]
+  (cond
+    (and (= method "GET") (id-from-path path #"/s/([^/]+)"))
+    (let [site-id (id-from-path path #"/s/([^/]+)")]
+      (if-let [site (sites/published site-id)]
+        (send-site-html! exchange 200 (:html site))
+        (send-site-html! exchange 404 "<!doctype html><title>Not found</title><h1>Site not found</h1>")))
+
+    (and (= method "GET") (= path "/api/sites"))
+    (let [session (require-app-session! exchange)
+          project (:project (query-params exchange))]
+      (send! exchange 200 (sites/list-sites (:organization-id session) project)))
+
+    (and (= method "POST") (= path "/api/sites"))
+    (let [session (require-human-session! exchange)
+          request (read-json exchange)]
+      (require-origin! exchange config)
+      (require-csrf! exchange session)
+      (send! exchange 201
+             (sites/create! (:organization-id session) (:user-id session) request)))
+
+    (and (= method "GET")
+         (id-from-path path #"/api/sites/([^/]+)/preview"))
+    (let [session (require-app-session! exchange)
+          project (:project (query-params exchange))
+          site-id (id-from-path path #"/api/sites/([^/]+)/preview")]
+      (send-site-html! exchange 200
+                       (:html (sites/detail (:organization-id session) project site-id))))
+
+    (and (= method "POST")
+         (id-from-path path #"/api/sites/([^/]+)/publish"))
+    (let [session (require-human-session! exchange)
+          site-id (id-from-path path #"/api/sites/([^/]+)/publish")
+          request (read-json exchange)]
+      (require-origin! exchange config)
+      (require-csrf! exchange session)
+      (send! exchange 200
+             (sites/publish! (:organization-id session) (:user-id session)
+                             (:project request) site-id)))
+
+    (and (= method "GET") (id-from-path path #"/api/sites/([^/]+)"))
+    (let [session (require-app-session! exchange)
+          project (:project (query-params exchange))
+          site-id (id-from-path path #"/api/sites/([^/]+)")]
+      (send! exchange 200 (sites/detail (:organization-id session) project site-id)))
+
+    (and (= method "PUT") (id-from-path path #"/api/sites/([^/]+)"))
+    (let [session (require-human-session! exchange)
+          site-id (id-from-path path #"/api/sites/([^/]+)")
+          request (read-json exchange)]
+      (require-origin! exchange config)
+      (require-csrf! exchange session)
+      (send! exchange 200
+             (sites/update! (:organization-id session) (:user-id session)
+                            site-id request)))
+
+    :else (send! exchange 404 {:error "not_found" :path path})))
+
+(defn- conversation-route? [path]
+  (contains? #{"/api/session" "/api/chat" "/api/chat/stream"
+               "/api/session/clear"} path))
+
+(defn- handle-conversation! [config exchange method path]
+  (cond
+    (and (= method "GET") (= path "/api/session"))
+    (let [session (require-app-session! exchange)
+          params (query-params exchange)
+          logical-id (or (:session params) "desktop")
+          scoped-id (scoped-chat-session-id session logical-id (:project params))]
+      (send! exchange 200
+             (assoc (public-session scoped-id)
+                    :id logical-id :project (:project params))))
+
+    (and (= method "POST") (contains? #{"/api/chat" "/api/chat/stream"} path))
+    (let [session (require-app-session! exchange)
+          request (read-json exchange)
+          prompt (:prompt request)
+          session-id (scoped-chat-session-id
+                      session (:session request) (:project request))
+          chat {:messages [{:role "user" :content prompt}]
+                :model (:model request)
+                :provider-id (:provider request)
+                :session-id session-id
+                :agent-id (:agent request)}]
+      (if (str/blank? prompt)
+        (send! exchange 400 {:error {:type "invalid_request"
+                                     :message "prompt is required"}})
+        (if (= path "/api/chat/stream")
+          (send-chat-stream! exchange config chat)
+          (send! exchange 200 (service/run-chat! config chat)))))
+
+    (and (= method "POST") (= path "/api/session/clear"))
+    (let [session (require-app-session! exchange)
+          request (read-json exchange)
+          logical-id (or (:session request) "desktop")
+          scoped-id (scoped-chat-session-id session logical-id (:project request))]
+      (store/clear-session! scoped-id)
+      (send! exchange 200 {:ok true :session logical-id
+                           :project (:project request)}))
+
+    :else (send! exchange 405 {:error {:type "method_not_allowed"}})))
 
 (defn handler [config]
   (reify HttpHandler
@@ -2561,12 +2720,8 @@
                              (str "/?connection=error&provider="
                                   (name provider) "#settings")))))
 
-            (and (= method "GET") (= path "/api/session"))
-            (do
-              (require-app-session! exchange)
-              (send! exchange 200
-                     (public-session (or (:session (query-params exchange))
-                                         "desktop"))))
+            (conversation-route? path)
+            (handle-conversation! config exchange method path)
 
             (and (= method "GET") (= path "/api/workspace"))
             (do
@@ -2726,6 +2881,9 @@
             ;; bytecode limit and the compiler refused the whole namespace.
             (project-route? path)
             (handle-projects! config exchange method path)
+
+            (site-route? path)
+            (handle-sites! config exchange method path)
 
             ;; The archive half of this is cached for a minute by
             ;; `workspace/snapshot`; the created documents are not, because a
@@ -3877,44 +4035,6 @@
                        (service/openai-response
                         (service/run-chat! config chat)))))
 
-            (and (= method "POST") (= path "/api/chat"))
-            (let [_session (require-app-session! exchange)
-                  request (read-json exchange)
-                  prompt (:prompt request)]
-              (if (str/blank? prompt)
-                (send! exchange 400 {:error {:type "invalid_request"
-                                             :message "prompt is required"}})
-                (send! exchange 200
-                       (service/run-chat!
-                        config
-                        {:messages [{:role "user" :content prompt}]
-                         :model (:model request)
-                         :provider-id (:provider request)
-                         :session-id (or (:session request) "desktop")
-                         :agent-id (:agent request)}))))
-
-            (and (= method "POST") (= path "/api/chat/stream"))
-            (let [_session (require-app-session! exchange)
-                  request (read-json exchange)
-                  prompt (:prompt request)]
-              (if (str/blank? prompt)
-                (send! exchange 400 {:error {:type "invalid_request"
-                                             :message "prompt is required"}})
-                (send-chat-stream!
-                 exchange config
-                 {:messages [{:role "user" :content prompt}]
-                  :model (:model request)
-                  :provider-id (:provider request)
-                  :session-id (or (:session request) "desktop")
-                  :agent-id (:agent request)})))
-
-            (and (= method "POST") (= path "/api/session/clear"))
-            (let [_session (require-app-session! exchange)
-                  request (read-json exchange)
-                  session (or (:session request) "desktop")]
-              (store/clear-session! session)
-              (send! exchange 200 {:ok true :session session}))
-
             :else
             (send! exchange 404 {:error {:type "not_found" :path path}}))
           (catch clojure.lang.ExceptionInfo error
@@ -3937,6 +4057,22 @@
                      :passkey/required 428
                      :email-login/invalid-token 400
                      :email-login/not-configured 503
+                     :site/not-found 404
+                     :site/slug-conflict 409
+                     :site/html-too-large 413
+                     :site/project-required 400
+                     :site/project-not-found 404
+                     :site/title-required 400
+                     :site/title-too-long 400
+                     :site/invalid-slug 400
+                     :project/invalid-id 400
+                     :project/invalid-issue 400
+                     :project/invalid-column 400
+                     :project/unknown-repository 400
+                     :project/unknown-agent 400
+                     :project/unknown-blocker 400
+                     :project/invalid-blocker 400
+                     :project/issue-not-found 404
                      :kotobase-federation/passkey-required 403
                      :kotobase-federation/no-subject-did 428
                      ;; 403 rather than 428: a Passkey is required and this
