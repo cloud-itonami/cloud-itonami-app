@@ -1,0 +1,10 @@
+;; cloud-itonami-app-edge — the app's read surface as a CF Worker.
+;; `default` is the fetch handler. No Durable Object export yet: slice 1 is
+;; read-only, so there is nothing to serialize (ADR-2608081500).
+{:deps   {:aliases [:cljs]}
+ :builds {:entry
+          {:target     :esm
+           :output-dir "js"
+           :modules    {:app-edge-worker
+                        {:exports {default cloud.itonami.edge.worker/app}}}
+           :compiler-options {:output-feature-set :es2020 :infer-externs :auto}}}}

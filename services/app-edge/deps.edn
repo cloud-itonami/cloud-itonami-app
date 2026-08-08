@@ -1,0 +1,21 @@
+{:paths ["src"]
+ ;; cloud-itonami-app's server surface, on Cloudflare Workers (ADR-2608081500).
+ ;;
+ ;; `../../src` is on the classpath for exactly one namespace today:
+ ;; cloud.itonami.app.fleet-core, the .cljc half of the fleet directory. The
+ ;; 109 .clj files beside it are never loaded — shadow-cljs compiles what is
+ ;; required, and nothing here requires them. That is the point of the split:
+ ;; the Worker and the JVM server answer a directory query with one
+ ;; implementation instead of two that drift.
+ :deps {org.clojure/clojure {:mvn/version "1.12.0"}}
+ :aliases
+ {:cljs
+  {:extra-paths ["../../src"]
+   :extra-deps {thheller/shadow-cljs {:mvn/version "2.28.20"}
+                ;; :local/root, not a git coordinate — jp-go-dds resolves its
+                ;; own siblings the same way, and tools.deps forbids
+                ;; :local/root inside a :git/sha dependency. So this build
+                ;; requires the superproject west checkout, exactly as
+                ;; net-kotobase/authn's deps.edn records for `authentication`.
+                io.github.kotoba-lang/jp-go-digital-design-system
+                {:local/root "../../../../kotoba-lang/jp-go-digital-design-system"}}}}}
