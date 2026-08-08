@@ -23,6 +23,7 @@
             [cloud.itonami.app.esign.retention :as esign-retention]
             [cloud.itonami.app.executor :as executor]
             [cloud.itonami.app.filecoin :as filecoin]
+            [cloud.itonami.app.folder-sync :as folder-sync]
             [cloud.itonami.app.fleet :as fleet]
             [cloud.itonami.app.operator :as operator]
             [cloud.itonami.app.pageview :as pageview]
@@ -4480,6 +4481,7 @@
    (agent-session/ensure-key!)
    (mail-sync/start! configuration)
    (chronicle/start! configuration)
+   (folder-sync/start! configuration)
    (let [host (get-in configuration [:server :host])
          port (get-in configuration [:server :port])
          instance (HttpServer/create (InetSocketAddress. host (int port)) 0)]
@@ -4498,6 +4500,47 @@
      ;; 64 KB bytecode limit. A longer HttpServer prefix wins over "/".
      (.createContext instance "/api/chronicle"
                      (chronicle-handler configuration))
+     (.createContext instance "/api/folder-sync"
+                     (reify HttpHandler
+                       (handle [_ exchange]
+                         (let [method (.getRequestMethod exchange)
+                               path (.getPath (.getRequestURI exchange))]
+                           (try
+                             (let [session (require-app-session! exchange)]
+                               (cond
+                                 (and (= method "GET")
+                                      (= path "/api/folder-sync"))
+                                 (send! exchange 200
+                                        (folder-sync/status (:user-id session)))
+
+                                 (and (= method "POST")
+                                      (= path "/api/folder-sync/sync"))
+                                 (do
+                                   (require-origin! exchange configuration)
+                                   (require-csrf! exchange session)
+                                   (send! exchange 200
+                                          {:schema folder-sync/schema
+                                           :results
+                                           (folder-sync/sync-configured!
+                                            (:user-id session))}))
+
+                                 :else
+                                 (send! exchange 404
+                                        {:error {:type "not_found"}})))
+                             (catch clojure.lang.ExceptionInfo error
+                               (send! exchange
+                                      (case (:type (ex-data error))
+                                        :identity/unauthenticated 401
+                                        :identity/invalid-origin 403
+                                        :identity/invalid-csrf 403
+                                        400)
+                                      {:error {:type (name (or (:type (ex-data error))
+                                                              :folder-sync/error))
+                                               :message (.getMessage error)}}))
+                             (catch Exception error
+                               (send! exchange 500
+                                      {:error {:type "internal_error"
+                                               :message (.getMessage error)}})))))))
      (.setExecutor instance (executor/task-executor))
      (.start instance)
      (reset! server instance)
@@ -4507,6 +4550,7 @@
 (defn stop! []
   (mail-sync/stop!)
   (chronicle/stop!)
+  (folder-sync/stop!)
   (work-reconciler/stop!)
   (when-let [instance @server]
     (.stop instance 0)
