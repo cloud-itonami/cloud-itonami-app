@@ -5425,6 +5425,8 @@
       return li;
     };
 
+    let fleetCapabilityCatalog = null;
+
     const fleetDetail = (repo) => fetch('/api/operator/readiness/' + encodeURIComponent(repo))
       .then((r) => r.ok ? r.json() : null)
       .then((d) => {
@@ -5446,6 +5448,58 @@
         box.append(make('p', 'form-help', ad
           ? `参与: ${String(ad.stage).replace(/^:/,'')}（${ad['declared-by']} / ${ad['declared-on']}）`
           : 'まだ参与を表明していません。事業者タブから表明できます。'));
+
+        // ── 接続（ADR-2608093000 D4）────────────────────────────────────
+        //
+        // The OAuth shape, assembled from three things that already existed
+        // and were not joined: the catalog row says what the app asks for,
+        // tenant_connection holds the grant, and the approval is the passkey
+        // ceremony in Settings. Nothing new is invented here.
+        //
+        // Only for an app that is actually running and actually asks for
+        // something. Offering "接続" for a directory record would promise
+        // something there is nothing behind.
+        const requests = a.requests || [];
+        if (a.endpoint && requests.length) {
+          box.append(make('h4', null, 'この app が求めるもの'));
+          const rl = make('ul', 'record-list__items');
+          requests.forEach((c) => {
+            const meta = (fleetCapabilityCatalog || {})[c];
+            const li = make('li', 'record-list__item');
+            // The sentence, not the identifier — and the identifier beneath
+            // it, because somebody auditing a grant needs the exact name.
+            li.append(make('strong', null, (meta && meta.label) || c));
+            li.append(make('p', 'form-help', c
+              + (meta && meta.direction === 'outbound'
+                 ? ' · 外部の app に渡ります' : '')));
+            rl.append(li);
+          });
+          box.append(rl);
+
+          const connect = make('button', 'primary-action', 'この app を接続する');
+          connect.type = 'button';
+          connect.addEventListener('click', async () => {
+            connect.disabled = true;
+            try {
+              // 202: requested, not granted. The grant needs the passkey
+              // ceremony, and saying "接続しました" here would claim an
+              // approval that has not happened — the same lie the 予約 page
+              // refuses to tell when it says まだ確定していません.
+              await postJSON('/v1/tenant-connections', {
+                tenant_id: (window.__itonamiActiveTenant || ''),
+                agent_id: a.id || a.repo,
+                capabilities: requests,
+                ttl_seconds: 3600,
+              }, true);
+              box.append(make('p', 'form-help',
+                '申請しました。Settings の Agent tenant connections で Passkey 承認すると有効になります。'));
+            } catch (error) {
+              connect.disabled = false;
+              box.append(make('p', 'form-help', '申請できませんでした: ' + error.message));
+            }
+          });
+          box.append(connect);
+        }
       })
       .catch(() => {});
 
@@ -7189,6 +7243,9 @@
       }
     });
     const renderTenantConnections = (data) => {
+      // Kept so the Fleet detail can render sentences without a second copy
+      // of the wording living in this file.
+      if (data['capability-catalog']) fleetCapabilityCatalog = data['capability-catalog'];
       const list = $('#tenant-connection-list');
       const state = $('#tenant-connection-state');
       if (!list || !state) return;
