@@ -75,6 +75,16 @@
              :relay-enabled? false
              :gmail-topic nil
              :providers {}}
+ ;; Ordinary local directory <-> Cloud Itonami Drive synchronization.
+ ;; Off unless the operator explicitly binds a directory to one local user.
+ ;; A root is {:id "documents" :path "/absolute/local/path"
+ ;;            :actor "person-..." :drive-path ["Synced" "Documents"]}.
+ ;; Conflict and deletion recovery trees are written inside the local root as
+ ;; `.itonami-conflicts` and `.itonami-trash`; they are never synchronized.
+ :folder-sync {:enabled? false
+               :interval-seconds 30
+               :maximum-file-bytes 104857600
+               :roots []}
  :memory {:max-session-messages 40
           :max-context-messages 20}
  :chronicle {:interval-seconds 60

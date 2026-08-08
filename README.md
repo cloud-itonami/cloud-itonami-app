@@ -102,6 +102,65 @@ WebAuthn user-verifying assertion, which no CLI and no agent can produce
 directory also needs the browser once, to enrol a Passkey and create the
 organization, before `auth login` will issue a session.
 
+## Local folder ↔ Drive sync
+
+The desktop process can continuously reconcile an ordinary directory with a
+folder in Cloud Itonami Drive. It uses the last matching local SHA-256 and
+remote object ETag as a common ancestor: a change on one side propagates, while
+changes on both sides create a visible conflict instead of choosing a winner.
+
+Synchronization is off until an operator names every root in ignored
+`data/config.edn`. A local Drive target is useful for one-machine/offline use:
+
+```clojure
+{:folder-sync
+ {:enabled? true
+  :interval-seconds 30
+  :roots [{:id "documents"
+           :path "/Users/me/Documents/Itonami"
+           :actor "person-local-user"
+           :drive-path ["Synced" "Documents"]}]}}
+```
+
+For a real local-disk ↔ hosted-Web deployment, point the same engine at a
+running Cloud Itonami app. The bearer value stays outside EDN; configuration
+names only its environment variable:
+
+```clojure
+{:folder-sync
+ {:enabled? true
+  :interval-seconds 30
+  :maximum-file-bytes 104857600
+  :roots [{:id "documents"
+           :path "/Users/me/Documents/Itonami"
+           :actor "person-local-user"
+           :drive-path ["Synced" "Documents"]
+           :remote {:kind :http
+                    :base-url "https://workspace.example"
+                    :bearer-token-env "CLOUD_ITONAMI_FOLDER_SYNC_TOKEN"}}]}}
+```
+
+The daemon handles nested folders, binary files, create/update/delete and
+remote renames as path changes. Symbolic links are not followed. Remote
+deletions move the local copy under `.itonami-trash/<time>/`; concurrent edits
+preserve the remote copy under `.itonami-conflicts/<time>/` and block automatic
+overwrite until the local file is edited again. Both internal recovery trees
+are excluded from synchronization. Empty files remain outside the current
+Drive upload contract and are reported as a failed root rather than silently
+dropped.
+
+An authenticated user can inspect or wake only their configured roots:
+
+```text
+GET  /api/folder-sync
+POST /api/folder-sync/sync
+```
+
+The HTTP target uses the existing Drive upload/download/folder/trash API. A
+remote installation therefore retains its normal object-store, tenant and
+repository-storage boundaries; the desktop daemon does not receive storage
+credentials.
+
 ## ローカル projects と、メールの振り分け
 
 Local projects are ordinary Git repositories this machine owns — one per
