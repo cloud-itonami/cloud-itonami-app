@@ -77,6 +77,9 @@
     const chatShell = $('#chat-shell');
     const modelSelect = $('#model-select');
     let sessionId = localStorage.getItem('cloud-itonami-session') || 'desktop';
+    let activeProjectId = localStorage.getItem('cloud-itonami-project') || '';
+    let localProjects = [];
+    let selectedSiteId = null;
     let currentController = null;
     let lastPrompt = '';
     let generating = false;
@@ -142,9 +145,13 @@
       });
     };
     const loadSession = async () => {
+      const requestedProject = activeProjectId;
       try {
-        const request = await fetch(`/api/session?session=${encodeURIComponent(sessionId)}`);
+        const params = new URLSearchParams({session:sessionId});
+        if (requestedProject) params.set('project', requestedProject);
+        const request = await fetch(`/api/session?${params}`);
         const data = await request.json();
+        if (activeProjectId !== requestedProject) return false;
         thread.querySelectorAll('.message-row').forEach((node) => node.remove());
         data.messages.forEach((message) => {
           if (message.role === 'user') lastPrompt = message.content;
@@ -218,7 +225,7 @@
           method:'POST', headers:{'Content-Type':'application/json'},
           signal:currentController.signal,
           body:JSON.stringify({prompt:value, session:sessionId, agent:'local',
-            model:modelSelect.value})
+            model:modelSelect.value, project:activeProjectId || null})
         });
         await parseStream(request, assistant, value);
       } catch (error) {
@@ -4471,6 +4478,271 @@
         $('#contracts-source').textContent = '契約を読み込めません。';
         return false;
       });
+    const projectPath = (suffix = '') =>
+      `/api/projects/${encodeURIComponent(activeProjectId)}${suffix}`;
+    const projectRequired = (element, message = 'Projectを選択してください。') => {
+      if (activeProjectId) return true;
+      if (element) element.textContent = message;
+      return false;
+    };
+    const renderProjectBoard = (data) => {
+      const board = $('#local-project-board');
+      board.replaceChildren();
+      const issues = data.issues || [];
+      (data.columns || []).forEach((column) => {
+        const lane = make('section', 'project-column');
+        const laneIssues = issues.filter((issue) => issue.column === column.id);
+        const heading = make('h3', null, `${column.name} · ${laneIssues.length}`);
+        lane.append(heading);
+        laneIssues.forEach((issue) => {
+          const card = make('article', 'project-issue');
+          card.append(make('strong', null, `#${issue.number} ${issue.title}`));
+          const move = make('select');
+          move.setAttribute('aria-label', `${issue.title} の状態`);
+          (data.columns || []).forEach((optionColumn) => {
+            const option = make('option', null, optionColumn.name);
+            option.value = optionColumn.id;
+            option.selected = optionColumn.id === issue.column;
+            move.append(option);
+          });
+          move.addEventListener('change', async () => {
+            move.disabled = true;
+            try {
+              await postJSON(`${projectPath('/issues/')}${encodeURIComponent(issue.id)}`,
+                {column:move.value}, true);
+              await loadProjectBoard();
+            } catch (error) {
+              $('#local-project-board-source').textContent = error.message;
+              move.value = issue.column;
+            } finally { move.disabled = false; }
+          });
+          card.append(move);
+          lane.append(card);
+        });
+        board.append(lane);
+      });
+      $('#local-project-board-source').textContent =
+        `${data.project?.title || activeProjectId} · ${issues.length} issues`;
+      $('#local-project-board-card').hidden = false;
+    };
+    const loadProjectBoard = async () => {
+      if (!activeProjectId) {
+        $('#local-project-board-card').hidden = true;
+        return false;
+      }
+      const requestedProject = activeProjectId;
+      try {
+        const request = await fetch(`/api/projects/${encodeURIComponent(requestedProject)}`);
+        const data = await request.json();
+        if (!request.ok) throw new Error(data?.error?.message || 'Projectを読み込めませんでした。');
+        if (activeProjectId !== requestedProject) return false;
+        renderProjectBoard(data);
+        return true;
+      } catch (error) {
+        $('#local-project-board-card').hidden = false;
+        $('#local-project-board').replaceChildren(make('p', 'empty-state', error.message));
+        return false;
+      }
+    };
+    const renderSites = (data) => {
+      const list = $('#site-list');
+      list.replaceChildren();
+      (data.items || []).forEach((site) => {
+        const row = recordButton(site, site.id === selectedSiteId,
+          (selected) => selectSite(selected.id),
+          {title:site.title, time:site.status === 'published' ? '公開中' : '下書き',
+           meta:site.slug});
+        row.dataset.siteId = site.id;
+        list.append(row);
+      });
+      if (!(data.items || []).length) {
+        list.append(make('li', 'empty-state', 'このProjectにSiteはありません。'));
+      }
+      $('#sites-count').textContent = (data.items || []).length;
+    };
+    const loadSites = async () => {
+      if (!activeProjectId) {
+        $('#site-list').replaceChildren(make('li', 'empty-state', 'Projectを選択してください。'));
+        $('#site-editor-panel').hidden = true;
+        $('#sites-count').textContent = '0';
+        return false;
+      }
+      const requestedProject = activeProjectId;
+      try {
+        const request = await fetch(`/api/sites?project=${encodeURIComponent(requestedProject)}`);
+        const data = await request.json();
+        if (!request.ok) throw new Error(data?.error?.message || 'Sitesを読み込めませんでした。');
+        if (activeProjectId !== requestedProject) return false;
+        renderSites(data);
+        if (selectedSiteId && !(data.items || []).some((site) => site.id === selectedSiteId)) {
+          selectedSiteId = null;
+          $('#site-editor-panel').hidden = true;
+        }
+        return true;
+      } catch (error) {
+        $('#site-list').replaceChildren(make('li', 'empty-state', error.message));
+        return false;
+      }
+    };
+    const selectSite = async (siteId) => {
+      selectedSiteId = siteId;
+      const requestedProject = activeProjectId;
+      $('#site-editor-status').textContent = '読み込み中…';
+      try {
+        const request = await fetch(
+          `/api/sites/${encodeURIComponent(siteId)}?project=${encodeURIComponent(requestedProject)}`);
+        const site = await request.json();
+        if (!request.ok) throw new Error(site?.error?.message || 'Siteを読み込めませんでした。');
+        if (activeProjectId !== requestedProject || selectedSiteId !== siteId) return;
+        $('#site-editor-panel').hidden = false;
+        $('#site-html').value = site.html || '';
+        $('#site-editor-meta').textContent =
+          `${site.title} · ${site.status === 'published' ? '公開中' : '下書き'} · ${site.url}`;
+        $('#site-preview').src =
+          `/api/sites/${encodeURIComponent(site.id)}/preview?project=${encodeURIComponent(requestedProject)}&v=${Date.now()}`;
+        $('#site-editor-status').textContent = 'HTMLを編集して保存するとプレビューを更新します。';
+        document.querySelectorAll('#site-list [data-site-id]').forEach((item) =>
+          item.querySelector('button')?.setAttribute(
+            'aria-pressed', item.dataset.siteId === siteId ? 'true' : 'false'));
+      } catch (error) {
+        $('#site-editor-status').textContent = error.message;
+      }
+    };
+    const setActiveProject = async (projectId, reloadChat = true) => {
+      activeProjectId = projectId || '';
+      selectedSiteId = null;
+      if (activeProjectId) localStorage.setItem('cloud-itonami-project', activeProjectId);
+      else localStorage.removeItem('cloud-itonami-project');
+      $('#active-project-select').value = activeProjectId;
+      document.querySelectorAll('#local-project-list [data-project-id]').forEach((item) =>
+        item.querySelector('button')?.setAttribute(
+          'aria-pressed', item.dataset.projectId === activeProjectId ? 'true' : 'false'));
+      $('#site-editor-panel').hidden = true;
+      await Promise.all([loadProjectBoard(), loadSites(), reloadChat ? loadSession() : true]);
+    };
+    const renderLocalProjects = (data) => {
+      localProjects = data.items || [];
+      const list = $('#local-project-list');
+      const select = $('#active-project-select');
+      list.replaceChildren();
+      select.replaceChildren();
+      const placeholder = make('option', null, 'Projectを選択');
+      placeholder.value = '';
+      select.append(placeholder);
+      localProjects.forEach((project) => {
+        const option = make('option', null, project.title || project['project-id']);
+        option.value = project['project-id'];
+        select.append(option);
+        const row = recordButton(project, project['project-id'] === activeProjectId,
+          (selected) => setActiveProject(selected['project-id']),
+          {title:project.title || project['project-id'], time:`${project['issue-count'] || 0} issues`,
+           meta:project['project-id']});
+        row.dataset.projectId = project['project-id'];
+        list.append(row);
+      });
+      if (!localProjects.length) {
+        list.append(make('li', 'empty-state', '最初のProjectを作成してください。'));
+      }
+      if (!localProjects.some((project) => project['project-id'] === activeProjectId)) {
+        activeProjectId = localProjects[0]?.['project-id'] || '';
+      }
+      select.value = activeProjectId;
+      document.querySelectorAll('#local-project-list [data-project-id]').forEach((item) =>
+        item.querySelector('button')?.setAttribute(
+          'aria-pressed', item.dataset.projectId === activeProjectId ? 'true' : 'false'));
+      $('#projects-count').textContent = localProjects.length;
+    };
+    const loadLocalProjects = async () => {
+      try {
+        const request = await fetch('/api/projects');
+        const data = await request.json();
+        if (!request.ok) throw new Error(data?.error?.message || 'Projectsを読み込めませんでした。');
+        renderLocalProjects(data);
+        if (activeProjectId) localStorage.setItem('cloud-itonami-project', activeProjectId);
+        else localStorage.removeItem('cloud-itonami-project');
+        await Promise.all([loadProjectBoard(), loadSites(), loadSession()]);
+        return true;
+      } catch (error) {
+        $('#local-project-list').replaceChildren(make('li', 'empty-state', error.message));
+        return false;
+      }
+    };
+    $('#active-project-select').addEventListener('change', (event) =>
+      setActiveProject(event.currentTarget.value));
+    $('#local-project-create-form').addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const status = $('#local-project-create-status');
+      const button = event.submitter;
+      const fields = Object.fromEntries(new FormData(event.currentTarget));
+      button.disabled = true;
+      status.textContent = 'Projectを作成中…';
+      try {
+        const data = await postJSON('/api/projects', fields, true);
+        event.currentTarget.reset();
+        status.textContent = 'Projectを作成しました。';
+        await loadLocalProjects();
+        await setActiveProject(data.item['project-id']);
+      } catch (error) { status.textContent = error.message; }
+      finally { button.disabled = false; }
+    });
+    $('#project-issue-create-form').addEventListener('submit', async (event) => {
+      event.preventDefault();
+      if (!projectRequired($('#local-project-board-source'))) return;
+      const button = event.submitter;
+      const title = new FormData(event.currentTarget).get('title');
+      button.disabled = true;
+      try {
+        await postJSON(projectPath('/issues'), {title, column:'backlog'}, true);
+        event.currentTarget.reset();
+        await loadProjectBoard();
+      } catch (error) { $('#local-project-board-source').textContent = error.message; }
+      finally { button.disabled = false; }
+    });
+    $('#site-create-form').addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const status = $('#site-create-status');
+      if (!projectRequired(status)) return;
+      const button = event.submitter;
+      const fields = Object.fromEntries(new FormData(event.currentTarget));
+      button.disabled = true;
+      status.textContent = 'Siteを作成中…';
+      try {
+        const site = await postJSON('/api/sites', {...fields, project:activeProjectId}, true);
+        event.currentTarget.reset();
+        status.textContent = 'Siteを作成しました。';
+        await loadSites();
+        await selectSite(site.id);
+      } catch (error) { status.textContent = error.message; }
+      finally { button.disabled = false; }
+    });
+    $('#site-save-button').addEventListener('click', async (event) => {
+      if (!selectedSiteId || !projectRequired($('#site-editor-status'))) return;
+      event.currentTarget.disabled = true;
+      $('#site-editor-status').textContent = '保存中…';
+      try {
+        await writeJSON(`/api/sites/${encodeURIComponent(selectedSiteId)}`, 'PUT',
+          {project:activeProjectId, html:$('#site-html').value}, true);
+        $('#site-editor-status').textContent = '下書きを保存しました。';
+        await Promise.all([loadSites(), selectSite(selectedSiteId)]);
+      } catch (error) { $('#site-editor-status').textContent = error.message; }
+      finally { event.currentTarget.disabled = false; }
+    });
+    $('#site-publish-button').addEventListener('click', async (event) => {
+      if (!selectedSiteId || !projectRequired($('#site-editor-status'))) return;
+      event.currentTarget.disabled = true;
+      $('#site-editor-status').textContent = '公開中…';
+      try {
+        const site = await postJSON(`/api/sites/${encodeURIComponent(selectedSiteId)}/publish`,
+          {project:activeProjectId}, true);
+        $('#site-editor-status').replaceChildren(document.createTextNode('公開しました: '));
+        const link = make('a', null, site.url);
+        link.href = site.url; link.target = '_blank'; link.rel = 'noopener';
+        $('#site-editor-status').append(link);
+        await loadSites();
+        $('#site-editor-meta').textContent = `${site.title} · 公開中 · ${site.url}`;
+      } catch (error) { $('#site-editor-status').textContent = error.message; }
+      finally { event.currentTarget.disabled = false; }
+    });
     const renderProjects = (data) => {
       const list = $('#project-list'); list.replaceChildren();
       data.items.forEach((item) => list.append(listItem(
@@ -4482,7 +4754,6 @@
           make('p', 'data-list__meta', '接続後は Table・Board・Roadmap を同じデータから切り替えます。'));
         list.append(empty);
       }
-      $('#projects-count').textContent = data.items.length;
       $('#projects-source').textContent = `${data.source} · ${data.scope}`;
       $('#projects-state').textContent = data.status === 'connected' ? '接続済み' : '権限確認が必要';
       $('#projects-state').className = `state-chip${data.status === 'connected' ? '' : ' state-chip--warn'}`;
@@ -5316,7 +5587,6 @@
     const bootstrapApp = () => {
       if (appBootstrapped) return;
       appBootstrapped = true;
-      loadSession();
       loadWorkspace('worker', renderWorker);
       loadOrganisms().catch((error) => {
         $('#organism-list').replaceChildren(make('li', 'empty-state', error.message));
@@ -5324,6 +5594,7 @@
       Promise.all([
         loadMessenger(),
         loadWorkspace('inbox', renderInbox),
+        loadLocalProjects(),
         loadWorkspace('projects', renderProjects),
         loadWorkGovernance(),
         loadWorkspace('drive', renderDrive),
@@ -6933,9 +7204,9 @@
       }
       return result;
     };
-    const postJSON = async (path, body={}, authenticated=false) => {
+    const writeJSON = async (path, method, body={}, authenticated=false) => {
       const request = await fetch(path, {
-        method:'POST',
+        method,
         headers:authenticated ? identityHeaders() : {'Content-Type':'application/json'},
         body:JSON.stringify(body)
       });
@@ -6943,6 +7214,8 @@
       if (!request.ok) throw new Error(data?.error?.message || '認証要求を完了できませんでした。');
       return data;
     };
+    const postJSON = (path, body={}, authenticated=false) =>
+      writeJSON(path, 'POST', body, authenticated);
     const requireWebAuthn = () => {
       if (!window.PublicKeyCredential || !navigator.credentials) {
         throw new Error('このブラウザは Passkey / WebAuthn に対応していません。');
@@ -7459,7 +7732,7 @@
         selectedOrganism = null;
         governanceHydrated = false;
         renderIdentity(data);
-        await Promise.all([loadOrganisms(), loadWorkGovernance()]);
+        await Promise.all([loadOrganisms(), loadWorkGovernance(), loadLocalProjects()]);
         $('#identity-status').textContent =
           `${data.organization.name} に切り替えました。`;
       } catch (error) {
@@ -7508,7 +7781,7 @@
         organismWorkers = [];
         selectedOrganism = null;
         renderIdentity(data);
-        await loadOrganisms();
+        await Promise.all([loadOrganisms(), loadLocalProjects()]);
         $('#identity-status').textContent =
           `${data.organization.name} に参加して切り替えました。`;
       } catch (error) {
@@ -7962,6 +8235,8 @@
           $('#credentials-source').textContent = error.message;
         });
       }
+      if (currentView === 'projects') loadProjectBoard();
+      if (currentView === 'sites') loadSites();
     };
     $('#worker-form').addEventListener('submit', async (event) => {
       event.preventDefault();
