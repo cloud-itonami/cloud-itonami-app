@@ -161,6 +161,8 @@
     ;; kotoba-shell fails the run in that case, so catch it at this distance
     ;; instead of at launch.
     (is (.isFile icon) (str "app.kotoba.edn names a missing icon: " (:app/icon manifest)))
+    (is (= #{:accessibility :screen-recording}
+           (set (:macos/permissions manifest))))
     (is (= :kotoba/web (get-in manifest [:runtime :surface])))
     ;; The window must point at the surface this server actually serves; the
     ;; port is load-bearing for WebAuthn and cannot drift.

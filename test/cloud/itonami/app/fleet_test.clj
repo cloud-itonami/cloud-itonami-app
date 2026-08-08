@@ -211,8 +211,11 @@
     ;; The count is an explicit tripwire, not incidental: this file has watched
     ;; a population vanish twice. It moved 8 -> 9 when loop-yakuwari joined
     ;; west, which is what a tripwire doing its job looks like.
+    ;; 8 -> 9 -> 10 -> 13. The last move is eleven loop-* orchestrators and
+    ;; two person-* organisms; the role assertion below is what says they are
+    ;; the right kind of thing rather than an accident.
     (let [r (fleet/by-execution :resident)]
-      (is (= 10 (count r)))
+      (is (= 13 (count r)))
       (is (every? :reference-only r))
       (is (every? #(re-matches #"[0-9a-f]{40}" (fleet/revision %)) r))
       (is (= #{:continuous-orchestrator :artificial-organism-actor}
@@ -255,8 +258,9 @@
     ;; does not carry — so it is not probeable, not unhealthy.
     (is (every? (complement fleet/probeable?) (fleet/by-execution :resident))))
 
-  (testing "unclassified stays queryable even now that it is empty"
-    ;; It held 731 when execution was introduced and holds none today. The
+  (testing "unclassified stays queryable"
+    ;; It held 731 when execution was introduced, none for a while, and 12
+    ;; again now that families the vocabulary does not cover have joined. The
     ;; query is kept rather than deleted: the next family added to the fleet
     ;; lands here until the authority classifies it, and the alternative — a
     ;; nil execution that no query surfaces — is how an unfinished vocabulary
