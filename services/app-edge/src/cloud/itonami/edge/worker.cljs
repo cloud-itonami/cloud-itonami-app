@@ -30,8 +30,13 @@
 (defn- load-catalog!
   "Promise of the validated catalog. Second and later callers get the cached
   value; a failed load is not cached, so a transient asset error does not
-  poison the isolate for its lifetime."
-  [env]
+  poison the isolate for its lifetime.
+
+  `^js` is load-bearing, not decoration: without it the compiler cannot infer
+  a target type for `.-ASSETS`, and release optimizations are free to rename
+  that property — the binding would be `undefined` at runtime in a build that
+  compiled without error."
+  [^js env]
   (if-some [c @catalog-cache]
     (js/Promise.resolve c)
     (-> (.fetch (.-ASSETS env)
@@ -130,7 +135,7 @@
          :slice "fleet-directory-read-only"
          :adr "ADR-2608081500"}))
 
-(defn- handle [request env]
+(defn- handle [^js request ^js env]
   (let [url    (js/URL. (.-url request))
         path   (.-pathname url)
         method (.-method request)]
