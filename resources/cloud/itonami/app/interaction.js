@@ -7216,6 +7216,90 @@
     };
     const postJSON = (path, body={}, authenticated=false) =>
       writeJSON(path, 'POST', body, authenticated);
+    const memoryControls = {
+      local:$('#memory-local-toggle'), screen:$('#memory-screen-toggle'),
+      tool:$('#memory-tool-toggle')
+    };
+    const renderChronicle = (data) => {
+      const settings = data.settings || {};
+      memoryControls.local.checked = Boolean(settings['local-memory-enabled?']);
+      memoryControls.screen.checked = Boolean(settings['screen-context-enabled?']);
+      memoryControls.tool.checked = Boolean(settings['tool-memory-enabled?']);
+      const permission = data.permission?.['screen-recording'] || 'unknown';
+      const permissionNode = $('#memory-screen-permission');
+      permissionNode.dataset.state = permission;
+      permissionNode.textContent = permission === 'granted'
+        ? 'ステータス: 画面収録は許可されています'
+        : permission === 'required'
+          ? 'ステータス: 画面収録が許可されていません（設定を開く）'
+          : 'ステータス: この環境では画面収録権限を確認できません';
+      const counts = data.counts || {};
+      $('#memory-counts').replaceChildren(
+        make('span', 'memory-stat', `画面 ${counts.frames || 0} 件`),
+        make('span', 'memory-stat', `記憶 ${counts.memories || 0} 件`),
+        make('span', 'memory-stat', data.runtime?.['ocr-available?']
+          ? 'OCR 利用可能' : 'OCR 未導入'));
+      const recent = $('#memory-recent-list');
+      recent.replaceChildren();
+      const entries = [
+        ...(data['recent-memories'] || []).map((item) => ({
+          at:item.at, text:`${item.source || 'chat'} — ${item.summary || ''}`})),
+        ...(data['recent-frames'] || []).map((item) => ({
+          at:item['captured-at'], text:`${item.application || '画面'} — ${item['text-preview'] || 'OCR 文字列なし'}`}))
+      ].sort((a, b) => String(b.at || '').localeCompare(String(a.at || ''))).slice(0, 8);
+      if (!entries.length) recent.append(make('li', null, 'まだ記憶はありません。'));
+      entries.forEach((entry) => recent.append(
+        make('li', null, `${formatDate(entry.at)}  ${entry.text}`)));
+      const lastError = data['last-error'];
+      $('#memory-status').textContent = lastError
+        ? `直近の取得エラー: ${lastError.message}` : '';
+    };
+    const loadChronicle = async () => {
+      const response = await fetch('/api/chronicle', {headers:identityHeaders()});
+      const data = await response.json();
+      if (!response.ok) throw new Error(data?.error?.message || 'メモリ設定を取得できませんでした。');
+      renderChronicle(data);
+      return data;
+    };
+    const saveChronicleSettings = async () => {
+      $('#memory-status').textContent = '設定を保存しています…';
+      const data = await postJSON('/api/chronicle/settings', {
+        'local-memory-enabled?':memoryControls.local.checked,
+        'screen-context-enabled?':memoryControls.screen.checked,
+        'tool-memory-enabled?':memoryControls.tool.checked
+      }, true);
+      renderChronicle(data);
+      $('#memory-status').textContent = 'この端末のメモリ設定を保存しました。';
+    };
+    Object.values(memoryControls).forEach((control) =>
+      control.addEventListener('change', () => saveChronicleSettings().catch((error) => {
+        $('#memory-status').textContent = error.message;
+        loadChronicle().catch(() => {});
+      })));
+    $('#memory-open-settings').addEventListener('click', async () => {
+      try {
+        await postJSON('/api/chronicle/open-settings', {}, true);
+        $('#memory-status').textContent = 'システム設定を開きました。許可後にこの画面へ戻ってください。';
+      } catch (error) { $('#memory-status').textContent = error.message; }
+    });
+    $('#memory-capture-button').addEventListener('click', async () => {
+      const button = $('#memory-capture-button');
+      button.disabled = true;
+      try {
+        $('#memory-status').textContent = '画面を取得して OCR しています…';
+        renderChronicle(await postJSON('/api/chronicle/capture', {}, true));
+        $('#memory-status').textContent = '画面コンテキストを端末内へ保存しました。';
+      } catch (error) { $('#memory-status').textContent = error.message; }
+      finally { button.disabled = false; }
+    });
+    $('#memory-delete-button').addEventListener('click', async () => {
+      if (!window.confirm('画面、OCR、派生メモリをこの端末から削除します。チャット履歴は残ります。')) return;
+      try {
+        await postJSON('/api/chronicle/delete', {}, true);
+        await loadChronicle();
+        $('#memory-status').textContent = 'ローカルメモリを削除しました。';
+      } catch (error) { $('#memory-status').textContent = error.message; }
+    });
     const requireWebAuthn = () => {
       if (!window.PublicKeyCredential || !navigator.credentials) {
         throw new Error('このブラウザは Passkey / WebAuthn に対応していません。');
@@ -8237,6 +8321,9 @@
       }
       if (currentView === 'projects') loadProjectBoard();
       if (currentView === 'sites') loadSites();
+      if (currentView === 'memory') loadChronicle().catch((error) => {
+        $('#memory-status').textContent = error.message;
+      });
     };
     $('#worker-form').addEventListener('submit', async (event) => {
       event.preventDefault();

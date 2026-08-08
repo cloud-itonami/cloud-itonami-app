@@ -9,6 +9,7 @@
             [cloud.itonami.app.authority.api :as authority-api]
             [cloud.itonami.app.business :as business]
             [cloud.itonami.app.canvas :as canvas]
+            [cloud.itonami.app.chronicle :as chronicle]
             [cloud.itonami.app.config :as config]
             [cloud.itonami.app.contracts :as contracts]
             [cloud.itonami.app.credential :as credential]
@@ -1707,7 +1708,14 @@
                 :model (:model request)
                 :provider-id (:provider request)
                 :session-id session-id
-                :agent-id (:agent request)}]
+                :agent-id (:agent request)
+                ;; Device-local memory is personal data. Agent sessions can
+                ;; chat, but cannot read or add to a human user's Chronicle.
+                :memory-user-id (:user-id session)
+                :memory-eligible? (identity/human-session? session)
+                :project-id (:project request)
+                :memory-source (if (:tool-assisted? request)
+                                 "tool-chat" "chat")}]
       (if (str/blank? prompt)
         (send! exchange 400 {:error {:type "invalid_request"
                                      :message "prompt is required"}})
@@ -1725,6 +1733,45 @@
                            :project (:project request)}))
 
     :else (send! exchange 405 {:error {:type "method_not_allowed"}})))
+
+(defn- handle-chronicle! [config exchange method path]
+  (let [session (require-human-session! exchange)
+        user-id (:user-id session)]
+    (cond
+      (and (= method "GET") (= path "/api/chronicle"))
+      (send! exchange 200 (chronicle/overview user-id))
+
+      (and (= method "GET") (= path "/api/chronicle/search"))
+      (send! exchange 200
+             (chronicle/search user-id (:q (query-params exchange))))
+
+      (and (= method "POST") (= path "/api/chronicle/settings"))
+      (let [request (read-json exchange)]
+        (require-origin! exchange config)
+        (require-csrf! exchange session)
+        (chronicle/configure! user-id request)
+        (send! exchange 200 (chronicle/overview user-id)))
+
+      (and (= method "POST") (= path "/api/chronicle/capture"))
+      (do
+        (require-origin! exchange config)
+        (require-csrf! exchange session)
+        (chronicle/capture! user-id)
+        (send! exchange 200 (chronicle/overview user-id)))
+
+      (and (= method "POST") (= path "/api/chronicle/open-settings"))
+      (do
+        (require-origin! exchange config)
+        (require-csrf! exchange session)
+        (send! exchange 200 (chronicle/open-screen-recording-settings!)))
+
+      (and (= method "POST") (= path "/api/chronicle/delete"))
+      (do
+        (require-origin! exchange config)
+        (require-csrf! exchange session)
+        (send! exchange 200 (chronicle/delete-all! user-id)))
+
+      :else (send! exchange 405 {:error {:type "method_not_allowed"}}))))
 
 (defn handler [config]
   (reify HttpHandler
@@ -4391,6 +4438,34 @@
                                            :message (.getMessage error)}})))
           (.handle ^HttpHandler delegate exchange))))))
 
+(defn- chronicle-handler [config]
+  (reify HttpHandler
+    (handle [_ exchange]
+      (let [method (.getRequestMethod exchange)
+            path (.getPath (.getRequestURI exchange))]
+        (try
+          (handle-chronicle! config exchange method path)
+          (catch clojure.lang.ExceptionInfo error
+            (send! exchange
+                   (case (:type (ex-data error))
+                     :identity/unauthenticated 401
+                     :identity/invalid-origin 403
+                     :identity/invalid-csrf 403
+                     :identity/agent-session-forbidden 403
+                     :chronicle/user-required 400
+                     :chronicle/disabled 409
+                     :chronicle/permission-required 428
+                     :chronicle/settings-unavailable 503
+                     :chronicle/command-timeout 504
+                     :chronicle/command-failed 502
+                     400)
+                   {:error {:type (name (or (:type (ex-data error))
+                                            :chronicle/error))
+                            :message (.getMessage error)}}))
+          (catch Exception error
+            (send! exchange 500 {:error {:type "internal_error"
+                                         :message (.getMessage error)}})))))))
+
 (defn start!
   ([] (start! (config/load-config)))
   ([configuration]
@@ -4404,6 +4479,7 @@
    ;; like the feature is absent rather than like they are early.
    (agent-session/ensure-key!)
    (mail-sync/start! configuration)
+   (chronicle/start! configuration)
    (let [host (get-in configuration [:server :host])
          port (get-in configuration [:server :port])
          instance (HttpServer/create (InetSocketAddress. host (int port)) 0)]
@@ -4418,6 +4494,10 @@
                      (reify HttpHandler
                        (handle [_ exchange]
                          (send-icon! exchange))))
+     ;; Keep this family outside `handler`; that method sits at the JVM's
+     ;; 64 KB bytecode limit. A longer HttpServer prefix wins over "/".
+     (.createContext instance "/api/chronicle"
+                     (chronicle-handler configuration))
      (.setExecutor instance (executor/task-executor))
      (.start instance)
      (reset! server instance)
@@ -4426,6 +4506,7 @@
 
 (defn stop! []
   (mail-sync/stop!)
+  (chronicle/stop!)
   (work-reconciler/stop!)
   (when-let [instance @server]
     (.stop instance 0)
