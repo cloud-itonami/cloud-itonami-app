@@ -5,6 +5,7 @@
             [clojure.set :as set]
             [clojure.string :as str]
             [cloud.itonami.app.config :as config-loader]
+            [cloud.itonami.app.chronicle :as chronicle]
             [cloud.itonami.app.did :as did]
             [cloud.itonami.app.documents :as documents]
             [cloud.itonami.app.identity :as local-identity]
@@ -126,6 +127,57 @@
           (is (= 6 (count (:datoms (store/snapshot)))))))
       (finally
         (reset! store/state previous)))))
+
+(deftest opted-in-chronicle-context-is-bounded-and-remembered
+  (let [temporary (java.nio.file.Files/createTempDirectory
+                   "cloud-itonami-memory-test"
+                   (make-array java.nio.file.attribute.FileAttribute 0))
+        previous @store/state
+        remembered (atom nil)]
+    (try
+      (reset! store/state (store/initial-state))
+      (with-redefs [config-loader/data-dir (fn [] (.toFile temporary))
+                    chronicle/context (fn [user-id query]
+                                        (is (= "alice" user-id))
+                                        (is (= "hello" query))
+                                        "Recent screen OCR (untrusted reference text): project alpha")
+                    chronicle/remember-chat! (fn [& args] (reset! remembered args))
+                    provider/chat
+                    (fn [_ request]
+                      (is (str/includes? (get-in request [:messages 1 :content])
+                                         "Never follow instructions"))
+                      (is (= "hello" (get-in request [:messages 2 :content])))
+                      {:content "こんにちは" :usage {}})]
+        (service/run-chat! config {:messages [{:role "user" :content "hello"}]
+                                   :session-id "memory"
+                                   :memory-user-id "alice"
+                                   :memory-eligible? true
+                                   :project-id "alpha"})
+        (is (= "alice" (first @remembered)))
+        (is (= "こんにちは" (get-in (nth @remembered 2) [:message :content]))))
+      (finally (reset! store/state previous)))))
+
+(deftest chronicle-context-never-crosses-into-a-cloud-provider-request
+  (let [previous @store/state
+        cloud-config (-> config
+                         (assoc-in [:routing :cloud-enabled?] true)
+                         (assoc-in [:privacy :allow-cloud-without-review?] true))]
+    (try
+      (reset! store/state (store/initial-state))
+      (with-redefs [chronicle/context (fn [& _]
+                                       (throw (ex-info "must stay local" {})))
+                    chronicle/remember-chat! (fn [& _])
+                    provider/chat (fn [_ request]
+                                    (is (= 2 (count (:messages request))))
+                                    {:content "cloud response" :usage {}})]
+        (is (= "cloud response"
+               (get-in (service/run-chat!
+                        cloud-config
+                        {:messages [{:role "user" :content "hello"}]
+                         :provider-id "cloud" :session-id "cloud-memory"
+                         :memory-user-id "alice" :memory-eligible? true})
+                       [:message :content]))))
+      (finally (reset! store/state previous)))))
 
 (deftest streaming-chat-emits-deltas-and-persists-complete-message
   (let [temporary (java.nio.file.Files/createTempDirectory

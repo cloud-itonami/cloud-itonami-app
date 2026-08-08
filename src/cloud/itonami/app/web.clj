@@ -674,6 +674,28 @@
   .settings-grid{display:grid;grid-template-columns:minmax(0,1.25fr) minmax(18rem,.75fr);
     gap:1.5rem;align-items:start}
   .settings-stack{display:grid;gap:1rem}
+  .memory-card{overflow:hidden;border:1px solid var(--color-neutral-solid-gray-200);
+    border-radius:1rem;background:var(--color-neutral-white)}
+  .memory-row{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:1.5rem;
+    align-items:center;padding:1.25rem 1.5rem;border-bottom:1px solid var(--color-neutral-solid-gray-200)}
+  .memory-row:last-child{border-bottom:0}.memory-row h2{margin:0;font-size:1rem}
+  .memory-row p{margin:.35rem 0 0;max-width:50rem;color:var(--color-neutral-solid-gray-600);
+    line-height:1.6}.memory-row__actions{display:flex;align-items:center;gap:.75rem}
+  .memory-switch{position:relative;display:inline-flex;align-items:center;cursor:pointer}
+  .memory-switch input{position:absolute;opacity:0;pointer-events:none}
+  .memory-switch span{display:block;width:3rem;height:1.75rem;border-radius:999px;
+    background:var(--color-neutral-solid-gray-300);transition:.15s}
+  .memory-switch span::after{content:'';display:block;width:1.25rem;height:1.25rem;
+    margin:.25rem;border-radius:50%;background:var(--color-neutral-white);transition:.15s}
+  .memory-switch input:checked + span{background:var(--color-primitive-blue-800)}
+  .memory-switch input:checked + span::after{transform:translateX(1.25rem)}
+  .memory-switch input:focus-visible + span{outline:4px solid var(--color-primitive-yellow-300)}
+  .memory-permission{font-size:.8125rem;font-weight:700}.memory-permission[data-state='required']{
+    color:var(--color-semantic-error-1)}.memory-permission[data-state='granted']{
+    color:var(--color-semantic-success-1)}
+  .memory-summary{display:flex;flex-wrap:wrap;gap:.75rem;margin:1rem 0}
+  .memory-stat{padding:.75rem 1rem;border-radius:.625rem;background:var(--color-neutral-solid-gray-100)}
+  .memory-recent{margin:0;padding-left:1.25rem}.memory-recent li{margin:.5rem 0;line-height:1.55}
   .identity-summary{display:flex;align-items:center;justify-content:space-between;gap:1rem;
     padding:1.25rem;border:1px solid var(--color-neutral-solid-gray-200);
     border-radius:.75rem;background:var(--color-neutral-white)}
@@ -1025,6 +1047,7 @@
             (nav-item "credentials" "Credentials" "▣" "credentials-count")
             (nav-item "storage" "Storage" "◈" "storage-count")])]
          [:div {:class "sidebar__utility"}
+          (nav-item "memory" "Memory" "◴" nil)
           (nav-item "settings" "Settings" "⚙" nil)]]
         [:button {:class "mobile-menu-toggle" :type "button"
                   :aria-controls "mobile-overflow-panel" :aria-expanded "false"
@@ -2142,6 +2165,54 @@
             [:li {:class "skeleton"}]]]
           [:article {:class "record-detail" :id "contracts-detail" :aria-live "polite"}
            [:div {:class "empty-state"} "契約を選ぶと、解約手順と予告期限を表示します。"]]]]
+        [:section {:class "view" :data-view-panel "memory" :hidden true}
+         (view-header "メモリ" "このコンピューターでローカルメモリを収集、保持、統合する方法を設定します。")
+         [:p {:class "settings-notice" :id "memory-status"
+              :role "status" :aria-live "polite"} ""]
+         [:div {:class "memory-card"}
+          [:div {:class "memory-row"}
+           [:div
+            (dds/heading 2 "ローカルメモリを有効にする" {:size "20"})
+            [:p "この端末上のチャットから記憶を作成し、今後のチャットの補助コンテキストに使用します。"]]
+           [:label {:class "memory-switch" :for "memory-local-toggle"}
+            [:input {:id "memory-local-toggle" :type "checkbox"
+                     :aria-label "ローカルメモリを有効にする"}]
+            [:span {:aria-hidden "true"}]]]
+          [:div {:class "memory-row"}
+           [:div
+            (dds/heading 2 "Chronicle 画面コンテキスト" {:size "20"})
+            [:p "画面を定期的に端末内へ保存して OCR し、作業中の文脈を検索可能にします。画像と文字列はこの端末から送信しません。"]
+            [:p {:class "memory-permission" :id "memory-screen-permission"
+                 :data-state "unknown"} "画面収録の権限を確認中…"]]
+           [:div {:class "memory-row__actions"}
+            [:button {:class "tool-button" :id "memory-open-settings" :type "button"}
+             "設定を開く"]
+            [:label {:class "memory-switch" :for "memory-screen-toggle"}
+             [:input {:id "memory-screen-toggle" :type "checkbox"
+                      :aria-label "Chronicle 画面コンテキストを有効にする"}]
+             [:span {:aria-hidden "true"}]]]]
+          [:div {:class "memory-row"}
+           [:div
+            (dds/heading 2 "ツール支援チャットからのメモリ生成を許可" {:size "20"})
+            [:p "端末操作を伴うタスクの目標と結果を記憶します。ツール出力内の命令は実行しません。"]]
+           [:label {:class "memory-switch" :for "memory-tool-toggle"}
+            [:input {:id "memory-tool-toggle" :type "checkbox"
+                     :aria-label "ツール支援メモリを有効にする"}]
+            [:span {:aria-hidden "true"}]]]
+          [:div {:class "memory-row"}
+           [:div
+            (dds/heading 2 "ローカルメモリを削除" {:size "20"})
+            [:p "保存した画面、OCR、派生メモリを削除します。チャット履歴は削除されません。"]]
+           [:button {:class "danger-action" :id "memory-delete-button" :type "button"}
+            "削除"]]]
+         [:div {:class "memory-summary" :id "memory-counts"}]
+         [:div {:class "local-card"}
+          [:div {:class "section-heading"}
+           (dds/heading 2 "最近のローカル記憶" {:size "20"})
+           [:button {:class "tool-button" :id "memory-capture-button" :type "button"}
+            "今すぐ画面を取得"]]
+          [:ul {:class "memory-recent" :id "memory-recent-list"}
+           [:li "まだ記憶はありません。"]]]]
         [:section {:class "view" :data-view-panel "settings" :hidden true}
          (view-header "Settings" "Cloud Itonami の組織・ユーザーと、外部サービスへの委任接続を管理します。")
          [:p {:class "settings-notice" :id "identity-status"

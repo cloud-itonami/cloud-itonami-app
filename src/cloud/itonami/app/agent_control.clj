@@ -4,6 +4,7 @@
             [clojure.java.io :as io]
             [clojure.string :as str]
             [cloud.itonami.app.cli-runner :as cli-runner]
+            [cloud.itonami.app.chronicle :as chronicle]
             [cloud.itonami.app.config :as config]
             [cloud.itonami.app.local-query :as local-query]
             [cloud.itonami.app.policy :as policy]
@@ -541,6 +542,16 @@
   (store/update-agent-control! assoc-in [:runs (:agent.run/id run)] run)
   run)
 
+(defn- remember-finished-run! [run]
+  ;; The AgentRun is already durably succeeded. Chronicle is optional and may
+  ;; never rewrite that outcome when its own persistence is unavailable.
+  (try
+    (chronicle/remember-tool! (:agent.run/actor run)
+                              (:agent.run/goal run)
+                              (:agent/result run))
+    (catch Exception _ nil))
+  run)
+
 (defn- transition [run status attrs]
   (agent-run/transition run status (now-ms) attrs))
 
@@ -608,6 +619,7 @@
             (let [finished (transition run :succeeded
                                        {:agent/result (:content result)})]
               (save-run! finished)
+              (remember-finished-run! finished)
               (public-run finished))
 
             (> (count calls) 1)
@@ -621,6 +633,7 @@
                                            {:agent/result (or (:text input)
                                                               (:content result))})]
                   (save-run! finished)
+                  (remember-finished-run! finished)
                   (public-run finished))
                 (if (contains? read-only-tools name)
                   (let [output (execute-tool! configuration name input)
@@ -763,6 +776,7 @@
                     (transition continued :succeeded
                                 {:agent/result (:content output)})]
                 (save-run! finished)
+                (remember-finished-run! finished)
                 (public-run finished))
               (do
                 (save-run! continued)

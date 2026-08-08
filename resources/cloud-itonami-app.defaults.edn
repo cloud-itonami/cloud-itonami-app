@@ -77,6 +77,10 @@
              :providers {}}
  :memory {:max-session-messages 40
           :max-context-messages 20}
+ :chronicle {:interval-seconds 60
+             ;; Every switch is still opt-in per user. This is only the cadence
+             ;; used after screen context has explicitly been enabled.
+             :frame-retention-hours 6}
  ;; Background worker runs. Concurrency is deliberately small: these share the
  ;; local model with interactive chat.
  :worker {:max-concurrency 2
