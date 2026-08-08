@@ -1,0 +1,8 @@
+node_modules/
+.shadow-cljs/
+js/
+dist/
+.cpcache/
+# Copied from ../../resources by `npm run catalog`. One catalog in the
+# repository, not a second copy that can drift from the generator's output.
+public/

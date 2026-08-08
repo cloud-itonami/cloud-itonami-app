@@ -64,20 +64,22 @@
   and it is absent where that vocabulary does not yet reach."
   (:require [clojure.edn :as edn]
             [clojure.java.io :as io]
-            [clojure.string :as str]))
+            [clojure.string :as str]
+            [cloud.itonami.app.fleet-core :as core]))
 
-(def schema "cloud.itonami.fleet-catalog.v1")
+;; What a directory query MEANS now lives in cloud.itonami.app.fleet-core, a
+;; .cljc namespace the Cloudflare Worker compiles too (ADR-2608081500). This
+;; namespace keeps the half that is genuinely platform-bound: reaching the
+;; catalog over the JVM classpath, and probing an endpoint over the network.
+;; The delegations below are deliberately thin — a second implementation that
+;; drifted would be the whole problem the split exists to prevent.
+(def schema core/schema)
 
 (def ^:private resource-name "itonami-fleet-catalog.edn")
 
 (defn- read-catalog []
   (if-some [r (io/resource resource-name)]
-    (let [c (edn/read-string (slurp r))]
-      (when-not (= schema (:schema c))
-        (throw (ex-info "fleet catalog schema mismatch"
-                        {:type :fleet/schema-mismatch
-                         :expected schema :found (:schema c)})))
-      c)
+    (core/validate-catalog (edn/read-string (slurp r)))
     (throw (ex-info (str "fleet catalog resource missing: " resource-name)
                     {:type :fleet/catalog-missing}))))
 
@@ -93,7 +95,7 @@
   "True when this actor declares an address. Absent means not deployed, or
   deployed with no route — not 'unknown, try it and see'."
   [actor]
-  (some? (:endpoint actor)))
+  (core/callable? actor))
 
 (defn probeable?
   "True when the actor names a health path. A callable actor need not be
@@ -104,7 +106,7 @@
   on a schedule has no HTTP surface to ask, and asking the wrong question would
   be worse than not asking."
   [actor]
-  (and (callable? actor) (some? (:health-path actor))))
+  (core/probeable? actor))
 
 (defn callable [] (filterv callable? (actors)))
 
@@ -112,14 +114,14 @@
   "Look up by repository directory, which is unique. Prefer this over
   find-by-id: :id collides for three actors and cannot resolve them."
   [repo]
-  (first (filter #(= repo (:repo %)) (actors))))
+  (core/actor-by-repo (actors) repo))
 
 (defn find-by-id
   "Every actor declaring this id — usually one, occasionally two. Returns a
   vector rather than a single record because returning the first match would
   make a collision look like a clean answer."
   [id]
-  (filterv #(= id (:id %)) (actors)))
+  (core/find-by-id (actors) id))
 
 (defn duplicate-ids
   "Ids claimed by more than one repository. Non-empty today: three actors were
@@ -218,14 +220,6 @@
 
 ;; ── search ───────────────────────────────────────────────────────────
 
-(defn- matches-text? [actor q]
-  (let [q (str/lower-case q)]
-    (some (fn [v] (and v (str/includes? (str/lower-case (str v)) q)))
-          [(:id actor) (:name actor) (:domain actor)])))
-
-(defn- isic-of [actor]
-  (or (:isic actor) (:isic-rev5 actor) (:isic-rev4 actor)))
-
 (defn search
   "Filter the directory. All criteria are ANDed; omitted criteria do not
   constrain. `:isic` matches whichever revision an actor happens to code in —
@@ -235,34 +229,14 @@
     (search {:domain :marketplace/order-orchestration})
     (search {:iso3166 \"JPN\" :maturity :implemented})
     (search {:text \"marketplace\" :callable? true})"
-  [{:keys [text domain governor maturity status isic iso3166 execution role]
-    want-callable :callable?}]
-  (cond->> (actors)
-    text      (filter #(matches-text? % text))
-    domain    (filter #(= domain (:domain %)))
-    governor  (filter #(= governor (:governor %)))
-    maturity  (filter #(= maturity (:maturity %)))
-    status    (filter #(= status (:status %)))
-    isic      (filter #(= isic (isic-of %)))
-    iso3166   (filter #(= iso3166 (:iso3166 %)))
-    ;; :execution and :role were accepted by the tool descriptor before search
-    ;; understood them, so an execution filter silently matched everything —
-    ;; a query that answers "all 1,206" to "show me the resident ones".
-    execution (filter #(= execution (:execution %)))
-    role      (filter #(= role (:role %)))
-    ;; bound as want-callable so the criterion does not shadow callable?
-    (some? want-callable) (filter #(= (boolean want-callable) (callable? %)))
-    true      vec))
+  [criteria]
+  (core/search (actors) criteria))
 
 (defn facets
   "Value → count for one field, most common first. Drives the directory's
   filter UI without hardcoding a list that would drift from the fleet."
   [field]
-  (->> (actors)
-       (keep field)
-       frequencies
-       (sort-by (juxt (comp - val) (comp str key)))
-       vec))
+  (core/facets (actors) field))
 
 ;; ── health ───────────────────────────────────────────────────────────
 

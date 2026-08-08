@@ -1,0 +1,31 @@
+{
+  "name": "cloud-itonami-app-edge",
+  // The shadow-cljs :esm output directly — no shim, same as net-kotobase/authn.
+  "main": "js/app-edge-worker.js",
+  "compatibility_date": "2026-06-28",
+
+  // Deliberately NO "nodejs_compat". Slice 1 does no crypto and no I/O beyond
+  // fetch, and keeping the flag off makes "nothing here reaches for node:*" a
+  // build-time guarantee rather than a convention someone has to re-check.
+  // When the Passkey slice lands it stays off: WebCrypto covers it
+  // (authentication.adapters.webcrypto, webauthn.adapters.edge).
+
+  // No "routes" yet — this deploys to workers.dev only. Slice 1 must not be
+  // able to take a live itonami.cloud host with it; the three existing
+  // services (mcp-edge, itonami-fleet-dispatch, itonami-cloud-webhooks) own
+  // real hostnames and roll back independently of this one.
+
+  // The 1,215-actor catalog, shipped as an asset rather than compiled into the
+  // bundle. `npm run catalog` copies it from resources/ so there is one file
+  // in the repository, not a second copy that can drift from the generator's
+  // output (scripts/gen-itonami-fleet-catalog.cljs in the superproject).
+  //
+  // binding + a directory holding only the .edn: no index.html means no asset
+  // path shadows a Worker route.
+  "assets": {
+    "directory": "./public",
+    "binding": "ASSETS"
+  },
+
+  "observability": { "enabled": true }
+}
