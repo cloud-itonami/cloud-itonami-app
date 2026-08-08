@@ -55,6 +55,7 @@
   Usage:
 
     itonami up | down | status
+    itonami kaiyu [--days 7]        ; このマシンの回遊（送信しない）
     itonami commands [term …]
     itonami <command words> [--flag value …] [--json '{…}']
 
@@ -85,6 +86,8 @@
             [cloud.itonami.app.app-client :as client]
             [cloud.itonami.app.commands :as commands]
             [cloud.itonami.app.config :as config]
+            [cloud.itonami.app.kaiyu-local :as kaiyu-local]
+            [cloud.itonami.app.store :as store]
             [cloud.itonami.app.server-process :as server-process])
   (:import [java.nio.file Files LinkOption]
            [java.util.concurrent TimeUnit]))
@@ -202,7 +205,7 @@
   server it had just created rather than the one that was there, and `commands`
   reads a resource off the classpath and needs nothing running at all. `up`
   starts one itself."
-  #{"up" "down" "status" "commands"})
+  #{"up" "down" "status" "commands" "kaiyu"})
 
 (defn needs-server?
   "Whether these arguments describe a command that will make a request."
@@ -521,6 +524,19 @@
       "up" (up configuration)
       "down" (down configuration)
       "status" (status configuration)
+      ;; 回遊 (local only). A lifecycle command because it reads this machine's
+      ;; own state file directly — starting a server to ask it about counters
+      ;; it already wrote would be the long way round, and `needs-server?`
+      ;; exists for exactly that.
+      ;;
+      ;; This is the reader the counters were missing: cloud.itonami.app
+      ;; .kaiyu-local has recorded page views since 2026-08-08 and nothing
+      ;; could show them, and a counter nobody can read is not a counter.
+      ;; It is a CLI command rather than an HTTP route because `server/handler`
+      ;; is already at the JVM's 64 KB method ceiling — two more branches there
+      ;; failed to compile, which is how this landed in the right place.
+      "kaiyu" (kaiyu-local/report (store/snapshot)
+                                  {:days (some-> (get flags "days") parse-long)})
       "commands" (list-commands (rest named))
       (run-server-command configuration args flags))))
 
