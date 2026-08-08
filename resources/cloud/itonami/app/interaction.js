@@ -7197,13 +7197,27 @@
       connections.forEach((connection) => {
         const item = make('li', 'member-list__item');
         const copy = make('div');
-        const capabilities = (connection.capabilities || []).join('、');
+        // Sentences, not identifiers. The server sends capability-details so
+        // the wording lives in one place; falling back to the raw list keeps
+        // an older server readable rather than blank.
+        const details = connection['capability-details'];
+        const capabilities = details && details.length
+          ? details.map((d) => d.label).join('、')
+          : (connection.capabilities || []).join('、');
+        // Outbound capabilities hand something of yours to another app, which
+        // is a different decision from letting an agent act in your own
+        // workspace. Saying so is the whole reason the two are distinguished.
+        const outbound = (details || []).filter((d) => d.direction === 'outbound');
         copy.append(
           make('strong', null, connection['agent-id'] || connection.id),
           make('p', 'form-help',
             `${connection['tenant-organization-id'] || connection['tenant-id']} · ${capabilities}`),
           make('p', 'form-help',
             `${connection.status} · ${connection['expires-at'] || '未承認'}`));
+        if (outbound.length) {
+          copy.append(make('p', 'form-help',
+            `⚠ 外部の app に渡します: ${outbound.map((d) => d.label).join('、')}`));
+        }
         const actions = make('div', 'worker-actions');
         const needsApproval = connection.status === 'pending-approval'
           || Boolean(connection['renewal-requested-at']);

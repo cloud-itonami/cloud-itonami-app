@@ -17,9 +17,64 @@
 (def max-ttl-seconds (* 24 60 60))
 (def default-ttl-seconds 3600)
 
+(def capability-catalog
+  "Every capability a connection may hold, and what it says to the person
+  approving it.
+
+  A map rather than a set, and `allowed-capabilities` is derived from it, so a
+  capability **cannot** be added without the sentence that will appear on the
+  grant screen. ADR-2608093000 D2 states that rule; making it a set plus a
+  lookup table elsewhere would let the two drift, and the half that drifts is
+  always the wording — leaving an approval screen showing `calendar.event.write`
+  to somebody deciding whether to allow it.
+
+  Two groups, and the distinction is who is acting:
+
+  - **inbound** — an agent session acting on this tenant's own workspace. The
+    original set; the risk is what the agent may do here.
+  - **outbound** — another app reading or writing something of this tenant's
+    through this app. The risk is what leaves, and to whom, so the wording
+    names the other party's role rather than the verb alone."
+  {"tenant.read"        {:label "テナントの基本情報を読む" :direction :inbound}
+   "workspace.read"     {:label "ワークスペースを読む" :direction :inbound}
+   "workspace.write"    {:label "ワークスペースに書き込む" :direction :inbound}
+   "chat.read"          {:label "チャットを読む" :direction :inbound}
+   "chat.write"         {:label "チャットに投稿する" :direction :inbound}
+   "actor.invoke"       {:label "actor を呼び出す" :direction :inbound}
+   "repository.query"   {:label "リポジトリを検索する" :direction :inbound}
+   "repository.write"   {:label "リポジトリに書き込む" :direction :inbound}
+
+   ;; ── outbound: another app, acting with something of yours ───────────────
+   ;;
+   ;; The wording says what the other side learns, not what call it makes.
+   ;; "free/busy" and "the calendar" are different disclosures and the person
+   ;; approving has to be able to tell them apart — free/busy is when you are
+   ;; occupied, with no title, attendee or location.
+   "calendar.freebusy.read"
+   {:label "予定の空き・埋まりだけを読む（件名や相手は渡しません）"
+    :direction :outbound}
+   "calendar.event.write"
+   {:label "確定した予定をカレンダーに書き込む"
+    :direction :outbound}})
+
 (def allowed-capabilities
-  #{"tenant.read" "workspace.read" "workspace.write" "chat.read"
-    "chat.write" "actor.invoke" "repository.query" "repository.write"})
+  "Derived, never written by hand — see `capability-catalog`."
+  (set (keys capability-catalog)))
+
+(defn describe-capabilities
+  "The capabilities as the grant screen should show them.
+
+  Returned alongside a connection so the UI never has to hold its own copy of
+  the wording. An unknown capability falls back to its raw name rather than
+  being dropped: a grant screen that silently omits something it was asked to
+  approve is worse than one showing an ugly identifier."
+  [capabilities]
+  (mapv (fn [c]
+          (let [{:keys [label direction]} (get capability-catalog c)]
+            {:capability c
+             :label (or label c)
+             :direction (or direction :unknown)}))
+        capabilities))
 
 (defn- identity-state []
   (merge {:organizations {} :memberships {} :tenant-connections {}}
@@ -102,12 +157,16 @@
                    vec)}))
 
 (defn- public-connection [connection]
-  (select-keys connection
+  (assoc
+   (select-keys connection
                [:id :tenant-id :tenant-organization-id :tenant-did :agent-id
                 :capabilities :budget :operations-used :status :created-at
                 :approved-at :expires-at :revoked-at :renewal-requested-at
                 :requested-ttl-seconds :repository-stream
-                :storage-used-bytes :workspace-bytes :published-bytes]))
+                :storage-used-bytes :workspace-bytes :published-bytes])
+   ;; So the approval UI shows sentences, not identifiers, without keeping a
+   ;; second copy of the wording that can fall out of step with this one.
+   :capability-details (describe-capabilities (:capabilities connection))))
 
 (defn connections [session]
   (identity/require-passkey! session)
