@@ -1861,6 +1861,44 @@
    (when-let [connection (connection-for provider did)]
      (keychain-token connection :access))))
 
+(defn google-freebusy
+  "The owner's busy intervals from Google Calendar, or a reason there are none.
+
+  **freeBusy, not events.list.** The response has nowhere to put a summary, an
+  attendee or a location, so nothing sensitive crosses the network to be
+  discarded afterwards. events.list would make the privacy property a promise
+  about this code; freeBusy makes it a property of the request. It also
+  expands recurring events server-side, which a local iCalendar reader cannot
+  do without a full recurrence engine.
+
+  The access token never leaves this namespace — `access-token` refuses to
+  return one through an HTTP view, and this is the shape that lets a caller
+  have the answer without the credential.
+
+  Returns `{:ok? true :busy [{:start iso :end iso}]}` or `{:ok? false :reason
+  ...}`. A missing connection is a reason, not an exception: it is the normal
+  state before anyone has connected anything."
+  ([] (google-freebusy nil nil nil))
+  ([time-min time-max did]
+   (if-let [token (access-token :google did)]
+     (let [body (json/write-str {"timeMin" time-min "timeMax" time-max
+                                 "items" [{"id" "primary"}]})
+           request (-> (HttpRequest/newBuilder
+                        (URI/create "https://www.googleapis.com/calendar/v3/freeBusy"))
+                       (.header "Authorization" (str "Bearer " token))
+                       (.header "Content-Type" "application/json")
+                       (.header "User-Agent" "cloud-itonami-app")
+                       (.POST (HttpRequest$BodyPublishers/ofString body))
+                       .build)
+           response (request-json! request)]
+       (if-let [err (get-in response [:error :message])]
+         {:ok? false :reason err}
+         {:ok? true
+          :busy (->> (vals (:calendars response))
+                     (mapcat :busy)
+                     (mapv (fn [b] {:start (:start b) :end (:end b)})))}))
+     {:ok? false :reason "google-not-connected"})))
+
 (defn connected-providers
   "The providers a connection exists for, optionally for one person only.
 
