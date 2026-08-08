@@ -1,0 +1,92 @@
+;; The fleet directory's DECISION CORE — the four questions that are judgements
+;; about one actor, separated from the queries that walk the collection.
+;;
+;; `fleet_core.cljc` keeps `search`, `facets`, `find-by-id` and `actor-by-repo`.
+;; Those are collection work: `cond->>` over filters, `frequencies`, `sort-by`
+;; with a `juxt` comparator. None of it is a decision about an actor, and all of
+;; it needs maps and closures.
+;;
+;; What is left is per-actor and answers from scalars:
+;;
+;; - `catalog-schema-ok?` — the comparison inside `validate-catalog`. The
+;;   `throw` stays in the cljc: an exception is an effect, and the core does not
+;;   have effects. This is the shape every validation in this migration takes —
+;;   the core decides, the host raises.
+;; - `callable?` / `probeable?` — presence of an address, and of a health path
+;;   alongside one.
+;; - `isic-of` — which of three ISIC revisions an actor is coded in. The fleet
+;;   uses `:isic`, `:isic-rev5` and `:isic-rev4` inconsistently and the cljc
+;;   picks the first present; that precedence is a real decision, and it is the
+;;   one thing here that would silently change meaning if the two sides drifted.
+;;
+;; `matches-text?` is deliberately NOT here. It needs `str/lower-case` and
+;; `str/includes?`; there is no case folding in the language at all, and
+;; `string-contains?` — which the native gate does admit — is refused by the
+;; pinned compiler on every target (measured 2026-08-08). Text search stays cljc
+;; until both exist.
+;;
+;; ## The native slice
+;;
+;; Every field is `[:option :string]`, which is one word, and every function
+;; stays inside `kotoba.kir/only-native-word-typed-features?`. Compiles for
+;; `:wasm32-kotoba-v1` and `:x86_64-kotoba-v1` — see
+;; `fleet-core-kotoba-parity-test`.
+;;
+;; Two spellings are forced, and both are temporary (ADR-2608650000):
+;;
+;; - **`option-some?-of` with an explicit `[:option :string]`**, not bare
+;;   `option-some?`. The bare form is typed `option-i64` and rejects a string
+;;   option outright (`expected option-i64, got [:option :string]`).
+;; - **`(if … true false)` around `and`/`or`**, because those produce `:i64`
+;;   rather than `:bool`.
+;;
+;; An actor is a flat record rather than the map the cljc reads, for the same
+;; reason `policy.kotoba` takes one: maps are absent from the native slice.
+
+(ns cloud.itonami.app.fleet-core
+  (:schemas {;; Only the fields the four decisions read. An actor in the catalog
+             ;; has many more; carrying them here would make this record a
+             ;; second catalog schema that has to be kept in step with the
+             ;; first, which is the drift `validate-catalog` exists to catch.
+             :fleet/actor
+             [:record :fleet/actor
+              [[:endpoint [:option :string]]
+               [:health-path [:option :string]]
+               [:isic [:option :string]]
+               [:isic-rev5 [:option :string]]
+               [:isic-rev4 [:option :string]]]]})
+  (:export [catalog-schema-ok? callable? probeable? isic-of]))
+
+;; The schema string is written out rather than bound to a name because `def`
+;; of a string constant is not part of the slice this core stays inside. The
+;; cljc's `schema` var remains the single place a CALLER reads it from; the
+;; parity test is what keeps this literal equal to it.
+(defn catalog-schema-ok? [found :string] :bool
+  (if (string=? found "cloud.itonami.fleet-catalog.v1")
+    true
+    false))
+
+;; An address is data, never something to call — absent means not deployed, or
+;; deployed with no route. It does not mean "unknown, try it and see".
+(defn callable? [a [:ref :fleet/actor]] :bool
+  (if (option-some?-of [:option :string] (record-get a :endpoint))
+    true
+    false))
+
+;; A callable actor need not be probeable: the Pages actors serve a real API
+;; under /api/* and have no health endpoint, so there is nothing honest to probe.
+(defn probeable? [a [:ref :fleet/actor]] :bool
+  (if (and (option-some?-of [:option :string] (record-get a :endpoint))
+           (option-some?-of [:option :string] (record-get a :health-path)))
+    true
+    false))
+
+;; First present wins, newest revision first. `none` when the actor codes no
+;; ISIC at all — which is different from coding an empty one, and the parity
+;; test covers both.
+(defn isic-of [a [:ref :fleet/actor]] [:option :string]
+  (if (option-some?-of [:option :string] (record-get a :isic))
+    (record-get a :isic)
+    (if (option-some?-of [:option :string] (record-get a :isic-rev5))
+      (record-get a :isic-rev5)
+      (record-get a :isic-rev4))))
