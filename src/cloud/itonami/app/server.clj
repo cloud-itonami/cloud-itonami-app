@@ -924,7 +924,35 @@
         (when-let [^java.io.Writer out @writer]
           (.close out))))))
 
-(defn- public-state [config]
+(defn- runtime-state!
+  "The operator's view of what this process is doing right now.
+
+  **Named `public-state` until 2026-08-08, and served with no session at all.**
+  That reading of『public』was『anything already on this machine』, which is a
+  fair thing to mean for a process bound to loopback — and it stopped being
+  true the moment a tunnel put the same handler on the internet, where
+  `GET /api/state` answered strangers with `:last-response`, i.e. the text of
+  the most recent assistant message (measured from off-host, 2026-08-08).
+
+  So it is session-bound now, and the name says what it is rather than who may
+  read it. The `:schema` string keeps its `public-state.v1` spelling: it is a
+  wire identifier, and renaming a contract to match an internal rename would
+  break readers to fix nothing.
+
+  Nothing in this repository fetches it — `server-process` reaches for
+  `/health`, which is the route that legitimately takes no session because it
+  says only『the process is up』and names no content.
+
+  **The session check lives here, not in the route table.** Not a preference:
+  the request handler's `cond` is within a couple of forms of the JVM's 64 KB
+  method limit, and wrapping the branch in a `do` to add the guard fails the
+  whole namespace with『Method code too large!』(measured 2026-08-08 — main
+  compiles, main plus that `do` does not). The `!` and the exchange argument
+  are what carry the requirement at the call site instead. Anyone adding a
+  route here will meet the same ceiling; splitting that `cond` is its own
+  change."
+  [config exchange]
+  (require-app-session! exchange)
   (let [state (store/snapshot)]
     {:schema "cloud.itonami.app.public-state.v1"
      :privacy {:bind (str (get-in config [:server :host]) ":"
@@ -2214,7 +2242,7 @@
               (send! exchange 200 (authority-api/commit! config session a id)))
 
             (and (= method "GET") (= path "/api/state"))
-            (send! exchange 200 (public-state config))
+            (send! exchange 200 (runtime-state! config exchange))
 
             ;; Versioned tenant control plane. A connection is immutable loop
             ;; context; unlike the browser organization switcher it never
