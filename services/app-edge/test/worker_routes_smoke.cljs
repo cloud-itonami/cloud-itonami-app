@@ -101,6 +101,12 @@
                                     (str "error type was "
                                          (pr-str (get-in b ["error" "type"])))))}))
     (.then #(check-route
+             {:label "the stylesheet the page links to is actually served"
+              :path "/dds.css" :expect-status 200}))
+    (.then #(check-route
+             {:label "the directory page renders as HTML"
+              :path "/" :expect-status 200}))
+    (.then #(check-route
              {:label "an unknown path is 404"
               :path "/no-such-route" :expect-status 404}))
     (.then #(check-route
