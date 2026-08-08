@@ -3,7 +3,8 @@
   rather than as sentences in a docstring."
   (:require [clojure.test :refer [deftest is testing]]
             [clojure.string :as str]
-            [cloud.itonami.app.kaiyu-local :as k]))
+            [cloud.itonami.app.kaiyu-local :as k]
+            [cloud.itonami.app.cli]))
 
 (deftest a-path-can-never-carry-what-a-person-typed
   (testing "the vocabulary is a whitelist, so a document title, a search term
@@ -66,3 +67,11 @@
       (doseq [n requires]
         (is (not (re-find #"(?i)http|client|socket|net\.|url" n))
             (str "requires a transport-shaped namespace: " n))))))
+
+(deftest the-reader-is-a-lifecycle-command
+  (testing "reading counters this machine already wrote must not start a
+            server to ask about them — and `kaiyu` must be in the set that
+            says so, or `needs-server?` sends it down the HTTP path"
+    (is (contains? cloud.itonami.app.cli/lifecycle-commands "kaiyu"))
+    (is (not (cloud.itonami.app.cli/needs-server? ["kaiyu"])))
+    (is (not (cloud.itonami.app.cli/needs-server? ["kaiyu" "--days" "30"])))))
