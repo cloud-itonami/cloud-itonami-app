@@ -26,6 +26,7 @@
 (def ^:private max-memories 500)
 (def ^:private max-frames 360)
 (def ^:private max-ocr-chars 20000)
+(def ^:private max-capture-preview-chars 4000)
 (defonce ^:private scheduler (atom nil))
 (defonce ^:private runtime-config (atom nil))
 
@@ -193,10 +194,47 @@
           (prune! user-id)
           frame)))))
 
+(defn- bounded [value maximum]
+  (let [value (str value)] (subs value 0 (min maximum (count value)))))
+
 (defn- public-frame [frame]
   (-> (select-keys frame [:id :captured-at :application])
       (assoc :text-preview (subs (or (:ocr frame) "") 0
                                  (min 240 (count (or (:ocr frame) "")))))))
+
+(defn- capture-frame [frame]
+  {:id (:id frame)
+   :captured-at (:captured-at frame)
+   :application (bounded (or (:application frame) "unknown") 200)
+   :text-preview (bounded (or (:ocr frame) "") max-capture-preview-chars)
+   ;; OCR is display material, not an instruction channel. The flag survives
+   ;; when the selected excerpt is copied into a durable Capture record.
+   :trust :untrusted-reference})
+
+(defn capture-candidates
+  "Recent, bounded Chronicle frames that a human may explicitly preview and
+  copy into Capture. Image paths, images, OCR digests and full OCR never cross
+  this boundary."
+  [user-id]
+  (let [profile (get-in (store/snapshot) (user-path user-id) {})
+        frames (sort-by :captured-at-ms > (vals (:frames profile)))]
+    {:schema "cloud.itonami.app.chronicle.capture-candidates.v1"
+     :enabled? (:screen-context-enabled? (settings user-id))
+     :permission {:screen-recording (permission-status)}
+     :frames (mapv capture-frame (take 8 frames))}))
+
+(defn capture-source
+  "Resolve one frame inside the requesting user's Chronicle namespace. The
+  returned map is a durable, bounded attribution snapshot; the original image
+  remains ephemeral and is not attached to Capture."
+  [user-id frame-id]
+  (let [frame (when (and (string? frame-id) (not (str/blank? frame-id)))
+                (get-in (store/snapshot) (user-path user-id :frames frame-id)))]
+    (when-not frame
+      (throw (ex-info "Chronicleの画面コンテキストが見つかりません。"
+                      {:type :chronicle/frame-not-found :status 404
+                       :frame-id frame-id})))
+    (assoc (capture-frame frame) :type :chronicle-frame :frame-id (:id frame))))
 
 (defn overview [user-id]
   (let [profile (get-in (store/snapshot) (user-path user-id) {})
@@ -224,9 +262,6 @@
 (defn- relevance [query value]
   (count (set/intersection (normalized-terms query)
                            (normalized-terms value))))
-
-(defn- bounded [value maximum]
-  (let [value (str value)] (subs value 0 (min maximum (count value)))))
 
 (defn remember! [user-id {:keys [source project-id session-id summary content]}]
   (when (and (not (str/blank? (str user-id)))

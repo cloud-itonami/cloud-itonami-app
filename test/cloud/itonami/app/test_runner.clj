@@ -14,6 +14,8 @@
             [cloud.itonami.app.kaiyu-local-test]
             [cloud.itonami.app.business-http-test]
             [cloud.itonami.app.canvas-test]
+            [cloud.itonami.app.capture-test]
+            [cloud.itonami.app.capture-http-test]
             [cloud.itonami.app.card-statement-test]
             [cloud.itonami.app.cli-test]
             [cloud.itonami.app.commands-test]
@@ -123,6 +125,8 @@
     cloud.itonami.app.kaiyu-local-test
     cloud.itonami.app.business-http-test
     cloud.itonami.app.canvas-test
+    cloud.itonami.app.capture-test
+    cloud.itonami.app.capture-http-test
     cloud.itonami.app.card-statement-test
     cloud.itonami.app.cli-test
     cloud.itonami.app.commands-test

@@ -39,6 +39,29 @@
     (is (str/includes? context "untrusted reference text"))
     (is (str/includes? context "Editor"))))
 
+(deftest capture-candidates-are-bounded-user-scoped-attributions
+  (chronicle/configure! "alice" {:screen-context-enabled? true})
+  (store/transact! assoc-in [:chronicle :users "alice" :frames "frame-1"]
+                   {:id "frame-1" :captured-at "2026-08-08T12:00:00Z"
+                    :captured-at-ms 1 :application "Editor"
+                    :ocr (apply str (repeat 5000 "a"))
+                    :image-path "/private/never-expose.jpg"
+                    :text-digest "never-expose"})
+  (with-redefs [chronicle/permission-status (constantly "granted")]
+    (let [candidate (first (:frames (chronicle/capture-candidates "alice")))
+          source (chronicle/capture-source "alice" "frame-1")]
+      (is (= true (:enabled? (chronicle/capture-candidates "alice"))))
+      (is (= "frame-1" (:id candidate)))
+      (is (= 4000 (count (:text-preview candidate))))
+      (is (= :untrusted-reference (:trust candidate)))
+      (is (not (contains? candidate :image-path)))
+      (is (not (contains? candidate :text-digest)))
+      (is (= :chronicle-frame (:type source)))
+      (is (= "frame-1" (:frame-id source)))
+      (is (= :chronicle/frame-not-found
+             (:type (ex-data (try (chronicle/capture-source "bob" "frame-1")
+                                  (catch clojure.lang.ExceptionInfo error error)))))))))
+
 (deftest deleting-memory-removes-derived-data-but-not-chat-sessions
   (let [frame (java.io.File/createTempFile "itonami-chronicle-" ".jpg")]
     (spit frame "frame")

@@ -203,6 +203,26 @@
   .local-card{background:var(--color-neutral-white);border:1px solid var(--color-neutral-solid-gray-200);
     border-radius:.75rem;padding:1.5rem}
   .local-card+.local-card{margin-top:1rem}
+  .capture-composer{display:grid;gap:1rem}.capture-composer textarea{width:100%;box-sizing:border-box;
+    min-height:14rem;resize:vertical;border:1px solid var(--color-neutral-solid-gray-300);
+    border-radius:.625rem;padding:1rem;font:inherit;line-height:1.8;background:var(--color-neutral-white)}
+  .capture-composer textarea:focus{outline:4px solid var(--color-primitive-yellow-300);
+    outline-offset:1px;border-color:var(--color-key-600)}
+  .capture-mode-row,.capture-filters{display:flex;align-items:center;flex-wrap:wrap;gap:.5rem}
+  .capture-filters{margin:1rem 0}.capture-filter[aria-pressed='true']{background:var(--color-key-900);
+    color:var(--color-neutral-white)}.capture-raw{white-space:pre-wrap;line-height:1.8;
+    padding:1rem;border-radius:.5rem;background:var(--color-neutral-solid-gray-50)}
+  .capture-recording{color:var(--color-semantic-error-1);font-weight:700}
+  .capture-chronicle{border:1px solid var(--color-neutral-solid-gray-200);border-radius:.625rem;
+    padding:1rem;background:var(--color-neutral-solid-gray-50)}.capture-chronicle__header{display:flex;
+    align-items:center;justify-content:space-between;gap:.75rem;flex-wrap:wrap}
+  .capture-chronicle__list{list-style:none;margin:.75rem 0 0;padding:0;display:grid;gap:.5rem}
+  .capture-chronicle__item{display:grid;gap:.35rem;width:100%;text-align:left;padding:.75rem;
+    border:1px solid var(--color-neutral-solid-gray-300);border-radius:.5rem;background:white}
+  .capture-chronicle__item:hover{border-color:var(--color-key-600)}
+  .capture-source{margin:1rem 0;padding:.75rem;border-left:4px solid var(--color-key-600);
+    background:var(--color-neutral-solid-gray-50)}.capture-source__text{white-space:pre-wrap;
+    overflow-wrap:anywhere}
   .local-meta{display:grid;grid-template-columns:auto 1fr;gap:.625rem 1rem;
     margin:0;font-size:.9375rem;line-height:1.7}
   .local-meta dt{font-weight:700}.local-meta dd{margin:0}
@@ -1018,6 +1038,7 @@
        [:nav {:class "local-nav" :aria-label "機能メニュー"}
         [:div {:class "nav-primary"}
          (nav-item "chat" "Chat" "✦" nil)
+         (nav-item "capture" "Capture" "＋" "capture-count")
          (nav-item "messenger" "Messenger" "◇" "messenger-count")
          (nav-item "projects" "Projects" "▦" "projects-count")
          (nav-item "sites" "Sites" "▦" "sites-count")
@@ -1126,6 +1147,74 @@
            [:p {:class "visually-hidden" :id "request-status"
                 :role "status" :aria-live "polite"}
             "ローカルモデルを準備中です。"]]]]
+        [:section {:class "view" :data-view-panel "capture" :hidden true}
+         (view-header "Capture"
+                      "考えを評価・分類せず、そのまま手元に残します。AIには送られません。整理は後から行います。")
+         [:div {:class "local-card"}
+          [:form {:class "capture-composer" :id "capture-form"}
+           [:div {:class "field"}
+            [:label {:for "capture-text"} "いま頭にあること"]
+            [:textarea {:id "capture-text" :name "text" :required true
+                        :maxlength "100000" :autocomplete "off"
+                        :placeholder "止めずに書く。整えない。判断しない。"}]]
+           [:div {:class "capture-mode-row"}
+            [:label {:for "capture-mode"} "記録方法"]
+            [:select {:id "capture-mode" :name "mode"}
+             [:option {:value "quick-capture"} "Quick capture"]
+             [:option {:value "freewriting"} "Freewriting"]
+             [:option {:value "think-aloud"} "Think aloud"]]
+            [:button {:class "tool-button" :id "capture-dictate" :type "button"}
+             "音声を文字にする"]
+            [:button {:class "primary-action" :id "capture-submit" :type "submit"}
+             "記録だけする"]]
+           [:input {:id "capture-chronicle-frame-id" :name "chronicle-frame-id"
+                    :type "hidden" :value ""}]
+           [:div {:class "capture-chronicle"}
+            [:div {:class "capture-chronicle__header"}
+             [:div
+              [:strong "Chronicle の作業文脈"]
+              [:p {:class "form-help"}
+               "選んだ画面のOCR抜粋だけを本文へ追加します。画像とOCR全文はCaptureへ保存しません。"]]
+             [:button {:class "tool-button" :id "capture-chronicle-toggle" :type "button"
+                       :aria-expanded "false" :aria-controls "capture-chronicle-panel"}
+              "文脈を選ぶ"]]
+            [:div {:id "capture-chronicle-panel" :hidden true}
+             [:div {:class "capture-mode-row"}
+              [:button {:class "tool-button" :id "capture-chronicle-now" :type "button"}
+               "今の画面を取得"]
+              [:span {:id "capture-chronicle-selection"} "未選択"]
+              [:button {:class "tool-button" :id "capture-chronicle-clear" :type "button"
+                        :disabled true} "出典を外す"]]
+             [:p {:class "form-help" :id "capture-chronicle-status"
+                  :role "status" :aria-live "polite"} ""]
+             [:ul {:class "capture-chronicle__list" :id "capture-chronicle-list"}]]]
+           [:p {:class "form-help"}
+            "音声文字起こしはブラウザ機能を明示的に開始した時だけ使います。ブラウザによっては外部音声認識を利用します。音声自体は保存しません。"]
+           [:p {:class "drive-create__status" :id "capture-status" :aria-live "polite"}]]]
+         [:div {:class "capture-filters" :id "capture-filters"
+                :role "group" :aria-label "整理先で絞り込む"}
+          [:button {:class "tool-button capture-filter" :type "button"
+                    :data-outcome "inbox" :aria-pressed "true"} "Inbox"]
+          [:button {:class "tool-button capture-filter" :type "button"
+                    :data-outcome "next-action" :aria-pressed "false"} "Next actions"]
+          [:button {:class "tool-button capture-filter" :type "button"
+                    :data-outcome "project" :aria-pressed "false"} "Projects"]
+          [:button {:class "tool-button capture-filter" :type "button"
+                    :data-outcome "waiting-for" :aria-pressed "false"} "Waiting for"]
+          [:button {:class "tool-button capture-filter" :type "button"
+                    :data-outcome "someday-maybe" :aria-pressed "false"} "Someday / Maybe"]
+          [:button {:class "tool-button capture-filter" :type "button"
+                    :data-outcome "reference" :aria-pressed "false"} "Reference"]
+          [:button {:class "tool-button capture-filter" :type "button"
+                    :data-outcome "done" :aria-pressed "false"} "Done"]
+          [:button {:class "tool-button capture-filter" :type "button"
+                    :data-outcome "all" :aria-pressed "false"} "Weekly review"]]
+         [:div {:class "record-browser"}
+          [:div {:class "record-list"}
+           [:ul {:class "record-list__items" :id "capture-list"}
+            [:li {:class "skeleton"}]]]
+          [:article {:class "record-detail" :id "capture-detail" :aria-live "polite"}
+           [:div {:class "empty-state"} "記録を読み込んでいます。"]]]]
         [:section {:class "view messenger-view" :data-view-panel "messenger" :hidden true}
          (view-header "Kaisya Messenger"
                       "人間・agent・organismがそれぞれのmailboxで会話します。未許可の送信者は本文を表示せず隔離します。")
