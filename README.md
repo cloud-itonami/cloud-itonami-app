@@ -386,6 +386,41 @@ reads mail it was never pointed at.
 
 Passwords and tokens go to the Keychain and never to `state.edn`, which is a
 file that gets copied, read and backed up.
+## Capture and GTD clarification
+
+The Capture view is the deliberately ungoverned front door for a thought. It
+stores text locally without sending it to Chat or a model and without asking for
+a Project, deadline, performer, capability, or approval. Freewriting and explicit
+browser speech-to-text both land in the same personal Inbox; audio itself is not
+stored.
+
+When Chronicle screen context is explicitly enabled, the Capture composer can
+show up to eight recent device-local frames and their bounded OCR previews. A
+frame enters Capture only after the human selects it. The editable note remains
+the canonical raw text; Capture additionally keeps a 4,000-character maximum
+attribution snapshot (frame ID, capture time, application and OCR excerpt), but
+never copies the screenshot, image path, OCR digest or full OCR. The excerpt is
+labelled untrusted reference text and is never treated as a model instruction.
+Removing Chronicle data later does not silently rewrite a Capture that the human
+already chose to preserve.
+
+Clarification is a later, explicit pass into Next Action, Project, Waiting For,
+Someday/Maybe, Reference, or Trash. Reviewing an item and returning it to the
+Inbox are explicit recorded acts. Capture is scoped to the human and active
+Organization, and agent sessions cannot read it. These personal GTD records do
+not silently become governed WorkItems; see ADR-0028.
+
+```
+GET  /api/captures
+POST /api/captures                         {:text :mode :chronicle-frame-id?}
+GET  /api/captures/chronicle
+POST /api/captures/chronicle/capture
+POST /api/captures/{id}/clarify            {:outcome :title :project :context :due :waiting-for}
+POST /api/captures/{id}/review
+POST /api/captures/{id}/complete
+POST /api/captures/{id}/reopen
+```
+
 ## Governed AgentRun Kanban
 
 The Projects view includes editors for the DoDAF organization graph

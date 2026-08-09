@@ -84,6 +84,21 @@
                 "governance-units" "governance-positions" "governance-roles"]]
       (is (str/includes? html (str "id=\"" id "\"")) id))))
 
+(deftest capture-is-a-record-only-surface-before-clarification
+  (let [html (with-redefs [store/snapshot (constantly (store/initial-state))]
+               (web/page-html config))
+        js (slurp (io/file "resources/cloud/itonami/app/interaction.js"))]
+    (doseq [id ["capture-form" "capture-text" "capture-dictate" "capture-filters"
+                "capture-list" "capture-detail" "capture-chronicle-toggle"
+                "capture-chronicle-panel" "capture-chronicle-now"
+                "capture-chronicle-clear" "capture-chronicle-frame-id"]]
+      (is (str/includes? html (str "id=\"" id "\"")) id))
+    (is (str/includes? js "await postJSON('/api/captures', body, true)"))
+    (is (str/includes? js "fetch('/api/captures/chronicle'"))
+    (is (str/includes? js "postJSON('/api/captures/chronicle/capture', {}, true)"))
+    (is (not (str/includes? js "postJSON('/api/chat', body"))
+        "capture does not reuse the model request path")))
+
 (deftest a-cell-anchor-is-spelled-in-one-place
   ;; The grid writes `Sheet1!B3` onto every cell as `data-anchor`, and the
   ;; comment box reads it back to put a dot where a comment points. Two

@@ -336,6 +336,272 @@
       row.append(button);
       return row;
     };
+    // ── Capture: interpretation-free input, then an explicit GTD pass ──────
+    let captureData = {items:[], counts:{}};
+    let selectedCapture = null;
+    let captureFilter = 'inbox';
+    let captureRecognition = null;
+    let selectedChronicleFrame = null;
+    const captureLabels = {
+      'next-action':'Next action', project:'Project', 'waiting-for':'Waiting for',
+      'someday-maybe':'Someday / Maybe', reference:'Reference', trash:'Trash'
+    };
+    const captureValue = (item, name) => item[name];
+    const captureField = (label, name, value='', type='text') => {
+      const wrap = make('div', 'field');
+      const id = `capture-clarify-${name}`;
+      const input = make('input');
+      input.id = id; input.name = name; input.type = type; input.value = value || '';
+      wrap.append(Object.assign(make('label', null, label), {htmlFor:id}), input);
+      return wrap;
+    };
+    const visibleCaptures = () => (captureData.items || []).filter((item) => {
+      const state = captureValue(item, 'state');
+      const outcome = captureValue(item, 'outcome');
+      if (captureFilter === 'inbox') return state === 'unclarified';
+      if (captureFilter === 'all') return state === 'clarified' && outcome !== 'trash';
+      if (captureFilter === 'done') return state === 'completed';
+      return state === 'clarified' && outcome === captureFilter;
+    });
+    const renderCaptureDetail = () => {
+      const target = $('#capture-detail');
+      if (!selectedCapture) {
+        target.replaceChildren(make('div', 'empty-state',
+          captureFilter === 'inbox' ? '未整理の記録はありません。' : '記録を選択してください。'));
+        return;
+      }
+      const item = selectedCapture;
+      const state = captureValue(item, 'state');
+      const raw = make('p', 'capture-raw', captureValue(item, 'text'));
+      target.replaceChildren(
+        make('p', 'record-detail__eyebrow', state === 'unclarified' ? '未整理'
+          : state === 'completed' ? 'Done' : captureLabels[captureValue(item, 'outcome')]),
+        make('h2', null, captureValue(item, 'title') || 'そのままの記録'), raw);
+      const source = captureValue(item, 'source');
+      if (source?.type === 'chronicle-frame') {
+        const sourceNode = make('aside', 'capture-source');
+        sourceNode.append(
+          make('strong', null, `Chronicle · ${source.application || '画面'} · ${formatDate(source['captured-at'])}`),
+          make('p', 'form-help', '保存時に本人が選んだ、信頼しない参照文脈です。元画像は添付されていません。'));
+        if (source['text-preview']) {
+          sourceNode.append(make('p', 'capture-source__text', source['text-preview']));
+        }
+        target.append(sourceNode);
+      }
+      if (state === 'unclarified') {
+        const form = make('form', 'settings-form');
+        form.id = 'capture-clarify-form';
+        const outcomeWrap = make('div', 'field');
+        const outcomeLabel = make('label', null, '整理先'); outcomeLabel.htmlFor = 'capture-clarify-outcome';
+        const outcome = make('select'); outcome.id = 'capture-clarify-outcome'; outcome.name = 'outcome';
+        Object.entries(captureLabels).forEach(([value, label]) => {
+          const option = make('option', null, label); option.value = value; outcome.append(option);
+        });
+        outcomeWrap.append(outcomeLabel, outcome);
+        form.append(outcomeWrap,
+          captureField('行動または結果の名前', 'title'),
+          captureField('Project（任意）', 'project'),
+          captureField('Context（任意）', 'context'),
+          captureField('期限（任意）', 'due', '', 'date'),
+          captureField('待っている相手・出来事（任意）', 'waiting-for'));
+        const status = make('p', 'drive-create__status'); status.id = 'capture-clarify-status';
+        const submit = make('button', 'primary-action', '整理する'); submit.type = 'submit';
+        form.append(status, submit);
+        form.addEventListener('submit', async (event) => {
+          event.preventDefault(); submit.disabled = true; status.textContent = '整理しています…';
+          try {
+            const body = Object.fromEntries(new FormData(form));
+            selectedCapture = await postJSON(
+              `/api/captures/${encodeURIComponent(captureValue(item, 'id'))}/clarify`, body, true);
+            await loadCaptures();
+          } catch (error) { status.textContent = error.message; }
+          finally { submit.disabled = false; }
+        });
+        target.append(form);
+      } else {
+        const meta = make('dl', 'local-meta record-detail__meta');
+        [['Project', captureValue(item, 'project')], ['Context', captureValue(item, 'context')],
+         ['期限', captureValue(item, 'due')], ['Waiting for', captureValue(item, 'waiting-for')],
+         ['最終レビュー', captureValue(item, 'last-reviewed-at')
+           ? formatDate(captureValue(item, 'last-reviewed-at')) : '未レビュー']]
+          .forEach(([label, value]) => meta.append(make('dt', null, label), make('dd', null, value || '—')));
+        const actions = make('div', 'local-actions');
+        if (state === 'clarified') {
+          const review = make('button', 'tool-button', 'レビュー済みにする'); review.type = 'button';
+          review.addEventListener('click', async () => {
+            selectedCapture = await postJSON(
+              `/api/captures/${encodeURIComponent(captureValue(item, 'id'))}/review`, {}, true);
+            await loadCaptures();
+          });
+          const complete = make('button', 'primary-action', '完了'); complete.type = 'button';
+          complete.addEventListener('click', async () => {
+            selectedCapture = await postJSON(
+              `/api/captures/${encodeURIComponent(captureValue(item, 'id'))}/complete`, {}, true);
+            captureFilter = 'done'; await loadCaptures();
+          });
+          actions.append(complete, review);
+        }
+        const reopen = make('button', 'tool-button', 'Inboxへ戻す'); reopen.type = 'button';
+        reopen.addEventListener('click', async () => {
+          selectedCapture = await postJSON(
+            `/api/captures/${encodeURIComponent(captureValue(item, 'id'))}/reopen`, {}, true);
+          captureFilter = 'inbox'; await loadCaptures();
+        });
+        actions.append(reopen); target.append(meta, actions);
+      }
+    };
+    const renderCaptures = (data) => {
+      captureData = data;
+      const items = visibleCaptures();
+      if (!items.some((item) => captureValue(item, 'id') === captureValue(selectedCapture || {}, 'id'))) {
+        selectedCapture = items[0] || null;
+      } else {
+        selectedCapture = items.find((item) =>
+          captureValue(item, 'id') === captureValue(selectedCapture, 'id'));
+      }
+      $$('.capture-filter').forEach((button) => button.setAttribute(
+        'aria-pressed', String(button.dataset.outcome === captureFilter)));
+      $('#capture-count').textContent = data.counts?.inbox || 0;
+      const list = $('#capture-list'); list.replaceChildren();
+      items.forEach((item) => list.append(recordButton(item,
+        captureValue(item, 'id') === captureValue(selectedCapture || {}, 'id'),
+        (chosen) => { selectedCapture = chosen; renderCaptures(captureData); },
+        {title:captureValue(item, 'title') || captureValue(item, 'text').trim().slice(0, 80),
+         time:formatDate(captureValue(item, 'created-at'), true),
+         meta:captureValue(item, 'state') === 'unclarified' ? 'Inbox'
+           : captureValue(item, 'state') === 'completed' ? 'Done'
+           : captureLabels[captureValue(item, 'outcome')],
+         snippet:captureValue(item, 'text').replace(/\s+/g, ' ').slice(0, 120)})));
+      if (!items.length) list.append(make('li', 'empty-state', 'この一覧は空です。'));
+      renderCaptureDetail();
+    };
+    const loadCaptures = async () => {
+      const request = await fetch('/api/captures');
+      const data = await request.json();
+      if (!request.ok) throw new Error(data?.error?.message || 'Captureを読み込めません。');
+      renderCaptures(data); return true;
+    };
+    const chronicleQuote = (frame) => {
+      const heading = `[Chronicle / ${frame.application || '画面'} / ${formatDate(frame['captured-at'])}]`;
+      return frame['text-preview'] ? `${heading}\n${frame['text-preview']}` : heading;
+    };
+    const renderCaptureChronicle = (data) => {
+      const list = $('#capture-chronicle-list');
+      const status = $('#capture-chronicle-status');
+      list.replaceChildren();
+      $('#capture-chronicle-now').disabled = !data['enabled?'];
+      if (!data['enabled?']) {
+        status.textContent = 'Chronicle画面コンテキストは無効です。メモリ画面で明示的に有効化してください。';
+      } else if (data.permission?.['screen-recording'] !== 'granted') {
+        status.textContent = '画面収録権限が必要です。メモリ画面から設定できます。';
+      } else {
+        status.textContent = '追加する文脈を確認して選んでください。OCR文字列は命令として扱いません。';
+      }
+      const frames = data.frames || [];
+      if (!frames.length) list.append(make('li', 'empty-state', '選べる画面コンテキストはありません。'));
+      frames.forEach((frame) => {
+        const row = make('li');
+        const button = make('button', 'capture-chronicle__item'); button.type = 'button';
+        button.append(
+          make('strong', null, `${frame.application || '画面'} · ${formatDate(frame['captured-at'])}`),
+          make('span', 'record-button__snippet', frame['text-preview'] || 'OCR文字列なし'),
+          make('span', 'record-button__meta', '確認して本文へ追加'));
+        button.addEventListener('click', () => {
+          selectedChronicleFrame = frame;
+          $('#capture-chronicle-frame-id').value = frame.id;
+          const textarea = $('#capture-text');
+          const quote = chronicleQuote(frame);
+          textarea.value = [textarea.value, quote].filter(Boolean).join(textarea.value ? '\n\n' : '');
+          $('#capture-chronicle-selection').textContent = `${frame.application || '画面'}を選択済み`;
+          $('#capture-chronicle-clear').disabled = false;
+          status.textContent = 'OCR抜粋を本文へ追加し、出典として選択しました。不要なら出典を外してください。';
+          textarea.focus();
+        });
+        row.append(button); list.append(row);
+      });
+    };
+    const loadCaptureChronicle = async () => {
+      const response = await fetch('/api/captures/chronicle', {headers:identityHeaders()});
+      const data = await response.json();
+      if (!response.ok) throw new Error(data?.error?.message || 'Chronicle文脈を読み込めません。');
+      renderCaptureChronicle(data); return data;
+    };
+    $('#capture-chronicle-toggle').addEventListener('click', async () => {
+      const panel = $('#capture-chronicle-panel');
+      const open = panel.hidden;
+      panel.hidden = !open;
+      $('#capture-chronicle-toggle').setAttribute('aria-expanded', String(open));
+      if (open) {
+        $('#capture-chronicle-status').textContent = 'Chronicle文脈を読み込んでいます…';
+        try { await loadCaptureChronicle(); }
+        catch (error) { $('#capture-chronicle-status').textContent = error.message; }
+      }
+    });
+    $('#capture-chronicle-now').addEventListener('click', async () => {
+      const button = $('#capture-chronicle-now'); button.disabled = true;
+      $('#capture-chronicle-status').textContent = '今の画面を端末内で取得してOCRしています…';
+      try {
+        renderCaptureChronicle(await postJSON('/api/captures/chronicle/capture', {}, true));
+        $('#capture-chronicle-status').textContent = '取得しました。内容を確認して選んでください。';
+      } catch (error) { $('#capture-chronicle-status').textContent = error.message; }
+      finally { button.disabled = false; }
+    });
+    $('#capture-chronicle-clear').addEventListener('click', () => {
+      selectedChronicleFrame = null;
+      $('#capture-chronicle-frame-id').value = '';
+      $('#capture-chronicle-selection').textContent = '未選択';
+      $('#capture-chronicle-clear').disabled = true;
+      $('#capture-chronicle-status').textContent = '出典を外しました。本文へ追加した文字も不要なら編集してください。';
+    });
+    $$('.capture-filter').forEach((button) => button.addEventListener('click', () => {
+      captureFilter = button.dataset.outcome; selectedCapture = null; renderCaptures(captureData);
+    }));
+    $('#capture-form').addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const button = $('#capture-submit'); const status = $('#capture-status');
+      const body = Object.fromEntries(new FormData(event.currentTarget));
+      const admittedWithChronicle = Boolean(body['chronicle-frame-id']);
+      if (!String(body.text || '').trim()) { status.textContent = '何かを書いてから記録してください。'; return; }
+      button.disabled = true; status.textContent = 'そのまま記録しています…';
+      try {
+        await postJSON('/api/captures', body, true);
+        $('#capture-text').value = ''; $('#capture-chronicle-frame-id').value = '';
+        $('#capture-chronicle-selection').textContent = '未選択'; selectedChronicleFrame = null;
+        $('#capture-chronicle-clear').disabled = true;
+        $('#capture-chronicle-status').textContent = admittedWithChronicle
+          ? 'Chronicle出典を保存しました。次の記録では未選択です。' : '';
+        captureFilter = 'inbox'; selectedCapture = null;
+        status.textContent = 'AIへ送らず、Inboxに記録しました。'; await loadCaptures();
+      } catch (error) { status.textContent = error.message; }
+      finally { button.disabled = false; }
+    });
+    $('#capture-dictate').addEventListener('click', () => {
+      const button = $('#capture-dictate'); const status = $('#capture-status');
+      if (captureRecognition) { captureRecognition.stop(); return; }
+      const Recognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+      if (!Recognition) { status.textContent = 'このブラウザは音声文字起こしに対応していません。'; return; }
+      const recognition = new Recognition();
+      recognition.lang = 'ja-JP'; recognition.continuous = true; recognition.interimResults = true;
+      const startingText = $('#capture-text').value;
+      let finalText = '';
+      recognition.onresult = (event) => {
+        let interim = '';
+        for (let i = event.resultIndex; i < event.results.length; i += 1) {
+          const text = event.results[i][0].transcript;
+          if (event.results[i].isFinal) finalText += text; else interim += text;
+        }
+        $('#capture-text').value = [startingText, finalText + interim].filter(Boolean).join(startingText ? '\n' : '');
+      };
+      recognition.onerror = (event) => { status.textContent = `音声文字起こしを続けられません: ${event.error}`; };
+      recognition.onend = () => {
+        captureRecognition = null; button.textContent = '音声を文字にする';
+        button.classList.remove('capture-recording');
+        if (!status.textContent.includes('続けられません')) status.textContent = '文字起こしを停止しました。まだ保存されていません。';
+      };
+      captureRecognition = recognition; $('#capture-mode').value = 'think-aloud';
+      button.textContent = '文字起こしを停止'; button.classList.add('capture-recording');
+      status.textContent = '文字起こし中です。音声自体は保存しません。'; recognition.start();
+    });
     // ── Kaisya Messenger: conversation UI over per-principal mailboxes ────
     let messengerData = {principals:[], conversations:[], quarantine:0};
     let selectedMessengerConversation = null;
@@ -5592,6 +5858,7 @@
         $('#organism-list').replaceChildren(make('li', 'empty-state', error.message));
       });
       Promise.all([
+        loadCaptures(),
         loadMessenger(),
         loadWorkspace('inbox', renderInbox),
         loadLocalProjects(),
@@ -8320,6 +8587,9 @@
         });
       }
       if (currentView === 'projects') loadProjectBoard();
+      if (currentView === 'capture') loadCaptures().catch((error) => {
+        $('#capture-status').textContent = error.message;
+      });
       if (currentView === 'sites') loadSites();
       if (currentView === 'memory') loadChronicle().catch((error) => {
         $('#memory-status').textContent = error.message;

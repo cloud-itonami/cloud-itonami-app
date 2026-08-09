@@ -9,6 +9,7 @@
             [cloud.itonami.app.authority.api :as authority-api]
             [cloud.itonami.app.business :as business]
             [cloud.itonami.app.canvas :as canvas]
+            [cloud.itonami.app.capture :as capture]
             [cloud.itonami.app.chronicle :as chronicle]
             [cloud.itonami.app.config :as config]
             [cloud.itonami.app.contracts :as contracts]
@@ -1032,7 +1033,20 @@
         :oauth-resource/insecure-resource 500
         :oauth-resource/introspection-credentials-missing 500
         :oauth-resource/no-authorization-server 500
-        :http/payload-too-large 413}
+        :http/payload-too-large 413
+        :capture/not-found 404
+        :capture/invalid-text 400
+        :capture/blank-text 400
+        :capture/text-too-long 413
+        :capture/invalid-mode 400
+        :capture/invalid-source 400
+        :capture/invalid-outcome 400
+        :capture/unclarified 409
+        :chronicle/frame-not-found 404
+        :chronicle/disabled 409
+        :chronicle/permission-required 428
+        :chronicle/command-timeout 504
+        :chronicle/command-failed 502}
        type 502))
 (defn- organization-actor-candidates [exchange]
   (let [context (identity-context exchange)
@@ -1687,6 +1701,83 @@
 (defn- conversation-route? [path]
   (contains? #{"/api/session" "/api/chat" "/api/chat/stream"
                "/api/session/clear"} path))
+
+(defn- handle-capture!
+  "Human-only, record-only capture. No route in here invokes a model or an
+  executor; classification is a later mutation over the immutable raw text."
+  [config exchange method path]
+  (cond
+    (and (= method "GET") (= path "/api/captures/chronicle"))
+    (let [session (require-human-session! exchange)]
+      (send! exchange 200 (chronicle/capture-candidates (:user-id session))))
+
+    (and (= method "POST") (= path "/api/captures/chronicle/capture"))
+    (let [session (require-human-session! exchange)]
+      (require-origin! exchange config)
+      (require-csrf! exchange session)
+      (chronicle/capture! (:user-id session))
+      (send! exchange 200 (chronicle/capture-candidates (:user-id session))))
+
+    (and (= method "GET") (= path "/api/captures"))
+    (let [session (require-human-session! exchange)]
+      (send! exchange 200
+             (capture/snapshot (:user-id session) (:organization-id session))))
+
+    (and (= method "POST") (= path "/api/captures"))
+    (let [session (require-human-session! exchange)
+          request (read-json exchange)
+          frame-id (:chronicle-frame-id request)]
+      (require-origin! exchange config)
+      (require-csrf! exchange session)
+      (let [source (when-not (str/blank? (str frame-id))
+                     (chronicle/capture-source (:user-id session) frame-id))]
+        (send! exchange 201
+               (capture/public-item
+                (capture/create! (:user-id session) (:organization-id session)
+                                 (dissoc request :chronicle-frame-id) source)))))
+
+    (and (= method "POST")
+         (id-from-path path #"/api/captures/([^/]+)/clarify"))
+    (let [session (require-human-session! exchange)
+          id (id-from-path path #"/api/captures/([^/]+)/clarify")]
+      (require-origin! exchange config)
+      (require-csrf! exchange session)
+      (send! exchange 200
+             (capture/public-item
+              (capture/clarify! id (:user-id session) (:organization-id session)
+                                (read-json exchange)))))
+
+    (and (= method "POST")
+         (id-from-path path #"/api/captures/([^/]+)/review"))
+    (let [session (require-human-session! exchange)
+          id (id-from-path path #"/api/captures/([^/]+)/review")]
+      (require-origin! exchange config)
+      (require-csrf! exchange session)
+      (send! exchange 200
+             (capture/public-item
+              (capture/review! id (:user-id session) (:organization-id session)))))
+
+    (and (= method "POST")
+         (id-from-path path #"/api/captures/([^/]+)/complete"))
+    (let [session (require-human-session! exchange)
+          id (id-from-path path #"/api/captures/([^/]+)/complete")]
+      (require-origin! exchange config)
+      (require-csrf! exchange session)
+      (send! exchange 200
+             (capture/public-item
+              (capture/complete! id (:user-id session) (:organization-id session)))))
+
+    (and (= method "POST")
+         (id-from-path path #"/api/captures/([^/]+)/reopen"))
+    (let [session (require-human-session! exchange)
+          id (id-from-path path #"/api/captures/([^/]+)/reopen")]
+      (require-origin! exchange config)
+      (require-csrf! exchange session)
+      (send! exchange 200
+             (capture/public-item
+              (capture/reopen! id (:user-id session) (:organization-id session)))))
+
+    :else (send! exchange 404 {:error "not found"})))
 
 (defn- handle-conversation! [config exchange method path]
   (cond
@@ -2770,6 +2861,9 @@
 
             (conversation-route? path)
             (handle-conversation! config exchange method path)
+
+            (str/starts-with? path "/api/captures")
+            (handle-capture! config exchange method path)
 
             (and (= method "GET") (= path "/api/workspace"))
             (do
