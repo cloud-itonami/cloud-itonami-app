@@ -10,6 +10,7 @@ contents_dir="$app_bundle/Contents"
 stage_dir="$release_dir/dmg-root"
 dmg="$release_dir/Cloud-Itonami-${version}-macOS-${arch}.dmg"
 zip="$release_dir/Cloud-Itonami-${version}-macOS-${arch}.zip"
+notarization_zip="$release_dir/Cloud-Itonami-${version}-notarization.zip"
 
 shell_dir="${KOTOBA_SHELL_DIR:-}"
 if [[ -z "$shell_dir" ]]; then
@@ -24,6 +25,7 @@ fi
 cd "$repo_dir"
 clojure -T:build uber
 
+rm -rf "$app_bundle" "$stage_dir" "$release_dir/CloudItonami.iconset"
 mkdir -p "$contents_dir/MacOS" "$contents_dir/Resources"
 cp packaging/macos/Info.plist "$contents_dir/Info.plist"
 cp packaging/macos/CloudItonami "$contents_dir/MacOS/CloudItonami"
@@ -45,13 +47,52 @@ done
 /usr/bin/iconutil -c icns "$iconset" -o "$contents_dir/Resources/CloudItonami.icns"
 
 codesign_identity="${CLOUD_ITONAMI_CODESIGN_IDENTITY:--}"
-/usr/bin/codesign --force --deep --options runtime --sign "$codesign_identity" "$app_bundle"
+if [[ "$codesign_identity" == "-" ]]; then
+  /usr/bin/codesign --force --deep --options runtime --sign - "$app_bundle"
+else
+  /usr/bin/codesign --force --options runtime --timestamp \
+    --sign "$codesign_identity" "$contents_dir/MacOS/kotoba-shell-host"
+  /usr/bin/codesign --force --deep --options runtime --timestamp \
+    --sign "$codesign_identity" "$app_bundle"
+fi
 /usr/bin/codesign --verify --deep --strict --verbose=2 "$app_bundle"
+
+if [[ "${CLOUD_ITONAMI_NOTARIZE:-0}" == "1" ]]; then
+  if [[ "$codesign_identity" != "Developer ID Application:"* ]]; then
+    echo "notarization requires a Developer ID Application identity" >&2
+    exit 1
+  fi
+  notary_key="${CLOUD_ITONAMI_NOTARY_KEY:-}"
+  notary_key_id="${CLOUD_ITONAMI_NOTARY_KEY_ID:-}"
+  notary_issuer="${CLOUD_ITONAMI_NOTARY_ISSUER:-}"
+  if [[ ! -f "$notary_key" || -z "$notary_key_id" || -z "$notary_issuer" ]]; then
+    echo "notarization requires CLOUD_ITONAMI_NOTARY_KEY, _KEY_ID, and _ISSUER" >&2
+    exit 1
+  fi
+  /usr/bin/ditto -c -k --sequesterRsrc --keepParent "$app_bundle" "$notarization_zip"
+  xcrun notarytool submit "$notarization_zip" \
+    --key "$notary_key" --key-id "$notary_key_id" --issuer "$notary_issuer" \
+    --wait --timeout 30m
+  xcrun stapler staple "$app_bundle"
+  xcrun stapler validate "$app_bundle"
+  /usr/sbin/spctl --assess --type execute --verbose=2 "$app_bundle"
+fi
 
 mkdir -p "$stage_dir"
 cp -R "$app_bundle" "$stage_dir/Cloud Itonami.app"
 ln -s /Applications "$stage_dir/Applications"
 /usr/bin/hdiutil create -volname "Cloud Itonami" -srcfolder "$stage_dir" -ov -format UDZO "$dmg"
+if [[ "$codesign_identity" != "-" ]]; then
+  /usr/bin/codesign --force --timestamp --sign "$codesign_identity" "$dmg"
+  /usr/bin/codesign --verify --verbose=2 "$dmg"
+fi
+if [[ "${CLOUD_ITONAMI_NOTARIZE:-0}" == "1" ]]; then
+  xcrun notarytool submit "$dmg" \
+    --key "$notary_key" --key-id "$notary_key_id" --issuer "$notary_issuer" \
+    --wait --timeout 30m
+  xcrun stapler staple "$dmg"
+  xcrun stapler validate "$dmg"
+fi
 /usr/bin/ditto -c -k --sequesterRsrc --keepParent "$app_bundle" "$zip"
 
 cd "$release_dir"

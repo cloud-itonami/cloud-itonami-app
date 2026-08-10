@@ -1,0 +1,47 @@
+#!/bin/bash
+set -euo pipefail
+
+if [[ $# -ne 1 ]]; then
+  echo "usage: scripts/sign-windows-release <portable-exe>" >&2
+  exit 2
+fi
+
+repo_dir="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
+exe="$1"
+pfx="${CLOUD_ITONAMI_WINDOWS_PFX:-}"
+password_file="${CLOUD_ITONAMI_WINDOWS_PFX_PASSWORD_FILE:-}"
+tsa_url="${CLOUD_ITONAMI_WINDOWS_TSA_URL:-http://timestamp.sectigo.com}"
+jsign_version="7.5"
+jsign_sha256="602a51c3545a6dc4fb99bd2ea7152b26d1345916d0c93ddfbd5936cb735af91c"
+tool_dir="$repo_dir/target/tools"
+jsign="$tool_dir/jsign-${jsign_version}.jar"
+
+if [[ ! -f "$exe" || ! -f "$pfx" || ! -f "$password_file" ]]; then
+  echo "Windows signing requires the executable, PKCS#12 file, and password file" >&2
+  exit 1
+fi
+if [[ "$(stat -f '%Lp' "$password_file" 2>/dev/null || stat -c '%a' "$password_file")" != "600" ]]; then
+  echo "Windows signing password file must have mode 600" >&2
+  exit 1
+fi
+
+mkdir -p "$tool_dir"
+if [[ ! -f "$jsign" ]]; then
+  curl -fsSL "https://github.com/ebourg/jsign/releases/download/${jsign_version}/jsign-${jsign_version}.jar" \
+    -o "$jsign"
+fi
+actual_sha256="$(shasum -a 256 "$jsign" | awk '{print $1}')"
+if [[ "$actual_sha256" != "$jsign_sha256" ]]; then
+  echo "jsign checksum mismatch" >&2
+  exit 1
+fi
+
+java -jar "$jsign" sign \
+  --keystore "$pfx" --storepass "file:$password_file" \
+  --alg SHA-256 --tsaurl "$tsa_url" --tsmode RFC3161 \
+  --tsretries 3 --tsretrywait 5 \
+  --name "Cloud Itonami" --url "https://itonami.cloud" "$exe"
+
+java -jar "$jsign" extract "$exe"
+test -s "$exe.sig"
+rm -f "$exe.sig"
