@@ -340,7 +340,11 @@
    :git/sha "4a85fd732a7aac8e8273f15556b5a9c43fc6cf82"}
   io.github.etzhayyim/kaiyaku
   {:git/url "https://github.com/etzhayyim/com-etzhayyim-kaiyaku.git"
-   :git/sha "b112a5ce4f61e3c561544e20a6aab5fb15e6c1fa"}
+   :git/sha "b112a5ce4f61e3c561544e20a6aab5fb15e6c1fa"
+   ;; tate still names the pre-migration coordinate. Both coordinates provide
+   ;; the same namespaces, so an uberjar can otherwise retain the older files
+   ;; and fail at startup when rdf-canon calls the newer sha384 API.
+   :exclusions [org.kotoba-lang/io-multiformats]}
   ;; The MCP protocol kernel (manifest model + pure JSON-RPC dispatcher) behind
   ;; `cloud.itonami.app.mcp`. Zero runtime deps of its own, so this adds the
   ;; protocol and nothing else; the tools it serves are already in `fleet`.
@@ -389,7 +393,9 @@
    :git/sha "b0f434c81f778c00321af9572da2346a5e0fc5c7"}}
 
  :aliases
- {:server {:main-opts ["-m" "cloud.itonami.app.server"]}
+ {:build {:deps {io.github.clojure/tools.build {:mvn/version "0.10.8"}}
+          :ns-default build}
+  :server {:main-opts ["-m" "cloud.itonami.app.server"]}
   :ao-messenger {:main-opts ["-m" "cloud.itonami.app.organism-messenger-client"]}
   :repository {:main-opts ["-m" "cloud.itonami.app.repository-runtime"]}
   ;; The MCP server speaks JSON-RPC on stdout, so nothing else may print there:

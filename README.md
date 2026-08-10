@@ -22,7 +22,7 @@ connections, W3C Verifiable Credentials for organization membership
 (`eddsa-jcs-2022` Data Integrity proofs with status-list revocation), the
 `did:web` document endpoint, and optional private email relay client are
 implemented. Production multi-tenant hosting, domain verification, holder-signed
-Verifiable Presentations, and signed desktop packages remain separate
+Verifiable Presentations, and Developer ID notarization remain separate
 responsibilities — the presentation gap is structural, not unfinished work: a
 Passkey signs its own `authenticatorData || clientDataHash` and cannot produce a
 Data Integrity proof.
@@ -36,6 +36,26 @@ Data Integrity proof.
 - Ollama or another configured OpenAI-compatible provider
 
 Pure tests and the loopback web surface also run on Linux.
+
+## Install on macOS
+
+Developer-preview DMG and ZIP builds are published on the
+[GitHub Releases](https://github.com/cloud-itonami/cloud-itonami-app/releases)
+page. They currently require Java 21+ and are ad-hoc signed, not Apple
+notarized. macOS may therefore require Control-click → Open on first launch.
+The DMG contains `Cloud Itonami.app`; drag it to Applications.
+
+Release assets include `SHA256SUMS`. Verify a download before opening it:
+
+```bash
+shasum -a 256 -c SHA256SUMS
+```
+
+Maintainers build the same artifacts locally with:
+
+```bash
+scripts/build-macos-release
+```
 
 ## Run
 
