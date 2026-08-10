@@ -7671,7 +7671,7 @@
       const issuedVia = session['issued-via'];
       $('#current-auth-method').textContent = provider
         ? `${authProviderLabels[provider] || provider}でサインイン中`
-        : issuedVia === 'email' ? 'Emailでサインイン中'
+        : issuedVia === 'email-magic-link' ? 'Emailでサインイン中'
         : issuedVia === 'passkey' ? 'Passkeyでサインイン中'
         : 'サインイン済み';
       const linked = $('#linked-auth-methods');
@@ -7683,8 +7683,27 @@
         identities.forEach((identity) => {
           const label = authProviderLabels[identity.provider] ||
             (identity.provider === 'email' ? 'Email' : identity.provider);
-          linked.append(make('li', null,
+          const row = make('li');
+          row.append(make('span', null,
             `${label} · ${identity.email || identity['display-name'] || '接続済み'}`));
+          const unlink = make('button', 'tool-button', '解除');
+          unlink.type = 'button';
+          unlink.addEventListener('click', async () => {
+            if (!window.confirm(`${label}の接続を解除しますか？`)) return;
+            unlink.disabled = true;
+            try {
+              await postJSON('/api/auth/identities/unlink', {
+                provider:identity.provider, subject:identity.subject
+              }, true);
+              await loadIdentity();
+              $('#identity-status').textContent = `${label}の接続を解除しました。`;
+            } catch (error) {
+              unlink.disabled = false;
+              $('#identity-status').textContent = error.message;
+            }
+          });
+          row.append(unlink);
+          linked.append(row);
         });
       }
       const linkedProviders = new Set(identities.map((identity) => identity.provider));
@@ -7699,11 +7718,49 @@
           links.append(button);
         });
     };
+    const renderSessions = async () => {
+      const list = $('#auth-session-list');
+      try {
+        const request = await fetch('/api/auth/sessions');
+        const data = await request.json();
+        if (!request.ok) throw new Error(data?.error?.message || 'セッションを確認できません。');
+        list.replaceChildren();
+        (data.sessions || []).forEach((session) => {
+          const row = make('li');
+          const provider = session['authn-provider'];
+          const method = provider ? (authProviderLabels[provider] || provider)
+            : session['issued-via'] === 'email-magic-link' ? 'Email'
+            : session['issued-via'] === 'passkey' ? 'Passkey' : session.kind;
+          row.append(make('span', null,
+            `${method}${session['current?'] ? ' · この端末' : ''} · ${session['created-at'] || '開始時刻不明'}`));
+          if (!session['current?']) {
+            const revoke = make('button', 'tool-button', 'ログアウト');
+            revoke.type = 'button';
+            revoke.addEventListener('click', async () => {
+              revoke.disabled = true;
+              try {
+                await postJSON('/api/auth/sessions/revoke', {'session-id':session.id}, true);
+                await renderSessions();
+              } catch (error) {
+                revoke.disabled = false;
+                $('#identity-status').textContent = error.message;
+              }
+            });
+            row.append(revoke);
+          }
+          list.append(row);
+        });
+        if (!list.children.length) list.append(make('li', null, '有効なセッションはありません。'));
+      } catch (error) {
+        list.replaceChildren(make('li', null, error.message));
+      }
+    };
     const renderIdentity = (data) => {
       identityState = data;
       renderAuthMethods(data);
       const identityReady = Boolean(data['authenticated?'] && data['may-act?']);
       appUnlocked = identityReady;
+      if (data['authenticated?']) renderSessions();
       $$('.local-nav__item').forEach((item) => {
         item.disabled = !identityReady && !publicViews.has(item.dataset.view);
         item.setAttribute('aria-disabled', String(item.disabled));
@@ -8315,6 +8372,18 @@
       } catch (error) {
         $('#identity-status').textContent = error.message;
       } finally { button.disabled = false; }
+    });
+    $('#sign-out-current').addEventListener('click', async (event) => {
+      const button = event.currentTarget;
+      button.disabled = true;
+      try {
+        await postJSON('/api/auth/signout', {}, true);
+        await loadIdentity();
+        $('#identity-status').textContent = 'ログアウトしました。';
+      } catch (error) {
+        button.disabled = false;
+        $('#identity-status').textContent = error.message;
+      }
     });
     $('#email-login-form').addEventListener('submit', async (event) => {
       event.preventDefault();

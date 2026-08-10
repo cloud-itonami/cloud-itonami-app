@@ -19,7 +19,16 @@
                :delivery-endpoint nil
                :access-token-env "CLOUD_ITONAMI_EMAIL_LOGIN_TOKEN"}
  :auth {:allow-signup? false
-        :sso-providers [:google :microsoft :github]}
+        :sso-providers [:google :microsoft :github]
+        ;; A distributed desktop app cannot keep a client secret. Google and
+        ;; Microsoft installed-app registrations can therefore provide only a
+        ;; public client ID and use the PKCE verifier already generated per
+        ;; transaction. GitHub's web flow still requires its secret, so it is
+        ;; intentionally not accepted in this map as a public client.
+        :sso-clients
+        #_{:google {:client-id "..." :public-client? true}
+           :microsoft {:client-id "..." :public-client? true}}
+        {}}
  :routing {:default-provider "ollama"
            :default-model "gemma4:e2b"
            :cloud-enabled? false}

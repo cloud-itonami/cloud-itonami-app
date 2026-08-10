@@ -2381,6 +2381,15 @@
            [:p {:class "form-help"}
             "同じEmailでも自動統合しません。既存Userへサインインした状態で接続してください。"]
            [:div {:class "button-row" :id "sso-link-list"}]]
+          [:div {:class "local-card" :id "session-management-card"}
+           (dds/heading 2 "ログイン中の端末" {:size "24"})
+           [:p {:class "view-lead"}
+            "このUserの有効なセッションを確認し、不要な端末をログアウトできます。"]
+           [:ul {:class "data-list" :id "auth-session-list"}
+            [:li "セッションを確認中…"]]
+           [:div {:class "button-row"}
+            [:button {:class "tool-button" :id "sign-out-current"
+                      :type "button"} "この端末からログアウト"]]]
           [:div {:class "settings-grid"}
            [:div {:class "settings-stack"}
             [:div {:class "local-card"}

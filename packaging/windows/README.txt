@@ -1,4 +1,4 @@
-Cloud Itonami 0.3.0 - Windows x64 preview
+Cloud Itonami 0.4.0 - Windows x64 preview
 
 Requirements:
 - Windows 10 or later

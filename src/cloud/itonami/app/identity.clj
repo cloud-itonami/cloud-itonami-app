@@ -33,6 +33,8 @@
 (def enrollment-seconds (* 24 60 60))
 (def email-login-seconds 600)
 (def email-login-cooldown-seconds 60)
+(def sso-start-window-seconds 60)
+(def sso-start-limit 20)
 (def account-id-pattern #"^[a-z0-9](?:[a-z0-9._-]{1,30}[a-z0-9])?$")
 (def keychain-service "cloud-itonami-app.oauth")
 (def default-identity-profile
@@ -177,15 +179,38 @@
    :microsoft ["openid" "profile" "email" "User.Read"]
    :github ["read:user" "user:email"]})
 
+(def public-sso-providers
+  "Providers whose installed-app code exchange accepts PKCE without a secret.
+  GitHub's web flow supports PKCE but still requires the OAuth app secret; its
+  separate device flow is not silently substituted here."
+  #{:google :microsoft})
+
 (defn sso-provider-config [provider]
   (when (some #{provider} (:sso-providers @runtime-auth-profile))
-    (when-let [config (provider-config provider)]
+    (when-let [base (provider-config provider)]
+      (let [client (get-in @runtime-auth-profile [:sso-clients provider])
+            client-id (or (some-> (:client-id-env client) System/getenv not-empty)
+                          (some-> (:client-id client) str str/trim not-empty)
+                          (:client-id base))
+            client-secret (or (some-> (:client-secret-env client)
+                                      System/getenv not-empty)
+                              (:client-secret base))
+            public-client? (and (true? (:public-client? client))
+                                (contains? public-sso-providers provider))
+            config (assoc base
+                          :client-id client-id
+                          :client-secret client-secret
+                          :public-client? public-client?
+                          :configured? (boolean
+                                        (and client-id
+                                             (or public-client?
+                                                 client-secret))))]
       (cond-> (assoc config :scopes (get sso-scopes provider []))
         (= provider :microsoft)
         (assoc :authorization-endpoint
                "https://login.microsoftonline.com/common/oauth2/v2.0/authorize"
                :token-endpoint
-               "https://login.microsoftonline.com/common/oauth2/v2.0/token")))))
+               "https://login.microsoftonline.com/common/oauth2/v2.0/token"))))))
 
 (defn public-auth-methods []
   {:allow-signup? (true? (:allow-signup? @runtime-auth-profile))
@@ -373,6 +398,49 @@
           authn-provider (assoc :authn-provider authn-provider)))
        {:token token :expires-at expires-at :session-id session-id
         :csrf csrf}))))
+
+(defn- public-session-record [current-session candidate]
+  (assoc (select-keys candidate [:id :kind :label :issued-via :authn-provider
+                                 :authn-level :created-at :expires-at])
+         :current? (= (:id current-session) (:id candidate))))
+
+(defn user-sessions
+  "List this User's live browser sessions without exposing token digests or CSRF."
+  [current-session]
+  (let [now (Instant/now)]
+    (->> (:sessions (identity-state (store/snapshot)))
+         vals
+         (filter #(= (:user-id current-session) (:user-id %)))
+         (filter #(and (not (:revoked? %))
+                       (pos? (compare (Instant/parse (:expires-at %)) now))))
+         (sort-by :created-at #(compare %2 %1))
+         (mapv #(public-session-record current-session %)))))
+
+(defn revoke-session!
+  "Revoke one session owned by the signed-in User. Cross-user ids fail closed."
+  [current-session session-id]
+  (let [candidate (get-in (identity-state (store/snapshot))
+                          [:sessions session-id])]
+    (when-not (and candidate
+                   (= (:user-id current-session) (:user-id candidate)))
+      (throw (ex-info "セッションが見つかりません。"
+                      {:type :identity/session-not-found})))
+    (let [now (store/now)]
+      (store/transact!
+       (fn [state]
+         (-> state
+             (assoc-in [:identity :sessions session-id :revoked?] true)
+             (assoc-in [:identity :sessions session-id :revoked-at] now)
+             (update :events conj
+                     {:type :identity/session-revoked :at now
+                      :user-id (:user-id current-session)
+                      :session-id session-id
+                      :current? (= session-id (:id current-session))}))))
+      {:revoked true :session-id session-id
+       :current? (= session-id (:id current-session))})))
+
+(defn sign-out! [current-session]
+  (revoke-session! current-session (:id current-session)))
 
 (defn- public-connection [connection]
   ;; :user-did is shown. Whose account a connection belongs to is exactly the
@@ -691,7 +759,7 @@
                 {:membership membership :tenant record})))
           (memberships-for-user state user-id))))
 
-(declare may-act?)
+(declare may-act? require-passkey!)
 
 (defn public-state [token]
   (ensure-personal-tenants!)
@@ -717,8 +785,9 @@
      :authenticated? (boolean session)
      :may-act? (boolean (and session (may-act? session)))
      :session (when session
-                (select-keys session [:kind :issued-via :authn-level
-                                      :authn-provider :authn-factors]))
+                (select-keys session [:id :kind :issued-via :authn-level
+                                      :authn-provider :authn-factors
+                                      :created-at :expires-at]))
      :auth-methods (public-auth-methods)
      :email-login-configured? @runtime-email-login-configured?
      :signup-enabled? (true? (:allow-signup? @runtime-auth-profile))
@@ -1100,6 +1169,42 @@
                      {:type :identity/login-identity-linked :at now
                       :provider provider :user-id user-id})))))
     user-id))
+
+(defn unlink-login-identity!
+  "Remove an explicitly named login identity from this User.
+
+  The last usable method cannot be removed. An enrolled Passkey counts as an
+  independent root; otherwise another linked Email/SSO identity must remain."
+  [session {:keys [provider subject]}]
+  (require-passkey! session)
+  (let [provider (some-> provider name keyword)
+        subject (some-> subject str)
+        key (login-identity-key provider subject)
+        state (identity-state (store/snapshot))
+        identity (get-in state [:login-identities key])
+        other-identities (->> (:login-identities state)
+                              vals
+                              (filter #(= (:user-id session) (:user-id %)))
+                              (remove #(= key (:id %))))
+        has-passkey? (true? (get-in state [:users (:user-id session)
+                                           :passkey-enrolled?]))]
+    (when-not (and identity (= (:user-id session) (:user-id identity)))
+      (throw (ex-info "接続済みのサインイン方法が見つかりません。"
+                      {:type :identity/login-identity-not-found})))
+    (when-not (or has-passkey? (seq other-identities))
+      (throw (ex-info "最後のサインイン方法は解除できません。"
+                      {:type :identity/last-login-method})))
+    (let [now (store/now)]
+      (store/transact!
+       (fn [current]
+         (-> current
+             (update-in [:identity :login-identities] dissoc key)
+             (update-in [:identity :users (:user-id session)
+                         :authentication-roots] disj key)
+             (update :events conj
+                     {:type :identity/login-identity-unlinked :at now
+                      :provider provider :user-id (:user-id session)}))))
+      {:unlinked true :provider provider :subject subject})))
 
 (defn resume-owner-onboarding! []
   (let [state (identity-state (store/snapshot))
@@ -1859,12 +1964,35 @@
      (get-in (identity-state (store/snapshot))
              [:sso-transactions state :provider])))
 
+(defn- prune-sso-transactions! []
+  (let [now (Instant/now)]
+    (store/transact!
+     update-in [:identity :sso-transactions]
+     (fn [transactions]
+       (into {}
+             (filter (fn [[_ transaction]]
+                       (and (not (:used? transaction))
+                            (when-let [expires-at (:expires-at transaction)]
+                              (pos? (compare (Instant/parse expires-at) now))))))
+             (or transactions {}))))))
+
 (defn start-sso-authentication!
   "Start a minimal-scope sign-in/sign-up or authenticated account-link flow."
   [provider origin {:keys [mode session]}]
+  (prune-sso-transactions!)
   (let [{:keys [configured? client-id authorization-endpoint scopes]
          :as config} (sso-provider-config provider)
-        link? (= :link mode)]
+        link? (= :link mode)
+        now (Instant/now)
+        recent-starts (->> (:sso-transactions (identity-state (store/snapshot)))
+                           vals
+                           (filter #(= provider (:provider %)))
+                           (filter #(when-let [created-at (:created-at %)]
+                                      (< (.getSeconds
+                                          (Duration/between
+                                           (Instant/parse created-at) now))
+                                         sso-start-window-seconds)))
+                           count)]
     (when-not config
       (throw (ex-info "未対応のSSOです。" {:type :sso/unsupported})))
     (when-not configured?
@@ -1873,6 +2001,9 @@
     (when (and link? (not (may-act? session)))
       (throw (ex-info "SSOを接続するにはサインインが必要です。"
                       {:type :identity/unauthenticated})))
+    (when (>= recent-starts sso-start-limit)
+      (throw (ex-info "SSOの開始回数が多すぎます。少し待って再試行してください。"
+                      {:type :sso/rate-limited :provider provider})))
     (let [state-value (random-token 32)
           nonce (random-token 24)
           verifier (random-token 48)
@@ -1898,9 +2029,21 @@
         :provider provider :mode (if link? :link :authenticate)
         :user-id (when link? (:user-id session))
         :nonce nonce :verifier verifier :redirect-uri redirect-uri
+        :created-at (str now)
         :expires-at expires-at :used? false})
       {:url url :provider provider :mode (if link? :link :authenticate)
        :expires-at expires-at})))
+
+(defn record-auth-failure!
+  "Append a secret-free authentication failure event."
+  [provider error]
+  (let [data (ex-data error)]
+    (store/transact!
+     update :events conj
+     {:type :identity/authentication-failed
+      :at (store/now)
+      :provider provider
+      :reason (or (:type data) :identity/unexpected-auth-error)})))
 
 (defn- form-body [values]
   (str/join "&" (map (fn [[key value]]

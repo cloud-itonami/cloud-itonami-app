@@ -242,6 +242,9 @@
        "; Path=/; HttpOnly; SameSite=Strict; Max-Age="
        identity/session-seconds))
 
+(defn- expired-session-cookie []
+  (str identity/cookie-name "=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0"))
+
 (defn- redirect!
   ([exchange location] (redirect! exchange location {}))
   ([^HttpExchange exchange location headers]
@@ -699,6 +702,45 @@
 (defn- identity-context [exchange]
   (identity/public-state (or (bearer-token exchange)
                              (cookie-value exchange identity/cookie-name))))
+
+(defn- auth-lifecycle-path? [path]
+  (contains? #{"/api/auth/sessions" "/api/auth/sessions/revoke"
+               "/api/auth/signout" "/api/auth/identities/unlink"}
+             path))
+
+(defn- handle-auth-lifecycle! [exchange config method path]
+  (case [method path]
+    ["GET" "/api/auth/sessions"]
+    (let [session (require-app-session! exchange)]
+      (send! exchange 200 {:sessions (identity/user-sessions session)}))
+
+    ["POST" "/api/auth/sessions/revoke"]
+    (let [session (require-app-session! exchange)
+          request (read-json exchange)
+          result (do
+                   (require-origin! exchange config)
+                   (require-csrf! exchange session)
+                   (identity/revoke-session! session (:session-id request)))]
+      (send! exchange 200 result
+             (if (:current? result)
+               {"Set-Cookie" (expired-session-cookie)} {})))
+
+    ["POST" "/api/auth/signout"]
+    (let [session (require-session! exchange)]
+      (require-origin! exchange config)
+      (require-csrf! exchange session)
+      (identity/sign-out! session)
+      (send! exchange 200 {:signed-out true}
+             {"Set-Cookie" (expired-session-cookie)}))
+
+    ["POST" "/api/auth/identities/unlink"]
+    (let [session (require-app-session! exchange)
+          request (read-json exchange)]
+      (require-origin! exchange config)
+      (require-csrf! exchange session)
+      (send! exchange 200 (identity/unlink-login-identity! session request)))
+
+    (send! exchange 405 {:error {:type "method_not_allowed"}})))
 
 (defn- messenger-actor [session]
   (if (= :agent (:kind session))
@@ -2671,6 +2713,9 @@
                    (identity/public-state
                     (cookie-value exchange identity/cookie-name)))
 
+            (auth-lifecycle-path? path)
+            (handle-auth-lifecycle! exchange config method path)
+
             (and (= method "POST") (= path "/api/identity/register"))
             (do
               (require-origin! exchange config)
@@ -2873,7 +2918,8 @@
                                (str "/?auth=sso&provider=" (name provider)
                                     "#settings")
                                {"Set-Cookie" (session-cookie (:token result))}))
-                  (catch Exception _
+                  (catch Exception error
+                    (identity/record-auth-failure! provider error)
                     (redirect! exchange
                                (str "/?auth=error&provider=" (name provider)
                                     "#settings"))))
@@ -4238,6 +4284,10 @@
                      :sso/link-required 409
                      :sso/signup-disabled 403
                      :sso/verification-failed 403
+                     :sso/rate-limited 429
+                     :identity/session-not-found 404
+                     :identity/login-identity-not-found 404
+                     :identity/last-login-method 409
                      :site/not-found 404
                      :site/slug-conflict 409
                      :site/html-too-large 413
