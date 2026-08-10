@@ -46,7 +46,9 @@
      :headers (.map (.headers response))
      :body (json/read-str (.body response) :key-fn keyword)}))
 
-(defn- with-server [deliveries body]
+(defn- with-server
+  ([deliveries body] (with-server deliveries configuration body))
+  ([deliveries server-configuration body]
   (let [temporary (java.nio.file.Files/createTempDirectory
                    "cloud-itonami-email-login-test"
                    (make-array java.nio.file.attribute.FileAttribute 0))
@@ -74,11 +76,11 @@
                       {:provider provider :name (name provider)
                        :configured? false :scopes []})]
         (server/stop!)
-        (server/start! configuration)
+        (server/start! server-configuration)
         (try (body) (finally (server/stop!))))
       (finally
         (server/stop!)
-        (reset! store/state previous)))))
+        (reset! store/state previous))))))
 
 (deftest email-link-is-private-expiring-single-use-and-session-rooted
   (let [deliveries (atom [])]
@@ -131,6 +133,26 @@
                                   {:email "owner@example.jp"}))))
         (is (empty? @deliveries)
             "email is a sign-in proof, not a replacement identity root")))))
+
+(deftest verified-email-can-create-a-personal-user-when-signup-is-enabled
+  (let [deliveries (atom [])]
+    (with-server
+      deliveries
+      (assoc configuration :auth {:allow-signup? true :sso-providers []})
+      (fn []
+        (is (= 202 (:status (post! "/api/email-authenticate/start"
+                                  {:email "new@example.jp"}))))
+        (let [token (second
+                     (re-find #"#email-login=(.+)$"
+                              (:magic-link (first @deliveries))))
+              finish (post! "/api/email-authenticate/finish" {:token token})]
+          (is (= 200 (:status finish)))
+          (is (true? (get-in finish [:body :authenticated?])))
+          (is (true? (get-in finish [:body :may-act?])))
+          (is (= "email" (get-in finish [:body :session :kind])))
+          (is (= "new@example.jp" (get-in finish [:body :user :contact-email])))
+          (is (false? (get-in finish [:body :user :passkey-enrolled?])))
+          (is (= "personal" (get-in finish [:body :organization :kind]))))))))
 
 (deftest expired-and-forged-email-proofs-fail-closed
   (let [deliveries (atom [])]

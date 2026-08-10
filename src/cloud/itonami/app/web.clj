@@ -2322,23 +2322,28 @@
          [:div {:class "settings-notice" :id "connection-notice" :hidden true}]
          [:div {:class "security-callout" :id "passkey-gate-notice"
                 :role "status" :aria-live "polite"}
-          [:strong "Passkey 登録が必須です。"]
-          " 登録が完了するまで、この端末ではワークスペースとチャットを利用できません。"]
+          [:strong "サインインが必要です。"]
+          " Passkey、Email、またはSSOで続行できます。重要操作ではPasskeyを追加確認します。"]
          [:div {:class "local-card" :id "identity-onboarding"}
-         (dds/heading 2 "Passkey で利用登録" {:size "24"
-                                             :id "registration-title"})
+         (dds/heading 2 "サインイン / 新規登録" {:size "24"
+                                                :id "registration-title"})
           [:p {:class "view-lead" :id "registration-lead"}
-           "入力は不要です。Passkey だけで User を作成し、Organization ID やプロフィールは後から設定できます。"]
+           "いつもの認証方法を選べます。SSOとEmailは新規登録にも使え、Passkeyは重要操作の追加確認にも使います。"]
           [:form {:class "settings-form" :id "registration-form"}
            [:p {:class "form-help"}
             "Passkey の P-256 公開鍵から User DID（did:key）を生成します。秘密鍵は端末から出ません。"]
            [:button {:class "primary-action" :id "registration-submit"
                      :type "submit"} "Passkey で登録"]]
           [:div {:class "settings-stack" :id "registered-auth" :hidden true}
-           [:form {:class "settings-form" :id "email-login-form" :hidden true}
-            (dds/heading 3 "Email でサインイン" {:size "20"})
+           [:div {:class "settings-form"}
+            (dds/heading 3 "SSOで続ける" {:size "20"})
             [:p {:class "form-help"}
-             "登録済みの連絡先へ、10分間・一回限りのログインリンクを送ります。"]
+             "Google、Microsoft、GitHubの認証だけを使います。メールやリポジトリへのアクセス権は要求しません。"]
+            [:div {:class "button-row" :id "sso-signin-list"}]]
+           [:form {:class "settings-form" :id "email-login-form" :hidden true}
+            (dds/heading 3 "Emailで続ける" {:size "20"})
+            [:p {:class "form-help"}
+             "10分間・一回限りのリンクを送ります。新規登録が有効な環境では、そのままUserを作成できます。"]
             [:div {:class "field"}
              [:label {:for "email-login-address"} "メールアドレス"]
              [:input {:id "email-login-address" :name "email" :type "email"
@@ -2367,7 +2372,15 @@
             [:p {:class "identity-summary__name" :id "identity-name"} "User"]
             [:p {:class "identity-summary__meta" :id "identity-email"} "—"]
             [:p {:class "identity-summary__meta" :id "identity-did"} "—"]]
-           [:span {:class "state-chip"} "端末認証済み"]]
+           [:span {:class "state-chip"} "サインイン済み"]]
+          [:div {:class "local-card" :id "auth-methods-card"}
+           (dds/heading 2 "サインイン方法" {:size "24"})
+           [:p {:class "view-lead" :id "current-auth-method"}
+            "現在の認証方法を確認中…"]
+           [:ul {:class "data-list" :id "linked-auth-methods"}]
+           [:p {:class "form-help"}
+            "同じEmailでも自動統合しません。既存Userへサインインした状態で接続してください。"]
+           [:div {:class "button-row" :id "sso-link-list"}]]
           [:div {:class "settings-grid"}
            [:div {:class "settings-stack"}
             [:div {:class "local-card"}

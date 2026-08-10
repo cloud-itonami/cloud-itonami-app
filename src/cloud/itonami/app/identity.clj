@@ -40,7 +40,12 @@
    :organization-domain-suffix "cloud-itonami.app"
    :organization-domain-overrides {}
    :publish-did-web? false})
+(def default-auth-profile
+  {:allow-signup? false
+   :sso-providers [:google :microsoft :github]})
 (defonce runtime-identity-profile (atom default-identity-profile))
+(defonce runtime-auth-profile (atom default-auth-profile))
+(defonce runtime-email-login-configured? (atom false))
 ;; Provider -> {:service :account}: an OAuth client this deployment holds under
 ;; a name the application did not choose. See `referenced-client`.
 (defonce runtime-oauth-clients (atom {}))
@@ -53,6 +58,10 @@
   [configuration]
   (reset! runtime-identity-profile
           (merge default-identity-profile (:identity configuration)))
+  (reset! runtime-auth-profile
+          (merge default-auth-profile (:auth configuration)))
+  (reset! runtime-email-login-configured?
+          (email-login/configured? configuration))
   (reset! runtime-oauth-clients (or (:oauth-clients configuration) {})))
 
 (defn identity-profile []
@@ -161,9 +170,37 @@
              :client-secret client-secret
              :configured? (boolean (and client-id client-secret))))))
 
+(def sso-scopes
+  "Authentication scopes are intentionally smaller than connector scopes.
+  Signing in must never grant mailbox, repository, or file access."
+  {:google ["openid" "profile" "email"]
+   :microsoft ["openid" "profile" "email" "User.Read"]
+   :github ["read:user" "user:email"]})
+
+(defn sso-provider-config [provider]
+  (when (some #{provider} (:sso-providers @runtime-auth-profile))
+    (when-let [config (provider-config provider)]
+      (cond-> (assoc config :scopes (get sso-scopes provider []))
+        (= provider :microsoft)
+        (assoc :authorization-endpoint
+               "https://login.microsoftonline.com/common/oauth2/v2.0/authorize"
+               :token-endpoint
+               "https://login.microsoftonline.com/common/oauth2/v2.0/token")))))
+
+(defn public-auth-methods []
+  {:allow-signup? (true? (:allow-signup? @runtime-auth-profile))
+   :email {:configured? @runtime-email-login-configured?}
+   :sso (mapv (fn [provider]
+                (let [config (sso-provider-config provider)]
+                  {:id (name provider)
+                   :name (:name config)
+                   :configured? (boolean (:configured? config))}))
+              (:sso-providers @runtime-auth-profile))})
+
 (defn- identity-state [state]
   (merge {:organizations {} :users {} :memberships {}
           :connections {} :oauth-transactions {} :sessions {}
+          :login-identities {} :sso-transactions {}
           :passkeys {} :enrollments {} :organization-invitations {}
           :webauthn-transactions {}}
          (:identity state)))
@@ -308,7 +345,7 @@
   still cannot do."
   ([user-id] (issue-session! user-id nil))
   ([user-id {:keys [kind label issued-via ttl-seconds authn-level
-                    authn-decision authn-factors]}]
+                    authn-decision authn-factors authn-provider]}]
    (let [state (identity-state (store/snapshot))
          membership (default-membership state user-id)]
      (when-not membership
@@ -332,7 +369,8 @@
           issued-via (assoc :issued-via issued-via)
           authn-level (assoc :authn-level authn-level)
           authn-decision (assoc :authn-decision authn-decision)
-          authn-factors (assoc :authn-factors authn-factors)))
+          authn-factors (assoc :authn-factors authn-factors)
+          authn-provider (assoc :authn-provider authn-provider)))
        {:token token :expires-at expires-at :session-id session-id
         :csrf csrf}))))
 
@@ -653,6 +691,8 @@
                 {:membership membership :tenant record})))
           (memberships-for-user state user-id))))
 
+(declare may-act?)
+
 (defn public-state [token]
   (ensure-personal-tenants!)
   (ensure-did-links!)
@@ -668,9 +708,27 @@
                               (memberships-for-user state (:user-id session))))]
     {:schema "cloud.itonami.app.identity.v1"
      :registered? (boolean (seq (:users state)))
-     :passkey-required? (and (boolean (seq (:users state)))
+     ;; This flag means the interrupted Passkey-first owner ceremony can be
+     ;; resumed, not merely that nobody has enrolled a Passkey. Email/SSO
+     ;; sign-up deliberately creates an active User without one.
+     :passkey-required? (and (some #(= :pending-passkey (:status %))
+                                   (vals (:users state)))
                              (empty? (:passkeys state)))
      :authenticated? (boolean session)
+     :may-act? (boolean (and session (may-act? session)))
+     :session (when session
+                (select-keys session [:kind :issued-via :authn-level
+                                      :authn-provider :authn-factors]))
+     :auth-methods (public-auth-methods)
+     :email-login-configured? @runtime-email-login-configured?
+     :signup-enabled? (true? (:allow-signup? @runtime-auth-profile))
+     :login-identities
+     (when session
+       (->> (:login-identities state)
+            vals
+            (filter #(= (:user-id session) (:user-id %)))
+            (mapv #(select-keys % [:provider :subject :email :display-name
+                                   :linked-at]))))
      :csrf (:csrf session)
      :user (when session (select-keys user [:id :did :account-id :email
                                             :contact-email :display-name :status
@@ -946,6 +1004,102 @@
                                      :user-id user-id})))))
       (assoc (issue-session! user-id)
              :user-id user-id :email canonical-address))))
+
+(defn- account-id-base [email display-name]
+  (let [source (or (some-> email (str/split #"@" 2) first)
+                   display-name
+                   "user")
+        normalized (-> source str str/lower-case
+                       (str/replace #"[^a-z0-9._-]+" "-")
+                       (str/replace #"^[^a-z0-9]+|[^a-z0-9]+$" ""))
+        normalized (if (< (count normalized) 3) "user" normalized)]
+    (subs normalized 0 (min 24 (count normalized)))))
+
+(defn- available-account-id [state email display-name]
+  (let [base (account-id-base email display-name)]
+    (loop [attempt 0]
+      (let [candidate (if (zero? attempt) base (str base "-" attempt))]
+        (if (and (valid-account-id? candidate)
+                 (nil? (slug-claimed-by state candidate {})))
+          candidate
+          (recur (inc attempt)))))))
+
+(defn- create-personal-user!
+  "Create an active personal User rooted in a verified external proof.
+
+  Passkey onboarding remains available as step-up; a normal sign-up does not
+  invent a DID or pretend that an email/OAuth proof was WebAuthn."
+  [{:keys [email display-name root]}]
+  (let [state (identity-state (store/snapshot))
+        account-id (available-account-id state email display-name)
+        canonical-address (canonical-email account-id)
+        user-id (str "user-" (UUID/randomUUID))
+        tenant-id (str "org-" (UUID/randomUUID))
+        membership-id (str "membership-" (UUID/randomUUID))
+        now (store/now)
+        user-name (or (some-> display-name str str/trim not-empty)
+                      (some-> email (str/split #"@" 2) first)
+                      "User")
+        tenant (personal-tenant-record
+                state {:tenant-id tenant-id :user-id user-id
+                       :account-id account-id :now now})
+        model (directory/directory tenant-id (account-domain))]
+    (directory/add-user
+     model (directory/user user-id canonical-address
+                           {:display-name user-name :roles #{:super-admin}}))
+    (store/transact!
+     (fn [current]
+       (-> current
+           (assoc-in [:identity :organizations tenant-id] tenant)
+           (assoc-in [:identity :memberships membership-id]
+                     {:id membership-id :organization-id tenant-id
+                      :user-id user-id :role :owner :created-at now})
+           (assoc-in [:identity :users user-id]
+                     {:id user-id :did nil :account-id account-id
+                      :email canonical-address :contact-email email
+                      :display-name user-name :user-handle (random-token 32)
+                      :passkey-enrolled? false :status :active
+                      :default-membership-id membership-id
+                      :authentication-roots #{root}
+                      :subject (identity/subject user-id :person
+                                                 {:labels #{:local :person}})
+                      :created-at now})
+           (update :events conj
+                   {:type :identity/signed-up :at now :user-id user-id
+                    :provider (first root)}))))
+    user-id))
+
+(defn- login-identity-key [provider subject]
+  [provider (str subject)])
+
+(defn- login-user [state provider subject]
+  (some-> (get-in state [:login-identities
+                         (login-identity-key provider subject)])
+          :user-id))
+
+(defn- bind-login-identity!
+  [user-id {:keys [provider subject email display-name]}]
+  (let [key (login-identity-key provider subject)
+        now (store/now)]
+    (store/transact!
+     (fn [current]
+       (let [held (get-in current [:identity :login-identities key])]
+         (when (and held (not= user-id (:user-id held)))
+           (throw (ex-info "このサインインIDは別のUserに接続されています。"
+                           {:type :sso/subject-already-bound
+                            :provider provider})))
+         (-> current
+             (assoc-in [:identity :login-identities key]
+                       {:id key :provider provider :subject (str subject)
+                        :user-id user-id :email email :display-name display-name
+                        :linked-at (or (:linked-at held) now)
+                        :last-authenticated-at now})
+             (update-in [:identity :users user-id :authentication-roots]
+                        (fnil conj #{}) [provider (str subject)])
+             (update :events conj
+                     {:type :identity/login-identity-linked :at now
+                      :provider provider :user-id user-id})))))
+    user-id))
 
 (defn resume-owner-onboarding! []
   (let [state (identity-state (store/snapshot))
@@ -1230,6 +1384,13 @@
                                                (:authn-level candidate))
                                             (= :authenticated
                                                (:authn-decision candidate)))
+                                :sso (and (= :sso (:issued-via candidate))
+                                          (= :single-factor
+                                             (:authn-level candidate))
+                                          (= :authenticated
+                                             (:authn-decision candidate))
+                                          (contains? sso-scopes
+                                                     (:authn-provider candidate)))
                                 ;; A Passkey session must have been minted BY
                                 ;; a Passkey ceremony, not merely belong to
                                 ;; somebody who has one.
@@ -1276,41 +1437,48 @@
                                (contains? #{(normalized-email (:email user))
                                             (normalized-email (:contact-email user))}
                                           email)))
-                     (filter #(and (= :active (:status %))
-                                   (true? (:passkey-enrolled? %))))
+                     (filter #(= :active (:status %)))
                      vec)]
     (when (= 1 (count matches)) (first matches))))
 
 (defn start-email-authentication!
   "Create and deliver a private one-time proof, while always returning the same
-  public result. Unknown, ambiguous, inactive and unrooted addresses do not
-  create a transaction or call the delivery adapter."
+  public result. Unknown addresses create an account only when this deployment
+  explicitly enables sign-up."
   [configuration email]
   (let [email (normalized-email email)
         state (identity-state (store/snapshot))
         user (when email (email-login-user state email))
+        signup? (and email (nil? user)
+                     (true? (:allow-signup? @runtime-auth-profile)))
+        subject-key (or (:id user) (when signup? (str "email:" (digest email))))
         now (System/currentTimeMillis)
         cooldown-ms (* 1000 email-login-cooldown-seconds)
         recent? (some (fn [transaction]
-                        (and (= (:id user)
-                                (:identity.email-challenge/user-id transaction))
+                        (and (= subject-key
+                                (:identity.email-challenge/subject-key transaction))
                              (not (:identity.email-challenge/consumed? transaction))
                              (< (- now (:identity.email-challenge/created-at
                                         transaction 0))
                                 cooldown-ms)))
                       (vals (:email-login-transactions state)))]
-    (when (and (email-login/configured? configuration) user (not recent?))
+    (when (and (email-login/configured? configuration)
+               (or user signup?) (not recent?))
       (let [token (random-token 32)
             transaction-id (str "email-login-" (UUID/randomUUID))
             expires-at (+ now (* 1000 email-login-seconds))
             destination (or (normalized-email (:contact-email user))
-                            (normalized-email (:email user)))
+                            (normalized-email (:email user))
+                            email)
             origin (str/replace (get-in configuration [:server :public-origin])
                                 #"/+$" "")]
         (store/transact!
          assoc-in [:identity :email-login-transactions transaction-id]
          {:identity.email-challenge/id transaction-id
           :identity.email-challenge/user-id (:id user)
+          :identity.email-challenge/signup-email (when signup? email)
+          :identity.email-challenge/email destination
+          :identity.email-challenge/subject-key subject-key
           :identity.email-challenge/token-digest (digest token)
           :identity.email-challenge/created-at now
           :identity.email-challenge/expires-at expires-at
@@ -1351,7 +1519,8 @@
       (throw (ex-info "Email ログインリンクが無効または期限切れです。"
                       {:type :email-login/invalid-token})))
     (let [transaction-id (:identity.email-challenge/id transaction)
-          user-id (:identity.email-challenge/user-id transaction)]
+          signup-email (:identity.email-challenge/signup-email transaction)
+          login-email (:identity.email-challenge/email transaction)]
       (store/transact!
        (fn [state]
          (let [current (get-in state [:identity :email-login-transactions
@@ -1364,7 +1533,22 @@
                           :identity.email-challenge/consumed?] true)
                (assoc-in [:identity :email-login-transactions transaction-id
                           :identity.email-challenge/consumed-at] now)))))
-      (let [request (authn-model/request
+      (let [state (identity-state (store/snapshot))
+            existing (when signup-email (email-login-user state signup-email))
+            user-id (or (:identity.email-challenge/user-id transaction)
+                        (:id existing)
+                        (when signup-email
+                          (create-personal-user!
+                           {:email signup-email
+                            :display-name (first (str/split signup-email #"@" 2))
+                            :root [:email signup-email]})))
+            _ (when-not user-id
+                (throw (ex-info "Email サインアップは無効です。"
+                                {:type :email-login/invalid-token})))
+            _ (bind-login-identity!
+               user-id {:provider :email :subject login-email
+                        :email login-email :display-name nil})
+            request (authn-model/request
                      (str "authn-" (UUID/randomUUID)) user-id
                      {:required-level :single-factor
                       :purpose :email-login :created-at (store/now)})
@@ -1664,6 +1848,60 @@
                     :expires-at expires-at :used? false})))
       {:url url :provider provider :expires-at expires-at})))
 
+(defn- sso-callback-uri [origin provider]
+  ;; Share the already-registered provider callback with connector OAuth. The
+  ;; random state selects the transaction partition after the browser returns;
+  ;; changing the path would make every existing client registration stale.
+  (str origin "/api/oauth/" (name provider) "/callback"))
+
+(defn sso-transaction? [provider state]
+  (= provider
+     (get-in (identity-state (store/snapshot))
+             [:sso-transactions state :provider])))
+
+(defn start-sso-authentication!
+  "Start a minimal-scope sign-in/sign-up or authenticated account-link flow."
+  [provider origin {:keys [mode session]}]
+  (let [{:keys [configured? client-id authorization-endpoint scopes]
+         :as config} (sso-provider-config provider)
+        link? (= :link mode)]
+    (when-not config
+      (throw (ex-info "未対応のSSOです。" {:type :sso/unsupported})))
+    (when-not configured?
+      (throw (ex-info "SSOクライアントが未設定です。"
+                      {:type :sso/not-configured :provider provider})))
+    (when (and link? (not (may-act? session)))
+      (throw (ex-info "SSOを接続するにはサインインが必要です。"
+                      {:type :identity/unauthenticated})))
+    (let [state-value (random-token 32)
+          nonce (random-token 24)
+          verifier (random-token 48)
+          challenge (-> verifier .getBytes
+                        (#(.digest (MessageDigest/getInstance "SHA-256") %))
+                        (#(.encodeToString (.withoutPadding (Base64/getUrlEncoder)) %)))
+          redirect-uri (sso-callback-uri origin provider)
+          expires-at (str (.plusSeconds (Instant/now) transaction-seconds))
+          parameters (merge
+                      {"client_id" client-id "redirect_uri" redirect-uri
+                       "response_type" "code" "scope" (str/join " " scopes)
+                       "state" state-value "code_challenge" challenge
+                       "code_challenge_method" "S256"}
+                      (when (#{:google :microsoft} provider)
+                        {"nonce" nonce "prompt" "select_account"}))
+          url (str authorization-endpoint "?"
+                   (str/join "&" (map (fn [[key value]]
+                                        (str (url-encode key) "=" (url-encode value)))
+                                      parameters)))]
+      (store/transact!
+       assoc-in [:identity :sso-transactions state-value]
+       {:id (str "sso-" (UUID/randomUUID)) :state state-value
+        :provider provider :mode (if link? :link :authenticate)
+        :user-id (when link? (:user-id session))
+        :nonce nonce :verifier verifier :redirect-uri redirect-uri
+        :expires-at expires-at :used? false})
+      {:url url :provider provider :mode (if link? :link :authenticate)
+       :expires-at expires-at})))
+
 (defn- form-body [values]
   (str/join "&" (map (fn [[key value]]
                        (str (url-encode (name key)) "=" (url-encode value)))
@@ -1701,6 +1939,90 @@
                     (.header "User-Agent" "cloud-itonami-app")
                     .GET .build)]
     (request-json! request)))
+
+(defn complete-sso-authentication!
+  "Finish SSO, binding one provider subject to exactly one local User.
+
+  A matching email never silently merges accounts. The person must first sign
+  in to the existing account and use link mode, which prevents a provider-side
+  email reassignment from taking over a local identity."
+  [provider {:keys [state code error]}]
+  (when error
+    (throw (ex-info "SSOがキャンセルされました。" {:type :sso/cancelled})))
+  (let [snapshot (identity-state (store/snapshot))
+        transaction (get-in snapshot [:sso-transactions state])]
+    (when-not (and transaction (= provider (:provider transaction))
+                   (not (:used? transaction))
+                   (pos? (compare (Instant/parse (:expires-at transaction))
+                                  (Instant/now))))
+      (throw (ex-info "SSO stateが無効、期限切れ、または使用済みです。"
+                      {:type :sso/invalid-state})))
+    (when (str/blank? code)
+      (throw (ex-info "認可コードがありません。" {:type :sso/missing-code})))
+    (store/transact! assoc-in
+                     [:identity :sso-transactions state :used?] true)
+    (let [config (sso-provider-config provider)
+          token (exchange-code! config transaction code)
+          access-token (:access_token token)
+          _ (when (str/blank? access-token)
+              (throw (ex-info "SSO providerからaccess tokenが返りませんでした。"
+                              {:type :sso/missing-token})))
+          profile (profile! config access-token)
+          subject (some-> (or (:sub profile) (:id profile)
+                              (:userPrincipalName profile)) str not-empty)
+          _ (when-not subject
+              (throw (ex-info "SSO provider subjectを確認できません。"
+                              {:type :sso/missing-subject})))
+          email (normalize-email
+                 (or (:email profile) (:mail profile)
+                     (:preferred_username profile)
+                     (:userPrincipalName profile)))
+          display-name (or (:name profile) (:displayName profile)
+                           (:login profile) email (name provider))
+          current (identity-state (store/snapshot))
+          bound-user-id (login-user current provider subject)
+          link-user-id (:user-id transaction)
+          _ (when (and bound-user-id link-user-id
+                       (not= bound-user-id link-user-id))
+              (throw (ex-info "このSSOアカウントは別のUserに接続されています。"
+                              {:type :sso/subject-already-bound})))
+          matching-email-user (when email (email-login-user current email))
+          _ (when (and (nil? bound-user-id) (nil? link-user-id)
+                       matching-email-user)
+              (throw (ex-info
+                      "同じEmailのUserがあります。既存方法でサインインしてからSSOを接続してください。"
+                      {:type :sso/link-required :provider provider})))
+          user-id (or bound-user-id link-user-id
+                      (when (true? (:allow-signup? @runtime-auth-profile))
+                        (create-personal-user!
+                         {:email email :display-name display-name
+                          :root [provider subject]})))
+          _ (when-not user-id
+              (throw (ex-info "この環境ではSSOサインアップが無効です。"
+                              {:type :sso/signup-disabled})))
+          _ (bind-login-identity!
+             user-id {:provider provider :subject subject :email email
+                      :display-name display-name})
+          request (authn-model/request
+                   (str "authn-" (UUID/randomUUID)) user-id
+                   {:required-level :single-factor :purpose :sso-login
+                    :created-at (store/now)})
+          factor (authn-model/factor
+                  (str (name provider) ":" subject) :oauth true
+                  {:subject user-id :evidence-ref (:id transaction)
+                   :at (store/now)})
+          decision (authn/decide request [factor])]
+      (when-not (= :authenticated (:authn.decision/decision decision))
+        (throw (ex-info "SSO認証保証が不足しています。"
+                        {:type :sso/verification-failed})))
+      (assoc (issue-session!
+              user-id {:kind :sso :issued-via :sso
+                       :authn-provider provider
+                       :authn-level (:authn.decision/level decision)
+                       :authn-decision (:authn.decision/decision decision)
+                       :authn-factors [:oauth]})
+             :provider provider :user-id user-id
+             :linked? (= :link (:mode transaction))))))
 
 (defn- keychain-account
   "Where one grant's token lives.
