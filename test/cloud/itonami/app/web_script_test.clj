@@ -84,6 +84,28 @@
                 "governance-units" "governance-positions" "governance-roles"]]
       (is (str/includes? html (str "id=\"" id "\"")) id))))
 
+(deftest authentication-is-a-dedicated-view-and-keeps-the-link-proof
+  (let [html (with-redefs [store/snapshot (constantly (store/initial-state))]
+               (web/page-html config))
+        js (slurp (io/file "resources/cloud/itonami/app/interaction.js"))
+        signin-start (.indexOf html "data-view-panel=\"signin\"")
+        settings-start (.indexOf html "data-view-panel=\"settings\"")
+        signin-html (subs html signin-start settings-start)
+        settings-html (subs html settings-start)]
+    (is (pos? signin-start))
+    (is (> settings-start signin-start))
+    (doseq [id ["identity-onboarding" "registration-form" "registered-auth"
+                "passkey-signin" "email-login-form" "sso-signin-list"
+                "enrollment-form"]]
+      (is (str/includes? signin-html (str "id=\"" id "\"")) id)
+      (is (not (str/includes? settings-html (str "id=\"" id "\""))) id))
+    (is (str/includes? settings-html "id=\"identity-workspace\""))
+    (is (str/includes? js "const emailLoginToken = new URLSearchParams(initialFragment)"))
+    (is (str/includes? js "const token = emailLoginToken;"))
+    (is (not (str/includes? js
+                            "const token = new URLSearchParams(location.hash.slice(1))"))
+        "showView must not erase the proof before the one finishing POST")))
+
 (deftest capture-is-a-record-only-surface-before-clarification
   (let [html (with-redefs [store/snapshot (constantly (store/initial-state))]
                (web/page-html config))

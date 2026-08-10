@@ -191,8 +191,10 @@
   .topbar__context{display:flex;align-items:center;gap:.75rem}
   .project-select{min-height:2.5rem;max-width:18rem;border:1px solid var(--color-neutral-solid-gray-300);
     border-radius:.625rem;background:var(--color-neutral-white);padding:.4rem 2rem .4rem .75rem;font:inherit}
-  .view{padding:clamp(1rem,4vw,3rem);max-width:78rem}
+  .view{box-sizing:border-box;width:100%;padding:clamp(1rem,4vw,3rem);max-width:78rem}
   [hidden]{display:none!important}
+  .authenticated-only[hidden],
+  body[data-identity-gate='required'] .authenticated-only{display:none!important}
   .view[hidden]{display:none}
   .view-header{display:flex;justify-content:space-between;align-items:flex-start;
     gap:1rem;margin-bottom:1.5rem}
@@ -203,6 +205,9 @@
   .local-card{background:var(--color-neutral-white);border:1px solid var(--color-neutral-solid-gray-200);
     border-radius:.75rem;padding:1.5rem}
   .local-card+.local-card{margin-top:1rem}
+  .signin-layout{display:grid;grid-template-columns:minmax(0,1.35fr) minmax(18rem,.65fr);
+    gap:1rem;align-items:start;max-width:60rem}
+  .signin-layout .local-card+.local-card{margin-top:0}
   .capture-composer{display:grid;gap:1rem}.capture-composer textarea{width:100%;box-sizing:border-box;
     min-height:14rem;resize:vertical;border:1px solid var(--color-neutral-solid-gray-300);
     border-radius:.625rem;padding:1rem;font:inherit;line-height:1.8;background:var(--color-neutral-white)}
@@ -844,6 +849,7 @@
     .nav-badge{display:none}
     .topbar{min-height:auto;padding:.75rem 1rem}.topbar__meta{display:none}
     .view{padding:1rem}.view-header{display:block}.view-header .dads-button{margin-top:1rem}
+    .signin-layout{grid-template-columns:1fr}
     .chat-view{padding:0}.chat-shell{height:calc(100dvh - 3.75rem)}
     .chat-header{padding:.5rem .75rem}.chat-header .model-pill{display:none}
     .chat-thread{padding:1.25rem 1rem 10.5rem}
@@ -867,6 +873,8 @@
   }
   @media(max-width:40rem){
     :root{--mobile-nav-height:calc(4.5rem + env(safe-area-inset-bottom))}
+    body[data-identity-gate='required'] .workspace{padding-bottom:0}
+    body[data-identity-gate='required'] .sidebar{display:none}
     .project-select{max-width:9rem}
     body.has-mobile-menu{overflow:hidden}
     .workspace{display:block;min-height:100dvh;padding-bottom:var(--mobile-nav-height)}
@@ -1026,7 +1034,8 @@
         [:p {:class "brand__name"} brand]
         [:p {:class "brand__mark" :role "img" :aria-label brand} "ai"]
         [:p {:class "brand__note"} "Kotoba でつながる、手元の仕事場"]]
-       [:section {:class "workspace-switcher" :aria-label "Organization切替"}
+       [:section {:class "workspace-switcher authenticated-only" :hidden true
+                  :aria-label "Organization切替"}
         [:label {:class "workspace-switcher__label"
                  :for "organization-switcher"} "現在のOrganization"]
         [:select {:id "organization-switcher" :disabled true
@@ -1036,7 +1045,7 @@
                 :id "organization-switcher-hint"}
          "作業対象の組織を切り替えます"]]
        [:nav {:class "local-nav" :aria-label "機能メニュー"}
-        [:div {:class "nav-primary"}
+        [:div {:class "nav-primary authenticated-only" :hidden true}
          (nav-item "chat" "Chat" "✦" nil)
          (nav-item "capture" "Capture" "＋" "capture-count")
          (nav-item "messenger" "Messenger" "◇" "messenger-count")
@@ -1044,7 +1053,7 @@
          (nav-item "sites" "Sites" "▦" "sites-count")
          (nav-item "drive" "Drive" "◇" "drive-count")]
         [:div {:class "nav-overflow-panel" :id "mobile-overflow-panel"}
-         [:div {:class "nav-secondary"}
+         [:div {:class "nav-secondary authenticated-only" :hidden true}
           (nav-section
            "business-design" "事業設計" "◱"
            [(nav-item "portfolio" "Portfolio" "▤" "portfolio-count")
@@ -1068,8 +1077,10 @@
             (nav-item "credentials" "Credentials" "▣" "credentials-count")
             (nav-item "storage" "Storage" "◈" "storage-count")])]
          [:div {:class "sidebar__utility"}
-          (nav-item "memory" "Memory" "◴" nil)
-          (nav-item "settings" "Settings" "⚙" nil)]]
+          (nav-item "signin" "サインイン" "↪" nil)
+          [:div {:class "authenticated-only" :hidden true}
+           (nav-item "memory" "Memory" "◴" nil)
+           (nav-item "settings" "Settings" "⚙" nil)]]]
         [:button {:class "mobile-menu-toggle" :type "button"
                   :aria-controls "mobile-overflow-panel" :aria-expanded "false"
                   :aria-label "その他のメニュー"}
@@ -1083,12 +1094,14 @@
       [:div {:class "main"}
        [:header {:class "topbar"}
         [:h2 {:class "topbar__title" :id "current-view"} "Chat"]
-        [:div {:class "topbar__context"}
+        [:div {:class "topbar__context authenticated-only" :hidden true}
          [:label {:class "visually-hidden" :for "active-project-select"} "現在のProject"]
          [:select {:class "project-select" :id "active-project-select"}
           [:option {:value ""} "Projectを選択"]]
          [:p {:class "topbar__meta"} "許可された接続先のみ"]]]
        [:main {:id "main-content"}
+        [:p {:class "settings-notice global-status" :id "identity-status"
+             :role "status" :aria-live "polite"} ""]
         [:section {:class "view chat-view" :data-view-panel "chat"}
          [:div {:class "chat-shell" :id "chat-shell"}
           [:header {:class "chat-header"}
@@ -2302,8 +2315,63 @@
             "今すぐ画面を取得"]]
           [:ul {:class "memory-recent" :id "memory-recent-list"}
            [:li "まだ記憶はありません。"]]]]
+        [:section {:class "view signin-view" :data-view-panel "signin" :hidden true}
+         (view-header "サインイン"
+                      "Cloud Itonami を使う本人として、この端末にセッションを作ります。")
+         [:div {:class "security-callout" :id "passkey-gate-notice"
+                :role "status" :aria-live "polite"}
+          [:strong "サインイン方法を選んでください。"]
+          " 通常の入口は Passkey、Email、SSO です。重要操作では Passkey を追加確認します。"]
+         [:div {:class "signin-layout" :id "identity-onboarding"}
+          [:div {:class "local-card"}
+           (dds/heading 2 "サインイン / 新規登録" {:size "24"
+                                                  :id "registration-title"})
+           [:p {:class "view-lead" :id "registration-lead"}
+            "いつもの認証方法を選べます。SSOとEmailは新規登録にも使え、Passkeyは重要操作の追加確認にも使います。"]
+           [:form {:class "settings-form" :id "registration-form"}
+            [:p {:class "form-help"}
+             "Passkey の P-256 公開鍵から User DID（did:key）を生成します。秘密鍵は端末から出ません。"]
+            [:button {:class "primary-action" :id "registration-submit"
+                      :type "submit"} "Passkey で登録"]]
+           [:div {:class "settings-stack" :id "registered-auth" :hidden true}
+            [:div {:class "settings-form"}
+             (dds/heading 3 "Passkey で続ける" {:size "20"})
+             [:p {:class "form-help"}
+              "この端末の Passkey で本人確認します。認証情報は端末から出ません。"]
+             [:button {:class "primary-action" :id "passkey-signin" :type "button"}
+              "Passkey でサインイン"]]
+            [:form {:class "settings-form" :id "email-login-form" :hidden true}
+             (dds/heading 3 "Emailで続ける" {:size "20"})
+             [:p {:class "form-help"}
+              "10分間・一回限りのリンクを送ります。新規登録が有効な環境では、そのままUserを作成できます。"]
+             [:div {:class "field"}
+              [:label {:for "email-login-address"} "メールアドレス"]
+              [:input {:id "email-login-address" :name "email" :type "email"
+                       :required true :autocomplete "email"}]]
+             [:button {:class "tool-button" :id "email-login-submit"
+                       :type "submit"} "ログインリンクを送る"]]
+            [:div {:class "settings-form"}
+             (dds/heading 3 "SSOで続ける" {:size "20"})
+             [:p {:class "form-help"}
+              "Google、Microsoft、GitHubの認証だけを使います。メールやリポジトリへのアクセス権は要求しません。"]
+             [:div {:class "button-row" :id "sso-signin-list"}]]]]
+          [:div {:class "local-card"}
+           (dds/heading 2 "招待された User" {:size "24"})
+           [:p {:class "form-help"}
+            "Organization から受け取ったアカウントIDと Enrollment code を使い、Passkeyを登録して参加します。"]
+           [:form {:class "settings-form" :id "enrollment-form"}
+            [:div {:class "field"}
+             [:label {:for "enrollment-account"} "アカウントID"]
+             [:input {:id "enrollment-account" :name "account-id"
+                      :required true :autocomplete "username"}]]
+            [:div {:class "field"}
+             [:label {:for "enrollment-code"} "Enrollment code"]
+             [:input {:id "enrollment-code" :name "enrollment-code"
+                      :required true :autocomplete "one-time-code"}]]
+            [:button {:class "tool-button" :id "enrollment-submit" :type "submit"}
+             "Passkey を登録して参加"]]]]]
         [:section {:class "view" :data-view-panel "settings" :hidden true}
-         (view-header "Settings" "Cloud Itonami の組織・ユーザーと、外部サービスへの委任接続を管理します。")
+         (view-header "Settings" "サインイン済みのUser、Organization、外部サービス接続を管理します。")
          [:div {:class "local-card" :id "desktop-update-card"}
           (dds/heading 2 "Desktop update" {:size "20"})
           [:p {:class "view-lead" :id "desktop-update-status"
@@ -2317,53 +2385,7 @@
            [:button {:class "primary-action" :id "desktop-update-download"
                      :type "button" :hidden true}
             "検証してダウンロード"]]]
-         [:p {:class "settings-notice" :id "identity-status"
-              :role "status" :aria-live "polite"} ""]
          [:div {:class "settings-notice" :id "connection-notice" :hidden true}]
-         [:div {:class "security-callout" :id "passkey-gate-notice"
-                :role "status" :aria-live "polite"}
-          [:strong "サインインが必要です。"]
-          " Passkey、Email、またはSSOで続行できます。重要操作ではPasskeyを追加確認します。"]
-         [:div {:class "local-card" :id "identity-onboarding"}
-         (dds/heading 2 "サインイン / 新規登録" {:size "24"
-                                                :id "registration-title"})
-          [:p {:class "view-lead" :id "registration-lead"}
-           "いつもの認証方法を選べます。SSOとEmailは新規登録にも使え、Passkeyは重要操作の追加確認にも使います。"]
-          [:form {:class "settings-form" :id "registration-form"}
-           [:p {:class "form-help"}
-            "Passkey の P-256 公開鍵から User DID（did:key）を生成します。秘密鍵は端末から出ません。"]
-           [:button {:class "primary-action" :id "registration-submit"
-                     :type "submit"} "Passkey で登録"]]
-          [:div {:class "settings-stack" :id "registered-auth" :hidden true}
-           [:div {:class "settings-form"}
-            (dds/heading 3 "SSOで続ける" {:size "20"})
-            [:p {:class "form-help"}
-             "Google、Microsoft、GitHubの認証だけを使います。メールやリポジトリへのアクセス権は要求しません。"]
-            [:div {:class "button-row" :id "sso-signin-list"}]]
-           [:form {:class "settings-form" :id "email-login-form" :hidden true}
-            (dds/heading 3 "Emailで続ける" {:size "20"})
-            [:p {:class "form-help"}
-             "10分間・一回限りのリンクを送ります。新規登録が有効な環境では、そのままUserを作成できます。"]
-            [:div {:class "field"}
-             [:label {:for "email-login-address"} "メールアドレス"]
-             [:input {:id "email-login-address" :name "email" :type "email"
-                      :required true :autocomplete "email"}]]
-            [:button {:class "tool-button" :id "email-login-submit"
-                      :type "submit"} "ログインリンクを送る"]]
-           [:button {:class "primary-action" :id "passkey-signin" :type "button"}
-            "Passkey でサインイン"]
-           [:form {:class "settings-form" :id "enrollment-form"}
-            (dds/heading 3 "招待された User" {:size "20"})
-            [:div {:class "field"}
-             [:label {:for "enrollment-account"} "アカウントID"]
-             [:input {:id "enrollment-account" :name "account-id"
-                      :required true :autocomplete "username"}]]
-            [:div {:class "field"}
-             [:label {:for "enrollment-code"} "Enrollment code"]
-             [:input {:id "enrollment-code" :name "enrollment-code"
-                      :required true :autocomplete "one-time-code"}]]
-            [:button {:class "tool-button" :id "enrollment-submit" :type "submit"}
-             "Passkey を登録して参加"]]]]
          [:div {:class "settings-stack" :id "identity-workspace" :hidden true}
           [:div {:class "identity-summary"}
            [:div {:class "identity-summary__avatar" :id "identity-avatar"
