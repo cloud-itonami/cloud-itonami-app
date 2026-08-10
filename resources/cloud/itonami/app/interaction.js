@@ -9,14 +9,19 @@
       return node;
     };
     const initialParams = new URLSearchParams(location.search);
-    const requestedView = location.hash.slice(1) || 'chat';
+    const initialFragment = location.hash.slice(1);
+    // Capture the one-time proof before showView() replaces the fragment.
+    // Reading location.hash again near the end of this file loses the token
+    // to the initial view redirect, so a valid link otherwise looks inert.
+    const emailLoginToken = new URLSearchParams(initialFragment).get('email-login');
+    const requestedView = emailLoginToken ? 'settings' : (initialFragment || 'chat');
     let appUnlocked = false;
     let appBootstrapped = false;
     // Views whose data is public, so the Passkey gate would protect nothing.
     // `storage` reads public Filecoin chain state and computes a PieceCID —
     // there is no workspace content in it. Everything else stays gated.
-    const publicViews = new Set(['settings', 'storage']);
-    let currentView = 'settings';
+    const publicViews = new Set(['signin', 'storage']);
+    let currentView = 'signin';
     const sidebar = $('.sidebar');
     const mobileMenuToggle = $('.mobile-menu-toggle');
     const mobileNavBackdrop = $('.mobile-nav-backdrop');
@@ -44,7 +49,7 @@
       ).format(date);
     };
     const showView = (name) => {
-      if (!appUnlocked && !publicViews.has(name)) name = 'settings';
+      if (!appUnlocked && !publicViews.has(name)) name = 'signin';
       $$('.local-nav__item').forEach((item) => item.setAttribute(
         'aria-current', item.dataset.view === name ? 'page' : 'false'));
       $$('.view').forEach((panel) => { panel.hidden = panel.dataset.viewPanel !== name; });
@@ -64,7 +69,7 @@
         showView(item.dataset.view);
         setMobileMenuOpen(false);
       }));
-    showView('settings');
+    showView('signin');
 
     const form = $('#chat-form');
     const prompt = $('#prompt');
@@ -7766,16 +7771,19 @@
         item.setAttribute('aria-disabled', String(item.disabled));
       });
       document.body.dataset.identityGate = identityReady ? 'ready' : 'required';
+      $$('.authenticated-only').forEach((node) => { node.hidden = !identityReady; });
+      const signInNav = document.querySelector(".local-nav__item[data-view='signin']");
+      if (signInNav) signInNav.hidden = Boolean(data['authenticated?']);
       $('#passkey-gate-notice').hidden = identityReady;
       if (!identityReady) {
         // a public view the user actually asked for stays put
-        showView(publicViews.has(requestedView) ? requestedView : 'settings');
+        showView(publicViews.has(requestedView) ? requestedView : 'signin');
         $('#current-view').textContent =
           currentView === 'storage' ? 'Storage' : 'サインイン';
         $('#workspace-status').textContent = 'サインインが必要です';
       } else {
         bootstrapApp();
-        showView(requestedView);
+        showView(requestedView === 'signin' ? 'settings' : requestedView);
       }
       const onboarding = $('#identity-onboarding');
       const workspace = $('#identity-workspace');
@@ -8857,7 +8865,7 @@
         : `${label}のサインインを完了できませんでした。もう一度お試しください。`;
     }
     const finishEmailLoginFromLink = async () => {
-      const token = new URLSearchParams(location.hash.slice(1)).get('email-login');
+      const token = emailLoginToken;
       if (!token) return;
       // Remove the bearer-like token from the address bar before doing any
       // other work. It remains available in this closure for this one POST.
