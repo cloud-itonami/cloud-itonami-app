@@ -12,6 +12,7 @@
             [cloud.itonami.app.business-test]
             [cloud.itonami.app.agent-session-test]
             [cloud.itonami.app.kaiyu-local-test]
+            [cloud.itonami.app.launcher-test]
             [cloud.itonami.app.business-http-test]
             [cloud.itonami.app.canvas-test]
             [cloud.itonami.app.capture-test]
@@ -126,6 +127,7 @@
     cloud.itonami.app.business-test
     cloud.itonami.app.agent-session-test
     cloud.itonami.app.kaiyu-local-test
+    cloud.itonami.app.launcher-test
     cloud.itonami.app.business-http-test
     cloud.itonami.app.canvas-test
     cloud.itonami.app.capture-test
