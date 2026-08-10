@@ -247,7 +247,9 @@
       (is (re-find #"data-view-panel=\"settings\"" html))
       (is (re-find #"id=\"registration-form\"" html))
       (is (re-find #"id=\"passkey-gate-notice\"" html))
-      (is (re-find #"Passkey 登録が必須" html))
+      (is (re-find #"サインインが必要" html))
+      (is (re-find #"id=\"sso-signin-list\"" html))
+      (is (re-find #"id=\"auth-methods-card\"" html))
       (is (re-find #"現在のOrganization" html))
       (is (re-find #"aria-label=\"Organization切替\"" html))
       (doseq [section ["business-design" "operations" "trust-records"]]

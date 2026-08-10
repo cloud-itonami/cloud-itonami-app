@@ -106,6 +106,22 @@ The server binds to `127.0.0.1` by default. The browser intentionally uses
 `http://localhost:1338`, which is required for the WebAuthn localhost
 development exception.
 
+## Sign-in and sign-up
+
+The single Settings surface supports Passkey, one-time Email links, and
+minimal-scope Google, Microsoft, and GitHub SSO. The `itonami` deployment
+profile allows a verified Email or provider subject to create a personal User;
+tenant-neutral defaults keep sign-up and Email delivery disabled until the
+operator chooses their delivery and OAuth clients.
+
+SSO authentication scopes are separate from delegated service connections:
+signing in never grants mailbox, Drive, or repository access. A provider
+subject is unique to one local User, and a matching Email address never merges
+accounts automatically. To add another provider to an existing User, sign in
+first and use the explicit link controls in Settings. Payment, e-signature,
+federation, and outward-authority approval retain their dedicated Passkey
+ceremonies as step-up authentication.
+
 ## `itonami` — the command line, without opening the app
 
 `bin/itonami` runs any of the app's operations from any directory. It starts a

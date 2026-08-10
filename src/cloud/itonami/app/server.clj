@@ -242,13 +242,17 @@
        "; Path=/; HttpOnly; SameSite=Strict; Max-Age="
        identity/session-seconds))
 
-(defn- redirect! [^HttpExchange exchange location]
-  (doto (.getResponseHeaders exchange)
-    (.set "Location" location)
-    (.set "Cache-Control" "no-store")
-    (.set "Referrer-Policy" "no-referrer"))
-  (.sendResponseHeaders exchange 303 -1)
-  (.close exchange))
+(defn- redirect!
+  ([exchange location] (redirect! exchange location {}))
+  ([^HttpExchange exchange location headers]
+   (doto (.getResponseHeaders exchange)
+     (.set "Location" location)
+     (.set "Cache-Control" "no-store")
+     (.set "Referrer-Policy" "no-referrer"))
+   (doseq [[key value] headers]
+     (.set (.getResponseHeaders exchange) (name key) (str value)))
+   (.sendResponseHeaders exchange 303 -1)
+   (.close exchange)))
 
 (defn- send-icon! [^HttpExchange exchange]
   (if-let [resource (io/resource "cloud/itonami/app/icon.png")]
@@ -2816,14 +2820,25 @@
                   result (do
                            (require-origin! exchange config)
                            (identity/finish-email-authentication!
-                            (:token request)))
-                  session (identity/session (:token result))]
+                            (:token request)))]
               (send! exchange 200
-                     {:session {:kind (some-> (:kind session) name)
-                                :issued-via (some-> (:issued-via session) name)
-                                :authn-level (some-> (:authn-level session) name)}
-                      :may-act? (identity/may-act? session)}
+                     (identity/public-state (:token result))
                      {"Set-Cookie" (session-cookie (:token result))}))
+
+            (and (= method "POST")
+                 (provider-from-path path #"/api/auth/sso/([^/]+)/start"))
+            (let [provider (provider-from-path
+                            path #"/api/auth/sso/([^/]+)/start")
+                  request (read-json exchange)
+                  link? (= "link" (some-> (:mode request) name))
+                  session (when link? (require-app-session! exchange))]
+              (require-origin! exchange config)
+              (when link? (require-csrf! exchange session))
+              (send! exchange 200
+                     (identity/start-sso-authentication!
+                      provider (origin config)
+                      {:mode (if link? :link :authenticate)
+                       :session session})))
 
             (and (= method "POST") (= path "/api/passkeys/authenticate/finish"))
             (let [request (read-json exchange)
@@ -2850,15 +2865,27 @@
             (let [provider (provider-from-path
                             path #"/api/oauth/([^/]+)/callback")
                   params (query-params exchange)]
-              (try
-                (identity/complete-oauth! provider params)
-                (redirect! exchange
-                           (str "/?connection=connected&provider="
-                                (name provider) "#settings"))
-                (catch Exception _
+              (if (identity/sso-transaction? provider (:state params))
+                (try
+                  (let [result (identity/complete-sso-authentication!
+                                provider params)]
+                    (redirect! exchange
+                               (str "/?auth=sso&provider=" (name provider)
+                                    "#settings")
+                               {"Set-Cookie" (session-cookie (:token result))}))
+                  (catch Exception _
+                    (redirect! exchange
+                               (str "/?auth=error&provider=" (name provider)
+                                    "#settings"))))
+                (try
+                  (identity/complete-oauth! provider params)
                   (redirect! exchange
-                             (str "/?connection=error&provider="
-                                  (name provider) "#settings")))))
+                             (str "/?connection=connected&provider="
+                                  (name provider) "#settings"))
+                  (catch Exception _
+                    (redirect! exchange
+                               (str "/?connection=error&provider="
+                                    (name provider) "#settings"))))))
 
             (conversation-route? path)
             (handle-conversation! config exchange method path)
@@ -4200,6 +4227,17 @@
                      :passkey/required 428
                      :email-login/invalid-token 400
                      :email-login/not-configured 503
+                     :sso/unsupported 400
+                     :sso/not-configured 503
+                     :sso/cancelled 400
+                     :sso/invalid-state 400
+                     :sso/missing-code 400
+                     :sso/missing-token 502
+                     :sso/missing-subject 502
+                     :sso/subject-already-bound 409
+                     :sso/link-required 409
+                     :sso/signup-disabled 403
+                     :sso/verification-failed 403
                      :site/not-found 404
                      :site/slug-conflict 409
                      :site/html-too-large 413

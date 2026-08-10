@@ -18,6 +18,8 @@
  :email-login {:enabled? false
                :delivery-endpoint nil
                :access-token-env "CLOUD_ITONAMI_EMAIL_LOGIN_TOKEN"}
+ :auth {:allow-signup? false
+        :sso-providers [:google :microsoft :github]}
  :routing {:default-provider "ollama"
            :default-model "gemma4:e2b"
            :cloud-enabled? false}

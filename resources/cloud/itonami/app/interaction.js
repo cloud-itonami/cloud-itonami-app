@@ -7631,8 +7631,77 @@
         card.append(copy, button); list.append(card);
       });
     };
+    const authProviderLabels = {google:'Google', microsoft:'Microsoft', github:'GitHub'};
+    const startSso = async (provider, mode, button) => {
+      button.disabled = true;
+      const previous = button.textContent;
+      button.textContent = '準備中…';
+      try {
+        const headers = mode === 'link'
+          ? identityHeaders() : {'Content-Type':'application/json'};
+        const request = await fetch(`/api/auth/sso/${provider}/start`, {
+          method:'POST', headers, body:JSON.stringify({mode})
+        });
+        const result = await request.json();
+        if (!request.ok) throw new Error(result?.error?.message || 'SSOを開始できませんでした。');
+        location.assign(result.url);
+      } catch (error) {
+        button.disabled = false;
+        button.textContent = previous;
+        $('#identity-status').textContent = error.message;
+      }
+    };
+    const renderAuthMethods = (data) => {
+      const methods = data['auth-methods'] || {};
+      const providers = methods.sso || [];
+      const signin = $('#sso-signin-list');
+      signin.replaceChildren();
+      providers.forEach((provider) => {
+        const label = provider.name || authProviderLabels[provider.id] || provider.id;
+        const button = make('button', 'tool-button', `${label}で続ける`);
+        button.type = 'button';
+        button.disabled = !provider['configured?'];
+        if (!provider['configured?']) button.title = 'OAuthクライアント設定が必要です';
+        button.addEventListener('click', () => startSso(provider.id, 'authenticate', button));
+        signin.append(button);
+      });
+      if (!data['authenticated?']) return;
+      const session = data.session || {};
+      const provider = session['authn-provider'];
+      const issuedVia = session['issued-via'];
+      $('#current-auth-method').textContent = provider
+        ? `${authProviderLabels[provider] || provider}でサインイン中`
+        : issuedVia === 'email' ? 'Emailでサインイン中'
+        : issuedVia === 'passkey' ? 'Passkeyでサインイン中'
+        : 'サインイン済み';
+      const linked = $('#linked-auth-methods');
+      linked.replaceChildren();
+      const identities = data['login-identities'] || [];
+      if (!identities.length) {
+        linked.append(make('li', null, '接続済みSSO / Emailはありません。'));
+      } else {
+        identities.forEach((identity) => {
+          const label = authProviderLabels[identity.provider] ||
+            (identity.provider === 'email' ? 'Email' : identity.provider);
+          linked.append(make('li', null,
+            `${label} · ${identity.email || identity['display-name'] || '接続済み'}`));
+        });
+      }
+      const linkedProviders = new Set(identities.map((identity) => identity.provider));
+      const links = $('#sso-link-list');
+      links.replaceChildren();
+      providers.filter((item) => item['configured?'] && !linkedProviders.has(item.id))
+        .forEach((item) => {
+          const label = item.name || authProviderLabels[item.id] || item.id;
+          const button = make('button', 'tool-button', `${label}を接続`);
+          button.type = 'button';
+          button.addEventListener('click', () => startSso(item.id, 'link', button));
+          links.append(button);
+        });
+    };
     const renderIdentity = (data) => {
       identityState = data;
+      renderAuthMethods(data);
       const identityReady = Boolean(data['authenticated?'] && data['may-act?']);
       appUnlocked = identityReady;
       $$('.local-nav__item').forEach((item) => {
@@ -7645,28 +7714,29 @@
         // a public view the user actually asked for stays put
         showView(publicViews.has(requestedView) ? requestedView : 'settings');
         $('#current-view').textContent =
-          currentView === 'storage' ? 'Storage' : 'Passkey 登録';
-        $('#workspace-status').textContent = 'Passkey 登録が必要です';
+          currentView === 'storage' ? 'Storage' : 'サインイン';
+        $('#workspace-status').textContent = 'サインインが必要です';
       } else {
         bootstrapApp();
         showView(requestedView);
       }
       const onboarding = $('#identity-onboarding');
       const workspace = $('#identity-workspace');
-      onboarding.hidden = data['registered?'];
+      onboarding.hidden = data['authenticated?'];
       workspace.hidden = !data['authenticated?'];
-      $('#registered-auth').hidden = !(data['registered?'] && !data['authenticated?']);
-      $('#email-login-form').hidden = !(data['registered?'] &&
-        !data['authenticated?'] && data['email-login-configured?']);
+      $('#registered-auth').hidden = Boolean(data['authenticated?']);
+      $('#email-login-form').hidden = Boolean(data['authenticated?']) ||
+        !data['email-login-configured?'];
+      $('#registration-form').hidden = Boolean(data['registered?']);
+      $('#passkey-signin').hidden = !data['registered?'];
       if (data['registered?'] && !data['authenticated?']) {
-        onboarding.hidden = false;
         const pendingPasskey = data['passkey-required?'];
         $('#registration-title').textContent = pendingPasskey
           ? 'Passkey 登録を再開'
-          : 'Passkey でサインイン';
+          : 'サインイン';
         $('#registration-lead').textContent = pendingPasskey
           ? '仮登録は完了しています。Passkey を作成するとアプリを利用できます。'
-          : '登録済みの Passkey で本人確認するとアプリを開けます。';
+          : 'Passkey、Email、またはSSOで続行できます。';
         $('#passkey-signin').textContent = pendingPasskey
           ? 'Passkey 登録を再開'
           : 'Passkey でサインイン';
@@ -7686,7 +7756,7 @@
       $('#identity-did').textContent = data.user.did || 'Passkey 登録後に発行';
       $('#passkey-state').textContent = data.user['passkey-enrolled?']
         ? 'Passkey 登録済み'
-        : '必須: 続行するには Passkey を登録してください。';
+        : '未登録: 通常利用は可能です。重要操作の追加確認に登録してください。';
       $('#passkey-register').textContent = data.user['passkey-enrolled?']
         ? '別の Passkey を追加' : 'Passkey を登録';
       const organizationReady = Boolean(data.organization?.['profile-complete?']);
@@ -7701,7 +7771,7 @@
           : (personalTenant ? '個人テナント ID 未設定' : 'Organization ID 未設定');
       $('#organization-domain').textContent = organizationReady
         ? `${data.organization.domain} · ${data.organization.role}`
-        : 'Passkey 登録後に設定できます';
+        : 'サインイン後に設定できます';
       $('#organization-did').textContent =
         data.organization?.did || 'Organization DID は ID 設定後に発行';
       const organizationSwitcher = $('#organization-switcher');
@@ -8708,6 +8778,14 @@
       notice.textContent = connected
         ? `${initialParams.get('provider')} を接続しました。`
         : `${initialParams.get('provider')} の接続を完了できませんでした。`;
+    }
+    if (initialParams.get('auth')) {
+      const provider = initialParams.get('provider');
+      const ok = initialParams.get('auth') === 'sso';
+      const label = authProviderLabels[provider] || provider || 'SSO';
+      $('#identity-status').textContent = ok
+        ? `${label}でサインインしました。`
+        : `${label}のサインインを完了できませんでした。もう一度お試しください。`;
     }
     const finishEmailLoginFromLink = async () => {
       const token = new URLSearchParams(location.hash.slice(1)).get('email-login');

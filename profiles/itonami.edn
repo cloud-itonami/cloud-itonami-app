@@ -24,11 +24,14 @@
 ;; `cloud.itonami.app.email-login/access-token` reads it per request and the
 ;; adapter refuses to run without it.
 ;;
-;; What this does NOT change: email remains a session proof, not an identity
-;; root. Only an active User who has already enrolled a Passkey can receive a
-;; link, and an email session still cannot finish a payment, an e-signature, or
-;; an outward-authority approval (ADR-0012, Authority boundary).
-{:email-login
+;; This deployment allows a verified Email or provider subject to create a
+;; personal User. Matching Email addresses are never used to merge identities:
+;; an existing User must sign in first and explicitly link the provider.
+;; Payment, signature, federation and outward-authority approval continue to
+;; use their explicit Passkey ceremonies.
+{:auth {:allow-signup? true
+        :sso-providers [:google :microsoft :github]}
+ :email-login
  {:enabled? true
   :delivery-endpoint "https://itonami.cloud/api/auth/magic-link/deliver"
   :access-token-env "CLOUD_ITONAMI_EMAIL_LOGIN_TOKEN"}}
