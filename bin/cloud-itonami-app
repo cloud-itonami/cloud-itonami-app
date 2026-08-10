@@ -36,6 +36,19 @@ shell_dir="${CLOUD_ITONAMI_SHELL_DIR:-}"
 if [[ -z "$shell_dir" && -d "$app_dir/../../kotoba-lang/shell" ]]; then
   shell_dir="$(CDPATH= cd -- "$app_dir/../../kotoba-lang/shell" && pwd)"
 fi
+if [[ -z "$shell_dir" && -n "${CLOUD_ITONAMI_WORKSPACE_ROOT:-}" &&
+      -d "$CLOUD_ITONAMI_WORKSPACE_ROOT/orgs/kotoba-lang/shell" ]]; then
+  shell_dir="$(CDPATH= cd -- \
+    "$CLOUD_ITONAMI_WORKSPACE_ROOT/orgs/kotoba-lang/shell" && pwd)"
+fi
+
+# Read-only launcher diagnosis. This deliberately happens before server or GUI
+# startup so packaging and LaunchAgent checks can verify the exact shell the
+# launcher resolved without opening a window.
+if [[ "${1:-}" == "--print-shell-dir" ]]; then
+  printf '%s\n' "$shell_dir"
+  exit 0
+fi
 
 open_window() {
   # The native host is the application window: app.kotoba.edn gives it the name,
