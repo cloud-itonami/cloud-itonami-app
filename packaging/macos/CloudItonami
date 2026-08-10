@@ -1,0 +1,58 @@
+#!/bin/bash
+set -euo pipefail
+
+contents_dir="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
+resources_dir="$contents_dir/Resources"
+support_dir="${CLOUD_ITONAMI_DATA_DIR:-$HOME/Library/Application Support/Cloud Itonami}"
+log_dir="$HOME/Library/Logs/Cloud Itonami"
+server_pid=""
+
+mkdir -p "$support_dir" "$log_dir"
+
+healthy() {
+  /usr/bin/curl -fsS http://127.0.0.1:1338/health >/dev/null 2>&1
+}
+
+cleanup() {
+  if [[ -n "$server_pid" ]] && kill -0 "$server_pid" 2>/dev/null; then
+    kill "$server_pid" 2>/dev/null || true
+    wait "$server_pid" 2>/dev/null || true
+  fi
+}
+trap cleanup EXIT INT TERM
+
+if ! healthy; then
+  java_home="$(/usr/libexec/java_home -v 21 2>/dev/null || true)"
+  if [[ -z "$java_home" || ! -x "$java_home/bin/java" ]]; then
+    /usr/bin/osascript -e 'display alert "Cloud Itonami requires Java 21" message "Install Java 21 or later, then open Cloud Itonami again." as critical' || true
+    exit 1
+  fi
+  CLOUD_ITONAMI_DATA_DIR="$support_dir" \
+    "$java_home/bin/java" -cp "$resources_dir/cloud-itonami-app.jar" \
+    clojure.main -m cloud.itonami.app.server \
+    >>"$log_dir/server.log" 2>&1 &
+  server_pid=$!
+
+  for _ in {1..600}; do
+    if healthy; then
+      break
+    fi
+    if ! kill -0 "$server_pid" 2>/dev/null; then
+      /usr/bin/osascript -e 'display alert "Cloud Itonami could not start" message "See ~/Library/Logs/Cloud Itonami/server.log for details." as critical' || true
+      exit 1
+    fi
+    sleep 0.1
+  done
+fi
+
+if ! healthy; then
+  /usr/bin/osascript -e 'display alert "Cloud Itonami timed out" message "The local server did not become ready." as critical' || true
+  exit 1
+fi
+
+"$contents_dir/MacOS/kotoba-shell-host" \
+  --title "Cloud Itonami" \
+  --icon "$resources_dir/icon.png" \
+  --web-url http://localhost:1338/ \
+  --width 1100 --height 860 --min-width 720 --min-height 600 \
+  --permissions accessibility,screen-recording
