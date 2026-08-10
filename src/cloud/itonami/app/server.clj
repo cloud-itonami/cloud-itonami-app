@@ -60,6 +60,7 @@
             [cloud.itonami.app.tenant-connection :as tenant-connection]
             [cloud.itonami.app.tenant-repository :as tenant-repository]
             [cloud.itonami.app.tenant-tools :as tenant-tools]
+            [cloud.itonami.app.updater :as updater]
             [cloud.itonami.app.web :as web]
             [cloud.itonami.app.worker :as worker]
             [cloud.itonami.app.work-approval :as work-approval]
@@ -4561,6 +4562,44 @@
             (send! exchange 500 {:error {:type "internal_error"
                                          :message (.getMessage error)}})))))))
 
+(defn- update-handler [configuration]
+  (reify HttpHandler
+    (handle [_ exchange]
+      (let [method (.getRequestMethod exchange)
+            path (.getPath (.getRequestURI exchange))]
+        (try
+          (cond
+            (and (= method "GET") (= path "/api/update"))
+            (send! exchange 200 (updater/status))
+
+            (and (= method "POST") (= path "/api/update/check"))
+            (do (require-origin! exchange configuration)
+                (send! exchange 200 (updater/check! configuration)))
+
+            (and (= method "POST") (= path "/api/update/download"))
+            (do (require-origin! exchange configuration)
+                (send! exchange 200 (updater/download! configuration)))
+
+            :else
+            (send! exchange 404 {:error {:type "not_found"}}))
+          (catch clojure.lang.ExceptionInfo error
+            (send! exchange
+                   (case (:type (ex-data error))
+                     :identity/invalid-origin 403
+                     :update/not-available 409
+                     :update/origin 502
+                     :update/http 502
+                     :update/digest 502
+                     :update/signature 502
+                     :update/size 502
+                     400)
+                   {:error {:type (name (or (:type (ex-data error))
+                                            :update/error))
+                            :message (.getMessage error)}}))
+          (catch Exception error
+            (send! exchange 500 {:error {:type "internal_error"
+                                         :message (.getMessage error)}})))))))
+
 (defn start!
   ([] (start! (config/load-config)))
   ([configuration]
@@ -4576,6 +4615,7 @@
    (mail-sync/start! configuration)
    (chronicle/start! configuration)
    (folder-sync/start! configuration)
+   (updater/start! configuration)
    (let [host (get-in configuration [:server :host])
          port (get-in configuration [:server :port])
          instance (HttpServer/create (InetSocketAddress. host (int port)) 0)]
@@ -4594,6 +4634,8 @@
      ;; 64 KB bytecode limit. A longer HttpServer prefix wins over "/".
      (.createContext instance "/api/chronicle"
                      (chronicle-handler configuration))
+     (.createContext instance "/api/update"
+                     (update-handler configuration))
      (.createContext instance "/api/folder-sync"
                      (reify HttpHandler
                        (handle [_ exchange]
@@ -4645,6 +4687,7 @@
   (mail-sync/stop!)
   (chronicle/stop!)
   (folder-sync/stop!)
+  (updater/stop!)
   (work-reconciler/stop!)
   (when-let [instance @server]
     (.stop instance 0)

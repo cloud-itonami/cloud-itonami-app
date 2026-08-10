@@ -1,0 +1,23 @@
+#!/bin/bash
+set -euo pipefail
+
+repo_dir="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
+version="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$repo_dir/packaging/macos/Info.plist")"
+release_dir="$repo_dir/target/release"
+stage_parent="$release_dir/windows-stage"
+stage="$stage_parent/Cloud Itonami"
+zip="$release_dir/Cloud-Itonami-${version}-Windows-x64.zip"
+
+cd "$repo_dir"
+if [[ ! -f target/release/cloud-itonami-app.jar ]]; then
+  clojure -T:build uber
+fi
+mkdir -p "$stage"
+GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" \
+  -o "$stage/CloudItonami.exe" packaging/windows/launcher/main.go
+cp target/release/cloud-itonami-app.jar "$stage/cloud-itonami-app.jar"
+cp packaging/windows/ApplyUpdateWindows.ps1 "$stage/ApplyUpdateWindows.ps1"
+cp packaging/windows/README.txt "$stage/README.txt"
+(cd "$stage_parent" && /usr/bin/zip -q -r "$zip" "Cloud Itonami")
+file "$stage/CloudItonami.exe"
+printf 'Built: %s\n' "$zip"

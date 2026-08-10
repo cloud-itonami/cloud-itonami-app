@@ -7991,6 +7991,62 @@
         $('#identity-status').textContent = error.message;
       }
     };
+    const renderDesktopUpdate = (data) => {
+      const status = $('#desktop-update-status');
+      const download = $('#desktop-update-download');
+      if (data['restart-required?']) {
+        status.textContent = `${data['staged-version'] || data['available-version']} を検証済みです。アプリを終了してもう一度開くと適用します。`;
+        download.hidden = true;
+        return;
+      }
+      if (data.status === 'error') {
+        status.textContent = `更新を確認できません: ${data.error}`;
+        download.hidden = true;
+        return;
+      }
+      if (data['available?']) {
+        status.textContent = `${data['installed-version']} → ${data['available-version']} を利用できます。`;
+        download.hidden = false;
+        return;
+      }
+      status.textContent = data['installed-version']
+        ? `${data['installed-version']} は最新です。`
+        : '更新状態をまだ確認していません。';
+      download.hidden = true;
+    };
+    const loadDesktopUpdate = async (refresh = false) => {
+      const button = $('#desktop-update-check');
+      button.disabled = true;
+      try {
+        const request = await fetch(refresh ? '/api/update/check' : '/api/update',
+          refresh ? {method:'POST', headers:{'Content-Type':'application/json'}, body:'{}'} : {});
+        const data = await request.json();
+        if (!request.ok) throw new Error(data?.error?.message || '更新状態を確認できません。');
+        renderDesktopUpdate(data);
+      } catch (error) {
+        renderDesktopUpdate({status:'error', error:error.message});
+      } finally {
+        button.disabled = false;
+      }
+    };
+    $('#desktop-update-check').addEventListener('click', () => loadDesktopUpdate(true));
+    $('#desktop-update-download').addEventListener('click', async () => {
+      const button = $('#desktop-update-download');
+      button.disabled = true;
+      try {
+        const request = await fetch('/api/update/download', {
+          method:'POST', headers:{'Content-Type':'application/json'}, body:'{}'
+        });
+        const data = await request.json();
+        if (!request.ok) throw new Error(data?.error?.message || '更新を準備できません。');
+        renderDesktopUpdate(data);
+      } catch (error) {
+        renderDesktopUpdate({status:'error', error:error.message});
+      } finally {
+        button.disabled = false;
+      }
+    });
+    loadDesktopUpdate();
     $('#registration-form').addEventListener('submit', async (event) => {
       event.preventDefault();
       const button = $('#registration-submit');

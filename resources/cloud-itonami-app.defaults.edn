@@ -3,6 +3,12 @@
  :server {:host "127.0.0.1" :port 1338
           :public-origin "http://localhost:1338"
           :webauthn-rp-id "localhost"}
+ :updates {:enabled? true
+           :auto-download? true
+           :channel :preview
+           :initial-delay-minutes 60
+           :interval-hours 24
+           :releases-url "https://api.github.com/repos/cloud-itonami/cloud-itonami-app/releases?per_page=20"}
  :identity {:account-domain "cloud-itonami.app"
             :organization-domain-suffix "cloud-itonami.app"
             :organization-domain-overrides {}

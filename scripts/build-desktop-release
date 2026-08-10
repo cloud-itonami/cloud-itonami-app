@@ -1,0 +1,23 @@
+#!/bin/bash
+set -euo pipefail
+
+repo_dir="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
+source_commit="${CLOUD_ITONAMI_SOURCE_COMMIT:-}"
+if [[ ! "$source_commit" =~ ^[0-9a-f]{40}$ ]]; then
+  echo "CLOUD_ITONAMI_SOURCE_COMMIT must be the released 40-character commit" >&2
+  exit 1
+fi
+
+cd "$repo_dir"
+scripts/build-macos-release
+scripts/build-windows-release
+CLOUD_ITONAMI_SOURCE_COMMIT="$source_commit" clojure -M:release-sign
+
+version="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' packaging/macos/Info.plist)"
+cd target/release
+/usr/bin/shasum -a 256 \
+  "Cloud-Itonami-${version}-macOS-arm64.dmg" \
+  "Cloud-Itonami-${version}-macOS-arm64.zip" \
+  "Cloud-Itonami-${version}-Windows-x64.zip" \
+  update-manifest.edn > SHA256SUMS
+cat SHA256SUMS

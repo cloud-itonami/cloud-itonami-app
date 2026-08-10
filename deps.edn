@@ -395,6 +395,8 @@
  :aliases
  {:build {:deps {io.github.clojure/tools.build {:mvn/version "0.10.8"}}
           :ns-default build}
+  :release-sign {:extra-paths ["dev"]
+                 :main-opts ["-m" "cloud.itonami.app.sign-update-manifest"]}
   :server {:main-opts ["-m" "cloud.itonami.app.server"]}
   :ao-messenger {:main-opts ["-m" "cloud.itonami.app.organism-messenger-client"]}
   :repository {:main-opts ["-m" "cloud.itonami.app.repository-runtime"]}
