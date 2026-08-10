@@ -12,9 +12,22 @@ cd "$repo_dir"
 if [[ ! -f target/release/cloud-itonami-app.jar ]]; then
   clojure -T:build uber
 fi
+rm -rf "$stage_parent"
 mkdir -p "$stage"
 GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" \
   -o "$stage/CloudItonami.exe" packaging/windows/launcher/main.go
+if [[ -n "${CLOUD_ITONAMI_WINDOWS_PFX:-}" ]]; then
+  scripts/sign-windows-release "$stage/CloudItonami.exe"
+  fingerprint="$(openssl pkcs12 -in "$CLOUD_ITONAMI_WINDOWS_PFX" -clcerts -nokeys \
+    -passin "file:$CLOUD_ITONAMI_WINDOWS_PFX_PASSWORD_FILE" 2>/dev/null | \
+    openssl x509 -noout -fingerprint -sha256 | \
+    sed -E 's/^[Ss][Hh][Aa]256 Fingerprint=//; s/://g' | tr '[:lower:]' '[:upper:]')"
+  if [[ ! "$fingerprint" =~ ^[0-9A-F]{64}$ ]]; then
+    echo "could not derive the Windows publisher certificate fingerprint" >&2
+    exit 1
+  fi
+  printf '%s\n' "$fingerprint" > "$stage/windows-publisher-sha256.txt"
+fi
 cp target/release/cloud-itonami-app.jar "$stage/cloud-itonami-app.jar"
 cp packaging/windows/ApplyUpdateWindows.ps1 "$stage/ApplyUpdateWindows.ps1"
 cp packaging/windows/README.txt "$stage/README.txt"

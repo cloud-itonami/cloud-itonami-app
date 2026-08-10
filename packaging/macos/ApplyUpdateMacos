@@ -23,6 +23,13 @@ if [[ ! -d "$new_bundle" ]]; then
   exit 1
 fi
 /usr/bin/codesign --verify --deep --strict --verbose=2 "$new_bundle"
+signature_details="$(/usr/bin/codesign -dv --verbose=4 "$new_bundle" 2>&1)"
+if [[ "$signature_details" != *"Authority=Developer ID Application:"* ||
+      "$signature_details" != *"TeamIdentifier=3A5CBTEBFP"* ]]; then
+  echo "update is not signed by the Cloud Itonami Developer ID team"
+  exit 1
+fi
+/usr/sbin/spctl --assess --type execute --verbose=2 "$new_bundle"
 
 if [[ -e "$backup_bundle" ]]; then
   mv "$backup_bundle" "${backup_bundle}.${stamp}"

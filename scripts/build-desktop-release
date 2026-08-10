@@ -3,10 +3,34 @@ set -euo pipefail
 
 repo_dir="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
 source_commit="${CLOUD_ITONAMI_SOURCE_COMMIT:-}"
+release_channel="${CLOUD_ITONAMI_RELEASE_CHANNEL:-preview}"
 if [[ ! "$source_commit" =~ ^[0-9a-f]{40}$ ]]; then
   echo "CLOUD_ITONAMI_SOURCE_COMMIT must be the released 40-character commit" >&2
   exit 1
 fi
+
+case "$release_channel" in
+  preview) ;;
+  stable)
+    if [[ "${CLOUD_ITONAMI_CODESIGN_IDENTITY:-}" != "Developer ID Application:"* ]]; then
+      echo "stable release requires a Developer ID Application identity" >&2
+      exit 1
+    fi
+    if [[ "${CLOUD_ITONAMI_NOTARIZE:-0}" != "1" ]]; then
+      echo "stable release requires CLOUD_ITONAMI_NOTARIZE=1" >&2
+      exit 1
+    fi
+    if [[ -z "${CLOUD_ITONAMI_WINDOWS_PFX:-}" ||
+          -z "${CLOUD_ITONAMI_WINDOWS_PFX_PASSWORD_FILE:-}" ]]; then
+      echo "stable release requires a Windows Authenticode PKCS#12 identity" >&2
+      exit 1
+    fi
+    ;;
+  *)
+    echo "CLOUD_ITONAMI_RELEASE_CHANNEL must be preview or stable" >&2
+    exit 1
+    ;;
+esac
 
 cd "$repo_dir"
 scripts/build-macos-release

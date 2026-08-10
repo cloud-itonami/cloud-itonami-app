@@ -80,6 +80,30 @@ locally with the exact commit being released:
 CLOUD_ITONAMI_SOURCE_COMMIT=<40-character-commit> scripts/build-desktop-release
 ```
 
+The default channel remains `preview`, which permits ad-hoc macOS signing and
+an unsigned Windows executable. A non-preview publication is fail closed: it
+requires a Developer ID Application identity, Apple notarization credentials,
+and an Authenticode PKCS#12 identity whose password is read from a mode-600
+file. No signing password is passed as a process argument.
+
+```bash
+CLOUD_ITONAMI_RELEASE_CHANNEL=stable \
+CLOUD_ITONAMI_SOURCE_COMMIT=<40-character-commit> \
+CLOUD_ITONAMI_CODESIGN_IDENTITY='Developer ID Application: ...' \
+CLOUD_ITONAMI_NOTARIZE=1 \
+CLOUD_ITONAMI_NOTARY_KEY=~/.appstoreconnect/private_keys/AuthKey_<KEY_ID>.p8 \
+CLOUD_ITONAMI_NOTARY_KEY_ID=<KEY_ID> \
+CLOUD_ITONAMI_NOTARY_ISSUER=<ISSUER_ID> \
+CLOUD_ITONAMI_WINDOWS_PFX=~/.gftd/cloud-itonami-authenticode.pfx \
+CLOUD_ITONAMI_WINDOWS_PFX_PASSWORD_FILE=~/.gftd/cloud-itonami-authenticode-password \
+scripts/build-desktop-release
+```
+
+The macOS app and DMG are notarized and stapled. The Windows signer is the
+pinned jsign 7.5 release, verified against its published SHA-256 before use;
+the updater rejects a package unless Windows validates its Authenticode chain
+and the signer certificate SHA-256 matches the current installation.
+
 ## Run
 
 ```bash

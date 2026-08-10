@@ -16,6 +16,25 @@ $newInstall = Join-Path $work "Cloud Itonami"
 if (-not (Test-Path (Join-Path $newInstall "CloudItonami.exe"))) {
   throw "Update archive contains no CloudItonami.exe"
 }
+$publisherPath = Join-Path $InstallDir "windows-publisher-sha256.txt"
+if (-not (Test-Path $publisherPath)) {
+  throw "Current installation has no Windows publisher identity"
+}
+$expectedPublisher = (Get-Content -Raw $publisherPath).Trim().ToUpperInvariant()
+$signature = Get-AuthenticodeSignature (Join-Path $newInstall "CloudItonami.exe")
+if ($signature.Status -ne "Valid" -or $null -eq $signature.SignerCertificate) {
+  throw "Updated CloudItonami.exe has no valid Authenticode signature"
+}
+$sha256 = [System.Security.Cryptography.SHA256]::Create()
+try {
+  $actualPublisher = -join ($sha256.ComputeHash($signature.SignerCertificate.RawData) |
+    ForEach-Object { $_.ToString("X2") })
+} finally {
+  $sha256.Dispose()
+}
+if ($actualPublisher -ne $expectedPublisher) {
+  throw "Updated CloudItonami.exe is signed by a different publisher"
+}
 if (Test-Path $backup) { Move-Item $backup "$backup.$stamp" }
 Move-Item $InstallDir $backup
 try {
