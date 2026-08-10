@@ -122,6 +122,29 @@ first and use the explicit link controls in Settings. Payment, e-signature,
 federation, and outward-authority approval retain their dedicated Passkey
 ceremonies as step-up authentication.
 
+The Settings page also lists this User's active sessions, can revoke another
+device, clears the current HttpOnly cookie on sign-out, and can unlink an Email
+or SSO identity only while another login root remains. Session responses never
+contain token digests or CSRF values.
+
+For an installed-app registration, Google and Microsoft can be configured
+without distributing a secret:
+
+```edn
+{:auth {:sso-providers [:google :microsoft :github]
+        :sso-clients
+        {:google {:client-id "PUBLIC-DESKTOP-CLIENT-ID"
+                  :public-client? true}
+         :microsoft {:client-id "PUBLIC-DESKTOP-CLIENT-ID"
+                     :public-client? true}}}}
+```
+
+The client ID is public configuration; the token exchange still requires the
+per-transaction PKCE verifier. GitHub's browser OAuth exchange requires a
+client secret, so GitHub remains a credential-store/hosted-broker deployment
+until a separate device-flow UX is selected; setting `:public-client? true`
+does not falsely mark it configured.
+
 ## `itonami` — the command line, without opening the app
 
 `bin/itonami` runs any of the app's operations from any directory. It starts a
