@@ -114,6 +114,7 @@
             [cloud.itonami.app.tenant-connection-test]
             [cloud.itonami.app.tenant-connection-http-test]
             [cloud.itonami.app.tenant-repository-test]
+            [cloud.itonami.app.updater-test]
             [cloud.itonami.app.oauth-resource-test]
             [cloud.itonami.app.oauth-did-binding-test]
             [cloud.itonami.app.worker-http-test]))
@@ -226,6 +227,7 @@
     cloud.itonami.app.tenant-connection-test
     cloud.itonami.app.tenant-connection-http-test
     cloud.itonami.app.tenant-repository-test
+    cloud.itonami.app.updater-test
     cloud.itonami.app.oauth-resource-test
     cloud.itonami.app.oauth-did-binding-test
     cloud.itonami.app.worker-http-test])

@@ -1,0 +1,61 @@
+#!/bin/bash
+set -euo pipefail
+
+parent_pid="$1"
+current_bundle="$2"
+package="$3"
+pending_dir="$4"
+log_file="$5"
+
+exec >>"$log_file" 2>&1
+while kill -0 "$parent_pid" 2>/dev/null; do sleep 0.2; done
+
+stamp="$(date -u +%Y%m%dT%H%M%SZ)"
+work_dir="${pending_dir}.apply-${stamp}"
+backup_bundle="${current_bundle}.previous"
+failed_bundle="${current_bundle}.failed-${stamp}"
+mkdir -p "$work_dir"
+/usr/bin/ditto -x -k "$package" "$work_dir"
+new_bundle="$work_dir/Cloud Itonami.app"
+
+if [[ ! -d "$new_bundle" ]]; then
+  echo "update archive contains no Cloud Itonami.app"
+  exit 1
+fi
+/usr/bin/codesign --verify --deep --strict --verbose=2 "$new_bundle"
+
+if [[ -e "$backup_bundle" ]]; then
+  mv "$backup_bundle" "${backup_bundle}.${stamp}"
+fi
+if ! mv "$current_bundle" "$backup_bundle"; then
+  echo "cannot replace $current_bundle; install the downloaded release manually"
+  exit 1
+fi
+if ! mv "$new_bundle" "$current_bundle"; then
+  mv "$backup_bundle" "$current_bundle"
+  exit 1
+fi
+
+open "$current_bundle"
+healthy=false
+for _ in {1..240}; do
+  if /usr/bin/curl -fsS http://127.0.0.1:1338/health >/dev/null 2>&1; then
+    healthy=true
+    break
+  fi
+  sleep 0.5
+done
+
+if [[ "$healthy" != true ]]; then
+  echo "updated app did not become healthy; rolling back"
+  /usr/bin/pkill -f "$current_bundle/Contents" 2>/dev/null || true
+  sleep 1
+  mv "$current_bundle" "$failed_bundle"
+  mv "$backup_bundle" "$current_bundle"
+  open "$current_bundle"
+  exit 1
+fi
+
+mv "$pending_dir" "${pending_dir}.applied-${stamp}"
+rm -rf "$work_dir"
+echo "update applied successfully"

@@ -27,9 +27,11 @@ clojure -T:build uber
 mkdir -p "$contents_dir/MacOS" "$contents_dir/Resources"
 cp packaging/macos/Info.plist "$contents_dir/Info.plist"
 cp packaging/macos/CloudItonami "$contents_dir/MacOS/CloudItonami"
+cp packaging/macos/ApplyUpdateMacos "$contents_dir/Resources/ApplyUpdateMacos"
 cp target/release/cloud-itonami-app.jar "$contents_dir/Resources/cloud-itonami-app.jar"
 cp resources/cloud/itonami/app/icon.png "$contents_dir/Resources/icon.png"
 chmod 755 "$contents_dir/MacOS/CloudItonami"
+chmod 755 "$contents_dir/Resources/ApplyUpdateMacos"
 
 "$shell_dir/bin/kotoba-shell-build-macos-window" "$contents_dir/MacOS/kotoba-shell-host"
 

@@ -15,7 +15,7 @@
 ;; 2026-08-06 (see README) and is not what this manifest describes.
 {:app/id "cloud.itonami.app"
  :app/name "Cloud Itonami"
- :app/version "0.1.0"
+ :app/version "0.2.0"
  :app/icon "resources/cloud/itonami/app/icon.png"
  :macos/permissions [:accessibility :screen-recording]
  :runtime {:surface :kotoba/web

@@ -9,6 +9,17 @@ server_pid=""
 
 mkdir -p "$support_dir" "$log_dir"
 
+pending_dir="$support_dir/updates/pending"
+if [[ -f "$pending_dir/pending.edn" && -f "$pending_dir/package.zip" ]]; then
+  current_bundle="$(CDPATH= cd -- "$contents_dir/.." && pwd)"
+  helper="$support_dir/apply-update-macos"
+  cp "$resources_dir/ApplyUpdateMacos" "$helper"
+  chmod 700 "$helper"
+  nohup "$helper" "$$" "$current_bundle" "$pending_dir/package.zip" \
+    "$pending_dir" "$log_dir/updater.log" >/dev/null 2>&1 &
+  exit 0
+fi
+
 healthy() {
   /usr/bin/curl -fsS http://127.0.0.1:1338/health >/dev/null 2>&1
 }

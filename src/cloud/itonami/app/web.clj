@@ -2304,6 +2304,19 @@
            [:li "まだ記憶はありません。"]]]]
         [:section {:class "view" :data-view-panel "settings" :hidden true}
          (view-header "Settings" "Cloud Itonami の組織・ユーザーと、外部サービスへの委任接続を管理します。")
+         [:div {:class "local-card" :id "desktop-update-card"}
+          (dds/heading 2 "Desktop update" {:size "20"})
+          [:p {:class "view-lead" :id "desktop-update-status"
+               :role "status" :aria-live "polite"}
+           "更新状態を確認しています…"]
+          [:p {:class "form-help"}
+           "公開Releaseはアプリ内のEd25519公開鍵で署名を検証し、packageのSHA-256とsizeが一致した場合だけ次回起動用に準備します。"]
+          [:div {:class "button-row"}
+           [:button {:class "tool-button" :id "desktop-update-check" :type "button"}
+            "更新を確認"]
+           [:button {:class "primary-action" :id "desktop-update-download"
+                     :type "button" :hidden true}
+            "検証してダウンロード"]]]
          [:p {:class "settings-notice" :id "identity-status"
               :role "status" :aria-live "polite"} ""]
          [:div {:class "settings-notice" :id "connection-notice" :hidden true}]

@@ -37,13 +37,35 @@ Data Integrity proof.
 
 Pure tests and the loopback web surface also run on Linux.
 
-## Install on macOS
+## Install desktop previews
 
-Developer-preview DMG and ZIP builds are published on the
+Developer-preview builds are published on the
 [GitHub Releases](https://github.com/cloud-itonami/cloud-itonami-app/releases)
-page. They currently require Java 21+ and are ad-hoc signed, not Apple
-notarized. macOS may therefore require Control-click → Open on first launch.
-The DMG contains `Cloud Itonami.app`; drag it to Applications.
+page. All builds currently require Java 21+.
+
+- **macOS 14+, Apple Silicon:** DMG and ZIP. The app is ad-hoc signed, not
+  Apple notarized, so macOS may require Control-click → Open on first launch.
+  The DMG contains `Cloud Itonami.app`; drag it to Applications.
+- **Windows 10+, x64:** portable ZIP. Extract the complete `Cloud Itonami`
+  directory and open `CloudItonami.exe`. The preview is not yet
+  Authenticode-signed. It opens Microsoft Edge in application mode when Edge
+  is available and otherwise uses the default browser.
+
+### Automatic updates
+
+The app checks the public GitHub release channel and downloads newer signed
+packages automatically; Settings also exposes manual check/download controls.
+GitHub is the transport, not the authority: `update-manifest.edn` must verify under the
+Ed25519 public key embedded in the installed app, and the selected package must
+match both the signed byte size and SHA-256. A verified package is staged but
+never interrupts an active session. The platform launcher applies it before the
+next server start, retains the previous install, checks `/health`, and restores
+the previous version if the new one does not become healthy.
+
+The signing key is not in this repository. Release engineering resolves the
+targeted kagi item `cloud-itonami-app-updater-ed25519` (compartment `personal`)
+to `~/.gftd/cloud-itonami-app-updater-ed25519.pk8.b64` (mode 600). The public
+half alone is committed.
 
 Release assets include `SHA256SUMS`. Verify a download before opening it:
 
@@ -51,10 +73,11 @@ Release assets include `SHA256SUMS`. Verify a download before opening it:
 shasum -a 256 -c SHA256SUMS
 ```
 
-Maintainers build the same artifacts locally with:
+Maintainers build the same macOS, Windows, manifest, and checksum artifacts
+locally with the exact commit being released:
 
 ```bash
-scripts/build-macos-release
+CLOUD_ITONAMI_SOURCE_COMMIT=<40-character-commit> scripts/build-desktop-release
 ```
 
 ## Run
