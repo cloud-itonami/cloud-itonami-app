@@ -1,0 +1,211 @@
+{:format :kotoba.kir/v3,
+ :signature nil,
+ :functions
+ [{:name status-backlog,
+   :params [],
+   :result :i64,
+   :effects #{},
+   :body 0}
+  {:name status-ready, :params [], :result :i64, :effects #{}, :body 1}
+  {:name status-leased,
+   :params [],
+   :result :i64,
+   :effects #{},
+   :body 2}
+  {:name status-running,
+   :params [],
+   :result :i64,
+   :effects #{},
+   :body 3}
+  {:name status-held, :params [], :result :i64, :effects #{}, :body 4}
+  {:name status-review,
+   :params [],
+   :result :i64,
+   :effects #{},
+   :body 5}
+  {:name status-done, :params [], :result :i64, :effects #{}, :body 6}
+  {:name status-failed,
+   :params [],
+   :result :i64,
+   :effects #{},
+   :body 7}
+  {:name status-rejected,
+   :params [],
+   :result :i64,
+   :effects #{},
+   :body 8}
+  {:name status-cancelled,
+   :params [],
+   :result :i64,
+   :effects #{},
+   :body 9}
+  {:name status-count,
+   :params [],
+   :result :i64,
+   :effects #{},
+   :body 10}
+  {:name status-known?,
+   :params [code],
+   :result :bool,
+   :effects #{},
+   :body
+   (if (< code 0) false (if (>= code (status-count)) false true))}
+  {:name terminal?,
+   :params [code],
+   :result :bool,
+   :effects #{},
+   :body
+   (if
+    (= code (status-done))
+    true
+    (if
+     (= code (status-rejected))
+     true
+     (if (= code (status-cancelled)) true false)))}
+  {:name from-backlog?,
+   :params [to],
+   :result :bool,
+   :effects #{},
+   :body
+   (if
+    (= to (status-ready))
+    true
+    (if (= to (status-cancelled)) true false))}
+  {:name from-ready?,
+   :params [to],
+   :result :bool,
+   :effects #{},
+   :body
+   (if
+    (= to (status-leased))
+    true
+    (if
+     (= to (status-held))
+     true
+     (if (= to (status-cancelled)) true false)))}
+  {:name from-leased?,
+   :params [to],
+   :result :bool,
+   :effects #{},
+   :body
+   (if
+    (= to (status-running))
+    true
+    (if
+     (= to (status-ready))
+     true
+     (if
+      (= to (status-failed))
+      true
+      (if (= to (status-cancelled)) true false))))}
+  {:name from-running?,
+   :params [to],
+   :result :bool,
+   :effects #{},
+   :body
+   (if
+    (= to (status-held))
+    true
+    (if
+     (= to (status-review))
+     true
+     (if
+      (= to (status-done))
+      true
+      (if
+       (= to (status-failed))
+       true
+       (if (= to (status-cancelled)) true false)))))}
+  {:name from-held?,
+   :params [to],
+   :result :bool,
+   :effects #{},
+   :body
+   (if
+    (= to (status-ready))
+    true
+    (if
+     (= to (status-leased))
+     true
+     (if
+      (= to (status-running))
+      true
+      (if
+       (= to (status-rejected))
+       true
+       (if (= to (status-cancelled)) true false)))))}
+  {:name from-review?,
+   :params [to],
+   :result :bool,
+   :effects #{},
+   :body
+   (if
+    (= to (status-done))
+    true
+    (if
+     (= to (status-held))
+     true
+     (if
+      (= to (status-failed))
+      true
+      (if (= to (status-cancelled)) true false))))}
+  {:name from-failed?,
+   :params [to],
+   :result :bool,
+   :effects #{},
+   :body
+   (if
+    (= to (status-ready))
+    true
+    (if (= to (status-cancelled)) true false))}
+  {:name transition-legal?,
+   :params [from to],
+   :result :bool,
+   :effects #{},
+   :body
+   (if
+    (status-known? from)
+    (if
+     (status-known? to)
+     (if
+      (= from (status-backlog))
+      (from-backlog? to)
+      (if
+       (= from (status-ready))
+       (from-ready? to)
+       (if
+        (= from (status-leased))
+        (from-leased? to)
+        (if
+         (= from (status-running))
+         (from-running? to)
+         (if
+          (= from (status-held))
+          (from-held? to)
+          (if
+           (= from (status-review))
+           (from-review? to)
+           (if (= from (status-failed)) (from-failed? to) false)))))))
+     false)
+    false)}],
+ :oracle-value nil,
+ :schema-identities nil,
+ :exports
+ [status-backlog
+  status-ready
+  status-leased
+  status-running
+  status-held
+  status-review
+  status-done
+  status-failed
+  status-rejected
+  status-cancelled
+  status-count
+  status-known?
+  terminal?
+  transition-legal?],
+ :schemas nil,
+ :effects #{},
+ :blocks [],
+ :entry nil}

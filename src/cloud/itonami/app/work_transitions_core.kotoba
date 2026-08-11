@@ -1,0 +1,121 @@
+;; The Kanban transition table's DECISION CORE — which moves are legal, and
+;; which states nothing leaves.
+;;
+;; `work_governance.cljc` keeps everything around it: `work-item` validation,
+;; the `merge` that carries the caller's receipt or approval evidence, and the
+;; `throw`. An exception is an effect and the core does not have effects — the
+;; core decides, the host raises, which is the shape every extraction in this
+;; repository takes.
+;;
+;; What is here is the table itself. It is a safety rule, not bookkeeping:
+;; `done`, `rejected` and `cancelled` are terminal, and one wrong entry would
+;; let a finished work item be leased and run again.
+;;
+;; Status codes are the host's translation of the keyword, in the order
+;; `work-governance/work-statuses` declares them. The mapping stays cljc;
+;; keywords do not cross this boundary.
+;;
+;; Written as one predicate per source state rather than a folded table, so
+;; that adding a state is a visible edit here and in the parity corpus instead
+;; of a silent omission from a chain.
+;;
+;; Parity: test/cloud/itonami/app/work_transitions_kotoba_parity_test.clj
+
+(ns work-transitions-core
+  (:export [status-backlog status-ready status-leased status-running
+            status-held status-review status-done status-failed
+            status-rejected status-cancelled
+            status-count status-known? terminal? transition-legal?]))
+
+(defn status-backlog [] :i64 0)
+(defn status-ready [] :i64 1)
+(defn status-leased [] :i64 2)
+(defn status-running [] :i64 3)
+(defn status-held [] :i64 4)
+(defn status-review [] :i64 5)
+(defn status-done [] :i64 6)
+(defn status-failed [] :i64 7)
+(defn status-rejected [] :i64 8)
+(defn status-cancelled [] :i64 9)
+
+(defn status-count [] :i64 10)
+
+(defn status-known? [code :i64] :bool
+  (if (< code 0) false (if (>= code (status-count)) false true)))
+
+(defn terminal? [code :i64] :bool
+  ;; Nothing leaves these. An unknown code is NOT terminal -- it is unknown,
+  ;; and `transition-legal?` refuses it on that ground instead, so the two
+  ;; questions stay separate.
+  (if (= code (status-done))
+    true
+    (if (= code (status-rejected))
+      true
+      (if (= code (status-cancelled)) true false))))
+
+(defn- from-backlog? [to :i64] :bool
+  (if (= to (status-ready)) true (if (= to (status-cancelled)) true false)))
+
+(defn- from-ready? [to :i64] :bool
+  (if (= to (status-leased))
+    true
+    (if (= to (status-held)) true (if (= to (status-cancelled)) true false))))
+
+(defn- from-leased? [to :i64] :bool
+  (if (= to (status-running))
+    true
+    (if (= to (status-ready))
+      true
+      (if (= to (status-failed)) true (if (= to (status-cancelled)) true false)))))
+
+(defn- from-running? [to :i64] :bool
+  (if (= to (status-held))
+    true
+    (if (= to (status-review))
+      true
+      (if (= to (status-done))
+        true
+        (if (= to (status-failed)) true (if (= to (status-cancelled)) true false))))))
+
+(defn- from-held? [to :i64] :bool
+  (if (= to (status-ready))
+    true
+    (if (= to (status-leased))
+      true
+      (if (= to (status-running))
+        true
+        (if (= to (status-rejected)) true (if (= to (status-cancelled)) true false))))))
+
+(defn- from-review? [to :i64] :bool
+  (if (= to (status-done))
+    true
+    (if (= to (status-held))
+      true
+      (if (= to (status-failed)) true (if (= to (status-cancelled)) true false)))))
+
+(defn- from-failed? [to :i64] :bool
+  (if (= to (status-ready)) true (if (= to (status-cancelled)) true false)))
+
+(defn transition-legal? [from :i64 to :i64] :bool
+  ;; Unknown codes on either side are refused before the table is consulted --
+  ;; a state nobody declared has no legal moves, in or out.
+  (if (status-known? from)
+    (if (status-known? to)
+      (if (= from (status-backlog))
+        (from-backlog? to)
+        (if (= from (status-ready))
+          (from-ready? to)
+          (if (= from (status-leased))
+            (from-leased? to)
+            (if (= from (status-running))
+              (from-running? to)
+              (if (= from (status-held))
+                (from-held? to)
+                (if (= from (status-review))
+                  (from-review? to)
+                  (if (= from (status-failed))
+                    (from-failed? to)
+                    ;; done / rejected / cancelled
+                    false)))))))
+      false)
+    false))
