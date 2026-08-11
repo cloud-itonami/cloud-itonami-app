@@ -106,6 +106,20 @@
                             "const token = new URLSearchParams(location.hash.slice(1))"))
         "showView must not erase the proof before the one finishing POST")))
 
+(deftest domain-ownership-ui-uses-the-human-session-api
+  (let [html (with-redefs [store/snapshot (constantly (store/initial-state))]
+               (web/page-html config))
+        js (slurp (io/file "resources/cloud/itonami/app/interaction.js"))]
+    (doseq [id ["domain-verification-card" "domain-verification-form"
+                "company-domain" "domain-verification-record-name"
+                "domain-verification-record-value" "domain-verification-verify"]]
+      (is (str/includes? html (str "id=\"" id "\"")) id))
+    (is (str/includes? js "fetch('/api/identity/domain-verifications')"))
+    (is (str/includes? js
+                       "postJSON(\n          '/api/identity/domain-verifications'"))
+    (is (str/includes? js "'/api/identity/domain-verifications/verify'"))
+    (is (str/includes? js "initialParams.get('setup-domain')"))))
+
 (deftest capture-is-a-record-only-surface-before-clarification
   (let [html (with-redefs [store/snapshot (constantly (store/initial-state))]
                (web/page-html config))

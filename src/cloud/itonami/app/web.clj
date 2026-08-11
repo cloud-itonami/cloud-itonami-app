@@ -2551,6 +2551,40 @@
                         :type "submit"}
                "招待を承認して参加"]]
              [:ul {:class "member-list" :id "member-list"}]]
+            [:div {:class "local-card" :id "domain-verification-card"}
+             (dds/heading 2 "会社ドメイン" {:size "20"})
+             [:p {:class "form-help"}
+              "DNS の TXT レコードで、このOrganizationが会社ドメインを管理できることを確認します。DNSの書き込み権限をCloud Itonamiへ渡す必要はありません。"]
+             [:p {:class "source-note" :id "domain-verification-state"
+                  :role "status" :aria-live "polite"}
+              "所有権確認を読み込み中…"]
+             [:form {:class "settings-form" :id "domain-verification-form"}
+              [:div {:class "field"}
+               [:label {:for "company-domain"} "会社ドメイン"]
+               [:input {:id "company-domain" :name "domain" :required true
+                        :type "text" :inputmode "url" :autocomplete "url"
+                        :placeholder "example.co.jp"}]
+               [:span {:class "form-help"}
+                "URLやワイルドカードではなく、会社が管理する完全なドメイン名を入力します。"]]
+              [:button {:class "primary-action" :id "domain-verification-start"
+                        :type "submit"}
+               "TXTレコードを発行"]]
+             [:div {:class "settings-form" :id "domain-verification-record"
+                    :hidden true}
+              [:div {:class "field"}
+               [:label {:for "domain-verification-record-name"} "TXT ホスト名"]
+               [:code {:id "domain-verification-record-name"} "—"]]
+              [:div {:class "field"}
+               [:label {:for "domain-verification-record-value"} "TXT 値"]
+               [:code {:id "domain-verification-record-value"} "—"]]
+              [:p {:class "form-help" :id "domain-verification-expiry"} "—"]
+              [:div {:class "record-actions"}
+               [:button {:class "tool-button" :id "domain-verification-copy"
+                         :type "button"}
+                "TXTをコピー"]
+               [:button {:class "primary-action" :id "domain-verification-verify"
+                         :type "button"}
+                "DNSを確認"]]]]
             [:div {:class "local-card"}
              (dds/heading 2 "Agent tenant connections" {:size "20"})
              [:p {:class "form-help"}
