@@ -1,0 +1,148 @@
+{:format :kotoba.kir/v4,
+ :signature nil,
+ :functions
+ [{:name catalog-schema-ok?,
+   :params [found],
+   :result :bool,
+   :effects #{},
+   :body
+   (if (string=? found "cloud.itonami.fleet-catalog.v1") true false),
+   :param-types [:string]}
+  {:name callable?,
+   :params [a],
+   :result :bool,
+   :effects #{},
+   :body
+   (if
+    (option-some?-of
+     [:option :string]
+     (record-get
+      [:record
+       :fleet/actor
+       [[:endpoint [:option :string]]
+        [:health-path [:option :string]]
+        [:isic [:option :string]]
+        [:isic-rev5 [:option :string]]
+        [:isic-rev4 [:option :string]]]]
+      a
+      :endpoint))
+    true
+    false),
+   :param-types [[:ref :fleet/actor]]}
+  {:name probeable?,
+   :params [a],
+   :result :bool,
+   :effects #{},
+   :body
+   (if
+    (let
+     [__kotoba_and_2
+      (option-some?-of
+       [:option :string]
+       (record-get
+        [:record
+         :fleet/actor
+         [[:endpoint [:option :string]]
+          [:health-path [:option :string]]
+          [:isic [:option :string]]
+          [:isic-rev5 [:option :string]]
+          [:isic-rev4 [:option :string]]]]
+        a
+        :endpoint))]
+     (if
+      __kotoba_and_2
+      (option-some?-of
+       [:option :string]
+       (record-get
+        [:record
+         :fleet/actor
+         [[:endpoint [:option :string]]
+          [:health-path [:option :string]]
+          [:isic [:option :string]]
+          [:isic-rev5 [:option :string]]
+          [:isic-rev4 [:option :string]]]]
+        a
+        :health-path))
+      __kotoba_and_2))
+    true
+    false),
+   :param-types [[:ref :fleet/actor]]}
+  {:name isic-of,
+   :params [a],
+   :result [:option :string],
+   :effects #{},
+   :body
+   (if
+    (option-some?-of
+     [:option :string]
+     (record-get
+      [:record
+       :fleet/actor
+       [[:endpoint [:option :string]]
+        [:health-path [:option :string]]
+        [:isic [:option :string]]
+        [:isic-rev5 [:option :string]]
+        [:isic-rev4 [:option :string]]]]
+      a
+      :isic))
+    (record-get
+     [:record
+      :fleet/actor
+      [[:endpoint [:option :string]]
+       [:health-path [:option :string]]
+       [:isic [:option :string]]
+       [:isic-rev5 [:option :string]]
+       [:isic-rev4 [:option :string]]]]
+     a
+     :isic)
+    (if
+     (option-some?-of
+      [:option :string]
+      (record-get
+       [:record
+        :fleet/actor
+        [[:endpoint [:option :string]]
+         [:health-path [:option :string]]
+         [:isic [:option :string]]
+         [:isic-rev5 [:option :string]]
+         [:isic-rev4 [:option :string]]]]
+       a
+       :isic-rev5))
+     (record-get
+      [:record
+       :fleet/actor
+       [[:endpoint [:option :string]]
+        [:health-path [:option :string]]
+        [:isic [:option :string]]
+        [:isic-rev5 [:option :string]]
+        [:isic-rev4 [:option :string]]]]
+      a
+      :isic-rev5)
+     (record-get
+      [:record
+       :fleet/actor
+       [[:endpoint [:option :string]]
+        [:health-path [:option :string]]
+        [:isic [:option :string]]
+        [:isic-rev5 [:option :string]]
+        [:isic-rev4 [:option :string]]]]
+      a
+      :isic-rev4))),
+   :param-types [[:ref :fleet/actor]]}],
+ :oracle-value nil,
+ :schema-identities
+ #:fleet{:actor
+         "c9b21db4a391b6aa106bfb01cf96214ec685f77ab1f5b0c13b0a2c718985c7ec"},
+ :exports [catalog-schema-ok? callable? probeable? isic-of],
+ :schemas
+ #:fleet{:actor
+         [:record
+          :fleet/actor
+          [[:endpoint [:option :string]]
+           [:health-path [:option :string]]
+           [:isic [:option :string]]
+           [:isic-rev5 [:option :string]]
+           [:isic-rev4 [:option :string]]]]},
+ :effects #{},
+ :blocks [],
+ :entry nil}
