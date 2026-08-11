@@ -15,7 +15,7 @@ its Swift implementation.
 |---|---|
 | Desktop calendar and Keychain | `kotoba-lang/shell` native host |
 | UI semantics | web surface on jp-go-dds |
-| Provider selection | safe `.kotoba` policy + host-side mirror |
+| Provider selection | safe `.kotoba` policy, executed from the shipped KIR |
 | Local/cloud model transport | localhost service adapters |
 | Session memory | `kotoba.kgraph` EAV datoms + durable EDN |
 | Compatible client access | OpenAI-compatible HTTP; MCP over stdio and authenticated Streamable HTTP |
@@ -1295,10 +1295,18 @@ application window ── loopback only ──> web surface (jp-go-dds)
                                   local      cloud gate
 ```
 
-The `.kotoba` policy compiles to a portable Wasm artifact. The Clojure host
-mirror is intentionally small and covered by the same truth table. Moving the
-actual server decision into a tendered Wasm component is the next hardening
-step; the current host mirror is not described as if it were already tendered.
+There is no host mirror any more. Since 2026-08-11 `policy.cljc` executes the
+shipped `resources/cloud/itonami/app/oracle/policy.kir.edn` through
+`cloud.itonami.app.kotoba-oracle`, so the `.kotoba` is what decides and the
+Clojure side only projects the two config maps into the four booleans the rule
+asks about. `fleet_core` and `organism_worker` moved the same way.
+
+That is delegation through the KIR interpreter, not a tendered Wasm component:
+the artifact is loaded and executed in-process, without a capability gate or a
+supervisor around it. These three cores are `kotoba/pure` — no effects, no
+capabilities — so there is nothing for a tender to gate yet. Tendering becomes
+the next hardening step when a core needs an effect, and this paragraph should
+not be read as claiming it already happened.
 
 ## MCP surface
 

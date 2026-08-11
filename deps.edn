@@ -8,6 +8,20 @@
   {:git/url "https://github.com/kotoba-lang/kaiyu.git"
    :git/sha "1a5cfb23e52e548ac8b1180b7a70505fbb11a78c"}
   org.clojure/data.json {:mvn/version "2.5.1"}
+
+  ;; The KIR interpreter is a RUNTIME dependency: `cloud.itonami.app.kotoba-
+  ;; oracle` executes the shipped `resources/cloud/itonami/app/oracle/*.kir.edn`
+  ;; through it, so the decisions in `src/cloud/itonami/app/*.kotoba` are what
+  ;; the application runs rather than what a test compares against. The
+  ;; COMPILER stays test-only (see the :test alias) -- it produced those
+  ;; artifacts and never reaches production.
+  ;;
+  ;; Pinned to the kir the pinned compiler emits for. They have to match: KIR
+  ;; is a versioned document, and an interpreter reading a shape its emitter
+  ;; did not write is exactly the failure the artifact was supposed to remove.
+  io.github.kotoba-lang/kotoba-kir
+  {:git/url "https://github.com/kotoba-lang/kotoba-kir.git"
+   :git/sha "da24cae65e82f91352c5b96b0c58f21a52911277"}
   ;; A second implementation executes the persisted portable Datalog corpus
   ;; during cutover qualification; normal Agent queries remain on langchain.db.
   datascript/datascript {:mvn/version "1.7.8"}
@@ -415,6 +429,11 @@
   ;; registration. The property beats the environment variable on purpose, so
   ;; an exported CLOUD_ITONAMI_DATA_DIR cannot redirect the suite back onto a
   ;; real store.
+  ;; Regenerate the shipped decision-core KIR. Combine with :test, which
+  ;; carries the compiler; a later alias's :main-opts wins:
+  ;;
+  ;;   clojure -M:test:gen
+  :gen {:main-opts ["-m" "cloud.itonami.app.kotoba-oracle-gen"]}
   :test {:extra-paths ["test"]
          :extra-deps {datascript/datascript {:mvn/version "1.7.8"}}
          ;; `kotoba-lang/compiler` is TEST-ONLY here, for the decision-core

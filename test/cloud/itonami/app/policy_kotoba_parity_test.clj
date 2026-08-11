@@ -1,5 +1,19 @@
 (ns cloud.itonami.app.policy-kotoba-parity-test
-  "What binds `policy.kotoba` to `policy.cljc`.
+  "The routing policy's truth table, and that the core compiles everywhere.
+
+  ## What this test now is
+
+  Since 2026-08-11 `policy.cljc` DELEGATES to the shipped artifact, so there
+  is no second implementation left to be in parity with. What survives is the
+  part that was always worth having: the truth table itself, asserted over the
+  host, and the multi-target compiles. Read `policy.cljc` == `policy.kotoba`
+  below as \"the host reaches the rule\", not as \"two implementations agree\".
+  `kotoba-oracle-test` is what checks the shipped artifact is current and that
+  the host really reads it.
+
+  ## What it was, and why
+
+  Before this test, `policy.cljc` said in a docstring that it was \"the
 
   Before this test, `policy.cljc` said in a docstring that it was \"the
   host-side mirror of policy.kotoba\", and nothing checked it. The two files
@@ -57,11 +71,11 @@
 (defn- with-probes
   "Append zero-arg `:bool` wrappers to the core and widen its `:export`.
 
-  Every case is a wrapper rather than a direct call with host arguments,
-  because a record cannot be handed across the entry boundary as a literal —
-  it is constructed inside the guest. This is the shape
-  `murakumo/test/murakumo/infer_join_kotoba_parity_test.clj` uses, for the
-  same reason."
+  Retained because it is a cheap way to run many cases off one compile, NOT
+  because a record cannot cross the entry boundary. This once said it could
+  not; measured false at these pins on 2026-08-11, and `kotoba-oracle-test`
+  pins that measurement. It had to be false for `policy.cljc` to delegate at
+  all — a production call path cannot recompile the way a test can."
   [probes]
   (let [names (str/join " " (map first probes))
         defs (str/join "\n" (map (fn [[n body]]

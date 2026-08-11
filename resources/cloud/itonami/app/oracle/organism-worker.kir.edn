@@ -1,0 +1,193 @@
+{:format :kotoba.kir/v4,
+ :signature nil,
+ :functions
+ [{:name required-value-present?,
+   :params [v],
+   :result :bool,
+   :effects #{},
+   :body
+   (if
+    (option-some?-of [:option :string] v)
+    (if
+     (string=? (option-value-of [:option :string] v "") "")
+     false
+     true)
+    false),
+   :param-types [[:option :string]]}
+  {:name rejection-reason,
+   :params [c],
+   :result :keyword,
+   :effects #{},
+   :body
+   (if
+    (record-get
+     [:record
+      :ao/intent-check
+      [[:status-active :bool]
+       [:has-id :bool]
+       [:has-issued-by :bool]
+       [:organization-matches :bool]
+       [:worker-matches :bool]
+       [:capability-granted :bool]
+       [:has-expires-at :bool]
+       [:expires-at :i64]
+       [:now-ms :i64]]]
+     c
+     :status-active)
+    (if
+     (let
+      [__kotoba_and_2
+       (record-get
+        [:record
+         :ao/intent-check
+         [[:status-active :bool]
+          [:has-id :bool]
+          [:has-issued-by :bool]
+          [:organization-matches :bool]
+          [:worker-matches :bool]
+          [:capability-granted :bool]
+          [:has-expires-at :bool]
+          [:expires-at :i64]
+          [:now-ms :i64]]]
+        c
+        :has-id)]
+      (if
+       __kotoba_and_2
+       (record-get
+        [:record
+         :ao/intent-check
+         [[:status-active :bool]
+          [:has-id :bool]
+          [:has-issued-by :bool]
+          [:organization-matches :bool]
+          [:worker-matches :bool]
+          [:capability-granted :bool]
+          [:has-expires-at :bool]
+          [:expires-at :i64]
+          [:now-ms :i64]]]
+        c
+        :has-issued-by)
+       __kotoba_and_2))
+     (if
+      (record-get
+       [:record
+        :ao/intent-check
+        [[:status-active :bool]
+         [:has-id :bool]
+         [:has-issued-by :bool]
+         [:organization-matches :bool]
+         [:worker-matches :bool]
+         [:capability-granted :bool]
+         [:has-expires-at :bool]
+         [:expires-at :i64]
+         [:now-ms :i64]]]
+       c
+       :organization-matches)
+      (if
+       (record-get
+        [:record
+         :ao/intent-check
+         [[:status-active :bool]
+          [:has-id :bool]
+          [:has-issued-by :bool]
+          [:organization-matches :bool]
+          [:worker-matches :bool]
+          [:capability-granted :bool]
+          [:has-expires-at :bool]
+          [:expires-at :i64]
+          [:now-ms :i64]]]
+        c
+        :worker-matches)
+       (if
+        (record-get
+         [:record
+          :ao/intent-check
+          [[:status-active :bool]
+           [:has-id :bool]
+           [:has-issued-by :bool]
+           [:organization-matches :bool]
+           [:worker-matches :bool]
+           [:capability-granted :bool]
+           [:has-expires-at :bool]
+           [:expires-at :i64]
+           [:now-ms :i64]]]
+         c
+         :capability-granted)
+        (if
+         (let
+          [__kotoba_and_2
+           (record-get
+            [:record
+             :ao/intent-check
+             [[:status-active :bool]
+              [:has-id :bool]
+              [:has-issued-by :bool]
+              [:organization-matches :bool]
+              [:worker-matches :bool]
+              [:capability-granted :bool]
+              [:has-expires-at :bool]
+              [:expires-at :i64]
+              [:now-ms :i64]]]
+            c
+            :has-expires-at)]
+          (if
+           __kotoba_and_2
+           (>
+            (record-get
+             [:record
+              :ao/intent-check
+              [[:status-active :bool]
+               [:has-id :bool]
+               [:has-issued-by :bool]
+               [:organization-matches :bool]
+               [:worker-matches :bool]
+               [:capability-granted :bool]
+               [:has-expires-at :bool]
+               [:expires-at :i64]
+               [:now-ms :i64]]]
+             c
+             :expires-at)
+            (record-get
+             [:record
+              :ao/intent-check
+              [[:status-active :bool]
+               [:has-id :bool]
+               [:has-issued-by :bool]
+               [:organization-matches :bool]
+               [:worker-matches :bool]
+               [:capability-granted :bool]
+               [:has-expires-at :bool]
+               [:expires-at :i64]
+               [:now-ms :i64]]]
+             c
+             :now-ms))
+           __kotoba_and_2))
+         :admitted
+         :intent-expired)
+        :capability-not-granted)
+       :worker-boundary)
+      :organization-boundary)
+     :invalid-intent)
+    :worker-not-active),
+   :param-types [[:ref :ao/intent-check]]}],
+ :oracle-value nil,
+ :schema-identities
+ #:ao{:intent-check
+      "69e5fa6753c3f79934dad717bcefb3c7f02de2d4d32365944c716ebd3f2a5dcc"},
+ :exports [required-value-present? rejection-reason],
+ :schemas
+ #:ao{:intent-check
+      [:record
+       :ao/intent-check
+       [[:status-active :bool]
+        [:has-id :bool]
+        [:has-issued-by :bool]
+        [:organization-matches :bool]
+        [:worker-matches :bool]
+        [:capability-granted :bool]
+        [:has-expires-at :bool]
+        [:expires-at :i64]
+        [:now-ms :i64]]]},
+ :effects #{},
+ :blocks [],
+ :entry nil}

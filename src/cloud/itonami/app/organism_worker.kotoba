@@ -59,8 +59,10 @@
   (:export [required-value-present? rejection-reason]))
 
 ;; `require-value` in the cljc refuses nil and the empty string, and accepts
-;; anything else. This is the string half of that rule; the cljc keeps the
-;; `throw` and keeps accepting non-string values, which do not reach here.
+;; anything else. This is the string half of that rule, and since 2026-08-11
+;; the cljc CALLS it (through `cloud.itonami.app.kotoba-oracle`) rather than
+;; repeating it; the cljc keeps the `throw`, which is not a decision, and keeps
+;; accepting non-string values, which do not reach here.
 (defn required-value-present? [v [:option :string]] :bool
   (if (option-some?-of [:option :string] v)
     (if (string=? (option-value-of [:option :string] v "") "")

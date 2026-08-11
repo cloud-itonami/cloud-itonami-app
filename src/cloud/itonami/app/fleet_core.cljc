@@ -11,8 +11,32 @@
   Every function takes the actor collection. Nothing in this namespace reads,
   fetches, caches or probes: an address is data here, never something to call.
   `probe*` and the health machinery stay on the platform side, because
-  measuring reachability is exactly the part that differs."
-  (:require [clojure.string :as str]))
+  measuring reachability is exactly the part that differs.
+
+  The four judgements — is this the schema we read, is an actor callable, is it
+  probeable, which ISIC does it code in — are `fleet_core.kotoba` and RUN from
+  there (`cloud.itonami.app.kotoba-oracle`). What stays here is the collection
+  work they are asked over: filtering, faceting, and the throw."
+  (:require [clojure.string :as str]
+            [cloud.itonami.app.kotoba-oracle :as oracle]))
+
+(def ^:private actor-record
+  "The record `fleet_core.kotoba` declares, in DECLARED field order."
+  [:record :fleet/actor
+   [[:endpoint [:option :string]] [:health-path [:option :string]]
+    [:isic [:option :string]] [:isic-rev5 [:option :string]]
+    [:isic-rev4 [:option :string]]]])
+
+(defn- ->actor
+  "Project the five fields the decisions read. An actor in the catalog has many
+  more; carrying them across would make this a second catalog schema."
+  [actor]
+  (oracle/record actor-record
+                 [(oracle/option (:endpoint actor))
+                  (oracle/option (:health-path actor))
+                  (oracle/option (:isic actor))
+                  (oracle/option (:isic-rev5 actor))
+                  (oracle/option (:isic-rev4 actor))]))
 
 (def schema "cloud.itonami.fleet-catalog.v1")
 
@@ -22,7 +46,7 @@
   A catalog whose shape drifted is worse than a missing one: it answers
   queries, and the answers are wrong in ways no caller can see."
   [c]
-  (when-not (= schema (:schema c))
+  (when-not (oracle/call :fleet-core 'catalog-schema-ok? [(str (:schema c))])
     (throw (ex-info "fleet catalog schema mismatch"
                     {:type :fleet/schema-mismatch
                      :expected schema :found (:schema c)})))
@@ -32,14 +56,14 @@
   "True when this actor declares an address. Absent means not deployed, or
   deployed with no route — not 'unknown, try it and see'."
   [actor]
-  (some? (:endpoint actor)))
+  (oracle/call :fleet-core 'callable? [(->actor actor)]))
 
 (defn probeable?
   "True when the actor names a health path. A callable actor need not be
   probeable: the Pages actors serve a real API under /api/* and have no health
   endpoint at all, so there is nothing honest to probe."
   [actor]
-  (and (callable? actor) (some? (:health-path actor))))
+  (oracle/call :fleet-core 'probeable? [(->actor actor)]))
 
 (defn- matches-text? [actor q]
   (let [q (str/lower-case q)]
@@ -47,7 +71,7 @@
           [(:id actor) (:name actor) (:domain actor)])))
 
 (defn- isic-of [actor]
-  (or (:isic actor) (:isic-rev5 actor) (:isic-rev4 actor)))
+  (oracle/option-value (oracle/call :fleet-core 'isic-of [(->actor actor)])))
 
 (defn actor-by-repo
   "Look up by repository directory, which is unique. Prefer this over

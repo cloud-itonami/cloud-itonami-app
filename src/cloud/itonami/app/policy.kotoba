@@ -7,9 +7,11 @@
 ;; questions — is this host loopback, and may this provider be used — and both
 ;; answer from scalars.
 ;;
-;; The two implementations do not call each other. `policy-kotoba-parity-test`
-;; is what binds them: it compiles this file and runs both over the same inputs.
-;; Before that test existed, `policy.cljc` merely CLAIMED in a docstring to be
+;; `policy.cljc` CALLS this file (through `cloud.itonami.app.kotoba-oracle`,
+;; from the shipped `resources/cloud/itonami/app/oracle/policy.kir.edn`), so
+;; there is one implementation, not two kept in step. It was two until
+;; 2026-08-11, bound by `policy-kotoba-parity-test`; before that test existed,
+;; `policy.cljc` merely CLAIMED in a docstring to be
 ;; "the host-side mirror of policy.kotoba", while the two files did not share a
 ;; single function — this one exported a `select-provider-tier` that no caller
 ;; anywhere referenced, and the cljc's `provider-allowed?` had no counterpart.

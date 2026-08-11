@@ -1,0 +1,96 @@
+{:format :kotoba.kir/v4,
+ :signature nil,
+ :functions
+ [{:name loopback-host?,
+   :params [host],
+   :result :bool,
+   :effects #{},
+   :body
+   (if
+    (let
+     [__kotoba_or_3 (string=? host "127.0.0.1")]
+     (if
+      __kotoba_or_3
+      __kotoba_or_3
+      (let
+       [__kotoba_or_2 (string=? host "localhost")]
+       (if __kotoba_or_2 __kotoba_or_2 (string=? host "::1")))))
+    true
+    false),
+   :param-types [:string]}
+  {:name provider-allowed?,
+   :params [p],
+   :result :bool,
+   :effects #{},
+   :body
+   (if
+    (let
+     [__kotoba_and_2
+      (record-get
+       [:record
+        :policy/provider
+        [[:enabled :bool]
+         [:local :bool]
+         [:cloud-enabled :bool]
+         [:cloud-reviewed :bool]]]
+       p
+       :enabled)]
+     (if
+      __kotoba_and_2
+      (let
+       [__kotoba_or_2
+        (record-get
+         [:record
+          :policy/provider
+          [[:enabled :bool]
+           [:local :bool]
+           [:cloud-enabled :bool]
+           [:cloud-reviewed :bool]]]
+         p
+         :local)]
+       (if
+        __kotoba_or_2
+        __kotoba_or_2
+        (let
+         [__kotoba_and_2
+          (record-get
+           [:record
+            :policy/provider
+            [[:enabled :bool]
+             [:local :bool]
+             [:cloud-enabled :bool]
+             [:cloud-reviewed :bool]]]
+           p
+           :cloud-enabled)]
+         (if
+          __kotoba_and_2
+          (record-get
+           [:record
+            :policy/provider
+            [[:enabled :bool]
+             [:local :bool]
+             [:cloud-enabled :bool]
+             [:cloud-reviewed :bool]]]
+           p
+           :cloud-reviewed)
+          __kotoba_and_2))))
+      __kotoba_and_2))
+    true
+    false),
+   :param-types [[:ref :policy/provider]]}],
+ :oracle-value nil,
+ :schema-identities
+ #:policy{:provider
+          "827d5654469168403369b653d4e2cb16c57117f21e2cf9871e3a926f8b333f13"},
+ :exports [loopback-host? provider-allowed?],
+ :schemas
+ #:policy{:provider
+          [:record
+           :policy/provider
+           [[:enabled :bool]
+            [:local :bool]
+            [:cloud-enabled :bool]
+            [:cloud-reviewed :bool]]]},
+ :effects #{},
+ :blocks [],
+ :entry nil}

@@ -4,8 +4,22 @@
 
   An OrganismWorker is not a `cloud.itonami.app.worker` background model run.
   Cloud Itonami stores an assignment and safe projections; the organism keeps
-  its identity, lifecycle, memory, scheduler, and repository authority."
-  (:require [clojure.set :as set]))
+  its identity, lifecycle, memory, scheduler, and repository authority.
+
+  Two judgements are `organism_worker.kotoba` and RUN from there
+  (`cloud.itonami.app.kotoba-oracle`): whether a required value is present, and
+  the precedence of intent rejection reasons. What stays here is everything
+  that is not a judgement -- the throw, the map projection, the shapes."
+  (:require [clojure.set :as set]
+            [cloud.itonami.app.kotoba-oracle :as oracle]))
+
+(def ^:private intent-check-record
+  "The record `organism_worker.kotoba` declares, in DECLARED field order."
+  [:record :ao/intent-check
+   [[:status-active :bool] [:has-id :bool] [:has-issued-by :bool]
+    [:organization-matches :bool] [:worker-matches :bool]
+    [:capability-granted :bool] [:has-expires-at :bool]
+    [:expires-at :i64] [:now-ms :i64]]])
 
 (def schema "kotoba.ao.worker-assignment.v1")
 (def intent-schema "kotoba.ao.worker-intent.v1")
@@ -21,8 +35,17 @@
     :ao.worker/repository :ao.worker/runtime :ao.worker/status
     :ao.worker/capabilities :ao.worker/authority :ao.worker/incarnation})
 
-(defn- require-value [value field]
-  (when (or (nil? value) (and (string? value) (empty? value)))
+(defn- require-value
+  "Refuse nil and the empty string; accept anything else.
+
+  The rule is `organism_worker.kotoba/required-value-present?`, which answers
+  over `[:option :string]`. A non-string, non-nil value never reaches it -- it
+  is present by construction -- and the throw stays here because a throw is not
+  a decision."
+  [value field]
+  (when-not (or (and (some? value) (not (string? value)))
+                (oracle/call :organism-worker 'required-value-present?
+                             [(oracle/option value)]))
     (throw (ex-info (str field " is required")
                     {:type :ao.worker/invalid-assignment :field field})))
   value)
@@ -73,24 +96,23 @@
    now-ms]
   (let [worker-assignment (assignment assignment-value)
         capabilities (:ao.worker/capabilities worker-assignment)
-        reason (cond
-                 (not= :active (:ao.worker/status worker-assignment))
-                 :worker-not-active
-
-                 (or (nil? id) (nil? issued-by))
-                 :invalid-intent
-
-                 (not= organization (:ao.worker/organization worker-assignment))
-                 :organization-boundary
-
-                 (not= worker (:ao.worker/id worker-assignment))
-                 :worker-boundary
-
-                 (not (contains? capabilities capability))
-                 :capability-not-granted
-
-                 (or (nil? expires-at) (<= expires-at now-ms))
-                 :intent-expired)]
+        ;; The precedence is the decision, and it is in the .kotoba. This
+        ;; projects the seven predicates and the two instants it is over;
+        ;; which reason wins is not decided here.
+        outcome (oracle/call
+                 :organism-worker 'rejection-reason
+                 [(oracle/record
+                   intent-check-record
+                   [(= :active (:ao.worker/status worker-assignment))
+                    (some? id)
+                    (some? issued-by)
+                    (= organization (:ao.worker/organization worker-assignment))
+                    (= worker (:ao.worker/id worker-assignment))
+                    (contains? capabilities capability)
+                    (some? expires-at)
+                    (long (or expires-at 0))
+                    (long now-ms)])])
+        reason (when-not (= :admitted outcome) outcome)]
     (if reason
       {:intent/status :rejected :intent/reason reason}
       {:intent/schema intent-schema

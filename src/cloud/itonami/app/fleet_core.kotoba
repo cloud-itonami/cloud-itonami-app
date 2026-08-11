@@ -61,6 +61,9 @@
 ;; of a string constant is not part of the slice this core stays inside. The
 ;; cljc's `schema` var remains the single place a CALLER reads it from; the
 ;; parity test is what keeps this literal equal to it.
+;;
+;; Since 2026-08-11 `fleet_core.cljc` CALLS these four through
+;; `cloud.itonami.app.kotoba-oracle` rather than keeping its own copies.
 (defn catalog-schema-ok? [found :string] :bool
   (if (string=? found "cloud.itonami.fleet-catalog.v1")
     true
