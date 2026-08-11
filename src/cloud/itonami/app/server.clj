@@ -19,6 +19,7 @@
             [cloud.itonami.app.presentation-request :as presentation-request]
             [webauthn.assurance :as credential-assurance]
             [cloud.itonami.app.documents :as documents]
+            [cloud.itonami.app.domain-verification :as domain-verification]
             [docs.html :as docs-html]
             [cloud.itonami.app.esign :as esign]
             [cloud.itonami.app.esign.retention :as esign-retention]
@@ -1912,6 +1913,34 @@
 
       :else (send! exchange 405 {:error {:type "method_not_allowed"}}))))
 
+(defn- route-domain-verification!
+  "Keep the domain-ownership surface out of the already-large HttpHandler
+  method. Returns true only when it handled the request."
+  [exchange config method path]
+  (cond
+    (and (= method "GET") (= path "/api/identity/domain-verifications"))
+    (let [session (require-human-session! exchange)]
+      (require-origin! exchange config)
+      (send! exchange 200 (domain-verification/list-for-session session))
+      true)
+
+    (and (= method "POST") (= path "/api/identity/domain-verifications"))
+    (let [session (require-human-session! exchange)]
+      (require-origin! exchange config)
+      (require-csrf! exchange session)
+      (send! exchange 201 (domain-verification/start! session (read-json exchange)))
+      true)
+
+    (and (= method "POST")
+         (= path "/api/identity/domain-verifications/verify"))
+    (let [session (require-human-session! exchange)]
+      (require-origin! exchange config)
+      (require-csrf! exchange session)
+      (send! exchange 200 (domain-verification/verify! session (read-json exchange)))
+      true)
+
+    :else false))
+
 (defn handler [config]
   (reify HttpHandler
     (handle [_ exchange]
@@ -2753,6 +2782,9 @@
               (send! exchange 201
                      (identity/public-state
                       (cookie-value exchange identity/cookie-name))))
+
+            (route-domain-verification! exchange config method path)
+            nil
 
             (and (= method "POST")
                  (= path "/api/identity/organizations/switch"))

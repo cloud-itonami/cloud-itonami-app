@@ -81,6 +81,7 @@
             [cloud.itonami.app.credential-trust-test]
             [cloud.itonami.app.data-isolation-test]
             [cloud.itonami.app.did-test]
+            [cloud.itonami.app.domain-verification-test]
             [cloud.itonami.app.email-login-test]
             [cloud.itonami.app.identity-lifecycle-test]
             [cloud.itonami.app.sso-login-test]
@@ -181,6 +182,7 @@
     cloud.itonami.app.credential-trust-test
     cloud.itonami.app.data-isolation-test
     cloud.itonami.app.did-test
+    cloud.itonami.app.domain-verification-test
     cloud.itonami.app.email-login-test
     cloud.itonami.app.identity-lifecycle-test
     cloud.itonami.app.sso-login-test
