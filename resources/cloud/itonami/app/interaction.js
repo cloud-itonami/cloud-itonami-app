@@ -7760,6 +7760,43 @@
         list.replaceChildren(make('li', null, error.message));
       }
     };
+    let activeDomainVerification = null;
+    const renderDomainVerifications = (data) => {
+      const records = data.verifications || [];
+      activeDomainVerification = records.length ? records[records.length - 1] : null;
+      const state = $('#domain-verification-state');
+      const record = $('#domain-verification-record');
+      if (!activeDomainVerification) {
+        state.textContent = '確認済みの会社ドメインはありません。';
+        record.hidden = true;
+        return;
+      }
+      const verification = activeDomainVerification;
+      const verified = verification.status === 'verified';
+      state.textContent = verified
+        ? `${verification.domain} は確認済みです。`
+        : `${verification.domain} のTXTレコードをDNSへ追加してください。`;
+      record.hidden = verified;
+      $('#domain-verification-record-name').textContent = verification['record-name'] || '—';
+      $('#domain-verification-record-value').textContent = verification['record-value'] || '—';
+      $('#domain-verification-expiry').textContent = verification['expires-at']
+        ? `有効期限: ${formatDate(verification['expires-at'])}` : '—';
+      if (verification.domain) $('#company-domain').value = verification.domain;
+    };
+    const loadDomainVerifications = async () => {
+      const state = $('#domain-verification-state');
+      try {
+        const request = await fetch('/api/identity/domain-verifications');
+        const data = await request.json();
+        if (!request.ok) {
+          throw new Error(data?.error?.message || '会社ドメインを読み込めませんでした。');
+        }
+        renderDomainVerifications(data);
+      } catch (error) {
+        state.textContent = error.message;
+      }
+    };
+
     const renderIdentity = (data) => {
       identityState = data;
       renderAuthMethods(data);
@@ -7879,6 +7916,10 @@
       // Members belong to organizations. A personal tenant has exactly one
       // member by construction, so the card that adds them stays away.
       $('#member-card').hidden = !organizationReady || personalTenant;
+      const mayVerifyDomain = organizationReady && !personalTenant
+        && data.organization?.role === 'owner';
+      $('#domain-verification-card').hidden = !mayVerifyDomain;
+      if (mayVerifyDomain) loadDomainVerifications();
       renderMembers(data.organization);
       renderConnectors(data);
       loadCloudAlias(data);
@@ -8235,6 +8276,50 @@
         $('#identity-status').textContent = error.message;
       } finally {
         button.disabled = false; button.textContent = 'Organizationを追加';
+      }
+    });
+    $('#domain-verification-form').addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const button = $('#domain-verification-start');
+      const domain = $('#company-domain').value.trim();
+      button.disabled = true;
+      button.textContent = '発行中…';
+      try {
+        const verification = await postJSON(
+          '/api/identity/domain-verifications', {domain}, true);
+        renderDomainVerifications({verifications:[verification]});
+        $('#identity-status').textContent =
+          `${verification.domain} のTXTレコードを発行しました。`;
+      } catch (error) {
+        $('#domain-verification-state').textContent = error.message;
+      } finally {
+        button.disabled = false;
+        button.textContent = 'TXTレコードを発行';
+      }
+    });
+    $('#domain-verification-copy').addEventListener('click', async () => {
+      if (!activeDomainVerification) return;
+      const text = `${activeDomainVerification['record-name']}\n${activeDomainVerification['record-value']}`;
+      await navigator.clipboard.writeText(text);
+      $('#domain-verification-state').textContent = 'TXTのホスト名と値をコピーしました。';
+    });
+    $('#domain-verification-verify').addEventListener('click', async () => {
+      if (!activeDomainVerification) return;
+      const button = $('#domain-verification-verify');
+      button.disabled = true;
+      button.textContent = '確認中…';
+      try {
+        const verification = await postJSON(
+          '/api/identity/domain-verifications/verify',
+          {'verification-id':activeDomainVerification.id}, true);
+        renderDomainVerifications({verifications:[verification]});
+        $('#identity-status').textContent = `${verification.domain} の所有権を確認しました。`;
+        await loadIdentity();
+      } catch (error) {
+        $('#domain-verification-state').textContent = error.message;
+      } finally {
+        button.disabled = false;
+        button.textContent = 'DNSを確認';
       }
     });
     $('#project-transfer-form').addEventListener('submit', async (event) => {
@@ -8855,6 +8940,9 @@
       notice.textContent = connected
         ? `${initialParams.get('provider')} を接続しました。`
         : `${initialParams.get('provider')} の接続を完了できませんでした。`;
+    }
+    if (initialParams.get('setup-domain')) {
+      $('#company-domain').value = initialParams.get('setup-domain');
     }
     if (initialParams.get('auth')) {
       const provider = initialParams.get('provider');

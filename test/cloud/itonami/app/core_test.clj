@@ -264,6 +264,10 @@
       (is (str/includes? web/interaction-js "setMobileMenuOpen"))
       (is (re-find #"id=\"connector-list\"" html))
       (is (re-find #"id=\"member-form\"" html))
+      (doseq [id ["domain-verification-card" "domain-verification-form"
+                  "company-domain" "domain-verification-record"
+                  "domain-verification-copy" "domain-verification-verify"]]
+        (is (re-find (re-pattern (str "id=\\\"" id "\\\"")) html)))
       (is (re-find #"data-view-panel=\"worker\"" html))
       (is (re-find #"id=\"worker-form\"" html))
       (is (re-find #"id=\"worker-prompt\"" html))
