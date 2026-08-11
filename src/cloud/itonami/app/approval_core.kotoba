@@ -1,0 +1,111 @@
+;; Approval's DECISION CORE — which human decisions count, and what they add up
+;; to.
+;;
+;; This is the highest-stakes rule in the repository: it decides whether a work
+;; item has human authority behind it. Two properties are the whole point, and
+;; both are one comparison away from being lost:
+;;
+;;   - a decision bound to DIFFERENT content does not count. Approving revision
+;;     A must not approve revision B, so the content hash is part of
+;;     eligibility, not metadata beside it.
+;;   - a veto beats a satisfied minimum. Ordering the tally the other way would
+;;     approve something that was rejected.
+;;
+;; `work_governance.cljc` keeps the folding: finding the performer and the
+;; assignment for an actor, intersecting role sets, deduplicating approvals by
+;; actor, and building the `:ignored` list. Those are collections. It also
+;; keeps every `throw` -- an exception is an effect and the core has none.
+;;
+;; What crosses is booleans the host has already decided and three counts. No
+;; keywords, no sets.
+;;
+;; Parity: test/cloud/itonami/app/approval_kotoba_parity_test.clj
+
+(ns approval-core
+  (:schemas {;; One decision's eligibility, as ten facts the host establishes.
+             ;; A record because a bare `:bool` parameter is still refused
+             ;; (ADR-0219) while `:bool` FIELDS have always worked -- and
+             ;; because ten would not fit as parameters regardless.
+             :approval/eligibility
+             [:record :approval/eligibility
+              [[:same-organization :bool]
+               [:same-capability :bool]
+               [:same-work-item :bool]
+               [:same-content-hash :bool]
+               [:actor-is-person :bool]
+               [:has-eligible-role :bool]
+               [:requires-user-verification :bool]
+               [:user-verified :bool]
+               [:separation-of-duties :bool]
+               [:actor-is-submitter :bool]]]
+             ;; What the eligible decisions add up to.
+             :approval/tally
+             [:record :approval/tally
+              [[:veto-mode :bool] [:rejected-count :i64]
+               [:approved-count :i64] [:minimum :i64]]]})
+  (:export [status-pending status-approved status-rejected
+            verification-satisfied? separation-satisfied? eligible?
+            minimum-met? veto-triggered? status main]))
+
+(defn status-pending [] :i64 0)
+(defn status-approved [] :i64 1)
+(defn status-rejected [] :i64 2)
+
+(defn verification-satisfied? [e [:ref :approval/eligibility]] :bool
+  ;; The policy flag GATES the requirement: when verification is not required,
+  ;; an unverified decision is still eligible. Reading this as a plain
+  ;; conjunction would silently require verification everywhere.
+  (if (record-get e :requires-user-verification)
+    (record-get e :user-verified)
+    true))
+
+(defn separation-satisfied? [e [:ref :approval/eligibility]] :bool
+  ;; Same shape, negated: when separation of duties is on, the submitter may
+  ;; not approve their own item.
+  (if (record-get e :separation-of-duties)
+    (if (record-get e :actor-is-submitter) false true)
+    true))
+
+(defn eligible? [e [:ref :approval/eligibility]] :bool
+  ;; Every fact must hold. Spelled out rather than folded so that adding a
+  ;; condition is a visible edit here and in the parity corpus.
+  (if (record-get e :same-organization)
+    (if (record-get e :same-capability)
+      (if (record-get e :same-work-item)
+        ;; A decision bound to different content is not a decision about this
+        ;; revision.
+        (if (record-get e :same-content-hash)
+          (if (record-get e :actor-is-person)
+            (if (record-get e :has-eligible-role)
+              (if (verification-satisfied? e)
+                (separation-satisfied? e)
+                false)
+              false)
+            false)
+          false)
+        false)
+      false)
+    false))
+
+(defn minimum-met? [approved-count :i64 minimum :i64] :bool
+  (>= approved-count minimum))
+
+(defn veto-triggered? [t [:ref :approval/tally]] :bool
+  (if (record-get t :veto-mode)
+    (> (record-get t :rejected-count) 0)
+    false))
+
+(defn status [t [:ref :approval/tally]] :i64
+  ;; Veto first. A rejection under veto mode outranks any number of approvals,
+  ;; including a satisfied minimum -- reversing these two branches is the
+  ;; failure this ordering exists to prevent.
+  (if (veto-triggered? t)
+    (status-rejected)
+    (if (minimum-met? (record-get t :approved-count) (record-get t :minimum))
+      (status-approved)
+      (status-pending))))
+
+(defn main [] :i64
+  ;; Sentinel for the wasm host contract, not a battery. The assertions live in
+  ;; the parity test where they can be compared against the cljc.
+  0)

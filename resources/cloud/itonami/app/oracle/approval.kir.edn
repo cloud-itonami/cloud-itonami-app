@@ -1,0 +1,324 @@
+{:format :kotoba.kir/v4,
+ :signature {:params [], :result :i64},
+ :functions
+ [{:name status-pending,
+   :params [],
+   :result :i64,
+   :effects #{},
+   :body 0,
+   :param-types []}
+  {:name status-approved,
+   :params [],
+   :result :i64,
+   :effects #{},
+   :body 1,
+   :param-types []}
+  {:name status-rejected,
+   :params [],
+   :result :i64,
+   :effects #{},
+   :body 2,
+   :param-types []}
+  {:name verification-satisfied?,
+   :params [e],
+   :result :bool,
+   :effects #{},
+   :body
+   (if
+    (record-get
+     [:record
+      :approval/eligibility
+      [[:same-organization :bool]
+       [:same-capability :bool]
+       [:same-work-item :bool]
+       [:same-content-hash :bool]
+       [:actor-is-person :bool]
+       [:has-eligible-role :bool]
+       [:requires-user-verification :bool]
+       [:user-verified :bool]
+       [:separation-of-duties :bool]
+       [:actor-is-submitter :bool]]]
+     e
+     :requires-user-verification)
+    (record-get
+     [:record
+      :approval/eligibility
+      [[:same-organization :bool]
+       [:same-capability :bool]
+       [:same-work-item :bool]
+       [:same-content-hash :bool]
+       [:actor-is-person :bool]
+       [:has-eligible-role :bool]
+       [:requires-user-verification :bool]
+       [:user-verified :bool]
+       [:separation-of-duties :bool]
+       [:actor-is-submitter :bool]]]
+     e
+     :user-verified)
+    true),
+   :param-types [[:ref :approval/eligibility]]}
+  {:name separation-satisfied?,
+   :params [e],
+   :result :bool,
+   :effects #{},
+   :body
+   (if
+    (record-get
+     [:record
+      :approval/eligibility
+      [[:same-organization :bool]
+       [:same-capability :bool]
+       [:same-work-item :bool]
+       [:same-content-hash :bool]
+       [:actor-is-person :bool]
+       [:has-eligible-role :bool]
+       [:requires-user-verification :bool]
+       [:user-verified :bool]
+       [:separation-of-duties :bool]
+       [:actor-is-submitter :bool]]]
+     e
+     :separation-of-duties)
+    (if
+     (record-get
+      [:record
+       :approval/eligibility
+       [[:same-organization :bool]
+        [:same-capability :bool]
+        [:same-work-item :bool]
+        [:same-content-hash :bool]
+        [:actor-is-person :bool]
+        [:has-eligible-role :bool]
+        [:requires-user-verification :bool]
+        [:user-verified :bool]
+        [:separation-of-duties :bool]
+        [:actor-is-submitter :bool]]]
+      e
+      :actor-is-submitter)
+     false
+     true)
+    true),
+   :param-types [[:ref :approval/eligibility]]}
+  {:name eligible?,
+   :params [e],
+   :result :bool,
+   :effects #{},
+   :body
+   (if
+    (record-get
+     [:record
+      :approval/eligibility
+      [[:same-organization :bool]
+       [:same-capability :bool]
+       [:same-work-item :bool]
+       [:same-content-hash :bool]
+       [:actor-is-person :bool]
+       [:has-eligible-role :bool]
+       [:requires-user-verification :bool]
+       [:user-verified :bool]
+       [:separation-of-duties :bool]
+       [:actor-is-submitter :bool]]]
+     e
+     :same-organization)
+    (if
+     (record-get
+      [:record
+       :approval/eligibility
+       [[:same-organization :bool]
+        [:same-capability :bool]
+        [:same-work-item :bool]
+        [:same-content-hash :bool]
+        [:actor-is-person :bool]
+        [:has-eligible-role :bool]
+        [:requires-user-verification :bool]
+        [:user-verified :bool]
+        [:separation-of-duties :bool]
+        [:actor-is-submitter :bool]]]
+      e
+      :same-capability)
+     (if
+      (record-get
+       [:record
+        :approval/eligibility
+        [[:same-organization :bool]
+         [:same-capability :bool]
+         [:same-work-item :bool]
+         [:same-content-hash :bool]
+         [:actor-is-person :bool]
+         [:has-eligible-role :bool]
+         [:requires-user-verification :bool]
+         [:user-verified :bool]
+         [:separation-of-duties :bool]
+         [:actor-is-submitter :bool]]]
+       e
+       :same-work-item)
+      (if
+       (record-get
+        [:record
+         :approval/eligibility
+         [[:same-organization :bool]
+          [:same-capability :bool]
+          [:same-work-item :bool]
+          [:same-content-hash :bool]
+          [:actor-is-person :bool]
+          [:has-eligible-role :bool]
+          [:requires-user-verification :bool]
+          [:user-verified :bool]
+          [:separation-of-duties :bool]
+          [:actor-is-submitter :bool]]]
+        e
+        :same-content-hash)
+       (if
+        (record-get
+         [:record
+          :approval/eligibility
+          [[:same-organization :bool]
+           [:same-capability :bool]
+           [:same-work-item :bool]
+           [:same-content-hash :bool]
+           [:actor-is-person :bool]
+           [:has-eligible-role :bool]
+           [:requires-user-verification :bool]
+           [:user-verified :bool]
+           [:separation-of-duties :bool]
+           [:actor-is-submitter :bool]]]
+         e
+         :actor-is-person)
+        (if
+         (record-get
+          [:record
+           :approval/eligibility
+           [[:same-organization :bool]
+            [:same-capability :bool]
+            [:same-work-item :bool]
+            [:same-content-hash :bool]
+            [:actor-is-person :bool]
+            [:has-eligible-role :bool]
+            [:requires-user-verification :bool]
+            [:user-verified :bool]
+            [:separation-of-duties :bool]
+            [:actor-is-submitter :bool]]]
+          e
+          :has-eligible-role)
+         (if
+          (verification-satisfied? e)
+          (separation-satisfied? e)
+          false)
+         false)
+        false)
+       false)
+      false)
+     false)
+    false),
+   :param-types [[:ref :approval/eligibility]]}
+  {:name minimum-met?,
+   :params [approved-count minimum],
+   :result :bool,
+   :effects #{},
+   :body (>= approved-count minimum),
+   :param-types [:i64 :i64]}
+  {:name veto-triggered?,
+   :params [t],
+   :result :bool,
+   :effects #{},
+   :body
+   (if
+    (record-get
+     [:record
+      :approval/tally
+      [[:veto-mode :bool]
+       [:rejected-count :i64]
+       [:approved-count :i64]
+       [:minimum :i64]]]
+     t
+     :veto-mode)
+    (>
+     (record-get
+      [:record
+       :approval/tally
+       [[:veto-mode :bool]
+        [:rejected-count :i64]
+        [:approved-count :i64]
+        [:minimum :i64]]]
+      t
+      :rejected-count)
+     0)
+    false),
+   :param-types [[:ref :approval/tally]]}
+  {:name status,
+   :params [t],
+   :result :i64,
+   :effects #{},
+   :body
+   (if
+    (veto-triggered? t)
+    (status-rejected)
+    (if
+     (minimum-met?
+      (record-get
+       [:record
+        :approval/tally
+        [[:veto-mode :bool]
+         [:rejected-count :i64]
+         [:approved-count :i64]
+         [:minimum :i64]]]
+       t
+       :approved-count)
+      (record-get
+       [:record
+        :approval/tally
+        [[:veto-mode :bool]
+         [:rejected-count :i64]
+         [:approved-count :i64]
+         [:minimum :i64]]]
+       t
+       :minimum))
+     (status-approved)
+     (status-pending))),
+   :param-types [[:ref :approval/tally]]}
+  {:name main,
+   :params [],
+   :result :i64,
+   :effects #{},
+   :body 0,
+   :param-types []}],
+ :oracle-value 0,
+ :schema-identities
+ #:approval{:eligibility
+            "d40d8529d433beb6b6d078c5adc3f5680494a1b667fef18a4dda8cd1609460c0",
+            :tally
+            "c7123f15a0d8359b741e8a7f2f9f93b73415d0b9726c4a993e83afc8f63f32fc"},
+ :exports
+ [status-pending
+  status-approved
+  status-rejected
+  verification-satisfied?
+  separation-satisfied?
+  eligible?
+  minimum-met?
+  veto-triggered?
+  status
+  main],
+ :schemas
+ #:approval{:eligibility
+            [:record
+             :approval/eligibility
+             [[:same-organization :bool]
+              [:same-capability :bool]
+              [:same-work-item :bool]
+              [:same-content-hash :bool]
+              [:actor-is-person :bool]
+              [:has-eligible-role :bool]
+              [:requires-user-verification :bool]
+              [:user-verified :bool]
+              [:separation-of-duties :bool]
+              [:actor-is-submitter :bool]]],
+            :tally
+            [:record
+             :approval/tally
+             [[:veto-mode :bool]
+              [:rejected-count :i64]
+              [:approved-count :i64]
+              [:minimum :i64]]]},
+ :effects #{},
+ :blocks [{:id 0, :instructions [[:const.i64 0] [:return]]}],
+ :entry main}

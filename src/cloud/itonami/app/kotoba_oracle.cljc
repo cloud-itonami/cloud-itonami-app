@@ -48,7 +48,8 @@
   {:policy "cloud/itonami/app/policy.kotoba"
    :fleet-core "cloud/itonami/app/fleet_core.kotoba"
    :organism-worker "cloud/itonami/app/organism_worker.kotoba"
-   :work-transitions "cloud/itonami/app/work_transitions_core.kotoba"})
+   :work-transitions "cloud/itonami/app/work_transitions_core.kotoba"
+   :approval "cloud/itonami/app/approval_core.kotoba"})
 
 (defn resource-path [id]
   (str "cloud/itonami/app/oracle/" (name id) ".kir.edn"))
