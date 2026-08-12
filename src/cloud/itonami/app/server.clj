@@ -10,6 +10,7 @@
             [cloud.itonami.app.business :as business]
             [cloud.itonami.app.canvas :as canvas]
             [cloud.itonami.app.capture :as capture]
+            [cloud.itonami.app.bots :as bots]
             [cloud.itonami.app.chronicle :as chronicle]
             [cloud.itonami.app.config :as config]
             [cloud.itonami.app.contracts :as contracts]
@@ -2931,11 +2932,20 @@
                  (provider-from-path path #"/api/connections/([^/]+)/start"))
             (let [session (require-app-session! exchange)
                   provider (provider-from-path
-                            path #"/api/connections/([^/]+)/start")]
+                            path #"/api/connections/([^/]+)/start")
+                  body (read-json exchange)]
               (require-origin! exchange config)
               (require-csrf! exchange session)
               (send! exchange 200
-                     (identity/start-oauth! session provider (origin config))))
+                     (identity/start-oauth!
+                      session provider (origin config)
+                      ;; Adding a SECOND account rather than reconnecting the
+                      ;; one that is there. Without saying so the consent
+                      ;; screen reuses the browser's current account and the
+                      ;; round trip returns the connection that already
+                      ;; exists — which looks, to the person who clicked, like
+                      ;; nothing happened.
+                      {:add-account? (boolean (:add-account body))})))
 
             (and (= method "GET")
                  (provider-from-path path #"/api/oauth/([^/]+)/callback"))
@@ -4654,6 +4664,135 @@
                                            :message (.getMessage error)}})))
           (.handle ^HttpHandler delegate exchange))))))
 
+(defn- bot-id-from [path pattern]
+  (some-> (re-matches pattern path) second))
+
+(defn- handle-bots!
+  "The Bots surface.
+
+  `require-human-session!` rather than `require-app-session!`, and that is the
+  decision this handler makes: a Bot is an agent, and an agent session reaching
+  these routes could create one, widen its grant, and approve its own held
+  write. `bot/may-approve?` refuses the last of those on its own, but a
+  boundary that only holds at the innermost check is one refactor from not
+  holding — so the outer gate refuses the whole family."
+  [config exchange method path]
+  (let [session (require-human-session! exchange)]
+    (cond
+      (and (= method "GET") (= path "/api/bots"))
+      (send! exchange 200 (bots/overview config session))
+
+      (and (= method "POST") (= path "/api/bots"))
+      (let [body (read-json exchange)]
+        (require-origin! exchange config)
+        (require-csrf! exchange session)
+        (bots/create! config session body)
+        (send! exchange 200 (bots/overview config session)))
+
+      (and (= method "POST") (= path "/api/bots/suggestions"))
+      (let [body (read-json exchange)]
+        (require-origin! exchange config)
+        (require-csrf! exchange session)
+        (send! exchange 200 {:suggestions (bots/suggestions (:connectors body))}))
+
+      (and (= method "GET") (bot-id-from path #"/api/bots/([^/]+)/messages"))
+      (send! exchange 200
+             {:messages (bots/messages
+                         session (bot-id-from path #"/api/bots/([^/]+)/messages"))})
+
+      (and (= method "POST") (bot-id-from path #"/api/bots/([^/]+)/messages"))
+      (let [bot-id (bot-id-from path #"/api/bots/([^/]+)/messages")
+            body (read-json exchange)]
+        (require-origin! exchange config)
+        (require-csrf! exchange session)
+        (send! exchange 200
+               {:messages (bots/send! config session bot-id (:text body))}))
+
+      (and (= method "POST")
+           (bot-id-from path #"/api/bots/([^/]+)/cards/[^/]+/answer"))
+      (let [bot-id (bot-id-from path #"/api/bots/([^/]+)/cards/[^/]+/answer")
+            card-id (bot-id-from path #"/api/bots/[^/]+/cards/([^/]+)/answer")
+            body (read-json exchange)]
+        (require-origin! exchange config)
+        (require-csrf! exchange session)
+        (send! exchange 200
+               {:messages (bots/answer! config session bot-id card-id
+                                        (:answer body))}))
+
+      (and (= method "GET") (bot-id-from path #"/api/bots/([^/]+)/accounts"))
+      (send! exchange 200
+             (bots/accounts session
+                            (bot-id-from path #"/api/bots/([^/]+)/accounts")))
+
+      ;; Naming an account is about the CONNECTION, not about any one Bot — two
+      ;; Bots sharing a Google account must see the same name for it — so it is
+      ;; not under a bot id even though this is where somebody does it.
+      (and (= method "POST") (= path "/api/bots/accounts/label"))
+      (let [body (read-json exchange)]
+        (require-origin! exchange config)
+        (require-csrf! exchange session)
+        (send! exchange 200
+               (bots/label-account! session (:connection body) (:label body))))
+
+      (and (= method "POST")
+           (bot-id-from path #"/api/bots/([^/]+)/cards/[^/]+/decide"))
+      (let [bot-id (bot-id-from path #"/api/bots/([^/]+)/cards/[^/]+/decide")
+            card-id (bot-id-from path #"/api/bots/[^/]+/cards/([^/]+)/decide")
+            body (read-json exchange)]
+        (require-origin! exchange config)
+        (require-csrf! exchange session)
+        (send! exchange 200
+               {:messages (bots/decide! config session bot-id card-id
+                                        (:decision body))}))
+
+      (and (= method "POST") (bot-id-from path #"/api/bots/([^/]+)/archive"))
+      (let [bot-id (bot-id-from path #"/api/bots/([^/]+)/archive")]
+        (require-origin! exchange config)
+        (require-csrf! exchange session)
+        (bots/archive! session bot-id)
+        (send! exchange 200 (bots/overview config session)))
+
+      (and (= method "POST") (bot-id-from path #"/api/bots/([^/]+)"))
+      (let [bot-id (bot-id-from path #"/api/bots/([^/]+)")
+            body (read-json exchange)]
+        (require-origin! exchange config)
+        (require-csrf! exchange session)
+        (bots/update! session bot-id body)
+        (send! exchange 200 (bots/overview config session)))
+
+      :else (send! exchange 405 {:error {:type "method_not_allowed"}}))))
+
+(defn- bots-handler
+  "Its own context, for the reason `/api/chronicle` has one: `handler` is at the
+  JVM's 64 KB method ceiling and will not take another branch."
+  [config]
+  (reify HttpHandler
+    (handle [_ exchange]
+      (let [method (.getRequestMethod exchange)
+            path (.getPath (.getRequestURI exchange))]
+        (try
+          (handle-bots! config exchange method path)
+          (catch clojure.lang.ExceptionInfo error
+            (send! exchange
+                   (case (:type (ex-data error))
+                     :identity/unauthenticated 401
+                     :identity/invalid-origin 403
+                     :identity/invalid-csrf 403
+                     :identity/agent-session-forbidden 403
+                     :bot/forbidden 403
+                     :bot/approval-refused 403
+                     :bot/not-found 404
+                     :bot/disabled 409
+                     :bot/not-held 409
+                     :bot/choice-answered 409
+                     :provider/denied 409
+                     400)
+                   {:error {:type (name (or (:type (ex-data error)) :bot/error))
+                            :message (.getMessage error)}}))
+          (catch Exception error
+            (send! exchange 500 {:error {:type "internal_error"
+                                         :message (.getMessage error)}})))))))
+
 (defn- chronicle-handler [config]
   (reify HttpHandler
     (handle [_ exchange]
@@ -4754,6 +4893,8 @@
      ;; 64 KB bytecode limit. A longer HttpServer prefix wins over "/".
      (.createContext instance "/api/chronicle"
                      (chronicle-handler configuration))
+     (.createContext instance "/api/bots"
+                     (bots-handler configuration))
      (.createContext instance "/api/update"
                      (update-handler configuration))
      (.createContext instance "/api/folder-sync"

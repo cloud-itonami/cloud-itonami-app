@@ -8858,8 +8858,458 @@
     $('#credential-verify-external').addEventListener('click', () =>
       verifyCredential('/api/credentials/verify/external'));
 
+    // ── Bots ───────────────────────────────────────────────────────────────
+    //
+    // A Bot is a durable record on the server; nothing here decides anything
+    // about one. This module picks services, makes the face, and renders what
+    // /api/bots answers — including the cards, which are the parts of a turn
+    // that cannot be prose because they have to be acted on.
+    //
+    // `botsState.status` is never computed here. The server derives it from
+    // what is outstanding, and a second derivation in the client is how a
+    // sidebar starts showing "working" for a Bot that is actually waiting.
+    const botsState = {
+      bots:[], catalog:[], palette:{colors:[], glyphs:[]},
+      selected:null, messages:[], picked:new Set(),
+      draft:{color:'blue', glyph:'circle'}, loaded:false, busy:false
+    };
+    const botAvatar = (node, avatar) => {
+      node.dataset.color = avatar?.color || 'blue';
+      node.dataset.glyph = avatar?.glyph || 'circle';
+      return node;
+    };
+    const botsStatusText = {
+      'idle':'待機中', 'working':'作業中',
+      'waiting-approval':'承認待ち', 'waiting-connection':'接続待ち',
+      'disabled':'停止中'
+    };
+    const botsSetStatus = (message) => {
+      $('#bots-thread-status-line').textContent = message || '';
+    };
+    const renderBotsRail = () => {
+      const list = $('#bots-list');
+      list.replaceChildren();
+      $('#bots-rail-empty').hidden = botsState.bots.length > 0;
+      botsState.bots.forEach((bot) => {
+        const item = make('button', 'bots-rail__item');
+        item.type = 'button';
+        item.setAttribute('aria-current', String(bot.id === botsState.selected));
+        const avatar = botAvatar(make('span', 'bot-avatar'), bot.avatar);
+        const copy = make('div', 'bots-rail__copy');
+        copy.append(make('span', 'bots-rail__name', bot.name),
+                    make('span', 'bots-rail__last',
+                         botsStatusText[bot.status] || bot.status));
+        const dot = make('span', 'bots-dot');
+        dot.dataset.status = bot.status;
+        dot.title = botsStatusText[bot.status] || bot.status;
+        item.append(avatar, copy, dot);
+        item.addEventListener('click', () => selectBot(bot.id));
+        const entry = make('li');
+        entry.append(item);
+        list.append(entry);
+      });
+      const badge = $('#bots-count');
+      if (badge) {
+        const needing = botsState.bots.filter((bot) =>
+          bot.status === 'waiting-approval' || bot.status === 'waiting-connection').length;
+        badge.textContent = needing ? String(needing) : '';
+        badge.dataset.tone = needing ? 'warn' : 'ok';
+      }
+    };
+    const renderBotsServiceGrid = () => {
+      const query = $('#bots-service-search').value.trim().toLowerCase();
+      const grid = $('#bots-service-grid');
+      grid.replaceChildren();
+      let hidden = 0;
+      botsState.catalog.forEach((service) => {
+        if (query && !service.name.toLowerCase().includes(query)) return;
+        // A connector with no enabled tool cannot do anything for a Bot, and
+        // offering it would be an invitation to authorize an account for
+        // nothing. Shown, disabled, and labelled — not silently dropped.
+        const usable = service['enabled-tool-count'] > 0 && service['configurable?'];
+        if (!usable) hidden += 1;
+        const tile = make('button', 'bots-tile');
+        tile.type = 'button';
+        tile.disabled = !usable;
+        tile.setAttribute('aria-pressed', String(botsState.picked.has(service.id)));
+        const copy = make('div', 'bots-tile__copy');
+        copy.append(make('span', 'bots-tile__name', service.name),
+                    make('span', 'bots-tile__meta',
+                         usable
+                           ? `${service['enabled-tool-count']} 個のツール${service['connected?'] ? '・接続済み' : ''}`
+                           : 'このビルドでは有効なツールがありません'));
+        tile.append(copy);
+        if (botsState.picked.has(service.id)) {
+          tile.append(make('span', 'bots-tile__check', '✓'));
+        }
+        tile.addEventListener('click', () => {
+          if (botsState.picked.has(service.id)) botsState.picked.delete(service.id);
+          else botsState.picked.add(service.id);
+          renderBotsServiceGrid();
+        });
+        grid.append(tile);
+      });
+      $('#bots-service-note').textContent = hidden
+        ? `${hidden} 件はこのビルドに有効なツールが無いので選べません。`
+        : '';
+      $('#bots-services-next').disabled = botsState.picked.size === 0;
+    };
+    const renderBotsPalette = () => {
+      const preview = botAvatar($('#bots-avatar-preview'), botsState.draft);
+      preview.textContent = '';
+      const colorRow = $('#bots-color-row');
+      colorRow.replaceChildren();
+      botsState.palette.colors.forEach((color) => {
+        const swatch = make('button', 'bots-swatch');
+        swatch.type = 'button';
+        swatch.setAttribute('role', 'radio');
+        swatch.setAttribute('aria-checked', String(botsState.draft.color === color));
+        swatch.setAttribute('aria-label', color);
+        swatch.append(botAvatar(make('span', 'bot-avatar'),
+                                {color, glyph:botsState.draft.glyph}));
+        swatch.addEventListener('click', () => {
+          botsState.draft.color = color; renderBotsPalette();
+        });
+        colorRow.append(swatch);
+      });
+      const glyphRow = $('#bots-glyph-row');
+      glyphRow.replaceChildren();
+      botsState.palette.glyphs.forEach((glyph) => {
+        const swatch = make('button', 'bots-swatch');
+        swatch.type = 'button';
+        swatch.setAttribute('role', 'radio');
+        swatch.setAttribute('aria-checked', String(botsState.draft.glyph === glyph));
+        swatch.setAttribute('aria-label', glyph);
+        swatch.append(botAvatar(make('span', 'bot-avatar'),
+                                {color:botsState.draft.color, glyph}));
+        swatch.addEventListener('click', () => {
+          botsState.draft.glyph = glyph; renderBotsPalette();
+        });
+        glyphRow.append(swatch);
+      });
+    };
+    const renderBotsSuggestions = async () => {
+      const holder = $('#bots-suggestions');
+      holder.replaceChildren();
+      let suggestions = [];
+      try {
+        const data = await postJSON('/api/bots/suggestions',
+                                    {connectors:[...botsState.picked]}, true);
+        suggestions = data.suggestions || [];
+      } catch (_) { return; }
+      suggestions.forEach((suggestion) => {
+        const card = make('button', 'bots-suggestion');
+        card.type = 'button';
+        const copy = make('div', 'bots-tile__copy');
+        copy.append(make('span', 'bots-suggestion__name', suggestion.name),
+                    make('span', 'bots-suggestion__summary', suggestion.summary));
+        card.append(botAvatar(make('span', 'bot-avatar'), suggestion.avatar), copy);
+        card.addEventListener('click', () => {
+          $('#bots-name').value = suggestion.name;
+          $('#bots-brief').value = suggestion.brief || '';
+          botsState.draft = {...suggestion.avatar};
+          renderBotsPalette();
+        });
+        holder.append(card);
+      });
+    };
+    const botsConnectionCard = (card, botId) => {
+      const node = make('div', 'bots-card');
+      node.append(make('div', 'bots-card__title', card.title));
+      if (card.summary) node.append(make('div', 'bots-card__summary', card.summary));
+      if ((card.scopes || []).length) {
+        const scopes = make('ul', 'bots-card__scopes');
+        card.scopes.forEach((scope) => scopes.append(make('li', null, scope)));
+        node.append(scopes);
+      }
+      const row = make('div', 'bots-card__row');
+      // One chip per ACCOUNT already held here. A person may hold two Google
+      // accounts; they are two grants in two Keychain slots, and a card that
+      // said only "Google — connected" would be answering a question this
+      // application decided some time ago is not the question.
+      (card.accounts || []).forEach((account) => {
+        const chip = make('button', 'bots-chip', account.label || account.email);
+        chip.type = 'button';
+        chip.title = '名前を変える';
+        chip.addEventListener('click', async () => {
+          // `window.` is load bearing: `prompt` is bound near the top of this
+          // file to the chat composer's textarea, so the bare name resolves to
+          // an element and calling it throws.
+          const label = window.prompt('このアカウントの呼び名', account.label || '');
+          if (label === null) return;
+          try {
+            await postJSON('/api/bots/accounts/label',
+                           {connection:account.id, label}, true);
+            await refreshBotsThread();
+          } catch (error) { botsSetStatus(error.message); }
+        });
+        row.append(chip);
+      });
+      const connect = async (button, addAccount) => {
+        button.disabled = true;
+        try {
+          // The existing connect flow, unchanged. A Bot does not get a second
+          // way to obtain a grant — it points at the one the app already has.
+          const result = await postJSON(`/api/connections/${card.connector}/start`,
+                                        {'add-account':addAccount}, true);
+          location.assign(result.url);
+        } catch (error) {
+          button.disabled = false;
+          botsSetStatus(error.message);
+        }
+      };
+      if ((card.accounts || []).length) {
+        const another = make('button', 'tool-button', '＋ 別のアカウントを追加');
+        another.type = 'button';
+        another.addEventListener('click', () => connect(another, true));
+        row.append(another);
+      } else {
+        const button = make('button', 'tool-button',
+                            card.state === 'waiting' ? '認証画面を開き直す' : '認証する');
+        button.type = 'button';
+        button.addEventListener('click', () => connect(button, false));
+        row.append(button);
+      }
+      const state = make('span', 'bots-card__state',
+                         card.state === 'connected' ? '接続済み'
+                           : card.state === 'waiting' ? '認証待ち' : '');
+      state.dataset.state = card.state;
+      row.append(state);
+      node.append(row);
+      return node;
+    };
+    const botsChoiceCard = (card, botId) => {
+      const node = make('div', 'bots-card');
+      node.append(make('div', 'bots-card__title', card.prompt));
+      if (card.detail) node.append(make('div', 'bots-card__summary', card.detail));
+      card.options.forEach((option) => {
+        const button = make('button', 'bots-option');
+        button.type = 'button';
+        button.disabled = Boolean(card.answer);
+        button.setAttribute('aria-pressed', String(card.answer === option.key));
+        button.append(make('span', 'bots-option__key', option.key),
+                      make('span', null, option.label));
+        button.addEventListener('click', async () => {
+          try {
+            const data = await postJSON(
+              `/api/bots/${botId}/cards/${card.id}/answer`, {answer:option.key}, true);
+            botsState.messages = data.messages || [];
+            renderBotsThread();
+          } catch (error) { botsSetStatus(error.message); }
+        });
+        node.append(button);
+      });
+      return node;
+    };
+    const botsApprovalCard = (card, botId) => {
+      const node = make('div', 'bots-card');
+      node.append(make('div', 'bots-card__title', card.title));
+      if (card.action) node.append(make('div', 'bots-card__summary', card.action));
+      if (card.summary) node.append(make('div', 'bots-card__summary', card.summary));
+      if (card.impact) node.append(make('div', 'bots-card__summary', card.impact));
+      if (card.decision) {
+        const state = make('span', 'bots-card__state',
+                           card.decision === 'approved' ? '承認済み' : '却下しました');
+        state.dataset.state = card.decision;
+        node.append(state);
+        return node;
+      }
+      const row = make('div', 'bots-card__row');
+      const decide = async (decision, button) => {
+        button.disabled = true;
+        botsSetStatus(decision === 'approved' ? '実行しています…' : '取り消しています…');
+        try {
+          const data = await postJSON(
+            `/api/bots/${botId}/cards/${card.id}/decide`, {decision}, true);
+          botsState.messages = data.messages || [];
+          renderBotsThread();
+          botsSetStatus('');
+          await loadBots({keepSelection:true});
+        } catch (error) {
+          button.disabled = false;
+          botsSetStatus(error.message);
+        }
+      };
+      const approve = make('button', 'primary-action', '承認して実行');
+      approve.type = 'button';
+      approve.addEventListener('click', () => decide('approved', approve));
+      const reject = make('button', 'tool-button', 'しない');
+      reject.type = 'button';
+      reject.addEventListener('click', () => decide('rejected', reject));
+      row.append(approve, reject);
+      node.append(row);
+      return node;
+    };
+    const renderBotsThread = () => {
+      const bot = botsState.bots.find((candidate) => candidate.id === botsState.selected);
+      const holder = $('#bots-messages');
+      holder.replaceChildren();
+      if (!bot) return;
+      botAvatar($('#bots-thread-avatar'), bot.avatar);
+      $('#bots-thread-name').textContent = bot.name;
+      $('#bots-thread-status').textContent = botsStatusText[bot.status] || bot.status;
+      const panel = $('#bots-thread-panel');
+      panel.replaceChildren();
+      panel.append(make('div', null,
+        `届く範囲: ${bot['admitted-tools'].length} 個のツール` +
+        `${bot['writes?'] ? '（書き込みは承認のうえで実行）' : '（読み取りのみ）'}`));
+      if (bot['grant-widens?']) {
+        // Surfaced rather than repaired: the two readings need different
+        // answers and both need a person to see them.
+        panel.append(make('div', null,
+          'この Bot には、この配備で有効になっていないツールが指定されています。Settings で有効にするか、この Bot の権限を見直してください。'));
+      }
+      if (bot['admitted-tools'].length) {
+        const list = make('ul');
+        bot['admitted-tools'].forEach((tool) => list.append(make('li', null, tool)));
+        panel.append(list);
+      }
+      botsState.messages.forEach((message) => {
+        const entry = make('li', 'bots-msg');
+        entry.dataset.role = message.role;
+        if (message.text) entry.append(make('div', 'bots-msg__bubble', message.text));
+        (message.cards || []).forEach((card) => {
+          if (card.kind === 'connection') entry.append(botsConnectionCard(card, bot.id));
+          else if (card.kind === 'choice') entry.append(botsChoiceCard(card, bot.id));
+          else if (card.kind === 'approval') entry.append(botsApprovalCard(card, bot.id));
+        });
+        holder.append(entry);
+      });
+      requestAnimationFrame(() => {
+        const scroll = $('#bots-thread-scroll');
+        scroll.scrollTop = scroll.scrollHeight;
+      });
+    };
+    const refreshBotsThread = async () => {
+      if (!botsState.selected) return;
+      const request = await fetch(`/api/bots/${botsState.selected}/messages`);
+      const data = await request.json();
+      if (!request.ok) throw new Error(data?.error?.message || '会話を読めませんでした。');
+      botsState.messages = data.messages || [];
+      renderBotsThread();
+    };
+    const showBotsPane = () => {
+      const hasBots = botsState.bots.length > 0;
+      $('#bots-onboard').hidden = hasBots && Boolean(botsState.selected);
+      $('#bots-thread').hidden = !(hasBots && botsState.selected);
+    };
+    const selectBot = async (botId) => {
+      botsState.selected = botId;
+      renderBotsRail();
+      showBotsPane();
+      try {
+        const request = await fetch(`/api/bots/${botId}/messages`);
+        const data = await request.json();
+        if (!request.ok) throw new Error(data?.error?.message || '会話を読めませんでした。');
+        botsState.messages = data.messages || [];
+        renderBotsThread();
+      } catch (error) { botsSetStatus(error.message); }
+    };
+    const loadBots = async (options = {}) => {
+      try {
+        const request = await fetch('/api/bots');
+        const data = await request.json();
+        if (!request.ok) throw new Error(data?.error?.message || 'Bots を読めませんでした。');
+        botsState.bots = data.bots || [];
+        botsState.catalog = data.catalog || [];
+        botsState.palette = data.palette || botsState.palette;
+        botsState.loaded = true;
+        if (!options.keepSelection && !botsState.selected && botsState.bots.length) {
+          await selectBot(botsState.bots[0].id);
+          return;
+        }
+        renderBotsRail();
+        renderBotsServiceGrid();
+        renderBotsPalette();
+        showBotsPane();
+        if (botsState.selected) renderBotsThread();
+      } catch (error) { botsSetStatus(error.message); }
+    };
+    $('#bots-service-search').addEventListener('input', renderBotsServiceGrid);
+    $('#bots-services-next').addEventListener('click', () => {
+      $('#bots-step-services').hidden = true;
+      $('#bots-step-create').hidden = false;
+      renderBotsPalette();
+      renderBotsSuggestions();
+    });
+    $('#bots-new').addEventListener('click', () => {
+      botsState.selected = null;
+      botsState.messages = [];
+      $('#bots-step-services').hidden = false;
+      $('#bots-step-create').hidden = true;
+      renderBotsRail();
+      renderBotsServiceGrid();
+      showBotsPane();
+    });
+    $('#bots-create').addEventListener('click', async () => {
+      const button = $('#bots-create');
+      const name = $('#bots-name').value.trim();
+      if (!name) { $('#bots-create-status').textContent = '名前を入れてください。'; return; }
+      button.disabled = true;
+      $('#bots-create-status').textContent = '作成しています…';
+      try {
+        const data = await postJSON('/api/bots', {
+          name,
+          avatar:{color:botsState.draft.color, glyph:botsState.draft.glyph},
+          brief:$('#bots-brief').value,
+          connectors:[...botsState.picked],
+          'writes?':$('#bots-writes').checked
+        }, true);
+        botsState.bots = data.bots || [];
+        botsState.catalog = data.catalog || [];
+        $('#bots-create-status').textContent = '';
+        $('#bots-name').value = '';
+        $('#bots-brief').value = '';
+        const created = botsState.bots[botsState.bots.length - 1];
+        if (created) await selectBot(created.id);
+      } catch (error) {
+        $('#bots-create-status').textContent = error.message;
+      } finally { button.disabled = false; }
+    });
+    $('#bots-thread-tools').addEventListener('click', (event) => {
+      const panel = $('#bots-thread-panel');
+      panel.hidden = !panel.hidden;
+      event.currentTarget.setAttribute('aria-expanded', String(!panel.hidden));
+    });
+    const botsInput = $('#bots-input');
+    const resizeBotsInput = () => {
+      botsInput.style.height = 'auto';
+      botsInput.style.height = `${Math.min(botsInput.scrollHeight, 192)}px`;
+      $('#bots-send').disabled = !botsInput.value.trim() || botsState.busy;
+    };
+    botsInput.addEventListener('input', resizeBotsInput);
+    botsInput.addEventListener('keydown', (event) => {
+      if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) {
+        event.preventDefault();
+        $('#bots-form').requestSubmit();
+      }
+    });
+    $('#bots-form').addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const text = botsInput.value.trim();
+      if (!text || !botsState.selected || botsState.busy) return;
+      botsState.busy = true;
+      botsInput.value = '';
+      resizeBotsInput();
+      botsSetStatus('考えています…');
+      try {
+        const data = await postJSON(`/api/bots/${botsState.selected}/messages`,
+                                    {text}, true);
+        botsState.messages = data.messages || [];
+        renderBotsThread();
+        botsSetStatus('');
+        await loadBots({keepSelection:true});
+      } catch (error) {
+        botsSetStatus(error.message);
+      } finally {
+        botsState.busy = false;
+        resizeBotsInput();
+      }
+    });
+
     onViewChange = () => {
       scheduleWorkerPoll();
+      if (currentView === 'bots') loadBots({keepSelection:botsState.loaded});
       scheduleOrganismPoll();
       // Computed the first time the pane is actually opened, then left alone
       // until the button is pressed — it is expensive and it is not live data.

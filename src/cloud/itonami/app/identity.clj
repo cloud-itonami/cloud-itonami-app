@@ -1900,7 +1900,8 @@
   loopback server first. Refusing here rather than at the callback means the
   consent screen never appears, so nobody hands Microsoft a password for a link
   this app was never going to make."
-  [session provider origin]
+  ([session provider origin] (start-oauth! session provider origin nil))
+  ([session provider origin {:keys [add-account?]}]
   (let [{:keys [configured? client-id authorization-endpoint scopes
                 authorization-extra] :as config}
         (provider-config provider)
@@ -1932,6 +1933,17 @@
                        "state" state-value "code_challenge" challenge
                        "code_challenge_method" "S256"}
                       (when (#{:google :microsoft} provider) {"nonce" nonce})
+                      ;; Adding a SECOND account at a provider somebody is
+                      ;; already signed in to. Without this the consent screen
+                      ;; silently reuses the session's current account and the
+                      ;; round trip comes back with the connection that already
+                      ;; exists — the person clicks "add another account",
+                      ;; nothing appears to happen, and there is no error to
+                      ;; read. `select_account` is Google's and Microsoft's
+                      ;; spelling; GitHub has no equivalent and one account per
+                      ;; client is all it offers, so it is left alone.
+                      (when (and add-account? (#{:google :microsoft} provider))
+                        {"prompt" "select_account"})
                       authorization-extra)
           url (str authorization-endpoint "?"
                    (str/join "&" (map (fn [[key value]]
@@ -1951,7 +1963,7 @@
                     :user-did did
                     :organization-id (:organization-id session)
                     :expires-at expires-at :used? false})))
-      {:url url :provider provider :expires-at expires-at})))
+      {:url url :provider provider :expires-at expires-at}))))
 
 (defn- sso-callback-uri [origin provider]
   ;; Share the already-registered provider callback with connector OAuth. The
@@ -2328,6 +2340,75 @@
                      (mapcat :busy)
                      (mapv (fn [b] {:start (:start b) :end (:end b)})))}))
      {:ok? false :reason "google-not-connected"})))
+
+(defn accounts-for
+  "Every external account this person holds, as accounts rather than providers.
+
+  `connected-providers` answers 'is Google connected', and this namespace has
+  said since the per-subject Keychain change that the question stops having an
+  answer once somebody connects two Google accounts. This is the finer form:
+  one entry per connection, carrying the id a token can actually be resolved
+  by (`connection-access-token!`) and the `:email` that says WHICH account.
+
+  `:label` is a nickname the person may set — 'work', 'personal'. It defaults
+  to the email rather than to a position, because 'the second one' stops being
+  true the moment the first is disconnected."
+  [did]
+  (->> (:connections (identity-state (store/snapshot)))
+       vals
+       (filter #(and (= :connected (:status %))
+                     (or (nil? did) (= did (:user-did %)))))
+       (sort-by (juxt #(name (:provider %)) :connected-at :id))
+       (mapv (fn [c]
+               {:id (:id c)
+                :provider (:provider c)
+                :email (:email c)
+                :display-name (:display-name c)
+                :label (or (:label c) (:email c) (:display-name c) (:id c))
+                :connected-at (:connected-at c)}))))
+
+(defn connection-by-id
+  "One connection record by id, for the person who holds it. Returns nil rather
+  than throwing so a caller holding a stale id from a Bot that was configured
+  before somebody disconnected an account gets an absence, not a crash."
+  [did connection-id]
+  (some (fn [c] (when (and (= connection-id (:id c))
+                           (= :connected (:status c))
+                           (or (nil? did) (= did (:user-did c))))
+                  c))
+        (vals (:connections (identity-state (store/snapshot))))))
+
+(defn label-connection!
+  "Give one account a nickname. Refuses a label that names another of this
+  person's accounts: two accounts called 'work' would make every later choice
+  between them meaningless."
+  [did connection-id label]
+  (let [label (str/trim (str label))
+        connection (connection-by-id did connection-id)]
+    (when-not connection
+      (throw (ex-info "その接続は見つかりません。"
+                      {:type :oauth/unknown-connection :connection connection-id})))
+    (when (and (seq label)
+               (some #(and (not= connection-id (:id %))
+                           (= label (:label %)))
+                     (accounts-for did)))
+      (throw (ex-info "同じ名前のアカウントが既にあります。"
+                      {:type :oauth/duplicate-label :label label})))
+    (store/transact! assoc-in [:identity :connections connection-id :label]
+                     (when (seq label) label))
+    (connection-by-id did connection-id)))
+
+(defn session-did
+  "The `did:key` of the person a session belongs to.
+
+  `user-did` needs the identity partition, and that partition's shape is
+  private on purpose. Without this, a caller holding only a session has to
+  reach into `store/snapshot` and know where identity lives — which is how a
+  second, subtly different answer to 'whose connection is this' gets written.
+  `bots` is the first such caller."
+  [session]
+  (when session
+    (user-did (identity-state (store/snapshot)) (:user-id session))))
 
 (defn connected-providers
   "The providers a connection exists for, optionally for one person only.

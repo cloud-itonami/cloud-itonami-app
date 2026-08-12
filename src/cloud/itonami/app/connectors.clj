@@ -219,6 +219,11 @@
               :name (:connector/name d)
               :summary (:connector/summary d)
               :configurable? (some? (provider-key d))
+              ;; The OAuth client this connector is authorized under. Drive,
+              ;; Gmail and Calendar share one, so a surface that asks per
+              ;; connector asks three times for one consent — which is what a
+              ;; Bot needs to know before it offers to connect anything.
+              :provider (provider-key d)
               :tools (mapv (fn [t]
                              {:name (:connector/name t)
                               :effect (:connector/effect t)

@@ -1,0 +1,338 @@
+{:format :kotoba.kir/v4,
+ :signature {:params [], :result :i64},
+ :functions
+ [{:name status-disabled,
+   :params [],
+   :result :i64,
+   :effects #{},
+   :body 0,
+   :param-types []}
+  {:name status-idle,
+   :params [],
+   :result :i64,
+   :effects #{},
+   :body 1,
+   :param-types []}
+  {:name status-working,
+   :params [],
+   :result :i64,
+   :effects #{},
+   :body 2,
+   :param-types []}
+  {:name status-waiting-connection,
+   :params [],
+   :result :i64,
+   :effects #{},
+   :body 3,
+   :param-types []}
+  {:name status-waiting-approval,
+   :params [],
+   :result :i64,
+   :effects #{},
+   :body 4,
+   :param-types []}
+  {:name write-effect?,
+   :params [effect],
+   :result :bool,
+   :effects #{},
+   :body (if (string=? effect "read") false true),
+   :param-types [:string]}
+  {:name tool-admitted?,
+   :params [a effect],
+   :result :bool,
+   :effects #{},
+   :body
+   (if
+    (record-get
+     [:record
+      :bot/admission
+      [[:deployment-enabled :bool]
+       [:granted :bool]
+       [:connected :bool]
+       [:writes :bool]]]
+     a
+     :deployment-enabled)
+    (if
+     (record-get
+      [:record
+       :bot/admission
+       [[:deployment-enabled :bool]
+        [:granted :bool]
+        [:connected :bool]
+        [:writes :bool]]]
+      a
+      :granted)
+     (if
+      (record-get
+       [:record
+        :bot/admission
+        [[:deployment-enabled :bool]
+         [:granted :bool]
+         [:connected :bool]
+         [:writes :bool]]]
+       a
+       :connected)
+      (if
+       (write-effect? effect)
+       (record-get
+        [:record
+         :bot/admission
+         [[:deployment-enabled :bool]
+          [:granted :bool]
+          [:connected :bool]
+          [:writes :bool]]]
+        a
+        :writes)
+       true)
+      false)
+     false)
+    false),
+   :param-types [[:ref :bot/admission] :string]}
+  {:name may-approve?,
+   :params [d actor-kind],
+   :result :bool,
+   :effects #{},
+   :body
+   (if
+    (string=? actor-kind "agent")
+    false
+    (if
+     (let
+      [__kotoba_and_3
+       (record-get
+        [:record
+         :bot/decision
+         [[:human :bool] [:identified :bool] [:authorized :bool]]]
+        d
+        :human)]
+      (if
+       __kotoba_and_3
+       (let
+        [__kotoba_and_2
+         (record-get
+          [:record
+           :bot/decision
+           [[:human :bool] [:identified :bool] [:authorized :bool]]]
+          d
+          :identified)]
+        (if
+         __kotoba_and_2
+         (record-get
+          [:record
+           :bot/decision
+           [[:human :bool] [:identified :bool] [:authorized :bool]]]
+          d
+          :authorized)
+         __kotoba_and_2))
+       __kotoba_and_3))
+     true
+     false)),
+   :param-types [[:ref :bot/decision] :string]}
+  {:name grant-widens?,
+   :params [granted-count admitted-count],
+   :result :bool,
+   :effects #{},
+   :body (> granted-count admitted-count),
+   :param-types [:i64 :i64]}
+  {:name account-connect,
+   :params [],
+   :result :i64,
+   :effects #{},
+   :body 0,
+   :param-types []}
+  {:name account-use,
+   :params [],
+   :result :i64,
+   :effects #{},
+   :body 1,
+   :param-types []}
+  {:name account-ask,
+   :params [],
+   :result :i64,
+   :effects #{},
+   :body 2,
+   :param-types []}
+  {:name usable-accounts,
+   :params [a],
+   :result :i64,
+   :effects #{},
+   :body
+   (if
+    (record-get
+     [:record
+      :bot/accounts
+      [[:connected :i64]
+       [:bound :i64]
+       [:declared :bool]
+       [:selected :bool]]]
+     a
+     :declared)
+    (record-get
+     [:record
+      :bot/accounts
+      [[:connected :i64]
+       [:bound :i64]
+       [:declared :bool]
+       [:selected :bool]]]
+     a
+     :bound)
+    (record-get
+     [:record
+      :bot/accounts
+      [[:connected :i64]
+       [:bound :i64]
+       [:declared :bool]
+       [:selected :bool]]]
+     a
+     :connected)),
+   :param-types [[:ref :bot/accounts]]}
+  {:name account-disposition,
+   :params [a],
+   :result :i64,
+   :effects #{},
+   :body
+   (if
+    (>
+     (record-get
+      [:record
+       :bot/accounts
+       [[:connected :i64]
+        [:bound :i64]
+        [:declared :bool]
+        [:selected :bool]]]
+      a
+      :connected)
+     0)
+    (if
+     (> (usable-accounts a) 0)
+     (if
+      (< (usable-accounts a) 2)
+      (account-use)
+      (if
+       (record-get
+        [:record
+         :bot/accounts
+         [[:connected :i64]
+          [:bound :i64]
+          [:declared :bool]
+          [:selected :bool]]]
+        a
+        :selected)
+       (account-use)
+       (account-ask)))
+     (account-connect))
+    (account-connect)),
+   :param-types [[:ref :bot/accounts]]}
+  {:name status,
+   :params [p],
+   :result :i64,
+   :effects #{},
+   :body
+   (if
+    (record-get
+     [:record
+      :bot/presence
+      [[:enabled :bool]
+       [:held-run :bool]
+       [:unmet-connection :bool]
+       [:active-run :bool]]]
+     p
+     :enabled)
+    (if
+     (record-get
+      [:record
+       :bot/presence
+       [[:enabled :bool]
+        [:held-run :bool]
+        [:unmet-connection :bool]
+        [:active-run :bool]]]
+      p
+      :held-run)
+     (status-waiting-approval)
+     (if
+      (record-get
+       [:record
+        :bot/presence
+        [[:enabled :bool]
+         [:held-run :bool]
+         [:unmet-connection :bool]
+         [:active-run :bool]]]
+       p
+       :unmet-connection)
+      (status-waiting-connection)
+      (if
+       (record-get
+        [:record
+         :bot/presence
+         [[:enabled :bool]
+          [:held-run :bool]
+          [:unmet-connection :bool]
+          [:active-run :bool]]]
+        p
+        :active-run)
+       (status-working)
+       (status-idle))))
+    (status-disabled)),
+   :param-types [[:ref :bot/presence]]}
+  {:name main,
+   :params [],
+   :result :i64,
+   :effects #{},
+   :body 0,
+   :param-types []}],
+ :oracle-value 0,
+ :schema-identities
+ #:bot{:accounts
+       "ddf27d1e6efd899ad04e3313837e69c4ac07355ff9c75fca3b3931850199b5f7",
+       :admission
+       "7633ab6d3725e62637d47057abd285a477a5e383957284f2b5efda69f46ccf71",
+       :decision
+       "9a025a90af55f1c8a08cb1c69aa30e20cdeb6f04e81031597bf059f670aba62d",
+       :presence
+       "cc9071a596484d069da3a27c1dd66a4e1407f28de11763be48d9b6ff2515c36d"},
+ :exports
+ [status-disabled
+  status-idle
+  status-working
+  status-waiting-connection
+  status-waiting-approval
+  account-connect
+  account-use
+  account-ask
+  write-effect?
+  tool-admitted?
+  may-approve?
+  grant-widens?
+  usable-accounts
+  account-disposition
+  status
+  main],
+ :schemas
+ #:bot{:admission
+       [:record
+        :bot/admission
+        [[:deployment-enabled :bool]
+         [:granted :bool]
+         [:connected :bool]
+         [:writes :bool]]],
+       :decision
+       [:record
+        :bot/decision
+        [[:human :bool] [:identified :bool] [:authorized :bool]]],
+       :accounts
+       [:record
+        :bot/accounts
+        [[:connected :i64]
+         [:bound :i64]
+         [:declared :bool]
+         [:selected :bool]]],
+       :presence
+       [:record
+        :bot/presence
+        [[:enabled :bool]
+         [:held-run :bool]
+         [:unmet-connection :bool]
+         [:active-run :bool]]]},
+ :effects #{},
+ :blocks [{:id 0, :instructions [[:const.i64 0] [:return]]}],
+ :entry main}
