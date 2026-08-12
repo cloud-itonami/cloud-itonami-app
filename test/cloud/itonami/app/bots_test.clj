@@ -116,6 +116,28 @@
           (testing "and stays offerable where the client does exist"
             (is (true? (:authable? card)))))))))
 
+(deftest a-stored-card-reports-the-client-this-machine-has-now
+  ;; Measured 2026-08-12: cards live inside messages, so the first fix reached
+  ;; only cards written after it. The Bot already on this machine kept showing
+  ;; 認証する, because its card predated the field entirely. Whether a provider
+  ;; can be authorized is the state of the installation now, not something the
+  ;; conversation said once — so the read path answers it, and a card written
+  ;; under either condition follows the machine.
+  (with-store
+    (fn []
+      (let [b (with-redefs [identity/provider-config (fn [_] {:configured? true})]
+                (let [made (make-bot alice {})]
+                  (bots/send! nil alice (:bot/id made) "受信箱を見て")
+                  made))]
+        (testing "offered while a client existed"
+          (with-redefs [identity/provider-config (fn [_] {:configured? true})]
+            (is (true? (:authable? (first (:cards (last (bots/messages
+                                                         alice (:bot/id b))))))))))
+        (testing "the same stored card stops offering it once the client is gone"
+          (with-redefs [identity/provider-config (fn [_] {:configured? false})]
+            (is (false? (:authable?
+                         (first (:cards (last (bots/messages alice (:bot/id b))))))))))))))
+
 (deftest an-agent-session-cannot-approve-a-held-write
   (with-store
     (fn []
