@@ -2573,6 +2573,13 @@
             [:button {:class "primary-action" :id "registration-submit"
                       :type "submit"} "Passkey で登録"]]
            [:div {:class "settings-stack" :id "registered-auth" :hidden true}
+            [:div {:class "settings-form" :id "itonami-cloud-signin-card"}
+             (dds/heading 3 "Itonami Cloud で続ける" {:size "20"})
+             [:p {:class "form-help"}
+              "auth.itonami.cloud で本人確認し、この端末には短期コードからローカルセッションだけを作ります。"]
+             [:button {:class "primary-action" :id "itonami-cloud-signin"
+                       :type "button"}
+              "auth.itonami.cloud でサインイン"]]
             [:div {:class "settings-form"}
              (dds/heading 3 "Passkey で続ける" {:size "20"})
              [:p {:class "form-help"}
@@ -2645,7 +2652,10 @@
            [:ul {:class "data-list" :id "linked-auth-methods"}]
            [:p {:class "form-help"}
             "同じEmailでも自動統合しません。既存Userへサインインした状態で接続してください。"]
-           [:div {:class "button-row" :id "sso-link-list"}]]
+           [:div {:class "button-row"}
+            [:button {:class "primary-action" :id "itonami-cloud-link"
+                      :type "button"} "auth.itonami.cloud を接続"]
+            [:span {:id "sso-link-list"}]]]
           [:div {:class "local-card" :id "session-management-card"}
            (dds/heading 2 "ログイン中の端末" {:size "24"})
            [:p {:class "view-lead"}

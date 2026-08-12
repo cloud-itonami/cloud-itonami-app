@@ -7636,7 +7636,31 @@
         card.append(copy, button); list.append(card);
       });
     };
-    const authProviderLabels = {google:'Google', microsoft:'Microsoft', github:'GitHub'};
+    const authProviderLabels = {
+      google:'Google', microsoft:'Microsoft', github:'GitHub',
+      'itonami-cloud':'auth.itonami.cloud'
+    };
+    const startCentralAuth = async (button) => {
+      button.disabled = true;
+      const previous = button.textContent;
+      button.textContent = '準備中…';
+      try {
+        const headers = identityState?.['authenticated?']
+          ? identityHeaders() : {'Content-Type':'application/json'};
+        const request = await fetch('/api/auth/itonami/start', {
+          method:'POST', headers, body:'{}'
+        });
+        const result = await request.json();
+        if (!request.ok) {
+          throw new Error(result?.error?.message || '中央認証を開始できませんでした。');
+        }
+        location.assign(result.url);
+      } catch (error) {
+        button.disabled = false;
+        button.textContent = previous;
+        $('#identity-status').textContent = error.message;
+      }
+    };
     const startSso = async (provider, mode, button) => {
       button.disabled = true;
       const previous = button.textContent;
@@ -7663,6 +7687,8 @@
       // so only in a `title` tooltip — invisible on a touch screen, and
       // announced as a button by a screen reader.
       const providers = (methods.sso || []).filter((p) => p['configured?']);
+      const centralConfigured = Boolean(methods.central?.['configured?']);
+      $('#itonami-cloud-signin-card').hidden = !centralConfigured;
       const signin = $('#sso-signin-list');
       signin.replaceChildren();
       providers.forEach((provider) => {
@@ -7715,6 +7741,8 @@
         });
       }
       const linkedProviders = new Set(identities.map((identity) => identity.provider));
+      $('#itonami-cloud-link').hidden = !centralConfigured ||
+        linkedProviders.has('itonami-cloud');
       const links = $('#sso-link-list');
       links.replaceChildren();
       providers.filter((item) => item['configured?'] && !linkedProviders.has(item.id))
@@ -7808,6 +7836,7 @@
     // The entrances besides Passkey that this deployment has configured. One
     // reading, so the notice, the lead and the cards cannot disagree.
     const otherSigninMethods = (data) => [
+      data['auth-methods']?.central?.['configured?'] ? 'auth.itonami.cloud' : null,
       data['email-login-configured?'] ? 'Email' : null,
       (data['auth-methods']?.sso || []).some((p) => p['configured?']) ? 'SSO' : null
     ].filter(Boolean);
@@ -8520,6 +8549,12 @@
       } catch (error) {
         $('#identity-status').textContent = error.message;
       } finally { button.disabled = false; }
+    });
+    $('#itonami-cloud-signin').addEventListener('click', (event) => {
+      startCentralAuth(event.currentTarget);
+    });
+    $('#itonami-cloud-link').addEventListener('click', (event) => {
+      startCentralAuth(event.currentTarget);
     });
     $('#sign-out-current').addEventListener('click', async (event) => {
       const button = event.currentTarget;

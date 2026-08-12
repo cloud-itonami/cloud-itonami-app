@@ -707,7 +707,8 @@
 
 (defn- auth-lifecycle-path? [path]
   (contains? #{"/api/auth/sessions" "/api/auth/sessions/revoke"
-               "/api/auth/signout" "/api/auth/identities/unlink"}
+               "/api/auth/signout" "/api/auth/identities/unlink"
+               "/api/auth/itonami/start" "/api/auth/itonami/callback"}
              path))
 
 (defn- handle-auth-lifecycle! [exchange config method path]
@@ -741,6 +742,27 @@
       (require-origin! exchange config)
       (require-csrf! exchange session)
       (send! exchange 200 (identity/unlink-login-identity! session request)))
+
+    ["POST" "/api/auth/itonami/start"]
+    (let [session (identity/session
+                   (cookie-value exchange identity/cookie-name))]
+      (require-origin! exchange config)
+      (when session (require-csrf! exchange session))
+      (send! exchange 200 (identity/start-central-authentication! session)))
+
+    ["GET" "/api/auth/itonami/callback"]
+    (let [params (query-params exchange)]
+      (try
+        (let [result (identity/complete-central-authentication! params)]
+          (redirect! exchange
+                     (if (:linked? result)
+                       "/?auth=itonami-cloud#settings"
+                       "/?auth=itonami-cloud")
+                     {"Set-Cookie" (session-cookie (:token result))}))
+        (catch Exception error
+          (identity/record-auth-failure! :itonami-cloud error)
+          (redirect! exchange
+                     "/?auth=error&provider=itonami-cloud#signin"))))
 
     (send! exchange 405 {:error {:type "method_not_allowed"}})))
 
@@ -4341,6 +4363,13 @@
                      :sso/signup-disabled 403
                      :sso/verification-failed 403
                      :sso/rate-limited 429
+                     :central-auth/not-configured 503
+                     :central-auth/invalid-state 400
+                     :central-auth/cancelled 400
+                     :central-auth/missing-code 400
+                     :central-auth/missing-token 502
+                     :central-auth/invalid-claims 403
+                     :central-auth/link-required 409
                      :identity/session-not-found 404
                      :identity/login-identity-not-found 404
                      :identity/last-login-method 409
