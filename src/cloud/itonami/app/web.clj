@@ -237,6 +237,165 @@
   .local-status{margin:0;color:var(--color-neutral-solid-gray-600);font-size:.9375rem;line-height:1.7}
   .local-actions{justify-content:flex-end}
   .chat-view{max-width:none;padding:0}
+  /* ── Bots ──────────────────────────────────────────────────────────────
+     Colours come from the DADS palette this file already uses, including the
+     ten avatar colours: a Bot's colour is decoration, and decoration that
+     invents its own hexes is how a second palette starts. */
+  .bots-view{max-width:none;padding:0;height:100%}
+  .bots-shell{display:grid;grid-template-columns:17rem 1fr;height:100%;min-height:0}
+  .bots-rail{display:flex;flex-direction:column;min-height:0;gap:.25rem;
+    padding:.75rem;border-right:1px solid var(--color-neutral-solid-gray-200);
+    background:var(--color-neutral-solid-gray-50)}
+  .bots-rail__head{display:flex;align-items:center;gap:.5rem;padding:.25rem .25rem .5rem}
+  .bots-rail__title{flex:1;font-weight:700}
+  .bots-rail__list{list-style:none;margin:0;padding:0;display:grid;gap:.125rem;
+    overflow-y:auto;min-height:0}
+  .bots-rail__empty{margin:.5rem .25rem;color:var(--color-neutral-solid-gray-600);
+    font-size:.875rem}
+  .bots-rail__item{display:flex;align-items:center;gap:.625rem;width:100%;border:0;
+    border-radius:.5rem;background:transparent;padding:.5rem;cursor:pointer;
+    text-align:left;min-height:3rem}
+  .bots-rail__item:hover{background:var(--color-neutral-solid-gray-100)}
+  .bots-rail__item[aria-current='true']{background:var(--color-key-50)}
+  .bots-rail__item:focus-visible{outline:4px solid var(--color-primitive-yellow-300);
+    outline-offset:1px}
+  .bots-rail__copy{flex:1;min-width:0;display:grid;gap:.125rem}
+  .bots-rail__name{font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .bots-rail__last{font-size:.8125rem;color:var(--color-neutral-solid-gray-600);
+    overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  /* The avatar. One element, two custom properties, so the same markup is a
+     swatch in the picker and a face in the rail. */
+  .bot-avatar{display:inline-flex;align-items:center;justify-content:center;
+    width:2rem;height:2rem;flex:0 0 auto;background:var(--bot-color,#4a6fd4);
+    color:var(--color-neutral-white);font-size:.875rem;position:relative}
+  .bot-avatar--xl{width:4.5rem;height:4.5rem;font-size:1.75rem}
+  .bot-avatar[data-glyph='circle']{border-radius:50%}
+  .bot-avatar[data-glyph='bean']{border-radius:50% 50% 45% 55% / 55% 45% 55% 45%}
+  .bot-avatar[data-glyph='block']{border-radius:.375rem}
+  .bot-avatar[data-glyph='wide']{border-radius:999px;width:2.75rem}
+  .bot-avatar--xl[data-glyph='wide']{width:6rem}
+  .bot-avatar[data-glyph='wedge']{border-radius:.25rem;
+    clip-path:polygon(50% 0,100% 100%,0 100%)}
+  .bot-avatar[data-glyph='cloud']{border-radius:60% 60% 40% 40% / 70% 70% 30% 30%}
+  .bot-avatar[data-glyph='wave']{border-radius:40% 60% 60% 40% / 60% 40% 60% 40%}
+  .bot-avatar[data-glyph='drop']{border-radius:50% 50% 50% 0}
+  .bot-avatar[data-color='clay']{--bot-color:#8a6552}
+  .bot-avatar[data-color='red']{--bot-color:var(--color-semantic-error-1)}
+  .bot-avatar[data-color='orange']{--bot-color:#e07a26}
+  .bot-avatar[data-color='amber']{--bot-color:#c9930b}
+  .bot-avatar[data-color='green']{--bot-color:var(--color-semantic-success-1)}
+  .bot-avatar[data-color='teal']{--bot-color:#12817c}
+  .bot-avatar[data-color='blue']{--bot-color:var(--color-key-600)}
+  .bot-avatar[data-color='violet']{--bot-color:#6b4cc4}
+  .bot-avatar[data-color='pink']{--bot-color:#c2418a}
+  .bot-avatar[data-color='slate']{--bot-color:var(--color-neutral-solid-gray-600)}
+  /* The status dot. Named states rather than a colour, because 'waiting for
+     you' and 'working' must not be told apart by hue alone. */
+  .bots-dot{width:.625rem;height:.625rem;border-radius:50%;flex:0 0 auto;
+    border:2px solid var(--color-neutral-white)}
+  .bots-dot[data-status='working']{background:var(--color-semantic-success-1)}
+  .bots-dot[data-status='waiting-approval']{background:var(--color-primitive-yellow-300)}
+  .bots-dot[data-status='waiting-connection']{background:#e07a26}
+  .bots-dot[data-status='idle']{background:var(--color-neutral-solid-gray-300)}
+  .bots-dot[data-status='disabled']{background:var(--color-neutral-solid-gray-200)}
+  .bots-main{display:flex;flex-direction:column;min-height:0;min-width:0}
+  .bots-onboard{overflow-y:auto;padding:clamp(1rem,4vw,3rem);max-width:52rem;
+    margin:0 auto;width:100%}
+  .bots-onboard__step{display:grid;gap:1rem;justify-items:stretch}
+  .bots-search{width:100%;padding:.625rem .75rem;border-radius:.5rem;
+    border:1px solid var(--color-neutral-solid-gray-300)}
+  .bots-grid{display:grid;gap:.75rem;
+    grid-template-columns:repeat(auto-fill,minmax(13rem,1fr))}
+  .bots-tile{display:flex;align-items:center;gap:.75rem;padding:.875rem;
+    border-radius:.75rem;border:2px solid var(--color-neutral-solid-gray-200);
+    background:var(--color-neutral-white);cursor:pointer;text-align:left;
+    min-height:4rem}
+  .bots-tile:hover{border-color:var(--color-neutral-solid-gray-400)}
+  .bots-tile[aria-pressed='true']{border-color:var(--color-key-600)}
+  .bots-tile:focus-visible{outline:4px solid var(--color-primitive-yellow-300);
+    outline-offset:1px}
+  .bots-tile:disabled{opacity:.45;cursor:not-allowed}
+  .bots-tile__copy{flex:1;min-width:0;display:grid;gap:.125rem}
+  .bots-tile__name{font-weight:600}
+  .bots-tile__meta{font-size:.75rem;color:var(--color-neutral-solid-gray-600)}
+  .bots-tile__check{color:var(--color-key-600);font-weight:700}
+  .bots-swatches{display:flex;flex-wrap:wrap;gap:.5rem;justify-content:center}
+  .bots-swatch{border:2px solid transparent;border-radius:50%;padding:.1875rem;
+    background:transparent;cursor:pointer;line-height:0}
+  .bots-swatch[aria-checked='true']{border-color:var(--color-key-600)}
+  .bots-swatch:focus-visible{outline:4px solid var(--color-primitive-yellow-300)}
+  .bots-avatar-preview{display:flex;justify-content:center;padding:.5rem 0}
+  .bots-permission{display:flex;align-items:center;gap:.5rem;
+    color:var(--color-neutral-solid-gray-700);font-size:.875rem}
+  .bots-suggestions{display:grid;gap:.75rem;
+    grid-template-columns:repeat(auto-fill,minmax(15rem,1fr))}
+  .bots-suggestion{display:flex;gap:.75rem;padding:.875rem;border-radius:.75rem;
+    border:1px solid var(--color-neutral-solid-gray-200);
+    background:var(--color-neutral-white);cursor:pointer;text-align:left}
+  .bots-suggestion:hover{border-color:var(--color-neutral-solid-gray-400)}
+  .bots-suggestion:focus-visible{outline:4px solid var(--color-primitive-yellow-300)}
+  .bots-suggestion__name{font-weight:600}
+  .bots-suggestion__summary{font-size:.8125rem;
+    color:var(--color-neutral-solid-gray-600)}
+  .bots-thread{display:flex;flex-direction:column;min-height:0;flex:1}
+  .bots-thread__head{display:flex;align-items:center;gap:.75rem;padding:.75rem 1rem;
+    border-bottom:1px solid var(--color-neutral-solid-gray-200)}
+  .bots-thread__identity{flex:1;min-width:0;display:grid}
+  .bots-thread__status{font-size:.8125rem;color:var(--color-neutral-solid-gray-600)}
+  .bots-thread__panel{padding:.75rem 1rem;font-size:.8125rem;
+    border-bottom:1px solid var(--color-neutral-solid-gray-200);
+    background:var(--color-neutral-solid-gray-50);
+    color:var(--color-neutral-solid-gray-700)}
+  .bots-thread__panel ul{margin:.25rem 0 0;padding-left:1.25rem}
+  .bots-thread__scroll{flex:1;min-height:0;overflow-y:auto;padding:1rem}
+  .bots-thread__messages{list-style:none;margin:0 auto;padding:0;display:grid;
+    gap:.75rem;max-width:44rem}
+  .bots-msg{display:grid;gap:.5rem}
+  .bots-msg__bubble{padding:.75rem .875rem;border-radius:.75rem;
+    background:var(--color-neutral-solid-gray-50);white-space:pre-wrap;
+    line-height:1.7;overflow-wrap:anywhere}
+  .bots-msg[data-role='person']{justify-items:end}
+  .bots-msg[data-role='person'] .bots-msg__bubble{background:var(--color-key-50)}
+  .bots-card{border:1px solid var(--color-neutral-solid-gray-200);
+    border-radius:.75rem;padding:.875rem;background:var(--color-neutral-white);
+    display:grid;gap:.5rem;width:100%}
+  .bots-card__title{font-weight:600}
+  .bots-card__summary{font-size:.8125rem;
+    color:var(--color-neutral-solid-gray-600);overflow-wrap:anywhere}
+  .bots-card__scopes{font-size:.75rem;color:var(--color-neutral-solid-gray-600);
+    margin:0;padding-left:1.125rem}
+  .bots-card__row{display:flex;align-items:center;gap:.5rem;flex-wrap:wrap}
+  .bots-card__state{margin-left:auto;font-size:.8125rem;font-weight:600}
+  .bots-card__state[data-state='connected']{color:var(--color-semantic-success-1)}
+  .bots-card__state[data-state='waiting']{color:var(--color-neutral-solid-gray-600)}
+  .bots-option{display:flex;align-items:center;gap:.625rem;width:100%;
+    border:1px solid var(--color-neutral-solid-gray-200);border-radius:.5rem;
+    background:var(--color-neutral-white);padding:.625rem .75rem;cursor:pointer;
+    text-align:left;min-height:2.75rem}
+  .bots-option:hover{background:var(--color-neutral-solid-gray-50)}
+  .bots-option:focus-visible{outline:4px solid var(--color-primitive-yellow-300)}
+  .bots-option[aria-pressed='true']{border-color:var(--color-key-600);
+    background:var(--color-key-50)}
+  .bots-option:disabled{opacity:.5;cursor:default}
+  .bots-chip{display:inline-flex;align-items:center;gap:.375rem;padding:.25rem .625rem;
+    border-radius:999px;border:1px solid var(--color-neutral-solid-gray-300);
+    background:var(--color-neutral-solid-gray-50);font-size:.8125rem;cursor:pointer}
+  .bots-chip:hover{border-color:var(--color-neutral-solid-gray-500)}
+  .bots-chip:focus-visible{outline:4px solid var(--color-primitive-yellow-300)}
+  .bots-option__key{display:inline-flex;align-items:center;justify-content:center;
+    width:1.5rem;height:1.5rem;border-radius:.25rem;font-size:.75rem;
+    background:var(--color-neutral-solid-gray-100)}
+  .bots-composer{display:flex;gap:.5rem;align-items:flex-end;padding:.75rem 1rem;
+    border-top:1px solid var(--color-neutral-solid-gray-200)}
+  .bots-composer textarea{flex:1;resize:none;padding:.625rem .75rem;
+    border-radius:.75rem;border:1px solid var(--color-neutral-solid-gray-300);
+    max-height:12rem;font:inherit}
+  @media (max-width:60rem){
+    .bots-shell{grid-template-columns:1fr}
+    .bots-rail{display:none}
+    .bots-shell[data-pane='rail'] .bots-rail{display:flex}
+    .bots-shell[data-pane='rail'] .bots-main{display:none}
+  }
   .chat-shell{position:relative;display:flex;flex-direction:column;
     height:calc(100vh - 5rem);min-height:32rem;background:var(--color-neutral-white)}
   .chat-header{display:flex;align-items:center;justify-content:space-between;gap:1rem;
@@ -1047,6 +1206,7 @@
        [:nav {:class "local-nav" :aria-label "機能メニュー"}
         [:div {:class "nav-primary authenticated-only" :hidden true}
          (nav-item "chat" "Chat" "✦" nil)
+         (nav-item "bots" "Bots" "◕" "bots-count")
          (nav-item "capture" "Capture" "＋" "capture-count")
          (nav-item "messenger" "Messenger" "◇" "messenger-count")
          (nav-item "projects" "Projects" "▦" "projects-count")
@@ -1160,6 +1320,78 @@
            [:p {:class "visually-hidden" :id "request-status"
                 :role "status" :aria-live "polite"}
             "ローカルモデルを準備中です。"]]]]
+        ;; Bots. Two panes, not a document: the list is how you find one and
+        ;; the thread is how you work with it, and both are always on screen so
+        ;; a Bot that is waiting for you cannot be somewhere you are not
+        ;; looking. Everything inside is built by the client from /api/bots —
+        ;; the markup here is the frame, because the number of Bots and the
+        ;; number of cards in a turn are both unknown until it answers.
+        [:section {:class "view bots-view" :data-view-panel "bots" :hidden true}
+         [:div {:class "bots-shell" :id "bots-shell"}
+          [:aside {:class "bots-rail"}
+           [:div {:class "bots-rail__head"}
+            [:span {:class "bots-rail__title"} "Bots"]
+            [:button {:class "tool-button" :id "bots-new" :type "button"
+                      :aria-label "新しい Bot を作る"} "＋"]]
+           [:ul {:class "bots-rail__list" :id "bots-list"}]
+           [:p {:class "bots-rail__empty" :id "bots-rail-empty"} "まだ Bot がいません"]]
+          [:div {:class "bots-main"}
+           ;; The onboarding pair from a first run: pick what you use, then
+           ;; make the first Bot. Hidden once one exists.
+           [:div {:class "bots-onboard" :id "bots-onboard" :hidden true}
+            [:div {:class "bots-onboard__step" :id "bots-step-services"}
+             (dds/heading 2 "毎日なにを使っていますか?" {:size "28"})
+             [:p {:class "view-lead"}
+              "この build が実際に持っているサービスだけを出しています。選んだものが、最初の Bot が触れる範囲になります。"]
+             [:input {:class "bots-search" :id "bots-service-search" :type "search"
+                      :placeholder "探す" :autocomplete "off"}]
+             [:div {:class "bots-grid" :id "bots-service-grid"}]
+             [:p {:class "form-help" :id "bots-service-note"}]
+             [:button {:class "primary-action" :id "bots-services-next" :type "button"}
+              "次へ"]]
+            [:div {:class "bots-onboard__step" :id "bots-step-create" :hidden true}
+             [:div {:class "bots-avatar-preview"}
+              [:span {:class "bot-avatar bot-avatar--xl" :id "bots-avatar-preview"}]]
+             [:div {:class "bots-swatches" :id "bots-color-row" :role "radiogroup"
+                    :aria-label "色"}]
+             [:div {:class "bots-swatches" :id "bots-glyph-row" :role "radiogroup"
+                    :aria-label "かたち"}]
+             [:div {:class "field"}
+              [:label {:for "bots-name"} "名前"]
+              [:input {:id "bots-name" :type "text" :maxlength "60"
+                       :autocomplete "off" :placeholder "New Bot"}]]
+             [:div {:class "field"}
+              [:label {:for "bots-brief"} "この Bot に任せること"]
+              [:textarea {:id "bots-brief" :maxlength "2000" :rows "4"
+                          :placeholder "毎朝わたしの受信箱を見て、返事が要るものと待てるものを分けて。"}]]
+             [:label {:class "bots-permission"}
+              [:input {:id "bots-writes" :type "checkbox"}]
+              [:span "書き込みも任せる（実行前に毎回わたしが承認する）"]]
+             [:button {:class "primary-action" :id "bots-create" :type "button"}
+              "はじめる"]
+             [:p {:class "drive-create__status" :id "bots-create-status"
+                  :aria-live "polite"}]
+             [:div {:class "bots-suggestions" :id "bots-suggestions"}]]]
+           ;; The thread.
+           [:div {:class "bots-thread" :id "bots-thread" :hidden true}
+            [:header {:class "bots-thread__head"}
+             [:span {:class "bot-avatar" :id "bots-thread-avatar"}]
+             [:div {:class "bots-thread__identity"}
+              [:strong {:id "bots-thread-name"}]
+              [:span {:class "bots-thread__status" :id "bots-thread-status"}]]
+             [:button {:class "tool-button" :id "bots-thread-tools" :type "button"
+                       :aria-expanded "false" :aria-controls "bots-thread-panel"
+                       :title "この Bot が届く範囲"} "▤"]]
+            [:div {:class "bots-thread__panel" :id "bots-thread-panel" :hidden true}]
+            [:div {:class "bots-thread__scroll" :id "bots-thread-scroll"}
+             [:ol {:class "bots-thread__messages" :id "bots-messages"}]]
+            [:form {:class "bots-composer" :id "bots-form"}
+             [:textarea {:id "bots-input" :rows "1" :maxlength "8000"
+                         :placeholder "この Bot に頼む" :autocomplete "off"}]
+             [:button {:class "primary-action" :id "bots-send" :type "submit"
+                       :disabled true} "送る"]]
+            [:p {:class "drive-create__status" :id "bots-thread-status-line"
+                 :aria-live "polite"}]]]]]
         [:section {:class "view" :data-view-panel "capture" :hidden true}
          (view-header "Capture"
                       "考えを評価・分類せず、そのまま手元に残します。AIには送られません。整理は後から行います。")

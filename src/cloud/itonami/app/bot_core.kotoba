@@ -1,0 +1,213 @@
+;; A Bot's DECISION CORE — what a named worker may do, and what its name has to
+;; do with it.
+;;
+;; A Bot is a durable performer with a face: a name, a colour, a glyph, a brief
+;; written in the second person. All four are the product. None of them is an
+;; input to a single function in this file, and that absence is the design.
+;; `work_governance.cljc` already states the rule for artificial performers —
+;; "Display personas belong in `:performer/persona`; they do not change
+;; authority" — but it states it about a map it is handed. Here it is
+;; structural: `tool-admitted?` cannot consult a persona, because no persona
+;; crosses the boundary. Renaming a Bot from "notes" to "administrator" cannot
+;; change an answer computed from four booleans that do not include the name.
+;;
+;; `bot.cljc` keeps the halves that are not decisions: intersecting the grant
+;; with the deployment's enabled tool set, building cards, folding a
+;; conversation, and every `throw` — an exception is an effect and the core has
+;; none.
+;;
+;; ## The three judgements, and the failure each one exists to prevent
+;;
+;;   - `tool-admitted?` — a Bot reaching a tool nobody enabled, or writing when
+;;     it was only ever granted reads.
+;;   - `may-approve?` — a Bot approving its own held run. It is the one thing
+;;     that must be impossible rather than merely unimplemented, so the actor
+;;     kind is tested FIRST and alone: no combination of the other three facts
+;;     can reach the human branch.
+;;   - `status` — a Bot that is waiting for a human reporting itself as
+;;     working. The ordering is the rule; see the comment there.
+;;
+;; ## Why it is written this narrowly
+;;
+;; Everything stays inside the native word-typed slice
+;; (`kotoba.kir/only-native-word-typed-features?`): `:string` and `:bool`
+;; scalars, `:i64` status codes, sealed all-scalar records, `string=?`, `and`,
+;; `or`, `if`. Two absences are backend gaps rather than house style
+;; (ADR-2608650000): a **set literal**, which is why an effect is compared by
+;; `string=?` rather than tested for membership, and a **bare `:bool`
+;; parameter** (compiler ADR-0219), which is why facts arrive as records.
+;;
+;; `and` / `or` produce `:i64`, not `:bool`, so a `:bool`-declared function
+;; folds the result through an `if` — that is what the trailing `true false`
+;; is for, and leaving it out fails with `expression type mismatch: expected
+;; bool, got i64`.
+;;
+;; Status is `:i64` rather than a keyword for the same reason `approval_core`
+;; returns codes: the exported constants below are what the host maps, so the
+;; numbers appear in exactly one place.
+;;
+;; Parity: test/cloud/itonami/app/bot_kotoba_parity_test.clj
+
+(ns bot-core
+  (:schemas {;; What the host has established about one tool, for one Bot, at
+             ;; one moment. Four facts, and deliberately not a fifth: nothing
+             ;; here identifies WHICH Bot is asking.
+             :bot/admission
+             [:record :bot/admission
+              [[:deployment-enabled :bool]
+               [:granted :bool]
+               [:connected :bool]
+               [:writes :bool]]]
+             ;; Who is recording an approval decision.
+             ;;
+             ;; `identified` is the session having established who it is —
+             ;; `identity/require-passkey!` passed. It is NOT the WebAuthn
+             ;; user-verifying assertion that `work-approval` requires, and it
+             ;; is not named as if it were: a governed WorkItem's approval is a
+             ;; strictly stronger gate, and a Bot write that needs that gate
+             ;; goes through a WorkItem rather than through this card.
+             ;; `authorized` is the host's answer to ownership.
+             :bot/decision
+             [:record :bot/decision
+              [[:human :bool]
+               [:identified :bool]
+               [:authorized :bool]]]
+             ;; How many of this person's accounts at one provider are in
+             ;; play. A person may hold two Google accounts; the Keychain has
+             ;; kept them in separate slots since subjects qualified it, and
+             ;; `connection-for` already refuses to guess between them. This
+             ;; record is that refusal, made into a decision a Bot can act on.
+             ;;
+             ;; `connected` counts the person's live accounts at the provider.
+             ;; `bound` counts how many of those THIS Bot was given. `declared`
+             ;; is whether it named any accounts AT ALL, and it is a separate
+             ;; field from `bound` being zero because those are different
+             ;; states: a Bot that named none inherits the person's accounts,
+             ;; and a Bot that named accounts which have all since been
+             ;; disconnected has none — and must say so rather than silently
+             ;; inheriting the very accounts it was configured to avoid.
+             ;; Measured: with one field the second case read as the first.
+             ;; `selected` is whether a choice is already in effect this turn.
+             :bot/accounts
+             [:record :bot/accounts
+              [[:connected :i64]
+               [:bound :i64]
+               [:declared :bool]
+               [:selected :bool]]]
+             ;; What is true of a Bot's outstanding work.
+             :bot/presence
+             [:record :bot/presence
+              [[:enabled :bool]
+               [:held-run :bool]
+               [:unmet-connection :bool]
+               [:active-run :bool]]]})
+  (:export [status-disabled status-idle status-working
+            status-waiting-connection status-waiting-approval
+            account-connect account-use account-ask
+            write-effect? tool-admitted? may-approve? grant-widens?
+            usable-accounts account-disposition status main]))
+
+(defn status-disabled [] :i64 0)
+(defn status-idle [] :i64 1)
+(defn status-working [] :i64 2)
+(defn status-waiting-connection [] :i64 3)
+(defn status-waiting-approval [] :i64 4)
+
+;; The connector registry declares `:connector/effect` as `:read` or `:write`.
+;; Anything else is treated as a write: an effect this build does not recognise
+;; is not a licence to assume it only reads.
+(defn write-effect? [effect :string] :bool
+  (if (string=? effect "read") false true))
+
+(defn tool-admitted? [a [:ref :bot/admission] effect :string] :bool
+  ;; Three facts always, plus the write permission only when the tool writes.
+  ;; Spelled as nested `if` rather than one conjunction so that each refusal is
+  ;; a separate line to put a breakpoint on and a separate case in the parity
+  ;; corpus.
+  (if (record-get a :deployment-enabled)
+    (if (record-get a :granted)
+      (if (record-get a :connected)
+        (if (write-effect? effect)
+          (record-get a :writes)
+          true)
+        false)
+      false)
+    false))
+
+(defn may-approve? [d [:ref :bot/decision] actor-kind :string] :bool
+  ;; A Bot may carry out what was approved. It may not approve. The actor kind
+  ;; is tested alone and first, so that this refusal cannot be traded against
+  ;; anything: there is no value of `human`, `user-verified` or `authorized`
+  ;; that reaches the second branch for an agent.
+  (if (string=? actor-kind "agent")
+    false
+    (if (and (record-get d :human)
+             (record-get d :identified)
+             (record-get d :authorized))
+      true
+      false)))
+
+(defn grant-widens? [granted-count :i64 admitted-count :i64] :bool
+  ;; `admitted-count` is how many of the Bot's granted tools survived
+  ;; intersection with what the deployment enabled. A difference means the
+  ;; grant names something nobody turned on — which is not an error to swallow
+  ;; and re-derive, because the two readings ("the operator disabled a tool
+  ;; this Bot had" and "someone wrote a tool name into a Bot that was never
+  ;; offered") need different answers from the host.
+  (> granted-count admitted-count))
+
+(defn account-connect [] :i64 0)
+(defn account-use [] :i64 1)
+(defn account-ask [] :i64 2)
+
+(defn usable-accounts [a [:ref :bot/accounts]] :i64
+  ;; A Bot that named accounts uses those and no others — including when the
+  ;; answer is none of them. A Bot that named none inherits the person's, which
+  ;; is what somebody who has only ever had one account means, and stays
+  ;; correct on the day they add a second because the count then makes the Bot
+  ;; ask rather than silently pick.
+  (if (record-get a :declared)
+    (record-get a :bound)
+    (record-get a :connected)))
+
+(defn account-disposition [a [:ref :bot/accounts]] :i64
+  ;; The refusal `connection-for` already makes, turned into something a Bot
+  ;; can act on: with several accounts and no choice in effect, ASK. Taking the
+  ;; first is the failure mail-sync's own comment names — 'an application that
+  ;; reaches for whichever Google token is on the machine is an application
+  ;; that reads mail it was never pointed at'.
+  ;;
+  ;; `connected` is checked separately from `usable-accounts` so that a Bot
+  ;; bound to accounts that have all since been disconnected asks to connect
+  ;; rather than reporting that it has nothing usable for an unstated reason.
+  (if (> (record-get a :connected) 0)
+    (if (> (usable-accounts a) 0)
+      (if (< (usable-accounts a) 2)
+        (account-use)
+        (if (record-get a :selected)
+          (account-use)
+          (account-ask)))
+      (account-connect))
+    (account-connect)))
+
+(defn status [p [:ref :bot/presence]] :i64
+  ;; Ordering IS the decision. A Bot with both a held run and an unmet
+  ;; connection is waiting for an approval, because that is the one a human has
+  ;; to act on first; and either of those outranks `active-run`, because a Bot
+  ;; that is blocked on a person while reporting itself as working is the exact
+  ;; failure the screen exists to prevent. Reversing any pair here compiles and
+  ;; is silently wrong.
+  (if (record-get p :enabled)
+    (if (record-get p :held-run)
+      (status-waiting-approval)
+      (if (record-get p :unmet-connection)
+        (status-waiting-connection)
+        (if (record-get p :active-run)
+          (status-working)
+          (status-idle))))
+    (status-disabled)))
+
+(defn main [] :i64
+  ;; Sentinel for the wasm host contract, not a battery. The assertions live in
+  ;; the parity test where they can be compared against the cljc.
+  0)
