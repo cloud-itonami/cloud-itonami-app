@@ -110,3 +110,65 @@
         (is false)
         (catch clojure.lang.ExceptionInfo error
           (is (= :identity/last-login-method (:type (ex-data error)))))))))
+
+(defn- central-state []
+  (->> (get-in (store/snapshot) [:identity :central-auth-transactions])
+       (keep (fn [[state transaction]] (when-not (:used? transaction) state)))
+       first))
+
+(defn- finish-central! [subject]
+  (let [state (central-state)]
+    (with-redefs-fn
+      {#'cloud.itonami.app.identity/central-exchange-code!
+       (fn [_ _ code]
+         (is (= "one-time-code" code))
+         {:access_token "central-access-token"})
+       #'cloud.itonami.app.identity/central-userinfo!
+       (fn [_ token]
+         (is (= "central-access-token" token))
+         {:iss "https://auth.itonami.cloud"
+          :sub subject
+          :client_id "cloud-itonami-app-native"
+          :scope "identity:read"
+          :acr "phishing-resistant"
+          :amr ["webauthn"]})}
+      #(identity/complete-central-authentication!
+        {:state state :code "one-time-code"}))))
+
+(deftest central-auth-pkce-bootstraps-once-and-never-persists-its-token
+  (let [previous @store/state]
+    (try
+      (reset! store/state (store/initial-state))
+      (identity/configure! {})
+      (let [started (identity/start-central-authentication! nil)
+            state (central-state)
+            transaction (get-in (store/snapshot)
+                                [:identity :central-auth-transactions state])]
+        (is (str/starts-with? (:url started)
+                              "https://auth.itonami.cloud/authorize?"))
+        (is (str/includes? (:url started) "code_challenge_method=S256"))
+        (is (= "http://127.0.0.1:1338/api/auth/itonami/callback"
+               (:redirect-uri transaction)))
+        (is (not (str/includes? (pr-str transaction) "access-token")))
+        (let [finished (finish-central! "did:web:kotobase.net:person:one")
+              session (identity/session (:token finished))]
+          (is (= :federated (:kind session)))
+          (is (= :itonami-cloud (:issued-via session)))
+          (is (true? (identity/may-act? session)))
+          (is (not (str/includes? (pr-str (store/snapshot))
+                                  "central-access-token")))
+          (try
+            (identity/complete-central-authentication!
+             {:state state :code "one-time-code"})
+            (is false "state replay must fail")
+            (catch clojure.lang.ExceptionInfo error
+              (is (= :central-auth/invalid-state (:type (ex-data error))))))))
+      (testing "an unbound DID cannot take over an existing install"
+        (identity/start-central-authentication! nil)
+        (try
+          (finish-central! "did:web:kotobase.net:person:two")
+          (is false "existing installs require an authenticated link")
+          (catch clojure.lang.ExceptionInfo error
+            (is (= :central-auth/link-required (:type (ex-data error)))))))
+      (finally
+        (reset! store/state previous)))))

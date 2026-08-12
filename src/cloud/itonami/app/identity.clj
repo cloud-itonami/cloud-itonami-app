@@ -44,7 +44,12 @@
    :publish-did-web? false})
 (def default-auth-profile
   {:allow-signup? false
-   :sso-providers [:google :microsoft :github]})
+   :sso-providers [:google :microsoft :github]
+   :central {:enabled? true
+             :issuer "https://auth.itonami.cloud"
+             :client-id "cloud-itonami-app-native"
+             :redirect-uri "http://127.0.0.1:1338/api/auth/itonami/callback"
+             :scope "identity:read"}})
 (defonce runtime-identity-profile (atom default-identity-profile))
 (defonce runtime-auth-profile (atom default-auth-profile))
 (defonce runtime-email-login-configured? (atom false))
@@ -213,19 +218,22 @@
                "https://login.microsoftonline.com/common/oauth2/v2.0/token"))))))
 
 (defn public-auth-methods []
-  {:allow-signup? (true? (:allow-signup? @runtime-auth-profile))
+  (let [central (:central @runtime-auth-profile)]
+    {:allow-signup? (true? (:allow-signup? @runtime-auth-profile))
+   :central {:configured? (true? (:enabled? central))
+             :issuer (:issuer central)}
    :email {:configured? @runtime-email-login-configured?}
    :sso (mapv (fn [provider]
                 (let [config (sso-provider-config provider)]
                   {:id (name provider)
                    :name (:name config)
                    :configured? (boolean (:configured? config))}))
-              (:sso-providers @runtime-auth-profile))})
+              (:sso-providers @runtime-auth-profile))}))
 
 (defn- identity-state [state]
   (merge {:organizations {} :users {} :memberships {}
           :connections {} :oauth-transactions {} :sessions {}
-          :login-identities {} :sso-transactions {}
+          :login-identities {} :sso-transactions {} :central-auth-transactions {}
           :passkeys {} :enrollments {} :organization-invitations {}
           :webauthn-transactions {}}
          (:identity state)))
@@ -1496,6 +1504,14 @@
                                              (:authn-decision candidate))
                                           (contains? sso-scopes
                                                      (:authn-provider candidate)))
+                                :federated
+                                (and (= :itonami-cloud (:issued-via candidate))
+                                     (= :itonami-cloud (:authn-provider candidate))
+                                     (= :phishing-resistant
+                                        (:authn-level candidate))
+                                     (= :authenticated
+                                        (:authn-decision candidate))
+                                     (= [:webauthn] (:authn-factors candidate)))
                                 ;; A Passkey session must have been minted BY
                                 ;; a Passkey ceremony, not merely belong to
                                 ;; somebody who has one.
@@ -2094,6 +2110,168 @@
                     (.header "User-Agent" "cloud-itonami-app")
                     .GET .build)]
     (request-json! request)))
+
+(defn- central-auth-config []
+  (let [config (:central @runtime-auth-profile)
+        issuer (some-> (:issuer config) str (str/replace #"/+$" ""))]
+    (assoc config
+           :issuer issuer
+           :authorization-endpoint (str issuer "/authorize")
+           :token-endpoint (str issuer "/oauth/token")
+           :profile-endpoint (str issuer "/userinfo"))))
+
+(defn- prune-central-auth-transactions! []
+  (let [now (Instant/now)]
+    (store/transact!
+     update-in [:identity :central-auth-transactions]
+     (fn [transactions]
+       (into {}
+             (filter (fn [[_ transaction]]
+                       (and (not (:used? transaction))
+                            (when-let [expires-at (:expires-at transaction)]
+                              (pos? (compare (Instant/parse expires-at) now))))))
+             (or transactions {}))))))
+
+(defn start-central-authentication!
+  "Start Authorization Code + PKCE against auth.itonami.cloud.
+
+  An authenticated local session turns this into an explicit link. Without
+  one, the returned DID may sign in only when already bound, except on a truly
+  empty install where it establishes the first local User."
+  [session]
+  (prune-central-auth-transactions!)
+  (let [{:keys [enabled? issuer client-id redirect-uri scope
+                authorization-endpoint]} (central-auth-config)
+        link? (boolean session)]
+    (when-not (and enabled? issuer client-id redirect-uri scope)
+      (throw (ex-info "auth.itonami.cloud 認証が未設定です。"
+                      {:type :central-auth/not-configured})))
+    (when (and link? (not (may-act? session)))
+      (throw (ex-info "中央認証を接続するにはサインインが必要です。"
+                      {:type :identity/unauthenticated})))
+    (let [state-value (random-token 32)
+          verifier (random-token 48)
+          challenge (digest verifier)
+          expires-at (str (.plusSeconds (Instant/now) transaction-seconds))
+          parameters {"client_id" client-id
+                      "redirect_uri" redirect-uri
+                      "response_type" "code"
+                      "scope" scope
+                      "state" state-value
+                      "code_challenge" challenge
+                      "code_challenge_method" "S256"}
+          url (str authorization-endpoint "?"
+                   (str/join "&"
+                             (map (fn [[key value]]
+                                    (str (url-encode key) "=" (url-encode value)))
+                                  parameters)))]
+      (store/transact!
+       assoc-in [:identity :central-auth-transactions state-value]
+       {:id (str "central-auth-" (UUID/randomUUID))
+        :state state-value :issuer issuer :client-id client-id
+        :redirect-uri redirect-uri :scope scope :verifier verifier
+        :mode (if link? :link :authenticate)
+        :user-id (when link? (:user-id session))
+        :created-at (store/now) :expires-at expires-at :used? false})
+      {:url url :provider :itonami-cloud
+       :mode (if link? :link :authenticate) :expires-at expires-at})))
+
+(defn- central-exchange-code! [config transaction code]
+  (let [body (form-body {:grant_type "authorization_code"
+                         :code code
+                         :client_id (:client-id config)
+                         :redirect_uri (:redirect-uri transaction)
+                         :code_verifier (:verifier transaction)})
+        request (-> (HttpRequest/newBuilder (URI/create (:token-endpoint config)))
+                    (.header "Content-Type" "application/x-www-form-urlencoded")
+                    (.header "Accept" "application/json")
+                    (.POST (HttpRequest$BodyPublishers/ofString body))
+                    .build)]
+    (request-json! request)))
+
+(defn- central-userinfo! [config access-token]
+  (let [request (-> (HttpRequest/newBuilder (URI/create (:profile-endpoint config)))
+                    (.header "Authorization" (str "Bearer " access-token))
+                    (.header "Accept" "application/json")
+                    (.header "User-Agent" "cloud-itonami-app")
+                    .GET .build)]
+    (request-json! request)))
+
+(defn complete-central-authentication!
+  "Consume one local state, exchange its code, validate the central identity,
+  and mint a local session. The central access token is never persisted."
+  [{:keys [state code error]}]
+  (let [snapshot (identity-state (store/snapshot))
+        transaction (get-in snapshot [:central-auth-transactions state])]
+    (when-not (and transaction
+                   (not (:used? transaction))
+                   (pos? (compare (Instant/parse (:expires-at transaction))
+                                  (Instant/now))))
+      (throw (ex-info "中央認証 state が無効、期限切れ、または使用済みです。"
+                      {:type :central-auth/invalid-state})))
+    ;; Spend state before any network call. A failed exchange cannot be retried
+    ;; with the same browser transaction.
+    (store/transact!
+     (fn [current]
+       (let [live (get-in current [:identity :central-auth-transactions state])]
+         (when (:used? live)
+           (throw (ex-info "中央認証 state は使用済みです。"
+                           {:type :central-auth/invalid-state})))
+         (assoc-in current [:identity :central-auth-transactions state :used?] true))))
+    (when error
+      (throw (ex-info "中央認証がキャンセルされました。"
+                      {:type :central-auth/cancelled})))
+    (when (str/blank? code)
+      (throw (ex-info "中央認証の認可コードがありません。"
+                      {:type :central-auth/missing-code})))
+    (let [config (central-auth-config)
+          token (central-exchange-code! config transaction code)
+          access-token (:access_token token)
+          _ (when (str/blank? access-token)
+              (throw (ex-info "中央認証から access token が返りませんでした。"
+                              {:type :central-auth/missing-token})))
+          profile (central-userinfo! config access-token)
+          subject (some-> (:sub profile) str not-empty)
+          scopes (set (str/split (str (:scope profile)) #"\s+"))
+          amr (set (map str (:amr profile)))
+          _ (when-not (and (= (:issuer transaction) (:iss profile))
+                           (= (:client-id transaction) (:client_id profile))
+                           (contains? scopes (:scope transaction))
+                           (= "phishing-resistant" (:acr profile))
+                           (contains? amr "webauthn")
+                           subject (str/starts-with? subject "did:"))
+              (throw (ex-info "中央認証の identity claims を検証できませんでした。"
+                              {:type :central-auth/invalid-claims})))
+          current (identity-state (store/snapshot))
+          bound-user-id (login-user current :itonami-cloud subject)
+          link-user-id (:user-id transaction)
+          _ (when (and bound-user-id link-user-id
+                       (not= bound-user-id link-user-id))
+              (throw (ex-info "この中央IDは別のUserに接続されています。"
+                              {:type :sso/subject-already-bound
+                               :provider :itonami-cloud})))
+          empty-install? (empty? (:users current))
+          _ (when (and (nil? bound-user-id) (nil? link-user-id)
+                       (not empty-install?))
+              (throw (ex-info
+                      "既存Userへサインインしてから中央IDを接続してください。"
+                      {:type :central-auth/link-required})))
+          user-id (or bound-user-id link-user-id
+                      (when empty-install?
+                        (create-personal-user!
+                         {:display-name "Itonami User"
+                          :root [:itonami-cloud subject]})))
+          _ (bind-login-identity!
+             user-id {:provider :itonami-cloud :subject subject
+                      :display-name "auth.itonami.cloud"})
+          issued (issue-session!
+                  user-id {:kind :federated :issued-via :itonami-cloud
+                           :authn-provider :itonami-cloud
+                           :authn-level :phishing-resistant
+                           :authn-decision :authenticated
+                           :authn-factors [:webauthn]})]
+      (assoc issued :provider :itonami-cloud :user-id user-id
+             :linked? (= :link (:mode transaction))))))
 
 (defn complete-sso-authentication!
   "Finish SSO, binding one provider subject to exactly one local User.
