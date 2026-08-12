@@ -110,8 +110,8 @@
                     (= worker (:ao.worker/id worker-assignment))
                     (contains? capabilities capability)
                     (some? expires-at)
-                    (long (or expires-at 0))
-                    (long now-ms)])])
+                    (oracle/i64 (or expires-at 0))
+                    (oracle/i64 now-ms)])])
         reason (when-not (= :admitted outcome) outcome)]
     (if reason
       {:intent/status :rejected :intent/reason reason}

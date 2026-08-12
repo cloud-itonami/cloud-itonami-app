@@ -38,7 +38,36 @@
 
   A missing or unreadable artifact throws. It does not quietly run a host
   reimplementation, because there is no longer one to run, and because a silent
-  fallback is how a decision stops being the one that shipped."
+  fallback is how a decision stops being the one that shipped.
+
+  ## `:i64` does not cross by itself, and the JVM cannot tell you that
+
+  An `:i64` is a JVM `long` under `:clj` and a `js/BigInt` under `:cljs`, and
+  the second is not what a host map holds. `kir/execute` coerces a TOP-LEVEL
+  `:i64` argument and will accept a host integer there, so a seam without a
+  conversion looks finished on both runtimes right up until the integer is
+  inside a record: that goes through `value/bounded-typed-value!`, which under
+  ClojureScript requires a `js/BigInt` and rejects a `js/Number` outright
+  (`value is not a signed i64`). The compiler's T5.2 rewrite pushed every
+  multi-argument pure export into a record, so that is most of them.
+
+  The return direction is worse, because it does not throw. An `:i64` result
+  read on ClojureScript is a `js/BigInt`, and `(get {0 :connect} (js/BigInt 0))`
+  is a miss — a host that maps a guest status code through a literal map gets
+  its `not-found` for every input and answers confidently with the wrong one.
+
+  `i64` and `i64-value` are that conversion, kept here so a caller never has to
+  know which runtime it is on. Every `:i64` that crosses this seam, in either
+  direction, goes through one of them.
+
+  ## Reading the artifact where there is no classpath
+
+  ClojureScript has no classpath, but it usually has SOMETHING: nbb has a
+  filesystem, a Worker has an asset binding. `set-resource-loader!` takes that
+  something as a function and `register-kir!` is its pre-parsed form. Neither
+  is a default: the seam does not reach for `node:fs` on its own, because a
+  namespace that does cannot be bundled into a Worker running without
+  `nodejs_compat` — which this one's is, deliberately."
   (:require [clojure.edn :as edn]
             [kotoba.kir :as ir]
             #?(:clj [clojure.java.io :as io])))
@@ -71,6 +100,17 @@
   (swap! registered dissoc id)
   nil)
 
+(def ^:private resource-loader
+  "path -> artifact text, for a ClojureScript host that has neither a classpath
+  nor a filesystem. A Worker installs its asset fetch here."
+  (atom nil))
+
+(defn set-resource-loader!
+  "Install `f` : resource-path -> artifact text (or nil). Pass nil to clear."
+  [f]
+  (reset! resource-loader f)
+  f)
+
 (defn- read-artifact [id]
   #?(:clj
      (let [path (resource-path id)]
@@ -79,8 +119,12 @@
          (throw (ex-info "shipped decision core is missing — run `clojure -M:test:gen`"
                          {:oracle id :path path}))))
      :cljs
-     (throw (ex-info "no classpath on this runtime — register-kir! first"
-                     {:oracle id}))))
+     (let [path (resource-path id)
+           text (when-let [f @resource-loader] (f path))]
+       (if text
+         (edn/read-string text)
+         (throw (ex-info "no classpath on this runtime — register-kir! or set-resource-loader! first"
+                         {:oracle id :path path}))))))
 
 (def ^:private cache (atom {}))
 
@@ -126,3 +170,33 @@
   the declared type."
   [schema field-values]
   (into [schema] field-values))
+
+;; ── :i64, which is a different host type on each runtime ─────────────
+
+(defn fits-i64?
+  "Whether a host value can cross as `:i64` without changing what it means.
+
+  On `:cljs` the host speaks `js/Number`, so the round trip is only exact
+  inside the safe-integer range; outside it the answer is no, and the caller
+  keeps whatever it was going to do otherwise."
+  [n]
+  #?(:clj  (and (integer? n) (<= Long/MIN_VALUE n Long/MAX_VALUE))
+     :cljs (and (number? n) (js/Number.isSafeInteger n))))
+
+(defn i64
+  "Host integer -> guest `:i64`.
+
+  Required for an `:i64` inside a record. Also correct, and cheaper to apply
+  uniformly, for a top-level `:i64` argument that `kir/execute` would have
+  coerced anyway — the point of putting it at every crossing is that no reader
+  has to work out which kind a given argument is."
+  [n]
+  #?(:clj (long n) :cljs (js/BigInt n)))
+
+(defn i64-value
+  "Guest `:i64` -> host integer.
+
+  The direction that does not throw when it is skipped: an unconverted
+  `js/BigInt` simply misses every host lookup keyed by a number."
+  [n]
+  #?(:clj n :cljs (js/Number n)))

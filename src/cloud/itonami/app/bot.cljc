@@ -270,13 +270,14 @@
   questions the host answers by looking at runs and connections."
   [b presence]
   (get status-codes
-       (oracle/call
-        :bot 'status
-        [(oracle/record presence-record
-                        [(boolean (:bot/enabled? b))
-                         (boolean (:held-run? presence))
-                         (boolean (:unmet-connection? presence))
-                         (boolean (:active-run? presence))])])
+       (oracle/i64-value
+        (oracle/call
+         :bot 'status
+         [(oracle/record presence-record
+                         [(boolean (:bot/enabled? b))
+                          (boolean (:held-run? presence))
+                          (boolean (:unmet-connection? presence))
+                          (boolean (:active-run? presence))])]))
        :idle))
 
 (defn usable-accounts
@@ -300,13 +301,14 @@
   that guessed would be making the refusal pointless one layer up."
   [b provider-accounts selected]
   (get account-dispositions
-       (oracle/call
-        :bot 'account-disposition
-        [(oracle/record accounts-record
-                        [(count provider-accounts)
-                         (count (usable-accounts b provider-accounts))
-                         (boolean (seq (:bot/accounts b)))
-                         (boolean selected)])])
+       (oracle/i64-value
+        (oracle/call
+         :bot 'account-disposition
+         [(oracle/record accounts-record
+                         [(oracle/i64 (count provider-accounts))
+                          (oracle/i64 (count (usable-accounts b provider-accounts)))
+                          (boolean (seq (:bot/accounts b)))
+                          (boolean selected)])]))
        :connect))
 
 (defn admitted-tools
@@ -355,8 +357,8 @@
   only ever asked with everything connected."
   [b catalog-rows]
   (oracle/call :bot 'grant-widens?
-               [(count (:bot/tools b))
-                (count (enabled-grant b catalog-rows))]))
+               [(oracle/i64 (count (:bot/tools b)))
+                (oracle/i64 (count (enabled-grant b catalog-rows)))]))
 
 ;; ── what a Bot says ─────────────────────────────────────────────────────
 ;;
