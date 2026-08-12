@@ -89,10 +89,25 @@
 
   Refusing rather than substituting: a Bot that silently came back a different
   colour from the one someone picked reads as the wrong Bot in a sidebar where
-  colour is how you find it."
+  colour is how you find it.
+
+  Both spellings are read, and that is the fix for the bug this docstring
+  described and the code then committed. The wire sends `{color, glyph}` —
+  JSON has no namespaces — while this read only `:avatar/color`. So every Bot
+  created from the picker got nil, fell through to the default, and came back
+  blue: substituted, silently, in the function whose whole point is not to.
+  The refusal below could not fire either, because an unknown colour was never
+  reached. Nothing in the Clojure suite saw it; a browser did, on the first
+  run.
+
+  Reading both here rather than translating in `bots.clj` keeps the property
+  where the docstring claims it: any caller, over any transport, either gets
+  the avatar it named or an exception."
   [value]
-  (let [color (or (:avatar/color value) (:avatar/color default-avatar))
-        glyph (or (:avatar/glyph value) (:avatar/glyph default-avatar))
+  (let [color (or (:avatar/color value) (:color value)
+                  (:avatar/color default-avatar))
+        glyph (or (:avatar/glyph value) (:glyph value)
+                  (:avatar/glyph default-avatar))
         color (if (keyword? color) color (keyword (str color)))
         glyph (if (keyword? glyph) glyph (keyword (str glyph)))]
     (when-not (some #{color} avatar-colors)
@@ -308,17 +323,40 @@
               (map :name))
         catalog-rows))
 
+(defn enabled-grant
+  "The Bot's grant, intersected with what the deployment enables — and with
+  nothing else.
+
+  Distinct from `admitted-tools`, which also requires the connector to be
+  connected. Both narrowings are real, they answer different questions, and
+  conflating them is a bug this had: see `grant-widens?`."
+  [b catalog-rows]
+  (into (sorted-set)
+        (comp (mapcat :tools)
+              (filter :enabled?)
+              (map :name)
+              (filter (:bot/tools b)))
+        catalog-rows))
+
 (defn grant-widens?
   "Does this Bot name a tool the deployment does not enable?
 
   Not an error here, and deliberately not repaired here either: the two
   readings — an operator turned a tool off that a Bot had, or a tool name was
   written into a Bot that was never offered — need different answers, and both
-  need a human to see them. `bots.clj` surfaces it; nothing silently prunes."
-  [b catalog-rows connected-connectors]
+  need a human to see them. `bots.clj` surfaces it; nothing silently prunes.
+
+  It compares against `enabled-grant`, NOT `admitted-tools`. Comparing against
+  the admitted set was the bug: admitted is also narrowed by whether the
+  connector is CONNECTED, so a brand-new Bot whose owner had not yet clicked
+  Authorize showed 'this Bot names tools this deployment has not enabled' —
+  every time, on a Bot with nothing wrong with it. A warning that fires on the
+  ordinary case is not a warning, and the tests did not catch it because they
+  only ever asked with everything connected."
+  [b catalog-rows]
   (oracle/call :bot 'grant-widens?
                [(count (:bot/tools b))
-                (count (admitted-tools b catalog-rows connected-connectors))]))
+                (count (enabled-grant b catalog-rows))]))
 
 ;; ── what a Bot says ─────────────────────────────────────────────────────
 ;;

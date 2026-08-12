@@ -140,6 +140,32 @@ with no API at all, which is what connectors structurally cannot cover.
   word-typed qualified. `kotoba-oracle-test` already gates every declared core
   against a fresh compile, so it needed no new drift test.
 
+## The JVM suite cannot see the client, measured
+
+`test/browser/bots_view.cljs` drives the view in a real browser. On its first
+run it found two defects that 1343 passing tests did not, both the same shape —
+a value crossing the JSON boundary and quietly becoming something else:
+
+- `bot/avatar` read `:avatar/color`, and the wire sends `{color}` because JSON
+  has no namespaces. Every Bot came back the default blue however it was drawn.
+  The function whose entire docstring is "refusing rather than substituting"
+  was substituting, and its refusal could not fire because the unknown value
+  was never reached.
+- `grant-widens?` compared the grant against `admitted-tools`, which is
+  narrowed by whether a connector is CONNECTED as well as by what the
+  deployment enables. So a brand-new Bot, before its owner had clicked
+  Authorize, displayed "this Bot names tools this deployment has not enabled" —
+  on every ordinary Bot. `enabled-grant` is now the separate, correct
+  narrowing. A warning that fires on the ordinary case is not a warning.
+
+Neither raises an exception; both render. The tests missed the second because
+they only ever asked the question with everything connected — the fixture was
+the blind spot, not the assertion.
+
+The harness also confirmed the single-page property this application requires
+(ADR-2608080100): a value set on `window` survives crossing to Chat and back,
+so the view change is state and not navigation.
+
 ## What this does not do
 
 - **No cadence.** A Bot answers when spoken to. A standing brief that runs on a
