@@ -83,6 +83,20 @@
   (is (thrown-with-msg? clojure.lang.ExceptionInfo #"unknown avatar glyph"
                         (a-bot {:bot/avatar {:avatar/glyph :dodecahedron}}))))
 
+(deftest an-avatar-that-arrived-over-the-wire-is-the-one-that-was-picked
+  ;; JSON has no namespaces, so the picker sends `{color, glyph}`. This read
+  ;; only `:avatar/color`, found nil, and substituted the default — every Bot
+  ;; came back blue however it was drawn. The suite could not see it: nothing
+  ;; here had ever built an avatar the way the client does.
+  (testing "the wire spelling survives"
+    (is (= {:avatar/color :orange :avatar/glyph :drop}
+           (:bot/avatar (a-bot {:bot/avatar {:color "orange" :glyph "drop"}})))))
+  (testing "and the refusal still fires on it, rather than defaulting"
+    (is (thrown-with-msg? clojure.lang.ExceptionInfo #"unknown avatar colour"
+                          (a-bot {:bot/avatar {:color "chartreuse"}}))))
+  (testing "an absent avatar is still the default — that IS a choice nobody made"
+    (is (= bot/default-avatar (:bot/avatar (a-bot {}))))))
+
 ;; ── 2. a grant narrows, never widens ────────────────────────────────────
 
 (deftest admission-is-exhausted-over-its-four-facts
@@ -120,10 +134,17 @@
       (is (< (count admitted) (count everything))
           "the fixture is only meaningful while some tool is disabled"))
     (testing "and the overreach is reported rather than silently pruned"
-      (is (true? (bot/grant-widens? greedy catalog all-connectors))))
+      (is (true? (bot/grant-widens? greedy catalog))))
     (testing "a Bot inside the enabled set does not report overreach"
       (is (false? (bot/grant-widens? (a-bot {:bot/tools enabled :bot/writes? true})
-                                     catalog all-connectors))))))
+                                     catalog))))
+    (testing "and a Bot whose connectors are simply not connected yet does not
+              report overreach — the two narrowings answer different questions,
+              and conflating them made this fire on every new Bot"
+      (is (false? (bot/grant-widens? (a-bot {:bot/tools enabled :bot/writes? true})
+                                     catalog)))
+      (is (empty? (bot/admitted-tools (a-bot {:bot/tools enabled}) catalog #{}))
+          "nothing admitted, because nothing is connected"))))
 
 (deftest nothing-connected-admits-nothing
   (let [b (a-bot {:bot/tools #{"gmail_search_messages"} :bot/writes? true})]

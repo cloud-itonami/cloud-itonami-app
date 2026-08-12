@@ -358,7 +358,7 @@
      :tools (vec (:bot/tools b))
      :accounts (vec (:bot/accounts b))
      :admitted-tools (vec (bot/admitted-tools b rows connected))
-     :grant-widens? (bot/grant-widens? b rows connected)
+     :grant-widens? (bot/grant-widens? b rows)
      :writes? (:bot/writes? b)
      :browser? (:bot/browser? b)
      :enabled? (:bot/enabled? b)
@@ -576,14 +576,25 @@
          (group-by :provider))))
 
 (defn- connection-card-for [configuration provider group accounts]
-  (bot/connection-card
-   {:id (new-id "card")
-    :connector (name provider)
-    :title (str/join "・" (map :name group))
-    :summary (str/join " / " (keep :summary group))
-    :tool-count (count (mapcat :tools group))
-    :scopes (connectors/granted-scopes configuration provider)
-    :accounts (mapv #(select-keys % [:id :label :email]) accounts)}))
+  (let [client (get-in (connectors/provider-catalog configuration)
+                       [provider :name])]
+    (bot/connection-card
+     {:id (new-id "card")
+      :connector (name provider)
+      :title (str/join "・" (map :name group))
+      ;; The scopes below are the OAuth CLIENT's, not this Bot's — one Google
+      ;; consent covers every tool this deployment has enabled, so a card
+      ;; titled "Gmail" that lists Calendar and Drive scopes is telling the
+      ;; truth and looking like a mistake. Saying whose authorization it is
+      ;; costs one line and is the difference between a list somebody skims and
+      ;; a list somebody can check.
+      :summary (str (when client (str client " の認証です。"))
+                    "この app が有効にしているツールぶんの権限をまとめて求めます。"
+                    (when-let [s (seq (keep :summary group))]
+                      (str " — " (str/join " / " s))))
+      :tool-count (count (mapcat :tools group))
+      :scopes (connectors/granted-scopes configuration provider)
+      :accounts (mapv #(select-keys % [:id :label :email]) accounts)})))
 
 (defn- selections [bot-id]
   (get-in (snapshot) [:selections bot-id] {}))

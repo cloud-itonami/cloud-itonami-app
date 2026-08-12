@@ -565,6 +565,37 @@ write-back configuration, confirmation, or connected OAuth credential are
 missing. A restoration failure is reported as
 `:github-projects/sandbox-restoration-required` for immediate inspection.
 
+## Bots
+
+A Bot is a named worker you talk to: a face, a standing brief, a set of tools,
+and the accounts it may use them with. It is an identity over capabilities this
+application already had, not a new one — see
+[ADR-0034](docs/adr/0034-a-bot-is-an-identity-over-capabilities-that-already-existed.md).
+
+Make one from the Bots tab: pick the services you use (the grid is derived from
+the connector registry, so it lists what this build actually carries), choose a
+colour and a glyph, and give it a brief. The Bot starts with the enabled tools
+of the connectors you picked and nothing else.
+
+- **The name is not the authority.** A Bot is a `work-governance` performer of
+  kind `:system`; renaming one changes nothing about what it may call.
+- **Reads run, writes wait.** A read-only tool executes inside the turn. The
+  first write tool stops the loop and becomes an approval card. A Bot may carry
+  out what was approved; it may not approve, and no session it could hold makes
+  it able to.
+- **Accounts, not providers.** If you have two Google accounts, the Bot asks
+  which one before it acts rather than picking. Name them from the connection
+  card; add another with `＋ 別のアカウントを追加`.
+- **Its computer is this machine.** Bots do not get a cloud VM, so a Bot does
+  not run while this machine is asleep. Long-running work belongs to the
+  governed WorkItem path instead.
+
+Turns are synchronous and bounded — 8 model turns and 12 tool calls per
+message. There is no schedule: a Bot answers when spoken to.
+
+The view is covered by `test/browser/bots_view.cljs`, which drives it in a real
+browser against a running server; the JVM suite cannot see the client.
+
 ## Background worker runs
 
 The Worker tab queues prompts that take longer than an interactive turn. Runs
