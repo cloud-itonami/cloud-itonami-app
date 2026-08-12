@@ -6,6 +6,7 @@
             [clojure.string :as str]
             [clojure.test :refer [deftest is testing]]
             [cloud.itonami.app.fax :as fax]
+            [cloud.itonami.app.lawfirm :as app-lawfirm]
             [lawfirm.actor :as lf-actor]
             [lawfirm.demo :as demo]
             [lawfirm.store :as lf-store]
@@ -261,6 +262,111 @@
       (is (nil? (fax/transmission-by-provider-id s "guid-nobody-sent")))
       (is (nil? (fax/transmission-by-provider-id s nil)))
       (is (nil? (fax/transmission-by-provider-id s ""))))))
+
+;; ---------------------------------------------------------------------------
+;; The record is written before the pages move
+;;
+;; `dispatch!` reaches the practice through `cloud.itonami.app.lawfirm`'s
+;; process-wide store, so these point it at a demo one. Nothing here has a
+;; credential: `fax/credentials` is stubbed with a value that is obviously not
+;; one, which is also what keeps `dispatch!` from stopping at
+;; `:credentials-missing` before it gets anywhere near this.
+;; ---------------------------------------------------------------------------
+
+(def ^:private fixture-credentials
+  {:username "fixture@example.invalid"
+   :password "not-a-password"
+   :account-guid "ACCOUNT-GUID-FIXTURE"})
+
+(defn- practice-awaiting-dispatch
+  "The demo practice plus one outbound fax that has not been sent.
+
+  `demo/fresh-store`'s own TX-1 already carries `:result :ok`, and the row
+  this needs is the one a dispatch starts from: no result at all."
+  []
+  (let [s (practice-with-fax)]
+    (lf-store/register-transmission! s {:transmission-id "TX-F" :matter-id "M-1"
+                                        :direction :outbound :channel :fax
+                                        :doc-id "W-9" :recipient-id "R-1"})
+    s))
+
+(defn- row [s transmission-id]
+  (first (filter #(= transmission-id (:transmission-id %))
+                 (lf-store/transmissions-of s "M-1"))))
+
+(defn- dispatching-into
+  "Run `f` with this app's practice and gate pointed at `s`."
+  [s f]
+  (let [g (lf-actor/build-graph {:store s})]
+    (with-redefs [app-lawfirm/practice (constantly s)
+                  app-lawfirm/graph (constantly g)
+                  fax/credentials (constantly fixture-credentials)]
+      (f))))
+
+(defn- dispatch-with [s send-fn]
+  (dispatching-into
+   s #(fax/dispatch! {:transmission-id "TX-F" :bytes pdf :filename "w9.pdf"
+                      :today demo/today :configuration config-on
+                      :send-fn send-fn})))
+
+(deftest the-record-says-a-fax-may-have-gone-before-the-transport-is-called
+  (testing "the ordering itself — observed from inside the transport, which is
+            the only place that can see what the record said at the moment the
+            pages moved"
+    (let [s (practice-awaiting-dispatch)
+          seen (atom :not-called)
+          send-fn (fn [_] (reset! seen (:result (row s "TX-F")))
+                    (response "S" {"To" "03-1234-5678"}))]
+      (is (true? (:ok? (dispatch-with s send-fn))))
+      (is (= :pending @seen)
+          "the 送達 is on the record as possibly transmitted before it can be"))))
+
+(deftest a-provider-that-accepted-and-then-answered-unreadably-still-leaves-a-record
+  (testing ":provider-unreadable is only reachable after a 2xx — the provider
+            took the document and then said so in something that is not JSON.
+            Writing the outcome afterwards produced no write at all, and the
+            送達 stayed indistinguishable from one that never left."
+    (let [s (practice-awaiting-dispatch)
+          r (dispatch-with s (constantly {:status 200 :body "<html>OK</html>"}))]
+      (is (false? (:ok? r)))
+      (is (= :provider-unreadable (:reason r)))
+      (is (= :pending (:recorded-as r)))
+      (is (= :pending (:result (row s "TX-F")))
+          "not nil — nil is what invites a second copy of a 送達")
+      (is (not (contains? (set (map :transmission-id (lf-transmission/unconfirmed s "M-1")))
+                          "TX-F"))
+          "and so it no longer appears alongside 送達 that were never dispatched"))))
+
+(deftest a-provider-that-refused-outright-also-leaves-the-attempt-on-the-record
+  (testing "a non-2xx does not promise the pages stayed put either, so the row
+            stays :pending rather than being turned into a verdict"
+    (let [s (practice-awaiting-dispatch)
+          r (dispatch-with s (constantly {:status 500 :body "{}"}))]
+      (is (= :provider-rejected (:reason r)))
+      (is (= :pending (:result (row s "TX-F")))))))
+
+(deftest nothing-is-sent-when-the-attempt-cannot-be-recorded
+  (testing "the refusal is free at this point and never again"
+    (let [s (practice-awaiting-dispatch)
+          calls (atom [])]
+      (with-redefs [fax/record-status! (constantly {:recorded? false
+                                                    :violations ["unknown-transmission"]})]
+        (let [r (dispatch-with s (recording-send-fn calls))]
+          (is (false? (:ok? r)))
+          (is (= :attempt-not-recordable (:reason r)))
+          (is (empty? @calls)))))))
+
+(deftest a-dispatch-that-the-provider-answered-records-the-guid-the-callback-joins-on
+  (testing "the reconcile corrects the pending row rather than adding a second"
+    (let [s (practice-awaiting-dispatch)
+          r (dispatch-with s (constantly (response "S" {"Guid" "GUID-FIXTURE-0001"
+                                                        "To" "03-1234-5678"})))]
+      (is (true? (:ok? r)))
+      (is (= :ok (:result (row s "TX-F"))))
+      (is (= 1 (count (filter #(= "TX-F" (:transmission-id %))
+                              (lf-store/transmissions-of s "M-1")))))
+      (is (= "TX-F" (:transmission-id
+                     (fax/transmission-by-provider-id s "GUID-FIXTURE-0001")))))))
 
 (deftest a-callback-is-joined-to-the-transmission-by-the-providers-own-guid
   (let [s (practice-with-fax)]

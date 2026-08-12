@@ -272,8 +272,13 @@
 
   Never escalated and never refused for a mismatch: the pages have already
   gone, and the practice's rule is that a misdirection is *recorded*. See
-  `lawfirm.transmission/confirmation-violations`."
-  [{:keys [transmission-id matter-id client-id today bengoshi-id status]}]
+  `lawfirm.transmission/confirmation-violations`.
+
+  `thread-id` names the run. `dispatch!` writes twice for one 送達 — the
+  attempt before the transport and the outcome after it — and those are two
+  runs of the gate, not one run replayed, so they are not given the same
+  checkpoint scope."
+  [{:keys [transmission-id matter-id client-id today bengoshi-id status thread-id]}]
   (let [g (app-lawfirm/graph)
         request {:op :confirm-transmission
                  :matter-id matter-id
@@ -293,7 +298,8 @@
                   :page-count (:page-count status)
                   :confirmed-on today}}
         run (lf-actor/run-request! g request {:today today}
-                                   (str "fax-confirm-" transmission-id))]
+                                   (or thread-id
+                                       (str "fax-confirm-" transmission-id)))]
     {:recorded? (lf-actor/committed? run)
      :violations (mapv (comp name :rule)
                        (get-in run [:state :verdict :violations]))}))
@@ -311,8 +317,42 @@
     3. the channel is `:fax`
     4. the bytes are the approved document
 
-  The outcome then goes back through the practice's own gate as
-  `:confirm-transmission` — this namespace never writes to the record."
+  Then the 送達 is written down as `:pending` **before** the transport is
+  called, and the outcome reconciles that row afterwards. Both writes go
+  through the practice's own gate as `:confirm-transmission` — this namespace
+  decides nothing about the record, it only refuses to act before the record
+  can describe the act.
+
+  ## Why the record is written first
+
+  `cloud.itonami.app.credential/issue-membership!` already states this rule
+  for a credential's revocation index:
+
+  > The index is allocated from durable state before signing, so a credential
+  > that exists is always revocable. Allocating afterwards would leave a
+  > window in which an issued credential had no index to flip.
+
+  A fax is the same shape and the window is worse, because the act is not
+  undoable. `parse-response` returns `:provider-unreadable` only *after* a
+  2xx: the provider took the transmission and then answered in something that
+  is not JSON. Recording the outcome afterwards meant that answer produced no
+  write at all, so the 送達 kept no `:result` — and `lawfirm.transmission/
+  unconfirmed`, which the console shows as 「結果未確認の送達」, listed it
+  identically to one that never reached a phone line. The obvious repair for
+  a 送達 that looks un-dispatched is to dispatch it, and the document is a
+  legal filing.
+
+  There is no id to recover afterwards either. The unreadable body is the
+  body the `Guid` was in, so `transmission-by-provider-id` — the only join
+  from the provider's callback back to this practice — has nothing to match,
+  and the callback for that fax is refused as
+  `:unknown-provider-transmission`. A row written beforehand cannot supply
+  that id, but it can stop the second copy.
+
+  So the failure this prefers is a 送達 recorded as `:pending` that turns out
+  never to have left. That is a row saying *this may have been transmitted*,
+  and a person can resolve it. The other failure is a legal document on a
+  stranger's fax machine and no record that it went."
   [{:keys [transmission-id bytes filename today send-fn decode configuration]}]
   (let [decode (or decode #(json/read-str %))
         configuration (or configuration (config/load-config))
@@ -351,25 +391,57 @@
                         "手元のファイルに対してではありません"))
 
           :else
-          (let [result (lf-workspace/-dispatch
-                        (dispatch-port {:send-fn (or send-fn http-send-fn)
-                                        :decode decode})
-                        {:plan plan :bytes bytes :filename filename
-                         :credentials creds
-                         :cover {:to (get-in plan [:recipient :name])
-                                 :from (:cover-from (settings configuration))
-                                 :message (:cover-message (settings configuration))}})]
-            (if-not (:ok? result)
-              (assoc result :schema schema :transmission-id transmission-id)
-              (merge {:schema schema :ok? true :transmission-id transmission-id}
-                     (select-keys result [:provider-id :provider-status :result
-                                          :error :dialled :page-count])
-                     (record-status! {:transmission-id transmission-id
-                                      :matter-id (:matter-id plan)
-                                      :client-id (:client-id plan)
-                                      :bengoshi-id (:bengoshi-id plan)
-                                      :today today
-                                      :status result})))))))))
+          ;; The attempt is recorded first. `:pending` is the practice's own
+          ;; word for a transport that has been handed a document and has not
+          ;; yet said what became of it (`lawfirm.transmission/results`), and
+          ;; the confirmation upserts by `:transmission-id`, so the outcome
+          ;; below corrects this row rather than adding a second one.
+          (let [attempt (record-status!
+                         {:transmission-id transmission-id
+                          :matter-id (:matter-id plan)
+                          :client-id (:client-id plan)
+                          :bengoshi-id (:bengoshi-id plan)
+                          :today today
+                          :thread-id (str "fax-attempt-" transmission-id)
+                          :status {:result :pending}})]
+            (if-not (:recorded? attempt)
+              ;; Nothing is sent. A practice that cannot write down that it is
+              ;; about to fax a filing cannot be handed one to fax: the record
+              ;; is what a re-send decision is made from, and this is the last
+              ;; moment at which refusing is still free.
+              (refusal :attempt-not-recordable
+                       (str "送達 " transmission-id
+                            " の送信を :pending として記録できなかったため、送信しません。"
+                            (when-let [v (seq (:violations attempt))]
+                              (str "（" (str/join "、" v) "）"))))
+              (let [result (lf-workspace/-dispatch
+                            (dispatch-port {:send-fn (or send-fn http-send-fn)
+                                            :decode decode})
+                            {:plan plan :bytes bytes :filename filename
+                             :credentials creds
+                             :cover {:to (get-in plan [:recipient :name])
+                                     :from (:cover-from (settings configuration))
+                                     :message (:cover-message (settings configuration))}})]
+                (if-not (:ok? result)
+                  ;; The row stays `:pending`. Neither refusal carries a
+                  ;; verdict this may turn into one: `:provider-rejected` did
+                  ;; not say the pages stayed put, and `:provider-unreadable`
+                  ;; followed a 2xx, so it very nearly says the opposite.
+                  ;; `:recorded-as` tells the caller the 送達 is on the record
+                  ;; as possibly transmitted, which is what a re-send has to
+                  ;; be decided against.
+                  (assoc result :schema schema
+                         :transmission-id transmission-id
+                         :recorded-as :pending)
+                  (merge {:schema schema :ok? true :transmission-id transmission-id}
+                         (select-keys result [:provider-id :provider-status :result
+                                              :error :dialled :page-count])
+                         (record-status! {:transmission-id transmission-id
+                                          :matter-id (:matter-id plan)
+                                          :client-id (:client-id plan)
+                                          :bengoshi-id (:bengoshi-id plan)
+                                          :today today
+                                          :status result})))))))))))
 
 (defn transmission-by-provider-id
   "The 送達 a provider GUID belongs to, or nil.
@@ -379,7 +451,14 @@
   rather than in the practice because it is a lookup and not a rule — but it
   is the reason `dispatch!` records `:provider-id` before anything can call
   back about it. A callback for a GUID this practice never sent matches
-  nothing and is refused, which is also the answer for a forged one."
+  nothing and is refused, which is also the answer for a forged one.
+
+  It is also the whole join, which is why `:provider-unreadable` is a hole
+  this cannot cover: the GUID was in the body that would not parse, so a
+  transmission the provider accepted there has no id on the record and its
+  callback is refused as `:unknown-provider-transmission`. `dispatch!`
+  answers that by recording the attempt as `:pending` beforehand — the fax
+  is still unjoinable, but it is no longer invisible."
   [store provider-id]
   (when (seq (str provider-id))
     (->> (lf-store/matters store)
