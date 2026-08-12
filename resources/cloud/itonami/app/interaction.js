@@ -7658,18 +7658,21 @@
     };
     const renderAuthMethods = (data) => {
       const methods = data['auth-methods'] || {};
-      const providers = methods.sso || [];
+      // Only providers this deployment can actually start. An unconfigured
+      // provider is not an entrance, and drawing it as a disabled button said
+      // so only in a `title` tooltip — invisible on a touch screen, and
+      // announced as a button by a screen reader.
+      const providers = (methods.sso || []).filter((p) => p['configured?']);
       const signin = $('#sso-signin-list');
       signin.replaceChildren();
       providers.forEach((provider) => {
         const label = provider.name || authProviderLabels[provider.id] || provider.id;
         const button = make('button', 'tool-button', `${label}で続ける`);
         button.type = 'button';
-        button.disabled = !provider['configured?'];
-        if (!provider['configured?']) button.title = 'OAuthクライアント設定が必要です';
         button.addEventListener('click', () => startSso(provider.id, 'authenticate', button));
         signin.append(button);
       });
+      $('#sso-signin-card').hidden = !providers.length;
       if (!data['authenticated?']) return;
       const session = data.session || {};
       const provider = session['authn-provider'];
@@ -7797,6 +7800,54 @@
       }
     };
 
+    // Whether a Passkey ceremony can start here at all. Asked before the
+    // button is offered rather than when it is clicked: on a browser without
+    // WebAuthn the only entrance on this screen looks live and is not.
+    const passkeySupported = () =>
+      Boolean(window.PublicKeyCredential && navigator.credentials);
+    // The entrances besides Passkey that this deployment has configured. One
+    // reading, so the notice, the lead and the cards cannot disagree.
+    const otherSigninMethods = (data) => [
+      data['email-login-configured?'] ? 'Email' : null,
+      (data['auth-methods']?.sso || []).some((p) => p['configured?']) ? 'SSO' : null
+    ].filter(Boolean);
+    // What this screen actually offers, said on every load.
+    //
+    // The interrupted owner ceremony is the case that needs it. Registration is
+    // two steps — `/api/identity/register` creates the account, then
+    // `navigator.credentials.create` enrols the Passkey — so cancelling the
+    // system prompt leaves an account with no Passkey. From then on
+    // `registered?` hides the registration form and the sign-in button becomes
+    // "resume". Measured 2026-08-12 on a real store: one cancelled prompt, and
+    // every later launch offered exactly one control, labelled as if the user
+    // had asked to resume something. The explanation existed — in a status line
+    // written once, which the next reload erased.
+    const renderSigninGate = (data) => {
+      const others = otherSigninMethods(data);
+      const resuming = Boolean(data['passkey-required?']);
+      const supported = passkeySupported();
+      $('#signin-gate-headline').textContent = resuming
+        ? '前回の Passkey 作成が完了していません。'
+        : 'サインイン方法を選んでください。';
+      $('#signin-gate-note').textContent = !supported
+        ? (others.length
+          ? ` このブラウザは Passkey / WebAuthn に対応していません。${others.join('、')}で続けられます。`
+          : ' このブラウザは Passkey / WebAuthn に対応していません。この端末から入る方法が今はありません。')
+        : resuming
+          // Naming the resume without naming the alternatives is the same
+          // defect this function exists to fix: a screen that describes one
+          // way in while another is sitting on it unmentioned.
+          ? ` アカウントはできていて、Passkey だけがありません。下のボタンで続きから作成します。${
+            others.length ? `${others.join('、')}でも入れます。` : ''}`
+          : others.length
+            ? ` この端末で使える入口は Passkey、${others.join('、')} です。重要操作では Passkey を追加確認します。`
+            : ' この端末で使える入口は Passkey だけです。重要操作では Passkey を追加確認します。';
+      // A control that cannot work is disabled with its reason on the screen,
+      // not left live to fail on click.
+      [$('#passkey-signin'), $('#registration-submit')].forEach((button) => {
+        button.disabled = !supported;
+      });
+    };
     const renderIdentity = (data) => {
       identityState = data;
       renderAuthMethods(data);
@@ -7836,14 +7887,18 @@
         $('#registration-title').textContent = pendingPasskey
           ? 'Passkey 登録を再開'
           : 'サインイン';
+        const others = otherSigninMethods(data);
         $('#registration-lead').textContent = pendingPasskey
           ? '仮登録は完了しています。Passkey を作成するとアプリを利用できます。'
-          : 'Passkey、Email、またはSSOで続行できます。';
+          : others.length
+            ? `Passkey、${others.join('、')}で続行できます。`
+            : 'Passkeyで続行できます。';
         $('#passkey-signin').textContent = pendingPasskey
           ? 'Passkey 登録を再開'
           : 'Passkey でサインイン';
         $('#registration-form').hidden = true;
       }
+      renderSigninGate(data);
       if (!data['authenticated?']) return;
       $('#identity-avatar').textContent =
         (data.user['display-name'] || 'U').slice(0, 2);

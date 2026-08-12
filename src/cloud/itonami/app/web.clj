@@ -2550,10 +2550,17 @@
         [:section {:class "view signin-view" :data-view-panel "signin" :hidden true}
          (view-header "サインイン"
                       "Cloud Itonami を使う本人として、この端末にセッションを作ります。")
+         ;; The headline is a default, not a claim: which entrances this
+         ;; deployment actually has is a runtime fact (`auth-methods`), so the
+         ;; client writes the sentence under it. The previous copy named
+         ;; Passkey, Email and SSO unconditionally, on a screen where an
+         ;; unconfigured Email card is hidden and unconfigured SSO buttons are
+         ;; disabled — it described a deployment rather than this one.
          [:div {:class "security-callout" :id "passkey-gate-notice"
                 :role "status" :aria-live "polite"}
-          [:strong "サインイン方法を選んでください。"]
-          " 通常の入口は Passkey、Email、SSO です。重要操作では Passkey を追加確認します。"]
+          [:strong {:id "signin-gate-headline"} "サインイン方法を選んでください。"]
+          [:span {:id "signin-gate-note"}
+           " 重要操作では Passkey を追加確認します。"]]
          [:div {:class "signin-layout" :id "identity-onboarding"}
           [:div {:class "local-card"}
            (dds/heading 2 "サインイン / 新規登録" {:size "24"
@@ -2582,7 +2589,11 @@
                        :required true :autocomplete "email"}]]
              [:button {:class "tool-button" :id "email-login-submit"
                        :type "submit"} "ログインリンクを送る"]]
-            [:div {:class "settings-form"}
+            ;; Hidden until the client knows at least one provider is
+            ;; configured. A card of disabled buttons whose only explanation is
+            ;; a `title` tooltip reads as a broken entrance to anyone on a
+            ;; touch screen, and as an entrance to a screen reader.
+            [:div {:class "settings-form" :id "sso-signin-card" :hidden true}
              (dds/heading 3 "SSOで続ける" {:size "20"})
              [:p {:class "form-help"}
               "Google、Microsoft、GitHubの認証だけを使います。メールやリポジトリへのアクセス権は要求しません。"]

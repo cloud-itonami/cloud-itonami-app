@@ -106,6 +106,37 @@
                             "const token = new URLSearchParams(location.hash.slice(1))"))
         "showView must not erase the proof before the one finishing POST")))
 
+(deftest the-signin-gate-describes-this-deployment-and-not-a-general-one
+  ;; The screen a person meets when the owner ceremony was interrupted:
+  ;; `/api/identity/register` created the account and the Passkey never
+  ;; arrived, so `registered?` is true and `passkey-required?` is true. Measured
+  ;; on a real store 2026-08-12 — the copy named Passkey, Email and SSO while
+  ;; the Email card was hidden and every SSO button was disabled.
+  ;;
+  ;; What the browser can prove lives in test/browser/signin_gate.cljs. What
+  ;; this asks is narrower and cheaper: that the copy is addressable at all, and
+  ;; that the client derives it from `auth-methods` rather than asserting it.
+  (let [html (with-redefs [store/snapshot (constantly (store/initial-state))]
+               (web/page-html config))
+        js (slurp (io/file "resources/cloud/itonami/app/interaction.js"))
+        signin-start (.indexOf html "data-view-panel=\"signin\"")
+        signin-html (subs html signin-start (.indexOf html "data-view-panel=\"settings\""))]
+    (doseq [id ["signin-gate-headline" "signin-gate-note" "sso-signin-card"]]
+      (is (str/includes? signin-html (str "id=\"" id "\"")) id))
+    ;; The SSO card ships hidden: a card of disabled buttons is not an entrance,
+    ;; and the client reveals it only once a provider is configured.
+    (is (str/includes? signin-html "id=\"sso-signin-card\" hidden"))
+    (is (str/includes? js "const otherSigninMethods = (data) => ["))
+    (is (str/includes? js "$('#sso-signin-card').hidden = !providers.length;"))
+    (is (str/includes? js
+                       "(methods.sso || []).filter((p) => p['configured?'])")
+        "the sign-in list must hold only providers that can actually start")
+    (is (str/includes? js "renderSigninGate(data);")
+        "the gate must be rewritten on every identity render, not once")
+    ;; The copy that made the promise this deployment could not keep.
+    (is (not (str/includes? html "通常の入口は Passkey、Email、SSO です")))
+    (is (not (str/includes? js "'Passkey、Email、またはSSOで続行できます。'")))))
+
 (deftest domain-ownership-ui-uses-the-human-session-api
   (let [html (with-redefs [store/snapshot (constantly (store/initial-state))]
                (web/page-html config))
