@@ -120,6 +120,31 @@ on 1338, since it is commonly already resident.
 bin/cloud-itonami-app
 ```
 
+**The native window step does not currently return.** Measured 2026-08-12 on
+macOS 26.4: `kotoba-shell app run --target macos --manifest app.kotoba.edn
+--execute` — the command this launcher's `open_window` runs — produces no
+output, opens no window, and was still running when killed at 240s. The same
+command without `--execute` returns `:shell/app-run-planned :ok? true` in ten
+seconds, so what hangs is the execution step, not manifest resolution. The
+defect is in `kotoba-lang/shell`, not here.
+
+Until that is fixed, use the launcher's own documented fallback, which is the
+same surface in an application window:
+
+```bash
+clojure -M:server &
+open -na "Google Chrome" --args --app="http://localhost:1338/" \
+  --window-size=1400,1120 --window-position=140,60
+```
+
+Two things about that invocation are load bearing, both measured the same day.
+`open -n` is coalesced into an already-running Chrome, and then **the flags
+never reach it** — check `ps` for the real argument list rather than assuming.
+And Chrome restores the window position saved in its profile, so if that
+position is on a display you are not looking at, the window opens off-screen
+and `count windows` will still report it as open. Confirm with a screenshot,
+not with a process listing: a process existing is not a window existing.
+
 There is one user interface, the web surface, built on jp-go-dds. A second
 `kotoba:dom` surface rendered by the `kotoba-lang/shell` AppKit host was retired
 on 2026-08-06: it had become the older of the two while remaining the one the
