@@ -40,6 +40,7 @@
             ;; ran. That check is why we know; without it the new coverage
             ;; would simply have been absent and green.
             [cloud.itonami.app.kotoba-oracle-test]
+            [cloud.itonami.app.oracle-cljs-parity-test]
             [cloud.itonami.app.work-transitions-kotoba-parity-test]
             [cloud.itonami.app.approval-kotoba-parity-test]
             [cloud.itonami.app.mail-age-key-test]
@@ -162,6 +163,7 @@
     cloud.itonami.app.fleet-core-kotoba-parity-test
     cloud.itonami.app.organism-worker-kotoba-parity-test
     cloud.itonami.app.kotoba-oracle-test
+    cloud.itonami.app.oracle-cljs-parity-test
     cloud.itonami.app.work-transitions-kotoba-parity-test
     cloud.itonami.app.approval-kotoba-parity-test
     cloud.itonami.app.mail-age-key-test

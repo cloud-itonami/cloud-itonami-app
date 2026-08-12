@@ -1,0 +1,53 @@
+#!/usr/bin/env nbb
+;; Run the shipped decision cores under ClojureScript.
+;;
+;;   bin/test-oracle-cljs          (from the repository root)
+;;
+;; ## Why this is not just `nbb test/oracle_cases_nbb.cljs`
+;;
+;; The interpreter is a pinned dependency, and a gate that ran against a
+;; DIFFERENT `kotoba-kir` than production would be worse than no gate — the
+;; two runtimes' host<->guest conversions are exactly what is under test, and
+;; those changed between pins. Measured 2026-08-12 in a sibling repository:
+;; nbb reading its own older pin threw `string substring indexes are out of
+;; bounds` on a core the JVM ran fine, purely because the two configs named
+;; different shas.
+;;
+;; So the classpath is asked of `deps.edn` rather than written down here. If
+;; the pin moves, this moves with it, and there is no second place to update.
+
+(ns test-oracle-cljs
+  (:require ["node:child_process" :as cp]
+            [clojure.string :as str]))
+
+(defn- sh
+  "Run `cmd`, returning stdout. Throws with the child's stderr on failure."
+  [cmd args opts]
+  (let [{:keys [status stdout stderr]}
+        (js->clj (cp/spawnSync cmd (clj->js args)
+                               (clj->js (merge {:encoding "utf8"} opts)))
+                 :keywordize-keys true)]
+    (when-not (zero? (or status 1))
+      (println (or stderr ""))
+      (throw (ex-info (str cmd " exited " status) {:status status})))
+    (str stdout)))
+
+(defn- kir-entries
+  "The kotoba-kir source roots on this project's resolved classpath.
+
+  `clojure -Spath` is the authority: it is the same resolution the JVM half of
+  this gate runs under, so the two halves cannot read the artifact with
+  different readers."
+  []
+  (->> (str/split (str/trim (sh "clojure" ["-Spath"] {})) #":")
+       (filter #(str/includes? % "kotoba-kir"))
+       vec))
+
+(let [kir (kir-entries)]
+  (when (empty? kir)
+    (println "kotoba-kir is not on the classpath — is deps.edn intact?")
+    (set! (.-exitCode js/process) 1))
+  (when (seq kir)
+    (sh "nbb" ["--classpath" (str/join ":" (concat ["src" "test"] kir))
+               "test/oracle_cases_nbb.cljs"]
+        {:stdio "inherit"})))

@@ -14,7 +14,40 @@
   (:require [cljs.reader :as reader]
             [clojure.string :as str]
             [cloud.itonami.app.fleet-core :as fleet]
+            [cloud.itonami.app.kotoba-oracle :as oracle]
             [cloud.itonami.edge.view :as view]))
+
+;; ── the shipped decision core ────────────────────────────────────────
+;;
+;; `fleet-core` does not decide what callable, probeable or in-schema mean —
+;; it runs `resources/cloud/itonami/app/oracle/fleet-core.kir.edn`, the same
+;; artifact the JVM server loads off its classpath. A Worker has no classpath,
+;; so the artifact ships as an asset beside the catalog and is registered
+;; before anything asks a question of it.
+;;
+;; Registered here rather than at module scope for the same reason the catalog
+;; is parsed lazily: this needs a fetch, and module-scope evaluation has a
+;; much smaller CPU budget than a request does.
+
+(defonce ^:private core-registered (atom false))
+
+(defn- register-core!
+  "Promise resolving once the fleet-core KIR is registered in this isolate."
+  [^js env]
+  (if @core-registered
+    (js/Promise.resolve true)
+    (-> (.fetch (.-ASSETS env)
+                (js/Request. "https://assets.local/fleet-core.kir.edn"))
+        (.then (fn [r]
+                 (when-not (.-ok r)
+                   (throw (ex-info "fleet decision core asset unreadable"
+                                   {:type :fleet/core-missing
+                                    :status (.-status r)})))
+                 (.text r)))
+        (.then (fn [text]
+                 (oracle/register-kir! :fleet-core (reader/read-string text))
+                 (reset! core-registered true)
+                 true)))))
 
 ;; ── catalog ──────────────────────────────────────────────────────────
 ;;
@@ -40,8 +73,10 @@
   [^js env]
   (if-some [c @catalog-cache]
     (js/Promise.resolve c)
-    (-> (.fetch (.-ASSETS env)
-                (js/Request. "https://assets.local/itonami-fleet-catalog.edn"))
+    (-> (register-core! env)
+        (.then (fn [_]
+                 (.fetch (.-ASSETS env)
+                         (js/Request. "https://assets.local/itonami-fleet-catalog.edn"))))
         (.then (fn [r]
                  (when-not (.-ok r)
                    (throw (ex-info "fleet catalog asset unreadable"

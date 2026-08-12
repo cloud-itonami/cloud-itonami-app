@@ -9,7 +9,20 @@
   after the generator changed shape."
   (:require [cljs.reader :as reader]
             ["fs" :as fs]
+            [cloud.itonami.app.kotoba-oracle :as oracle]
             [cloud.itonami.app.fleet-core :as fleet]))
+
+;; `fleet-core` runs the shipped decision core rather than reimplementing it,
+;; and ClojureScript has no classpath to read that from. Node has a filesystem,
+;; so this hands the seam the SAME bytes `io/resource` gives the JVM — the
+;; Worker does the same thing with its asset binding. Without it every
+;; assertion below dies at the first `validate-catalog`, which is exactly what
+;; happened, unnoticed, from the day the delegation landed.
+(oracle/set-resource-loader!
+ (fn [path]
+   (let [file (str "../../resources/" path)]
+     (when (.existsSync fs file)
+       (.readFileSync fs file "utf8")))))
 
 (def ^:private catalog
   (fleet/validate-catalog
