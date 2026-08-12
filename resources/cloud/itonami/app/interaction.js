@@ -9010,14 +9010,24 @@
       const query = $('#bots-service-search').value.trim().toLowerCase();
       const grid = $('#bots-service-grid');
       grid.replaceChildren();
-      let hidden = 0;
+      let noTools = 0;
+      let noClient = 0;
       botsState.catalog.forEach((service) => {
         if (query && !service.name.toLowerCase().includes(query)) return;
         // A connector with no enabled tool cannot do anything for a Bot, and
         // offering it would be an invitation to authorize an account for
         // nothing. Shown, disabled, and labelled — not silently dropped.
-        const usable = service['enabled-tool-count'] > 0 && service['configurable?'];
-        if (!usable) hidden += 1;
+        //
+        // The same holds one step earlier: a connector whose OAuth client is
+        // not configured on this machine has nothing to authorize AGAINST, so
+        // picking it produces a Bot that can only ever answer 'connect first'
+        // with a button that fails. Two reasons, reported apart, because they
+        // are fixed in different places.
+        const hasTools = service['enabled-tool-count'] > 0 && service['configurable?'];
+        const authable = service['authable?'] !== false;
+        const usable = hasTools && authable;
+        if (!hasTools) noTools += 1;
+        else if (!authable) noClient += 1;
         const tile = make('button', 'bots-tile');
         tile.type = 'button';
         tile.disabled = !usable;
@@ -9027,7 +9037,9 @@
                     make('span', 'bots-tile__meta',
                          usable
                            ? `${service['enabled-tool-count']} 個のツール${service['connected?'] ? '・接続済み' : ''}`
-                           : 'このビルドでは有効なツールがありません'));
+                           : hasTools
+                             ? 'OAuth クライアント設定が必要です'
+                             : 'このビルドでは有効なツールがありません'));
         tile.append(copy);
         if (botsState.picked.has(service.id)) {
           tile.append(make('span', 'bots-tile__check', '✓'));
@@ -9039,9 +9051,12 @@
         });
         grid.append(tile);
       });
-      $('#bots-service-note').textContent = hidden
-        ? `${hidden} 件はこのビルドに有効なツールが無いので選べません。`
-        : '';
+      $('#bots-service-note').textContent = [
+        noTools ? `${noTools} 件はこのビルドに有効なツールが無いので選べません。` : '',
+        noClient
+          ? `${noClient} 件は OAuth クライアントが未設定なので選べません（Settings の接続に同じ表示が出ます）。`
+          : '',
+      ].filter(Boolean).join(' ');
       $('#bots-services-next').disabled = botsState.picked.size === 0;
     };
     const renderBotsPalette = () => {
@@ -9148,7 +9163,17 @@
           botsSetStatus(error.message);
         }
       };
-      if ((card.accounts || []).length) {
+      if (card['authable?'] === false) {
+        // Nothing to authorize against on this machine. Say so where the
+        // button would have been, rather than letting somebody press it and
+        // read the same fact as an error afterwards.
+        const button = make('button', 'tool-button', '未設定');
+        button.type = 'button';
+        button.disabled = true;
+        row.append(button);
+        row.append(make('span', 'bots-card__state',
+                        'この端末に OAuth クライアントがありません'));
+      } else if ((card.accounts || []).length) {
         const another = make('button', 'tool-button', '＋ 別のアカウントを追加');
         another.type = 'button';
         another.addEventListener('click', () => connect(another, true));
