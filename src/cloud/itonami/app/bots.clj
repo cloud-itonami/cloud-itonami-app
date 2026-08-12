@@ -202,13 +202,33 @@
                     (map #(str (:id %))))
           (connectors/catalog-rows configuration))))
 
+(defn provider-authable?
+  "Whether this deployment could obtain a grant for `provider` if somebody
+  asked for one — i.e. an OAuth client is configured on this machine.
+
+  Separate from `connected?`, and the distinction is the whole point:
+  'nobody has authorized this yet' is a step away, and 'this installation
+  has no client to authorize against' is a dead end. Settings has always
+  drawn that line — it disables its connect button and says
+  'OAuth クライアント設定が必要です' — and this function is what lets the
+  Bots surfaces draw the same one from the same fact."
+  [provider]
+  (boolean (some-> provider identity/provider-config :configured?)))
+
 (defn catalog
   "Every connector this build carries, with whether it is connected — the
   'What do you use every day?' grid.
 
   Derived from the registry, so it lists what this deployment can actually
   offer rather than a picture of an integrations page. A connector this build
-  does not carry is absent, which is the honest answer."
+  does not carry is absent, which is the honest answer.
+
+  `:authable?` is the second reason a row can be unofferable, and it has to be
+  reported separately from `:enabled-tool-count` because the two send a person
+  to different places: no enabled tool is something an operator turns on in
+  this build, no OAuth client is something they configure for this machine.
+  Collapsing them into one disabled tile would repeat the mistake this grid's
+  own comment warns about — offering an authorization that leads nowhere."
   [configuration did]
   (let [connected (connected-connectors configuration did)]
     (mapv (fn [row]
@@ -219,6 +239,7 @@
                :provider (some-> (:provider row) name)
                :connected? (contains? connected (str (:id row)))
                :configurable? (boolean (:configurable? row))
+               :authable? (provider-authable? (:provider row))
                :tool-count (count tools)
                :enabled-tool-count (count (filter :enabled? tools))
                :tools (mapv #(select-keys % [:name :effect :enabled? :description])
@@ -594,7 +615,13 @@
                       (str " — " (str/join " / " s))))
       :tool-count (count (mapcat :tools group))
       :scopes (connectors/granted-scopes configuration provider)
-      :accounts (mapv #(select-keys % [:id :label :email]) accounts)})))
+      :accounts (mapv #(select-keys % [:id :label :email]) accounts)
+      ;; A Bot may already hold tools for a provider this machine cannot
+      ;; authorize — it was granted them before anyone checked, or the client
+      ;; was removed since. The card still has to appear, because the Bot
+      ;; genuinely is blocked on it; what it must not do is offer a button
+      ;; whose only outcome is 'OAuth クライアントが未設定です'.
+      :authable? (provider-authable? provider)})))
 
 (defn- selections [bot-id]
   (get-in (snapshot) [:selections bot-id] {}))

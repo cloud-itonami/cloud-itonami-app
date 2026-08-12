@@ -97,6 +97,25 @@
           (is (= "waiting-connection"
                  (:status (first (:bots (bots/overview nil alice)))))))))))
 
+(deftest a-card-does-not-offer-an-authorization-this-machine-cannot-perform
+  ;; A Bot can hold tools for a provider with no client — it was given them
+  ;; before anyone checked, or the client went away since. The card still has
+  ;; to appear, because the Bot really is blocked on it. What it must not do is
+  ;; carry a button whose only outcome is the error.
+  (with-store
+    (fn []
+      (with-redefs [identity/provider-config (fn [_] {:configured? false})]
+        (let [b (make-bot alice {})
+              cards (:cards (last (bots/send! nil alice (:bot/id b) "受信箱を見て")))
+              card (first cards)]
+          (is (= "connection" (:kind card)))
+          (is (false? (:authable? card)))))
+      (with-redefs [identity/provider-config (fn [_] {:configured? true})]
+        (let [b (make-bot alice {:name "second"})
+              card (first (:cards (last (bots/send! nil alice (:bot/id b) "見て"))))]
+          (testing "and stays offerable where the client does exist"
+            (is (true? (:authable? card)))))))))
+
 (deftest an-agent-session-cannot-approve-a-held-write
   (with-store
     (fn []
@@ -154,6 +173,31 @@
             (is (<= 3 (count google)))))
         (testing "nothing is connected in a fresh store"
           (is (every? #(false? (:connected? %)) rows)))))))
+
+(deftest the-catalog-separates-having-no-tool-from-having-nothing-to-authorize
+  ;; Measured 2026-08-12: GitHub carries two enabled tools and no OAuth client
+  ;; on this machine, so the picker offered it, the first Bot was created with
+  ;; its tools, and the only thing it could ever say was 'connect first' behind
+  ;; a button that answers 'OAuth クライアントが未設定です'. The grid was
+  ;; filtering on the wrong fact — one it had, rather than the one that decides.
+  (with-store
+    (fn []
+      (with-redefs [identity/provider-config
+                    (fn [provider] {:configured? (= :google provider)})]
+        (let [rows (bots/catalog nil nil)
+              by-provider (group-by :provider rows)]
+          (testing "a provider with a client is offerable"
+            (is (seq (get by-provider "google")))
+            (is (every? :authable? (get by-provider "google"))))
+          (testing "a provider without one is reported, not silently offered"
+            (is (seq (get by-provider "github")))
+            (is (every? #(false? (:authable? %)) (get by-provider "github"))))
+          (testing "and the two reasons stay distinguishable, because an
+                    operator fixes them in different places"
+            (let [github (first (get by-provider "github"))]
+              (is (pos? (:enabled-tool-count github))
+                  "this row is unofferable for the client, NOT for its tools —
+                   collapsing the two would send somebody to the wrong screen"))))))))
 
 ;; ── more than one account at one provider ───────────────────────────────
 

@@ -387,8 +387,18 @@
   Keychain slots, and a card that said only 'Google — connected' would be
   answering a question this application decided some time ago is not the
   question. Each entry names the connection a token resolves by, so the card
-  can offer to add another without inventing a second way to obtain a grant."
-  [{:keys [id connector title summary tool-count scopes state accounts]}]
+  can offer to add another without inventing a second way to obtain a grant.
+
+  `:card/authable?` is whether this deployment can obtain that grant AT ALL —
+  whether an OAuth client for the provider is configured on this machine. It is
+  a fact about the installation, not a state of the request, which is why it is
+  a field rather than a fifth `connection-states` member: `:offered` with no
+  client is still offered, and would still be offered tomorrow if somebody
+  configured one. Defaults to true so a caller that does not know stays
+  unchanged; a caller that does know can stop the card from offering an
+  authorization that has nowhere to go."
+  [{:keys [id connector title summary tool-count scopes state accounts
+           authable?]}]
   (let [accounts (vec accounts)
         state (or state (if (seq accounts) :connected :offered))]
     (when-not (connection-states state)
@@ -402,6 +412,7 @@
      :card/tool-count (or tool-count 0)
      :card/scopes (vec (sort scopes))
      :card/accounts accounts
+     :card/authable? (if (some? authable?) (boolean authable?) true)
      :card/state state}))
 
 (defn choice-card
