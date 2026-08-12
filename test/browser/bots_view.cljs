@@ -187,16 +187,15 @@
       (println (str "\nscreenshot: " path)))
 
     (println "\n── console ──")
-    ;; One known-unrelated failure is excluded by URL, not by loosening the
-    ;; check: `GET /api/identity/domain-verifications` calls `require-origin!`
-    ;; on a GET, and a browser sends no Origin on a same-origin GET, so it 403s
-    ;; on every load. It arrived with the domain-ownership UI and has nothing to
-    ;; do with Bots. Excluding the one URL keeps any NEW error failing this.
-    (let [known #"domain-verifications|Failed to load resource"
-          errors (remove #(re-find known %) @console-errors)]
-      (check! (str "no console errors" (when (seq errors)
-                                         (str ": " (pr-str (take 5 errors)))))
-              (empty? errors)))
+    ;; No exclusions. There was one — `GET /api/identity/domain-verifications`
+    ;; 403'd on every load because it asked for an `Origin` header a browser
+    ;; does not send on a same-origin GET — and this harness is how that was
+    ;; found. It is fixed, so the exclusion is gone rather than kept as a
+    ;; standing allowance: a list of errors we have agreed to ignore is how a
+    ;; console check stops checking.
+    (check! (str "no console errors" (when (seq @console-errors)
+                                       (str ": " (pr-str (take 5 @console-errors)))))
+            (empty? @console-errors))
 
     (p/do
       (.close browser)

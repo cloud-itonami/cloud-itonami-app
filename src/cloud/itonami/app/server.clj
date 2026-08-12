@@ -1919,9 +1919,23 @@
   method. Returns true only when it handled the request."
   [exchange config method path]
   (cond
+    ;; No `require-origin!` on this read, and its absence is the fix rather
+    ;; than an omission.
+    ;;
+    ;; `require-origin!` demands the header EQUAL the configured origin, and a
+    ;; browser does not send `Origin` on a same-origin GET — only on non-GET
+    ;; requests and on cross-origin ones. So this route answered 403 to the one
+    ;; caller it has, `fetch('/api/identity/domain-verifications')`, on every
+    ;; page load. Measured 2026-08-12 from the browser console; it was the only
+    ;; GET in this file that asked (157 POST, 1 PUT, 1 DELETE, and this).
+    ;;
+    ;; Dropping it costs nothing: the request has no effect to forge, and this
+    ;; server sends no `Access-Control-Allow-Origin` at all, so a cross-origin
+    ;; page can cause the request but cannot read the answer. The session gate
+    ;; below is what actually protects it, and the two writes underneath keep
+    ;; both `require-origin!` and `require-csrf!`.
     (and (= method "GET") (= path "/api/identity/domain-verifications"))
     (let [session (require-human-session! exchange)]
-      (require-origin! exchange config)
       (send! exchange 200 (domain-verification/list-for-session session))
       true)
 
