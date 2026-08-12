@@ -404,7 +404,23 @@
                          :else v)]))
         m))
 
-(defn- public-card [c] (unqualify c))
+(defn- public-card
+  "A stored card, as the client should see it NOW.
+
+  `:authable?` is recomputed rather than replayed. A card lives inside a
+  message, and a message is a record of what was said; whether this machine
+  can authorize a provider is not something that was said, it is the state of
+  the installation at the moment somebody is looking at the button. A card
+  written before this field existed carries no answer at all, and one written
+  while a client was configured would keep saying so after it was removed —
+  both render a button whose only outcome is
+  「OAuth クライアントが未設定です」, which is the failure this field exists
+  to prevent. The stored value stays as the record of what was true when the
+  card was offered."
+  [c]
+  (cond-> (unqualify c)
+    (= :connection (:card/kind c))
+    (assoc :authable? (provider-authable? (keyword (:card/connector c))))))
 
 (defn- public-message [m]
   {:id (:message/id m)
