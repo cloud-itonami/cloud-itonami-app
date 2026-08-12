@@ -2234,11 +2234,16 @@
           subject (some-> (:sub profile) str not-empty)
           scopes (set (str/split (str (:scope profile)) #"\s+"))
           amr (set (map str (:amr profile)))
+          passkey-proof? (and (= "phishing-resistant" (:acr profile))
+                              (= #{"webauthn"} amr))
+          federated-methods #{"apple" "google" "github" "microsoft" "email"}
+          federated-proof? (and (= "single-factor" (:acr profile))
+                                (= 1 (count amr))
+                                (every? federated-methods amr))
           _ (when-not (and (= (:issuer transaction) (:iss profile))
                            (= (:client-id transaction) (:client_id profile))
                            (contains? scopes (:scope transaction))
-                           (= "phishing-resistant" (:acr profile))
-                           (contains? amr "webauthn")
+                           (or passkey-proof? federated-proof?)
                            subject (str/starts-with? subject "did:"))
               (throw (ex-info "中央認証の identity claims を検証できませんでした。"
                               {:type :central-auth/invalid-claims})))
@@ -2264,12 +2269,16 @@
           _ (bind-login-identity!
              user-id {:provider :itonami-cloud :subject subject
                       :display-name "auth.itonami.cloud"})
+          authn-level (if passkey-proof? :phishing-resistant :single-factor)
+          authn-factors (mapv keyword amr)
           issued (issue-session!
                   user-id {:kind :federated :issued-via :itonami-cloud
-                           :authn-provider :itonami-cloud
-                           :authn-level :phishing-resistant
+                           :authn-provider (if passkey-proof?
+                                            :itonami-cloud
+                                            (first authn-factors))
+                           :authn-level authn-level
                            :authn-decision :authenticated
-                           :authn-factors [:webauthn]})]
+                           :authn-factors authn-factors})]
       (assoc issued :provider :itonami-cloud :user-id user-id
              :linked? (= :link (:mode transaction))))))
 

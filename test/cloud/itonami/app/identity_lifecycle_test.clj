@@ -116,7 +116,9 @@
        (keep (fn [[state transaction]] (when-not (:used? transaction) state)))
        first))
 
-(defn- finish-central! [subject]
+(defn- finish-central!
+  ([subject] (finish-central! subject {:acr "phishing-resistant" :amr ["webauthn"]}))
+  ([subject assurance]
   (let [state (central-state)]
     (with-redefs-fn
       {#'cloud.itonami.app.identity/central-exchange-code!
@@ -126,14 +128,13 @@
        #'cloud.itonami.app.identity/central-userinfo!
        (fn [_ token]
          (is (= "central-access-token" token))
-         {:iss "https://auth.itonami.cloud"
+         (merge {:iss "https://auth.itonami.cloud"
           :sub subject
           :client_id "cloud-itonami-app-native"
-          :scope "identity:read"
-          :acr "phishing-resistant"
-          :amr ["webauthn"]})}
+          :scope "identity:read"}
+                assurance))}
       #(identity/complete-central-authentication!
-        {:state state :code "one-time-code"}))))
+        {:state state :code "one-time-code"})))))
 
 (deftest central-auth-pkce-bootstraps-once-and-never-persists-its-token
   (let [previous @store/state]
@@ -162,7 +163,16 @@
              {:state state :code "one-time-code"})
             (is false "state replay must fail")
             (catch clojure.lang.ExceptionInfo error
-              (is (= :central-auth/invalid-state (:type (ex-data error))))))))
+              (is (= :central-auth/invalid-state (:type (ex-data error))))))
+          (testing "a linked central provider remains single-factor locally"
+            (identity/start-central-authentication! session)
+            (let [provider-finished
+                  (finish-central! "did:web:kotobase.net:person:one"
+                                   {:acr "single-factor" :amr ["google"]})
+                  central-session (identity/session (:token provider-finished))]
+              (is (= :single-factor (:authn-level central-session)))
+              (is (= [:google] (:authn-factors central-session)))
+              (is (not= :phishing-resistant (:authn-level central-session)))))))
       (testing "an unbound DID cannot take over an existing install"
         (identity/start-central-authentication! nil)
         (try
