@@ -280,6 +280,18 @@
         (is (re-find (re-pattern (str ">" view "<")) html)))
       (is (re-find #"data-view-panel=\"scheduler\"" html)))))
 
+(deftest every-padded-box-in-the-bots-view-is-border-box
+  ;; Measured 2026-08-12 in the running app: `.bots-onboard` (96px),
+  ;; `.bots-thread__scroll` (32px) and `.bots-card` (30px) each filled their
+  ;; column as a CONTENT box and put their padding outside it, so the document
+  ;; itself scrolled sideways and the create form's 名前 field and はじめる
+  ;; button were clipped. Every other padded box in this stylesheet declares
+  ;; box-sizing per rule; the Bots view is a grid column with a fixed width, so
+  ;; it is stated once for the whole view instead.
+  (is (str/includes? web/app-css ".bots-view, .bots-view *{box-sizing:border-box}")
+      "the Bots view must size its boxes border-box, or padding overflows the
+       grid column it is laid out in and the whole document scrolls sideways"))
+
 (deftest app-css-only-references-design-system-tokens-that-exist
   ;; An undefined custom property makes the whole declaration invalid at
   ;; computed-value time, so it does not fall back to the cascade — it silently

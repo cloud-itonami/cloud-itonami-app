@@ -241,6 +241,21 @@
      Colours come from the DADS palette this file already uses, including the
      ten avatar colours: a Bot's colour is decoration, and decoration that
      invents its own hexes is how a second palette starts. */
+  /* Measured 2026-08-12: this view overflowed the document horizontally by
+     exactly its own padding. `.bots-onboard` is `width:100%` with 3rem of
+     padding, so under the default `content-box` the CONTENT box filled the
+     column and the padding went outside it — 96px, which then propagated up
+     through `.bots-shell`, `main` and `.workspace` to a scrollbar on `body`.
+     `.bots-thread__scroll` (32px) and `.bots-card` (30px) were the same
+     mistake in two more places.
+
+     Stated once for the view rather than three times, because the rule that
+     went missing is not specific to any of them: everything here is a box
+     that stretches to a fixed column and has padding, so `border-box` is the
+     only sizing that can be right, and a fourth such box is going to be
+     written. Elsewhere in this stylesheet each rule declares it — that
+     convention is exactly what a person adding a rule can forget. */
+  .bots-view, .bots-view *{box-sizing:border-box}
   .bots-view{max-width:none;padding:0;height:100%}
   .bots-shell{display:grid;grid-template-columns:17rem 1fr;height:100%;min-height:0}
   .bots-rail{display:flex;flex-direction:column;min-height:0;gap:.25rem;
