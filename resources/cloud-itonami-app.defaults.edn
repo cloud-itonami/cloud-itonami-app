@@ -104,6 +104,15 @@
                :roots []}
  :memory {:max-session-messages 40
           :max-context-messages 20}
+ ;; The unattended routine tick. `:interval-seconds` is how often to LOOK, not
+ ;; how often anything runs — a routine's own schedule has a five-minute floor
+ ;; and `may-fire?` refuses to overlap or to stack behind an approval.
+ ;;
+ ;; On by default, and that is not the same as scheduling anything: the tick
+ ;; acts only for a person whose session is live, and only on routines they
+ ;; explicitly gave a schedule. With no scheduled routine it is a store read
+ ;; that finds nothing. Set `:enabled? false` to stop it looking at all.
+ :bots {:tick {:enabled? true :interval-seconds 60}}
  :chronicle {:interval-seconds 60
              ;; Every switch is still opt-in per user. This is only the cadence
              ;; used after screen context has explicitly been enabled.

@@ -1,0 +1,169 @@
+;; A ROUTINE's DECISION CORE — when a recorded piece of work may run again.
+;;
+;; A routine is a demonstration that was kept: a person did something once with
+;; a Bot, and the steps that actually ran were written down so they can run
+;; again later, on a schedule or on request. What was written down is a
+;; SEMANTIC workflow — which tool, to what end — and never a screen coordinate,
+;; because a routine recorded as `click(241, 382)` is a routine that breaks the
+;; next time a page moves a button, and breaks silently.
+;;
+;; The identity of a routine is the content address of its steps, computed by
+;; the host: two Bots given the same workflow reference one address rather than
+;; holding two copies, and editing a routine produces a different address
+;; instead of mutating the one already scheduled. None of that is decided here
+;; — hashing is an effect and this file has none — but it is why `steps-recorded`
+;; below is a count of something immutable, and can be compared against the
+;; present without wondering whether the past changed underneath.
+;;
+;; ## The three judgements, and the failure each one exists to prevent
+;;
+;;   - `stale?` — a routine running with fewer tools than it was recorded with,
+;;     quietly doing part of the job. The count comparison is the whole
+;;     mechanism: a step that no longer survives the Bot's grant must make the
+;;     routine REFUSE, not skip.
+;;   - `may-fire?` — a scheduled routine piling up. This is the failure that
+;;     does not announce itself: a routine that needs an approval every run,
+;;     fired hourly, leaves a queue of held runs nobody asked for, and the
+;;     person finds out when they open the screen. A schedule may only start
+;;     work that the last schedule finished.
+;;   - `status` — a routine blocked on a person reporting itself as ready.
+;;     The ordering is the rule; see the comment there.
+;;
+;; ## Why it is written this narrowly
+;;
+;; Same native word-typed slice as `bot_core.kotoba`: `:bool` and `:i64`
+;; scalars, sealed all-scalar records, `and`, `if`, `<`. Facts arrive as
+;; records because a bare `:bool` parameter is a backend gap (compiler
+;; ADR-0219), and `and` produces `:i64` rather than `:bool`, which is what the
+;; trailing `true false` folds.
+;;
+;; Nothing here identifies WHICH routine is asking, and nothing here is its
+;; name. A routine called `cleanup` and a routine called `wire-money` are the
+;; same three judgements; the difference between them is the grant its Bot
+;; holds, which was decided in `bot_core.kotoba` before a step ever reached
+;; this file.
+;;
+;; Parity: test/cloud/itonami/app/routine_kotoba_parity_test.clj
+
+(ns routine-core
+  (:schemas {;; What the host has established about one routine, now.
+             ;;
+             ;; `steps-recorded` is how many steps the demonstration captured,
+             ;; fixed when the routine was written down. `steps-admitted` is
+             ;; how many of those survive the Bot's grant AT THIS MOMENT —
+             ;; recomputed per attempt, because a person may revoke a tool
+             ;; between two firings of the same schedule, and the routine must
+             ;; notice rather than run a shortened version of itself.
+             ;;
+             ;; `held-run` is a previous run of THIS routine waiting for a
+             ;; human. `active-run` is one still executing.
+             :routine/presence
+             [:record :routine/presence
+              [[:enabled :bool]
+               [:held-run :bool]
+               [:active-run :bool]
+               [:steps-admitted :i64]
+               [:steps-recorded :i64]]]
+             ;; Whether an unattended tick may act for one person.
+             ;;
+             ;; `session-live` is a session that person really created and has
+             ;; not revoked or let expire — FOUND in the store, never minted.
+             ;; That distinction is the whole design: a timer that could mint
+             ;; its own authority would be a daemon acting for someone who is
+             ;; not there and cannot take it back, and this application's
+             ;; thesis is that nothing leaves without being named.
+             ;;
+             ;; Deliberately absent: which routines are due, which tools they
+             ;; hold, and how long it has been. Those are `may-fire?`'s and are
+             ;; asked per routine AFTER this answers yes. Admission to tick at
+             ;; all is a question about the person, not about the work.
+             :routine/tick
+             [:record :routine/tick
+              [[:tick-enabled :bool]
+               [:session-live :bool]]]})
+  (:export [status-disabled status-idle status-running
+            status-waiting-approval status-stale
+            stale? may-fire? may-start? status tick-admitted? main]))
+
+(defn status-disabled [] :i64 0)
+(defn status-idle [] :i64 1)
+(defn status-running [] :i64 2)
+(defn status-waiting-approval [] :i64 3)
+(defn status-stale [] :i64 4)
+
+(defn stale? [p [:ref :routine/presence]] :bool
+  ;; Fewer steps admitted than recorded means the grant narrowed under the
+  ;; routine. Strictly less, not `not=`: more admitted than recorded is not a
+  ;; thing the host can produce (admission filters a fixed list), and treating
+  ;; it as staleness would turn a host bug into a refusal that reads like a
+  ;; permission problem.
+  (< (record-get p :steps-admitted) (record-get p :steps-recorded)))
+
+(defn may-start? [p [:ref :routine/presence]] :bool
+  ;; A person asking for this routine right now. Disabled or stale refuses;
+  ;; a run already going refuses, because two concurrent copies of one
+  ;; workflow is how a routine sends the same mail twice.
+  ;;
+  ;; A held run does NOT block a manual start: the person is right there, and
+  ;; refusing would leave them with a routine they cannot run and an approval
+  ;; they may not want to give. `may-fire?` is the one that has to be stricter,
+  ;; because no one is watching it.
+  (if (record-get p :enabled)
+    (if (stale? p)
+      false
+      (if (record-get p :active-run) false true))
+    false))
+
+(defn may-fire? [p [:ref :routine/presence]] :bool
+  ;; A schedule reaching its time. Everything `may-start?` refuses, plus a held
+  ;; run: firing again while the last firing is still waiting for a human is
+  ;; how an hourly routine becomes twenty-four approvals by morning. The person
+  ;; who has not answered the first one has not asked for a second.
+  (if (may-start? p)
+    (if (record-get p :held-run) false true)
+    false))
+
+(defn status [p [:ref :routine/presence]] :i64
+  ;; Ordering IS the decision. `held-run` outranks `stale?` because a human has
+  ;; something to act on and acting on it is what clears the way; `stale?`
+  ;; outranks `active-run` because a routine whose grant narrowed mid-run needs
+  ;; saying so more than it needs a progress light. Reversing any pair here
+  ;; compiles and is silently wrong.
+  (if (record-get p :enabled)
+    (if (record-get p :held-run)
+      (status-waiting-approval)
+      (if (stale? p)
+        (status-stale)
+        (if (record-get p :active-run)
+          (status-running)
+          (status-idle))))
+    (status-disabled)))
+
+(defn tick-admitted? [t [:ref :routine/tick] session-kind :string] :bool
+  ;; May an unattended tick act for this person at all?
+  ;;
+  ;; The session kind is tested FIRST and ALONE, and this is the one refusal
+  ;; here that is not merely prudent. Every route into the Bots surface goes
+  ;; through `require-human-session!`, which refuses an agent session — but a
+  ;; TICK IS NOT A ROUTE. It runs from a timer inside the server, so it reaches
+  ;; `fire-due!` without passing the gate that would have stopped it. An agent
+  ;; session is rooted in being able to read a file in the data directory; if
+  ;; it could also drive the clock, then reading that file would be enough to
+  ;; make somebody's Bots act on a schedule forever. Restated here for the same
+  ;; reason `handoff_core` restates it: at the one place the argument could be
+  ;; made, rather than only where it was first written down.
+  ;;
+  ;; Anything that is not an agent is a browser session, including a stored
+  ;; record with no kind at all — `issue-session!` says an unmarked record from
+  ;; an older store IS a browser session, and refusing those would quietly stop
+  ;; the schedules of everyone who had not signed in since the field landed.
+  (if (string=? session-kind "agent")
+    false
+    (if (record-get t :tick-enabled)
+      (if (record-get t :session-live) true false)
+      false)))
+
+(defn main [] :i64
+  ;; Sentinel for the wasm host contract, not a battery. The assertions live in
+  ;; the parity test where they can be compared against the cljc.
+  0)

@@ -424,6 +424,39 @@
          (sort-by :created-at #(compare %2 %1))
          (mapv #(public-session-record current-session %)))))
 
+(defn live-sessions
+  "Every session that is still real, newest first — as STORED records.
+
+  For callers that have no session of their own and must not invent one. The
+  unattended routine tick is the case: it runs from a timer rather than from a
+  request, so there is no cookie to resolve, and the alternative to finding a
+  session is minting one, which would be a daemon acting for somebody who never
+  asked and cannot take it back.
+
+  Liveness is the same three conditions `session-by-token` applies — present,
+  not revoked, not expired — written once more rather than shared, because that
+  function needs a token digest to compare and this one has no token at all.
+  The consequence is the useful part: signing out or letting a session lapse
+  stops whatever was running on its authority, and the person can see the
+  session that is doing it in 「ログイン中の端末」.
+
+  Token digests and CSRF secrets are dropped. A caller that needs to ACT holds
+  the record's `:user-id` and `:organization-id`, which is what the surfaces
+  check; nothing downstream needs the secret, and handing it out would make
+  this a way to obtain one."
+  []
+  (let [now (Instant/now)]
+    (->> (:sessions (identity-state (store/snapshot)))
+         vals
+         (filter #(and (not (:revoked? %))
+                       (try (pos? (compare (Instant/parse (:expires-at %)) now))
+                            ;; An unparseable expiry is a stored value this
+                            ;; build does not understand. Treating it as live
+                            ;; would make a corrupt record permanent authority.
+                            (catch Exception _ false))))
+         (sort-by :created-at #(compare %2 %1))
+         (mapv #(dissoc % :token-digest :csrf)))))
+
 (defn revoke-session!
   "Revoke one session owned by the signed-in User. Cross-user ids fail closed."
   [current-session session-id]

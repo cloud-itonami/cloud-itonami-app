@@ -362,6 +362,17 @@
     background:var(--color-neutral-solid-gray-50);
     color:var(--color-neutral-solid-gray-700)}
   .bots-thread__panel ul{margin:.25rem 0 0;padding-left:1.25rem}
+  /* The routine list is the one shape the panel did not already have: a row
+     whose status has to be legible at a glance, because 'stale' is the whole
+     reason somebody opens this. Colours are the DADS neutrals the panel above
+     already uses; the warning state is the one semantic token added. */
+  .bots-routines{list-style:none;margin:.25rem 0 .75rem;padding:0}
+  .bots-routines li{display:flex;gap:.5rem;align-items:baseline;
+    padding:.375rem 0;border-bottom:1px solid var(--color-neutral-solid-gray-200)}
+  .bots-routines__name{font-weight:600;flex:1}
+  .bots-routines__state{font-size:.75rem;
+    color:var(--color-neutral-solid-gray-600)}
+  .bots-routines__state[data-state='stale']{color:var(--color-semantic-error-1)}
   .bots-thread__scroll{flex:1;min-height:0;overflow-y:auto;padding:1rem}
   .bots-thread__messages{list-style:none;margin:0 auto;padding:0;display:grid;
     gap:.75rem;max-width:44rem}
@@ -1396,8 +1407,49 @@
               [:span {:class "bots-thread__status" :id "bots-thread-status"}]]
              [:button {:class "tool-button" :id "bots-thread-tools" :type "button"
                        :aria-expanded "false" :aria-controls "bots-thread-panel"
-                       :title "この Bot が届く範囲"} "▤"]]
+                       :title "この Bot が届く範囲"} "▤"]
+             [:button {:class "tool-button" :id "bots-thread-routines" :type "button"
+                       :aria-expanded "false" :aria-controls "bots-routines-panel"
+                       :title "routine と引き継ぎ"} "⟳"]]
             [:div {:class "bots-thread__panel" :id "bots-thread-panel" :hidden true}]
+            ;; Kept in the same panel slot as the tool list, because both answer
+            ;; "what can this Bot do" — one as reach, the other as work it has
+            ;; already been shown.
+            [:div {:class "bots-thread__panel" :id "bots-routines-panel" :hidden true}
+             (dds/heading 3 "routine" {:size "20"})
+             [:p {:class "form-help"}
+              (str "この Bot が実際に実行した手順を残して、あとで同じことをさせられます。"
+                   "残るのは実行できた手順だけで、提案や下書きは入りません。")]
+             [:ul {:class "bots-routines" :id "bots-routines"}]
+             [:p {:class "form-help" :id "bots-routines-empty"}
+              "まだ routine がありません。何か実行させたあとで残せます。"]
+             [:div {:class "field"}
+              [:label {:for "bots-routine-name"} "いまやったことの名前"]
+              [:input {:id "bots-routine-name" :type "text" :maxlength "60"
+                       :autocomplete "off" :placeholder "朝の受信箱"}]]
+             [:div {:class "field"}
+              [:label {:for "bots-routine-intent"} "何のための手順か"]
+              [:input {:id "bots-routine-intent" :type "text" :maxlength "200"
+                       :autocomplete "off" :placeholder "返事が要るものを分ける"}]]
+             [:button {:class "tool-button" :id "bots-routine-record" :type "button"}
+              "いまの手順を残す"]
+             [:p {:class "drive-create__status" :id "bots-routine-status"
+                  :aria-live "polite"}]
+             (dds/heading 3 "引き継ぐ" {:size "20"})
+             [:p {:class "form-help"}
+              (str "別の Bot に続きを頼みます。引き継いでも相手の権限は変わりません — "
+                   "相手は相手が許可されているツールだけを使います。")]
+             [:div {:class "field"}
+              [:label {:for "bots-handoff-to"} "引き継ぎ先"]
+              [:select {:id "bots-handoff-to"}]]
+             [:div {:class "field"}
+              [:label {:for "bots-handoff-task"} "頼むこと"]
+              [:textarea {:id "bots-handoff-task" :rows "2" :maxlength "4000"
+                          :placeholder "ここまでの内容をまとめて"}]]
+             [:button {:class "tool-button" :id "bots-handoff-send" :type "button"}
+              "引き継ぐ"]
+             [:p {:class "drive-create__status" :id "bots-handoff-status"
+                  :aria-live "polite"}]]
             [:div {:class "bots-thread__scroll" :id "bots-thread-scroll"}
              [:ol {:class "bots-thread__messages" :id "bots-messages"}]]
             [:form {:class "bots-composer" :id "bots-form"}

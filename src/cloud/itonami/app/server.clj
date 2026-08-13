@@ -4788,6 +4788,74 @@
                {:messages (bots/decide! config session bot-id card-id
                                         (:decision body))}))
 
+      ;; ── routines ──────────────────────────────────────────────────
+      ;; Before the `/api/bots/([^/]+)` catch-all below. `bot-id-from` uses
+      ;; `re-matches`, so a longer path could not reach it anyway; the order is
+      ;; for the reader rather than for the router.
+
+      ;; Not under a bot id: a tick asks about every routine this person owns,
+      ;; and putting it under one Bot would invite a caller to tick per Bot and
+      ;; call that a schedule.
+      (and (= method "POST") (= path "/api/bots/routines/fire"))
+      (do (require-origin! exchange config)
+          (require-csrf! exchange session)
+          (send! exchange 200 (bots/fire-due! config session (store/now))))
+
+      (and (= method "GET") (bot-id-from path #"/api/bots/([^/]+)/routines"))
+      (send! exchange 200
+             {:routines (bots/routines
+                         config session
+                         (bot-id-from path #"/api/bots/([^/]+)/routines"))})
+
+      (and (= method "POST") (bot-id-from path #"/api/bots/([^/]+)/routines"))
+      (let [bot-id (bot-id-from path #"/api/bots/([^/]+)/routines")
+            body (read-json exchange)]
+        (require-origin! exchange config)
+        (require-csrf! exchange session)
+        (send! exchange 200
+               {:routine (bots/record-routine! config session bot-id body)}))
+
+      (and (= method "POST")
+           (bot-id-from path #"/api/bots/([^/]+)/routines/[^/]+/start"))
+      (let [bot-id (bot-id-from path #"/api/bots/([^/]+)/routines/[^/]+/start")
+            routine-id (bot-id-from path #"/api/bots/[^/]+/routines/([^/]+)/start")]
+        (require-origin! exchange config)
+        (require-csrf! exchange session)
+        (send! exchange 200
+               {:messages (bots/start-routine! config session bot-id routine-id)}))
+
+      (and (= method "POST")
+           (bot-id-from path #"/api/bots/([^/]+)/routines/[^/]+/forget"))
+      (let [bot-id (bot-id-from path #"/api/bots/([^/]+)/routines/[^/]+/forget")
+            routine-id (bot-id-from path #"/api/bots/[^/]+/routines/([^/]+)/forget")]
+        (require-origin! exchange config)
+        (require-csrf! exchange session)
+        (send! exchange 200 (bots/forget-routine! session bot-id routine-id)))
+
+      (and (= method "POST")
+           (bot-id-from path #"/api/bots/([^/]+)/routines/[^/]+"))
+      (let [bot-id (bot-id-from path #"/api/bots/([^/]+)/routines/[^/]+")
+            routine-id (bot-id-from path #"/api/bots/[^/]+/routines/([^/]+)")
+            body (read-json exchange)]
+        (require-origin! exchange config)
+        (require-csrf! exchange session)
+        (send! exchange 200
+               {:routine (bots/update-routine! config session bot-id routine-id body)}))
+
+      ;; ── handoff ───────────────────────────────────────────────────
+      ;; The target is in the BODY rather than the path. Both Bots are checked
+      ;; by `owned!` either way, but a URL that named two Bots would read as
+      ;; though the pair were the resource, and what is being created is one
+      ;; message with a sender.
+      (and (= method "POST") (bot-id-from path #"/api/bots/([^/]+)/handoff"))
+      (let [from-bot-id (bot-id-from path #"/api/bots/([^/]+)/handoff")
+            body (read-json exchange)]
+        (require-origin! exchange config)
+        (require-csrf! exchange session)
+        (send! exchange 200
+               (bots/hand-off! config session from-bot-id (:to body)
+                               {:task (:task body) :depth (:depth body)})))
+
       (and (= method "POST") (bot-id-from path #"/api/bots/([^/]+)/archive"))
       (let [bot-id (bot-id-from path #"/api/bots/([^/]+)/archive")]
         (require-origin! exchange config)
@@ -4829,6 +4897,14 @@
                      :bot/not-held 409
                      :bot/choice-answered 409
                      :provider/denied 409
+                     :routine/not-found 404
+                     ;; 409 rather than 403: a stale or already-running routine
+                     ;; is a state that will pass, and 403 would send somebody
+                     ;; to check permissions they have.
+                     :routine/refused 409
+                     :routine/no-demonstration 409
+                     :routine/too-many 409
+                     :handoff/refused 409
                      400)
                    {:error {:type (name (or (:type (ex-data error)) :bot/error))
                             :message (.getMessage error)}}))
@@ -4917,6 +4993,9 @@
    (mail-sync/start! configuration)
    (chronicle/start! configuration)
    (folder-sync/start! configuration)
+   ;; After the surfaces it drives, so a routine that fires on the first pass
+   ;; finds a store that is already open rather than one still being read.
+   (bots/start-tick! configuration)
    (updater/start! configuration)
    (let [host (get-in configuration [:server :host])
          port (get-in configuration [:server :port])
@@ -4991,6 +5070,7 @@
   (mail-sync/stop!)
   (chronicle/stop!)
   (folder-sync/stop!)
+  (bots/stop-tick!)
   (updater/stop!)
   (work-reconciler/stop!)
   (when-let [instance @server]

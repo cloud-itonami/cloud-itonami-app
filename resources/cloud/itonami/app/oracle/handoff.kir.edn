@@ -1,0 +1,183 @@
+{:format :kotoba.kir/v4,
+ :signature {:params [], :result :i64},
+ :functions
+ [{:name budget-exhausted?,
+   :params [r],
+   :result :bool,
+   :effects #{},
+   :body
+   (if
+    (<
+     (record-get
+      [:record
+       :handoff/request
+       [[:same-owner :bool]
+        [:source-enabled :bool]
+        [:target-enabled :bool]
+        [:distinct-bots :bool]
+        [:depth :i64]
+        [:max-depth :i64]]]
+      r
+      :depth)
+     (record-get
+      [:record
+       :handoff/request
+       [[:same-owner :bool]
+        [:source-enabled :bool]
+        [:target-enabled :bool]
+        [:distinct-bots :bool]
+        [:depth :i64]
+        [:max-depth :i64]]]
+      r
+      :max-depth))
+    false
+    true),
+   :param-types [[:ref :handoff/request]]}
+  {:name admitted?,
+   :params [r],
+   :result :bool,
+   :effects #{},
+   :body
+   (if
+    (record-get
+     [:record
+      :handoff/request
+      [[:same-owner :bool]
+       [:source-enabled :bool]
+       [:target-enabled :bool]
+       [:distinct-bots :bool]
+       [:depth :i64]
+       [:max-depth :i64]]]
+     r
+     :same-owner)
+    (if
+     (record-get
+      [:record
+       :handoff/request
+       [[:same-owner :bool]
+        [:source-enabled :bool]
+        [:target-enabled :bool]
+        [:distinct-bots :bool]
+        [:depth :i64]
+        [:max-depth :i64]]]
+      r
+      :source-enabled)
+     (if
+      (record-get
+       [:record
+        :handoff/request
+        [[:same-owner :bool]
+         [:source-enabled :bool]
+         [:target-enabled :bool]
+         [:distinct-bots :bool]
+         [:depth :i64]
+         [:max-depth :i64]]]
+       r
+       :target-enabled)
+      (if
+       (record-get
+        [:record
+         :handoff/request
+         [[:same-owner :bool]
+          [:source-enabled :bool]
+          [:target-enabled :bool]
+          [:distinct-bots :bool]
+          [:depth :i64]
+          [:max-depth :i64]]]
+        r
+        :distinct-bots)
+       (if (budget-exhausted? r) false true)
+       false)
+      false)
+     false)
+    false),
+   :param-types [[:ref :handoff/request]]}
+  {:name may-approve?,
+   :params [d actor-kind],
+   :result :bool,
+   :effects #{},
+   :body
+   (if
+    (string=? actor-kind "agent")
+    false
+    (if
+     (let
+      [__kotoba_and_3
+       (record-get
+        [:record
+         :handoff/decision
+         [[:human :bool] [:identified :bool] [:authorized :bool]]]
+        d
+        :human)]
+      (if
+       __kotoba_and_3
+       (let
+        [__kotoba_and_2
+         (record-get
+          [:record
+           :handoff/decision
+           [[:human :bool] [:identified :bool] [:authorized :bool]]]
+          d
+          :identified)]
+        (if
+         __kotoba_and_2
+         (record-get
+          [:record
+           :handoff/decision
+           [[:human :bool] [:identified :bool] [:authorized :bool]]]
+          d
+          :authorized)
+         __kotoba_and_2))
+       __kotoba_and_3))
+     true
+     false)),
+   :param-types [[:ref :handoff/decision] :string]}
+  {:name next-depth,
+   :params [r],
+   :result :i64,
+   :effects #{},
+   :body
+   (+
+    (record-get
+     [:record
+      :handoff/request
+      [[:same-owner :bool]
+       [:source-enabled :bool]
+       [:target-enabled :bool]
+       [:distinct-bots :bool]
+       [:depth :i64]
+       [:max-depth :i64]]]
+     r
+     :depth)
+    1),
+   :param-types [[:ref :handoff/request]]}
+  {:name main,
+   :params [],
+   :result :i64,
+   :effects #{},
+   :body 0,
+   :param-types []}],
+ :oracle-value 0,
+ :schema-identities
+ #:handoff{:decision
+           "a681b680fd5add7cc7265a86471051af95b4ec686e29c31c6bfe98fe410f4501",
+           :request
+           "c1aa3105702830acd2f3fcd3285f5ee62096d24b29847ae38b37f44634411e4a"},
+ :exports [budget-exhausted? admitted? may-approve? next-depth main],
+ :schemas
+ #:handoff{:request
+           [:record
+            :handoff/request
+            [[:same-owner :bool]
+             [:source-enabled :bool]
+             [:target-enabled :bool]
+             [:distinct-bots :bool]
+             [:depth :i64]
+             [:max-depth :i64]]],
+           :decision
+           [:record
+            :handoff/decision
+            [[:human :bool] [:identified :bool] [:authorized :bool]]]},
+ :effects #{},
+ :blocks [{:id 0, :instructions [[:const.i64 0] [:return]]}],
+ :entry main}
