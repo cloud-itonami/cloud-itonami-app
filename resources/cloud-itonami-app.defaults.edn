@@ -48,12 +48,17 @@
  :providers
  [{:id "murakumo"
    :name "Murakumo fleet"
-   :kind :anthropic-messages
+   :kind :openai-compatible
    ;; `murakumo-main` is an ALIAS the fleet resolves, never a concrete model
    ;; id: models change capability quickly and a pinned id goes stale silently
    ;; (root ADR-2607173100). Switching the fleet main is one KV entry there,
    ;; and every consumer follows on its next call.
-   :base-url "https://api.murakumo.cloud/v1/messages"
+   ;; The OpenAI chat shape, not the Anthropic messages shape. Measured
+   ;; 2026-08-13: both api. and infer. answer 200 to /v1/chat/completions with
+   ;; a Bearer token. Shipped wrong for one commit as `:anthropic-messages`,
+   ;; which the provider layer refused with `unsupported provider kind` — the
+   ;; refusal is why it was found the same day.
+   :base-url "https://api.murakumo.cloud/v1"
    :api-key-env "MURAKUMO_API_KEY"
    :local? false
    ;; Shipped off and unreviewed. The distribution is tenant-neutral: it cannot

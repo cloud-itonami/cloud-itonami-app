@@ -14,6 +14,7 @@
   network."
   (:require [clojure.string :as str]
             [clojure.test :refer [deftest is testing]]
+            [cloud.itonami.app.agent-control :as agent-control]
             [cloud.itonami.app.bots :as bots]
             [cloud.itonami.app.config :as config]
             [cloud.itonami.app.policy :as policy]
@@ -358,3 +359,24 @@
         (is (= 2 @calls) "both were attempted")
         (is (= #{"alice" "bob"} (set (map :user results))))
         (is (some :error results) "and the failure is reported, not swallowed")))))
+
+;; ── browser session isolation ────────────────────────────────────────
+
+(deftest browser-profiles-are-per-principal
+  ;; The isolated browser keeps cookies and logged-in sessions, so a shared
+  ;; profile means a Bot that signs into a service leaves that session for the
+  ;; next one. Isolation was per MACHINE where people reason per Bot.
+  (testing "two principals get two profiles"
+    (is (not= (agent-control/session-for "bot-a")
+              (agent-control/session-for "bot-b"))))
+  (testing "the same principal is stable across calls"
+    (is (= (agent-control/session-for "bot-a")
+           (agent-control/session-for "bot-a"))))
+  (testing "the value is safe as a directory component"
+    (is (re-matches #"[A-Za-z0-9_-]+"
+                    (agent-control/session-for "bot/../../etc:passwd"))))
+  (testing "an empty principal falls back rather than producing a bare prefix"
+    (is (= agent-control/default-session-name (agent-control/session-for "")))
+    (is (= agent-control/default-session-name (agent-control/session-for nil))))
+  (testing "saying nothing keeps the previous behaviour"
+    (is (nil? agent-control/*browser-session*))))
