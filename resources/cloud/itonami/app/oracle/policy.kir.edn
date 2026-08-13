@@ -6,52 +6,22 @@
    :result :bool,
    :effects #{},
    :body
-   (if
-    (let
-     [__kotoba_or_3 (string=? host "127.0.0.1")]
-     (if
-      __kotoba_or_3
-      __kotoba_or_3
-      (let
-       [__kotoba_or_2 (string=? host "localhost")]
-       (if __kotoba_or_2 __kotoba_or_2 (string=? host "::1")))))
-    true
-    false),
+   (let
+    [__kotoba_or_3 (string=? host "127.0.0.1")]
+    (if
+     __kotoba_or_3
+     __kotoba_or_3
+     (let
+      [__kotoba_or_2 (string=? host "localhost")]
+      (if __kotoba_or_2 __kotoba_or_2 (string=? host "::1"))))),
    :param-types [:string]}
   {:name provider-allowed?,
    :params [p],
    :result :bool,
    :effects #{},
    :body
-   (if
-    (let
-     [__kotoba_and_2
-      (record-get
-       [:record
-        :policy/provider
-        [[:enabled :bool]
-         [:reviewed :bool]
-         [:no-egress :bool]
-         [:egress-permitted :bool]
-         [:confidential :bool]
-         [:authenticated :bool]]]
-       p
-       :enabled)]
-     (if
-      __kotoba_and_2
-      (record-get
-       [:record
-        :policy/provider
-        [[:enabled :bool]
-         [:reviewed :bool]
-         [:no-egress :bool]
-         [:egress-permitted :bool]
-         [:confidential :bool]
-         [:authenticated :bool]]]
-       p
-       :reviewed)
-      __kotoba_and_2))
-    (if
+   (let
+    [__kotoba_and_3
      (record-get
       [:record
        :policy/provider
@@ -62,55 +32,85 @@
         [:confidential :bool]
         [:authenticated :bool]]]
       p
-      :no-egress)
-     true
-     (if
-      (let
-       [__kotoba_and_2
-        (record-get
-         [:record
-          :policy/provider
-          [[:enabled :bool]
-           [:reviewed :bool]
-           [:no-egress :bool]
-           [:egress-permitted :bool]
-           [:confidential :bool]
-           [:authenticated :bool]]]
-         p
-         :egress-permitted)]
-       (if
-        __kotoba_and_2
-        (let
-         [__kotoba_and_2
-          (record-get
-           [:record
-            :policy/provider
-            [[:enabled :bool]
-             [:reviewed :bool]
-             [:no-egress :bool]
-             [:egress-permitted :bool]
-             [:confidential :bool]
-             [:authenticated :bool]]]
-           p
-           :confidential)]
-         (if
-          __kotoba_and_2
-          (record-get
-           [:record
-            :policy/provider
-            [[:enabled :bool]
-             [:reviewed :bool]
-             [:no-egress :bool]
-             [:egress-permitted :bool]
-             [:confidential :bool]
-             [:authenticated :bool]]]
-           p
-           :authenticated)
-          __kotoba_and_2))
-        __kotoba_and_2))
-      true
-      false))
-    false),
+      :enabled)]
+    (if
+     __kotoba_and_3
+     (let
+      [__kotoba_and_2
+       (record-get
+        [:record
+         :policy/provider
+         [[:enabled :bool]
+          [:reviewed :bool]
+          [:no-egress :bool]
+          [:egress-permitted :bool]
+          [:confidential :bool]
+          [:authenticated :bool]]]
+        p
+        :reviewed)]
+      (if
+       __kotoba_and_2
+       (let
+        [__kotoba_or_2
+         (record-get
+          [:record
+           :policy/provider
+           [[:enabled :bool]
+            [:reviewed :bool]
+            [:no-egress :bool]
+            [:egress-permitted :bool]
+            [:confidential :bool]
+            [:authenticated :bool]]]
+          p
+          :no-egress)]
+        (if
+         __kotoba_or_2
+         __kotoba_or_2
+         (let
+          [__kotoba_and_3
+           (record-get
+            [:record
+             :policy/provider
+             [[:enabled :bool]
+              [:reviewed :bool]
+              [:no-egress :bool]
+              [:egress-permitted :bool]
+              [:confidential :bool]
+              [:authenticated :bool]]]
+            p
+            :egress-permitted)]
+          (if
+           __kotoba_and_3
+           (let
+            [__kotoba_and_2
+             (record-get
+              [:record
+               :policy/provider
+               [[:enabled :bool]
+                [:reviewed :bool]
+                [:no-egress :bool]
+                [:egress-permitted :bool]
+                [:confidential :bool]
+                [:authenticated :bool]]]
+              p
+              :confidential)]
+            (if
+             __kotoba_and_2
+             (record-get
+              [:record
+               :policy/provider
+               [[:enabled :bool]
+                [:reviewed :bool]
+                [:no-egress :bool]
+                [:egress-permitted :bool]
+                [:confidential :bool]
+                [:authenticated :bool]]]
+              p
+              :authenticated)
+             __kotoba_and_2))
+           __kotoba_and_3))))
+       __kotoba_and_2))
+     __kotoba_and_3)),
    :param-types [[:ref :policy/provider]]}],
  :oracle-value nil,
  :schema-identities

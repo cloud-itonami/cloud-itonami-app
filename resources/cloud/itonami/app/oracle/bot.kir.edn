@@ -96,37 +96,34 @@
    (if
     (string=? actor-kind "agent")
     false
-    (if
-     (let
-      [__kotoba_and_3
-       (record-get
-        [:record
-         :bot/decision
-         [[:human :bool] [:identified :bool] [:authorized :bool]]]
-        d
-        :human)]
-      (if
-       __kotoba_and_3
-       (let
-        [__kotoba_and_2
-         (record-get
-          [:record
-           :bot/decision
-           [[:human :bool] [:identified :bool] [:authorized :bool]]]
-          d
-          :identified)]
-        (if
-         __kotoba_and_2
-         (record-get
-          [:record
-           :bot/decision
-           [[:human :bool] [:identified :bool] [:authorized :bool]]]
-          d
-          :authorized)
-         __kotoba_and_2))
-       __kotoba_and_3))
-     true
-     false)),
+    (let
+     [__kotoba_and_3
+      (record-get
+       [:record
+        :bot/decision
+        [[:human :bool] [:identified :bool] [:authorized :bool]]]
+       d
+       :human)]
+     (if
+      __kotoba_and_3
+      (let
+       [__kotoba_and_2
+        (record-get
+         [:record
+          :bot/decision
+          [[:human :bool] [:identified :bool] [:authorized :bool]]]
+         d
+         :identified)]
+       (if
+        __kotoba_and_2
+        (record-get
+         [:record
+          :bot/decision
+          [[:human :bool] [:identified :bool] [:authorized :bool]]]
+         d
+         :authorized)
+        __kotoba_and_2))
+      __kotoba_and_3))),
    :param-types [[:ref :bot/decision] :string]}
   {:name grant-widens?,
    :params [granted-count admitted-count],

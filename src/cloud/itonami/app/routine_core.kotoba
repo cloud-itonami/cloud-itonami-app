@@ -34,8 +34,7 @@
 ;; Same native word-typed slice as `bot_core.kotoba`: `:bool` and `:i64`
 ;; scalars, sealed all-scalar records, `and`, `if`, `<`. Facts arrive as
 ;; records because a bare `:bool` parameter is a backend gap (compiler
-;; ADR-0219), and `and` produces `:i64` rather than `:bool`, which is what the
-;; trailing `true false` folds.
+;; ADR-0219). `and` / `not` are `:bool`.
 ;;
 ;; Nothing here identifies WHICH routine is asking, and nothing here is its
 ;; name. A routine called `cleanup` and a routine called `wire-money` are the
@@ -111,7 +110,7 @@
   (if (record-get p :enabled)
     (if (stale? p)
       false
-      (if (record-get p :active-run) false true))
+      (not (record-get p :active-run)))
     false))
 
 (defn may-fire? [p [:ref :routine/presence]] :bool
@@ -120,7 +119,7 @@
   ;; how an hourly routine becomes twenty-four approvals by morning. The person
   ;; who has not answered the first one has not asked for a second.
   (if (may-start? p)
-    (if (record-get p :held-run) false true)
+    (not (record-get p :held-run))
     false))
 
 (defn status [p [:ref :routine/presence]] :i64
@@ -159,9 +158,8 @@
   ;; the schedules of everyone who had not signed in since the field landed.
   (if (string=? session-kind "agent")
     false
-    (if (record-get t :tick-enabled)
-      (if (record-get t :session-live) true false)
-      false)))
+    (and (record-get t :tick-enabled)
+         (record-get t :session-live))))
 
 (defn main [] :i64
   ;; Sentinel for the wasm host contract, not a battery. The assertions live in

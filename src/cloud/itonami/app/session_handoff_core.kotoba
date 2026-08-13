@@ -93,9 +93,7 @@
     (if (record-get c :ready)
       (if (record-get c :claimed)
         false
-        (if (record-get c :expired)
-          false
-          true))
+        (not (record-get c :expired)))
       false)
     false))
 

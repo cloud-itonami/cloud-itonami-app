@@ -168,23 +168,23 @@
    (if
     (string=? session-kind "agent")
     false
-    (if
-     (record-get
-      [:record
-       :routine/tick
-       [[:tick-enabled :bool] [:session-live :bool]]]
-      t
-      :tick-enabled)
+    (let
+     [__kotoba_and_2
+      (record-get
+       [:record
+        :routine/tick
+        [[:tick-enabled :bool] [:session-live :bool]]]
+       t
+       :tick-enabled)]
      (if
+      __kotoba_and_2
       (record-get
        [:record
         :routine/tick
         [[:tick-enabled :bool] [:session-live :bool]]]
        t
        :session-live)
-      true
-      false)
-     false)),
+      __kotoba_and_2))),
    :param-types [[:ref :routine/tick] :string]}
   {:name main,
    :params [],

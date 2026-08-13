@@ -6,32 +6,29 @@
    :result :bool,
    :effects #{},
    :body
-   (if
-    (<
-     (record-get
-      [:record
-       :handoff/request
-       [[:same-owner :bool]
-        [:source-enabled :bool]
-        [:target-enabled :bool]
-        [:distinct-bots :bool]
-        [:depth :i64]
-        [:max-depth :i64]]]
-      r
-      :depth)
-     (record-get
-      [:record
-       :handoff/request
-       [[:same-owner :bool]
-        [:source-enabled :bool]
-        [:target-enabled :bool]
-        [:distinct-bots :bool]
-        [:depth :i64]
-        [:max-depth :i64]]]
-      r
-      :max-depth))
-    false
-    true),
+   (>=
+    (record-get
+     [:record
+      :handoff/request
+      [[:same-owner :bool]
+       [:source-enabled :bool]
+       [:target-enabled :bool]
+       [:distinct-bots :bool]
+       [:depth :i64]
+       [:max-depth :i64]]]
+     r
+     :depth)
+    (record-get
+     [:record
+      :handoff/request
+      [[:same-owner :bool]
+       [:source-enabled :bool]
+       [:target-enabled :bool]
+       [:distinct-bots :bool]
+       [:depth :i64]
+       [:max-depth :i64]]]
+     r
+     :max-depth)),
    :param-types [[:ref :handoff/request]]}
   {:name admitted?,
    :params [r],
@@ -100,37 +97,34 @@
    (if
     (string=? actor-kind "agent")
     false
-    (if
-     (let
-      [__kotoba_and_3
-       (record-get
-        [:record
-         :handoff/decision
-         [[:human :bool] [:identified :bool] [:authorized :bool]]]
-        d
-        :human)]
-      (if
-       __kotoba_and_3
-       (let
-        [__kotoba_and_2
-         (record-get
-          [:record
-           :handoff/decision
-           [[:human :bool] [:identified :bool] [:authorized :bool]]]
-          d
-          :identified)]
-        (if
-         __kotoba_and_2
-         (record-get
-          [:record
-           :handoff/decision
-           [[:human :bool] [:identified :bool] [:authorized :bool]]]
-          d
-          :authorized)
-         __kotoba_and_2))
-       __kotoba_and_3))
-     true
-     false)),
+    (let
+     [__kotoba_and_3
+      (record-get
+       [:record
+        :handoff/decision
+        [[:human :bool] [:identified :bool] [:authorized :bool]]]
+       d
+       :human)]
+     (if
+      __kotoba_and_3
+      (let
+       [__kotoba_and_2
+        (record-get
+         [:record
+          :handoff/decision
+          [[:human :bool] [:identified :bool] [:authorized :bool]]]
+         d
+         :identified)]
+       (if
+        __kotoba_and_2
+        (record-get
+         [:record
+          :handoff/decision
+          [[:human :bool] [:identified :bool] [:authorized :bool]]]
+         d
+         :authorized)
+        __kotoba_and_2))
+      __kotoba_and_3))),
    :param-types [[:ref :handoff/decision] :string]}
   {:name next-depth,
    :params [r],

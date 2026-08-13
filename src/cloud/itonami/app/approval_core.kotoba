@@ -63,7 +63,7 @@
   ;; Same shape, negated: when separation of duties is on, the submitter may
   ;; not approve their own item.
   (if (record-get e :separation-of-duties)
-    (if (record-get e :actor-is-submitter) false true)
+    (not (record-get e :actor-is-submitter))
     true))
 
 (defn eligible? [e [:ref :approval/eligibility]] :bool

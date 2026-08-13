@@ -49,115 +49,145 @@
    :result :bool,
    :effects #{},
    :body
-   (if (< code 0) false (if (>= code (status-count)) false true))}
+   (let
+    [__kotoba_and_2 (>= code 0)]
+    (if __kotoba_and_2 (< code (status-count)) __kotoba_and_2))}
   {:name terminal?,
    :params [code],
    :result :bool,
    :effects #{},
    :body
-   (if
-    (= code (status-done))
-    true
+   (let
+    [__kotoba_or_3 (= code (status-done))]
     (if
-     (= code (status-rejected))
-     true
-     (if (= code (status-cancelled)) true false)))}
+     __kotoba_or_3
+     __kotoba_or_3
+     (let
+      [__kotoba_or_2 (= code (status-rejected))]
+      (if __kotoba_or_2 __kotoba_or_2 (= code (status-cancelled))))))}
   {:name from-backlog?,
    :params [to],
    :result :bool,
    :effects #{},
    :body
-   (if
-    (= to (status-ready))
-    true
-    (if (= to (status-cancelled)) true false))}
+   (let
+    [__kotoba_or_2 (= to (status-ready))]
+    (if __kotoba_or_2 __kotoba_or_2 (= to (status-cancelled))))}
   {:name from-ready?,
    :params [to],
    :result :bool,
    :effects #{},
    :body
-   (if
-    (= to (status-leased))
-    true
+   (let
+    [__kotoba_or_3 (= to (status-leased))]
     (if
-     (= to (status-held))
-     true
-     (if (= to (status-cancelled)) true false)))}
+     __kotoba_or_3
+     __kotoba_or_3
+     (let
+      [__kotoba_or_2 (= to (status-held))]
+      (if __kotoba_or_2 __kotoba_or_2 (= to (status-cancelled))))))}
   {:name from-leased?,
    :params [to],
    :result :bool,
    :effects #{},
    :body
-   (if
-    (= to (status-running))
-    true
+   (let
+    [__kotoba_or_4 (= to (status-running))]
     (if
-     (= to (status-ready))
-     true
-     (if
-      (= to (status-failed))
-      true
-      (if (= to (status-cancelled)) true false))))}
+     __kotoba_or_4
+     __kotoba_or_4
+     (let
+      [__kotoba_or_3 (= to (status-ready))]
+      (if
+       __kotoba_or_3
+       __kotoba_or_3
+       (let
+        [__kotoba_or_2 (= to (status-failed))]
+        (if
+         __kotoba_or_2
+         __kotoba_or_2
+         (= to (status-cancelled))))))))}
   {:name from-running?,
    :params [to],
    :result :bool,
    :effects #{},
    :body
-   (if
-    (= to (status-held))
-    true
+   (let
+    [__kotoba_or_5 (= to (status-held))]
     (if
-     (= to (status-review))
-     true
-     (if
-      (= to (status-done))
-      true
+     __kotoba_or_5
+     __kotoba_or_5
+     (let
+      [__kotoba_or_4 (= to (status-review))]
       (if
-       (= to (status-failed))
-       true
-       (if (= to (status-cancelled)) true false)))))}
+       __kotoba_or_4
+       __kotoba_or_4
+       (let
+        [__kotoba_or_3 (= to (status-done))]
+        (if
+         __kotoba_or_3
+         __kotoba_or_3
+         (let
+          [__kotoba_or_2 (= to (status-failed))]
+          (if
+           __kotoba_or_2
+           __kotoba_or_2
+           (= to (status-cancelled))))))))))}
   {:name from-held?,
    :params [to],
    :result :bool,
    :effects #{},
    :body
-   (if
-    (= to (status-ready))
-    true
+   (let
+    [__kotoba_or_5 (= to (status-ready))]
     (if
-     (= to (status-leased))
-     true
-     (if
-      (= to (status-running))
-      true
+     __kotoba_or_5
+     __kotoba_or_5
+     (let
+      [__kotoba_or_4 (= to (status-leased))]
       (if
-       (= to (status-rejected))
-       true
-       (if (= to (status-cancelled)) true false)))))}
+       __kotoba_or_4
+       __kotoba_or_4
+       (let
+        [__kotoba_or_3 (= to (status-running))]
+        (if
+         __kotoba_or_3
+         __kotoba_or_3
+         (let
+          [__kotoba_or_2 (= to (status-rejected))]
+          (if
+           __kotoba_or_2
+           __kotoba_or_2
+           (= to (status-cancelled))))))))))}
   {:name from-review?,
    :params [to],
    :result :bool,
    :effects #{},
    :body
-   (if
-    (= to (status-done))
-    true
+   (let
+    [__kotoba_or_4 (= to (status-done))]
     (if
-     (= to (status-held))
-     true
-     (if
-      (= to (status-failed))
-      true
-      (if (= to (status-cancelled)) true false))))}
+     __kotoba_or_4
+     __kotoba_or_4
+     (let
+      [__kotoba_or_3 (= to (status-held))]
+      (if
+       __kotoba_or_3
+       __kotoba_or_3
+       (let
+        [__kotoba_or_2 (= to (status-failed))]
+        (if
+         __kotoba_or_2
+         __kotoba_or_2
+         (= to (status-cancelled))))))))}
   {:name from-failed?,
    :params [to],
    :result :bool,
    :effects #{},
    :body
-   (if
-    (= to (status-ready))
-    true
-    (if (= to (status-cancelled)) true false))}
+   (let
+    [__kotoba_or_2 (= to (status-ready))]
+    (if __kotoba_or_2 __kotoba_or_2 (= to (status-cancelled))))}
   {:name transition-legal?,
    :params [from to],
    :result :bool,

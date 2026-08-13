@@ -41,60 +41,52 @@
 (defn status-count [] :i64 10)
 
 (defn status-known? [code :i64] :bool
-  (if (< code 0) false (if (>= code (status-count)) false true)))
+  (and (>= code 0) (< code (status-count))))
 
 (defn terminal? [code :i64] :bool
   ;; Nothing leaves these. An unknown code is NOT terminal -- it is unknown,
   ;; and `transition-legal?` refuses it on that ground instead, so the two
   ;; questions stay separate.
-  (if (= code (status-done))
-    true
-    (if (= code (status-rejected))
-      true
-      (if (= code (status-cancelled)) true false))))
+  (or (= code (status-done))
+      (= code (status-rejected))
+      (= code (status-cancelled))))
 
 (defn- from-backlog? [to :i64] :bool
-  (if (= to (status-ready)) true (if (= to (status-cancelled)) true false)))
+  (or (= to (status-ready)) (= to (status-cancelled))))
 
 (defn- from-ready? [to :i64] :bool
-  (if (= to (status-leased))
-    true
-    (if (= to (status-held)) true (if (= to (status-cancelled)) true false))))
+  (or (= to (status-leased))
+      (= to (status-held))
+      (= to (status-cancelled))))
 
 (defn- from-leased? [to :i64] :bool
-  (if (= to (status-running))
-    true
-    (if (= to (status-ready))
-      true
-      (if (= to (status-failed)) true (if (= to (status-cancelled)) true false)))))
+  (or (= to (status-running))
+      (= to (status-ready))
+      (= to (status-failed))
+      (= to (status-cancelled))))
 
 (defn- from-running? [to :i64] :bool
-  (if (= to (status-held))
-    true
-    (if (= to (status-review))
-      true
-      (if (= to (status-done))
-        true
-        (if (= to (status-failed)) true (if (= to (status-cancelled)) true false))))))
+  (or (= to (status-held))
+      (= to (status-review))
+      (= to (status-done))
+      (= to (status-failed))
+      (= to (status-cancelled))))
 
 (defn- from-held? [to :i64] :bool
-  (if (= to (status-ready))
-    true
-    (if (= to (status-leased))
-      true
-      (if (= to (status-running))
-        true
-        (if (= to (status-rejected)) true (if (= to (status-cancelled)) true false))))))
+  (or (= to (status-ready))
+      (= to (status-leased))
+      (= to (status-running))
+      (= to (status-rejected))
+      (= to (status-cancelled))))
 
 (defn- from-review? [to :i64] :bool
-  (if (= to (status-done))
-    true
-    (if (= to (status-held))
-      true
-      (if (= to (status-failed)) true (if (= to (status-cancelled)) true false)))))
+  (or (= to (status-done))
+      (= to (status-held))
+      (= to (status-failed))
+      (= to (status-cancelled))))
 
 (defn- from-failed? [to :i64] :bool
-  (if (= to (status-ready)) true (if (= to (status-cancelled)) true false)))
+  (or (= to (status-ready)) (= to (status-cancelled))))
 
 (defn transition-legal? [from :i64 to :i64] :bool
   ;; Unknown codes on either side are refused before the table is consulted --
