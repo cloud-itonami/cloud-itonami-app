@@ -29,21 +29,57 @@
         #_{:google {:client-id "..." :public-client? true}
            :microsoft {:client-id "..." :public-client? true}}
         {}}
+ ;; SECURITY FIRST (ADR-2608130100). `:cloud-enabled?` is the deployment-wide
+ ;; egress switch: with it false, no provider that leaves this machine is
+ ;; admitted no matter what it declares. It does NOT admit anything on its own —
+ ;; each provider still needs its own `:reviewed?`.
  :routing {:default-provider "ollama"
            :default-model "gemma4:e2b"
            :cloud-enabled? false}
+ ;; `:reviewed?` is per provider and positive: somebody looked at THIS
+ ;; destination and said yes. It is the whole gate for a loopback provider and
+ ;; half of it for one that leaves the machine — the rest (TLS, a credential
+ ;; that is actually exported) is derived from `:base-url` and the environment
+ ;; rather than declared here, so a provider cannot assert its own safety.
+ ;;
+ ;; `:local?` is documentation now. The decision reads the host out of
+ ;; `:base-url`, because a provider that called itself local while pointing
+ ;; somewhere else is exactly the case the flag could not catch.
  :providers
- [{:id "ollama"
+ [{:id "murakumo"
+   :name "Murakumo fleet"
+   :kind :anthropic-messages
+   ;; `murakumo-main` is an ALIAS the fleet resolves, never a concrete model
+   ;; id: models change capability quickly and a pinned id goes stale silently
+   ;; (root ADR-2607173100). Switching the fleet main is one KV entry there,
+   ;; and every consumer follows on its next call.
+   :base-url "https://api.murakumo.cloud/v1/messages"
+   :api-key-env "MURAKUMO_API_KEY"
+   :local? false
+   ;; Shipped off and unreviewed. The distribution is tenant-neutral: it cannot
+   ;; review a fleet on a stranger's behalf, and a default that did would be
+   ;; this file asserting somebody else's decision. An operator who wants it
+   ;; sets both here or in their own config, which is the act of reviewing.
+   :reviewed? false
+   :enabled? false}
+  {:id "ollama"
    :name "Ollama"
    :kind :ollama
    :base-url "http://127.0.0.1:11434"
    :local? true
+   ;; Reviewed in the shipped defaults, and this is a claim worth reading
+   ;; twice: the distribution can vouch for "the machine you are already
+   ;; running this on" and for nothing else. Every provider that leaves the
+   ;; machine ships `:reviewed? false` and stays that way until an operator
+   ;; changes it here.
+   :reviewed? true
    :enabled? true}
   {:id "lm-studio"
    :name "LM Studio"
    :kind :openai-compatible
    :base-url "http://127.0.0.1:1234/v1"
    :local? true
+   :reviewed? true
    :enabled? false}
   {:id "openai"
    :name "OpenAI"
@@ -51,9 +87,13 @@
    :base-url "https://api.openai.com/v1"
    :api-key-env "OPENAI_API_KEY"
    :local? false
+   :reviewed? false
    :enabled? false}]
- :privacy {:bind-loopback-only? true
-           :allow-cloud-without-review? false}
+ ;; `:allow-cloud-without-review?` was retired here (ADR-2608130100). It was
+ ;; the only way to admit a cloud provider, and it said the opposite of what an
+ ;; operator who had reviewed one wanted to say. Review is `:reviewed?` above,
+ ;; per provider.
+ :privacy {:bind-loopback-only? true}
  :cloud-relay {:base-url nil
                :access-token-env "CLOUD_ITONAMI_RELAY_ACCESS_TOKEN"}
  ;; Live mailbox synchronization. Off in the tenant-neutral distribution: an

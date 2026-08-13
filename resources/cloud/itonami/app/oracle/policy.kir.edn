@@ -30,67 +30,103 @@
        [:record
         :policy/provider
         [[:enabled :bool]
-         [:local :bool]
-         [:cloud-enabled :bool]
-         [:cloud-reviewed :bool]]]
+         [:reviewed :bool]
+         [:no-egress :bool]
+         [:egress-permitted :bool]
+         [:confidential :bool]
+         [:authenticated :bool]]]
        p
        :enabled)]
      (if
       __kotoba_and_2
+      (record-get
+       [:record
+        :policy/provider
+        [[:enabled :bool]
+         [:reviewed :bool]
+         [:no-egress :bool]
+         [:egress-permitted :bool]
+         [:confidential :bool]
+         [:authenticated :bool]]]
+       p
+       :reviewed)
+      __kotoba_and_2))
+    (if
+     (record-get
+      [:record
+       :policy/provider
+       [[:enabled :bool]
+        [:reviewed :bool]
+        [:no-egress :bool]
+        [:egress-permitted :bool]
+        [:confidential :bool]
+        [:authenticated :bool]]]
+      p
+      :no-egress)
+     true
+     (if
       (let
-       [__kotoba_or_2
+       [__kotoba_and_2
         (record-get
          [:record
           :policy/provider
           [[:enabled :bool]
-           [:local :bool]
-           [:cloud-enabled :bool]
-           [:cloud-reviewed :bool]]]
+           [:reviewed :bool]
+           [:no-egress :bool]
+           [:egress-permitted :bool]
+           [:confidential :bool]
+           [:authenticated :bool]]]
          p
-         :local)]
+         :egress-permitted)]
        (if
-        __kotoba_or_2
-        __kotoba_or_2
+        __kotoba_and_2
         (let
          [__kotoba_and_2
           (record-get
            [:record
             :policy/provider
             [[:enabled :bool]
-             [:local :bool]
-             [:cloud-enabled :bool]
-             [:cloud-reviewed :bool]]]
+             [:reviewed :bool]
+             [:no-egress :bool]
+             [:egress-permitted :bool]
+             [:confidential :bool]
+             [:authenticated :bool]]]
            p
-           :cloud-enabled)]
+           :confidential)]
          (if
           __kotoba_and_2
           (record-get
            [:record
             :policy/provider
             [[:enabled :bool]
-             [:local :bool]
-             [:cloud-enabled :bool]
-             [:cloud-reviewed :bool]]]
+             [:reviewed :bool]
+             [:no-egress :bool]
+             [:egress-permitted :bool]
+             [:confidential :bool]
+             [:authenticated :bool]]]
            p
-           :cloud-reviewed)
-          __kotoba_and_2))))
-      __kotoba_and_2))
-    true
+           :authenticated)
+          __kotoba_and_2))
+        __kotoba_and_2))
+      true
+      false))
     false),
    :param-types [[:ref :policy/provider]]}],
  :oracle-value nil,
  :schema-identities
  #:policy{:provider
-          "827d5654469168403369b653d4e2cb16c57117f21e2cf9871e3a926f8b333f13"},
+          "c2aedffc1f39f92f7417ed80378121fb0c078dc0ae753b03e1baeacb1227f002"},
  :exports [loopback-host? provider-allowed?],
  :schemas
  #:policy{:provider
           [:record
            :policy/provider
            [[:enabled :bool]
-            [:local :bool]
-            [:cloud-enabled :bool]
-            [:cloud-reviewed :bool]]]},
+            [:reviewed :bool]
+            [:no-egress :bool]
+            [:egress-permitted :bool]
+            [:confidential :bool]
+            [:authenticated :bool]]]},
  :effects #{},
  :blocks [],
  :entry nil}

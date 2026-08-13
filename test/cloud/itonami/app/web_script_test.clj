@@ -36,7 +36,7 @@
              :cloud-enabled? false}
    :privacy {:allow-cloud-without-review? false}
    :memory {:max-session-messages 10 :max-context-messages 10}
-   :providers [{:id "ollama" :kind :ollama :local? true :enabled? true}]})
+   :providers [{:id "ollama" :kind :ollama :local? true :base-url "http://127.0.0.1:11434" :reviewed? true :enabled? true}]})
 
 (defn- node-version []
   (try (let [{:keys [exit out]} (shell/sh "node" "--version")]

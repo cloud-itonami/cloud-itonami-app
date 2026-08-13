@@ -37,9 +37,12 @@
   ## What a Bot's 'own computer' is here
 
   Not a cloud VM. This application's thesis is that anything leaving this
-  machine has to be named before it can happen, and a per-Bot VM inverts it:
-  the Bot's work would happen somewhere the fail-closed policy does not reach,
-  and 'local-first' would become a description of the chat window only. A Bot's
+  machine has to be NAMED and REVIEWED before it can happen (ADR-2608130100),
+  and a per-Bot VM inverts it: the Bot's work would happen somewhere the
+  fail-closed policy does not reach, so the review would cover the chat window
+  and nothing the Bot actually did. Note the thesis is about the policy
+  reaching the work, not about the work being local — a reviewed, encrypted,
+  credentialed provider is admissible; an unreachable one is not. A Bot's
   computer is therefore this machine, entered through a narrow door — its own
   grant, its own token resolution, its own conversation — and heavy or
   long-running work goes to the externally supervised OrganismWorkers

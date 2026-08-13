@@ -55,16 +55,29 @@
 ;; the parity test is what makes that safe to check.
 
 (ns cloud.itonami.app.policy
-  (:schemas {;; Everything `provider-allowed?` needs, flattened out of the two
-             ;; maps the cljc reads it from. `cloud-enabled` is the global gate
-             ;; (`[:routing :cloud-enabled?]`) and `cloud-reviewed` is the
-             ;; privacy gate (`[:privacy :allow-cloud-without-review?]`); they
-             ;; are separate fields because they come from separate places and
-             ;; either one alone must not admit a cloud provider.
+  (:schemas {;; Everything `provider-allowed?` needs, flattened out of the maps
+             ;; the cljc reads it from.
+             ;;
+             ;; `reviewed` is per PROVIDER and positive: somebody looked at
+             ;; this destination and said yes. It replaced a global
+             ;; `:allow-cloud-without-review?`, which could only ever express
+             ;; the opposite — an operator who had actually reviewed one cloud
+             ;; provider had no way to say so, and had to switch review off for
+             ;; everything to use it. A gate whose only setting is "skip me" is
+             ;; not a review gate.
+             ;;
+             ;; `no-egress` is the honest name for what used to be `local`. It
+             ;; says the bytes do not leave this machine, which is a property;
+             ;; "local" had come to mean "therefore trusted", which is not one.
+             ;;
+             ;; `egress-permitted` is the deployment-wide switch
+             ;; (`[:routing :cloud-enabled?]`). Kept so an operator can forbid
+             ;; ALL egress in one place regardless of what any provider claims.
              :policy/provider
              [:record :policy/provider
-              [[:enabled :bool] [:local :bool]
-               [:cloud-enabled :bool] [:cloud-reviewed :bool]]]})
+              [[:enabled :bool] [:reviewed :bool] [:no-egress :bool]
+               [:egress-permitted :bool] [:confidential :bool]
+               [:authenticated :bool]]]})
   (:export [loopback-host? provider-allowed?]))
 
 ;; The three spellings of "this machine". A set literal would be the natural
@@ -76,13 +89,31 @@
     true
     false))
 
-;; A local provider is admitted by being enabled. A cloud provider needs BOTH
-;; gates. There is deliberately no fallback from local to cloud: a disabled
-;; local provider denies, it does not escalate.
+;; SECURITY FIRST — locality is evidence, not permission.
+;;
+;; Review is universal. Every provider needs somebody to have said yes to it,
+;; including one on this machine: a process listening on 127.0.0.1 is not
+;; trustworthy for being there, it is merely close. The previous rule admitted
+;; any enabled loopback provider outright, which is the substitution this
+;; application decided to stop making — "it did not leave the machine" and "it
+;; is safe" are different sentences.
+;;
+;; Egress then adds what egress needs: the deployment permits it at all, the
+;; transport is encrypted, and the request carries a credential. The last is
+;; not about confidentiality — TLS already has that — but about the
+;; destination being an account somebody holds rather than a URL somebody
+;; typed.
+;;
+;; There is still no fallback from one provider to another: a provider that
+;; fails any of this denies, it does not escalate.
 (defn provider-allowed? [p [:ref :policy/provider]] :bool
   (if (and (record-get p :enabled)
-           (or (record-get p :local)
-               (and (record-get p :cloud-enabled)
-                    (record-get p :cloud-reviewed))))
-    true
+           (record-get p :reviewed))
+    (if (record-get p :no-egress)
+      true
+      (if (and (record-get p :egress-permitted)
+               (and (record-get p :confidential)
+                    (record-get p :authenticated)))
+        true
+        false))
     false))

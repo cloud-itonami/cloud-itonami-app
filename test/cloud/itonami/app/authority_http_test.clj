@@ -37,7 +37,7 @@
              :cloud-enabled? false}
    :privacy {:allow-cloud-without-review? false :bind-loopback-only? true}
    :memory {:max-session-messages 10 :max-context-messages 10}
-   :providers [{:id "ollama" :kind :ollama :local? true :enabled? true}]
+   :providers [{:id "ollama" :kind :ollama :local? true :base-url "http://127.0.0.1:11434" :reviewed? true :enabled? true}]
    ;; Shipped posture: every authority off. A route that answers usefully with them off
    ;; is the one a settings screen needs in order to say so.
    :authorities {:esim {:enabled? false :endpoint nil}

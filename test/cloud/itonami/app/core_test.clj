@@ -42,9 +42,16 @@
              :cloud-enabled? false}
    :privacy {:allow-cloud-without-review? false}
    :memory {:max-session-messages 10 :max-context-messages 10}
-   :providers [{:id "ollama" :kind :ollama :local? true :enabled? true}
+   :providers [{:id "ollama" :kind :ollama :local? true
+                :base-url "http://127.0.0.1:11434"
+                :reviewed? true :enabled? true}
+               ;; Reviewed and credentialed, so the ONLY thing standing between
+               ;; it and admission is the deployment egress switch — which is
+               ;; what the test below turns on and off.
                {:id "cloud" :kind :openai-compatible
-                :local? false :enabled? true}]})
+                :base-url "https://cloud.example.com/v1"
+                :api-key-env "PATH"
+                :local? false :reviewed? true :enabled? true}]})
 
 (def ^:private passkey-session-options
   {:kind :passkey
@@ -52,7 +59,10 @@
    :authn-ref "test-passkey-authn"
    :authn-level :phishing-resistant})
 
-(deftest local-first-policy-is-fail-closed
+(deftest security-first-policy-is-fail-closed
+  ;; Renamed with the principle (ADR-2608130100). The assertions are the same
+  ;; shape — a provider is admitted or it is not — but what admits one changed:
+  ;; review is universal and locality is evidence rather than permission.
   (is (= "ollama" (:id (policy/select-provider config nil))))
   (is (nil? (policy/select-provider config "cloud")))
   (is (nil? (policy/select-provider config "missing")))

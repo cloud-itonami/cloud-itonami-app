@@ -144,7 +144,8 @@
                    :cloud-enabled? false}
          :privacy {:allow-cloud-without-review? false}
          :providers [{:id "ollama" :kind :ollama :local? true
-                      :enabled? true}]}
+                      :base-url "http://127.0.0.1:11434"
+                      :reviewed? true :enabled? true}]}
         result (with-redefs [provider/agent-turn
                              (fn [_ request]
                                (is (= "test-model" (:model request)))
