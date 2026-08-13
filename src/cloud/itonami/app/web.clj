@@ -1275,7 +1275,11 @@
        [:button {:class "mobile-nav-backdrop" :type "button"
                  :aria-label "メニューを閉じる"}]
        [:div {:class "sidebar__status"}
-        [:strong "● ローカルモード"]
+        ;; Says which mode is actually in effect. It asserted 「ローカルモード」
+        ;; unconditionally until ADR-2608130100, which was true only while
+        ;; egress was impossible; with a reviewed cloud provider admitted it
+        ;; was a badge claiming the opposite of what the app was doing.
+        [:strong (if cloud? "● 許可済み接続あり" "● ローカルのみ")]
         [:span {:id "workspace-status"} "既存サービスを確認中…"]]]
       [:div {:class "main"}
        [:header {:class "topbar"}

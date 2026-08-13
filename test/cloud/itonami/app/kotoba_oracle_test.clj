@@ -71,9 +71,14 @@
   ;; path cannot recompile the way a test can. Pinned here so that if a pin
   ;; advance ever makes it true again, this says so before the application
   ;; finds out.
-  (is (false? (policy/provider-allowed? {:routing {:cloud-enabled? true}
-                                         :privacy {:allow-cloud-without-review? false}}
-                                        {:enabled? true :local? false})))
-  (is (true? (policy/provider-allowed? {:routing {:cloud-enabled? true}
-                                        :privacy {:allow-cloud-without-review? true}}
-                                       {:enabled? true :local? false}))))
+  ;; Inputs follow the security-first shape (ADR-2608130100); what this pins is
+  ;; unchanged — a record reaching the guest through the production seam, with
+  ;; two rows that differ only in a field carried INSIDE that record.
+  (is (false? (policy/provider-allowed?
+               {:routing {:cloud-enabled? true}}
+               {:enabled? true :reviewed? false
+                :base-url "https://cloud.example.com/v1" :api-key-env "PATH"})))
+  (is (true? (policy/provider-allowed?
+              {:routing {:cloud-enabled? true}}
+              {:enabled? true :reviewed? true
+               :base-url "https://cloud.example.com/v1" :api-key-env "PATH"}))))

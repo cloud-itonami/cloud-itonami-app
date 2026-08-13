@@ -36,7 +36,8 @@
 
 (def provider-record
   [:record :policy/provider
-   [[:enabled :bool] [:local :bool] [:cloud-enabled :bool] [:cloud-reviewed :bool]]])
+   [[:enabled :bool] [:reviewed :bool] [:no-egress :bool]
+    [:egress-permitted :bool] [:confidential :bool] [:authenticated :bool]]])
 
 (def intent-check-record
   [:record :ao/intent-check
@@ -106,14 +107,25 @@
    ;; ── policy ──────────────────────────────────────────────────────
    [{:oracle :policy :export 'loopback-host? :args ["127.0.0.1"] :expect true}
     {:oracle :policy :export 'loopback-host? :args ["example.com"] :expect false}
+    ;; enabled + reviewed + no egress -> admitted
     {:oracle :policy :export 'provider-allowed?
-     :args [(oracle/record provider-record [true true false false])] :expect true}
+     :args [(oracle/record provider-record [true true true false false false])] :expect true}
+    ;; SECURITY FIRST: loopback no longer admits on its own. Unreviewed denies.
     {:oracle :policy :export 'provider-allowed?
-     :args [(oracle/record provider-record [false true false false])] :expect false}
+     :args [(oracle/record provider-record [true false true false false false])] :expect false}
+    ;; disabled denies whatever else is true
     {:oracle :policy :export 'provider-allowed?
-     :args [(oracle/record provider-record [true false true true])] :expect true}
+     :args [(oracle/record provider-record [false true true true true true])] :expect false}
+    ;; egress with everything present -> admitted
     {:oracle :policy :export 'provider-allowed?
-     :args [(oracle/record provider-record [true false true false])] :expect false}
+     :args [(oracle/record provider-record [true true false true true true])] :expect true}
+    ;; egress missing the deployment switch / TLS / a credential -> denied
+    {:oracle :policy :export 'provider-allowed?
+     :args [(oracle/record provider-record [true true false false true true])] :expect false}
+    {:oracle :policy :export 'provider-allowed?
+     :args [(oracle/record provider-record [true true false true false true])] :expect false}
+    {:oracle :policy :export 'provider-allowed?
+     :args [(oracle/record provider-record [true true false true true false])] :expect false}
 
     ;; ── fleet-core ──────────────────────────────────────────────────
     {:oracle :fleet-core :export 'catalog-schema-ok?

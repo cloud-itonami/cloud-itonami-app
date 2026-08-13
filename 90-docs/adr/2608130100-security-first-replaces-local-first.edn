@@ -1,0 +1,105 @@
+[{:db/id -1
+  :adr/id "ADR-2608130100"
+  :adr/title "Security first replaces local first; review becomes per-provider and universal"
+  :adr/status "accepted"
+  :adr/date "2026-08-13"
+  :adr/supersedes "the local-first framing in README and bots.clj"
+  :adr/body
+  "## Decision
+
+Cloud Itonami's founding principle is SECURITY first, not LOCAL first (owner
+directive, 2026-08-13). Keeping data on this machine remains an instrument for
+security. It stops being the thing that grants permission.
+
+`policy.kotoba/provider-allowed?` changes from
+
+    enabled AND (local OR (cloud-enabled AND cloud-reviewed))
+
+to
+
+    enabled AND reviewed AND (no-egress OR (egress-permitted AND confidential AND authenticated))
+
+## Why the old rule was the principle's bug, not its expression
+
+Two things were wrong with it, and only one of them was about the cloud.
+
+FIRST: `local` was a free pass. An enabled loopback provider was admitted on
+that alone. But a process listening on 127.0.0.1 is close, not trustworthy —
+any local process can bind a port, and 'the bytes did not leave the machine'
+and 'this is safe' are different sentences. The old rule substituted one for
+the other, which is exactly what a security-first principle must not do.
+
+SECOND, and the reason this surfaced: the ONLY way to admit a cloud provider
+was the global `:privacy :allow-cloud-without-review?`. There was no way to
+record that a specific provider HAD been reviewed. An operator who had
+actually reviewed one destination had to switch review off for everything in
+order to use it. A gate whose only setting is 'skip me' is not a review gate,
+and its existence is what told us the principle was upside down rather than
+merely strict.
+
+## What replaces it
+
+Review is UNIVERSAL and per provider. `:reviewed?` is a positive fact about one
+destination: somebody looked at this and said yes. It is the whole gate for a
+provider with no egress and half the gate for one with egress.
+
+Egress adds what egress needs: `:cloud-enabled?` (a deployment-wide switch, so
+an operator can forbid all egress in one place), an encrypted transport, and a
+credential that is actually exported. The credential is not about
+confidentiality — TLS already provides that — but about the destination being
+an account somebody holds rather than a URL somebody typed.
+
+The result is STRICTER overall, which is the test of whether this was a
+loosening dressed up as a principle. Before, an enabled loopback provider was
+admitted; now it must also be reviewed. What became possible is narrow and
+deliberate: a reviewed, encrypted, credentialed cloud provider — for example
+the murakumo fleet — can be admitted, which under the old rule required
+declaring that review does not happen.
+
+## Facts are derived, never declared
+
+The host computes every fact from the configuration rather than reading a flag:
+`no-egress` by parsing the host out of `:base-url`, `confidential` from its
+scheme, `authenticated` by reading the named environment variable. `:local?`
+survives as documentation and is no longer an input — a provider that called
+itself local while pointing at a remote address is precisely the case a flag
+cannot catch, and precisely what a typo or an attacker gets to write.
+
+## Shipped defaults stay fail-closed
+
+The distribution is tenant-neutral, so it reviews nothing on a stranger's
+behalf. Loopback providers ship `:reviewed? true` because the distribution can
+vouch for 'the machine you are already running this on' and for nothing else.
+Every provider that leaves the machine — murakumo and OpenAI both — ships
+`:reviewed? false`, `:enabled? false`, with `:cloud-enabled?` false. Turning
+those on is the act of reviewing, and it happens in an operator's own config.
+
+## Consequences
+
+- `:privacy :allow-cloud-without-review?` is retired. It cannot be expressed in
+  the new rule and should not be: it named the absence of the thing that now
+  admits a provider.
+- The UI stopped asserting 「ローカルモード」 unconditionally. That badge was
+  true only while egress was impossible; with a reviewed provider admitted it
+  claimed the opposite of what the application was doing.
+- `core-test/local-first-policy-is-fail-closed` became
+  `security-first-policy-is-fail-closed`. The assertions keep their shape; what
+  admits a provider is what changed.
+- Every provider fixture in the suite had to gain `:reviewed?` and a real
+  `:base-url`. That churn is the rule being enforced rather than described.
+
+## Verification
+
+The parity corpus went from 16 rows to 32 x the egress switch, exercised
+through the derivation rather than by setting the booleans directly — a fixture
+that set them would test the core twice and the derivation not at all. Four
+properties are asserted separately from agreement: an unreviewed loopback
+provider is denied (TRUE before this change, which was the bug); plaintext
+egress is denied; a named-but-unexported credential does not count as one; and
+a provider that declares `:local? true` while pointing at a remote host is
+treated as egress.
+
+Watched failing: inverting the review test admitted an unreviewed provider and
+failed `security-first-review-is-universal`, the oracle case table, and the
+ClojureScript gate. 1403 tests / 8372 assertions on the JVM and 106 oracle
+cases over 8 cores on ClojureScript, both green."}]
