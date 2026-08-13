@@ -7910,7 +7910,10 @@
       $('#email-login-form').hidden = Boolean(data['authenticated?']) ||
         !data['email-login-configured?'];
       $('#registration-form').hidden = Boolean(data['registered?']);
-      $('#passkey-signin').hidden = !data['registered?'];
+      // Gated on a CREDENTIAL existing, not on a User existing. A device with
+      // a User and no enrolled Passkey has nothing to authenticate with, and
+      // showing the button there offers a door that cannot open.
+      $('#passkey-signin').hidden = !data['device-passkey?'];
       if (data['registered?'] && !data['authenticated?']) {
         const pendingPasskey = data['passkey-required?'];
         $('#registration-title').textContent = pendingPasskey

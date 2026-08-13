@@ -823,6 +823,16 @@
                               (memberships-for-user state (:user-id session))))]
     {:schema "cloud.itonami.app.identity.v1"
      :registered? (boolean (seq (:users state)))
+     ;; Whether a Passkey CREDENTIAL exists on this device — which is not the
+     ;; same question as `:registered?`, and conflating them is what put a
+     ;; dead button on the sign-in screen. `:registered?` says a User exists;
+     ;; the client gated "Passkey でサインイン" on it, so on a device whose
+     ;; credentials had never been enrolled the button appeared and every
+     ;; press failed with an empty `allowCredentials`. Measured 2026-08-13:
+     ;; registered? true, credentials 0.
+     ;; Named for the DEVICE, because `:passkey-enrolled?` already means
+     ;; something else here — a per-user flag (see `missing-user?` above).
+     :device-passkey? (boolean (seq (:passkeys state)))
      ;; This flag means the interrupted Passkey-first owner ceremony can be
      ;; resumed, not merely that nobody has enrolled a Passkey. Email/SSO
      ;; sign-up deliberately creates an active User without one.
