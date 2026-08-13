@@ -748,7 +748,10 @@
                    (cookie-value exchange identity/cookie-name))]
       (require-origin! exchange config)
       (when session (require-csrf! exchange session))
-      (send! exchange 200 (identity/start-central-authentication! session)))
+      ;; The origin is passed so the callback lands where the person already
+      ;; is. Hardcoding it sent the session to a different cookie jar.
+      (send! exchange 200
+             (identity/start-central-authentication! session (origin config))))
 
     ["GET" "/api/auth/itonami/callback"]
     (let [params (query-params exchange)]

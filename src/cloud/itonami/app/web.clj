@@ -2641,7 +2641,9 @@
            [:form {:class "settings-form" :id "registration-form"}
             [:p {:class "form-help"}
              "Passkey の P-256 公開鍵から User DID（did:key）を生成します。秘密鍵は端末から出ません。"]
-            [:button {:class "primary-action" :id "registration-submit"
+            ;; Secondary: registering a Passkey is a path for a device that
+            ;; has none, not the default answer to "how do I get in".
+            [:button {:class "tool-button" :id "registration-submit"
                       :type "submit"} "Passkey で登録"]]
            [:div {:class "settings-stack" :id "registered-auth" :hidden true}
             [:div {:class "settings-form" :id "itonami-cloud-signin-card"}
@@ -2655,7 +2657,11 @@
              (dds/heading 3 "Passkey で続ける" {:size "20"})
              [:p {:class "form-help"}
               "この端末の Passkey で本人確認します。認証情報は端末から出ません。"]
-             [:button {:class "primary-action" :id "passkey-signin" :type "button"}
+             ;; Secondary. Two identically-styled primary buttons stacked gave
+             ;; a first-time person no recommended path — and this one only
+             ;; works for somebody already registered on THIS device, which is
+             ;; not who is stuck on this screen.
+             [:button {:class "tool-button" :id "passkey-signin" :type "button"}
               "Passkey でサインイン"]]
             [:form {:class "settings-form" :id "email-login-form" :hidden true}
              (dds/heading 3 "Emailで続ける" {:size "20"})

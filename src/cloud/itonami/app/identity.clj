@@ -48,7 +48,13 @@
    :central {:enabled? true
              :issuer "https://auth.itonami.cloud"
              :client-id "cloud-itonami-app-native"
-             :redirect-uri "http://127.0.0.1:1338/api/auth/itonami/callback"
+             ;; Derived from the request origin at call time, not fixed here.
+             ;; A literal `127.0.0.1` was the bug: this app serves on
+             ;; `localhost`, so the callback landed on a DIFFERENT origin —
+             ;; a separate cookie jar, and one `require-origin!` rejects. The
+             ;; session was created where the app was not. An operator whose
+             ;; client registration demands a fixed URI can still set one.
+             :redirect-uri nil
              :scope "identity:read"}})
 (defonce runtime-identity-profile (atom default-identity-profile))
 (defonce runtime-auth-profile (atom default-auth-profile))
@@ -2171,10 +2177,17 @@
   An authenticated local session turns this into an explicit link. Without
   one, the returned DID may sign in only when already bound, except on a truly
   empty install where it establishes the first local User."
-  [session]
+  [session origin]
   (prune-central-auth-transactions!)
   (let [{:keys [enabled? issuer client-id redirect-uri scope
                 authorization-endpoint]} (central-auth-config)
+        ;; Same construction the other SSO providers already use
+        ;; (`sso-callback-uri`): the callback belongs to whatever origin the
+        ;; person is actually on, so the session it creates is readable there.
+        redirect-uri (or redirect-uri
+                         (when origin
+                           (str (str/replace (str origin) #"/+$" "")
+                                "/api/auth/itonami/callback")))
         link? (boolean session)]
     (when-not (and enabled? issuer client-id redirect-uri scope)
       (throw (ex-info "auth.itonami.cloud 認証が未設定です。"
