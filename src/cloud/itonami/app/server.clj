@@ -708,8 +708,45 @@
 (defn- auth-lifecycle-path? [path]
   (contains? #{"/api/auth/sessions" "/api/auth/sessions/revoke"
                "/api/auth/signout" "/api/auth/identities/unlink"
-               "/api/auth/itonami/start" "/api/auth/itonami/callback"}
+               "/api/auth/itonami/start" "/api/auth/itonami/callback"
+               "/api/auth/itonami/handoff"}
              path))
+
+(defn- open-in-system-browser!
+  "Hand `url` to the desktop's default browser.
+
+  Called with the authorization URL this server just constructed from its own
+  configuration — never with anything a caller sent. That is the whole reason
+  this is not an endpoint: a general \"open a URL\" primitive on a loopback
+  port is a phishing gadget, and there is no need for one. `https?` is checked
+  anyway, because a rule that depends on a caller staying disciplined is not a
+  rule.
+
+  The same call `kotoba-shell`'s `browser/open-url` provider makes. It is
+  inlined rather than routed through the shell host because the webview
+  exposes no JS bridge to reach a provider command, and the server is already
+  a local process on this machine.
+
+  Failure is reported, not thrown: the response still carries the URL, so a
+  person whose default browser did not open can follow the link themselves."
+  [url]
+  (try
+    (if-not (and (string? url) (re-matches #"https://.*" url))
+      false
+      (do (-> (ProcessBuilder. ^java.util.List ["/usr/bin/open" url])
+              (.redirectErrorStream true)
+              .start)
+          true))
+    (catch Exception _ false)))
+
+(defn- same-origin?
+  "`require-origin!`'s test, as an answer instead of an exception.
+
+  The claim endpoint needs the fact rather than the throw: every refusal it
+  makes has to look identical on the wire, and a 403 that only a cross-origin
+  caller sees is a distinguishable response."
+  [^HttpExchange exchange config]
+  (= (origin config) (.getFirst (.getRequestHeaders exchange) "Origin")))
 
 (defn- handle-auth-lifecycle! [exchange config method path]
   (case [method path]
@@ -745,13 +782,49 @@
 
     ["POST" "/api/auth/itonami/start"]
     (let [session (identity/session
-                   (cookie-value exchange identity/cookie-name))]
+                   (cookie-value exchange identity/cookie-name))
+          request (read-json exchange)]
       (require-origin! exchange config)
       (when session (require-csrf! exchange session))
       ;; The origin is passed so the callback lands where the person already
       ;; is. Hardcoding it sent the session to a different cookie jar.
-      (send! exchange 200
-             (identity/start-central-authentication! session (origin config))))
+      ;;
+      ;; `:handoff?` is the caller saying it will not be able to read that
+      ;; cookie — the native webview, which sends the authorization request to
+      ;; the system browser. It gets a claim token; a browser does not ask and
+      ;; never receives one.
+      (let [handoff? (true? (:handoff request))
+            started (identity/start-central-authentication!
+                     session (origin config) {:handoff? handoff?})]
+        ;; A caller asking for a handoff is telling us it cannot navigate to
+        ;; this URL itself. Opening it here is what makes the sign-in happen
+        ;; somewhere WebAuthn works. The URL still goes back in the response
+        ;; so the person can follow it by hand if their default browser did
+        ;; not come up.
+        (send! exchange 200
+               (cond-> started
+                 handoff? (assoc :opened-externally?
+                                 (open-in-system-browser! (:url started)))))))
+
+    ["POST" "/api/auth/itonami/handoff"]
+    ;; No session is required and none can be: the whole point is that this
+    ;; caller has no cookie. The claim token is the entire authority, which is
+    ;; why it is single-use, short-lived, and never travels in a URL.
+    (let [request (read-json exchange)
+          result (identity/claim-session-handoff!
+                  (:handoff request)
+                  {:origin-trusted? (same-origin? exchange config)})]
+      ;; One shape for every refusal — see `identity/claim-session-handoff!`.
+      ;; A 200 carrying `{"ready?": false}` is the answer to a wrong guess, an
+      ;; early poll, a replay and an expiry alike.
+      (if (:ready? result)
+        ;; No CSRF token here. `public-state` already hands one to whoever
+        ;; presents the cookie, so the client reloads identity and gets it
+        ;; there; sending it twice would put a second secret on this wire for
+        ;; no gain.
+        (send! exchange 200 (select-keys result [:ready? :provider :linked?])
+               {"Set-Cookie" (session-cookie (:token result))})
+        (send! exchange 200 {:ready? false})))
 
     ["GET" "/api/auth/itonami/callback"]
     (let [params (query-params exchange)]

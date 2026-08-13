@@ -1,0 +1,105 @@
+;; A SESSION HANDOFF's DECISION CORE — moving an authentication that already
+;; succeeded from the agent that completed it into the one that asked for it.
+;;
+;; Not to be confused with `handoff_core.kotoba`, which is one Bot giving work
+;; to another. This file has nothing to do with Bots. The word is the same
+;; because the shape is: something crosses a boundary, and the whole question
+;; is what it must not carry with it.
+;;
+;; ## Why a session has to cross a boundary at all
+;;
+;; The native window is a webview with its OWN cookie jar, and RFC 8252 says
+;; the authorization request must not open inside it. So the person signs in
+;; in the system browser, the loopback callback lands there, and the session
+;; cookie is set THERE — in a jar the native window cannot read. The native
+;; window started the flow and ends up with nothing to show for it. That is
+;; the blank screen, stated precisely.
+;;
+;; The fix is a second, separate secret: the starter keeps a claim token that
+;; never enters a URL, never reaches the authorization server, and never
+;; appears in a redirect. When the callback completes, the starter presents it
+;; and receives a session of its own.
+;;
+;; ## Why the claim token is not the OAuth `state`
+;;
+;; Because `state` is published. It travels in the authorization URL, sits in
+;; the address bar, lands in the authorization server's logs, and comes back
+;; in a redirect. Anything that can be read by a bystander is not a bearer
+;; secret, and a claim endpoint keyed on `state` would hand a session to
+;; whoever read one. The claim token is generated in the same breath and goes
+;; only into the JSON response the starter already receives.
+;;
+;; ## What this file refuses, and the failure each refusal is for
+;;
+;;   - not `origin-trusted` — a page on the open internet POSTing a guessed
+;;     token at a loopback port. The HTTP layer already applies the same test;
+;;     it is restated here for the reason `handoff_core/may-approve?` restates
+;;     `bot_core`'s: a refusal is only reliable where the argument is made.
+;;   - not `ready` — claiming before anybody authenticated. Without this, a
+;;     claim token is a session that exists as soon as it is issued, and
+;;     starting a sign-in would be the same as finishing one.
+;;   - `claimed` — replay. A claim is a one-shot: the window that asked for
+;;     the session got it, and a second presentation of the same token is
+;;     somebody else holding a copy.
+;;   - `expired` — a token that outlives its purpose. The gap between the
+;;     callback landing and the window that is already polling picking it up
+;;     is seconds. Anything longer is a session waiting to be stolen.
+;;
+;; A caller that is refused is told nothing about WHICH of the four it was.
+;; The host collapses every negative answer into the same "not ready", so a
+;; guessed token cannot be confirmed by the shape of its rejection. That
+;; collapse belongs to the host: this file keeps the distinctions because
+;; refusing precisely and answering vaguely are different jobs.
+;;
+;; ## Why it is written this narrowly
+;;
+;; Same native word-typed slice as the other cores: `:bool` scalars, a sealed
+;; all-scalar record, `if`. Facts arrive as a record because a bare `:bool`
+;; parameter is a backend gap (compiler ADR-0219).
+;;
+;; Parity: test/cloud/itonami/app/session_handoff_kotoba_parity_test.clj
+
+(ns session-handoff-core
+  (:schemas {;; What the host has established about one presented claim token.
+             ;;
+             ;; Deliberately absent: the token itself, the user it would sign
+             ;; in as, the identity provider, and the authentication strength.
+             ;; The first would put a live secret into a decision; the rest
+             ;; are the CALLBACK's judgement, already made and already
+             ;; recorded, and re-deciding them here would mean this file could
+             ;; disagree with the authentication it is only supposed to move.
+             ;;
+             ;; `ready` is the host's answer to "did the callback complete for
+             ;; this claim", not "does this claim exist" — a claim is written
+             ;; when the flow starts, so existence proves only that somebody
+             ;; started something.
+             :session-handoff/claim
+             [:record :session-handoff/claim
+              [[:origin-trusted :bool]
+               [:ready :bool]
+               [:claimed :bool]
+               [:expired :bool]]]})
+  (:export [claimable? main]))
+
+(defn claimable? [c [:ref :session-handoff/claim]] :bool
+  ;; Origin first and alone, because it is the only one of the four that is
+  ;; about WHO is asking rather than about the state of the claim. No
+  ;; combination of ready, unclaimed and unexpired reaches past it.
+  ;;
+  ;; Then ready, then the two ways a ready claim is spent — used, or too old.
+  ;; Nested `if` rather than one conjunction so each refusal is a separate
+  ;; line to put a breakpoint on and a separate case in the parity corpus.
+  (if (record-get c :origin-trusted)
+    (if (record-get c :ready)
+      (if (record-get c :claimed)
+        false
+        (if (record-get c :expired)
+          false
+          true))
+      false)
+    false))
+
+(defn main [] :i64
+  ;; Sentinel for the wasm host contract, not a battery. The assertions live
+  ;; in the parity test where they can be compared against the cljc.
+  0)

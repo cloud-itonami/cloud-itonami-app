@@ -18,7 +18,14 @@
  :app/version "0.4.2"
  :app/icon "resources/cloud/itonami/app/icon.png"
  :runtime {:surface :kotoba/web
-           :window {:web-url "http://localhost:1338/"
+           ;; `?surface=native` is how the page learns it is inside the native
+           ;; webview rather than a browser tab, and it is written HERE because
+           ;; this file is the only place the native surface is declared. The
+           ;; page needs to know for exactly one reason: an authorization
+           ;; request must not open in an embedded webview (RFC 8252, and
+           ;; independently because this webview cannot do WebAuthn), so
+           ;; sign-in has to go to the system browser and come back by claim.
+           :window {:web-url "http://localhost:1338/?surface=native"
                     :width 1100 :height 860
                     :min-width 720 :min-height 600}}
  :local/contracts

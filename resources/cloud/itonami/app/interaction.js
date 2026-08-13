@@ -7640,21 +7640,61 @@
       google:'Google', microsoft:'Microsoft', github:'GitHub',
       'itonami-cloud':'auth.itonami.cloud'
     };
+    // The native window is a webview, and an authorization request must not
+    // open inside one — RFC 8252 says so, and this application has its own
+    // evidence: the embedded webview cannot do WebAuthn, which is how people
+    // actually sign in here. `?surface=native` is set by app.kotoba.edn, the
+    // one file that declares the native surface.
+    const nativeSurface = () =>
+      new URLSearchParams(location.search).get('surface') === 'native';
+    const claimSession = async (claim, deadline) => {
+      // Poll until the person finishes in the system browser. Every refusal
+      // comes back as the same {ready?: false} — an early poll, a wrong token
+      // and a spent one are one answer — so there is nothing to branch on
+      // here but readiness and the clock.
+      while (Date.now() < deadline) {
+        const request = await fetch('/api/auth/itonami/handoff', {
+          method:'POST', headers:{'Content-Type':'application/json'},
+          body: JSON.stringify({handoff: claim})
+        });
+        const result = await request.json().catch(() => ({}));
+        if (result?.['ready?']) return result;
+        await new Promise((resolve) => setTimeout(resolve, 1500));
+      }
+      return null;
+    };
     const startCentralAuth = async (button) => {
       button.disabled = true;
       const previous = button.textContent;
       button.textContent = '準備中…';
+      const native = nativeSurface();
       try {
         const headers = identityState?.['authenticated?']
           ? identityHeaders() : {'Content-Type':'application/json'};
         const request = await fetch('/api/auth/itonami/start', {
-          method:'POST', headers, body:'{}'
+          method:'POST', headers, body: JSON.stringify({handoff: native})
         });
         const result = await request.json();
         if (!request.ok) {
           throw new Error(result?.error?.message || '中央認証を開始できませんでした。');
         }
-        location.assign(result.url);
+        if (!native) {
+          location.assign(result.url);
+          return;
+        }
+        // The server opened the URL in the default browser. If it could not,
+        // say so and show the link rather than leaving a window that looks
+        // like it is doing something.
+        button.textContent = 'ブラウザで認証中…';
+        $('#identity-status').textContent = result['opened-externally?']
+          ? 'ブラウザでサインインを続けてください。完了するとこの画面に戻ります。'
+          : 'ブラウザを開けませんでした。次のURLを手動で開いてください: ' + result.url;
+        const claimed = await claimSession(result.handoff, Date.now() + 300000);
+        if (!claimed) {
+          throw new Error('サインインが完了しませんでした。もう一度お試しください。');
+        }
+        await loadIdentity();
+        $('#identity-status').textContent = 'サインインしました。';
       } catch (error) {
         button.disabled = false;
         button.textContent = previous;

@@ -226,8 +226,18 @@
     (is (empty? (:macos/permissions manifest)))
     (is (= :kotoba/web (get-in manifest [:runtime :surface])))
     ;; The window must point at the surface this server actually serves; the
-    ;; port is load-bearing for WebAuthn and cannot drift.
-    (is (= "http://localhost:1338/" (get-in manifest [:runtime :window :web-url])))))
+    ;; ORIGIN is load-bearing for WebAuthn and for `require-origin!` and cannot
+    ;; drift. The query may carry surface facts and does — `?surface=native` is
+    ;; how the page learns it is inside the webview, which it needs in order to
+    ;; send an authorization request to the system browser instead. So this
+    ;; asserts the origin exactly and the marker separately, rather than
+    ;; pinning a whole URL and making the two indistinguishable.
+    (let [web-url (get-in manifest [:runtime :window :web-url])]
+      (is (str/starts-with? web-url "http://localhost:1338/")
+          "the window must load the origin this server serves")
+      (is (= "native" (-> ^String web-url java.net.URI. .getQuery
+                          (str/split #"=") second))
+          "the native surface must announce itself; sign-in depends on it"))))
 
 (deftest web-surface-serves-the-same-icon-the-manifest-gives-the-window
   (let [manifest (edn/read-string (slurp (io/file "app.kotoba.edn")))]

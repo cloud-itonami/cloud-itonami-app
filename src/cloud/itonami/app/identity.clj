@@ -8,6 +8,7 @@
             [cloud.itonami.app.email-login :as email-login]
             [cloud.itonami.app.store :as store]
             [cloud.itonami.app.passkey :as passkey]
+            [cloud.itonami.app.session-handoff :as session-handoff]
             [authentication.core :as authn]
             [authentication.model :as authn-model]
             [authorization.core :as authz]
@@ -240,6 +241,7 @@
   (merge {:organizations {} :users {} :memberships {}
           :connections {} :oauth-transactions {} :sessions {}
           :login-identities {} :sso-transactions {} :central-auth-transactions {}
+          :central-auth-handoffs {}
           :passkeys {} :enrollments {} :organization-invitations {}
           :webauthn-transactions {}}
          (:identity state)))
@@ -2181,14 +2183,54 @@
                               (pos? (compare (Instant/parse expires-at) now))))))
              (or transactions {}))))))
 
+(defn- prune-central-auth-handoffs! []
+  (let [now (Instant/now)]
+    (store/transact!
+     update-in [:identity :central-auth-handoffs]
+     (fn [handoffs]
+       (into {}
+             (filter (fn [[_ handoff]]
+                       (and (not (:session-handoff/claimed? handoff))
+                            (when-let [expires-at (:session-handoff/expires-at
+                                                   handoff)]
+                              (pos? (compare (Instant/parse expires-at) now))))))
+             (or handoffs {}))))))
+
+(defn- handoff-expired? [handoff]
+  (or (nil? handoff)
+      (nil? (:session-handoff/expires-at handoff))
+      (not (pos? (compare (Instant/parse (:session-handoff/expires-at handoff))
+                          (Instant/now))))))
+
 (defn start-central-authentication!
   "Start Authorization Code + PKCE against auth.itonami.cloud.
 
   An authenticated local session turns this into an explicit link. Without
   one, the returned DID may sign in only when already bound, except on a truly
-  empty install where it establishes the first local User."
-  [session origin]
+  empty install where it establishes the first local User.
+
+  ## `:handoff?` and why it is not the default
+
+  A caller that cannot read the callback's cookie — the native webview, which
+  must send the authorization request to the system browser (RFC 8252, and
+  independently because the embedded webview cannot do WebAuthn) — asks for a
+  claim token here and exchanges it later at `claim-session-handoff!`.
+
+  That token is a bearer secret: whoever holds it gets the session this flow
+  produces. Same-origin script on this application can already act as the
+  person through the CSRF token it is allowed to read, so the marginal
+  exposure is small, but it is not nothing, and a browser doing an ordinary
+  redirect flow has no use for one. So it is issued only when asked for, and
+  the ordinary path never mints it.
+
+  The claim token is deliberately NOT the OAuth `state`: `state` travels in
+  the authorization URL, the address bar, the provider's logs and the
+  redirect, and none of those are places to keep a secret that mints
+  sessions."
+  ([session origin] (start-central-authentication! session origin nil))
+  ([session origin {:keys [handoff?]}]
   (prune-central-auth-transactions!)
+  (prune-central-auth-handoffs!)
   (let [{:keys [enabled? issuer client-id redirect-uri scope
                 authorization-endpoint]} (central-auth-config)
         ;; Same construction the other SSO providers already use
@@ -2208,6 +2250,7 @@
     (let [state-value (random-token 32)
           verifier (random-token 48)
           challenge (digest verifier)
+          claim-token (when handoff? (random-token 32))
           expires-at (str (.plusSeconds (Instant/now) transaction-seconds))
           parameters {"client_id" client-id
                       "redirect_uri" redirect-uri
@@ -2228,9 +2271,26 @@
         :redirect-uri redirect-uri :scope scope :verifier verifier
         :mode (if link? :link :authenticate)
         :user-id (when link? (:user-id session))
+        :handoff-digest (some-> claim-token digest)
         :created-at (store/now) :expires-at expires-at :used? false})
-      {:url url :provider :itonami-cloud
-       :mode (if link? :link :authenticate) :expires-at expires-at})))
+      ;; Written now, not on completion, so that a claim has a PENDING state
+      ;; the core can name. Collapsing pending into absent would make the
+      ;; endpoint's answer differ between a token that is merely early and one
+      ;; that was guessed, and that difference is an oracle.
+      (when claim-token
+        (store/transact!
+         assoc-in [:identity :central-auth-handoffs (digest claim-token)]
+         {:session-handoff/digest (digest claim-token)
+          :session-handoff/state state-value
+          :session-handoff/ready? false
+          :session-handoff/claimed? false
+          :session-handoff/created-at (store/now)
+          :session-handoff/expires-at
+          (str (.plusSeconds (Instant/now)
+                             session-handoff/start-window-seconds))}))
+      (cond-> {:url url :provider :itonami-cloud
+               :mode (if link? :link :authenticate) :expires-at expires-at}
+        claim-token (assoc :handoff claim-token))))))
 
 (defn- central-exchange-code! [config transaction code]
   (let [body (form-body {:grant_type "authorization_code"
@@ -2327,16 +2387,83 @@
                       :display-name "auth.itonami.cloud"})
           authn-level (if passkey-proof? :phishing-resistant :single-factor)
           authn-factors (mapv keyword amr)
-          issued (issue-session!
-                  user-id {:kind :federated :issued-via :itonami-cloud
-                           :authn-provider (if passkey-proof?
-                                            :itonami-cloud
-                                            (first authn-factors))
-                           :authn-level authn-level
-                           :authn-decision :authenticated
-                           :authn-factors authn-factors})]
+          session-opts {:kind :federated :issued-via :itonami-cloud
+                        :authn-provider (if passkey-proof?
+                                          :itonami-cloud
+                                          (first authn-factors))
+                        :authn-level authn-level
+                        :authn-decision :authenticated
+                        :authn-factors authn-factors}
+          issued (issue-session! user-id session-opts)]
+      ;; The agent that started this flow may not be the one holding the
+      ;; cookie just set. If it asked for a claim token, record the FACTS its
+      ;; session will be minted from — never a token, which would be the one
+      ;; raw credential this application keeps at rest.
+      (when-let [handoff-digest (:handoff-digest transaction)]
+        (store/transact!
+         (fn [current]
+           (if (get-in current [:identity :central-auth-handoffs handoff-digest])
+             (update-in current [:identity :central-auth-handoffs handoff-digest]
+                        merge
+                        {:session-handoff/ready? true
+                         :session-handoff/user-id user-id
+                         :session-handoff/session-opts session-opts
+                         :session-handoff/linked? (= :link (:mode transaction))
+                         :session-handoff/ready-at (store/now)
+                         :session-handoff/expires-at
+                         (str (.plusSeconds
+                               (Instant/now)
+                               session-handoff/claim-window-seconds))})
+             current))))
       (assoc issued :provider :itonami-cloud :user-id user-id
              :linked? (= :link (:mode transaction))))))
+
+(defn claim-session-handoff!
+  "Exchange a claim token for a session of this agent's own.
+
+  Every refusal returns the same `{:ready? false}`. An unknown token, a claim
+  still waiting on the person, a spent one and an expired one are one answer,
+  so a caller guessing tokens learns nothing from the shape of the rejection —
+  it cannot even tell a wrong guess from a right one that is early. Only the
+  poller that actually started the flow is in a position to know the
+  difference, because only it knows it started something.
+
+  `origin-trusted?` is the host's answer to `require-origin!`, restated here
+  rather than assumed: the claim mints a session, and that is not a decision
+  to leave entirely to whether a caller remembered to check first."
+  [claim-token {:keys [origin-trusted?]}]
+  (prune-central-auth-handoffs!)
+  (let [digested (some-> claim-token str not-empty digest)
+        handoff (when digested
+                  (get-in (identity-state (store/snapshot))
+                          [:central-auth-handoffs digested]))
+        admitted? (session-handoff/claimable?
+                   handoff
+                   {:origin-trusted? origin-trusted?
+                    :expired? (handoff-expired? handoff)})]
+    (if-not admitted?
+      {:ready? false}
+      ;; Spend it inside the transaction that reads it. Two windows polling
+      ;; the same token must not both be handed a session, and the check above
+      ;; ran against a snapshot.
+      (let [spent? (atom false)]
+        (store/transact!
+         (fn [current]
+           (let [live (get-in current [:identity :central-auth-handoffs digested])]
+             (if (and live (not (:session-handoff/claimed? live)))
+               (do (reset! spent? true)
+                   (assoc-in current
+                             [:identity :central-auth-handoffs digested
+                              :session-handoff/claimed?]
+                             true))
+               current))))
+        (if-not @spent?
+          {:ready? false}
+          (let [issued (issue-session! (:session-handoff/user-id handoff)
+                                       (:session-handoff/session-opts handoff))]
+            (assoc issued :ready? true :provider :itonami-cloud
+                   :user-id (:session-handoff/user-id handoff)
+                   :linked? (boolean (:session-handoff/linked? handoff)))))))))
 
 (defn complete-sso-authentication!
   "Finish SSO, binding one provider subject to exactly one local User.
