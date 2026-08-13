@@ -63,10 +63,27 @@
                [:held-run :bool]
                [:active-run :bool]
                [:steps-admitted :i64]
-               [:steps-recorded :i64]]]})
+               [:steps-recorded :i64]]]
+             ;; Whether an unattended tick may act for one person.
+             ;;
+             ;; `session-live` is a session that person really created and has
+             ;; not revoked or let expire — FOUND in the store, never minted.
+             ;; That distinction is the whole design: a timer that could mint
+             ;; its own authority would be a daemon acting for someone who is
+             ;; not there and cannot take it back, and this application's
+             ;; thesis is that nothing leaves without being named.
+             ;;
+             ;; Deliberately absent: which routines are due, which tools they
+             ;; hold, and how long it has been. Those are `may-fire?`'s and are
+             ;; asked per routine AFTER this answers yes. Admission to tick at
+             ;; all is a question about the person, not about the work.
+             :routine/tick
+             [:record :routine/tick
+              [[:tick-enabled :bool]
+               [:session-live :bool]]]})
   (:export [status-disabled status-idle status-running
             status-waiting-approval status-stale
-            stale? may-fire? may-start? status main]))
+            stale? may-fire? may-start? status tick-admitted? main]))
 
 (defn status-disabled [] :i64 0)
 (defn status-idle [] :i64 1)
@@ -121,6 +138,30 @@
           (status-running)
           (status-idle))))
     (status-disabled)))
+
+(defn tick-admitted? [t [:ref :routine/tick] session-kind :string] :bool
+  ;; May an unattended tick act for this person at all?
+  ;;
+  ;; The session kind is tested FIRST and ALONE, and this is the one refusal
+  ;; here that is not merely prudent. Every route into the Bots surface goes
+  ;; through `require-human-session!`, which refuses an agent session — but a
+  ;; TICK IS NOT A ROUTE. It runs from a timer inside the server, so it reaches
+  ;; `fire-due!` without passing the gate that would have stopped it. An agent
+  ;; session is rooted in being able to read a file in the data directory; if
+  ;; it could also drive the clock, then reading that file would be enough to
+  ;; make somebody's Bots act on a schedule forever. Restated here for the same
+  ;; reason `handoff_core` restates it: at the one place the argument could be
+  ;; made, rather than only where it was first written down.
+  ;;
+  ;; Anything that is not an agent is a browser session, including a stored
+  ;; record with no kind at all — `issue-session!` says an unmarked record from
+  ;; an older store IS a browser session, and refusing those would quietly stop
+  ;; the schedules of everyone who had not signed in since the field landed.
+  (if (string=? session-kind "agent")
+    false
+    (if (record-get t :tick-enabled)
+      (if (record-get t :session-live) true false)
+      false)))
 
 (defn main [] :i64
   ;; Sentinel for the wasm host contract, not a battery. The assertions live in

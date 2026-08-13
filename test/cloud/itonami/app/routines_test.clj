@@ -254,3 +254,107 @@
              clojure.lang.ExceptionInfo #"引き継ぐ内容が空"
              (quiet-model
               #(bots/hand-off! nil alice (:bot/id a) (:bot/id b) {:task "  "}))))))))
+
+;; ── the tick ─────────────────────────────────────────────────────────
+
+(defn- session!
+  "Seed one stored session record, the way `issue-session!` writes it."
+  [id user-id {:keys [kind expires revoked?]}]
+  (store/transact!
+   (fn [state]
+     (assoc-in state [:identity :sessions id]
+               {:id id :user-id user-id :organization-id "org-1"
+                :token-digest "digest" :csrf "csrf"
+                :created-at "2026-08-13T00:00:00.000000Z"
+                :expires-at (or expires "2099-01-01T00:00:00Z")
+                :revoked? (boolean revoked?)
+                :kind (or kind :passkey)}))))
+
+(defn- ticked-users [configuration]
+  (set (map :user (quiet-model #(bots/tick! configuration (store/now))))))
+
+(deftest a-tick-with-nobody-signed-in-does-nothing
+  ;; The property the whole design turns on: authority is FOUND, not minted. A
+  ;; tick that acted here would be acting for somebody who never asked.
+  (with-store
+    (fn []
+      (make-bot alice {})
+      (is (= [] (quiet-model #(bots/tick! nil (store/now))))))))
+
+(deftest a-tick-acts-for-a-person-whose-session-is-live
+  (with-store
+    (fn []
+      (make-bot alice {})
+      (session! "s1" "alice" {})
+      (is (= #{"alice"} (ticked-users nil))))))
+
+(deftest an-agent-session-never-drives-the-tick
+  ;; A tick is not a route, so `require-human-session!` never sees it. If this
+  ;; were not refused here, reading a file in the data directory would be
+  ;; enough to put somebody's Bots on a schedule.
+  (with-store
+    (fn []
+      (make-bot alice {})
+      (session! "s1" "alice" {:kind :agent})
+      (is (= #{} (ticked-users nil))))))
+
+(deftest an-expired-or-revoked-session-stops-the-schedule
+  ;; Expiry is the off-switch, and it is the one a person can see and use.
+  (with-store
+    (fn []
+      (make-bot alice {})
+      (session! "s1" "alice" {:expires "2020-01-01T00:00:00Z"})
+      (is (= #{} (ticked-users nil)) "expired")
+      (session! "s2" "alice" {:revoked? true})
+      (is (= #{} (ticked-users nil)) "revoked")
+      (session! "s3" "alice" {})
+      (is (= #{"alice"} (ticked-users nil)) "and a live one starts it again"))))
+
+(deftest a-session-with-an-unreadable-expiry-is-not-live
+  ;; Treating a value this build cannot parse as live would make a corrupt
+  ;; record permanent authority.
+  (with-store
+    (fn []
+      (make-bot alice {})
+      (session! "s1" "alice" {:expires "not-a-timestamp"})
+      (is (= #{} (ticked-users nil))))))
+
+(deftest one-person-with-two-devices-fires-once
+  ;; Per person, not per session. A laptop and a phone are two live sessions
+  ;; and one set of routines; firing per session would run every schedule twice.
+  (with-store
+    (fn []
+      (make-bot alice {})
+      (session! "s1" "alice" {})
+      (session! "s2" "alice" {})
+      (is (= 1 (count (quiet-model #(bots/tick! nil (store/now)))))))))
+
+(deftest the-tick-can-be-turned-off
+  (with-store
+    (fn []
+      (make-bot alice {})
+      (session! "s1" "alice" {})
+      (is (= #{} (ticked-users {:bots {:tick {:enabled? false}}})))
+      (is (= #{"alice"} (ticked-users {:bots {:tick {:enabled? true}}}))))))
+
+(deftest one-persons-failure-does-not-stop-everybody-elses
+  ;; A timer that dies on the first error is a scheduler that silently stops
+  ;; being one.
+  (with-store
+    (fn []
+      (make-bot alice {})
+      (make-bot bob {})
+      (session! "s1" "alice" {})
+      (session! "s2" "bob" {})
+      (let [calls (atom 0)
+            results (with-redefs
+                      [bots/fire-due!
+                       (fn [_ session _]
+                         (swap! calls inc)
+                         (if (= "alice" (:user-id session))
+                           (throw (ex-info "boom" {}))
+                           {:started [] :skipped []}))]
+                      (bots/tick! nil (store/now)))]
+        (is (= 2 @calls) "both were attempted")
+        (is (= #{"alice" "bob"} (set (map :user results))))
+        (is (some :error results) "and the failure is reported, not swallowed")))))

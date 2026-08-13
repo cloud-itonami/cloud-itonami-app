@@ -1199,3 +1199,100 @@
                    :tool-count 0}))
       {:handoff (unqualify h)
        :messages (mapv public-message (conversation to-bot-id))})))
+
+;; ── the tick ────────────────────────────────────────────────────────────
+;;
+;; What makes a schedule happen. Everything above it answers "may this run";
+;; this answers "who is asking", for the one caller that arrives without a
+;; request behind it.
+;;
+;; ## The authority is found, never minted
+;;
+;; `fire-due!` needs a session, and a timer has none. The tempting shape is to
+;; build one — iterate the Bots, act as their owner — and it is the shape this
+;; refuses. A synthesised session is authority that nobody granted, that nobody
+;; can see, and that signing out does not take away. So the tick READS the
+;; sessions that exist: a person signed in on this machine, that session is
+;; live, and it is theirs. If it lapses or they sign out, their schedules stop.
+;;
+;; That is a real limitation and it is the honest one. `bots.clj`'s own thesis
+;; is that a Bot's computer is this machine and 'a Bot does not run while this
+;; machine is asleep'; a schedule that also stops thirty days after you last
+;; signed in is the same sentence, continued.
+
+(defonce ^:private tick-scheduler (atom nil))
+
+(def default-tick-seconds
+  "How often to LOOK. Not how often a routine runs — `may-fire?` and the
+  five-minute floor decide that. Looking is a store read, so a wake that
+  usually finds nothing is cheap; the interval only bounds how late a due
+  routine can be."
+  60)
+
+(defn- tick-sessions
+  "One live session per person, newest first.
+
+  Per PERSON, not per session: somebody signed in on a laptop and a phone has
+  two live sessions and one set of routines, and firing once per session would
+  run every schedule twice."
+  [configuration]
+  (let [enabled? (not (false? (get-in configuration [:bots :tick :enabled?])))]
+    (->> (identity/live-sessions)
+         (filter (fn [s]
+                   (routine/tick-admitted?
+                    {:tick-enabled? enabled?
+                     :session-live? true
+                     :session-kind (or (:kind s) :passkey)})))
+         (reduce (fn [acc s]
+                   (if (contains? acc (:user-id s)) acc (assoc acc (:user-id s) s)))
+                 {})
+         vals)))
+
+(defn tick!
+  "One pass. Returns what it started and skipped, per person.
+
+  Exceptions are caught per session rather than per pass: one person's expired
+  OAuth token must not stop everybody else's schedules, and a timer that dies
+  on the first failure is a scheduler that silently stops being one."
+  [configuration now]
+  (mapv (fn [session]
+          (try
+            (assoc (fire-due! configuration session now) :user (:user-id session))
+            (catch Exception error
+              {:user (:user-id session) :started [] :skipped []
+               :error (.getMessage error)})))
+        (tick-sessions configuration)))
+
+(defn start-tick!
+  "Begin looking. Idempotent, and a no-op when the deployment turned it off."
+  [configuration]
+  (when (and (not @tick-scheduler)
+             (not (false? (get-in configuration [:bots :tick :enabled?]))))
+    (let [interval (long (or (get-in configuration [:bots :tick :interval-seconds])
+                             default-tick-seconds))
+          executor (java.util.concurrent.Executors/newSingleThreadScheduledExecutor
+                    (reify java.util.concurrent.ThreadFactory
+                      (newThread [_ runnable]
+                        (doto (Thread. runnable "cloud-itonami-bot-tick")
+                          (.setDaemon true)))))]
+      ;; `scheduleWithFixedDelay`, not `atFixedRate`: a pass that takes longer
+      ;; than the interval must not have the next one queued behind it. Runs
+      ;; are bounded but not instant, and a backlog of ticks would arrive all
+      ;; at once the moment a slow pass finished.
+      (.scheduleWithFixedDelay
+       ^java.util.concurrent.ScheduledExecutorService executor
+       ^Runnable (fn [] (try (tick! configuration (store/now))
+                             ;; The timer thread must survive anything. An
+                             ;; escaping throwable cancels the schedule
+                             ;; permanently and silently — the one failure that
+                             ;; would leave this looking installed and not be.
+                             (catch Throwable _ nil)))
+       interval interval java.util.concurrent.TimeUnit/SECONDS)
+      (reset! tick-scheduler executor)))
+  true)
+
+(defn stop-tick! []
+  (when-let [^java.util.concurrent.ScheduledExecutorService executor @tick-scheduler]
+    (.shutdownNow executor)
+    (reset! tick-scheduler nil))
+  true)

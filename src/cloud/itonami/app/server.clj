@@ -4993,6 +4993,9 @@
    (mail-sync/start! configuration)
    (chronicle/start! configuration)
    (folder-sync/start! configuration)
+   ;; After the surfaces it drives, so a routine that fires on the first pass
+   ;; finds a store that is already open rather than one still being read.
+   (bots/start-tick! configuration)
    (updater/start! configuration)
    (let [host (get-in configuration [:server :host])
          port (get-in configuration [:server :port])
@@ -5067,6 +5070,7 @@
   (mail-sync/stop!)
   (chronicle/stop!)
   (folder-sync/stop!)
+  (bots/stop-tick!)
   (updater/stop!)
   (work-reconciler/stop!)
   (when-let [instance @server]

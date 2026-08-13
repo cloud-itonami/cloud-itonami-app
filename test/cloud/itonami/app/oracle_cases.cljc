@@ -78,6 +78,9 @@
    [[:enabled :bool] [:held-run :bool] [:active-run :bool]
     [:steps-admitted :i64] [:steps-recorded :i64]]])
 
+(def routine-tick-record
+  [:record :routine/tick [[:tick-enabled :bool] [:session-live :bool]]])
+
 (def handoff-request-record
   [:record :handoff/request
    [[:same-owner :bool] [:source-enabled :bool] [:target-enabled :bool]
@@ -326,7 +329,20 @@
     {:oracle :routine :export 'status
      :args [(oracle/record routine-presence-record
                            [true false false (oracle/i64 2) (oracle/i64 3)])]
-     :expect 4 :read oracle/i64-value}]
+     :expect 4 :read oracle/i64-value}
+    ;; An agent session must never drive the clock, whatever else is true.
+    {:oracle :routine :export 'tick-admitted?
+     :args [(oracle/record routine-tick-record [true true]) "agent"]
+     :expect false}
+    {:oracle :routine :export 'tick-admitted?
+     :args [(oracle/record routine-tick-record [true true]) "passkey"]
+     :expect true}
+    {:oracle :routine :export 'tick-admitted?
+     :args [(oracle/record routine-tick-record [false true]) "passkey"]
+     :expect false}
+    {:oracle :routine :export 'tick-admitted?
+     :args [(oracle/record routine-tick-record [true false]) "passkey"]
+     :expect false}]
 
    ;; ── handoff ─────────────────────────────────────────────────────
    [{:oracle :handoff :export 'main :args [] :expect 0 :read oracle/i64-value}

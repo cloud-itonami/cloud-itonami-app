@@ -166,6 +166,27 @@
        (oracle/i64-value (oracle/call :routine 'status [(presence r b state)]))
        :idle))
 
+(def ^:private tick-record
+  [:record :routine/tick [[:tick-enabled :bool] [:session-live :bool]]])
+
+(defn tick-admitted?
+  "May an unattended tick act for the person who owns `session`?
+
+  `session` is a record the host FOUND in the store, not one it made: the
+  caller's job is to look for a session that is live, and to pass what it
+  found. There is no argument here for 'act anyway' — a tick with nobody's
+  session behind it has no authority to borrow, and the absence of one is the
+  answer rather than a case to handle.
+
+  The kind travels as a string for the same reason it does in
+  `bot/may-approve?`, and is normalised the way `issue-session!` writes it: an
+  older record with no kind is a browser session."
+  [{:keys [tick-enabled? session-live? session-kind]}]
+  (oracle/call
+   :routine 'tick-admitted?
+   [(oracle/record tick-record [(boolean tick-enabled?) (boolean session-live?)])
+    (name (or session-kind :passkey))]))
+
 ;; ── the record itself ────────────────────────────────────────────────
 
 (defn routine

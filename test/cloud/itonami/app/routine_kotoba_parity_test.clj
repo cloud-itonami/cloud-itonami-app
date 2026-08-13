@@ -34,7 +34,7 @@
 
 (def ^:private export-prefix
   (str "status-disabled status-idle status-running status-waiting-approval "
-       "status-stale stale? may-fire? may-start? status main"))
+       "status-stale stale? may-fire? may-start? status tick-admitted? main"))
 
 (def ^:private presence-ty
   (str "[:record :routine/presence [[:enabled :bool] [:held-run :bool] "
@@ -173,3 +173,49 @@
         "a narrowed grant outranks a progress light")
     (is (= :waiting-approval (at {:held true :active true}))
         "waiting outranks working")))
+
+;; ── the tick ─────────────────────────────────────────────────────────
+
+(def ^:private tick-ty
+  "[:record :routine/tick [[:tick-enabled :bool] [:session-live :bool]]]")
+
+(def ^:private tick-rows
+  (for [enabled [true false]
+        live [true false]
+        kind ["agent" "passkey" "" "something-else"]]
+    {:tick-enabled? enabled :session-live? live :session-kind kind}))
+
+(deftest kotoba-and-host-agree-on-tick-admission
+  (let [probes (map-indexed
+                (fn [i {:keys [tick-enabled? session-live? session-kind]}]
+                  [(str "tk_" i)
+                   (str "(tick-admitted? (record-new " tick-ty " "
+                        tick-enabled? " " session-live? ") \"" session-kind "\")")])
+                tick-rows)
+        guest (run-probes probes ":bool")]
+    (doseq [[i row] (map-indexed vector tick-rows)]
+      (is (= (get guest (str "tk_" i)) (routine/tick-admitted? row))
+          (str "tick-admitted? disagreed on " (pr-str row))))))
+
+(deftest an-agent-session-can-never-drive-the-clock
+  ;; The refusal this export exists for. A tick is NOT a route, so it never
+  ;; passes `require-human-session!`; without this, reading a file in the data
+  ;; directory would be enough to put somebody's Bots on a schedule.
+  ;; Exhaustive over the other two facts, because a refusal that any of them
+  ;; can trade against is not one.
+  (doseq [row tick-rows :when (= "agent" (:session-kind row))]
+    (is (false? (routine/tick-admitted? row))
+        (str "an agent session was admitted: " (pr-str row)))))
+
+(deftest a-tick-needs-a-live-session-and-a-switch-that-is-on
+  (doseq [row tick-rows :when (not= "agent" (:session-kind row))]
+    (is (= (boolean (and (:tick-enabled? row) (:session-live? row)))
+           (routine/tick-admitted? row))
+        (str "tick admission disagreed on " (pr-str row)))))
+
+(deftest a-session-with-no-kind-is-a-browser-session
+  ;; `issue-session!` says an unmarked record from an older store IS a browser
+  ;; session. Refusing those would silently stop the schedules of everyone who
+  ;; had not signed in since the field landed.
+  (is (true? (routine/tick-admitted? {:tick-enabled? true :session-live? true
+                                      :session-kind nil}))))

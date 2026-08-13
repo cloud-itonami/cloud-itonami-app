@@ -160,6 +160,32 @@
        (status-idle))))
     (status-disabled)),
    :param-types [[:ref :routine/presence]]}
+  {:name tick-admitted?,
+   :params [t session-kind],
+   :result :bool,
+   :effects #{},
+   :body
+   (if
+    (string=? session-kind "agent")
+    false
+    (if
+     (record-get
+      [:record
+       :routine/tick
+       [[:tick-enabled :bool] [:session-live :bool]]]
+      t
+      :tick-enabled)
+     (if
+      (record-get
+       [:record
+        :routine/tick
+        [[:tick-enabled :bool] [:session-live :bool]]]
+       t
+       :session-live)
+      true
+      false)
+     false)),
+   :param-types [[:ref :routine/tick] :string]}
   {:name main,
    :params [],
    :result :i64,
@@ -169,7 +195,9 @@
  :oracle-value 0,
  :schema-identities
  #:routine{:presence
-           "05b9a2e1529639452b7c9690e99c6c2906290a0b0b8352028dd7cf50bbaa06b9"},
+           "68f6c7eb34de718c080fec8b0e114c9a8f18c128a15e811591eb0751088f49e9",
+           :tick
+           "34078cd3ecc8906b53558b4bccd18cef6dfcbff5e1e0a7c9fc0ced1b14086594"},
  :exports
  [status-disabled
   status-idle
@@ -180,6 +208,7 @@
   may-fire?
   may-start?
   status
+  tick-admitted?
   main],
  :schemas
  #:routine{:presence
@@ -189,7 +218,11 @@
              [:held-run :bool]
              [:active-run :bool]
              [:steps-admitted :i64]
-             [:steps-recorded :i64]]]},
+             [:steps-recorded :i64]]],
+           :tick
+           [:record
+            :routine/tick
+            [[:tick-enabled :bool] [:session-live :bool]]]},
  :effects #{},
  :blocks [{:id 0, :instructions [[:const.i64 0] [:return]]}],
  :entry main}
