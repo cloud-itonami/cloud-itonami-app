@@ -46,6 +46,7 @@
     (if (str/blank? id)
       default-session-name
       (str default-session-name "-" id))))
+
 (def ^:private max-output 24000)
 
 (def ^:private browser-tools
@@ -458,6 +459,64 @@
       "cli_agent" (str (:provider input) " を " (:access input)
                        " で " (preview (:workspace input)) " に実行します。")
       (str tool-name " を実行します。"))))
+
+(defn browser-enabled?
+  "Whether THIS MACHINE's isolated browser is on.
+
+  Independent of any Bot's `:bot/browser?`. A Bot that asked for the browser
+  on a deployment that never enabled it must not silently grow tools — the
+  field stays, the tools do not appear, and the screen can say why."
+  [configuration]
+  (boolean (get-in (settings (or configuration {})) [:browser :enabled?])))
+
+(defn browser-tool?
+  "Is this an isolated-browser tool name, and not a computer or connector one?"
+  [tool-name]
+  (str/starts-with? (str tool-name) "browser_"))
+
+(defn browser-write?
+  "`browser_snapshot` reads. Everything else changes the page, so a Bot turn
+  holds it the same way it holds a Gmail send."
+  [tool-name]
+  (and (browser-tool? tool-name)
+       (not (contains? read-only-tools (str tool-name)))))
+
+(defn browser-tool-definitions
+  "The isolated-browser tools as a model sees them, or none.
+
+  Computer tools are not on this list. A Bot's `:bot/browser?` opts into the
+  isolated browser, not into keystrokes on the frontmost app; those stay on
+  agent-control's own loop."
+  [configuration]
+  (if (browser-enabled? configuration)
+    (mapv (fn [t]
+            (cond-> t
+              (browser-write? (:name t))
+              (update :description #(str % " (write)"))))
+          browser-tools)
+    []))
+
+(defn describe-browser-tool
+  "What an approval card should say about one browser call."
+  [tool-name input]
+  (approval-summary (str tool-name) (or input {})))
+
+(defn call-browser-tool!
+  "Run one isolated-browser tool as a named principal.
+
+  The profile is `session-for`, so two Bots do not share cookies. This is the
+  seam ADR-0034 left unwired: the field existed, the profile name existed, and
+  nothing in a Bot turn called through."
+  [configuration principal-id tool-name input]
+  (let [name (str tool-name)]
+    (when-not (browser-tool? name)
+      (throw (ex-info "browser tool ではありません。"
+                      {:type :agent/unknown-tool :tool name})))
+    (when-not (browser-enabled? configuration)
+      (throw (ex-info "分離ブラウザーは有効ではありません。"
+                      {:type :agent/browser-disabled :tool name})))
+    (binding [*browser-session* (session-for principal-id)]
+      (execute-tool! (or configuration {}) name (or input {})))))
 
 (defn- approval [run-id tool-name input]
   (hil/approval-request

@@ -168,11 +168,13 @@ so the view change is state and not navigation.
 
 ## What this does not do
 
-- **No cadence.** A Bot answers when spoken to. A standing brief that runs on a
-  schedule is `work-runtime`'s job and is not wired to Bots yet.
 - **No Bot-scoped memory.** `chronicle` remains device-scoped and opt-in; a Bot
   does not yet accumulate preferences across conversations.
 - **No parallel Bots.** Turns are synchronous, one at a time.
-- **`:bot/browser?` is recorded but not yet dispatched.** The field exists and
-  the two-loop boundary is decided; nothing calls `agent-control` from a Bot
-  turn.
+- **No cloud VM.** A Bot's computer is this machine. That is the thesis, not a
+  remaining gap; the isolated-browser dispatch is ADR-0036.
+
+Cadence is routines (traces → schedule → `fire-due!`), not a standing brief
+that runs on a timer by itself. `:bot/browser?` is dispatched: a Bot turn that
+opted in, on a machine that has the browser on, receives the isolated-browser
+tools and holds writes for approval.

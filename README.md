@@ -618,12 +618,18 @@ of the connectors you picked and nothing else.
 - **Accounts, not providers.** If you have two Google accounts, the Bot asks
   which one before it acts rather than picking. Name them from the connection
   card; add another with `＋ 別のアカウントを追加`.
-- **Its computer is this machine.** Bots do not get a cloud VM, so a Bot does
-  not run while this machine is asleep. Long-running work belongs to the
-  governed WorkItem path instead.
+- **Its computer is this machine's isolated browser.** Bots do not get a cloud
+  VM, so a Bot does not run while this machine is asleep. When you opt a Bot
+  into the browser (and Settings has enabled it), that Bot gets its own
+  profile — cookies are not shared with other Bots — and opening, clicking and
+  typing wait for approval the same way a send does. See
+  [ADR-0036](docs/adr/0036-a-bots-computer-is-this-machines-isolated-browser.md).
+  Long-running work that should outlive sleep belongs to the governed WorkItem
+  path instead.
 
 Turns are synchronous and bounded — 8 model turns and 12 tool calls per
-message. There is no schedule: a Bot answers when spoken to.
+message. A Bot also answers on a schedule when a routine has been made from an
+executed trace; the tick uses a live session and never mints one.
 
 The view is covered by `test/browser/bots_view.cljs`, which drives it in a real
 browser against a running server; the JVM suite cannot see the client.

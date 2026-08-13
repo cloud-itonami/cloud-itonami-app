@@ -9004,7 +9004,8 @@
     const botsState = {
       bots:[], catalog:[], palette:{colors:[], glyphs:[]},
       selected:null, messages:[], routines:[], picked:new Set(),
-      draft:{color:'blue', glyph:'circle'}, loaded:false, busy:false
+      draft:{color:'blue', glyph:'circle'}, loaded:false, busy:false,
+      browserAvailable:false
     };
     const botAvatar = (node, avatar) => {
       node.dataset.color = avatar?.color || 'blue';
@@ -9317,6 +9318,13 @@
         panel.append(make('div', null,
           'この Bot には、この配備で有効になっていないツールが指定されています。Settings で有効にするか、この Bot の権限を見直してください。'));
       }
+      if (bot['browser-ready?']) {
+        panel.append(make('div', null,
+          '分離ブラウザー: この Bot 専用のプロファイル（実行前に承認する）'));
+      } else if (bot['browser?']) {
+        panel.append(make('div', null,
+          '分離ブラウザーは依頼されていますが、このマシンの Settings で有効になっていません。'));
+      }
       if (bot['admitted-tools'].length) {
         const list = make('ul');
         bot['admitted-tools'].forEach((tool) => list.append(make('li', null, tool)));
@@ -9363,6 +9371,19 @@
         renderBotsThread();
       } catch (error) { botsSetStatus(error.message); }
     };
+    const syncBotsBrowserPermission = () => {
+      const box = $('#bots-browser');
+      const help = $('#bots-browser-help');
+      if (!box) return;
+      const available = Boolean(botsState.browserAvailable);
+      box.disabled = !available;
+      if (!available) {
+        box.checked = false;
+        if (help) help.textContent = 'このマシンの Settings で分離ブラウザーが有効になっていません。';
+      } else if (help) {
+        help.textContent = '';
+      }
+    };
     const loadBots = async (options = {}) => {
       try {
         const request = await fetch('/api/bots');
@@ -9371,7 +9392,9 @@
         botsState.bots = data.bots || [];
         botsState.catalog = data.catalog || [];
         botsState.palette = data.palette || botsState.palette;
+        botsState.browserAvailable = Boolean(data['browser-available?']);
         botsState.loaded = true;
+        syncBotsBrowserPermission();
         if (!options.keepSelection && !botsState.selected && botsState.bots.length) {
           await selectBot(botsState.bots[0].id);
           return;
@@ -9389,6 +9412,7 @@
       $('#bots-step-create').hidden = false;
       renderBotsPalette();
       renderBotsSuggestions();
+      syncBotsBrowserPermission();
     });
     $('#bots-new').addEventListener('click', () => {
       botsState.selected = null;
@@ -9411,7 +9435,8 @@
           avatar:{color:botsState.draft.color, glyph:botsState.draft.glyph},
           brief:$('#bots-brief').value,
           connectors:[...botsState.picked],
-          'writes?':$('#bots-writes').checked
+          'writes?':$('#bots-writes').checked,
+          'browser?':$('#bots-browser').checked
         }, true);
         botsState.bots = data.bots || [];
         botsState.catalog = data.catalog || [];
