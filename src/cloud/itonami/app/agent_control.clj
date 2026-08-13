@@ -15,7 +15,37 @@
            [java.util UUID]
            [java.util.concurrent TimeUnit]))
 
-(def ^:private session-name "cloud-itonami-agent")
+(def default-session-name
+  "The browser profile used when nobody has said whose work this is.
+
+  It is a SHARED profile, and that is the whole hazard this namespace used to
+  carry silently: the isolated browser keeps cookies and logged-in sessions,
+  so every caller reaching these tools was reusing one identity. A Bot that
+  signed into a service left that session sitting there for the next one.
+  Isolation was per MACHINE when the thing people reason about is per Bot."
+  "cloud-itonami-agent")
+
+(def ^:dynamic *browser-session*
+  "Whose browser profile the tools act in, for the current call.
+
+  Dynamic rather than a parameter because `execute-tool!` dispatches on a tool
+  NAME and its callers are several layers up; threading an argument would have
+  touched every one of them and been dropped by the first that forgot. A caller
+  that says nothing keeps the previous behaviour exactly."
+  nil)
+
+(defn session-for
+  "A stable browser-profile name for one principal.
+
+  Derived from the principal's id rather than its display name: a name can be
+  changed, and two Bots may share one. Non-alphanumerics are folded to `-` so
+  the value is safe as a directory component, and the prefix keeps it
+  recognisable next to the shared profile in a process listing."
+  [principal-id]
+  (let [id (str/replace (str principal-id) #"[^A-Za-z0-9_-]+" "-")]
+    (if (str/blank? id)
+      default-session-name
+      (str default-session-name "-" id))))
 (def ^:private max-output 24000)
 
 (def ^:private browser-tools
@@ -217,7 +247,7 @@
 (defn- browser-command! [& args]
   (run-command!
    (into ["agent-browser"] args)
-   45 {"AGENT_BROWSER_SESSION" session-name
+   45 {"AGENT_BROWSER_SESSION" (or *browser-session* default-session-name)
        "AGENT_BROWSER_HEADED" "true"}))
 
 (defn- allowed-url! [settings value]
