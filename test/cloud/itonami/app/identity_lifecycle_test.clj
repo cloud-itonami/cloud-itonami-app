@@ -141,15 +141,22 @@
     (try
       (reset! store/state (store/initial-state))
       (identity/configure! {})
-      (let [started (identity/start-central-authentication! nil)
+      (let [started (identity/start-central-authentication! nil "http://localhost:1338")
             state (central-state)
             transaction (get-in (store/snapshot)
                                 [:identity :central-auth-transactions state])]
         (is (str/starts-with? (:url started)
                               "https://auth.itonami.cloud/authorize?"))
         (is (str/includes? (:url started) "code_challenge_method=S256"))
-        (is (= "http://127.0.0.1:1338/api/auth/itonami/callback"
+        ;; The callback belongs to the origin the person is ON. It was pinned
+        ;; to 127.0.0.1 while this app serves localhost, so the session was
+        ;; created in a cookie jar the app could not read and every following
+        ;; request was rejected by `require-origin!`. That is what "signin does
+        ;; not work" was.
+        (is (= "http://localhost:1338/api/auth/itonami/callback"
                (:redirect-uri transaction)))
+        (is (not (str/includes? (:url started) "127.0.0.1"))
+            "the callback must not point at a different origin than the app")
         (is (not (str/includes? (pr-str transaction) "access-token")))
         (let [finished (finish-central! "did:web:kotobase.net:person:one")
               session (identity/session (:token finished))]
@@ -165,7 +172,7 @@
             (catch clojure.lang.ExceptionInfo error
               (is (= :central-auth/invalid-state (:type (ex-data error))))))
           (testing "a linked central provider remains single-factor locally"
-            (identity/start-central-authentication! session)
+            (identity/start-central-authentication! session "http://localhost:1338")
             (let [provider-finished
                   (finish-central! "did:web:kotobase.net:person:one"
                                    {:acr "single-factor" :amr ["google"]})
@@ -174,7 +181,7 @@
               (is (= [:google] (:authn-factors central-session)))
               (is (not= :phishing-resistant (:authn-level central-session)))))))
       (testing "an unbound DID cannot take over an existing install"
-        (identity/start-central-authentication! nil)
+        (identity/start-central-authentication! nil "http://localhost:1338")
         (try
           (finish-central! "did:web:kotobase.net:person:two")
           (is false "existing installs require an authenticated link")
