@@ -1,0 +1,195 @@
+{:format :kotoba.kir/v4,
+ :signature {:params [], :result :i64},
+ :functions
+ [{:name status-disabled,
+   :params [],
+   :result :i64,
+   :effects #{},
+   :body 0,
+   :param-types []}
+  {:name status-idle,
+   :params [],
+   :result :i64,
+   :effects #{},
+   :body 1,
+   :param-types []}
+  {:name status-running,
+   :params [],
+   :result :i64,
+   :effects #{},
+   :body 2,
+   :param-types []}
+  {:name status-waiting-approval,
+   :params [],
+   :result :i64,
+   :effects #{},
+   :body 3,
+   :param-types []}
+  {:name status-stale,
+   :params [],
+   :result :i64,
+   :effects #{},
+   :body 4,
+   :param-types []}
+  {:name stale?,
+   :params [p],
+   :result :bool,
+   :effects #{},
+   :body
+   (<
+    (record-get
+     [:record
+      :routine/presence
+      [[:enabled :bool]
+       [:held-run :bool]
+       [:active-run :bool]
+       [:steps-admitted :i64]
+       [:steps-recorded :i64]]]
+     p
+     :steps-admitted)
+    (record-get
+     [:record
+      :routine/presence
+      [[:enabled :bool]
+       [:held-run :bool]
+       [:active-run :bool]
+       [:steps-admitted :i64]
+       [:steps-recorded :i64]]]
+     p
+     :steps-recorded)),
+   :param-types [[:ref :routine/presence]]}
+  {:name may-start?,
+   :params [p],
+   :result :bool,
+   :effects #{},
+   :body
+   (if
+    (record-get
+     [:record
+      :routine/presence
+      [[:enabled :bool]
+       [:held-run :bool]
+       [:active-run :bool]
+       [:steps-admitted :i64]
+       [:steps-recorded :i64]]]
+     p
+     :enabled)
+    (if
+     (stale? p)
+     false
+     (if
+      (record-get
+       [:record
+        :routine/presence
+        [[:enabled :bool]
+         [:held-run :bool]
+         [:active-run :bool]
+         [:steps-admitted :i64]
+         [:steps-recorded :i64]]]
+       p
+       :active-run)
+      false
+      true))
+    false),
+   :param-types [[:ref :routine/presence]]}
+  {:name may-fire?,
+   :params [p],
+   :result :bool,
+   :effects #{},
+   :body
+   (if
+    (may-start? p)
+    (if
+     (record-get
+      [:record
+       :routine/presence
+       [[:enabled :bool]
+        [:held-run :bool]
+        [:active-run :bool]
+        [:steps-admitted :i64]
+        [:steps-recorded :i64]]]
+      p
+      :held-run)
+     false
+     true)
+    false),
+   :param-types [[:ref :routine/presence]]}
+  {:name status,
+   :params [p],
+   :result :i64,
+   :effects #{},
+   :body
+   (if
+    (record-get
+     [:record
+      :routine/presence
+      [[:enabled :bool]
+       [:held-run :bool]
+       [:active-run :bool]
+       [:steps-admitted :i64]
+       [:steps-recorded :i64]]]
+     p
+     :enabled)
+    (if
+     (record-get
+      [:record
+       :routine/presence
+       [[:enabled :bool]
+        [:held-run :bool]
+        [:active-run :bool]
+        [:steps-admitted :i64]
+        [:steps-recorded :i64]]]
+      p
+      :held-run)
+     (status-waiting-approval)
+     (if
+      (stale? p)
+      (status-stale)
+      (if
+       (record-get
+        [:record
+         :routine/presence
+         [[:enabled :bool]
+          [:held-run :bool]
+          [:active-run :bool]
+          [:steps-admitted :i64]
+          [:steps-recorded :i64]]]
+        p
+        :active-run)
+       (status-running)
+       (status-idle))))
+    (status-disabled)),
+   :param-types [[:ref :routine/presence]]}
+  {:name main,
+   :params [],
+   :result :i64,
+   :effects #{},
+   :body 0,
+   :param-types []}],
+ :oracle-value 0,
+ :schema-identities
+ #:routine{:presence
+           "05b9a2e1529639452b7c9690e99c6c2906290a0b0b8352028dd7cf50bbaa06b9"},
+ :exports
+ [status-disabled
+  status-idle
+  status-running
+  status-waiting-approval
+  status-stale
+  stale?
+  may-fire?
+  may-start?
+  status
+  main],
+ :schemas
+ #:routine{:presence
+           [:record
+            :routine/presence
+            [[:enabled :bool]
+             [:held-run :bool]
+             [:active-run :bool]
+             [:steps-admitted :i64]
+             [:steps-recorded :i64]]]},
+ :effects #{},
+ :blocks [{:id 0, :instructions [[:const.i64 0] [:return]]}],
+ :entry main}

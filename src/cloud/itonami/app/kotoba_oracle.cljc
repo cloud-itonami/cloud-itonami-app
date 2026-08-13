@@ -79,7 +79,9 @@
    :organism-worker "cloud/itonami/app/organism_worker.kotoba"
    :work-transitions "cloud/itonami/app/work_transitions_core.kotoba"
    :approval "cloud/itonami/app/approval_core.kotoba"
-   :bot "cloud/itonami/app/bot_core.kotoba"})
+   :bot "cloud/itonami/app/bot_core.kotoba"
+   :routine "cloud/itonami/app/routine_core.kotoba"
+   :handoff "cloud/itonami/app/handoff_core.kotoba"})
 
 (defn resource-path [id]
   (str "cloud/itonami/app/oracle/" (name id) ".kir.edn"))

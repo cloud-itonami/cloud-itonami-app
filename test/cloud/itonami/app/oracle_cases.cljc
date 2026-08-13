@@ -73,6 +73,20 @@
   [:record :bot/presence
    [[:enabled :bool] [:held-run :bool] [:unmet-connection :bool] [:active-run :bool]]])
 
+(def routine-presence-record
+  [:record :routine/presence
+   [[:enabled :bool] [:held-run :bool] [:active-run :bool]
+    [:steps-admitted :i64] [:steps-recorded :i64]]])
+
+(def handoff-request-record
+  [:record :handoff/request
+   [[:same-owner :bool] [:source-enabled :bool] [:target-enabled :bool]
+    [:distinct-bots :bool] [:depth :i64] [:max-depth :i64]]])
+
+(def handoff-decision-record
+  [:record :handoff/decision
+   [[:human :bool] [:identified :bool] [:authorized :bool]]])
+
 (defn- some-string [s] [[:option :string] true s])
 (def ^:private no-string [[:option :string] false])
 
@@ -267,7 +281,87 @@
     {:oracle :work-transitions :export 'transition-legal?
      :args [(oracle/i64 0) (oracle/i64 1)] :expect true}
     {:oracle :work-transitions :export 'transition-legal?
-     :args [(oracle/i64 0) (oracle/i64 6)] :expect false}]))
+     :args [(oracle/i64 0) (oracle/i64 6)] :expect false}]
+
+   ;; ── routine ─────────────────────────────────────────────────────
+   ;; `:routine/presence` carries two `:i64` fields, so every case here
+   ;; exercises the in-a-record direction that only ClojureScript rejects.
+   (map-indexed
+    (fn [i export] {:oracle :routine :export export :args []
+                    :expect i :read oracle/i64-value})
+    '[status-disabled status-idle status-running status-waiting-approval
+      status-stale])
+   [{:oracle :routine :export 'main :args [] :expect 0 :read oracle/i64-value}
+    ;; a narrowed grant is stale; an equal one is not
+    {:oracle :routine :export 'stale?
+     :args [(oracle/record routine-presence-record
+                           [true false false (oracle/i64 2) (oracle/i64 3)])]
+     :expect true}
+    {:oracle :routine :export 'stale?
+     :args [(oracle/record routine-presence-record
+                           [true false false (oracle/i64 3) (oracle/i64 3)])]
+     :expect false}
+    ;; a person may start with a held run outstanding; a schedule may not.
+    ;; The pair is the whole difference between the two exports.
+    {:oracle :routine :export 'may-start?
+     :args [(oracle/record routine-presence-record
+                           [true true false (oracle/i64 3) (oracle/i64 3)])]
+     :expect true}
+    {:oracle :routine :export 'may-fire?
+     :args [(oracle/record routine-presence-record
+                           [true true false (oracle/i64 3) (oracle/i64 3)])]
+     :expect false}
+    {:oracle :routine :export 'may-fire?
+     :args [(oracle/record routine-presence-record
+                           [true false false (oracle/i64 3) (oracle/i64 3)])]
+     :expect true}
+    {:oracle :routine :export 'status
+     :args [(oracle/record routine-presence-record
+                           [false false false (oracle/i64 3) (oracle/i64 3)])]
+     :expect 0 :read oracle/i64-value}
+    {:oracle :routine :export 'status
+     :args [(oracle/record routine-presence-record
+                           [true true false (oracle/i64 2) (oracle/i64 3)])]
+     :expect 3 :read oracle/i64-value}
+    {:oracle :routine :export 'status
+     :args [(oracle/record routine-presence-record
+                           [true false false (oracle/i64 2) (oracle/i64 3)])]
+     :expect 4 :read oracle/i64-value}]
+
+   ;; ── handoff ─────────────────────────────────────────────────────
+   [{:oracle :handoff :export 'main :args [] :expect 0 :read oracle/i64-value}
+    {:oracle :handoff :export 'admitted?
+     :args [(oracle/record handoff-request-record
+                           [true true true true (oracle/i64 0) (oracle/i64 4)])]
+     :expect true}
+    ;; ownership is the refusal that is not recoverable
+    {:oracle :handoff :export 'admitted?
+     :args [(oracle/record handoff-request-record
+                           [false true true true (oracle/i64 0) (oracle/i64 4)])]
+     :expect false}
+    {:oracle :handoff :export 'admitted?
+     :args [(oracle/record handoff-request-record
+                           [true true true true (oracle/i64 4) (oracle/i64 4)])]
+     :expect false}
+    {:oracle :handoff :export 'budget-exhausted?
+     :args [(oracle/record handoff-request-record
+                           [true true true true (oracle/i64 4) (oracle/i64 4)])]
+     :expect true}
+    {:oracle :handoff :export 'budget-exhausted?
+     :args [(oracle/record handoff-request-record
+                           [true true true true (oracle/i64 0) (oracle/i64 4)])]
+     :expect false}
+    ;; the refusal the core exists for, and its human counterpart
+    {:oracle :handoff :export 'may-approve?
+     :args [(oracle/record handoff-decision-record [true true true]) "agent"]
+     :expect false}
+    {:oracle :handoff :export 'may-approve?
+     :args [(oracle/record handoff-decision-record [true true true]) "person"]
+     :expect true}
+    {:oracle :handoff :export 'next-depth
+     :args [(oracle/record handoff-request-record
+                           [true true true true (oracle/i64 2) (oracle/i64 4)])]
+     :expect 3 :read oracle/i64-value}]))
 
 (defn run-case
   "Execute one case through the seam. Returns {:ok? :actual}.

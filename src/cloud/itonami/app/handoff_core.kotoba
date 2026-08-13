@@ -1,0 +1,133 @@
+;; A HANDOFF's DECISION CORE — one Bot giving work to another, and what that
+;; must not buy either of them.
+;;
+;; Bots that can pass work between them are the point of having more than one:
+;; a Bot that researches hands what it found to a Bot that writes. The whole
+;; risk is in the same sentence. If handing work over also hands over reach,
+;; then the way to obtain a tool you were not granted is to ask a Bot that was,
+;; and every per-Bot grant in this application becomes advisory.
+;;
+;; ## The mechanism is an absence
+;;
+;; `:handoff/request` has no tool, no grant, no scope and no account field.
+;; Not "the host is careful not to copy the grant across" — there is no grant
+;; here to copy. A handed-over task arrives at the target as a message, and the
+;; target's own `bot_core/tool-admitted?` decides what may run, from the
+;; target's own grant, exactly as if the person had typed the request
+;; themselves. The sender's reach is not an input to that answer and cannot be
+;; made into one from this file.
+;;
+;; This is the same construction `bot_core.kotoba` uses for personas: the way
+;; to guarantee a name cannot become authority is to keep the name out of the
+;; function. The way to guarantee delegation cannot become escalation is to
+;; keep the grant out of the record.
+;;
+;; ## The three judgements, and the failure each one exists to prevent
+;;
+;;   - `admitted?` — work crossing between two people's Bots. `same-owner` is
+;;     first because it is the boundary that is not recoverable: a tool a Bot
+;;     should not have had is a bad afternoon, and someone else's Bot acting on
+;;     your data is a different kind of incident.
+;;   - `may-approve?` — a Bot approving through a proxy. `bot_core` already
+;;     refuses to let an agent approve; without the same refusal here, the way
+;;     around it is to hand the held run to a second Bot and have that one say
+;;     yes. Restated at the one place the argument would be made, for the same
+;;     reason `bot_core` restates `agent-session`'s rule.
+;;   - `budget-exhausted?` — Bots handing work in a ring. Two Bots that each
+;;     answer by delegating do not stop, and every hop costs a model call and
+;;     compounds the chance of drift: twenty hops at 98% each is a two-in-three
+;;     chance the chain still means what it started as. A depth ceiling bounds
+;;     both the spend and the cycle, which is why there is no separate
+;;     cycle test — a ring cannot outrun a budget that only decreases.
+;;
+;; ## Why it is written this narrowly
+;;
+;; Same native word-typed slice as `bot_core.kotoba`: `:bool` and `:i64`
+;; scalars, sealed all-scalar records, `string=?`, `and`, `if`, `<`. Facts
+;; arrive as records because a bare `:bool` parameter is a backend gap
+;; (compiler ADR-0219), and `and` produces `:i64` rather than `:bool`, which is
+;; what the trailing `true false` folds.
+;;
+;; Parity: test/cloud/itonami/app/handoff_kotoba_parity_test.clj
+
+(ns handoff-core
+  (:schemas {;; What the host has established about one attempted handoff.
+             ;;
+             ;; Deliberately absent: which tools either Bot holds, which
+             ;; accounts either Bot is bound to, and what the task says. The
+             ;; first two are the escalation this file exists to prevent; the
+             ;; third would let the decision turn on the wording of a request
+             ;; written by a model.
+             ;;
+             ;; `distinct-bots` is the host's answer to "is the target a
+             ;; different Bot than the sender", kept as a fact rather than
+             ;; derived from ids, because no id crosses this boundary either.
+             ;; `depth` is how many handoffs already happened in this chain and
+             ;; `max-depth` is the deployment's ceiling.
+             :handoff/request
+             [:record :handoff/request
+              [[:same-owner :bool]
+               [:source-enabled :bool]
+               [:target-enabled :bool]
+               [:distinct-bots :bool]
+               [:depth :i64]
+               [:max-depth :i64]]]
+             ;; Who is recording an approval decision that arrived by handoff.
+             ;; Identical in shape to `bot/decision` in `bot_core.kotoba`, and
+             ;; identical on purpose: a decision must not become approvable by
+             ;; changing which door it came through.
+             :handoff/decision
+             [:record :handoff/decision
+              [[:human :bool]
+               [:identified :bool]
+               [:authorized :bool]]]})
+  (:export [budget-exhausted? admitted? may-approve? next-depth main]))
+
+(defn budget-exhausted? [r [:ref :handoff/request]] :bool
+  ;; At or past the ceiling. `<` rather than `<=` on the admitting side means a
+  ;; ceiling of zero admits nothing, which is what a deployment that sets zero
+  ;; is asking for.
+  (if (< (record-get r :depth) (record-get r :max-depth))
+    false
+    true))
+
+(defn admitted? [r [:ref :handoff/request]] :bool
+  ;; Ownership first and alone, then both Bots live, then the two are actually
+  ;; two, then the budget. Nested `if` rather than one conjunction so each
+  ;; refusal is a separate line to put a breakpoint on and a separate case in
+  ;; the parity corpus.
+  (if (record-get r :same-owner)
+    (if (record-get r :source-enabled)
+      (if (record-get r :target-enabled)
+        (if (record-get r :distinct-bots)
+          (if (budget-exhausted? r) false true)
+          false)
+        false)
+      false)
+    false))
+
+(defn may-approve? [d [:ref :handoff/decision] actor-kind :string] :bool
+  ;; The actor kind is tested FIRST and ALONE, so that no combination of the
+  ;; other three facts reaches the human branch for an agent. A handoff is a
+  ;; message, and a message from a Bot is still a Bot talking: there is no
+  ;; value of `human`, `identified` or `authorized` that lets one Bot's request
+  ;; stand in for a person's approval of another Bot's held run.
+  (if (string=? actor-kind "agent")
+    false
+    (if (and (record-get d :human)
+             (record-get d :identified)
+             (record-get d :authorized))
+      true
+      false)))
+
+(defn next-depth [r [:ref :handoff/request]] :i64
+  ;; What the accepted handoff records as its chain position. Monotonic by
+  ;; construction: the successor of a bounded, only-increasing counter is what
+  ;; makes `budget-exhausted?` terminating, so the host must carry this value
+  ;; forward rather than recomputing a depth from the graph it walked.
+  (+ (record-get r :depth) 1))
+
+(defn main [] :i64
+  ;; Sentinel for the wasm host contract, not a battery. The assertions live in
+  ;; the parity test where they can be compared against the cljc.
+  0)
