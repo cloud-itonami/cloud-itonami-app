@@ -340,8 +340,13 @@
   .bots-swatch[aria-checked='true']{border-color:var(--color-key-600)}
   .bots-swatch:focus-visible{outline:4px solid var(--color-primitive-yellow-300)}
   .bots-avatar-preview{display:flex;justify-content:center;padding:.5rem 0}
-  .bots-permission{display:flex;align-items:center;gap:.5rem;
+  .bots-permission{display:flex;align-items:flex-start;gap:.5rem;
     color:var(--color-neutral-solid-gray-700);font-size:.875rem}
+  .bots-permission input{margin-top:.2rem}
+  .bots-permission:has(input:disabled){opacity:.65}
+  .bots-permission__copy{display:grid;gap:.125rem}
+  .bots-permission__help{font-size:.75rem;
+    color:var(--color-neutral-solid-gray-600)}
   .bots-suggestions{display:grid;gap:.75rem;
     grid-template-columns:repeat(auto-fill,minmax(15rem,1fr))}
   .bots-suggestion{display:flex;gap:.75rem;padding:.875rem;border-radius:.75rem;
@@ -1397,6 +1402,11 @@
              [:label {:class "bots-permission"}
               [:input {:id "bots-writes" :type "checkbox"}]
               [:span "書き込みも任せる（実行前に毎回わたしが承認する）"]]
+             [:label {:class "bots-permission"}
+              [:input {:id "bots-browser" :type "checkbox"}]
+              [:span {:class "bots-permission__copy"}
+               [:span "API の無いサイトは、このマシンの分離ブラウザーで（実行前に承認する）"]
+               [:span {:class "bots-permission__help" :id "bots-browser-help"}]]]
              [:button {:class "primary-action" :id "bots-create" :type "button"}
               "はじめる"]
              [:p {:class "drive-create__status" :id "bots-create-status"

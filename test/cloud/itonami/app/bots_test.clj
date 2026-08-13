@@ -7,6 +7,7 @@
   that would cross it redefines the seam instead."
   (:require [clojure.string :as str]
             [clojure.test :refer [deftest is testing]]
+            [cloud.itonami.app.agent-control :as agent-control]
             [cloud.itonami.app.bots :as bots]
             [cloud.itonami.app.config :as config]
             [cloud.itonami.app.identity :as identity]
@@ -325,3 +326,179 @@
             (testing "a connector with no selected account resolves to nothing,
                       which connector.invoke turns into a value the Bot can read"
               (is (nil? (cports/-token tokens 'com.github))))))))))
+
+(def ^:private browser-on {:agent-control {:browser {:enabled? true}}})
+
+(defn- execute-tool-var []
+  (ns-resolve 'cloud.itonami.app.agent-control 'execute-tool!))
+
+(deftest a-bot-that-asked-for-the-browser-gets-the-isolated-tools
+  (with-store
+    (fn []
+      (connect! "conn-1" :google "sub-1" "jun@example.com")
+      (let [b (make-bot alice {:browser? true})
+            seen (atom nil)]
+        (with-redefs [policy/select-provider (fn [_ _] {:id :local})
+                      provider/agent-turn
+                      (fn [_ request] (reset! seen request)
+                        {:content "見ました。" :tool-calls []})]
+          (bots/send! browser-on alice (:bot/id b) "ページを見て"))
+        (is (some #(= "browser_snapshot" (:name %)) (:tools @seen)))
+        (is (some #(= "browser_open" (:name %)) (:tools @seen)))
+        (is (not-any? #(str/starts-with? (:name %) "computer_") (:tools @seen))
+            "computer-use is not a Bot tool")
+        (is (not (contains? (:bot/tools (#'bots/bot-by-id (:bot/id b)))
+                            "browser_snapshot"))
+            "browser tools stay off the connector grant, so grant-widens? does not fire")
+        (let [shown (first (:bots (bots/overview browser-on alice)))]
+          (is (true? (:browser? shown)))
+          (is (true? (:browser-ready? shown)))
+          (is (true? (:browser-available? (bots/overview browser-on alice)))))))))
+
+(deftest a-bot-without-the-browser-does-not-see-browser-tools
+  (with-store
+    (fn []
+      (connect! "conn-1" :google "sub-1" "jun@example.com")
+      (let [b (make-bot alice {})
+            seen (atom nil)]
+        (with-redefs [policy/select-provider (fn [_ _] {:id :local})
+                      provider/agent-turn
+                      (fn [_ request] (reset! seen request)
+                        {:content "見ました。" :tool-calls []})]
+          (bots/send! browser-on alice (:bot/id b) "受信箱を見て"))
+        (is (not-any? #(str/starts-with? (:name %) "browser_") (:tools @seen)))
+        (is (seq (:tools @seen)) "Gmail tools still reach the model")))))
+
+(deftest a-bot-that-asked-for-the-browser-on-a-machine-that-has-it-off-does-not-grow-tools
+  (with-store
+    (fn []
+      (connect! "conn-1" :google "sub-1" "jun@example.com")
+      (let [b (make-bot alice {:browser? true})
+            seen (atom nil)]
+        (with-redefs [policy/select-provider (fn [_ _] {:id :local})
+                      provider/agent-turn
+                      (fn [_ request] (reset! seen request)
+                        {:content "見ました。" :tool-calls []})]
+          (bots/send! nil alice (:bot/id b) "ページを見て"))
+        (is (not-any? #(str/starts-with? (:name %) "browser_") (:tools @seen)))
+        (let [shown (first (:bots (bots/overview nil alice)))]
+          (is (true? (:browser? shown)) "the field stays")
+          (is (false? (:browser-ready? shown)) "the tools do not appear")
+          (is (false? (:browser-available? (bots/overview nil alice)))))))))
+
+(deftest browser-open-is-held-for-approval
+  (with-store
+    (fn []
+      (connect! "conn-1" :google "sub-1" "jun@example.com")
+      (let [b (make-bot alice {:browser? true})
+            executed (atom [])]
+        (with-redefs-fn {(execute-tool-var)
+                         (fn [_ name input]
+                           (swap! executed conj [name input])
+                           "opened")}
+          (fn []
+            (with-redefs [policy/select-provider (fn [_ _] {:id :local})
+                          provider/agent-turn
+                          (fn [_ _]
+                            {:content "開きます。"
+                             :tool-calls [{:id "c1" :name "browser_open"
+                                           :input {:url "https://example.com"}}]})]
+              (let [messages (bots/send! browser-on alice (:bot/id b) "example.com を開いて")
+                    card (first (:cards (last messages)))]
+                (is (empty? @executed)
+                    "call-browser-tool! must not run until the person approves")
+                (is (= "approval" (:kind card)))
+                (is (= "browser_open" (:action card)))
+                (is (str/includes? (str (:impact card)) "分離ブラウザー"))))))))))
+
+(deftest browser-snapshot-runs-without-hold
+  (with-store
+    (fn []
+      (connect! "conn-1" :google "sub-1" "jun@example.com")
+      (let [b (make-bot alice {:browser? true})
+            executed (atom [])
+            turns (atom 0)]
+        (with-redefs-fn {(execute-tool-var)
+                         (fn [_ name input]
+                           (swap! executed conj {:session agent-control/*browser-session*
+                                                 :name name :input input})
+                           "tree")}
+          (fn []
+            (with-redefs [policy/select-provider (fn [_ _] {:id :local})
+                          provider/agent-turn
+                          (fn [_ _]
+                            (let [n (swap! turns inc)]
+                              (if (= 1 n)
+                                {:content ""
+                                 :tool-calls [{:id "c1" :name "browser_snapshot" :input {}}]}
+                                {:content "見ました。" :tool-calls []})))]
+              (let [messages (bots/send! browser-on alice (:bot/id b) "ページを見て")]
+                (is (= 1 (count @executed)))
+                (is (= "browser_snapshot" (:name (first @executed))))
+                (is (= (agent-control/session-for (:bot/id b))
+                       (:session (first @executed))))
+                (is (not-any? #(= "approval" (:kind %))
+                              (mapcat :cards messages)))))))))))
+
+(deftest approving-a-browser-write-runs-it-in-the-bots-profile
+  (with-store
+    (fn []
+      (connect! "conn-1" :google "sub-1" "jun@example.com")
+      (let [b (make-bot alice {:browser? true})
+            executed (atom [])
+            turns (atom 0)]
+        (with-redefs-fn {(execute-tool-var)
+                         (fn [_ name input]
+                           (swap! executed conj {:session agent-control/*browser-session*
+                                                 :name name :input input})
+                           "opened")}
+          (fn []
+            (with-redefs [policy/select-provider (fn [_ _] {:id :local})
+                          provider/agent-turn
+                          (fn [_ _]
+                            (let [n (swap! turns inc)]
+                              (if (= 1 n)
+                                {:content "開きます。"
+                                 :tool-calls [{:id "c1" :name "browser_open"
+                                               :input {:url "https://example.com"}}]}
+                                {:content "開きました。" :tool-calls []})))]
+              (let [card (first (:cards (last (bots/send! browser-on alice (:bot/id b)
+                                                          "example.com を開いて"))))]
+                (is (empty? @executed))
+                (bots/decide! browser-on alice (:bot/id b) (:id card) "approved")
+                (is (= 1 (count @executed)))
+                (is (= "browser_open" (:name (first @executed))))
+                (is (= (agent-control/session-for (:bot/id b))
+                       (:session (first @executed))))))))))))
+
+(deftest call-browser-tool-binds-the-profile-to-the-bot
+  (with-store
+    (fn []
+      (let [seen (atom [])]
+        (with-redefs-fn {(execute-tool-var)
+                         (fn [_ name _]
+                           (swap! seen conj [agent-control/*browser-session* name])
+                           "ok")}
+          (fn []
+            (agent-control/call-browser-tool! browser-on "bot-a" "browser_snapshot" {})
+            (agent-control/call-browser-tool! browser-on "bot-b" "browser_snapshot" {})))
+        (is (= [(agent-control/session-for "bot-a")
+                (agent-control/session-for "bot-b")]
+               (mapv first @seen)))
+        (is (not= (ffirst @seen) (first (second @seen))))))))
+
+(deftest call-browser-tool-refuses-computer-use-and-a-disabled-browser
+  (with-store
+    (fn []
+      (try
+        (agent-control/call-browser-tool! browser-on "bot-a" "computer_click"
+                                          {:x 1 :y 1 :application "Safari"})
+        (is false "computer_click must not be callable as a browser tool")
+        (catch clojure.lang.ExceptionInfo e
+          (is (= :agent/unknown-tool (:type (ex-data e))))))
+      (try
+        (agent-control/call-browser-tool! {} "bot-a" "browser_open"
+                                          {:url "https://example.com"})
+        (is false "a disabled browser must not execute")
+        (catch clojure.lang.ExceptionInfo e
+          (is (= :agent/browser-disabled (:type (ex-data e)))))))))

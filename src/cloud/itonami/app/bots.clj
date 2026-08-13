@@ -30,9 +30,12 @@
   check are all about that. A Gmail send and a click on this laptop are not the
   same risk and should not share an approval prompt that has to describe both.
 
-  A Bot may hold both. `:bot/browser?` opts it into agent-control's surface for
-  the sites with no API at all, which is the case connectors structurally
-  cannot cover.
+  A Bot may hold both. `:bot/browser?` opts it into agent-control's isolated
+  browser for the sites with no API at all, which is the case connectors
+  structurally cannot cover. The dispatch is this namespace: the tools join
+  the Bot's turn, writes still hold, and the profile is `session-for` of the
+  Bot's id so two Bots do not share cookies. Computer-use (frontmost app)
+  stays off this path.
 
   ## What a Bot's 'own computer' is here
 
@@ -53,6 +56,7 @@
   consequence of the thesis rather than an oversight."
   (:require [clojure.data.json :as json]
             [clojure.string :as str]
+            [cloud.itonami.app.agent-control :as agent-control]
             [cloud.itonami.app.bot :as bot]
             [cloud.itonami.app.connectors :as connectors]
             [cloud.itonami.app.handoff :as handoff]
@@ -390,6 +394,8 @@
      :grant-widens? (bot/grant-widens? b rows)
      :writes? (:bot/writes? b)
      :browser? (:bot/browser? b)
+     :browser-ready? (boolean (and (:bot/browser? b)
+                                   (agent-control/browser-enabled? configuration)))
      :enabled? (:bot/enabled? b)
      :status (name (bot/status b (presence (:bot/id b))))
      :updated-at (:bot/updated-at b)}))
@@ -449,7 +455,8 @@
     {:bots (mapv #(public-bot configuration did %) mine)
      :catalog (catalog configuration did)
      :palette {:colors (mapv name bot/avatar-colors)
-               :glyphs (mapv name bot/avatar-glyphs)}}))
+               :glyphs (mapv name bot/avatar-glyphs)}
+     :browser-available? (agent-control/browser-enabled? configuration)}))
 
 (defn suggestions
   "Starting points for the connectors somebody picked."
@@ -473,51 +480,67 @@
 
   Read and write are both offered. Withholding the write tools would make a Bot
   answer 'I cannot send mail' when the truth is 'I can, once you approve it',
-  and the second is the thing a person is trying to find out."
+  and the second is the thing a person is trying to find out.
+
+  Isolated-browser tools join here when the Bot asked for them AND this
+  machine has enabled the browser. They are not written into `:bot/tools`:
+  that set is connector names, and mixing the two would make `grant-widens?`
+  fire on every ordinary browser Bot."
   [configuration b connected]
   (let [registry (connectors/enabled configuration)
         admitted (bot/admitted-tools b (connectors/catalog-rows configuration)
-                                     connected)]
-    (into []
-          (for [d (creg/descriptors registry)
-                t (cm/tools d)
-                :when (contains? admitted (:connector/name t))]
-            {:name (:connector/name t)
-             :description (str "[" (:connector/name d) "] "
-                               (or (:connector/description t) (:connector/name t))
-                               (when (= :write (:connector/effect t)) " (write)"))
-             :parameters (:connector/input-schema t)}))))
+                                     connected)
+        connector-tools
+        (into []
+              (for [d (creg/descriptors registry)
+                    t (cm/tools d)
+                    :when (contains? admitted (:connector/name t))]
+                {:name (:connector/name t)
+                 :description (str "[" (:connector/name d) "] "
+                                   (or (:connector/description t) (:connector/name t))
+                                   (when (= :write (:connector/effect t)) " (write)"))
+                 :parameters (:connector/input-schema t)}))]
+    (into (if (:bot/browser? b)
+            (vec (agent-control/browser-tool-definitions configuration))
+            [])
+          connector-tools)))
 
 (defn- write-tool? [configuration tool-name]
-  (let [registry (connectors/enabled configuration)]
-    (boolean
-     (some (fn [d] (when-let [t (cm/tool d tool-name)]
-                     (= :write (:connector/effect t))))
-           (creg/descriptors registry)))))
+  (or (agent-control/browser-write? tool-name)
+      (let [registry (connectors/enabled configuration)]
+        (boolean
+         (some (fn [d] (when-let [t (cm/tool d tool-name)]
+                         (= :write (:connector/effect t))))
+               (creg/descriptors registry))))))
 
 (defn- describe-tool [configuration tool-name args]
-  (let [registry (connectors/enabled configuration)
-        request (invoke/request-for registry tool-name args)]
-    ;; The request WITHOUT the credential — `connector.invoke/request-for`
-    ;; exists precisely so a host can show what a call would do without holding
-    ;; a token to do it. An approval prompt that only names the tool is asking
-    ;; somebody to approve a word.
-    (str (str/upper-case (name (or (:connector.http/method request) :get)))
-         " " (:connector.http/url request)
-         (when-let [q (seq (:connector.http/query request))]
-           (str " " (pr-str (into (sorted-map) q)))))))
+  (if (agent-control/browser-tool? tool-name)
+    (agent-control/describe-browser-tool tool-name args)
+    (let [registry (connectors/enabled configuration)
+          request (invoke/request-for registry tool-name args)]
+      ;; The request WITHOUT the credential — `connector.invoke/request-for`
+      ;; exists precisely so a host can show what a call would do without holding
+      ;; a token to do it. An approval prompt that only names the tool is asking
+      ;; somebody to approve a word.
+      (str (str/upper-case (name (or (:connector.http/method request) :get)))
+           " " (:connector.http/url request)
+           (when-let [q (seq (:connector.http/query request))]
+             (str " " (pr-str (into (sorted-map) q))))))))
 
-(defn- run-tool! [configuration selection tool-name args]
-  (let [registry (connectors/enabled configuration)
-        result (invoke/call registry tool-name args
-                            {:http (http-port)
-                             :tokens (tokens-port configuration selection)})
-        text (if (string? result) result (pr-str result))]
+(defn- run-tool! [configuration b selection tool-name args]
+  (let [text (if (agent-control/browser-tool? tool-name)
+               (str (agent-control/call-browser-tool!
+                     configuration (:bot/id b) tool-name args))
+               (let [registry (connectors/enabled configuration)
+                     result (invoke/call registry tool-name args
+                                         {:http (http-port)
+                                          :tokens (tokens-port configuration selection)})]
+                 (if (string? result) result (pr-str result))))]
     (if (> (count text) max-tool-output-chars)
       (str (subs text 0 max-tool-output-chars) "…")
       text)))
 
-(defn- system-prompt [b]
+(defn- system-prompt [b configuration]
   (str "You are " (:bot/name b) ", a bounded worker inside Cloud Itonami. "
        "Use exactly one tool per turn. Prefer reading before writing. "
        "Never request, reveal or repeat a password, token, MFA code or other "
@@ -525,6 +548,14 @@
        "A write tool will be held for the person's approval before it runs — "
        "call it when it is the right next step and say what you are about to do. "
        "Answer in the language the person used.\n\n"
+       (when (and (:bot/browser? b)
+                  (agent-control/browser-enabled? configuration))
+         (str "You have an isolated browser of your own on this machine. "
+              "Its cookies are not shared with other Bots. "
+              "browser_snapshot reads; opening, clicking and typing wait for "
+              "approval. Stay inside the domains Settings has allowed. "
+              "If a site asks for a password, 2FA, CAPTCHA or payment, stop "
+              "and tell the person — do not try to bypass it.\n\n"))
        (when (seq (str (:bot/brief b)))
          (str "Standing brief from the person you work for:\n" (:bot/brief b)))))
 
@@ -533,8 +564,8 @@
   stored in provider shape: `:person`/`:bot` is what this application records,
   and a stored `\"user\"`/`\"assistant\"` transcript would be a second copy of
   the conversation whose only purpose is to be sent somewhere."
-  [b messages]
-  (into [{:role "system" :content (system-prompt b)}]
+  [configuration b messages]
+  (into [{:role "system" :content (system-prompt b configuration)}]
         (for [m messages
               :when (seq (str (:message/text m)))]
           {:role (if (= :person (:message/role m)) "user" "assistant")
@@ -624,8 +655,10 @@
                         :title "この Bot が実行しようとしています"
                         :action name
                         :summary (describe-tool configuration name input)
-                        :impact "承認するとこの Bot が接続済みサービスに書き込みます。"})]))
-              (let [output (run-tool! configuration (:selection run) name input)
+                        :impact (if (agent-control/browser-tool? name)
+                                  "承認するとこの Bot 専用の分離ブラウザーのページ状態が変わります。"
+                                  "承認するとこの Bot が接続済みサービスに書き込みます。")})]))
+              (let [output (run-tool! configuration b (:selection run) name input)
                     run (-> run
                             (update :tool-count (fnil inc 0))
                             (update :messages conj
@@ -768,7 +801,7 @@
             (advance! configuration b
                       {:id (new-id "run")
                        :selection selection
-                       :messages (transcript b (conversation bot-id))
+                       :messages (transcript configuration b (conversation bot-id))
                        :tools tools
                        :turn-count 0
                        :tool-count 0})))))
@@ -862,7 +895,7 @@
                                            cards))))
                          messages)))
       (if (= :approved decision)
-        (let [output (run-tool! configuration (:selection run)
+        (let [output (run-tool! configuration b (:selection run)
                                 (:name call) (:input call))
               run (-> run
                       (update :tool-count (fnil inc 0))
@@ -1093,7 +1126,7 @@
     (advance! configuration b
               {:id (new-id "run")
                :selection (:selection selection)
-               :messages (transcript b (conversation (:bot/id b)))
+               :messages (transcript configuration b (conversation (:bot/id b)))
                :tools (tool-definitions configuration b connected)
                :turn-count 0
                :tool-count 0})))
@@ -1196,7 +1229,7 @@
         (advance! configuration target
                   {:id (new-id "run")
                    :selection selection
-                   :messages (transcript target (conversation to-bot-id))
+                   :messages (transcript configuration target (conversation to-bot-id))
                    :tools (tool-definitions configuration target connected)
                    :turn-count 0
                    :tool-count 0}))
