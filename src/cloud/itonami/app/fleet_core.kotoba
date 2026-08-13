@@ -32,13 +32,9 @@
 ;; `:wasm32-kotoba-v1` and `:x86_64-kotoba-v1` — see
 ;; `fleet-core-kotoba-parity-test`.
 ;;
-;; Two spellings are forced, and both are temporary (ADR-2608650000):
-;;
-;; - **`option-some?-of` with an explicit `[:option :string]`**, not bare
-;;   `option-some?`. The bare form is typed `option-i64` and rejects a string
-;;   option outright (`expected option-i64, got [:option :string]`).
-;; - **`(if … true false)` around `and`/`or`**, because those produce `:i64`
-;;   rather than `:bool`.
+;; Presence is `option-some?` (sema rewrites it to `option-some?-of` when the
+;; field is `[:option :string]`). `string=?` and `and` are `:bool`, so they
+;; are the function body rather than `(if … true false)`.
 ;;
 ;; An actor is a flat record rather than the map the cljc reads, for the same
 ;; reason `policy.kotoba` takes one: maps are absent from the native slice.
@@ -65,31 +61,25 @@
 ;; Since 2026-08-11 `fleet_core.cljc` CALLS these four through
 ;; `cloud.itonami.app.kotoba-oracle` rather than keeping its own copies.
 (defn catalog-schema-ok? [found :string] :bool
-  (if (string=? found "cloud.itonami.fleet-catalog.v1")
-    true
-    false))
+  (string=? found "cloud.itonami.fleet-catalog.v1"))
 
 ;; An address is data, never something to call — absent means not deployed, or
 ;; deployed with no route. It does not mean "unknown, try it and see".
 (defn callable? [a [:ref :fleet/actor]] :bool
-  (if (option-some?-of [:option :string] (record-get a :endpoint))
-    true
-    false))
+  (option-some? (record-get a :endpoint)))
 
 ;; A callable actor need not be probeable: the Pages actors serve a real API
 ;; under /api/* and have no health endpoint, so there is nothing honest to probe.
 (defn probeable? [a [:ref :fleet/actor]] :bool
-  (if (and (option-some?-of [:option :string] (record-get a :endpoint))
-           (option-some?-of [:option :string] (record-get a :health-path)))
-    true
-    false))
+  (and (option-some? (record-get a :endpoint))
+       (option-some? (record-get a :health-path))))
 
 ;; First present wins, newest revision first. `none` when the actor codes no
 ;; ISIC at all — which is different from coding an empty one, and the parity
 ;; test covers both.
 (defn isic-of [a [:ref :fleet/actor]] [:option :string]
-  (if (option-some?-of [:option :string] (record-get a :isic))
+  (if (option-some? (record-get a :isic))
     (record-get a :isic)
-    (if (option-some?-of [:option :string] (record-get a :isic-rev5))
+    (if (option-some? (record-get a :isic-rev5))
       (record-get a :isic-rev5)
       (record-get a :isic-rev4))))

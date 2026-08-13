@@ -5,67 +5,60 @@
    :params [found],
    :result :bool,
    :effects #{},
-   :body
-   (if (string=? found "cloud.itonami.fleet-catalog.v1") true false),
+   :body (string=? found "cloud.itonami.fleet-catalog.v1"),
    :param-types [:string]}
   {:name callable?,
    :params [a],
    :result :bool,
    :effects #{},
    :body
-   (if
-    (option-some?-of
-     [:option :string]
-     (record-get
-      [:record
-       :fleet/actor
-       [[:endpoint [:option :string]]
-        [:health-path [:option :string]]
-        [:isic [:option :string]]
-        [:isic-rev5 [:option :string]]
-        [:isic-rev4 [:option :string]]]]
-      a
-      :endpoint))
-    true
-    false),
+   (option-some?-of
+    [:option :string]
+    (record-get
+     [:record
+      :fleet/actor
+      [[:endpoint [:option :string]]
+       [:health-path [:option :string]]
+       [:isic [:option :string]]
+       [:isic-rev5 [:option :string]]
+       [:isic-rev4 [:option :string]]]]
+     a
+     :endpoint)),
    :param-types [[:ref :fleet/actor]]}
   {:name probeable?,
    :params [a],
    :result :bool,
    :effects #{},
    :body
-   (if
-    (let
-     [__kotoba_and_2
-      (option-some?-of
-       [:option :string]
-       (record-get
-        [:record
-         :fleet/actor
-         [[:endpoint [:option :string]]
-          [:health-path [:option :string]]
-          [:isic [:option :string]]
-          [:isic-rev5 [:option :string]]
-          [:isic-rev4 [:option :string]]]]
-        a
-        :endpoint))]
-     (if
-      __kotoba_and_2
-      (option-some?-of
-       [:option :string]
-       (record-get
-        [:record
-         :fleet/actor
-         [[:endpoint [:option :string]]
-          [:health-path [:option :string]]
-          [:isic [:option :string]]
-          [:isic-rev5 [:option :string]]
-          [:isic-rev4 [:option :string]]]]
-        a
-        :health-path))
-      __kotoba_and_2))
-    true
-    false),
+   (let
+    [__kotoba_and_2
+     (option-some?-of
+      [:option :string]
+      (record-get
+       [:record
+        :fleet/actor
+        [[:endpoint [:option :string]]
+         [:health-path [:option :string]]
+         [:isic [:option :string]]
+         [:isic-rev5 [:option :string]]
+         [:isic-rev4 [:option :string]]]]
+       a
+       :endpoint))]
+    (if
+     __kotoba_and_2
+     (option-some?-of
+      [:option :string]
+      (record-get
+       [:record
+        :fleet/actor
+        [[:endpoint [:option :string]]
+         [:health-path [:option :string]]
+         [:isic [:option :string]]
+         [:isic-rev5 [:option :string]]
+         [:isic-rev4 [:option :string]]]]
+       a
+       :health-path))
+     __kotoba_and_2)),
    :param-types [[:ref :fleet/actor]]}
   {:name isic-of,
    :params [a],

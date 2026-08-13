@@ -459,9 +459,10 @@
          ;; `string=?` still returns i64 so a `:bool` result is a type mismatch.
          ;; All three measured directly against it on 2026-08-08.
          ;;
-         ;; Pinned to the same commit `manifest/west.yml` pins, so the parity
-         ;; gate measures the compiler this workspace actually ships — the same
-         ;; discipline compiler ADR 0221 applied to itself.
+         ;; Pinned to amu `1644b32`, which carries kotoba-sema `1b83233`.
+         ;; That rewrite lets `fleet_core.kotoba` write `option-some?` on
+         ;; `[:option :string]` instead of `option-some?-of`. `compiler.git`
+         ;; redirects at GitHub to `kotoba-lang/amu`.
          ;;
          ;; `io-multiformats` is named here for a reason that is not optional.
          ;; The compiler pin above drags its own, OLDER `io-multiformats`
@@ -475,7 +476,7 @@
          :override-deps
          {io.github.kotoba-lang/compiler
           {:git/url "https://github.com/kotoba-lang/compiler.git"
-           :git/sha "4c9650ee1a3ebaefb9a5a449e1b6ad37b009d2bf"}
+           :git/sha "1644b326eefa0951a6343cee9aff88fe9ba745e2"}
           io.github.kotoba-lang/io-multiformats
           {:git/url "https://github.com/kotoba-lang/io-multiformats.git"
            :git/sha "dc5200329d2fabce6edb7ca5c87c477cec0ea162"}}
