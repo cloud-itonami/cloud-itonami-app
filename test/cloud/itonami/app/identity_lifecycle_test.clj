@@ -189,3 +189,82 @@
             (is (= :central-auth/link-required (:type (ex-data error)))))))
       (finally
         (reset! store/state previous)))))
+
+(deftest a-session-handoff-crosses-exactly-one-cookie-jar-exactly-once
+  ;; The native window sends the authorization request to the system browser
+  ;; (RFC 8252, and independently because the embedded webview cannot do
+  ;; WebAuthn), so the callback's cookie is set in a jar it cannot read. The
+  ;; claim token is how it gets a session of its own — and it is the entire
+  ;; authority on an endpoint reached WITHOUT one, so what it refuses matters
+  ;; more than what it allows.
+  (let [previous @store/state]
+    (try
+      (reset! store/state (store/initial-state))
+      (identity/configure! {})
+      (testing "a browser that does not ask is never handed a claim token"
+        ;; It has no use for one, and a bearer secret that mints sessions is
+        ;; not something to issue on the ordinary path just because it fits.
+        (let [started (identity/start-central-authentication!
+                       nil "http://localhost:1338")]
+          (is (nil? (:handoff started)))
+          (is (empty? (get-in (store/snapshot)
+                              [:identity :central-auth-handoffs])))))
+      (reset! store/state (store/initial-state))
+      (identity/configure! {})
+      (let [started (identity/start-central-authentication!
+                     nil "http://localhost:1338" {:handoff? true})
+            claim (:handoff started)]
+        (is (string? claim))
+        (testing "the claim token is not the OAuth state and is not in the URL"
+          ;; `state` is published — address bar, provider logs, redirect. A
+          ;; claim endpoint keyed on it would hand a session to whoever read
+          ;; one.
+          (is (not= claim (central-state)))
+          (is (not (str/includes? (:url started) claim))))
+        (testing "the claim token is never stored"
+          ;; Same rule as `issue-session!`: digests at rest, never the secret.
+          (is (not (str/includes? (pr-str (store/snapshot)) claim))))
+        (testing "claiming before anybody authenticated mints nothing"
+          ;; Without this the token issued above would already BE a session,
+          ;; and starting a sign-in would equal finishing one.
+          (is (= {:ready? false}
+                 (identity/claim-session-handoff!
+                  claim {:origin-trusted? true}))))
+        (finish-central! "did:web:kotobase.net:person:one")
+        (testing "an untrusted origin mints nothing even when ready"
+          (is (= {:ready? false}
+                 (identity/claim-session-handoff!
+                  claim {:origin-trusted? false}))))
+        (testing "every refusal is the same answer on the wire"
+          ;; An unknown token, a wrong one and a blank one must be
+          ;; indistinguishable from a claim that is merely early — otherwise
+          ;; the endpoint confirms guesses by the shape of its rejection.
+          (doseq [guess [nil "" "not-a-real-claim-token" (central-state)]]
+            (is (= {:ready? false}
+                   (identity/claim-session-handoff!
+                    guess {:origin-trusted? true}))
+                (str "a refusal was distinguishable for " (pr-str guess)))))
+        (let [claimed (identity/claim-session-handoff!
+                       claim {:origin-trusted? true})
+              session (identity/session (:token claimed))]
+          (testing "the window that started the flow gets a session of its own"
+            (is (true? (:ready? claimed)))
+            (is (true? (identity/may-act? session)))
+            ;; The facts came from the callback, not from the claim: the claim
+            ;; record carries no user, provider or authentication level, so
+            ;; there is nothing here that could have chosen them.
+            (is (= :federated (:kind session)))
+            (is (= :itonami-cloud (:issued-via session)))
+            (is (= :phishing-resistant (:authn-level session))))
+          (testing "it is a second session, not a copy of the browser's"
+            ;; Two agents, two sessions, each revocable without killing the
+            ;; other — and no raw session token had to be stored to do it.
+            (is (= 2 (count (identity/user-sessions session))))
+            (is (not (str/includes? (pr-str (store/snapshot))
+                                    (:token claimed)))))
+          (testing "a claim is spent exactly once"
+            (is (= {:ready? false}
+                   (identity/claim-session-handoff!
+                    claim {:origin-trusted? true}))))))
+      (finally
+        (reset! store/state previous)))))

@@ -1,0 +1,76 @@
+{:format :kotoba.kir/v4,
+ :signature {:params [], :result :i64},
+ :functions
+ [{:name claimable?,
+   :params [c],
+   :result :bool,
+   :effects #{},
+   :body
+   (if
+    (record-get
+     [:record
+      :session-handoff/claim
+      [[:origin-trusted :bool]
+       [:ready :bool]
+       [:claimed :bool]
+       [:expired :bool]]]
+     c
+     :origin-trusted)
+    (if
+     (record-get
+      [:record
+       :session-handoff/claim
+       [[:origin-trusted :bool]
+        [:ready :bool]
+        [:claimed :bool]
+        [:expired :bool]]]
+      c
+      :ready)
+     (if
+      (record-get
+       [:record
+        :session-handoff/claim
+        [[:origin-trusted :bool]
+         [:ready :bool]
+         [:claimed :bool]
+         [:expired :bool]]]
+       c
+       :claimed)
+      false
+      (if
+       (record-get
+        [:record
+         :session-handoff/claim
+         [[:origin-trusted :bool]
+          [:ready :bool]
+          [:claimed :bool]
+          [:expired :bool]]]
+        c
+        :expired)
+       false
+       true))
+     false)
+    false),
+   :param-types [[:ref :session-handoff/claim]]}
+  {:name main,
+   :params [],
+   :result :i64,
+   :effects #{},
+   :body 0,
+   :param-types []}],
+ :oracle-value 0,
+ :schema-identities
+ #:session-handoff{:claim
+                   "c23ed0f45d41078a60fb7a47bf4515058a344d91a4b6e2b71729837b877edebe"},
+ :exports [claimable? main],
+ :schemas
+ #:session-handoff{:claim
+                   [:record
+                    :session-handoff/claim
+                    [[:origin-trusted :bool]
+                     [:ready :bool]
+                     [:claimed :bool]
+                     [:expired :bool]]]},
+ :effects #{},
+ :blocks [{:id 0, :instructions [[:const.i64 0] [:return]]}],
+ :entry main}

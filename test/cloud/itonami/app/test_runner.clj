@@ -46,6 +46,7 @@
             [cloud.itonami.app.routine-kotoba-parity-test]
             [cloud.itonami.app.routines-test]
             [cloud.itonami.app.handoff-kotoba-parity-test]
+            [cloud.itonami.app.session-handoff-kotoba-parity-test]
             [cloud.itonami.app.mail-age-key-test]
             [cloud.itonami.app.mail-authentication-test]
             [cloud.itonami.app.mail-origins-test]
@@ -172,6 +173,7 @@
     cloud.itonami.app.routine-kotoba-parity-test
     cloud.itonami.app.routines-test
     cloud.itonami.app.handoff-kotoba-parity-test
+    cloud.itonami.app.session-handoff-kotoba-parity-test
     cloud.itonami.app.mail-age-key-test
     cloud.itonami.app.mail-authentication-test
     cloud.itonami.app.mail-origins-test

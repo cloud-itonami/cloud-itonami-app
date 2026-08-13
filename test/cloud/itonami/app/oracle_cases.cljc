@@ -87,6 +87,10 @@
    [[:same-owner :bool] [:source-enabled :bool] [:target-enabled :bool]
     [:distinct-bots :bool] [:depth :i64] [:max-depth :i64]]])
 
+(def session-handoff-claim-record
+  [:record :session-handoff/claim
+   [[:origin-trusted :bool] [:ready :bool] [:claimed :bool] [:expired :bool]]])
+
 (def handoff-decision-record
   [:record :handoff/decision
    [[:human :bool] [:identified :bool] [:authorized :bool]]])
@@ -389,7 +393,36 @@
     {:oracle :handoff :export 'next-depth
      :args [(oracle/record handoff-request-record
                            [true true true true (oracle/i64 2) (oracle/i64 4)])]
-     :expect 3 :read oracle/i64-value}]))
+     :expect 3 :read oracle/i64-value}]
+
+   ;; ── session-handoff ─────────────────────────────────────────────
+   ;; Unrelated to :handoff above — this one moves an authentication that
+   ;; already succeeded into the agent that asked for it. Field order is
+   ;; origin-trusted, ready, claimed, expired.
+   [{:oracle :session-handoff :export 'main :args [] :expect 0
+     :read oracle/i64-value}
+    {:oracle :session-handoff :export 'claimable?
+     :args [(oracle/record session-handoff-claim-record
+                           [true true false false])]
+     :expect true}
+    ;; each of the four refusals, one at a time, against an otherwise
+    ;; admissible claim
+    {:oracle :session-handoff :export 'claimable?
+     :args [(oracle/record session-handoff-claim-record
+                           [false true false false])]
+     :expect false}
+    {:oracle :session-handoff :export 'claimable?
+     :args [(oracle/record session-handoff-claim-record
+                           [true false false false])]
+     :expect false}
+    {:oracle :session-handoff :export 'claimable?
+     :args [(oracle/record session-handoff-claim-record
+                           [true true true false])]
+     :expect false}
+    {:oracle :session-handoff :export 'claimable?
+     :args [(oracle/record session-handoff-claim-record
+                           [true true false true])]
+     :expect false}]))
 
 (defn run-case
   "Execute one case through the seam. Returns {:ok? :actual}.
