@@ -45,8 +45,7 @@
 ;; Same native word-typed slice as `bot_core.kotoba`: `:bool` and `:i64`
 ;; scalars, sealed all-scalar records, `string=?`, `and`, `if`, `<`. Facts
 ;; arrive as records because a bare `:bool` parameter is a backend gap
-;; (compiler ADR-0219), and `and` produces `:i64` rather than `:bool`, which is
-;; what the trailing `true false` folds.
+;; (compiler ADR-0219). `and` / `not` / `>=` are `:bool`.
 ;;
 ;; Parity: test/cloud/itonami/app/handoff_kotoba_parity_test.clj
 
@@ -86,10 +85,8 @@
 (defn budget-exhausted? [r [:ref :handoff/request]] :bool
   ;; At or past the ceiling. `<` rather than `<=` on the admitting side means a
   ;; ceiling of zero admits nothing, which is what a deployment that sets zero
-  ;; is asking for.
-  (if (< (record-get r :depth) (record-get r :max-depth))
-    false
-    true))
+  ;; is asking for; exhausted is the dual, `>=`.
+  (>= (record-get r :depth) (record-get r :max-depth)))
 
 (defn admitted? [r [:ref :handoff/request]] :bool
   ;; Ownership first and alone, then both Bots live, then the two are actually
@@ -100,7 +97,7 @@
     (if (record-get r :source-enabled)
       (if (record-get r :target-enabled)
         (if (record-get r :distinct-bots)
-          (if (budget-exhausted? r) false true)
+          (not (budget-exhausted? r))
           false)
         false)
       false)
@@ -114,11 +111,9 @@
   ;; stand in for a person's approval of another Bot's held run.
   (if (string=? actor-kind "agent")
     false
-    (if (and (record-get d :human)
-             (record-get d :identified)
-             (record-get d :authorized))
-      true
-      false)))
+    (and (record-get d :human)
+         (record-get d :identified)
+         (record-get d :authorized))))
 
 (defn next-depth [r [:ref :handoff/request]] :i64
   ;; What the accepted handoff records as its chain position. Monotonic by

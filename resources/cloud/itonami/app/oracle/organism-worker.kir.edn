@@ -6,13 +6,15 @@
    :result :bool,
    :effects #{},
    :body
-   (if
-    (option-some?-of [:option :string] v)
+   (let
+    [__kotoba_and_2 (option-some?-of [:option :string] v)]
     (if
-     (string=? (option-value-of [:option :string] v "") "")
-     false
-     true)
-    false),
+     __kotoba_and_2
+     (if
+      (string=? (option-value-of [:option :string] v "") "")
+      false
+      true)
+     __kotoba_and_2)),
    :param-types [[:option :string]]}
   {:name rejection-reason,
    :params [c],

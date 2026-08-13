@@ -36,11 +36,7 @@
 ;; (ADR-2608650000): a **set literal**, which is why an effect is compared by
 ;; `string=?` rather than tested for membership, and a **bare `:bool`
 ;; parameter** (compiler ADR-0219), which is why facts arrive as records.
-;;
-;; `and` / `or` produce `:i64`, not `:bool`, so a `:bool`-declared function
-;; folds the result through an `if` — that is what the trailing `true false`
-;; is for, and leaving it out fails with `expression type mismatch: expected
-;; bool, got i64`.
+;; `and` / `or` / `not` / `string=?` are `:bool`.
 ;;
 ;; Status is `:i64` rather than a keyword for the same reason `approval_core`
 ;; returns codes: the exported constants below are what the host maps, so the
@@ -117,7 +113,7 @@
 ;; Anything else is treated as a write: an effect this build does not recognise
 ;; is not a licence to assume it only reads.
 (defn write-effect? [effect :string] :bool
-  (if (string=? effect "read") false true))
+  (not (string=? effect "read")))
 
 (defn tool-admitted? [a [:ref :bot/admission] effect :string] :bool
   ;; Three facts always, plus the write permission only when the tool writes.
@@ -141,11 +137,9 @@
   ;; that reaches the second branch for an agent.
   (if (string=? actor-kind "agent")
     false
-    (if (and (record-get d :human)
-             (record-get d :identified)
-             (record-get d :authorized))
-      true
-      false)))
+    (and (record-get d :human)
+         (record-get d :identified)
+         (record-get d :authorized))))
 
 (defn grant-widens? [granted-count :i64 admitted-count :i64] :bool
   ;; `admitted-count` is how many of the Bot's granted tools survived
