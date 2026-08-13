@@ -52,9 +52,11 @@
             [clojure.string :as str]
             [cloud.itonami.app.bot :as bot]
             [cloud.itonami.app.connectors :as connectors]
+            [cloud.itonami.app.handoff :as handoff]
             [cloud.itonami.app.identity :as identity]
             [cloud.itonami.app.policy :as policy]
             [cloud.itonami.app.provider :as provider]
+            [cloud.itonami.app.routine :as routine]
             [cloud.itonami.app.store :as store]
             [connector.invoke :as invoke]
             [connector.model :as cm]
@@ -63,6 +65,7 @@
   (:import [java.net URI]
            [java.net.http HttpClient HttpRequest HttpRequest$BodyPublishers
             HttpResponse$BodyHandlers]
+           [java.security MessageDigest]
            [java.time Duration]
            [java.util UUID]))
 
@@ -73,6 +76,8 @@
 (def max-message-chars 8000)
 (def max-conversation 200)
 (def max-tool-output-chars 6000)
+(def max-trace 60)
+(def max-routines 40)
 
 ;; ── ports ───────────────────────────────────────────────────────────────
 
@@ -538,6 +543,33 @@
 (defn- clear-run! [bot-id]
   (transact! update :runs dissoc bot-id))
 
+;; ── the demonstration ───────────────────────────────────────────────────
+
+(defn- trace!
+  "Record that a tool actually RAN.
+
+  Kept separately from the run because a run is cleared the moment it finishes,
+  and what a routine is built from is exactly the part that survives that: the
+  calls that executed. Not the calls the model proposed and not the plan it
+  described — a routine built from a plan is a routine built from a sentence
+  nobody checked.
+
+  Capped, and per Bot. The cap is why `record-routine!` takes the most recent
+  window rather than a whole history: a demonstration is one piece of work, and
+  a person pointing at 'what you just did' means the last few minutes."
+  [configuration bot-id tool-name]
+  (transact! update-in [:traces bot-id]
+             (fn [entries]
+               (vec (take-last max-trace
+                               (conj (vec entries)
+                                     {:trace/tool tool-name
+                                      :trace/effect (if (write-tool? configuration tool-name)
+                                                      :write :read)
+                                      :trace/at (store/now)}))))))
+
+(defn- trace-of [bot-id]
+  (vec (get-in (snapshot) [:traces bot-id] [])))
+
 (defn- advance!
   "Turn until the Bot is done or needs a person.
 
@@ -596,6 +628,7 @@
                             (update :messages conj
                                     {:role "tool" :tool-call-id (:id call)
                                      :name name :content output}))]
+                (trace! configuration (:bot/id b) name)
                 (save-run! (:bot/id b) run)
                 (recur run)))))))))
 
@@ -835,8 +868,334 @@
                                               :name (:name call)
                                               :content output})
                       (dissoc :pending-call :pending-card))]
+          ;; Traced here as well as in `advance!`: an approved write is the
+          ;; step a routine most needs to have recorded, and it is the one
+          ;; execution path that does not go through the loop's own call site.
+          (trace! configuration bot-id (:name call))
           (save-run! bot-id run)
           (advance! configuration b run))
         (do (clear-run! bot-id)
             (say bot-id "わかりました。この操作はしません。" nil))))
     (mapv public-message (conversation bot-id))))
+
+;; ── routines ────────────────────────────────────────────────────────────
+
+(defn- sha256-hex [^String s]
+  (let [digest (.digest (MessageDigest/getInstance "SHA-256")
+                        (.getBytes s "UTF-8"))]
+    (apply str (map #(format "%02x" %) digest))))
+
+(defn- address
+  "The content address of a routine's steps.
+
+  `routine/canonical` is the portable half — the same value on every runtime —
+  and this is the effect the core is not allowed to have. Two Bots given the
+  same workflow land on one address; editing produces a different one, so the
+  version a schedule points at is still there to compare against."
+  [steps]
+  (str "sha256:" (sha256-hex (pr-str (routine/canonical steps)))))
+
+(def schedule-kinds
+  "The one schedule shape, named so a client cannot invent a second.
+
+  `:every-minutes` and nothing else. A cron expression would be a small
+  language to parse, to validate, and to explain in a refusal, and none of the
+  work this is for needs one: 'check the inbox every 30 minutes' is the shape,
+  and a person who wants 09:00 on Tuesdays is describing an appointment, which
+  this application already has in `scheduler`."
+  #{:every-minutes})
+
+(def min-schedule-minutes
+  "Below this a schedule is a loop with extra steps. A Bot turn costs a model
+  call, and `may-fire?` already refuses to overlap runs, so a one-minute
+  schedule would mostly measure how long the last run took."
+  5)
+
+(defn schedule*
+  "Validate a schedule, or nil for one that only runs when asked."
+  [spec]
+  (when spec
+    (let [kind (keyword (or (:kind spec) (:schedule/kind spec)))
+          minutes (long (or (:every-minutes spec) (:schedule/every-minutes spec) 0))]
+      (when-not (contains? schedule-kinds kind)
+        (throw (ex-info "対応していない schedule です。"
+                        {:type :routine/invalid-schedule :kind kind})))
+      (when (< minutes min-schedule-minutes)
+        (throw (ex-info (str "schedule は " min-schedule-minutes "分以上にしてください。")
+                        {:type :routine/invalid-schedule :minutes minutes})))
+      {:schedule/kind kind :schedule/every-minutes minutes})))
+
+(defn- due?
+  "Has enough time passed since this routine last ran?
+
+  A routine that has never run is due the moment it is scheduled — the person
+  who set it up asked for it to happen, and making them wait a full interval to
+  find out whether it works is how a broken routine stays undiscovered."
+  [r now]
+  (when-let [s (:routine/schedule r)]
+    (if-let [last-run (:routine/last-run-at r)]
+      (try
+        (>= (.toMinutes (java.time.Duration/between
+                         (java.time.Instant/parse last-run)
+                         (java.time.Instant/parse now)))
+            (:schedule/every-minutes s))
+        ;; An unparseable timestamp is a stored value this build does not
+        ;; understand, and treating it as 'due' would fire on every tick.
+        (catch Exception _ false))
+      true)))
+
+(defn- routine-by-id [routine-id]
+  (get-in (snapshot) [:routines routine-id]))
+
+(defn- owned-routine!
+  "The routine, or a refusal. Ownership is the BOT's — a routine has no
+  separate owner, because one that could outlive its Bot's grant would be a
+  second place authority is written down."
+  [session bot-id routine-id]
+  (owned! session bot-id)
+  (let [r (routine-by-id routine-id)]
+    (when-not (and r (= bot-id (:routine/bot r)))
+      (throw (ex-info "routine が見つかりません。"
+                      {:type :routine/not-found :routine routine-id})))
+    r))
+
+(defn- routine-state
+  "The three facts `routine_core` decides from.
+
+  `held-run?` and `active-run?` are the BOT's, not a per-routine pair: a
+  routine runs AS its Bot, through the same conversation and the same approval
+  cards, so a Bot with a held write is a Bot whose routines are waiting too.
+  Tracking a second copy would let the two disagree, and the copy that said
+  'idle' is the one a schedule would believe."
+  [configuration r b did]
+  (let [p (presence (:bot/id b))]
+    {:held-run? (:held-run? p)
+     :active-run? (:active-run? p)
+     :admitted (routine/admitted-steps r b
+                                       (connectors/catalog-rows configuration)
+                                       (connected-connectors configuration did))}))
+
+(defn- public-routine [configuration r b did]
+  (let [state (routine-state configuration r b did)]
+    {:id (:routine/id r)
+     :bot (:routine/bot r)
+     :name (:routine/name r)
+     :address (:routine/address r)
+     :steps (mapv (fn [s] {:tool (:step/tool s)
+                           :effect (name (:step/effect s))
+                           :intent (:step/intent s)})
+                  (:routine/steps r))
+     :admitted-steps (count (:admitted state))
+     :enabled? (:routine/enabled? r)
+     :schedule (:routine/schedule r)
+     :status (name (routine/status r b state))
+     :stale? (routine/stale? r b state)
+     :may-start? (routine/may-start? r b state)
+     :created-at (:routine/created-at r)
+     :last-run-at (:routine/last-run-at r)}))
+
+(defn routines
+  "This Bot's routines, newest first."
+  [configuration session bot-id]
+  (let [b (owned! session bot-id)
+        did (identity/session-did session)]
+    (->> (vals (:routines (snapshot)))
+         (filter #(= bot-id (:routine/bot %)))
+         (sort-by :routine/created-at #(compare %2 %1))
+         (mapv #(public-routine configuration % b did)))))
+
+(defn record-routine!
+  "Keep what this Bot just did, as a routine.
+
+  The steps come from the TRACE — the calls that executed — not from the
+  transcript's prose and not from anything the model offered to do. `intent` is
+  the person's, taken once for the whole routine, because the thing they are
+  naming is the job rather than each call inside it."
+  [configuration session bot-id {:keys [name intent schedule]}]
+  (let [b (owned! session bot-id)
+        entries (trace-of bot-id)]
+    (when (empty? entries)
+      (throw (ex-info "まだ何も実行していないので routine にできません。"
+                      {:type :routine/no-demonstration :bot bot-id})))
+    (when (>= (count (filter #(= bot-id (:routine/bot %))
+                             (vals (:routines (snapshot)))))
+              max-routines)
+      (throw (ex-info "この Bot の routine が上限に達しています。"
+                      {:type :routine/too-many :bot bot-id})))
+    (let [steps (routine/from-tool-calls
+                 (map (fn [e] {:tool (:trace/tool e)
+                               :effect (:trace/effect e)
+                               :intent (str intent)})
+                      entries))
+          r (routine/routine {:id (new-id "routine")
+                              :bot bot-id
+                              :name name
+                              :steps steps
+                              :address (address steps)
+                              :enabled? true
+                              :schedule (schedule* schedule)
+                              :created-at (store/now)})]
+      (transact! assoc-in [:routines (:routine/id r)] r)
+      ;; The demonstration has been kept; keeping it a second time would append
+      ;; the same calls to the next routine as well.
+      (transact! update :traces dissoc bot-id)
+      (public-routine configuration r b (identity/session-did session)))))
+
+(defn update-routine!
+  "Enable, disable, rename, or re-schedule.
+
+  The STEPS are not editable here. A routine whose steps changed is a different
+  routine — it has a different address — and editing them in place would leave
+  a schedule pointing at something nobody demonstrated."
+  [configuration session bot-id routine-id attrs]
+  (let [b (owned! session bot-id)
+        existing (owned-routine! session bot-id routine-id)
+        merged (cond-> existing
+                 (contains? attrs :name) (assoc :routine/name (:name attrs))
+                 (contains? attrs :enabled?) (assoc :routine/enabled?
+                                                    (boolean (:enabled? attrs)))
+                 (contains? attrs :schedule) (assoc :routine/schedule
+                                                    (schedule* (:schedule attrs))))]
+    (transact! assoc-in [:routines routine-id] merged)
+    (public-routine configuration merged b (identity/session-did session))))
+
+(defn forget-routine!
+  "Delete a routine. Unlike a Bot this really is deleted: a routine is a
+  shortcut, and a disabled shortcut nobody can remove is clutter that looks
+  like history."
+  [session bot-id routine-id]
+  (owned-routine! session bot-id routine-id)
+  (transact! update :routines dissoc routine-id)
+  {:forgotten true})
+
+(defn- routine-prompt [r]
+  (str "保存された routine「" (:routine/name r) "」を実行してください。\n"
+       "手順:\n"
+       (str/join "\n" (map-indexed (fn [i s]
+                                     (str (inc i) ". " (:step/tool s)
+                                          " — " (:step/intent s)))
+                                   (:routine/steps r)))))
+
+(defn- run-routine!
+  "Start one routine as its Bot. The gate is the caller's to choose —
+  `may-start?` for a person, `may-fire?` for a schedule — because those differ
+  by exactly one fact and the difference is who is watching."
+  [configuration b r selection]
+  (transact! assoc-in [:routines (:routine/id r) :routine/last-run-at] (store/now))
+  (append! (:bot/id b) (bot/message {:id (new-id "msg") :bot (:bot/id b)
+                                     :role :person
+                                     :text (routine-prompt r)
+                                     :at (store/now)}))
+  (let [connected (connected-connectors configuration (:did selection))]
+    (advance! configuration b
+              {:id (new-id "run")
+               :selection (:selection selection)
+               :messages (transcript b (conversation (:bot/id b)))
+               :tools (tool-definitions configuration b connected)
+               :turn-count 0
+               :tool-count 0})))
+
+(defn start-routine!
+  "A person running a routine now."
+  [configuration session bot-id routine-id]
+  (let [b (owned! session bot-id)
+        r (owned-routine! session bot-id routine-id)
+        did (identity/session-did session)
+        state (routine-state configuration r b did)]
+    (when-not (routine/may-start? r b state)
+      (throw (ex-info (if (routine/stale? r b state)
+                        "この routine の手順に、いま使えないツールがあります。"
+                        "この routine はいま実行できません。")
+                      {:type :routine/refused
+                       :routine routine-id
+                       :status (name (routine/status r b state))})))
+    (let [{:keys [selection]} (resolve-accounts configuration b did)]
+      (run-routine! configuration b r {:selection selection :did did})
+      (mapv public-message (conversation bot-id)))))
+
+(defn fire-due!
+  "The scheduler's side: every routine whose time has come and whose Bot can
+  take it.
+
+  `may-fire?` rather than `may-start?` — the one extra refusal is a held run,
+  and it is the whole reason an hourly routine that needs an approval does not
+  leave a queue of them. Returns what it started and what it skipped, because a
+  scheduler that silently does nothing is indistinguishable from one that is
+  broken."
+  [configuration session now]
+  (let [did (identity/session-did session)
+        mine (filter #(= (:user-id session) (:bot/owner %))
+                     (vals (:bots (snapshot))))
+        by-id (into {} (map (juxt :bot/id identity)) mine)]
+    (reduce
+     (fn [acc r]
+       (if-let [b (get by-id (:routine/bot r))]
+         (let [state (routine-state configuration r b did)]
+           (cond
+             (not (due? r now)) acc
+             (routine/may-fire? r b state)
+             (let [{:keys [selection]} (resolve-accounts configuration b did)]
+               (run-routine! configuration b r {:selection selection :did did})
+               (update acc :started conj (:routine/id r)))
+             :else
+             (update acc :skipped conj {:routine (:routine/id r)
+                                        :status (name (routine/status r b state))})))
+         acc))
+     {:started [] :skipped []}
+     (vals (:routines (snapshot))))))
+
+;; ── handoff ─────────────────────────────────────────────────────────────
+
+(defn hand-off!
+  "One Bot giving work to another.
+
+  What crosses is a message and its provenance. What does not cross is any
+  part of the sender's grant: `handoff/->request` has no field for it, and the
+  target runs the task through `advance!` with ITS OWN tools — the same call
+  `send!` makes when a person types. A Bot that could reach a connector by
+  asking a Bot that holds it would make every per-Bot grant advisory, and this
+  is the one place that could have been arranged."
+  [configuration session from-bot-id to-bot-id {:keys [task depth]}]
+  (let [source (owned! session from-bot-id)
+        target (owned! session to-bot-id)
+        did (identity/session-did session)
+        context {:source-owner (:bot/owner source)
+                 :target-owner (:bot/owner target)
+                 :depth (or depth 0)
+                 :max-depth handoff/default-max-depth}]
+    (when-not (handoff/admitted? source target context)
+      (throw (ex-info (cond
+                        (= from-bot-id to-bot-id)
+                        "Bot は自分自身に引き継げません。"
+                        (handoff/budget-exhausted? source target context)
+                        "引き継ぎの回数が上限に達しました。"
+                        :else "この引き継ぎはできません。")
+                      {:type :handoff/refused
+                       :from from-bot-id :to to-bot-id})))
+    (let [h (handoff/handoff {:id (new-id "handoff")
+                              :from from-bot-id
+                              :to to-bot-id
+                              :task task
+                              :depth (handoff/next-depth source target context)
+                              :at (store/now)})]
+      (transact! update-in [:handoffs to-bot-id]
+                 (fn [entries] (vec (take-last max-trace (conj (vec entries) h)))))
+      ;; Written into the TARGET's conversation, attributed. A message that
+      ;; appeared without saying which Bot put it there is one the person
+      ;; cannot audit.
+      (append! to-bot-id
+               (bot/message {:id (new-id "msg") :bot to-bot-id :role :person
+                             :text (str (:bot/name source) " からの引き継ぎ: "
+                                        (:handoff/task h))
+                             :at (store/now)}))
+      (let [{:keys [selection]} (resolve-accounts configuration target did)
+            connected (connected-connectors configuration did)]
+        (advance! configuration target
+                  {:id (new-id "run")
+                   :selection selection
+                   :messages (transcript target (conversation to-bot-id))
+                   :tools (tool-definitions configuration target connected)
+                   :turn-count 0
+                   :tool-count 0}))
+      {:handoff (unqualify h)
+       :messages (mapv public-message (conversation to-bot-id))})))
