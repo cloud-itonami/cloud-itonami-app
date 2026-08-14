@@ -1,0 +1,22 @@
+{:format :kotoba.kir/v4,
+ :signature nil,
+ :functions
+ [{:name did-web-route?,
+   :params [method path],
+   :result :bool,
+   :effects #{},
+   :body
+   (let
+    [__kotoba_and_2 (string=? method "GET")]
+    (if
+     __kotoba_and_2
+     (string=? path "/.well-known/did.json")
+     __kotoba_and_2)),
+   :param-types [:string :string]}],
+ :oracle-value nil,
+ :schema-identities nil,
+ :exports [did-web-route?],
+ :schemas nil,
+ :effects #{},
+ :blocks [],
+ :entry nil}

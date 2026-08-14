@@ -1311,6 +1311,11 @@ the call would still 200, so the HTTP test inverts the artifact.
 RFC 9728 document, same seam, different oracle id. Inverting that artifact
 must stop discovery and must leave `/health` answering.
 
+`GET /.well-known/did.json` is the third (ADR-0040): the public did:web
+document. Host→tenant resolution and the 404 when this deployment does not
+publish did:web stay on the host. Inverting that artifact must stop the
+document and must leave `/health` answering.
+
 That is delegation through the KIR interpreter, not a tendered Wasm component:
 the artifact is loaded and executed in-process, without a capability gate or a
 supervisor around it. The cores are `kotoba/pure` — no effects, no
