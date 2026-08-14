@@ -363,7 +363,7 @@
 ;; ── browser computer sharing ─────────────────────────────────────────
 
 (deftest browser-computers-are-per-owner-screens-are-per-bot
-  ;; Same-owner Bots share cookies and logins (ADR-0041). Different owners
+  ;; Same-owner Bots share cookies and logins (ADR-0042). Different owners
   ;; still get different computers. Isolation was per Bot; sharing is the
   ;; Grok shape this application now takes, on this machine.
   (testing "two owners get two computers"

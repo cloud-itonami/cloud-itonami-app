@@ -1,4 +1,4 @@
-# ADR-0041: Bots are persistent peers — memory isolated, computer shared
+# ADR-0042: Bots are persistent peers — memory isolated, computer shared
 
 **Status:** accepted — 2026-08-14
 

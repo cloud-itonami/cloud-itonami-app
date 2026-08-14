@@ -35,7 +35,7 @@
   structurally cannot cover. The dispatch is this namespace: the tools join
   the Bot's turn, writes still hold, and the computer is `computer-for` of
   the owner so same-person Bots share cookies and logins, each on its own
-  screen (ADR-0041). Computer-use (frontmost app) stays off this path.
+  screen (ADR-0042). Computer-use (frontmost app) stays off this path.
 
   ## What a Bot's 'own computer' is here
 

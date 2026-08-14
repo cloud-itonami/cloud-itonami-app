@@ -169,11 +169,11 @@ so the view change is state and not navigation.
 ## What this does not do
 
 - **No Chronicle for Bots.** `chronicle` remains device-scoped and opt-in;
-  a Bot's durable notes are its own store (ADR-0041), not the person's
+  a Bot's durable notes are its own store (ADR-0042), not the person's
   Chronicle, and not another Bot's notes.
 - **No cloud VM.** A Bot's computer is this machine. That is the thesis, not a
   remaining gap. Same-owner Bots share that computer; cognition stays isolated
-  (ADR-0041). The isolated-browser dispatch is ADR-0036, sharing is ADR-0041.
+  (ADR-0042). The isolated-browser dispatch is ADR-0036, sharing is ADR-0042.
 
 Cadence is routines (traces → schedule → `fire-due!`), not a standing brief
 that runs on a timer by itself. `:bot/browser?` is dispatched: a Bot turn that

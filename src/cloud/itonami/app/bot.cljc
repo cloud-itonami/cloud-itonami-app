@@ -154,7 +154,7 @@
      ;; Two permissions, separate on purpose. `writes?` is about the connected
      ;; services; `browser?` is about this machine's isolated browser, which
      ;; `agent-control` gates independently and which is how a Bot reaches a
-     ;; site with no API at all. Same-owner Bots share that computer (ADR-0041).
+     ;; site with no API at all. Same-owner Bots share that computer (ADR-0042).
      :bot/writes? (boolean (:bot/writes? value))
      :bot/browser? (boolean (:bot/browser? value))
      :bot/enabled? (if (contains? value :bot/enabled?)

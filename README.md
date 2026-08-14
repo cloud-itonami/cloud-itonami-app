@@ -627,7 +627,7 @@ of the connectors you picked and nothing else.
   (`send_message`), which is not a grant-transfer. See
   [ADR-0036](docs/adr/0036-a-bots-computer-is-this-machines-isolated-browser.md)
   and
-  [ADR-0041](docs/adr/0041-bots-are-persistent-peers-memory-isolated-computer-shared.md).
+  [ADR-0042](docs/adr/0042-bots-are-persistent-peers-memory-isolated-computer-shared.md).
   Long-running work that should outlive sleep belongs to the governed WorkItem
   path instead.
 

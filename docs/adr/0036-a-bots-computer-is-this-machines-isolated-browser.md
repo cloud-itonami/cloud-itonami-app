@@ -36,7 +36,7 @@ computer-use on the frontmost app, and not into a cloud VM.
 | Finish e2e, return for approval | Reads run, writes hold. Passkey / human session. |
 | Scheduled routines | Already: traces → routine → `fire-due!` on live sessions |
 | Multi-bot / handoff | Already: `hand-off!`. Grants do not cross. |
-| All bots share cookies on one VM | Same-owner Bots share this machine's computer (ADR-0041). Different owners stay apart. Not a cloud VM. |
+| All bots share cookies on one VM | Same-owner Bots share this machine's computer (ADR-0042). Different owners stay apart. Not a cloud VM. |
 
 Dispatch:
 
@@ -49,7 +49,7 @@ Dispatch:
   approval, the same way a Gmail send holds.
 - `call-browser-tool!` binds `*browser-session*` to `(computer-for owner)`
   and `*browser-screen*` to `(screen-for bot-id)` so same-owner Bots share
-  cookies and keep separate screens (ADR-0041 superseded the per-Bot cookie
+  cookies and keep separate screens (ADR-0042 superseded the per-Bot cookie
   jar).
 - Computer-use tools (`computer_*`) stay off this path. A Bot that asked for
   the browser did not ask to type into the frontmost app.
@@ -68,4 +68,4 @@ unchanged.
   defect to patch with a cloud VM.
 - Parallel turns that outlive a laptop sleep, and watch-and-learn from DOM
   coordinates, remain open. Same-owner cookie sharing and per-Bot memory are
-  ADR-0041.
+  ADR-0042.

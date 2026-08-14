@@ -28,7 +28,7 @@ Every durable principal has one mailbox address:
 | Human member | existing user ID | Passkey session owns the mailbox |
 | Agent session | `agent:<session-id>` | bearer-authenticated, organization-bound |
 | OrganismWorker | `organism:<worker-id>` | durable address; transport adapter remains separate |
-| Bot | `bot:<bot-id>` | named persistent peer (ADR-0041); same-owner only |
+| Bot | `bot:<bot-id>` | named persistent peer (ADR-0042); same-owner only |
 
 Restart-ephemeral Background WorkerRuns are deliberately not addressable. They
 may produce receipts, but they do not become organizational identities merely by

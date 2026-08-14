@@ -18,7 +18,7 @@
 (def default-session-name
   "The browser profile used when nobody has said whose work this is.
 
-  Same-owner Bots share one computer (ADR-0041): cookies, logins and files
+  Same-owner Bots share one computer (ADR-0042): cookies, logins and files
   belong to the person, not to a Bot. Different owners still get different
   computers. A caller that names no owner keeps this shared default, which
   is the original hazard — only use it when the work is not a Bot's."
@@ -526,7 +526,7 @@
 
   `principal-or-ctx` is either an owner id (legacy: computer and screen are
   that id) or `{:owner owner-id :bot bot-id}`. Same-owner Bots therefore share
-  cookies and keep separate screens (ADR-0041)."
+  cookies and keep separate screens (ADR-0042)."
   [configuration principal-or-ctx tool-name input]
   (let [name (str tool-name)
         ctx (if (map? principal-or-ctx)

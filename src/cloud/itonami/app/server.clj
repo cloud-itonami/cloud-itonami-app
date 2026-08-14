@@ -886,7 +886,7 @@
 
   WorkerRuns are deliberately absent: they are restart-ephemeral executions,
   not identities. Agent sessions, OrganismWorkers, and same-owner Bots
-  (`bot:<id>`, ADR-0041) are stable enough to be addressed independently and
+  (`bot:<id>`, ADR-0042) are stable enough to be addressed independently and
   remain visibly non-human."
   [exchange session]
   (let [context (identity-context exchange)
