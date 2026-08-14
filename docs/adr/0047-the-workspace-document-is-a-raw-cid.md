@@ -59,12 +59,12 @@ Update channel:
 ipns://k51qzi5uqu5dj6z20sjzztyay81591voe6yofukl0ylsmug9euf934z1g04erd
 ```
 
-Sequence 1 (live GET 2026-08-14T12:53Z) still resolves to the previous
-snapshot `ipfs://bafkreiey52hai5obtqeg5w2ix63orset4o74kxljif2gwdkxt5upre2wsi`.
-Sequence 2 PUT to `delegated-ipfs.dev` returned 200, but GET
-`Cache-Control: public, max-age=3600` matches the spec default 1-hour
-record TTL, so the pointer cannot be GET-verified onto #82 until that
-TTL expires. Later records from this publisher use a 5-minute TTL.
+Sequence 2 GET-verified 2026-08-14T13:02:53Z: origin at
+`delegated-ipfs.dev` (Cloudflare `cf-cache-status: MISS`) returns value
+`/ipfs/bafkreig4jyeaynm47icfmqj3m5ya7iep2o7c4vk34pwpafm7tnf4tfimny`.
+The default URL without a cache-bust query still serves sequence 1 until
+the 1-hour `Cache-Control` from 12:47Z expires (~13:47Z). Later records
+from this publisher use a 5-minute TTL.
 
 ## Implemented
 
@@ -107,16 +107,19 @@ TTL expires. Later records from this publisher use a 5-minute TTL.
   value `/ipfs/bafkreiey52hai5obtqeg5w2ix63orset4o74kxljif2gwdkxt5upre2wsi`.
   `kad.routing/publish` accepted `https://delegated-ipfs.dev/routing/v1`.
   Independent GET of that router with `Accept: application/vnd.ipfs.ipns-record`
-  returned 200 (331 bytes, sequence 1). Sequence 2 PUT 200 onto
-  `bafkreig4jyeaynm47icfmqj3m5ya7iep2o7c4vk34pwpafm7tnf4tfimny`; GET still
-  served sequence 1 (`Cache-Control: public, max-age=3600`).
+  returned 200 (331 bytes). Sequence 1 (12:47Z, CF HIT) value
+  `/ipfs/bafkreiey52hai5obtqeg5w2ix63orset4o74kxljif2gwdkxt5upre2wsi`.
+  Sequence 2 origin GET 200 at 13:02:53Z (`cf-cache-status: MISS`, cache-bust
+  query) value `/ipfs/bafkreig4jyeaynm47icfmqj3m5ya7iep2o7c4vk34pwpafm7tnf4tfimny`
+  (lock CID). Archive GET of that CID remains 200 / 806,249 bytes.
   `GET https://kotobase.net/ipns/{k51}` remains 410 (ADR-2608130000).
 
 ## Resume
 
-After sequence 1 TTL (~1h from 12:47Z): run `clojure -M -m cloud.itonami.app.latest`
-so sequence N GET-verifies onto the lock CID. Then graph snapshot CID
-(`:kotoba.graph/cid`). Do not move the auth host.
+Graph snapshot CID (`:kotoba.graph/cid`). Do not move the auth host.
+Do not republish IPNS until the lock CID changes: sequence 2 already
+points at it. Default delegated GET may still show sequence 1 until
+~13:47Z; origin already serves sequence 2.
 
 ## Consequences
 
