@@ -268,3 +268,11 @@
                     claim {:origin-trusted? true}))))))
       (finally
         (reset! store/state previous)))))
+
+(deftest public-auth-methods-name-hosted-enrolment
+  (identity/configure! {})
+  (let [methods (identity/public-auth-methods)]
+    (is (true? (get-in methods [:central :configured?])))
+    (is (= "https://auth.itonami.cloud" (get-in methods [:central :issuer])))
+    (is (= "https://itonami.cloud/signin/"
+           (get-in methods [:central :enrolment-url])))))

@@ -94,11 +94,21 @@
         settings-html (subs html settings-start)]
     (is (pos? signin-start))
     (is (> settings-start signin-start))
-    (doseq [id ["identity-onboarding" "registration-form" "registered-auth"
+    (doseq [id ["identity-onboarding" "itonami-cloud-signin" "itonami-enrolment-link"
+                "registration-form" "registered-auth"
                 "passkey-signin" "email-login-form" "sso-signin-list"
                 "enrollment-form"]]
       (is (str/includes? signin-html (str "id=\"" id "\"")) id)
       (is (not (str/includes? settings-html (str "id=\"" id "\""))) id))
+    (let [hosted (.indexOf signin-html "id=\"itonami-cloud-signin-card\"")
+          local (.indexOf signin-html "id=\"registration-form\"")]
+      (is (pos? hosted))
+      (is (< hosted local)
+          "hosted auth.itonami.cloud is the first entrance, not local Passkey"))
+    (is (not (str/includes? signin-html "id=\"itonami-cloud-signin-card\" hidden"))
+        "the hosted entrance must not start hidden behind script")
+    (is (not (str/includes? signin-html "Passkey の P-256 公開鍵から User DID"))
+        "first-time copy must not mint a local did:key as the story")
     (is (str/includes? settings-html "id=\"identity-workspace\""))
     (is (str/includes? js "const emailLoginToken = new URLSearchParams(initialFragment)"))
     (is (str/includes? js "const token = emailLoginToken;"))
@@ -133,6 +143,8 @@
         "the sign-in list must hold only providers that can actually start")
     (is (str/includes? js "renderSigninGate(data);")
         "the gate must be rewritten on every identity render, not once")
+    (is (str/includes? js "入口は auth.itonami.cloud")
+        "the gate leads with hosted auth when it is configured")
     ;; The copy that made the promise this deployment could not keep.
     (is (not (str/includes? html "通常の入口は Passkey、Email、SSO です")))
     (is (not (str/includes? js "'Passkey、Email、またはSSOで続行できます。'")))))

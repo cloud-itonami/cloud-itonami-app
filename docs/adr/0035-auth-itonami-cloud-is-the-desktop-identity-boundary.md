@@ -8,7 +8,9 @@ The installed Cloud Itonami app authenticates through
 `https://auth.itonami.cloud` using Authorization Code + PKCE (`S256`). The app
 is a fixed public client named `cloud-itonami-app-native`; it has no distributed
 client secret. Its exact loopback redirect is
-`http://127.0.0.1:1338/api/auth/itonami/callback`.
+`http://localhost:1338/api/auth/itonami/callback`.
+
+(2026-08-14: the IP literal was a sign-in that could not complete. WebAuthn RP ID and `app-auth` `oauth-client` require the name. See ADR-0041.)
 
 The central service returns a one-minute, one-use code. A successful exchange
 returns an opaque five-minute access token which is used once at `/userinfo`
@@ -21,7 +23,7 @@ installation that already has Users, it must be linked from an authenticated
 local session. Email equality is never an account-linking signal.
 
 The existing local Passkey, Email, and provider SSO entrances remain available
-as compatibility and recovery paths. Operations whose policy requires a fresh
+as compatibility and recovery paths, not as the first-time entrance (ADR-0041). Operations whose policy requires a fresh
 local WebAuthn ceremony continue to require that step-up; central authentication
 does not silently satisfy an operation-specific approval challenge.
 

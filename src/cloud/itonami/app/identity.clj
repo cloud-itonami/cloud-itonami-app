@@ -49,6 +49,10 @@
    :central {:enabled? true
              :issuer "https://auth.itonami.cloud"
              :client-id "cloud-itonami-app-native"
+             ;; Must stay in lockstep with app-auth `config/enrolment-url`.
+             ;; That Worker does not enrol; first-time passkeys are minted at
+             ;; itonami.cloud/signin/, not as a local did:key on this device.
+             :enrolment-url "https://itonami.cloud/signin/"
              ;; Derived from the request origin at call time, not fixed here.
              ;; A literal `127.0.0.1` was the bug: this app serves on
              ;; `localhost`, so the callback landed on a DIFFERENT origin —
@@ -228,7 +232,8 @@
   (let [central (:central @runtime-auth-profile)]
     {:allow-signup? (true? (:allow-signup? @runtime-auth-profile))
    :central {:configured? (true? (:enabled? central))
-             :issuer (:issuer central)}
+             :issuer (:issuer central)
+             :enrolment-url (:enrolment-url central)}
    :email {:configured? @runtime-email-login-configured?}
    :sso (mapv (fn [provider]
                 (let [config (sso-provider-config provider)]
