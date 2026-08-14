@@ -123,9 +123,29 @@ account keys. ES256 is not a preference here.
 
 ## Verified
 
-`clojure -M:test` — 1491 tests, 8925 assertions, 0 failures, 0 errors.
+`clojure -M:test` — 1491 tests, 8925 assertions, 0 failures on the branch, and
+**1507 tests, 9041 assertions, 0 failures on the merged default branch at
+closing**, which is the number that counts: several other branches landed alongside this one and touched
+`server.clj`, `oracle_cases.cljc`, `core_test.clj` and `interaction.js`.
 `bin/test-oracle-cljs` — 172 cases over 13 shipped cores.
 `clojure -M:lint` — unchanged from this branch's base.
+
+**The merged tip was RED the first time it was measured, and the defect was
+this file's.** `verify-es256` rebuilt the DER signature from
+`BigInteger/toString 16`, which drops a leading zero NIBBLE — so a coordinate
+whose top four bits are zero produced a 63-digit hex string that `unhex`
+refused, correctly. That is about one run in eight. It passed every run on the
+branch and failed on somebody else's tip.
+
+Two things are worth keeping about it. The helper was ALSO reading the value
+with `integer-from-hex`, the signed reader, where r and s are positive by
+construction — `unsigned-integer-from-hex` is the one that adds the leading
+`0x00` DER wants. And the whole defect was in the test, not in `acme`: the
+production direction is DER→raw through `coordinate`, which pads, and the CSR
+embeds the JDK's own DER without rebuilding it. **A signature verifier that is
+right most of the time cannot be the thing that says a signature is valid**, so
+the padding is now asserted directly on a value with an odd-length hex, and the
+JWS test verifies twenty-five fresh signatures rather than one.
 
 What is actually proven, as opposed to exercised:
 
