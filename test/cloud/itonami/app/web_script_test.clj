@@ -77,7 +77,10 @@
 (deftest bots-bind-an-admitted-provider-and-model
   (let [html (with-redefs [store/snapshot (constantly (store/initial-state))]
                (web/page-html config))
-        js (slurp (io/file "resources/cloud/itonami/app/interaction.js"))]
+        js (slurp (io/file "resources/cloud/itonami/app/interaction.js"))
+        load-bots (second (re-find
+                           #"(?s)const loadBots = async \(options = \{\}\) => \{(.*?)\n    \};"
+                           js))]
     (doseq [id ["bots-provider" "bots-provider-help"
                 "bots-provider-readiness" "bots-model"]]
       (is (str/includes? html (str "id=\"" id "\"")) id))
@@ -88,7 +91,11 @@
     (is (str/includes? js "model:$('#bots-model').value.trim()"))
     (is (str/includes? js "`/api/bots/${bot.id}`"))
     (is (str/includes? js "'provider-id':providerSelect.value"))
-    (is (str/includes? js "Model: ${bot['provider-id']} / ${bot.model}"))))
+    (is (str/includes? js "Model: ${bot['provider-id']} / ${bot.model}"))
+    (is load-bots "loadBots remains independently inspectable")
+    (is (< (.indexOf load-bots "renderBotsModelProviders();")
+           (.indexOf load-bots "await selectBot(botsState.bots[0].id);"))
+        "provider readiness renders before the initial selection fast path")))
 
 (deftest authenticated-writes-recover-one-stale-csrf-without-relaxing-the-gate
   ;; A resident app is a long-lived single-page document. Hosted sign-in or a
