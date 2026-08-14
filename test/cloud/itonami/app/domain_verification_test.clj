@@ -301,6 +301,79 @@
             (is (= :live (:status (record (:id claimed)))))
             (is (= "example.com" (:domain (organization "org-a"))))))))))
 
+;; ── the periodic sweep ───────────────────────────────────────────────────────
+
+(defn- txt-from-store
+  "A resolver that answers whatever the store says each binding's record is, so
+  a sweep over several bindings does not need one resolver per record."
+  []
+  (fn [owner]
+    (->> (vals (get-in (store/snapshot) [:identity :domain-verifications]))
+         (keep #(when (= owner (:record-name %)) (:record-value %)))
+         vec)))
+
+(deftest the-sweep-visits-every-proven-binding-and-says-how-many-it-saw
+  (with-state
+    (fn [f]
+      (let [mine (claim! (:session-a f) "example.com")
+            theirs (claim! (:session-b f) "other.example")
+            pending (verification/start! (:session-a f) {:domain "later.example"})]
+        (activate! (:session-a f) (:id mine))
+        (activate! (:session-b f) (:id theirs))
+        (testing "one binding stops answering and only that one is demoted"
+          (binding [verification/*txt-resolver* (txt-from-store)
+                    verification/*prober*
+                    (fn [_config domain nonce]
+                      (if (= "example.com" domain)
+                        {:answered? false :confidential? true
+                         :error "document returned HTTP 404"}
+                        {:answered? (= nonce (:activation-nonce (record (:id theirs))))
+                         :confidential? true :error nil}))]
+            (let [summary (verification/recheck-all! {})]
+              (is (= 2 (:scanned summary))
+                  "a pending binding has nothing proven to re-measure")
+              (is (= [{:verification-id (:id mine) :domain "example.com"
+                       :from :live :to :lapsed}]
+                     (:changed summary)))
+              (is (= [] (:failed summary))))))
+        (is (= :lapsed (:status (record (:id mine)))))
+        (is (= :live (:status (record (:id theirs)))))
+        (is (= :pending (:status (record (:id pending)))))
+        (testing "the tenant that lapsed reverted; the other kept its name"
+          (is (= (str "acme." suffix) (:domain (organization "org-a"))))
+          (is (= "other.example" (:domain (organization "org-b")))))))))
+
+(deftest one-broken-domain-does-not-freeze-every-other-tenants-evidence
+  (with-state
+    (fn [f]
+      (let [mine (claim! (:session-a f) "example.com")
+            theirs (claim! (:session-b f) "other.example")]
+        (activate! (:session-b f) (:id theirs))
+        (binding [verification/*txt-resolver*
+                  (fn [owner]
+                    (if (= (:record-name mine) owner)
+                      (throw (ex-info "DNS timed out" {}))
+                      ((txt-from-store) owner)))
+                  verification/*prober*
+                  (fn [_config _domain nonce]
+                    {:answered? (= nonce (:activation-nonce (record (:id theirs))))
+                     :confidential? true :error nil})]
+          (let [summary (verification/recheck-all! {})]
+            (is (= 2 (:scanned summary)) "the sweep did not abort at the first throw")
+            (is (= 1 (count (:failed summary))))
+            (is (= "DNS timed out" (:error (first (:failed summary))))
+                "the message is kept — a count is not something an operator can act on")))
+        (is (= :live (:status (record (:id theirs))))
+            "the healthy binding was still measured")))))
+
+(deftest a-sweep-that-measured-nothing-is-not-a-sweep-where-all-was-well
+  ;; The evidence floor. `{:scanned 0}` and "everything is fine" have to be
+  ;; distinguishable in the return value, or an empty store reads as a clean
+  ;; bill of health for domains nobody checked.
+  (with-state
+    (fn [_]
+      (is (= {:scanned 0 :changed [] :failed []} (verification/recheck-all! {}))))))
+
 ;; ── the pre-check the create route needs ─────────────────────────────────────
 
 (deftest a-domain-is-refused-before-a-tenant-is-created-for-it

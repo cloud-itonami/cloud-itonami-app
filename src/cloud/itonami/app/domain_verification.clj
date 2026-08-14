@@ -589,12 +589,69 @@
       (public-record settled))))
 
 (defn recheck!
-  "Re-measure a binding that already passed both gates, and demote it if it no
-  longer does.
+  "Re-measure one binding on the owner's instruction, and demote it if it no
+  longer holds.
 
-  Exposed to the owner rather than run on a timer: this application has no
-  scheduler to hang it on, and a demotion path that nothing can invoke would be
-  a state the store can hold and nobody can reach."
+  The same measurement the scheduler below takes, reachable by hand — an owner
+  who has just repointed DNS should not have to wait out an interval to find
+  out whether it worked."
   [configuration session {:keys [verification-id]}]
   (record-for-session! session verification-id)
   (public-record (check! configuration verification-id)))
+
+;; ── the periodic re-check ────────────────────────────────────────────────────
+;;
+;; The timer that drives this lives in `binding_sweep`, with the mail
+;; authority's sweep beside it — the interval is the only thing the two share.
+;; ADR-0043's first draft said this application had no scheduler to hang a
+;; periodic check on. That was simply wrong: `updater`, `mail-sync`,
+;; `folder-sync` and `work-reconciler` all run one from `server/start!`. The
+;; claim was written from memory rather than from the source, and a limit that
+;; does not exist is worse than an unimplemented feature — nobody goes looking
+;; for it again.
+
+(def ^:private recheckable
+  "States with something to lose or something to regain.
+  `:pending` is excluded: nothing has been proven yet, and completing a claim is
+  the owner's act inside a bounded window, not a thing that should happen to
+  them while they are not looking."
+  #{:claimed :live :lapsed})
+
+(defn recheck-all!
+  "Re-measure every binding that has been proven at least once.
+
+  Returns `{:scanned :changed :failed}` rather than nil. The count is the
+  evidence floor: a tick that measured NOTHING — because the store was empty,
+  or because a read threw before the loop — must not be reportable as a tick
+  where everything was fine.
+
+  One binding's failure does not stop the others. A DNS timeout on a customer's
+  zone is an ordinary event, and letting it abort the sweep would mean the first
+  broken domain froze every other tenant's evidence at whatever it last said."
+  [configuration]
+  (let [targets (->> (records)
+                     vals
+                     (filter #(contains? recheckable (:status %)))
+                     (sort-by :id))]
+    (reduce
+     (fn [summary record]
+       (let [was (:status record)]
+         (try
+           (let [settled (check! configuration (:id record))]
+             (cond-> (update summary :scanned inc)
+               (not= was (:status settled))
+               (update :changed conj {:verification-id (:id record)
+                                      :domain (:domain record)
+                                      :from was :to (:status settled)})))
+           (catch Exception e
+             ;; The message, not just a count. Which of DNS, TLS and routing
+             ;; failed is in that sentence, and a sweep that recorded only
+             ;; "1 failed" would throw away the only thing an operator can act
+             ;; on.
+             (-> summary
+                 (update :scanned inc)
+                 (update :failed conj {:verification-id (:id record)
+                                       :domain (:domain record)
+                                       :error (or (ex-message e) (str e))}))))))
+     {:scanned 0 :changed [] :failed []}
+     targets)))

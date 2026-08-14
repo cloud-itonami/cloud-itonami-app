@@ -46,9 +46,32 @@
                [:probe-confidential :bool]
                [:probe-fresh :bool]
                [:name-is-service-owned :bool]
-               [:previously-live :bool]]]})
+               [:previously-live :bool]]]
+             ;; MAIL is a different authority from naming, and this is the
+             ;; record that keeps them apart. Proving you control a zone says
+             ;; nothing about whether mail claiming to be from it can
+             ;; authenticate; that is SPF, DKIM and DMARC, and they are read
+             ;; separately and add up separately.
+             ;;
+             ;; `dmarc-enforcing` is carried and NOT required. A domain
+             ;; publishing `p=none` is monitoring rather than enforcing, which
+             ;; is a legitimate posture and a fact worth reporting — refusing it
+             ;; would refuse most domains that have done the work.
+             :domain-binding/mail-facts
+             [:record :domain-binding/mail-facts
+              [[:owner-authorized :bool]
+               [:spf-present :bool]
+               [:spf-closed :bool]
+               [:dkim-present :bool]
+               [:dmarc-present :bool]
+               [:dmarc-enforcing :bool]
+               [:claim-exclusive :bool]
+               [:name-is-service-owned :bool]
+               [:previously-authorized :bool]]]})
   (:export [state-pending state-claimed state-live state-lapsed
             may-start? claim-holds? name-holds? binding-state
+            mail-state-pending mail-state-authorized mail-state-lapsed
+            mail-may-start? mail-authorized? mail-state
             nonce-route? main]))
 
 ;; Admission of the one public route this binding owns — the sibling of
@@ -113,6 +136,50 @@
       (if (claim-holds? f)
         (state-claimed)
         (state-pending)))))
+
+;; ── mail authority ───────────────────────────────────────────────────────────
+;;
+;; Three states, not four: there is no second gate here. Naming has one because
+;; controlling a zone and answering at a name are different facts; mail's three
+;; records are all published in the same zone by the same act, so proving them
+;; is one step.
+
+(defn mail-state-pending [] :i64 0)
+(defn mail-state-authorized [] :i64 1)
+(defn mail-state-lapsed [] :i64 2)
+
+;; The naming side's `may-start?`, for this authority. Same three conditions:
+;; an owner asked, nobody else holds the domain for mail, and it is not a name
+;; this deployment already speaks for.
+(defn mail-may-start? [f [:ref :domain-binding/mail-facts]] :bool
+  (and (record-get f :owner-authorized)
+       (record-get f :claim-exclusive)
+       (not (record-get f :name-is-service-owned))))
+
+;; `spf-closed` is required and `dmarc-enforcing` is not, and the asymmetry is
+;; deliberate. An SPF record ending in `+all` authorizes the entire internet to
+;; send as the domain — it is a record that exists and says nothing, so treating
+;; its presence as proof would be counting a blank page as a signature. A DMARC
+;; policy of `p=none` is different: it is a real, common, correct posture for a
+;; domain still collecting reports, and the record's presence is what proves the
+;; owner has been here.
+(defn mail-authorized? [f [:ref :domain-binding/mail-facts]] :bool
+  (and (record-get f :spf-present)
+       (record-get f :spf-closed)
+       (record-get f :dkim-present)
+       (record-get f :dmarc-present)
+       (record-get f :claim-exclusive)
+       (not (record-get f :name-is-service-owned))))
+
+;; Same ordering rule as `binding-state`: what holds NOW is asked before what
+;; held before, so an owner who fixes a pulled record gets the authority back
+;; rather than being pinned by the lapse.
+(defn mail-state [f [:ref :domain-binding/mail-facts]] :i64
+  (if (mail-authorized? f)
+    (mail-state-authorized)
+    (if (record-get f :previously-authorized)
+      (mail-state-lapsed)
+      (mail-state-pending))))
 
 (defn main [] :i64
   ;; Sentinel for the wasm host contract. The assertions live in the parity

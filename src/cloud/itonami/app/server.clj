@@ -20,6 +20,7 @@
             [cloud.itonami.app.presentation-request :as presentation-request]
             [webauthn.assurance :as credential-assurance]
             [cloud.itonami.app.documents :as documents]
+            [cloud.itonami.app.binding-sweep :as binding-sweep]
             [cloud.itonami.app.domain-binding :as domain-binding]
             [cloud.itonami.app.domain-verification :as domain-verification]
             [docs.html :as docs-html]
@@ -47,6 +48,7 @@
             [cloud.itonami.app.portfolio :as portfolio]
             [cloud.itonami.app.mail-age-key :as age-key]
             [cloud.itonami.app.mail-authentication :as authentication]
+            [cloud.itonami.app.mail-domain-authority :as mail-authority]
             [cloud.itonami.app.mail-projects :as mail-projects]
             [cloud.itonami.app.project-repository :as project-repository]
             [cloud.itonami.app.project-remote :as project-remote]
@@ -59,6 +61,7 @@
             [cloud.itonami.app.mail-account :as mail-account]
             [cloud.itonami.app.mail-send :as mail-send]
             [cloud.itonami.app.mail-sync :as mail-sync]
+            [cloud.itonami.app.tls-certificate :as tls]
             [cloud.itonami.app.scheduler :as scheduler]
             [cloud.itonami.app.service :as service]
             [cloud.itonami.app.sites :as sites]
@@ -82,6 +85,10 @@
            [javax.crypto.spec SecretKeySpec]))
 
 (defonce server (atom nil))
+;; The opt-in TLS listener (ADR-0045). Separate from `server` because it is a
+;; different socket with a different lifetime, and a deployment that never
+;; enables it must not have a nil check for it in the plain path.
+(defonce https-server (atom nil))
 (defonce ^:private active-config (atom nil))
 
 (defn- read-json [^HttpExchange exchange]
@@ -278,6 +285,22 @@
       (with-open [out (.getResponseBody exchange)]
         (.write out bytes)))
     (send! exchange 404 {:error "icon-missing"})))
+
+(defn- send-text!
+  "A body the far end compares byte for byte.
+
+  RFC 8555 has the CA fetch the HTTP-01 challenge and compare the response to
+  the key authorization exactly, so this sends the string and nothing else — no
+  JSON envelope, no trailing newline, no charset parameter the spec does not
+  ask for."
+  [^HttpExchange exchange status ^String body]
+  (let [bytes (.getBytes body StandardCharsets/UTF_8)]
+    (doto (.getResponseHeaders exchange)
+      (.set "Content-Type" "text/plain")
+      (.set "Cache-Control" "no-store"))
+    (.sendResponseHeaders exchange status (alength bytes))
+    (with-open [out (.getResponseBody exchange)]
+      (.write out bytes))))
 
 (defn- send-html! [^HttpExchange exchange html]
   ;; 回遊 (local only): every HTML surface this app serves passes through here,
@@ -2099,6 +2122,18 @@
   routes on this subject belong here, including the public one."
   [exchange config method path]
   (cond
+    ;; The ACME HTTP-01 challenge (ADR-0045). Public and unauthenticated because
+    ;; the CA holds no credential for this deployment, and answerable only for a
+    ;; token this process published moments ago for an order it started. Served
+    ;; as text/plain because RFC 8555 says the CA compares the body byte for
+    ;; byte — a JSON wrapper would be a different body.
+    (and (= method "GET") (tls/challenge-token path))
+    (let [authorization (tls/key-authorization-for (tls/challenge-token path))]
+      (if (str/blank? (str authorization))
+        (send! exchange 404 {:error "unknown or expired challenge"})
+        (send-text! exchange 200 authorization))
+      true)
+
     ;; Gate B's document (ADR-0043). Public and unauthenticated by necessity: a
     ;; prober being pointed at a name for the first time holds no credential for
     ;; it, and a nonce a caller had to authenticate for would prove nothing
@@ -2178,6 +2213,41 @@
       (require-csrf! exchange session)
       (send! exchange 200
              (domain-verification/recheck! config session (read-json exchange)))
+      true)
+
+    :else false))
+
+(defn- route-mail-domain-authority!
+  "The OTHER authority a tenant can prove about a domain (ADR-0043): that mail
+  claiming to be from it can authenticate. Separate routes because it is a
+  separate proof — SPF, DKIM and DMARC, not a TXT token — and holding one never
+  confers the other.
+
+  Out of line for the same reason its neighbour is: `handle` is at javac's
+  64 KB method limit. Each clause carries its own test so `route-scan` reads
+  each one's gate from its own body."
+  [exchange config method path]
+  (cond
+    ;; Same reasoning as the read next door: a browser sends no `Origin` on a
+    ;; same-origin GET, so requiring it would 403 the only caller this has.
+    (and (= method "GET") (= path "/api/identity/mail-domain-authorities"))
+    (let [session (require-human-session! exchange)]
+      (send! exchange 200 (mail-authority/list-for-session session))
+      true)
+
+    (and (= method "POST") (= path "/api/identity/mail-domain-authorities"))
+    (let [session (require-human-session! exchange)]
+      (require-origin! exchange config)
+      (require-csrf! exchange session)
+      (send! exchange 201 (mail-authority/start! session (read-json exchange)))
+      true)
+
+    (and (= method "POST")
+         (= path "/api/identity/mail-domain-authorities/verify"))
+    (let [session (require-human-session! exchange)]
+      (require-origin! exchange config)
+      (require-csrf! exchange session)
+      (send! exchange 200 (mail-authority/verify! session (read-json exchange)))
       true)
 
     :else false))
@@ -3039,6 +3109,9 @@
             nil
 
             (route-domain-verification! exchange config method path)
+            nil
+
+            (route-mail-domain-authority! exchange config method path)
             nil
 
             (and (= method "POST")
@@ -5234,6 +5307,11 @@
    ;; finds a store that is already open rather than one still being read.
    (bots/start-tick! configuration)
    (updater/start! configuration)
+   ;; Re-measures both proven authorities — a name that stops resolving here and
+   ;; a mail posture whose records were pulled — so neither is carried until
+   ;; somebody happens to look (ADR-0043). Visits nothing on a deployment that
+   ;; has proven nothing.
+   (binding-sweep/start! configuration)
    (let [host (get-in configuration [:server :host])
          port (get-in configuration [:server :port])
          instance (HttpServer/create (InetSocketAddress. host (int port)) 0)]
@@ -5242,6 +5320,16 @@
                       (with-kotobase-federation (handler configuration)
                                                 configuration)
                       configuration))
+     ;; The opt-in TLS listener (ADR-0045), serving the certificates this
+     ;; deployment has been issued and choosing among them by SNI. Default off:
+     ;; this app binds loopback, and a deployment behind a terminator neither
+     ;; needs it nor should be asked for it.
+     (reset! https-server
+             (tls/https-server configuration
+                               (with-canonical-loopback
+                                (with-kotobase-federation (handler configuration)
+                                                          configuration)
+                                configuration)))
      ;; Its own context rather than another branch in `handler`: that method is
      ;; already at the JVM's 64 KB ceiling, and two more lines in its `cond`
      ;; failed to compile with "Method code too large". A longer prefix wins over
@@ -5311,6 +5399,10 @@
   (folder-sync/stop!)
   (bots/stop-tick!)
   (updater/stop!)
+  (binding-sweep/stop!)
+  (when-let [instance @https-server]
+    (.stop instance 0)
+    (reset! https-server nil))
   (work-reconciler/stop!)
   (when-let [instance @server]
     (.stop instance 0)

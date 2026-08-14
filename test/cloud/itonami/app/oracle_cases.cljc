@@ -126,6 +126,26 @@
           :probe-confidential :probe-fresh :name-is-service-owned
           :previously-live])))
 
+(def mail-facts-record
+  [:record :domain-binding/mail-facts
+   [[:owner-authorized :bool] [:spf-present :bool] [:spf-closed :bool]
+    [:dkim-present :bool] [:dmarc-present :bool] [:dmarc-enforcing :bool]
+    [:claim-exclusive :bool] [:name-is-service-owned :bool]
+    [:previously-authorized :bool]]])
+
+(defn- mail-facts [m]
+  (oracle/record
+   mail-facts-record
+   (mapv #(boolean (get m %))
+         [:owner-authorized :spf-present :spf-closed :dkim-present
+          :dmarc-present :dmarc-enforcing :claim-exclusive
+          :name-is-service-owned :previously-authorized])))
+
+(def ^:private mail-proven
+  "Every record published and the SPF record actually closed."
+  {:owner-authorized true :spf-present true :spf-closed true
+   :dkim-present true :dmarc-present true :claim-exclusive true})
+
 (def ^:private proven-and-answering
   {:owner-authorized true :txt-observed true :claim-exclusive true
    :probe-answered true :probe-confidential true :probe-fresh true})
@@ -604,7 +624,64 @@
     ;; returns. `name-holds?` is asked before `previously-live` for this.
     {:oracle :domain-binding :export 'binding-state
      :args [(binding-facts (assoc proven-and-answering :previously-live true))]
-     :expect 2 :read oracle/i64-value}]))
+     :expect 2 :read oracle/i64-value}
+
+    ;; ── mail authority, the OTHER proof about a domain ──────────────
+    {:oracle :domain-binding :export 'mail-state-pending :args [] :expect 0 :read oracle/i64-value}
+    {:oracle :domain-binding :export 'mail-state-authorized :args [] :expect 1 :read oracle/i64-value}
+    {:oracle :domain-binding :export 'mail-state-lapsed :args [] :expect 2 :read oracle/i64-value}
+
+    {:oracle :domain-binding :export 'mail-may-start?
+     :args [(mail-facts {:owner-authorized true :claim-exclusive true})]
+     :expect true}
+    {:oracle :domain-binding :export 'mail-may-start?
+     :args [(mail-facts {:claim-exclusive true})] :expect false}
+    {:oracle :domain-binding :export 'mail-may-start?
+     :args [(mail-facts {:owner-authorized true})] :expect false}
+    {:oracle :domain-binding :export 'mail-may-start?
+     :args [(mail-facts {:owner-authorized true :claim-exclusive true
+                         :name-is-service-owned true})]
+     :expect false}
+
+    {:oracle :domain-binding :export 'mail-authorized?
+     :args [(mail-facts mail-proven)] :expect true}
+    ;; `v=spf1 +all` authorizes the whole internet. A record that exists and
+    ;; says nothing is not a proof, and this is the case that says so.
+    {:oracle :domain-binding :export 'mail-authorized?
+     :args [(mail-facts (assoc mail-proven :spf-closed false))] :expect false}
+    {:oracle :domain-binding :export 'mail-authorized?
+     :args [(mail-facts (assoc mail-proven :spf-present false :spf-closed false))]
+     :expect false}
+    ;; A revoked DKIM key (`p=`) is a record that is present and says the key is
+    ;; gone; the host reads that as absent and the core refuses either way.
+    {:oracle :domain-binding :export 'mail-authorized?
+     :args [(mail-facts (assoc mail-proven :dkim-present false))] :expect false}
+    {:oracle :domain-binding :export 'mail-authorized?
+     :args [(mail-facts (assoc mail-proven :dmarc-present false))] :expect false}
+    ;; `p=none` is monitoring, which is a real posture and not a failure. This
+    ;; is the asymmetry with SPF, asserted rather than described.
+    {:oracle :domain-binding :export 'mail-authorized?
+     :args [(mail-facts (assoc mail-proven :dmarc-enforcing false))] :expect true}
+    {:oracle :domain-binding :export 'mail-authorized?
+     :args [(mail-facts (assoc mail-proven :claim-exclusive false))] :expect false}
+    {:oracle :domain-binding :export 'mail-authorized?
+     :args [(mail-facts (assoc mail-proven :name-is-service-owned true))]
+     :expect false}
+
+    {:oracle :domain-binding :export 'mail-state
+     :args [(mail-facts {:owner-authorized true :claim-exclusive true})]
+     :expect 0 :read oracle/i64-value}
+    {:oracle :domain-binding :export 'mail-state
+     :args [(mail-facts mail-proven)] :expect 1 :read oracle/i64-value}
+    {:oracle :domain-binding :export 'mail-state
+     :args [(mail-facts (assoc mail-proven :dkim-present false
+                               :previously-authorized true))]
+     :expect 2 :read oracle/i64-value}
+    ;; and a lapse is not permanent here either — the owner republishes and the
+    ;; authority returns, because what holds now is asked first.
+    {:oracle :domain-binding :export 'mail-state
+     :args [(mail-facts (assoc mail-proven :previously-authorized true))]
+     :expect 1 :read oracle/i64-value}]))
 
 (defn run-case
   "Execute one case through the seam. Returns {:ok? :actual}.

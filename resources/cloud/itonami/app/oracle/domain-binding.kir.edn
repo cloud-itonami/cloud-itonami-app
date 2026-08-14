@@ -238,6 +238,229 @@
      (state-lapsed)
      (if (claim-holds? f) (state-claimed) (state-pending)))),
    :param-types [[:ref :domain-binding/facts]]}
+  {:name mail-state-pending,
+   :params [],
+   :result :i64,
+   :effects #{},
+   :body 0,
+   :param-types []}
+  {:name mail-state-authorized,
+   :params [],
+   :result :i64,
+   :effects #{},
+   :body 1,
+   :param-types []}
+  {:name mail-state-lapsed,
+   :params [],
+   :result :i64,
+   :effects #{},
+   :body 2,
+   :param-types []}
+  {:name mail-may-start?,
+   :params [f],
+   :result :bool,
+   :effects #{},
+   :body
+   (let
+    [__kotoba_and_3
+     (record-get
+      [:record
+       :domain-binding/mail-facts
+       [[:owner-authorized :bool]
+        [:spf-present :bool]
+        [:spf-closed :bool]
+        [:dkim-present :bool]
+        [:dmarc-present :bool]
+        [:dmarc-enforcing :bool]
+        [:claim-exclusive :bool]
+        [:name-is-service-owned :bool]
+        [:previously-authorized :bool]]]
+      f
+      :owner-authorized)]
+    (if
+     __kotoba_and_3
+     (let
+      [__kotoba_and_2
+       (record-get
+        [:record
+         :domain-binding/mail-facts
+         [[:owner-authorized :bool]
+          [:spf-present :bool]
+          [:spf-closed :bool]
+          [:dkim-present :bool]
+          [:dmarc-present :bool]
+          [:dmarc-enforcing :bool]
+          [:claim-exclusive :bool]
+          [:name-is-service-owned :bool]
+          [:previously-authorized :bool]]]
+        f
+        :claim-exclusive)]
+      (if
+       __kotoba_and_2
+       (if
+        (record-get
+         [:record
+          :domain-binding/mail-facts
+          [[:owner-authorized :bool]
+           [:spf-present :bool]
+           [:spf-closed :bool]
+           [:dkim-present :bool]
+           [:dmarc-present :bool]
+           [:dmarc-enforcing :bool]
+           [:claim-exclusive :bool]
+           [:name-is-service-owned :bool]
+           [:previously-authorized :bool]]]
+         f
+         :name-is-service-owned)
+        false
+        true)
+       __kotoba_and_2))
+     __kotoba_and_3)),
+   :param-types [[:ref :domain-binding/mail-facts]]}
+  {:name mail-authorized?,
+   :params [f],
+   :result :bool,
+   :effects #{},
+   :body
+   (let
+    [__kotoba_and_6
+     (record-get
+      [:record
+       :domain-binding/mail-facts
+       [[:owner-authorized :bool]
+        [:spf-present :bool]
+        [:spf-closed :bool]
+        [:dkim-present :bool]
+        [:dmarc-present :bool]
+        [:dmarc-enforcing :bool]
+        [:claim-exclusive :bool]
+        [:name-is-service-owned :bool]
+        [:previously-authorized :bool]]]
+      f
+      :spf-present)]
+    (if
+     __kotoba_and_6
+     (let
+      [__kotoba_and_5
+       (record-get
+        [:record
+         :domain-binding/mail-facts
+         [[:owner-authorized :bool]
+          [:spf-present :bool]
+          [:spf-closed :bool]
+          [:dkim-present :bool]
+          [:dmarc-present :bool]
+          [:dmarc-enforcing :bool]
+          [:claim-exclusive :bool]
+          [:name-is-service-owned :bool]
+          [:previously-authorized :bool]]]
+        f
+        :spf-closed)]
+      (if
+       __kotoba_and_5
+       (let
+        [__kotoba_and_4
+         (record-get
+          [:record
+           :domain-binding/mail-facts
+           [[:owner-authorized :bool]
+            [:spf-present :bool]
+            [:spf-closed :bool]
+            [:dkim-present :bool]
+            [:dmarc-present :bool]
+            [:dmarc-enforcing :bool]
+            [:claim-exclusive :bool]
+            [:name-is-service-owned :bool]
+            [:previously-authorized :bool]]]
+          f
+          :dkim-present)]
+        (if
+         __kotoba_and_4
+         (let
+          [__kotoba_and_3
+           (record-get
+            [:record
+             :domain-binding/mail-facts
+             [[:owner-authorized :bool]
+              [:spf-present :bool]
+              [:spf-closed :bool]
+              [:dkim-present :bool]
+              [:dmarc-present :bool]
+              [:dmarc-enforcing :bool]
+              [:claim-exclusive :bool]
+              [:name-is-service-owned :bool]
+              [:previously-authorized :bool]]]
+            f
+            :dmarc-present)]
+          (if
+           __kotoba_and_3
+           (let
+            [__kotoba_and_2
+             (record-get
+              [:record
+               :domain-binding/mail-facts
+               [[:owner-authorized :bool]
+                [:spf-present :bool]
+                [:spf-closed :bool]
+                [:dkim-present :bool]
+                [:dmarc-present :bool]
+                [:dmarc-enforcing :bool]
+                [:claim-exclusive :bool]
+                [:name-is-service-owned :bool]
+                [:previously-authorized :bool]]]
+              f
+              :claim-exclusive)]
+            (if
+             __kotoba_and_2
+             (if
+              (record-get
+               [:record
+                :domain-binding/mail-facts
+                [[:owner-authorized :bool]
+                 [:spf-present :bool]
+                 [:spf-closed :bool]
+                 [:dkim-present :bool]
+                 [:dmarc-present :bool]
+                 [:dmarc-enforcing :bool]
+                 [:claim-exclusive :bool]
+                 [:name-is-service-owned :bool]
+                 [:previously-authorized :bool]]]
+               f
+               :name-is-service-owned)
+              false
+              true)
+             __kotoba_and_2))
+           __kotoba_and_3))
+         __kotoba_and_4))
+       __kotoba_and_5))
+     __kotoba_and_6)),
+   :param-types [[:ref :domain-binding/mail-facts]]}
+  {:name mail-state,
+   :params [f],
+   :result :i64,
+   :effects #{},
+   :body
+   (if
+    (mail-authorized? f)
+    (mail-state-authorized)
+    (if
+     (record-get
+      [:record
+       :domain-binding/mail-facts
+       [[:owner-authorized :bool]
+        [:spf-present :bool]
+        [:spf-closed :bool]
+        [:dkim-present :bool]
+        [:dmarc-present :bool]
+        [:dmarc-enforcing :bool]
+        [:claim-exclusive :bool]
+        [:name-is-service-owned :bool]
+        [:previously-authorized :bool]]]
+      f
+      :previously-authorized)
+     (mail-state-lapsed)
+     (mail-state-pending))),
+   :param-types [[:ref :domain-binding/mail-facts]]}
   {:name main,
    :params [],
    :result :i64,
@@ -247,7 +470,9 @@
  :oracle-value 0,
  :schema-identities
  #:domain-binding{:facts
-                  "fa9264b69205f0fb3dce0792e82b6bff3ed8289c24955355ebe8bedbce1f76f4"},
+                  "86f150fd166b0682c686a137a06ac17eba0e5c61ce2f6aa78956451de1cdaeb9",
+                  :mail-facts
+                  "4ddacdc7152b81595ce58954885b6f4a3c78a5a63d6b1c6ed35baa00628675a3"},
  :exports
  [state-pending
   state-claimed
@@ -257,6 +482,12 @@
   claim-holds?
   name-holds?
   binding-state
+  mail-state-pending
+  mail-state-authorized
+  mail-state-lapsed
+  mail-may-start?
+  mail-authorized?
+  mail-state
   nonce-route?
   main],
  :schemas
@@ -270,7 +501,19 @@
                     [:probe-confidential :bool]
                     [:probe-fresh :bool]
                     [:name-is-service-owned :bool]
-                    [:previously-live :bool]]]},
+                    [:previously-live :bool]]],
+                  :mail-facts
+                  [:record
+                   :domain-binding/mail-facts
+                   [[:owner-authorized :bool]
+                    [:spf-present :bool]
+                    [:spf-closed :bool]
+                    [:dkim-present :bool]
+                    [:dmarc-present :bool]
+                    [:dmarc-enforcing :bool]
+                    [:claim-exclusive :bool]
+                    [:name-is-service-owned :bool]
+                    [:previously-authorized :bool]]]},
  :effects #{},
  :blocks [{:id 0, :instructions [[:const.i64 0] [:return]]}],
  :entry main}

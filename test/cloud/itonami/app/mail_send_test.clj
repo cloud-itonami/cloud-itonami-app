@@ -90,6 +90,35 @@
                                      {:subject "s" :text "t"}
                                      {:user-did "did:key:alice"}))))))
 
+(deftest a-domain-another-tenant-proved-for-mail-cannot-be-sent-as
+  ;; The gate is `mail-domain-authority/assert-sender-permitted!` and its rule
+  ;; is tested there. What THIS asserts is that `send!` actually calls it, and
+  ;; before the message leaves — a refusal that arrived after the provider had
+  ;; accepted the message would be a refusal of nothing.
+  (let [now (store/now)]
+    (swap! store/state assoc :identity
+           {:organizations {"org-b" {:id "org-b" :organization-id "other"
+                                     :status :active}}
+            :users {"user-b" {:id "user-b" :did "did:key:ben"}}
+            :memberships {"m-b" {:id "m-b" :organization-id "org-b"
+                                 :user-id "user-b" :role :owner
+                                 :created-at now}}
+            :mail-domain-authorities
+            {"auth-1" {:id "auth-1" :organization-id "org-b"
+                       :domain "example.com" :selector "sel"
+                       :status :authorized :authorized-at now}}})
+    (with-account imap-account
+      ;; `imap-account` sends as me@example.com, and org-b holds example.com.
+      ;; did:key:alice belongs to no tenant here, so it is somebody else.
+      #(let [error (try (mail-send/send! (:id imap-account)
+                                         {:to "a@elsewhere.example"
+                                          :subject "s" :text "t"}
+                                         {:user-did "did:key:alice"})
+                        (catch clojure.lang.ExceptionInfo e (ex-data e)))]
+         (is (= :mail-domain-authority/domain-held-by-another-tenant
+                (:type error)))
+         (is (= "example.com" (:domain error)))))))
+
 (deftest sending-to-an-unknown-account-names-it
   (with-account imap-account
     #(let [error (try (mail-send/send! "gmail:nobody"

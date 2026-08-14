@@ -16,7 +16,8 @@
             [cloud.itonami.app.config :as config-loader]
             [cloud.itonami.app.identity :as identity]
             [cloud.itonami.app.server :as server]
-            [cloud.itonami.app.store :as store])
+            [cloud.itonami.app.store :as store]
+            [cloud.itonami.app.tls-certificate :as tls])
   (:import [java.net URI]
            [java.net.http HttpClient HttpRequest HttpRequest$BodyPublishers
             HttpResponse$BodyHandlers]))
@@ -113,6 +114,27 @@
         (is (= 201 (:status (call :post "/api/identity/domain-verifications"
                                   {:body {:domain "example.com"}
                                    :send-origin? true :csrf? true}))))))))
+
+(deftest the-acme-challenge-answers-a-published-token-as-plain-bytes
+  ;; The CA compares the response body to the key authorization byte for byte
+  ;; (RFC 8555), so this route must not wrap it in anything. And it must be
+  ;; reachable with no session at all — the CA holds no credential here.
+  (with-server
+    (fn []
+      (let [token "acme-token-0123456789abcd"]
+        (is (= 404 (:status (call :get (str "/.well-known/acme-challenge/" token)
+                                  {:send-origin? false})))
+            "nothing is published yet, and a guess is not an answer")
+        (tls/publish-challenge! "acme.example" token "the-key-authorization")
+        (let [{:keys [status body]}
+              (call :get (str "/.well-known/acme-challenge/" token)
+                    {:send-origin? false})]
+          (is (= 200 status))
+          (is (= "the-key-authorization" body)
+              "the bytes and nothing else — no JSON envelope, no trailing newline"))
+        (tls/retract-challenge! token)
+        (is (= 404 (:status (call :get (str "/.well-known/acme-challenge/" token)
+                                  {:send-origin? false}))))))))
 
 (deftest the-activation-nonce-document-is-public-and-refuses-to-guess
   ;; Gate B's document (ADR-0043). It has to answer a caller that holds no

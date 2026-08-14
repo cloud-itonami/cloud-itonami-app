@@ -164,13 +164,17 @@ nothing: credentials already issued name the domain that was live when they were
 issued and are signed by the same issuer key either way. Nothing here is
 revocation, and this ADR does not add one.
 
-**Who re-probes is the owner, not a timer.** This application has no scheduler
-to hang a periodic check on, and inventing one for this is a larger decision
-than this ADR. So `recheck!` is a route. That is a real limit and it is stated
-rather than papered over: between two owner-initiated checks, a `:live` name can
-stop resolving here and the tenant keeps carrying it. `probe-freshness` bounds
-how stale the evidence may be — a probe older than it stops satisfying
-`probe-fresh`, so the NEXT check demotes rather than confirming on old evidence.
+**Both the owner and a timer re-probe.** `recheck!` is a route, so an owner who
+has just repointed DNS does not have to wait out an interval; `binding-sweep`
+runs the same measurement on a schedule (ADR-0044).
+
+This paragraph used to say the opposite — that this application had no scheduler
+to hang a periodic check on, so the owner was the only trigger. **That was
+simply wrong.** `updater`, `mail-sync`, `folder-sync` and `work-reconciler` all
+run a `ScheduledExecutorService` from `server/start!`, and the sweep now follows
+`updater` exactly. The sentence was written from memory instead of from the
+source, and it is left here rather than deleted because a limit that does not
+exist is worse than an unimplemented feature: nobody goes looking for it again.
 
 ## Out of scope
 
@@ -179,13 +183,22 @@ domain needs SPF and DKIM alignment, which `mail_authentication.clj` already
 computes for *inbound* messages, and which a TXT proof of naming does not
 establish. `account-domain` stays deployment-level here.
 
+That reasoning did not change; what changed is that the other authority now
+exists beside this one. ADR-0044 proves it separately, from its own three
+records, and holding either binding still confers nothing about the other.
+
 **Multi-tenant hosting.** As ADR-0025 put it, one process still holds one data
 directory and one issuer key. This lets a tenant be *named* by a domain it
 proved. It does not make this a host for tenants that do not trust each other.
 
 **Certificate issuance.** Whether this deployment can terminate TLS for a
-customer's name is an operator fact. Gate B fails until it is true, which is the
-honest reading, and is the same boundary ADR-0025 drew.
+customer's name was an operator fact when this was written. Gate B fails until
+it is true, which is the honest reading, and is the same boundary ADR-0025 drew.
+
+ADR-0045 moved it: the deployment now orders its own certificates over ACME, for
+exactly the domains Gate B has already proven it answers at — HTTP-01 needs the
+CA to fetch a URL at that name, so this proof is the precondition. Gate B still
+measures rather than assumes, which is what this paragraph was really about.
 
 ## Consequences
 
