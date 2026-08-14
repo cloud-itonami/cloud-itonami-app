@@ -9237,7 +9237,13 @@
         row.append(button);
         row.append(make('span', 'bots-card__state',
                         'この端末に OAuth クライアントがありません'));
-      } else if ((card.accounts || []).length) {
+      } else if ((card.accounts || []).length || card.state === 'connected') {
+        // `connected` counts here as well as a listed account. A card written
+        // while nothing was authorized lists none, and the server recomputes
+        // its state from the provider rather than replaying what was stored
+        // (ADR-0044) — so without this the same row said 接続済み and offered
+        // 認証する, and the person pressed the button for something already
+        // done.
         const another = make('button', 'tool-button', '＋ 別のアカウントを追加');
         another.type = 'button';
         another.addEventListener('click', () => connect(another, true));

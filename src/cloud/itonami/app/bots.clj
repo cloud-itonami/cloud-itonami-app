@@ -152,6 +152,21 @@
                               [(str (:id row)) (:provider row)])))
          (connectors/catalog-rows configuration))))
 
+(defn- tool->provider
+  "tool name -> the OAuth client it is authorized under.
+
+  One step finer than `connector->provider`, and needed for a different
+  question: when a Bot's turn reaches for a tool, which authorization is the
+  one to ask for. Browser tools are deliberately absent — the isolated browser
+  is this machine, not a connected account — so a lookup that misses is how
+  they stay outside the connection question entirely rather than by being
+  named here as exceptions."
+  [configuration]
+  (into {} (for [row (connectors/catalog-rows configuration)
+                 :when (:provider row)
+                 tool (:tools row)]
+             [(:name tool) (:provider row)])))
+
 (defn tokens-port
   "`ITokens` over ONE named account per provider.
 
@@ -374,10 +389,35 @@
         :when (and (= kind (:card/kind c)) (pred c))]
     c))
 
-(defn- presence [bot-id]
+(defn- connected-providers
+  "The provider names this person now holds at least one account for — the
+  vocabulary a connection card's `:card/connector` is written in, which is the
+  PROVIDER (`google`) rather than the connector id (`com.google.gmail`)."
+  [did]
+  (into #{} (map name) (keys (accounts-by-provider did))))
+
+(defn- met?
+  "Has this connection card been answered by the world since it was written?
+
+  Nothing ever rewrites a stored card's `:card/state`: it is set once, and a
+  card written while nothing was connected says `:offered` forever. Read
+  literally, that made `unmet-connection?` true for the life of the
+  conversation, so a Bot whose Google was authorized ten minutes ago still
+  reported itself as `waiting-connection` — the screen kept asking for
+  something that had already been done.
+
+  So the state is recomputed from the provider rather than replayed, for the
+  same reason `public-card` recomputes `:authable?`: whether a connector is
+  connected right now is not something that was SAID, and the stored value
+  stays as the record of what was true when the card was offered."
+  [providers card]
+  (contains? providers (:card/connector card)))
+
+(defn- presence [bot-id providers]
   {:held-run? (boolean (seq (open-cards bot-id :approval #(nil? (:card/decision %)))))
    :unmet-connection? (boolean (seq (open-cards bot-id :connection
-                                                #(#{:offered :waiting} (:card/state %)))))
+                                                #(and (#{:offered :waiting} (:card/state %))
+                                                      (not (met? providers %))))))
    :active-run? (boolean (get-in (snapshot) [:runs bot-id :pending-call]))})
 
 (defn- public-bot [configuration did b]
@@ -397,7 +437,8 @@
      :browser-ready? (boolean (and (:bot/browser? b)
                                    (agent-control/browser-enabled? configuration)))
      :enabled? (:bot/enabled? b)
-     :status (name (bot/status b (presence (:bot/id b))))
+     :status (name (bot/status b (presence (:bot/id b)
+                                           (connected-providers did))))
      :updated-at (:bot/updated-at b)}))
 
 (defn- unqualify
@@ -430,18 +471,41 @@
   both render a button whose only outcome is
   「OAuth クライアントが未設定です」, which is the failure this field exists
   to prevent. The stored value stays as the record of what was true when the
-  card was offered."
-  [c]
-  (cond-> (unqualify c)
-    (= :connection (:card/kind c))
-    (assoc :authable? (provider-authable? (keyword (:card/connector c))))))
+  card was offered.
 
-(defn- public-message [m]
-  {:id (:message/id m)
-   :role (name (:message/role m))
-   :text (:message/text m)
-   :at (:message/at m)
-   :cards (mapv public-card (:message/cards m))})
+  `:state` is recomputed for the same reason and answers the same class of
+  complaint from the other side: nothing rewrites a stored card, so one written
+  while Google was unauthorized keeps offering the button after somebody
+  authorized it — the transcript goes on asking for what is already done. See
+  `met?`. `providers` is the set of provider names connected now; an empty set
+  leaves every card as it was recorded, which is what a caller that does not
+  know should get."
+  ([c] (public-card c #{}))
+  ([c providers]
+   (cond-> (unqualify c)
+     (= :connection (:card/kind c))
+     (assoc :authable? (provider-authable? (keyword (:card/connector c))))
+
+     (and (= :connection (:card/kind c)) (met? providers c))
+     (assoc :state "connected"))))
+
+(defn- public-message
+  ([m] (public-message m #{}))
+  ([m providers]
+   {:id (:message/id m)
+    :role (name (:message/role m))
+    :text (:message/text m)
+    :at (:message/at m)
+    :cards (mapv #(public-card % providers) (:message/cards m))}))
+
+(defn- public-conversation
+  "One Bot's conversation, as the client should see it now. Every route that
+  returns messages goes through here, so the recomputation in `public-card`
+  cannot be had by some callers and not others — which is how `:authable?`
+  ended up correct on the Bots screen and stale everywhere else."
+  [did bot-id]
+  (let [providers (connected-providers did)]
+    (mapv #(public-message % providers) (conversation bot-id))))
 
 (defn overview
   "Everything the Bots screen needs on load: the Bots, and — when there are
@@ -471,39 +535,52 @@
 
 (defn messages [session bot-id]
   (owned! session bot-id)
-  (mapv public-message (conversation bot-id)))
+  (public-conversation (identity/session-did session) bot-id))
 
 ;; ── the loop ────────────────────────────────────────────────────────────
 
+(defn- browser-tools
+  "The isolated-browser tools, when the Bot asked for them AND this machine has
+  enabled the browser. Not written into `:bot/tools`: that set is connector
+  names, and mixing the two would make `grant-widens?` fire on every ordinary
+  browser Bot."
+  [configuration b]
+  (if (:bot/browser? b)
+    (vec (agent-control/browser-tool-definitions configuration))
+    []))
+
 (defn- tool-definitions
-  "The admitted tools, as the model sees them.
+  "The tools the Bot's grant REACHES, as the model sees them.
 
   Read and write are both offered. Withholding the write tools would make a Bot
   answer 'I cannot send mail' when the truth is 'I can, once you approve it',
   and the second is the thing a person is trying to find out.
 
-  Isolated-browser tools join here when the Bot asked for them AND this
-  machine has enabled the browser. They are not written into `:bot/tools`:
-  that set is connector names, and mixing the two would make `grant-widens?`
-  fire on every ordinary browser Bot."
-  [configuration b connected]
+  So is a tool whose connector nobody has authorized yet, and for the same
+  reason one step further out: a Bot that could not see `gmail_search` would
+  answer 'I have no way to read mail', when the truth is 'I have, once you
+  authorize Google'. The difference between this set and what may actually run
+  is carried by `:runnable` and decided at the call, not here — see
+  `turn-admission`.
+
+  Offering a tool is not granting it. `bot/reachable-tools` asks the same core
+  as `admitted-tools`, still narrowed by the deployment's enabled set, by the
+  grant and by the write permission; only the connected fact is held true, and
+  only for the purpose of letting the model reach."
+  [configuration b]
   (let [registry (connectors/enabled configuration)
-        admitted (bot/admitted-tools b (connectors/catalog-rows configuration)
-                                     connected)
+        offerable (bot/reachable-tools b (connectors/catalog-rows configuration))
         connector-tools
         (into []
               (for [d (creg/descriptors registry)
                     t (cm/tools d)
-                    :when (contains? admitted (:connector/name t))]
+                    :when (contains? offerable (:connector/name t))]
                 {:name (:connector/name t)
                  :description (str "[" (:connector/name d) "] "
                                    (or (:connector/description t) (:connector/name t))
                                    (when (= :write (:connector/effect t)) " (write)"))
                  :parameters (:connector/input-schema t)}))]
-    (into (if (:bot/browser? b)
-            (vec (agent-control/browser-tool-definitions configuration))
-            [])
-          connector-tools)))
+    (into (browser-tools configuration b) connector-tools)))
 
 (defn- write-tool? [configuration tool-name]
   (or (agent-control/browser-write? tool-name)
@@ -610,7 +687,15 @@
   The shape is `agent-control/advance!`'s, deliberately: read tools run, the
   first write tool stops the loop and becomes an approval card, and the budget
   is finite in both turns and tool calls so a Bot cannot spend an afternoon on
-  one message."
+  one message.
+
+  Admission is checked at the CALL, in the same place, because that is where it
+  becomes true. A tool whose provider is unresolved stops the loop and becomes
+  a connection or choice card; the host used to answer that question before the
+  turn instead, and a Bot with an unauthorized connector then could not answer
+  anything at all (ADR-0044). `run` carries the facts — `:runnable`, `:blocked`,
+  `:tool-provider` — because `turn-admission` assembles them once for all three
+  callers."
   [configuration b run]
   (loop [run run]
     (cond
@@ -640,8 +725,45 @@
         (if (empty? calls)
           (do (clear-run! (:bot/id b))
               (say (:bot/id b) (:content result) nil))
-          (let [{:keys [name input] :as call} (first calls)]
-            (if (write-tool? configuration name)
+          (let [{:keys [name input] :as call} (first calls)
+                ;; The provider this call needs, and — when that provider is
+                ;; not resolved for this Bot — the card that resolves it. This
+                ;; is the moment the connection question becomes NECESSARY:
+                ;; the Bot has reached for the tool. Asking earlier meant
+                ;; asking on turns that never touched a connector.
+                blocked (get (:blocked run) (get (:tool-provider run) name))]
+            (cond
+              ;; Checked before `:runnable`, and the order is the decision. A
+              ;; provider can be connected — so its tools are admitted — while
+              ;; the account to use is still ambiguous, which is `:ask`. Running
+              ;; then would resolve no token and reach nothing; taking the first
+              ;; account is the failure `connection-for` already refuses.
+              blocked
+              ;; Cleared rather than held. An approval card can resume, because
+              ;; the person's answer is the last thing the call was waiting for;
+              ;; an authorization is a round trip through a browser and another
+              ;; provider, and a run parked across it would be resumed from a
+              ;; transcript written before it. The person says it again, to a
+              ;; Bot that can now do it.
+              (do (clear-run! (:bot/id b))
+                  (say (:bot/id b)
+                       (if (= :connection (:card/kind blocked))
+                         (str (:card/title blocked)
+                              " を認証すると、この続きができます。")
+                         (:card/prompt blocked))
+                       [blocked]))
+
+              ;; A name the model invented, or one that left the grant between
+              ;; the offer and the call. `invoke/call` would fail somewhere
+              ;; deeper with a message about a registry; refusing here says the
+              ;; true thing in the Bot's own transcript.
+              (not (contains? (:runnable run) name))
+              (do (clear-run! (:bot/id b))
+                  (say (:bot/id b)
+                       (str "「" name "」はこの Bot が使えるツールではありません。")
+                       nil))
+
+              (write-tool? configuration name)
               ;; Stop. The person decides, and the transcript is kept so the
               ;; call can be made from exactly this state if they say yes.
               (let [card-id (new-id "card")]
@@ -658,6 +780,8 @@
                         :impact (if (agent-control/browser-tool? name)
                                   "承認するとこの Bot 専用の分離ブラウザーのページ状態が変わります。"
                                   "承認するとこの Bot が接続済みサービスに書き込みます。")})]))
+
+              :else
               (let [output (run-tool! configuration b (:selection run) name input)
                     run (-> run
                             (update :tool-count (fnil inc 0))
@@ -714,11 +838,16 @@
 (defn- resolve-accounts
   "Which account this Bot uses at each provider it needs — or what to ask.
 
-  Returns `{:selection {provider connection} :connect [cards] :ask [cards]}`.
-  The decision per provider is `bot/account-disposition`'s, which is the
-  refusal `identity/connection-for` already makes turned into something a Bot
-  can act on. Nothing here picks between two accounts; when there are two and
-  no choice is in effect, it asks."
+  Returns `{:selection {provider connection} :blocked {provider card}}`. The
+  decision per provider is `bot/account-disposition`'s, which is the refusal
+  `identity/connection-for` already makes turned into something a Bot can act
+  on. Nothing here picks between two accounts; when there are two and no choice
+  is in effect, it asks.
+
+  `:blocked` is keyed by PROVIDER rather than being a list, because the caller's
+  question is no longer 'is anything unresolved' — it is 'the Bot just reached
+  for this tool, is the provider behind it resolved'. A list answers the first
+  and the first is what made every turn open with a demand."
   [configuration b did]
   (let [held (accounts-by-provider did)
         chosen (selections (:bot/id b))]
@@ -730,8 +859,8 @@
                             usable)]
          (case (bot/account-disposition b mine (some? selected))
            :connect
-           (update acc :connect conj
-                   (connection-card-for configuration provider group mine))
+           (assoc-in acc [:blocked provider]
+                     (connection-card-for configuration provider group mine))
 
            :use
            (assoc-in acc [:selection provider]
@@ -739,21 +868,46 @@
                       did (:id (or selected (first usable)))))
 
            :ask
-           (update acc :ask conj
-                   (bot/choice-card
-                    {:id (new-id "card")
-                     :prompt (str (str/join "・" (map :name group))
-                                  " はどのアカウントで?")
-                     :detail "この Bot がこれから使うアカウントです。あとから変えられます。"
-                     :subject {:subject/kind :account
-                               :subject/provider (name provider)}
-                     :options (mapv (fn [account]
-                                      {:option/label (or (:label account)
-                                                         (:email account))
-                                       :option/value (:id account)})
-                                    usable)})))))
-     {:selection {} :connect [] :ask []}
+           (assoc-in acc [:blocked provider]
+                     (bot/choice-card
+                      {:id (new-id "card")
+                       :prompt (str (str/join "・" (map :name group))
+                                    " はどのアカウントで?")
+                       :detail "この Bot がこれから使うアカウントです。あとから変えられます。"
+                       :subject {:subject/kind :account
+                                 :subject/provider (name provider)}
+                       :options (mapv (fn [account]
+                                        {:option/label (or (:label account)
+                                                           (:email account))
+                                         :option/value (:id account)})
+                                      usable)})))))
+     {:selection {} :blocked {}}
      (rows-by-provider configuration b))))
+
+(defn- turn-admission
+  "Everything one turn needs to know about reach, in one place.
+
+  `:tools` is what the model may reach for; `:runnable` is what may actually
+  run; `:blocked` is, per provider, the card to show if the Bot reaches past
+  the second into the first. Three run-builders exist — a message, a routine
+  and a handoff — and every one of them calls `advance!`, so the facts it
+  decides from are assembled here rather than three times.
+
+  `:runnable` folds the browser tools in beside the connector ones because
+  `advance!` asks one question of one set. They are admitted by a different
+  gate — `browser-tools` already applied it — and they carry no provider, so
+  they can never be blocked on an authorization."
+  [configuration b did]
+  (let [rows (connectors/catalog-rows configuration)
+        connected (connected-connectors configuration did)
+        browser (browser-tools configuration b)
+        {:keys [selection blocked]} (resolve-accounts configuration b did)]
+    {:selection selection
+     :blocked blocked
+     :tool-provider (tool->provider configuration)
+     :runnable (into (into #{} (map :name) browser)
+                     (bot/admitted-tools b rows connected))
+     :tools (tool-definitions configuration b)}))
 
 (defn send!
   "One message to a Bot, and its answer.
@@ -774,38 +928,27 @@
     (append! bot-id (bot/message {:id (new-id "msg") :bot bot-id :role :person
                                   :text text :at (store/now)}))
     (let [did (identity/session-did session)
-          connected (connected-connectors configuration did)
-          {:keys [selection connect ask]} (resolve-accounts configuration b did)]
-      (cond
-        ;; No model call. Asking one to plan around a service nobody authorized
-        ;; produces a plan that cannot run, and the person then has to work out
-        ;; which step was fiction.
-        (seq connect)
+          admission (turn-admission configuration b did)]
+      ;; The turn is taken. An unauthorized connector is no longer a reason to
+      ;; refuse the message: it used to be, and the cost was a Bot that
+      ;; answered "先に接続が要ります" to hello, to thanks, and to every
+      ;; question about its own brief — on a grant whose tools that turn was
+      ;; never going to touch. The refusal it was protecting — no plan built
+      ;; around a service nobody authorized — is kept, one step later and where
+      ;; it is true: `advance!` stops at the CALL, before the tool is reached,
+      ;; and the card arrives then.
+      (if (empty? (:tools admission))
         (say bot-id
-             (str "先に接続が要ります。" (str/join "・" (map :card/title connect))
-                  " を認証してください。")
-             connect)
-
-        ;; Two accounts at one provider and no choice in effect. Asking is the
-        ;; whole point; picking the first is the failure this application
-        ;; already refuses one layer down.
-        (seq ask)
-        (say bot-id "どのアカウントを使うか教えてください。" ask)
-
-        :else
-        (let [tools (tool-definitions configuration b connected)]
-          (if (empty? tools)
-            (say bot-id
-                 "使えるツールがひとつもありません。Settings で有効にするか、この Bot の権限を見直してください。"
-                 nil)
-            (advance! configuration b
-                      {:id (new-id "run")
-                       :selection selection
-                       :messages (transcript configuration b (conversation bot-id))
-                       :tools tools
-                       :turn-count 0
-                       :tool-count 0})))))
-    (mapv public-message (conversation bot-id))))
+             "使えるツールがひとつもありません。Settings で有効にするか、この Bot の権限を見直してください。"
+             nil)
+        (advance! configuration b
+                  (merge admission
+                         {:id (new-id "run")
+                          :messages (transcript configuration b
+                                                (conversation bot-id))
+                          :turn-count 0
+                          :tool-count 0})))
+      (public-conversation did bot-id))))
 
 (defn- answered-card [bot-id card-id]
   (some (fn [m] (some #(when (= card-id (:card/id %)) %) (:message/cards m)))
@@ -834,7 +977,7 @@
                       "そのアカウント")
                   " を使います。")
              nil)))
-    (mapv public-message (conversation bot-id))))
+    (public-conversation (identity/session-did session) bot-id)))
 
 (defn accounts
   "This person's external accounts, and which of them this Bot may use.
@@ -912,7 +1055,7 @@
           (advance! configuration b run))
         (do (clear-run! bot-id)
             (say bot-id "わかりました。この操作はしません。" nil))))
-    (mapv public-message (conversation bot-id))))
+    (public-conversation (identity/session-did session) bot-id)))
 
 ;; ── routines ────────────────────────────────────────────────────────────
 
@@ -1004,7 +1147,7 @@
   Tracking a second copy would let the two disagree, and the copy that said
   'idle' is the one a schedule would believe."
   [configuration r b did]
-  (let [p (presence (:bot/id b))]
+  (let [p (presence (:bot/id b) (connected-providers did))]
     {:held-run? (:held-run? p)
      :active-run? (:active-run? p)
      :admitted (routine/admitted-steps r b
@@ -1116,20 +1259,19 @@
   "Start one routine as its Bot. The gate is the caller's to choose —
   `may-start?` for a person, `may-fire?` for a schedule — because those differ
   by exactly one fact and the difference is who is watching."
-  [configuration b r selection]
+  [configuration b r did]
   (transact! assoc-in [:routines (:routine/id r) :routine/last-run-at] (store/now))
   (append! (:bot/id b) (bot/message {:id (new-id "msg") :bot (:bot/id b)
                                      :role :person
                                      :text (routine-prompt r)
                                      :at (store/now)}))
-  (let [connected (connected-connectors configuration (:did selection))]
-    (advance! configuration b
-              {:id (new-id "run")
-               :selection (:selection selection)
-               :messages (transcript configuration b (conversation (:bot/id b)))
-               :tools (tool-definitions configuration b connected)
-               :turn-count 0
-               :tool-count 0})))
+  (advance! configuration b
+            (merge (turn-admission configuration b did)
+                   {:id (new-id "run")
+                    :messages (transcript configuration b
+                                          (conversation (:bot/id b)))
+                    :turn-count 0
+                    :tool-count 0})))
 
 (defn start-routine!
   "A person running a routine now."
@@ -1145,9 +1287,8 @@
                       {:type :routine/refused
                        :routine routine-id
                        :status (name (routine/status r b state))})))
-    (let [{:keys [selection]} (resolve-accounts configuration b did)]
-      (run-routine! configuration b r {:selection selection :did did})
-      (mapv public-message (conversation bot-id)))))
+    (run-routine! configuration b r did)
+    (public-conversation did bot-id)))
 
 (defn fire-due!
   "The scheduler's side: every routine whose time has come and whose Bot can
@@ -1170,9 +1311,8 @@
            (cond
              (not (due? r now)) acc
              (routine/may-fire? r b state)
-             (let [{:keys [selection]} (resolve-accounts configuration b did)]
-               (run-routine! configuration b r {:selection selection :did did})
-               (update acc :started conj (:routine/id r)))
+             (do (run-routine! configuration b r did)
+                 (update acc :started conj (:routine/id r)))
              :else
              (update acc :skipped conj {:routine (:routine/id r)
                                         :status (name (routine/status r b state))})))
@@ -1224,17 +1364,15 @@
                              :text (str (:bot/name source) " からの引き継ぎ: "
                                         (:handoff/task h))
                              :at (store/now)}))
-      (let [{:keys [selection]} (resolve-accounts configuration target did)
-            connected (connected-connectors configuration did)]
-        (advance! configuration target
-                  {:id (new-id "run")
-                   :selection selection
-                   :messages (transcript configuration target (conversation to-bot-id))
-                   :tools (tool-definitions configuration target connected)
-                   :turn-count 0
-                   :tool-count 0}))
+      (advance! configuration target
+                (merge (turn-admission configuration target did)
+                       {:id (new-id "run")
+                        :messages (transcript configuration target
+                                              (conversation to-bot-id))
+                        :turn-count 0
+                        :tool-count 0}))
       {:handoff (unqualify h)
-       :messages (mapv public-message (conversation to-bot-id))})))
+       :messages (public-conversation did to-bot-id)})))
 
 ;; ── the tick ────────────────────────────────────────────────────────────
 ;;
