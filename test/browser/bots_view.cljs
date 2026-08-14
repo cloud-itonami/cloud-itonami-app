@@ -136,7 +136,15 @@
                                                  (= "workspace worker" (str/trim (or thread-name "")))))
       (check! "carrying the colour that was picked" (= "orange" avatar-color)))
 
-    (println "\n── a turn, and the card it comes back with ──")
+    ;; This message asks for the inbox, so the Bot has to reach for a Gmail
+    ;; tool, and reaching for one nobody authorized is what produces the card.
+    ;; The card is no longer a precondition of the turn — a Bot with an
+    ;; unauthorized connector answers ordinary messages — so what is checked
+    ;; here depends on the model actually calling the tool. If this ever fails
+    ;; with prose instead of a card, read the transcript before touching the
+    ;; assertion: a Bot that answers a question about mail without trying to
+    ;; read any mail is the defect, not the check.
+    (println "\n── a turn that needs Gmail, and the card it comes back with ──")
     (p/let [_ (.fill page "#bots-input" "受信箱を見て、返事が要るものを教えて")
             _ (.waitForTimeout page 200)
             send-disabled (.isDisabled page "#bots-send")

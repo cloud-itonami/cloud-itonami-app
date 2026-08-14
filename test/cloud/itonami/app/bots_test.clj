@@ -76,27 +76,127 @@
         (is (every? #(str/starts-with? % "gmail_") tools)
             (str "a Bot given only Gmail reached past it: " (vec tools)))))))
 
-(deftest a-bot-with-nothing-connected-asks-before-it-plans
+(defn- answers
+  "A model that says one thing and reaches for nothing."
+  [text]
+  (fn [_ _] {:content text :tool-calls []}))
+
+(defn- reaches-for
+  "A model that reaches for `tool` on its first turn and then reports."
+  [tool]
+  (let [turns (atom 0)]
+    (fn [_ _]
+      (if (= 1 (swap! turns inc))
+        {:content "調べます。" :tool-calls [{:id "c1" :name tool :input {}}]}
+        {:content "終わりました。" :tool-calls []}))))
+
+(deftest a-bot-with-nothing-connected-asks-when-it-reaches-for-the-tool
   (with-store
     (fn []
       ;; No OAuth connection exists in this store, so the Bot's whole grant is
-      ;; unreachable. The turn must stop at the connection card — a model call
-      ;; here would produce a plan whose every step is fiction.
+      ;; unreachable. The turn is still taken — see the test below for why —
+      ;; and it stops at the CALL, which is where the authorization became
+      ;; necessary. A plan built around a service nobody authorized is still
+      ;; refused; it is refused one step later, naming the tool.
       (let [b (make-bot alice {})
-            messages (bots/send! nil alice (:bot/id b) "受信箱を見て")
-            last-message (last messages)
-            cards (:cards last-message)]
-        (is (= "bot" (:role last-message)))
-        (is (seq cards))
-        (is (= "connection" (:kind (first cards))))
-        (is (= "google" (:connector (first cards))))
-        (testing "the card names the scopes, because 'connect Gmail' and
-                  'connect Gmail so something can read and send your mail' are
-                  different requests"
-          (is (seq (:scopes (first cards)))))
-        (testing "and the Bot reports itself as waiting for a connection"
-          (is (= "waiting-connection"
-                 (:status (first (:bots (bots/overview nil alice)))))))))))
+            ran (atom [])]
+        (with-redefs [policy/select-provider (fn [_ _] {:id :local})
+                      provider/agent-turn (reaches-for "gmail_search_messages")
+                      identity/connection-access-token!
+                      (fn [c] (swap! ran conj (:id c)) "t")]
+          (let [messages (bots/send! nil alice (:bot/id b) "受信箱を見て")
+                last-message (last messages)
+                cards (:cards last-message)]
+            (is (empty? @ran) "no credential was resolved, so nothing was called")
+            (is (not-any? #(= "tool" (:role %)) messages)
+                "and no tool result entered the conversation")
+            (is (= "bot" (:role last-message)))
+            (is (seq cards))
+            (is (= "connection" (:kind (first cards))))
+            (is (= "google" (:connector (first cards))))
+            (testing "the card names the scopes, because 'connect Gmail' and
+                      'connect Gmail so something can read and send your mail'
+                      are different requests"
+              (is (seq (:scopes (first cards)))))
+            (testing "and the Bot reports itself as waiting for a connection"
+              (is (= "waiting-connection"
+                     (:status (first (:bots (bots/overview nil alice)))))))))))))
+
+(deftest an-unauthorized-connector-does-not-stop-a-bot-from-answering
+  ;; The reported defect: a Bot whose Google was never authorized answered
+  ;; "先に接続が要ります" to EVERY message — hello, thank you, and every
+  ;; question about its own brief. The demand was a precondition for talking
+  ;; rather than a consequence of reaching for a tool, so it arrived on turns
+  ;; that were never going to touch a connector.
+  (with-store
+    (fn []
+      (let [b (make-bot alice {})
+            asked (atom 0)]
+        (with-redefs [policy/select-provider (fn [_ _] {:id :local})
+                      provider/agent-turn
+                      (fn [request _] (swap! asked inc)
+                        ((answers "こんにちは。何をしましょう?") request nil))]
+          (let [messages (bots/send! nil alice (:bot/id b) "こんにちは")
+                last-message (last messages)]
+            (is (= 1 @asked) "the model was asked, rather than the person")
+            (is (= "こんにちは。何をしましょう?" (:text last-message)))
+            (is (empty? (:cards last-message))
+                "nothing was authorized, and nothing needed to be")
+            (testing "and the Bot is idle rather than waiting for a connection"
+              (is (= "idle"
+                     (:status (first (:bots (bots/overview nil alice)))))))))))))
+
+(deftest the-tools-of-an-unauthorized-connector-are-offered-but-not-runnable
+  ;; Offering is not granting. The model has to be able to REACH for
+  ;; `gmail_search_messages` — that reach is the signal that this turn needs
+  ;; Google — but `admitted-tools` stays the only set that may run, and the
+  ;; core's four booleans are unchanged.
+  (with-store
+    (fn []
+      (let [b (make-bot alice {})
+            seen (atom nil)]
+        (with-redefs [policy/select-provider (fn [_ _] {:id :local})
+                      provider/agent-turn
+                      (fn [_ request] (reset! seen request)
+                        {:content "はい。" :tool-calls []})]
+          (bots/send! nil alice (:bot/id b) "何ができる?"))
+        (is (some #(= "gmail_search_messages" (:name %)) (:tools @seen))
+            "the model could not have asked for what it cannot see")
+        (testing "while the Bots screen still reports nothing as admitted"
+          (is (empty? (:admitted-tools
+                       (first (:bots (bots/overview nil alice)))))))))))
+
+(deftest a-tool-the-model-invented-is-refused-rather-than-invoked
+  (with-store
+    (fn []
+      (connect! "conn-1" :google "sub-1" "jun@example.com")
+      (let [b (make-bot alice {})]
+        (with-redefs [policy/select-provider (fn [_ _] {:id :local})
+                      provider/agent-turn (reaches-for "gmail_delete_everything")]
+          (let [last-message (last (bots/send! nil alice (:bot/id b) "消して"))]
+            (is (empty? (:cards last-message)))
+            (is (str/includes? (:text last-message) "gmail_delete_everything"))
+            (is (str/includes? (:text last-message) "使えるツールではありません"))))))))
+
+(deftest a-connection-card-stops-asking-once-the-provider-is-connected
+  ;; Nothing rewrites a stored card, so a card written while Google was
+  ;; unauthorized said `:offered` for the life of the conversation. The Bot
+  ;; went on reporting `waiting-connection` and the transcript went on
+  ;; rendering an 認証する button, both for something already done.
+  (with-store
+    (fn []
+      (let [b (make-bot alice {})]
+        (with-redefs [policy/select-provider (fn [_ _] {:id :local})
+                      provider/agent-turn (reaches-for "gmail_search_messages")]
+          (bots/send! nil alice (:bot/id b) "受信箱を見て"))
+        (is (= "waiting-connection"
+               (:status (first (:bots (bots/overview nil alice))))))
+        (connect! "conn-1" :google "sub-1" "jun@example.com")
+        (testing "the stored card is not rewritten, but what is shown is recomputed"
+          (let [card (first (:cards (last (bots/messages alice (:bot/id b)))))]
+            (is (= "connected" (:state card)))))
+        (testing "and the badge stops asking"
+          (is (= "idle" (:status (first (:bots (bots/overview nil alice)))))))))))
 
 (deftest a-card-does-not-offer-an-authorization-this-machine-cannot-perform
   ;; A Bot can hold tools for a provider with no client — it was given them
@@ -105,13 +205,21 @@
   ;; carry a button whose only outcome is the error.
   (with-store
     (fn []
-      (with-redefs [identity/provider-config (fn [_] {:configured? false})]
+      ;; A fresh `reaches-for` per block: the stub counts turns, and one shared
+      ;; between two `send!` calls answers the second with no tool call at all —
+      ;; so the card never appears and the assertion reads as a defect in the
+      ;; code rather than in the fixture. Measured while writing this.
+      (with-redefs [policy/select-provider (fn [_ _] {:id :local})
+                    provider/agent-turn (reaches-for "gmail_search_messages")
+                    identity/provider-config (fn [_] {:configured? false})]
         (let [b (make-bot alice {})
               cards (:cards (last (bots/send! nil alice (:bot/id b) "受信箱を見て")))
               card (first cards)]
           (is (= "connection" (:kind card)))
           (is (false? (:authable? card)))))
-      (with-redefs [identity/provider-config (fn [_] {:configured? true})]
+      (with-redefs [policy/select-provider (fn [_ _] {:id :local})
+                    provider/agent-turn (reaches-for "gmail_search_messages")
+                    identity/provider-config (fn [_] {:configured? true})]
         (let [b (make-bot alice {:name "second"})
               card (first (:cards (last (bots/send! nil alice (:bot/id b) "見て"))))]
           (testing "and stays offerable where the client does exist"
@@ -126,7 +234,9 @@
   ;; under either condition follows the machine.
   (with-store
     (fn []
-      (let [b (with-redefs [identity/provider-config (fn [_] {:configured? true})]
+      (let [b (with-redefs [identity/provider-config (fn [_] {:configured? true})
+                            policy/select-provider (fn [_ _] {:id :local})
+                            provider/agent-turn (reaches-for "gmail_search_messages")]
                 (let [made (make-bot alice {})]
                   (bots/send! nil alice (:bot/id made) "受信箱を見て")
                   made))]
@@ -164,7 +274,13 @@
   (with-store
     (fn []
       (let [b (make-bot alice {})]
-        (bots/send! nil alice (:bot/id b) "おはよう")
+        ;; "おはよう" now reaches the model. It did not before: nothing is
+        ;; connected here, and the connection gate answered every message
+        ;; without one — which is the defect ADR-0044 removed, and this test
+        ;; was quietly relying on it to avoid stubbing a provider.
+        (with-redefs [policy/select-provider (fn [_ _] {:id :local})
+                      provider/agent-turn (answers "おはようございます。")]
+          (bots/send! nil alice (:bot/id b) "おはよう"))
         (let [before (count (bots/messages alice (:bot/id b)))]
           (bots/archive! alice (:bot/id b))
           (is (= "disabled" (:status (first (:bots (bots/overview nil alice))))))
@@ -248,13 +364,15 @@
       (connect! "conn-1" :google "sub-1" "jun@example.com")
       (connect! "conn-2" :google "sub-2" "work@example.com")
       (let [b (make-bot alice {})
-            reached (atom 0)]
-        (with-redefs [provider/agent-turn
-                      (fn [_ _] (swap! reached inc) {:content "" :tool-calls []})]
+            ran (atom [])]
+        (with-redefs [policy/select-provider (fn [_ _] {:id :local})
+                      provider/agent-turn (reaches-for "gmail_search_messages")
+                      identity/connection-access-token!
+                      (fn [c] (swap! ran conj (:id c)) "t")]
           (let [messages (bots/send! nil alice (:bot/id b) "受信箱を見て")
                 card (first (:cards (last messages)))]
-            (is (zero? @reached)
-                "the model must not be asked to plan before the account is known")
+            (is (empty? @ran)
+                "no token was resolved, so no account was silently picked")
             (is (= "choice" (:kind card)))
             (is (= "account" (get-in card [:subject :kind])))
             (is (= ["A" "B"] (mapv :key (:options card))))
@@ -290,7 +408,7 @@
       (let [b (make-bot alice {:accounts ["conn-1"]})
             resolved (#'bots/resolve-accounts nil (#'bots/bot-by-id (:bot/id b))
                                               "did:key:alice")]
-        (is (empty? (:ask resolved))
+        (is (empty? (:blocked resolved))
             "bound to exactly one, so there is nothing to ask")
         (is (= "conn-1" (:id (get (:selection resolved) :google))))))))
 

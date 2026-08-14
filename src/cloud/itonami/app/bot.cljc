@@ -325,6 +325,38 @@
               (map :name))
         catalog-rows))
 
+(defn reachable-tools
+  "The tools this Bot would be allowed to call ONCE its connectors are
+  authorized.
+
+  The same question `admitted-tools` asks, put to the same core, with
+  `connected` held true: still narrowed by what the deployment enables, by the
+  grant, and by the write permission — and by nothing about whether anybody has
+  authorized anything yet.
+
+  The two sets differ by exactly the tools an authorization would unlock, and
+  that difference is what a connection card is FOR. Offering THIS set to the
+  model is what lets a Bot discover, by reaching for a tool, that this
+  particular turn needs an authorization. The host used to answer that question
+  before the turn instead, by demanding every connector the grant touched — so
+  a Bot with an unauthorized Gmail refused to say hello, and the demand arrived
+  on turns that needed nothing. `admitted-tools` remains the only set that may
+  actually RUN; nothing here widens it.
+
+  Distinct from `enabled-grant`, which drops the write permission as well and
+  answers a third question — whether the grant names something nobody turned
+  on. Three narrowings, three callers, and collapsing any two of them has
+  already produced one warning that fired on every ordinary Bot.
+
+  A row with no `:provider` is left out: there is no authorization that would
+  ever connect it, so it is not reachable in the sense this function means, and
+  offering it would put a tool in front of the model that nothing can grant. A
+  row that has a provider but no client configured on this machine DOES stay —
+  that Bot really is blocked on an authorization, and the card says so with its
+  button disabled rather than by being absent."
+  [b catalog-rows]
+  (admitted-tools b catalog-rows (keep :id (filter :provider catalog-rows))))
+
 (defn enabled-grant
   "The Bot's grant, intersected with what the deployment enables — and with
   nothing else.

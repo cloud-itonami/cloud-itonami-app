@@ -618,6 +618,14 @@ of the connectors you picked and nothing else.
 - **Accounts, not providers.** If you have two Google accounts, the Bot asks
   which one before it acts rather than picking. Name them from the connection
   card; add another with `＋ 別のアカウントを追加`.
+- **The authorization is asked for when it is needed.** A Bot whose Gmail has
+  never been authorized still holds an ordinary conversation; the connection
+  card arrives on the turn the Bot reaches for a Gmail tool, naming the
+  service. It used to arrive on every turn instead, which meant a new Bot could
+  not answer "hello" — see
+  [ADR-0044](docs/adr/0044-a-bot-asks-for-an-authorization-when-it-reaches-for-one.md).
+  Routines are the exception and still refuse up front: a schedule has nobody
+  watching to answer a card.
 - **Its computer is this machine's isolated browser.** Bots do not get a cloud
   VM, so a Bot does not run while this machine is asleep. When you opt a Bot
   into the browser (and Settings has enabled it), that Bot gets its own
