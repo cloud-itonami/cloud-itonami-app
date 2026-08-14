@@ -113,3 +113,26 @@
         (is (= 201 (:status (call :post "/api/identity/domain-verifications"
                                   {:body {:domain "example.com"}
                                    :send-origin? true :csrf? true}))))))))
+
+(deftest the-activation-nonce-document-is-public-and-refuses-to-guess
+  ;; Gate B's document (ADR-0043). It has to answer a caller that holds no
+  ;; session — a prober being pointed at a name for the first time has no
+  ;; credential for it — so the thing worth asserting is that being public does
+  ;; not make it answer for a name nobody proved.
+  (with-server
+    (fn []
+      (testing "reachable with no session, no Origin and no CSRF"
+        (let [{:keys [status body]}
+              (call :get "/.well-known/itonami-domain-binding.json"
+                    {:send-origin? false})]
+          ;; The request arrives with `Host: 127.0.0.1:<port>`, which no binding
+          ;; claims. With no match there is no fallback: handing out a nonce for
+          ;; "the deployment's binding" is how a name gets activated for a
+          ;; tenant that never proved it (the same reading as ADR-0025).
+          (is (= 404 status))
+          (is (= "cloud.itonami.app.domain-binding-nonce.v1" (:schema body)))
+          (is (nil? (:nonce body))
+              "a 404 that carried a nonce would defeat the whole gate")))
+      (testing "and it is a GET-only document"
+        (is (not= 200 (:status (call :post "/.well-known/itonami-domain-binding.json"
+                                     {:send-origin? true :csrf? true}))))))))

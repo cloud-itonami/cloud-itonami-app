@@ -103,6 +103,7 @@
             [cloud.itonami.app.credential-trust-test]
             [cloud.itonami.app.data-isolation-test]
             [cloud.itonami.app.did-test]
+            [cloud.itonami.app.domain-binding-kotoba-parity-test]
             [cloud.itonami.app.domain-verification-test]
             [cloud.itonami.app.domain-verification-http-test]
             [cloud.itonami.app.email-login-test]
@@ -224,6 +225,7 @@
     cloud.itonami.app.credential-trust-test
     cloud.itonami.app.data-isolation-test
     cloud.itonami.app.did-test
+    cloud.itonami.app.domain-binding-kotoba-parity-test
     cloud.itonami.app.domain-verification-test
     cloud.itonami.app.domain-verification-http-test
     cloud.itonami.app.email-login-test

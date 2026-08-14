@@ -2902,8 +2902,12 @@
              [:ul {:class "member-list" :id "member-list"}]]
             [:div {:class "local-card" :id "domain-verification-card"}
              (dds/heading 2 "会社ドメイン" {:size "20"})
+             ;; Two steps, and the card says why there are two (ADR-0043). The
+             ;; TXT record proves the zone is yours; it does not make the name
+             ;; resolve here, and a tenant named by an address that answers
+             ;; nothing is what the second step exists to prevent.
              [:p {:class "form-help"}
-              "DNS の TXT レコードで、このOrganizationが会社ドメインを管理できることを確認します。DNSの書き込み権限をCloud Itonamiへ渡す必要はありません。"]
+              "会社ドメインでこのOrganizationを名乗るには2段階が必要です。①DNS の TXT レコードで、そのドメインを管理していることを確認します（DNSの書き込み権限をCloud Itonamiへ渡す必要はありません）。②ドメインをこの deployment に向けてから有効化します。①だけではまだ名前になりません。"]
              [:p {:class "source-note" :id "domain-verification-state"
                   :role "status" :aria-live "polite"}
               "所有権確認を読み込み中…"]
@@ -2931,9 +2935,29 @@
                [:button {:class "tool-button" :id "domain-verification-copy"
                          :type "button"}
                 "TXTをコピー"]
-               [:button {:class "primary-action" :id "domain-verification-verify"
+               [:button {:class "primary-action" :id "domain-verification-claim"
                          :type "button"}
-                "DNSを確認"]]]]
+                "DNSを確認"]]]
+             ;; Step 2. Shown once the claim holds — until then there is nothing
+             ;; to point anywhere, and offering activation would invite an owner
+             ;; to cut production DNS over to a name they have not reserved.
+             [:div {:class "settings-form" :id "domain-verification-activation"
+                    :hidden true}
+              (dds/heading 3 "この deployment に向ける" {:size "16"})
+              [:p {:class "form-help"}
+               "所有権の確認だけでは、まだこのOrganizationの名前になりません。ドメインをこの deployment に向け、証明書が有効になってから有効化してください。有効化は、この URL がこの deployment の応答を返すことを実際に取得して確かめます。"]
+              [:div {:class "field"}
+               [:label {:for "domain-verification-activation-url"} "確認するURL"]
+               [:code {:id "domain-verification-activation-url"} "—"]]
+              [:p {:class "source-note" :id "domain-verification-probe"
+                   :role "status" :aria-live "polite"} "—"]
+              [:div {:class "record-actions"}
+               [:button {:class "primary-action"
+                         :id "domain-verification-activate" :type "button"}
+                "有効化"]
+               [:button {:class "tool-button" :id "domain-verification-recheck"
+                         :type "button"}
+                "再確認"]]]]
             [:div {:class "local-card"}
              (dds/heading 2 "Agent tenant connections" {:size "20"})
              [:p {:class "form-help"}
