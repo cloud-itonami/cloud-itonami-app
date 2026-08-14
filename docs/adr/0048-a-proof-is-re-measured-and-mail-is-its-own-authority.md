@@ -1,4 +1,4 @@
-# ADR-0044: A proof is re-measured, and mail is its own authority
+# ADR-0048: A proof is re-measured, and mail is its own authority
 
 **Status:** accepted and implemented — 2026-08-14.
 

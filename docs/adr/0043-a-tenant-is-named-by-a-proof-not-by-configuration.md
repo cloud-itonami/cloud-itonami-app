@@ -166,7 +166,7 @@ revocation, and this ADR does not add one.
 
 **Both the owner and a timer re-probe.** `recheck!` is a route, so an owner who
 has just repointed DNS does not have to wait out an interval; `binding-sweep`
-runs the same measurement on a schedule (ADR-0044).
+runs the same measurement on a schedule (ADR-0048).
 
 This paragraph used to say the opposite — that this application had no scheduler
 to hang a periodic check on, so the owner was the only trigger. **That was
@@ -184,7 +184,7 @@ computes for *inbound* messages, and which a TXT proof of naming does not
 establish. `account-domain` stays deployment-level here.
 
 That reasoning did not change; what changed is that the other authority now
-exists beside this one. ADR-0044 proves it separately, from its own three
+exists beside this one. ADR-0048 proves it separately, from its own three
 records, and holding either binding still confers nothing about the other.
 
 **Multi-tenant hosting.** As ADR-0025 put it, one process still holds one data
@@ -195,7 +195,7 @@ proved. It does not make this a host for tenants that do not trust each other.
 customer's name was an operator fact when this was written. Gate B fails until
 it is true, which is the honest reading, and is the same boundary ADR-0025 drew.
 
-ADR-0045 moved it: the deployment now orders its own certificates over ACME, for
+ADR-0049 moved it: the deployment now orders its own certificates over ACME, for
 exactly the domains Gate B has already proven it answers at — HTTP-01 needs the
 CA to fetch a URL at that name, so this proof is the precondition. Gate B still
 measures rather than assumes, which is what this paragraph was really about.

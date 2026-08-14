@@ -35,7 +35,7 @@
    ;; Renewal rides the same timer, and it is the reason the timer must not be
    ;; slow: a certificate has a hard expiry, and one that lapses takes the name
    ;; with it — the probe stops validating TLS and the binding lapses too.
-   ;; Visits only certificates inside their renewal window (ADR-0045).
+   ;; Visits only certificates inside their renewal window (ADR-0049).
    :certificates (tls/renew-all! configuration)})
 
 (defn start!
