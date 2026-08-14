@@ -71,6 +71,10 @@
       // in the information architecture, even when its section starts closed.
       active?.closest('.nav-section')?.setAttribute('open', '');
       $('#current-view').textContent = active?.dataset.title || 'Chat';
+      $$('[data-topbar-view]').forEach((context) => {
+        context.hidden = !appUnlocked ||
+          (context.dataset.topbarView === 'bots' ? name !== 'bots' : name === 'bots');
+      });
       const target = `#/${name}`;
       if (location.hash !== target) history.replaceState(null, '', target);
       const brand = document.querySelector('.workspace')?.dataset.brand || 'Cloud Itonami';
@@ -9108,7 +9112,7 @@
     const botsState = {
       bots:[], catalog:[], modelProviders:[], providerReadiness:[],
       palette:{colors:[], glyphs:[]},
-      selected:null, messages:[], routines:[], picked:new Set(),
+      selected:null, messages:[], picked:new Set(),
       draft:{color:'blue', glyph:'circle'}, loaded:false, busy:false,
       browserAvailable:false
     };
@@ -9464,9 +9468,11 @@
       const holder = $('#bots-messages');
       holder.replaceChildren();
       if (!bot) return;
-      botAvatar($('#bots-thread-avatar'), bot.avatar);
-      $('#bots-thread-name').textContent = bot.name;
-      $('#bots-thread-status').textContent = botsStatusText[bot.status] || bot.status;
+      botAvatar($('#bots-titlebar-avatar'), bot.avatar);
+      $('#bots-titlebar-name').textContent = bot.name;
+      $('#bots-titlebar-status').textContent = botsStatusText[bot.status] || bot.status;
+      $('#bots-titlebar-identity').hidden = false;
+      $('#bots-thread-tools').hidden = false;
       const panel = $('#bots-thread-panel');
       panel.replaceChildren();
       panel.append(make('div', null,
@@ -9563,6 +9569,9 @@
       const hasBots = botsState.bots.length > 0;
       $('#bots-onboard').hidden = hasBots && Boolean(botsState.selected);
       $('#bots-thread').hidden = !(hasBots && botsState.selected);
+      const selected = hasBots && Boolean(botsState.selected);
+      $('#bots-titlebar-identity').hidden = !selected;
+      $('#bots-thread-tools').hidden = !selected;
     };
     const selectBot = async (botId) => {
       botsState.selected = botId;
@@ -9668,130 +9677,6 @@
       event.currentTarget.setAttribute('aria-expanded', String(!panel.hidden));
     });
 
-    // ── routines and handoff ────────────────────────────────────────────
-    //
-    // The list says STATE, not just name. `stale` is the whole reason to open
-    // this panel: a routine whose Bot lost a tool refuses to run, and a row
-    // that only showed a name would leave somebody pressing a button that
-    // keeps declining without saying why.
-    const routineLabels = {
-      idle:'待機', running:'実行中', 'waiting-approval':'承認待ち',
-      stale:'使えないツールがあります', disabled:'停止中'
-    };
-    const renderBotRoutines = () => {
-      const list = $('#bots-routines');
-      const routines = botsState.routines || [];
-      list.replaceChildren();
-      $('#bots-routines-empty').hidden = routines.length > 0;
-      routines.forEach((routine) => {
-        const row = make('li');
-        row.append(make('span', 'bots-routines__name', routine.name || '(名前なし)'));
-        const state = make('span', 'bots-routines__state',
-                           routineLabels[routine.status] || routine.status);
-        state.dataset.state = routine.status;
-        row.append(state);
-        const run = make('button', 'tool-button', '実行');
-        run.type = 'button';
-        // Disabled from the SERVER's answer, not from a guess here: the same
-        // `may-start?` the route enforces, so the button and the refusal
-        // cannot disagree.
-        run.disabled = !routine['may-start?'];
-        run.addEventListener('click', async () => {
-          run.disabled = true;
-          $('#bots-routine-status').textContent = '実行しています…';
-          try {
-            const data = await postJSON(
-              `/api/bots/${botsState.selected}/routines/${routine.id}/start`, {}, true);
-            botsState.messages = data.messages || [];
-            renderBotsThread();
-            $('#bots-routine-status').textContent = '';
-            await loadRoutines(botsState.selected);
-          } catch (error) {
-            $('#bots-routine-status').textContent = error.message;
-            run.disabled = false;
-          }
-        });
-        row.append(run);
-        const forget = make('button', 'tool-button', '削除');
-        forget.type = 'button';
-        forget.addEventListener('click', async () => {
-          try {
-            await postJSON(
-              `/api/bots/${botsState.selected}/routines/${routine.id}/forget`, {}, true);
-            await loadRoutines(botsState.selected);
-          } catch (error) { $('#bots-routine-status').textContent = error.message; }
-        });
-        row.append(forget);
-        list.append(row);
-      });
-    };
-    const loadRoutines = async (botId) => {
-      if (!botId) return;
-      try {
-        const request = await fetch(`/api/bots/${botId}/routines`);
-        const data = await request.json();
-        if (!request.ok) throw new Error(data?.error?.message || 'routine を読めませんでした。');
-        botsState.routines = data.routines || [];
-        renderBotRoutines();
-      } catch (error) { $('#bots-routine-status').textContent = error.message; }
-    };
-    const renderHandoffTargets = () => {
-      const select = $('#bots-handoff-to');
-      select.replaceChildren();
-      (botsState.bots || [])
-        .filter((b) => b.id !== botsState.selected && b['enabled?'] !== false)
-        .forEach((b) => {
-          const option = make('option', null, b.name);
-          option.value = b.id;
-          select.append(option);
-        });
-    };
-    $('#bots-thread-routines').addEventListener('click', async (event) => {
-      const panel = $('#bots-routines-panel');
-      panel.hidden = !panel.hidden;
-      event.currentTarget.setAttribute('aria-expanded', String(!panel.hidden));
-      if (!panel.hidden) {
-        renderHandoffTargets();
-        await loadRoutines(botsState.selected);
-      }
-    });
-    $('#bots-routine-record').addEventListener('click', async () => {
-      const button = $('#bots-routine-record');
-      const name = $('#bots-routine-name').value.trim();
-      if (!name) { $('#bots-routine-status').textContent = '名前を入れてください。'; return; }
-      button.disabled = true;
-      $('#bots-routine-status').textContent = '残しています…';
-      try {
-        await postJSON(`/api/bots/${botsState.selected}/routines`, {
-          name, intent:$('#bots-routine-intent').value
-        }, true);
-        $('#bots-routine-name').value = '';
-        $('#bots-routine-intent').value = '';
-        $('#bots-routine-status').textContent = '';
-        await loadRoutines(botsState.selected);
-      } catch (error) {
-        $('#bots-routine-status').textContent = error.message;
-      } finally { button.disabled = false; }
-    });
-    $('#bots-handoff-send').addEventListener('click', async () => {
-      const button = $('#bots-handoff-send');
-      const to = $('#bots-handoff-to').value;
-      const task = $('#bots-handoff-task').value.trim();
-      if (!to) { $('#bots-handoff-status').textContent = '引き継ぎ先がありません。'; return; }
-      if (!task) { $('#bots-handoff-status').textContent = '頼むことを入れてください。'; return; }
-      button.disabled = true;
-      $('#bots-handoff-status').textContent = '引き継いでいます…';
-      try {
-        await postJSON(`/api/bots/${botsState.selected}/handoff`, {to, task}, true);
-        $('#bots-handoff-task').value = '';
-        $('#bots-handoff-status').textContent = '';
-        // Follow the work. The messages that came back are the TARGET's, and
-        // showing them under the sender would attribute them to the wrong Bot.
-        await selectBot(to);
-      } catch (error) {
-        $('#bots-handoff-status').textContent = error.message;
-      } finally { button.disabled = false; }
-    });
     const botsInput = $('#bots-input');
     const resizeBotsInput = () => {
       botsInput.style.height = 'auto';
