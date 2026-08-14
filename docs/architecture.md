@@ -1307,6 +1307,10 @@ still owns the socket — amu's http-ingress kit is host-listen and its
 admits the named route. A handler that kept the two string equals and dropped
 the call would still 200, so the HTTP test inverts the artifact.
 
+`GET /.well-known/oauth-protected-resource/mcp` is the second (ADR-0039): the
+RFC 9728 document, same seam, different oracle id. Inverting that artifact
+must stop discovery and must leave `/health` answering.
+
 That is delegation through the KIR interpreter, not a tendered Wasm component:
 the artifact is loaded and executed in-process, without a capability gate or a
 supervisor around it. The cores are `kotoba/pure` — no effects, no

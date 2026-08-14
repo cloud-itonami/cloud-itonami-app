@@ -21,6 +21,7 @@
             [cloud.itonami.app.kotoba-oracle :as oracle]
             [cloud.itonami.app.kotoba-oracle-gen :as gen]
             [cloud.itonami.app.health :as health]
+            [cloud.itonami.app.oauth-resource :as oauth-resource]
             [cloud.itonami.app.policy :as policy]
             [kotoba.compiler.core :as compiler]))
 
@@ -85,6 +86,25 @@
           "and followed it in both directions")
       (finally (oracle/deregister-kir! :health)))
     (is (true? (health/health-route? "GET" "/health")) "restored")))
+
+(deftest the-oauth-resource-host-reads-the-artifact-rather-than-keeping-a-copy
+  (let [path "/.well-known/oauth-protected-resource/mcp"
+        inverted (:kir (compiler/compile-source
+                        (str "(ns cloud.itonami.app.oauth-resource"
+                             "  (:export [oauth-resource-route?]))"
+                             "(defn oauth-resource-route? [method :string path :string] :bool"
+                             "  (if (and (string=? method \"GET\") (string=? path \"" path "\"))"
+                             "    false true))")
+                        gen/target {}))]
+    (is (true? (oauth-resource/oauth-resource-route? "GET" path)) "the shipped answer")
+    (try
+      (oracle/register-kir! :oauth-resource inverted)
+      (is (false? (oauth-resource/oauth-resource-route? "GET" path))
+          "the host followed the artifact")
+      (is (true? (oauth-resource/oauth-resource-route? "POST" path))
+          "and followed it in both directions")
+      (finally (oracle/deregister-kir! :oauth-resource)))
+    (is (true? (oauth-resource/oauth-resource-route? "GET" path)) "restored")))
 
 (deftest a-record-crosses-the-entry-boundary
   ;; `policy-kotoba-parity-test` used to say it could not, and built zero-arg

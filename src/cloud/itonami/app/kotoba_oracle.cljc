@@ -83,7 +83,8 @@
    :routine "cloud/itonami/app/routine_core.kotoba"
    :handoff "cloud/itonami/app/handoff_core.kotoba"
    :session-handoff "cloud/itonami/app/session_handoff_core.kotoba"
-   :health "cloud/itonami/app/health_core.kotoba"})
+   :health "cloud/itonami/app/health_core.kotoba"
+   :oauth-resource "cloud/itonami/app/oauth_resource_core.kotoba"})
 
 (defn resource-path [id]
   (str "cloud/itonami/app/oracle/" (name id) ".kir.edn"))

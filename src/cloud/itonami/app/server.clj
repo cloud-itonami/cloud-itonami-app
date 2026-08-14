@@ -2055,6 +2055,19 @@
 
     :else false))
 
+(defn- process-liveness?
+  "GET /health (ADR-0038). Literals stay in this file for the route scanner."
+  [method path]
+  (and (= method "GET") (= path "/health")
+       (health/health-route? method path)))
+
+(defn- oauth-protected-resource-mcp?
+  "RFC 9728 discovery (ADR-0039). Literals stay in this file for the route scanner."
+  [method path]
+  (and (= method "GET")
+       (= path "/.well-known/oauth-protected-resource/mcp")
+       (oauth-resource/oauth-resource-route? method path)))
+
 (defn handler [config]
   (reify HttpHandler
     (handle [_ exchange]
@@ -2065,13 +2078,11 @@
             (and (= method "GET") (= path "/"))
             (send-html! exchange (web/page-html config))
 
-            (and (= method "GET") (= path "/health")
-                 (health/health-route? method path))
+            (process-liveness? method path)
             (send! exchange 200 {:ok true :service "cloud-itonami-app"
                                  :schema "cloud.itonami.app.health.v1"})
 
-            (and (= method "GET")
-                 (= path "/.well-known/oauth-protected-resource/mcp"))
+            (oauth-protected-resource-mcp? method path)
             (send! exchange 200 (oauth-resource/metadata config))
 
             (and (contains? #{"POST" "GET" "DELETE"} method)
