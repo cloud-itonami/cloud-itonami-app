@@ -74,6 +74,31 @@
         (is (zero? exit) (str source " does not parse under node " version ":\n" err))))
     (println "web-script-test: node is not on PATH, so the interaction layer was not parsed.")))
 
+(deftest authenticated-writes-recover-one-stale-csrf-without-relaxing-the-gate
+  ;; A resident app is a long-lived single-page document. Hosted sign-in or a
+  ;; renewed session can replace its cookie without replacing the JavaScript
+  ;; closure that still holds the previous session's CSRF token. The client may
+  ;; fetch the token for the cookie it now has and retry exactly that failure;
+  ;; the server must still perform its ordinary Origin and CSRF checks.
+  (let [js (slurp (io/file "resources/cloud/itonami/app/interaction.js"))
+        refresh (second (re-find
+                         #"(?s)const refreshIdentityForWrite = async \(\) => \{(.*?)\n    \};"
+                         js))
+        write (second (re-find
+                       #"(?s)const writeJSON = async \(path, method, body=\{\}, authenticated=false\) => \{(.*?)\n    \};"
+                       js))]
+    (is (some? refresh))
+    (is (some? write))
+    (is (str/includes? refresh "fetch('/api/identity', {cache:'no-store'})"))
+    (is (str/includes? refresh "identityState = data;"))
+    (is (str/includes? write "data?.error?.type === 'invalid-csrf'"))
+    (is (= 2 (count (re-seq #"refreshIdentityForWrite\(\)" write)))
+        "a missing token is filled before send and a stale token is refreshed in the retry branch")
+    (is (= 2 (count (re-seq #"await send\(\)" write)))
+        "there is one initial request and at most one retry")
+    (is (not (str/includes? write "invalid-origin"))
+        "an Origin refusal is never converted into a retry")))
+
 (deftest organization-studio-is-a-dedicated-single-editor-surface
   (let [html (with-redefs [store/snapshot (constantly (store/initial-state))]
                (web/page-html config))]
