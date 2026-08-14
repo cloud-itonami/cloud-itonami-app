@@ -37,6 +37,7 @@
             [cloud.itonami.app.fax :as fax]
             [cloud.itonami.app.lawfirm :as lawfirm]
             [cloud.itonami.app.kotobase-federation :as kotobase-federation]
+            [cloud.itonami.app.loopback-origin :as loopback-origin]
             [cloud.itonami.app.loops :as loops]
             [cloud.itonami.app.metrics :as business-metrics]
             [cloud.itonami.app.mcp :as mcp]
@@ -4785,6 +4786,22 @@
             (send! exchange 500 {:error {:type "internal_error"
                                          :message (.getMessage error)}})))))))
 
+(defn- with-canonical-loopback [delegate config]
+  "Send GET / on 127.0.0.1 to localhost on the same port.
+
+  Lives outside `handler`: that method is at the JVM 64 KB ceiling, and this
+  is not a new route — it is the same document at the name WebAuthn and
+  auth.itonami.cloud already agreed on."
+  (reify HttpHandler
+    (handle [_ exchange]
+      (if-let [location (loopback-origin/document-redirect
+                         {:method (.getRequestMethod exchange)
+                          :host (.getFirst (.getRequestHeaders exchange) "Host")
+                          :path (.getPath (.getRequestURI exchange))
+                          :public-origin (origin config)})]
+        (redirect! exchange location)
+        (.handle ^HttpHandler delegate exchange)))))
+
 (defn- with-kotobase-federation [delegate config]
   (reify HttpHandler
     (handle [_ exchange]
@@ -5147,8 +5164,10 @@
          port (get-in configuration [:server :port])
          instance (HttpServer/create (InetSocketAddress. host (int port)) 0)]
      (.createContext instance "/"
-                     (with-kotobase-federation (handler configuration)
-                                               configuration))
+                     (with-canonical-loopback
+                      (with-kotobase-federation (handler configuration)
+                                                configuration)
+                      configuration))
      ;; Its own context rather than another branch in `handler`: that method is
      ;; already at the JVM's 64 KB ceiling, and two more lines in its `cond`
      ;; failed to compile with "Method code too large". A longer prefix wins over
