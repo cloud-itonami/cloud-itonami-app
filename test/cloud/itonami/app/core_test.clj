@@ -318,6 +318,14 @@
       "the Bots view must size its boxes border-box, or padding overflows the
        grid column it is laid out in and the whole document scrolls sideways"))
 
+(deftest bots-use-the-app-titlebar-and-hide-agent-internals
+  (let [html (web/page-html {})]
+    (is (re-find #"id=\"bots-titlebar-context\"" html))
+    (is (re-find #"id=\"bots-titlebar-name\"" html))
+    (is (re-find #"id=\"bots-new\"" html))
+    (is (not (re-find #"id=\"bots-routines-panel\"" html)))
+    (is (not (re-find #"id=\"bots-handoff-send\"" html)))))
+
 (deftest app-css-only-references-design-system-tokens-that-exist
   ;; An undefined custom property makes the whole declaration invalid at
   ;; computed-value time, so it does not fall back to the cascade — it silently

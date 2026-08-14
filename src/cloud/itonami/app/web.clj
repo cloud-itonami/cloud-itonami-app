@@ -190,6 +190,11 @@
   .topbar__title{margin:0;font-size:1.25rem;line-height:1.5}
   .topbar__meta{margin:0;color:var(--color-neutral-solid-gray-600);font-size:.875rem}
   .topbar__context{display:flex;align-items:center;gap:.75rem}
+  .bots-titlebar__identity{display:flex;align-items:center;gap:.625rem;min-width:0}
+  .bots-titlebar__copy{display:grid;min-width:0;line-height:1.35}
+  .bots-titlebar__name{font-weight:700;overflow:hidden;text-overflow:ellipsis;
+    white-space:nowrap;max-width:16rem}
+  .bots-titlebar__status{font-size:.75rem;color:var(--color-neutral-solid-gray-600)}
   .project-select{min-height:2.5rem;max-width:18rem;border:1px solid var(--color-neutral-solid-gray-300);
     border-radius:.625rem;background:var(--color-neutral-white);padding:.4rem 2rem .4rem .75rem;font:inherit}
   .view{box-sizing:border-box;width:100%;padding:clamp(1rem,4vw,3rem);max-width:78rem}
@@ -262,8 +267,6 @@
   .bots-rail{display:flex;flex-direction:column;min-height:0;gap:.25rem;
     padding:.75rem;border-right:1px solid var(--color-neutral-solid-gray-200);
     background:var(--color-neutral-solid-gray-50)}
-  .bots-rail__head{display:flex;align-items:center;gap:.5rem;padding:.25rem .25rem .5rem}
-  .bots-rail__title{flex:1;font-weight:700}
   .bots-rail__list{list-style:none;margin:0;padding:0;display:grid;gap:.125rem;
     overflow-y:auto;min-height:0}
   .bots-rail__empty{margin:.5rem .25rem;color:var(--color-neutral-solid-gray-600);
@@ -359,26 +362,11 @@
   .bots-suggestion__summary{font-size:.8125rem;
     color:var(--color-neutral-solid-gray-600)}
   .bots-thread{display:flex;flex-direction:column;min-height:0;flex:1}
-  .bots-thread__head{display:flex;align-items:center;gap:.75rem;padding:.75rem 1rem;
-    border-bottom:1px solid var(--color-neutral-solid-gray-200)}
-  .bots-thread__identity{flex:1;min-width:0;display:grid}
-  .bots-thread__status{font-size:.8125rem;color:var(--color-neutral-solid-gray-600)}
   .bots-thread__panel{padding:.75rem 1rem;font-size:.8125rem;
     border-bottom:1px solid var(--color-neutral-solid-gray-200);
     background:var(--color-neutral-solid-gray-50);
     color:var(--color-neutral-solid-gray-700)}
   .bots-thread__panel ul{margin:.25rem 0 0;padding-left:1.25rem}
-  /* The routine list is the one shape the panel did not already have: a row
-     whose status has to be legible at a glance, because 'stale' is the whole
-     reason somebody opens this. Colours are the DADS neutrals the panel above
-     already uses; the warning state is the one semantic token added. */
-  .bots-routines{list-style:none;margin:.25rem 0 .75rem;padding:0}
-  .bots-routines li{display:flex;gap:.5rem;align-items:baseline;
-    padding:.375rem 0;border-bottom:1px solid var(--color-neutral-solid-gray-200)}
-  .bots-routines__name{font-weight:600;flex:1}
-  .bots-routines__state{font-size:.75rem;
-    color:var(--color-neutral-solid-gray-600)}
-  .bots-routines__state[data-state='stale']{color:var(--color-semantic-error-1)}
   .bots-thread__scroll{flex:1;min-height:0;overflow-y:auto;padding:1rem}
   .bots-thread__messages{list-style:none;margin:0 auto;padding:0;display:grid;
     gap:.75rem;max-width:44rem}
@@ -1119,6 +1107,8 @@
       box-sizing:border-box;padding:calc(.75rem + env(safe-area-inset-top)) 8.75rem .75rem 1rem;
       background:var(--color-neutral-white)}
     .topbar__title{font-size:1rem;line-height:1.4;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+    .bots-titlebar__copy{display:none}
+    #bots-titlebar-context{gap:.375rem}
     .view{padding:1rem}.view-header h1{font-size:1.75rem;line-height:1.3}.view-lead{line-height:1.7}
     .chat-shell{height:calc(100dvh - 4rem - var(--mobile-nav-height))}
     .data-card,.settings-card{padding:1rem}
@@ -1304,11 +1294,24 @@
       [:div {:class "main"}
        [:header {:class "topbar"}
         [:h2 {:class "topbar__title" :id "current-view"} "Chat"]
-        [:div {:class "topbar__context authenticated-only" :hidden true}
+        [:div {:class "topbar__context authenticated-only" :id "project-titlebar-context"
+               :data-topbar-view "default" :hidden true}
          [:label {:class "visually-hidden" :for "active-project-select"} "現在のProject"]
          [:select {:class "project-select" :id "active-project-select"}
           [:option {:value ""} "Projectを選択"]]
-         [:p {:class "topbar__meta"} "許可された接続先のみ"]]]
+         [:p {:class "topbar__meta"} "許可された接続先のみ"]]
+        [:div {:class "topbar__context authenticated-only" :id "bots-titlebar-context"
+               :data-topbar-view "bots" :hidden true}
+         [:div {:class "bots-titlebar__identity" :id "bots-titlebar-identity" :hidden true}
+          [:span {:class "bot-avatar" :id "bots-titlebar-avatar"}]
+          [:div {:class "bots-titlebar__copy"}
+           [:span {:class "bots-titlebar__name" :id "bots-titlebar-name"}]
+           [:span {:class "bots-titlebar__status" :id "bots-titlebar-status"}]]]
+         [:button {:class "tool-button" :id "bots-thread-tools" :type "button"
+                   :aria-expanded "false" :aria-controls "bots-thread-panel"
+                   :title "この Bot が届く範囲" :hidden true} "▤"]
+         [:button {:class "tool-button" :id "bots-new" :type "button"
+                   :aria-label "新しい Bot を作る"} "＋"]]]
        [:main {:id "main-content"}
         [:p {:class "settings-notice global-status" :id "identity-status"
              :role "status" :aria-live "polite"} ""]
@@ -1379,10 +1382,6 @@
         [:section {:class "view bots-view" :data-view-panel "bots" :hidden true}
          [:div {:class "bots-shell" :id "bots-shell"}
           [:aside {:class "bots-rail"}
-           [:div {:class "bots-rail__head"}
-            [:span {:class "bots-rail__title"} "Bots"]
-            [:button {:class "tool-button" :id "bots-new" :type "button"
-                      :aria-label "新しい Bot を作る"} "＋"]]
            [:ul {:class "bots-rail__list" :id "bots-list"}]
            [:p {:class "bots-rail__empty" :id "bots-rail-empty"} "まだ Bot がいません"]]
           [:div {:class "bots-main"}
@@ -1439,56 +1438,7 @@
              [:div {:class "bots-suggestions" :id "bots-suggestions"}]]]
            ;; The thread.
            [:div {:class "bots-thread" :id "bots-thread" :hidden true}
-            [:header {:class "bots-thread__head"}
-             [:span {:class "bot-avatar" :id "bots-thread-avatar"}]
-             [:div {:class "bots-thread__identity"}
-              [:strong {:id "bots-thread-name"}]
-              [:span {:class "bots-thread__status" :id "bots-thread-status"}]]
-             [:button {:class "tool-button" :id "bots-thread-tools" :type "button"
-                       :aria-expanded "false" :aria-controls "bots-thread-panel"
-                       :title "この Bot が届く範囲"} "▤"]
-             [:button {:class "tool-button" :id "bots-thread-routines" :type "button"
-                       :aria-expanded "false" :aria-controls "bots-routines-panel"
-                       :title "routine と引き継ぎ"} "⟳"]]
             [:div {:class "bots-thread__panel" :id "bots-thread-panel" :hidden true}]
-            ;; Kept in the same panel slot as the tool list, because both answer
-            ;; "what can this Bot do" — one as reach, the other as work it has
-            ;; already been shown.
-            [:div {:class "bots-thread__panel" :id "bots-routines-panel" :hidden true}
-             (dds/heading 3 "routine" {:size "20"})
-             [:p {:class "form-help"}
-              (str "この Bot が実際に実行した手順を残して、あとで同じことをさせられます。"
-                   "残るのは実行できた手順だけで、提案や下書きは入りません。")]
-             [:ul {:class "bots-routines" :id "bots-routines"}]
-             [:p {:class "form-help" :id "bots-routines-empty"}
-              "まだ routine がありません。何か実行させたあとで残せます。"]
-             [:div {:class "field"}
-              [:label {:for "bots-routine-name"} "いまやったことの名前"]
-              [:input {:id "bots-routine-name" :type "text" :maxlength "60"
-                       :autocomplete "off" :placeholder "朝の受信箱"}]]
-             [:div {:class "field"}
-              [:label {:for "bots-routine-intent"} "何のための手順か"]
-              [:input {:id "bots-routine-intent" :type "text" :maxlength "200"
-                       :autocomplete "off" :placeholder "返事が要るものを分ける"}]]
-             [:button {:class "tool-button" :id "bots-routine-record" :type "button"}
-              "いまの手順を残す"]
-             [:p {:class "drive-create__status" :id "bots-routine-status"
-                  :aria-live "polite"}]
-             (dds/heading 3 "引き継ぐ" {:size "20"})
-             [:p {:class "form-help"}
-              (str "別の Bot に続きを頼みます。引き継いでも相手の権限は変わりません — "
-                   "相手は相手が許可されているツールだけを使います。")]
-             [:div {:class "field"}
-              [:label {:for "bots-handoff-to"} "引き継ぎ先"]
-              [:select {:id "bots-handoff-to"}]]
-             [:div {:class "field"}
-              [:label {:for "bots-handoff-task"} "頼むこと"]
-              [:textarea {:id "bots-handoff-task" :rows "2" :maxlength "4000"
-                          :placeholder "ここまでの内容をまとめて"}]]
-             [:button {:class "tool-button" :id "bots-handoff-send" :type "button"}
-              "引き継ぐ"]
-             [:p {:class "drive-create__status" :id "bots-handoff-status"
-                  :aria-live "polite"}]]
             [:div {:class "bots-thread__scroll" :id "bots-thread-scroll"}
              [:ol {:class "bots-thread__messages" :id "bots-messages"}]]
             [:form {:class "bots-composer" :id "bots-form"}

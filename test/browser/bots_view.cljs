@@ -126,8 +126,8 @@
             rail (.count (.locator page ".bots-rail__item"))
             rail-name (.textContent page ".bots-rail__name")
             thread-hidden (.getAttribute (.locator page "#bots-thread") "hidden")
-            thread-name (.textContent page "#bots-thread-name")
-            avatar-color (.getAttribute (.locator page "#bots-thread-avatar") "data-color")]
+            thread-name (.textContent page "#bots-titlebar-name")
+            avatar-color (.getAttribute (.locator page "#bots-titlebar-avatar") "data-color")]
       (check! "the picker changes the preview" (and (= "orange" preview-color)
                                                     (= "drop" preview-glyph)))
       (check! "the Bot appears in the rail" (= 1 rail))
@@ -135,6 +135,15 @@
       (check! "and the thread opened on it" (and (nil? thread-hidden)
                                                  (= "workspace worker" (str/trim (or thread-name "")))))
       (check! "carrying the colour that was picked" (= "orange" avatar-color)))
+
+    (println "\n── the titlebar keeps human controls minimal ──")
+    (p/let [titlebar-visible (.isVisible page "#bots-titlebar-context")
+            identity-visible (.isVisible page "#bots-titlebar-identity")
+            new-visible (.isVisible page "#bots-new")
+            routine-controls (.count (.locator page "#bots-routines-panel, #bots-thread-routines, #bots-handoff-send"))]
+      (check! "the selected Bot lives in the app titlebar" (and titlebar-visible identity-visible))
+      (check! "new Bot is a titlebar action" new-visible)
+      (check! "routine and handoff controls are not exposed to the person" (zero? routine-controls)))
 
     ;; This message asks for the inbox, so the Bot has to reach for a Gmail
     ;; tool, and reaching for one nobody authorized is what produces the card.
@@ -156,7 +165,7 @@
             card-title (.textContent page ".bots-card__title")
             scopes (.count (.locator page ".bots-card__scopes li"))
             button-label (.textContent page ".bots-card .tool-button")
-            status (.textContent page "#bots-thread-status")]
+            status (.textContent page "#bots-titlebar-status")]
       (check! "Send enables once there is text" (not send-disabled))
       (check! "both turns are in the thread" (and (= 2 messages) (= 1 person)))
       (check! "the Bot came back with a card, not just prose" (= 1 card-count))
@@ -182,7 +191,7 @@
             _ (.click page ".local-nav__item[data-view='bots']")
             _ (.waitForTimeout page 1200)
             probe (.evaluate page "window.__botsProbe")
-            thread-name (.textContent page "#bots-thread-name")
+            thread-name (.textContent page "#bots-titlebar-name")
             messages (.count (.locator page ".bots-msg"))]
       (check! "crossing views did not reload the document" (= "kept" probe))
       (check! "the Bot is still selected after crossing"
