@@ -252,7 +252,8 @@ exactly what ADR-0025 removed from `did:web` resolution.
 
 ## Verified
 
-`clojure -M:test` — 1460 tests, 8777 assertions, 0 failures, 0 errors.
+`clojure -M:test` — 1460 tests, 8777 assertions, 0 failures, 0 errors on the
+branch. Re-measured on the merged default branch at closing: see ADR-0049.
 `bin/test-oracle-cljs` — 153 cases over 13 shipped cores, all passing.
 `clojure -M:lint` — errors: 50, warnings: 23, which is **exactly the count at
 `e073007`**, this branch's base. None of them are in the files this ADR touches.

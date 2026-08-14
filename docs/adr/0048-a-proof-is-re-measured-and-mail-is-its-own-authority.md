@@ -150,7 +150,8 @@ removing.
 
 ## Verified
 
-`clojure -M:test` — 1477 tests, 8861 assertions, 0 failures, 0 errors.
+`clojure -M:test` — 1477 tests, 8861 assertions, 0 failures, 0 errors on the
+branch. Re-measured on the merged default branch at closing: see ADR-0049.
 `bin/test-oracle-cljs` — 172 cases over 13 shipped cores.
 
 **Watched failing:**

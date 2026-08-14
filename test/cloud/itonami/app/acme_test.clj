@@ -26,20 +26,44 @@
   (.generatePublic (KeyFactory/getInstance "EC")
                    (X509EncodedKeySpec. (decode64 (:public key)))))
 
+(defn- even-hex
+  "`BigInteger/toString 16` padded to whole octets.
+
+  `toString` drops a leading zero NIBBLE, so a coordinate whose top four bits
+  are zero comes back 63 digits and `unhex` refuses it — correctly, since half
+  an octet is not an octet. That happens about one run in eight, which is why
+  this arrived as a flake on a tip rather than as a failure on the branch."
+  [^BigInteger n]
+  (let [hex (.toString n 16)]
+    (cond-> hex (odd? (count hex)) (->> (str "0")))))
+
 (defn- verify-es256
   "Verify a JWS `R || S` signature the way a CA does: rebuild the DER the JDK
-  wants and hand it the exact signing input."
+  wants and hand it the exact signing input.
+
+  `unsigned-integer-from-hex` and not `integer-from-hex`: r and s are positive,
+  and the signed reader would encode one whose high bit is set as a NEGATIVE
+  INTEGER — a DER signature that is not the one that was made."
   [key ^String input ^String signature]
   (let [raw (decode64 signature)
         r (BigInteger. 1 (Arrays/copyOfRange raw 0 32))
         s (BigInteger. 1 (Arrays/copyOfRange raw 32 64))
         der (asn1/encode (asn1/sequence*
-                          [(asn1/integer-from-hex (.toString r 16))
-                           (asn1/integer-from-hex (.toString s 16))]))]
+                          [(asn1/unsigned-integer-from-hex (even-hex r))
+                           (asn1/unsigned-integer-from-hex (even-hex s))]))]
     (.verify (doto (Signature/getInstance "SHA256withECDSA")
                (.initVerify (public-key key))
                (.update (.getBytes input "UTF-8")))
              der)))
+
+(deftest the-verifier-in-this-file-handles-a-coordinate-with-a-leading-zero
+  ;; Asserted directly rather than left to chance. The bug this replaces was
+  ;; probabilistic — it passed every run on the branch and failed on the tip —
+  ;; and a helper that is only right most of the time cannot be the thing that
+  ;; says a signature is valid.
+  (is (= "0a" (even-hex (BigInteger. "10"))))
+  (is (= "ff" (even-hex (BigInteger. "255"))))
+  (is (= "0100" (even-hex (BigInteger. "256")))))
 
 ;; ── the two conversions that fail silently ───────────────────────────────────
 
@@ -58,7 +82,18 @@
         "R || S, each padded to 32 — a 63-byte signature is merely invalid")
     (is (true? (verify-es256 key (str (get signed "protected") "."
                                       (get signed "payload"))
-                             (get signed "signature"))))))
+                             (get signed "signature"))))
+    (testing "over many fresh signatures, not one"
+      ;; ECDSA picks a random k per signature, so r and s differ every time and
+      ;; a single sample exercises one shape of them. Twenty-five samples make
+      ;; the ~1-in-8 short-coordinate case a near certainty rather than the
+      ;; thing that shows up once on somebody else's branch.
+      (dotimes [_ 25]
+        (let [k (acme/generate-key)
+              jws (acme/jws k {:nonce "n" :url "https://ca.test/x" :payload {}})]
+          (is (true? (verify-es256 k (str (get jws "protected") "."
+                                          (get jws "payload"))
+                                   (get jws "signature")))))))))
 
 (deftest an-account-key-announces-itself-until-it-has-a-kid
   (let [key (acme/generate-key)
