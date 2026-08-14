@@ -269,7 +269,7 @@
     font-size:.875rem}
   .bots-rail__item{display:flex;align-items:center;gap:.625rem;width:100%;border:0;
     border-radius:.5rem;background:transparent;padding:.5rem;cursor:pointer;
-    text-align:left;min-height:3rem}
+    text-align:left;min-height:3rem;position:relative}
   .bots-rail__item:hover{background:var(--color-neutral-solid-gray-100)}
   .bots-rail__item[aria-current='true']{background:var(--color-key-50)}
   .bots-rail__item:focus-visible{outline:4px solid var(--color-primitive-yellow-300);
@@ -387,6 +387,11 @@
     line-height:1.7;overflow-wrap:anywhere}
   .bots-msg[data-role='person']{justify-items:end}
   .bots-msg[data-role='person'] .bots-msg__bubble{background:var(--color-key-50)}
+  .bots-msg__from{font-size:.75rem;color:var(--color-neutral-solid-gray-600)}
+  .bots-msg[data-peer='true'] .bots-msg__bubble{background:var(--color-neutral-solid-gray-100);
+    border:1px dashed var(--color-neutral-solid-gray-400)}
+  .bots-peers{margin:.5rem 0 0;padding:0;list-style:none;display:grid;gap:.25rem}
+  .bots-peers li{font-size:.8125rem}
   .bots-card{border:1px solid var(--color-neutral-solid-gray-200);
     border-radius:.75rem;padding:.875rem;background:var(--color-neutral-white);
     display:grid;gap:.5rem;width:100%}
@@ -421,11 +426,20 @@
   .bots-composer textarea{flex:1;resize:none;padding:.625rem .75rem;
     border-radius:.75rem;border:1px solid var(--color-neutral-solid-gray-300);
     max-height:12rem;font:inherit}
+  /* Named Bots stay on the left at every width. Hiding the rail at 60rem
+     left only the thread, so the person had to guess which Bot they were
+     talking to from the header — the opposite of a named peer. Below 60rem
+     the copy collapses and the rail becomes the avatar column; the name
+     remains on the control for a screen reader and as the tooltip. */
   @media (max-width:60rem){
-    .bots-shell{grid-template-columns:1fr}
-    .bots-rail{display:none}
-    .bots-shell[data-pane='rail'] .bots-rail{display:flex}
-    .bots-shell[data-pane='rail'] .bots-main{display:none}
+    .bots-shell{grid-template-columns:3.75rem minmax(0,1fr)}
+    .bots-rail{padding:.5rem .35rem;align-items:center}
+    .bots-rail__head{justify-content:center;padding:.25rem 0 .5rem}
+    .bots-rail__title,.bots-rail__empty,.bots-rail__copy{
+      position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;
+      clip:rect(0,0,0,0);white-space:nowrap;border:0}
+    .bots-rail__item{justify-content:center;padding:.375rem;min-height:2.75rem}
+    .bots-rail__item .bots-dot{position:absolute;right:.2rem;bottom:.2rem}
   }
   .chat-shell{position:relative;display:flex;flex-direction:column;
     height:calc(100vh - 5rem);min-height:32rem;background:var(--color-neutral-white)}
@@ -1116,6 +1130,7 @@
       background:var(--color-neutral-white)}
     .topbar__title{font-size:1rem;line-height:1.4;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
     .view{padding:1rem}.view-header h1{font-size:1.75rem;line-height:1.3}.view-lead{line-height:1.7}
+    .bots-view{padding:0;height:calc(100dvh - 4rem - var(--mobile-nav-height))}
     .chat-shell{height:calc(100dvh - 4rem - var(--mobile-nav-height))}
     .data-card,.settings-card{padding:1rem}
     input,select,textarea,button{max-width:100%}

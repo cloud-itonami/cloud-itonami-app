@@ -1,16 +1,16 @@
 (ns cloud.itonami.app.bots-test
-  "The host: ownership, the connection gate, and the refusal that has to hold
+  "The host: ownership, the connection card, and the refusal that has to hold
   at the route rather than only in the contract.
 
-  Nothing here calls a model or reaches the network. The two places that would
-  — `advance!` and `run-tool!` — are behind the connection gate, and every test
-  that would cross it redefines the seam instead."
+  Connector OAuth is not a door on the conversation. Tests that would reach a
+  model redefine `provider/agent-turn` instead of calling the network."
   (:require [clojure.string :as str]
             [clojure.test :refer [deftest is testing]]
             [cloud.itonami.app.agent-control :as agent-control]
             [cloud.itonami.app.bots :as bots]
             [cloud.itonami.app.config :as config]
             [cloud.itonami.app.identity :as identity]
+            [cloud.itonami.app.messenger :as messenger]
             [cloud.itonami.app.peer :as peer]
             [cloud.itonami.app.policy :as policy]
             [cloud.itonami.app.provider :as provider]
@@ -77,27 +77,37 @@
         (is (every? #(str/starts-with? % "gmail_") tools)
             (str "a Bot given only Gmail reached past it: " (vec tools)))))))
 
-(deftest a-bot-with-nothing-connected-asks-before-it-plans
+(defn- with-model [f]
+  (with-redefs [policy/select-provider (fn [_ _] {:id :local :name "local"})
+                provider/agent-turn (fn [_ _] {:content "はい。" :tool-calls []})]
+    (f)))
+
+(deftest a-bot-talks-through-the-model-before-connectors-are-connected
   (with-store
     (fn []
-      ;; No OAuth connection exists in this store, so the Bot's whole grant is
-      ;; unreachable. The turn must stop at the connection card — a model call
-      ;; here would produce a plan whose every step is fiction.
+      ;; A named Bot is a conversation partner. Connector OAuth is for tools,
+      ;; not for being allowed to speak. The card is still offered so a later
+      ;; Gmail call has somewhere to go.
       (let [b (make-bot alice {})
-            messages (bots/send! nil alice (:bot/id b) "受信箱を見て")
-            last-message (last messages)
-            cards (:cards last-message)]
-        (is (= "bot" (:role last-message)))
-        (is (seq cards))
-        (is (= "connection" (:kind (first cards))))
-        (is (= "google" (:connector (first cards))))
-        (testing "the card names the scopes, because 'connect Gmail' and
-                  'connect Gmail so something can read and send your mail' are
-                  different requests"
-          (is (seq (:scopes (first cards)))))
-        (testing "and the Bot reports itself as waiting for a connection"
-          (is (= "waiting-connection"
-                 (:status (first (:bots (bots/overview nil alice)))))))))))
+            calls (atom [])]
+        (with-redefs [policy/select-provider (fn [_ _] {:id :local :name "local"})
+                      provider/agent-turn
+                      (fn [_ request] (swap! calls conj request)
+                        {:content "受信箱はまだ繋げていません。" :tool-calls []})]
+          (let [messages (bots/send! nil alice (:bot/id b) "受信箱を見て")
+                last-message (last messages)
+                cards (:cards last-message)
+                system (get-in (first @calls) [:messages 0 :content])]
+            (is (= 1 (count @calls)) "the model ran without a Google grant")
+            (is (str/includes? (str system) "workspace worker")
+                "the Bot's name is in the system prompt")
+            (is (some #(= "bot" (:role %)) messages))
+            (is (seq cards))
+            (is (= "connection" (:kind (first cards))))
+            (is (= "google" (:connector (first cards))))
+            (is (seq (:scopes (first cards))))
+            (is (= "waiting-connection"
+                   (:status (first (:bots (bots/overview nil alice))))))))))))
 
 (deftest a-card-does-not-offer-an-authorization-this-machine-cannot-perform
   ;; A Bot can hold tools for a provider with no client — it was given them
@@ -106,17 +116,19 @@
   ;; carry a button whose only outcome is the error.
   (with-store
     (fn []
-      (with-redefs [identity/provider-config (fn [_] {:configured? false})]
-        (let [b (make-bot alice {})
-              cards (:cards (last (bots/send! nil alice (:bot/id b) "受信箱を見て")))
-              card (first cards)]
-          (is (= "connection" (:kind card)))
-          (is (false? (:authable? card)))))
-      (with-redefs [identity/provider-config (fn [_] {:configured? true})]
-        (let [b (make-bot alice {:name "second"})
-              card (first (:cards (last (bots/send! nil alice (:bot/id b) "見て"))))]
-          (testing "and stays offerable where the client does exist"
-            (is (true? (:authable? card)))))))))
+      (with-model
+        (fn []
+          (with-redefs [identity/provider-config (fn [_] {:configured? false})]
+            (let [b (make-bot alice {})
+                  cards (:cards (last (bots/send! nil alice (:bot/id b) "受信箱を見て")))
+                  card (first cards)]
+              (is (= "connection" (:kind card)))
+              (is (false? (:authable? card)))))
+          (with-redefs [identity/provider-config (fn [_] {:configured? true})]
+            (let [b (make-bot alice {:name "second"})
+                  card (first (:cards (last (bots/send! nil alice (:bot/id b) "見て"))))]
+              (testing "and stays offerable where the client does exist"
+                (is (true? (:authable? card)))))))))))
 
 (deftest a-stored-card-reports-the-client-this-machine-has-now
   ;; Measured 2026-08-12: cards live inside messages, so the first fix reached
@@ -127,18 +139,20 @@
   ;; under either condition follows the machine.
   (with-store
     (fn []
-      (let [b (with-redefs [identity/provider-config (fn [_] {:configured? true})]
-                (let [made (make-bot alice {})]
-                  (bots/send! nil alice (:bot/id made) "受信箱を見て")
-                  made))]
-        (testing "offered while a client existed"
-          (with-redefs [identity/provider-config (fn [_] {:configured? true})]
-            (is (true? (:authable? (first (:cards (last (bots/messages
-                                                         alice (:bot/id b))))))))))
-        (testing "the same stored card stops offering it once the client is gone"
-          (with-redefs [identity/provider-config (fn [_] {:configured? false})]
-            (is (false? (:authable?
-                         (first (:cards (last (bots/messages alice (:bot/id b))))))))))))))
+      (with-model
+        (fn []
+          (let [b (with-redefs [identity/provider-config (fn [_] {:configured? true})]
+                    (let [made (make-bot alice {})]
+                      (bots/send! nil alice (:bot/id made) "受信箱を見て")
+                      made))]
+            (testing "offered while a client existed"
+              (with-redefs [identity/provider-config (fn [_] {:configured? true})]
+                (is (true? (:authable? (first (:cards (last (bots/messages
+                                                             alice (:bot/id b))))))))))
+            (testing "the same stored card stops offering it once the client is gone"
+              (with-redefs [identity/provider-config (fn [_] {:configured? false})]
+                (is (false? (:authable?
+                             (first (:cards (last (bots/messages alice (:bot/id b))))))))))))))))
 
 (deftest an-agent-session-cannot-approve-a-held-write
   (with-store
@@ -164,16 +178,18 @@
 (deftest an-archived-bot-keeps-its-conversation-and-stops-working
   (with-store
     (fn []
-      (let [b (make-bot alice {})]
-        (bots/send! nil alice (:bot/id b) "おはよう")
-        (let [before (count (bots/messages alice (:bot/id b)))]
-          (bots/archive! alice (:bot/id b))
-          (is (= "disabled" (:status (first (:bots (bots/overview nil alice))))))
-          (is (= before (count (bots/messages alice (:bot/id b))))
-              "archiving took the record along with the ability, and only the
-               second was asked for")
-          (is (thrown-with-msg? clojure.lang.ExceptionInfo #"停止しています"
-                                (bots/send! nil alice (:bot/id b) "まだ動く?"))))))))
+      (with-model
+        (fn []
+          (let [b (make-bot alice {})]
+            (bots/send! nil alice (:bot/id b) "おはよう")
+            (let [before (count (bots/messages alice (:bot/id b)))]
+              (bots/archive! alice (:bot/id b))
+              (is (= "disabled" (:status (first (:bots (bots/overview nil alice))))))
+              (is (= before (count (bots/messages alice (:bot/id b))))
+                  "archiving took the record along with the ability, and only the
+                   second was asked for")
+              (is (thrown-with-msg? clojure.lang.ExceptionInfo #"停止しています"
+                                    (bots/send! nil alice (:bot/id b) "まだ動く?"))))))))))
 
 (deftest renaming-a-bot-changes-nothing-about-its-reach
   (with-store
@@ -557,12 +573,49 @@
             (is (true? (:accepted? result)))
             (is (true? (:computer-shared? result)))
             (is (pos? @turns) "the idle reviewer is woken")
-            (is (some #(str/includes? (str (:text %)) "research")
+            (is (some #(and (= "research" (:from %))
+                            (str/includes? (str (:text %)) "research"))
                        (bots/messages alice (:bot/id review)))
-                "the person can see the handoff in the reviewer's 1:1")))
+                "the person can see the handoff in the reviewer's 1:1")
+            (is (some #(str/includes? (str (:text %)) "review へ")
+                       (bots/messages alice (:bot/id research)))
+                "the sender's 1:1 also records the outbound peer note")
+            (let [principals (bots/mailbox-principals "org-1" "alice")
+                  overview (messenger/overview "org-1" "alice" principals)
+                  group (first (filter #(= "group" (:kind %))
+                                       (:conversations overview)))]
+              (is (some? group) "the person is a member of the peer group")
+              (is (str/includes? (str (:title group)) "↔"))
+              (is (= #{ "alice"
+                       (str "bot:" (:bot/id research))
+                       (str "bot:" (:bot/id review))}
+                     (set (:members group))))
+              (is (some #(str/includes? (str (:content %)) "この下書きを見て")
+                        (:items (messenger/messages "org-1" "alice"
+                                                    (:id group) principals)))
+                  "the group body is visible to the person, not quarantined"))))
         (is (= #{"gmail_search_messages"} (:bot/tools research))
             "messaging did not copy the sender a send grant")
         (is (contains? (:bot/tools review) "gmail_send_message"))))))
+
+(deftest a-peer-group-is-filed-under-the-messenger-slug
+  (with-store
+    (fn []
+      (store/transact!
+       (fn [state]
+         (assoc-in state [:identity :organizations "org-record"]
+                   {:id "org-record" :organization-id "acme"})))
+      (let [session (assoc alice :organization-id "org-record")
+            research (make-bot session {:name "research"})
+            review (make-bot session {:name "review"})]
+        (with-redefs [policy/select-provider (fn [_ _] {:id :local})
+                      provider/agent-turn (fn [_ _] {:content "見ました。" :tool-calls []})]
+          (bots/peer-message! nil session (:bot/id research)
+                              (:bot/id review) "見て"))
+        (let [principals (bots/mailbox-principals "org-record" "alice")
+              overview (messenger/overview "acme" "alice" principals)]
+          (is (some #(= "group" (:kind %)) (:conversations overview))
+              "Messenger indexes the slug, so the person can open the group"))))))
 
 (deftest a-peer-message-does-not-cross-owners
   (with-store
@@ -591,10 +644,16 @@
                             (and (= 1 n)
                                  (some #(= "send_message" (:name %))
                                        (:tools request)))
-                            {:content ""
-                             :tool-calls [{:id "c1" :name "send_message"
-                                           :input {:to (:bot/id review)
-                                                   :text "review this"}}]}
+                            (do
+                              (is (str/includes? (str (get-in request [:messages 0 :content]))
+                                                 "You are research"))
+                              (is (str/includes? (str (get-in request [:messages 0 :content]))
+                                                 "review")
+                                  "the peer's name is in the sender's context")
+                              {:content ""
+                               :tool-calls [{:id "c1" :name "send_message"
+                                             :input {:to (:bot/id review)
+                                                     :text "review this"}}]})
                             :else
                             {:content "done" :tool-calls []})))]
           (bots/send! nil alice (:bot/id research) "レビューして")

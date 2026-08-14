@@ -312,6 +312,20 @@
       "the Bots view must size its boxes border-box, or padding overflows the
        grid column it is laid out in and the whole document scrolls sideways"))
 
+(deftest named-bots-stay-on-the-left-at-every-width
+  ;; Measured 2026-08-14: at 60rem the rail was `display:none`, so the Bots
+  ;; view on a phone (and the Chrome app window at that width) showed only
+  ;; the thread. Named peers need to be findable without opening a second
+  ;; pane. Compact column, not absence.
+  (is (str/includes? web/app-css
+                     ".bots-shell{display:grid;grid-template-columns:17rem 1fr")
+      "the named list is a left column, not a header dropdown")
+  (is (not (str/includes? web/app-css ".bots-rail{display:none}"))
+      "hiding the rail at a breakpoint leaves a nameless thread")
+  (is (str/includes? web/app-css
+                     "grid-template-columns:3.75rem minmax(0,1fr)")
+      "below 60rem the rail collapses to avatars, still on the left"))
+
 (deftest app-css-only-references-design-system-tokens-that-exist
   ;; An undefined custom property makes the whole declaration invalid at
   ;; computed-value time, so it does not fall back to the cascade — it silently

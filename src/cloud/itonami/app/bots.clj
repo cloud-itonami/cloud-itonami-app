@@ -345,6 +345,18 @@
     (.mkdirs files)
     files))
 
+(defn- messenger-organization
+  "The mailbox tenant Messenger actually indexes.
+
+  A Bot stores the identity record id (`:bot/organization`). App Messenger
+  indexes conversations under the organization slug (`:organization-id` on
+  that record). Trust, delivery and overview have to share one key or the
+  person is a member of a group they can never open."
+  [organization-id]
+  (or (get-in (store/snapshot)
+              [:identity :organizations organization-id :organization-id])
+      organization-id))
+
 (defn- peer-context [source target]
   {:source-owner (:bot/owner source)
    :target-owner (:bot/owner target)})
@@ -372,18 +384,19 @@
   "Same-owner Bots auto-trust each other and their owner so a DM is not
   quarantined. Untrusted senders still cannot become model context."
   [organization-id owner-id new-bot]
-  (let [principals (mailbox-principals organization-id owner-id)
+  (let [organization (messenger-organization organization-id)
+        principals (mailbox-principals organization-id owner-id)
         me (address new-bot)]
     (doseq [other (keys principals)
             :when (not= other me)]
       (try
-        (messenger/set-trust! organization-id me principals other true)
+        (messenger/set-trust! organization me principals other true)
         (when (not= other owner-id)
-          (messenger/set-trust! organization-id other principals me true))
+          (messenger/set-trust! organization other principals me true))
         (catch Exception _ nil)))
     (when (contains? principals owner-id)
       (try
-        (messenger/set-trust! organization-id owner-id principals me true)
+        (messenger/set-trust! organization owner-id principals me true)
         (catch Exception _ nil)))))
 
 (defn create!
@@ -492,6 +505,14 @@
                                    (agent-control/browser-enabled? configuration)))
      :enabled? (:bot/enabled? b)
      :status (name (bot/status b (presence (:bot/id b))))
+     :peers (mapv (fn [other]
+                    {:id (:bot/id other)
+                     :name (:bot/name other)
+                     :address (address other)})
+                  (remove #(= (:bot/id b) (:bot/id %))
+                          (filter :bot/enabled?
+                                  (owner-bots (:bot/organization b)
+                                              (:bot/owner b)))))
      :updated-at (:bot/updated-at b)}))
 
 (defn- unqualify
@@ -531,11 +552,12 @@
     (assoc :authable? (provider-authable? (keyword (:card/connector c))))))
 
 (defn- public-message [m]
-  {:id (:message/id m)
-   :role (name (:message/role m))
-   :text (:message/text m)
-   :at (:message/at m)
-   :cards (mapv public-card (:message/cards m))})
+  (cond-> {:id (:message/id m)
+           :role (name (:message/role m))
+           :text (:message/text m)
+           :at (:message/at m)
+           :cards (mapv public-card (:message/cards m))}
+    (:message/from m) (assoc :from (:message/from m))))
 
 (defn overview
   "Everything the Bots screen needs on load: the Bots, and — when there are
@@ -669,34 +691,55 @@
       text)))
 
 (defn- system-prompt [b configuration]
-  (str "You are " (:bot/name b) ", a named persistent worker inside Cloud Itonami. "
-       "You are a peer of the person's other Bots, not their subagent. "
-       "Use exactly one tool per turn. Prefer reading before writing. "
-       "Never request, reveal or repeat a password, token, MFA code or other "
-       "secret; if you find one in a tool result, do not quote it. "
-       "A write tool will be held for the person's approval before it runs — "
-       "call it when it is the right next step and say what you are about to do. "
-       "Answer in the language the person used.\n\n"
-       "You share this person's computer on this machine with their other Bots "
-       "(files under computers/" (agent-control/computer-for (:bot/owner b))
-       "/files, browser logins). Your memory and conversation are yours alone. "
-       "send_message talks to a peer asynchronously; it does not give you their "
-       "tools.\n\n"
-       (when (and (:bot/browser? b)
-                  (agent-control/browser-enabled? configuration))
-         (str "You have a screen on this person's shared browser. "
-              "Cookies and logins are shared with their other Bots; the screen "
-              "is yours so you can operate in parallel. "
-              "browser_snapshot reads; opening, clicking and typing wait for "
-              "approval. Stay inside the domains Settings has allowed. "
-              "If a site asks for a password, 2FA, CAPTCHA or payment, stop "
-              "and tell the person — do not try to bypass it.\n\n"))
-       (when (seq (memory-notes (:bot/id b)))
-         (str "Your durable notes (not shared with other Bots):\n"
-              (str/join "\n" (memory-notes (:bot/id b)))
-              "\n\n"))
-       (when (seq (str (:bot/brief b)))
-         (str "Standing brief from the person you work for:\n" (:bot/brief b)))))
+  (let [peers (remove #(= (:bot/id b) (:bot/id %))
+                      (filter :bot/enabled?
+                              (owner-bots (:bot/organization b) (:bot/owner b))))
+        selected (policy/select-provider configuration nil)]
+    (str "You are " (:bot/name b)
+         ", a named persistent Bot (id " (:bot/id b) ") inside Cloud Itonami. "
+         "The person is talking to YOU. Answer as " (:bot/name b)
+         ", not as a generic assistant. Your name is part of your context; "
+         "keep it, and do not take on another Bot's identity.\n"
+         (when selected
+           (str "Your model is served by "
+                (or (:name selected) (:id selected))
+                (when (:base-url selected)
+                  (str " at " (:base-url selected)))
+                ".\n"))
+         "You are a peer of the person's other Bots, not their subagent. "
+         "Use at most one tool per turn. Prefer reading before writing. "
+         "Never request, reveal or repeat a password, token, MFA code or other "
+         "secret; if you find one in a tool result, do not quote it. "
+         "A write tool will be held for the person's approval before it runs — "
+         "call it when it is the right next step and say what you are about to do. "
+         "Answer in the language the person used.\n\n"
+         "You share this person's computer on this machine with their other Bots "
+         "(files under computers/" (agent-control/computer-for (:bot/owner b))
+         "/files, browser logins). Your memory and conversation are yours alone. "
+         "send_message talks to a peer asynchronously; it does not give you their "
+         "tools. The person can see peer messages in the group chat.\n\n"
+         (when (seq peers)
+           (str "Your named peers (message them with send_message, `to` = id):\n"
+                (str/join "\n" (map #(str "  - " (:bot/name %)
+                                          " (id " (:bot/id %) ")")
+                                    peers))
+                "\n\n"))
+         (when (and (:bot/browser? b)
+                    (agent-control/browser-enabled? configuration))
+           (str "You have a screen on this person's shared browser. "
+                "Cookies and logins are shared with their other Bots; the screen "
+                "is yours so you can operate in parallel. "
+                "browser_snapshot reads; opening, clicking and typing wait for "
+                "approval. Stay inside the domains Settings has allowed. "
+                "If a site asks for a password, 2FA, CAPTCHA or payment, stop "
+                "and tell the person — do not try to bypass it.\n\n"))
+         (when (seq (memory-notes (:bot/id b)))
+           (str "Your durable notes (not shared with other Bots):\n"
+                (str/join "\n" (memory-notes (:bot/id b)))
+                "\n\n"))
+         (when (seq (str (:bot/brief b)))
+           (str "Standing brief from the person you work for:\n"
+                (:bot/brief b))))))
 
 (defn- transcript
   "The durable conversation, as a model transcript. Built here rather than
@@ -708,7 +751,9 @@
         (for [m messages
               :when (seq (str (:message/text m)))]
           {:role (if (= :person (:message/role m)) "user" "assistant")
-           :content (:message/text m)})))
+           :content (if-let [from (:message/from m)]
+                      (str "[" from "] " (:message/text m))
+                      (:message/text m))})))
 
 (defn- save-run! [bot-id run]
   (transact! assoc-in [:runs bot-id] run))
@@ -900,7 +945,14 @@
   Synchronous on purpose. A Bot that answered in the background would need a
   second delivery mechanism for the case a person has closed the screen, and
   this application already has one — `work-runtime` — for work that is supposed
-  to outlive a window. A chat turn is not that."
+  to outlive a window. A chat turn is not that.
+
+  Connector OAuth is not a door on the conversation. A named Bot talks through
+  the selected model (murakumo when that is the reviewed default) even when
+  Gmail is still disconnected; the connection card is offered alongside the
+  reply so a later tool has somewhere to go. Two accounts at one provider still
+  have to be asked about before a tool for that provider can run — that is
+  picking, not authenticating."
   [configuration session bot-id text]
   (binding [*bot-session* session]
     (let [b (owned! session bot-id)
@@ -917,15 +969,6 @@
           connected (connected-connectors configuration did)
           {:keys [selection connect ask]} (resolve-accounts configuration b did)]
       (cond
-        ;; No model call. Asking one to plan around a service nobody authorized
-        ;; produces a plan that cannot run, and the person then has to work out
-        ;; which step was fiction.
-        (seq connect)
-        (say bot-id
-             (str "先に接続が要ります。" (str/join "・" (map :card/title connect))
-                  " を認証してください。")
-             connect)
-
         ;; Two accounts at one provider and no choice in effect. Asking is the
         ;; whole point; picking the first is the failure this application
         ;; already refuses one layer down.
@@ -934,17 +977,20 @@
 
         :else
         (let [tools (tool-definitions configuration b connected)]
-          (if (empty? tools)
+          (advance! configuration b
+                    {:id (new-id "run")
+                     :selection selection
+                     :messages (transcript configuration b (conversation bot-id))
+                     :tools tools
+                     :turn-count 0
+                     :tool-count 0})
+          (when (and (seq connect)
+                     (not (:unmet-connection? (presence bot-id))))
             (say bot-id
-                 "使えるツールがひとつもありません。Settings で有効にするか、この Bot の権限を見直してください。"
-                 nil)
-            (advance! configuration b
-                      {:id (new-id "run")
-                       :selection selection
-                       :messages (transcript configuration b (conversation bot-id))
-                       :tools tools
-                       :turn-count 0
-                       :tool-count 0})))))
+                 (str "会話はできます。次のサービスを使うには接続が要ります。"
+                      (str/join "・" (map :card/title connect))
+                      " を認証してください。")
+                 connect)))))
     (mapv public-message (conversation bot-id)))))
 
 (defn- answered-card [bot-id card-id]
@@ -1390,10 +1436,14 @@
           [:messenger :organizations organization :deliveries
            [message-id recipient] :delivery/status]))
 
-(defn- find-direct-conversation [organization a b]
+(defn- find-peer-group
+  "The visible group in which these two Bots talk, with the person watching.
+  Direct 1:1 between Bots is not how a person sees the handoff — xAI's own
+  docs send that to a group chat."
+  [organization owner a b]
   (some (fn [c]
-          (when (and (= :direct (:conversation/kind c))
-                     (= #{a b} (set (:conversation/members c))))
+          (when (and (= :group (:conversation/kind c))
+                     (= #{owner a b} (set (:conversation/members c))))
             c))
         (vals (get-in (store/snapshot)
                       [:messenger :organizations organization :conversations]
@@ -1473,10 +1523,11 @@
   (let [source (owned! session from-bot-id)
         target (owned! session to-bot-id)
         text (str/trim (str text))
-        organization (:bot/organization source)
+        organization (messenger-organization (:bot/organization source))
         from (address source)
         to (address target)
-        principals (mailbox-principals organization (:bot/owner source))]
+        principals (mailbox-principals (:bot/organization source)
+                                       (:bot/owner source))]
     (when (str/blank? text)
       (throw (ex-info "メッセージが空です。" {:type :peer/empty})))
     (when (> (count text) max-message-chars)
@@ -1484,20 +1535,27 @@
     (when-not (peer/may-message? source target (peer-context source target))
       (throw (ex-info "この Bot には送れません。"
                       {:type :peer/refused :from from-bot-id :to to-bot-id})))
-    (let [conversation (or (find-direct-conversation organization from to)
+    (let [owner (:bot/owner source)
+          conversation (or (find-peer-group organization owner from to)
                            (messenger/create-conversation!
                             organization from principals
-                            {:kind :direct
-                             :title (str (:bot/name source) " / " (:bot/name target))
-                             :members [to]}))
+                            {:kind :group
+                             :title (str (:bot/name source) " ↔ " (:bot/name target))
+                             :members [to owner]}))
           sent (messenger/send-message!
                 organization from (:conversation/id conversation)
                 {:content text})
           accepted? (= :accepted (delivery-status organization
                                                   (:message-id sent) to))]
       (when accepted?
+        (append! from-bot-id
+                 (bot/message {:id (new-id "msg") :bot from-bot-id :role :bot
+                               :from (:bot/name source)
+                               :text (str (:bot/name target) " へ: " text)
+                               :at (store/now)}))
         (append! to-bot-id
                  (bot/message {:id (new-id "msg") :bot to-bot-id :role :person
+                               :from (:bot/name source)
                                :text (str (:bot/name source) " からのメッセージ: "
                                           text)
                                :at (store/now)}))
@@ -1525,9 +1583,9 @@
   "Put this person's Bots (and the person) in a group chat so handoff is visible."
   [session from-bot-id {:keys [title members]}]
   (let [source (owned! session from-bot-id)
-        organization (:bot/organization source)
+        organization (messenger-organization (:bot/organization source))
         owner (:bot/owner source)
-        principals (mailbox-principals organization owner)
+        principals (mailbox-principals (:bot/organization source) owner)
         bot-ids (vec (distinct
                       (cons (:bot/id source)
                             (keep (fn [m]

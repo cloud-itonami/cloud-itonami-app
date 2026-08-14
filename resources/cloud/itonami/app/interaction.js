@@ -9042,6 +9042,8 @@
         const item = make('button', 'bots-rail__item');
         item.type = 'button';
         item.setAttribute('aria-current', String(bot.id === botsState.selected));
+        item.setAttribute('aria-label', bot.name);
+        item.title = bot.name;
         const avatar = botAvatar(make('span', 'bot-avatar'), bot.avatar);
         const copy = make('div', 'bots-rail__copy');
         copy.append(make('span', 'bots-rail__name', bot.name),
@@ -9334,10 +9336,24 @@
       }
       if (bot['browser-ready?']) {
         panel.append(make('div', null,
-          '分離ブラウザー: この Bot 専用のプロファイル（実行前に承認する）'));
+          '共有コンピューター: この人の Bot と cookie を共有し、画面は Bot ごと（実行前に承認する）'));
       } else if (bot['browser?']) {
         panel.append(make('div', null,
           '分離ブラウザーは依頼されていますが、このマシンの Settings で有効になっていません。'));
+      }
+      if ((bot.peers || []).length) {
+        panel.append(make('div', null, 'named peers（Messenger の group で会話が見えます）'));
+        const peers = make('ul', 'bots-peers');
+        bot.peers.forEach((peer) => {
+          const item = make('li');
+          const go = make('button', 'tool-button', peer.name);
+          go.type = 'button';
+          go.title = peer.id;
+          go.addEventListener('click', () => selectBot(peer.id));
+          item.append(go);
+          peers.append(item);
+        });
+        panel.append(peers);
       }
       if (bot['admitted-tools'].length) {
         const list = make('ul');
@@ -9347,6 +9363,10 @@
       botsState.messages.forEach((message) => {
         const entry = make('li', 'bots-msg');
         entry.dataset.role = message.role;
+        if (message.from) {
+          entry.dataset.peer = 'true';
+          entry.append(make('div', 'bots-msg__from', message.from));
+        }
         if (message.text) entry.append(make('div', 'bots-msg__bubble', message.text));
         (message.cards || []).forEach((card) => {
           if (card.kind === 'connection') entry.append(botsConnectionCard(card, bot.id));
