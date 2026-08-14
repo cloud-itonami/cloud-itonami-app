@@ -20,6 +20,7 @@
             [clojure.test :refer [deftest is testing]]
             [cloud.itonami.app.kotoba-oracle :as oracle]
             [cloud.itonami.app.kotoba-oracle-gen :as gen]
+            [cloud.itonami.app.did-web :as did-web]
             [cloud.itonami.app.health :as health]
             [cloud.itonami.app.oauth-resource :as oauth-resource]
             [cloud.itonami.app.policy :as policy]
@@ -105,6 +106,25 @@
           "and followed it in both directions")
       (finally (oracle/deregister-kir! :oauth-resource)))
     (is (true? (oauth-resource/oauth-resource-route? "GET" path)) "restored")))
+
+(deftest the-did-web-host-reads-the-artifact-rather-than-keeping-a-copy
+  (let [path "/.well-known/did.json"
+        inverted (:kir (compiler/compile-source
+                        (str "(ns cloud.itonami.app.did-web"
+                             "  (:export [did-web-route?]))"
+                             "(defn did-web-route? [method :string path :string] :bool"
+                             "  (if (and (string=? method \"GET\") (string=? path \"" path "\"))"
+                             "    false true))")
+                        gen/target {}))]
+    (is (true? (did-web/did-web-route? "GET" path)) "the shipped answer")
+    (try
+      (oracle/register-kir! :did-web inverted)
+      (is (false? (did-web/did-web-route? "GET" path))
+          "the host followed the artifact")
+      (is (true? (did-web/did-web-route? "POST" path))
+          "and followed it in both directions")
+      (finally (oracle/deregister-kir! :did-web)))
+    (is (true? (did-web/did-web-route? "GET" path)) "restored")))
 
 (deftest a-record-crosses-the-entry-boundary
   ;; `policy-kotoba-parity-test` used to say it could not, and built zero-arg

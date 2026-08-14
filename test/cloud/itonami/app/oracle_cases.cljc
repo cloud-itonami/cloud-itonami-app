@@ -149,6 +149,18 @@
     {:oracle :oauth-resource :export 'oauth-resource-route?
      :args ["GET" "/.well-known/oauth-protected-resource"] :expect false}
 
+    ;; ── did-web ────────────────────────────────────────────────────
+    {:oracle :did-web :export 'did-web-route?
+     :args ["GET" "/.well-known/did.json"] :expect true}
+    {:oracle :did-web :export 'did-web-route?
+     :args ["POST" "/.well-known/did.json"] :expect false}
+    {:oracle :did-web :export 'did-web-route?
+     :args ["GET" "/health"] :expect false}
+    {:oracle :did-web :export 'did-web-route?
+     :args ["GET" "/.well-known/oauth-protected-resource/mcp"] :expect false}
+    {:oracle :did-web :export 'did-web-route?
+     :args ["GET" "/.well-known/did"] :expect false}
+
     ;; ── fleet-core ──────────────────────────────────────────────────
     {:oracle :fleet-core :export 'catalog-schema-ok?
      :args ["cloud.itonami.fleet-catalog.v1"] :expect true}

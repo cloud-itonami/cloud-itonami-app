@@ -1,0 +1,17 @@
+;; did:web document: is THIS request that public document?
+;;
+;; Sibling of `health_core.kotoba` (ADR-0038) and `oauth_resource_core.kotoba`
+;; (ADR-0039). The document body, Host→tenant resolution and the 404 when no
+;; domain is published stay in `credential.clj` / `identity.clj`. Admission of
+;; `GET /.well-known/did.json` is the only judgement here.
+;;
+;; Inverting the shipped KIR must stop this path and must leave `/health`
+;; answering (different oracle id). Native-crossable shape: two `:string`
+;; arguments and a `:bool` result.
+
+(ns cloud.itonami.app.did-web
+  (:export [did-web-route?]))
+
+(defn did-web-route? [method :string path :string] :bool
+  (and (string=? method "GET")
+       (string=? path "/.well-known/did.json")))

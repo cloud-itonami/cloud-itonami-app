@@ -31,6 +31,7 @@
             [cloud.itonami.app.operator :as operator]
             [cloud.itonami.app.pageview :as pageview]
             [cloud.itonami.app.funding :as funding]
+            [cloud.itonami.app.did-web :as did-web]
             [cloud.itonami.app.health :as health]
             [cloud.itonami.app.identity :as identity]
             [cloud.itonami.app.fax :as fax]
@@ -2068,6 +2069,13 @@
        (= path "/.well-known/oauth-protected-resource/mcp")
        (oauth-resource/oauth-resource-route? method path)))
 
+(defn- did-web-document-route?
+  "did:web discovery (ADR-0040). Literals stay in this file for the route scanner."
+  [method path]
+  (and (= method "GET")
+       (= path "/.well-known/did.json")
+       (did-web/did-web-route? method path)))
+
 (defn handler [config]
   (reify HttpHandler
     (handle [_ exchange]
@@ -2116,7 +2124,7 @@
             ;; (every User owns a personal one, ADR-0023), so serving whichever
             ;; came first would publish a key under a name nobody asked about.
             ;; ADR-0025.
-            (and (= method "GET") (= path "/.well-known/did.json"))
+            (did-web-document-route? method path)
             (let [domain (identity/did-web-domain-for-host
                           (.getFirst (.getRequestHeaders exchange) "Host"))]
               (if (str/blank? (str domain))

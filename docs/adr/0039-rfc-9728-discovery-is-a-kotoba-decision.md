@@ -27,4 +27,4 @@ canary stays `policy.kotoba`.
 ## Consequences
 
 - Shipped KIR: `resources/cloud/itonami/app/oracle/oauth-resource.kir.edn`.
-- `GET /.well-known/did.json` is the next public judgement of this shape.
+- `GET /.well-known/did.json` moved in ADR-0040.
