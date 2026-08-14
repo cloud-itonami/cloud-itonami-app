@@ -74,6 +74,8 @@
             [cloud.itonami.app.mail-sync-test]
             [cloud.itonami.app.mail-account-test]
             [cloud.itonami.app.mail-domain-authority-test]
+            [cloud.itonami.app.mail-domain-records-test]
+            [cloud.itonami.app.tls-binding-test]
             [cloud.itonami.app.tls-certificate-test]
             [cloud.itonami.app.mail-gmail-test]
             [cloud.itonami.app.mail-imap-test]
@@ -107,6 +109,7 @@
             [cloud.itonami.app.did-test]
             [cloud.itonami.app.acme-test]
             [cloud.itonami.app.binding-sweep-test]
+            [cloud.itonami.app.domain-name-test]
             [cloud.itonami.app.domain-binding-kotoba-parity-test]
             [cloud.itonami.app.domain-verification-test]
             [cloud.itonami.app.domain-verification-http-test]
@@ -234,6 +237,7 @@
     cloud.itonami.app.did-test
     cloud.itonami.app.acme-test
     cloud.itonami.app.binding-sweep-test
+    cloud.itonami.app.domain-name-test
     cloud.itonami.app.domain-binding-kotoba-parity-test
     cloud.itonami.app.domain-verification-test
     cloud.itonami.app.domain-verification-http-test
@@ -275,6 +279,8 @@
     cloud.itonami.app.mail-sync-test
     cloud.itonami.app.mail-account-test
     cloud.itonami.app.mail-domain-authority-test
+    cloud.itonami.app.mail-domain-records-test
+    cloud.itonami.app.tls-binding-test
     cloud.itonami.app.tls-certificate-test
     cloud.itonami.app.mail-gmail-test
     cloud.itonami.app.mail-imap-test

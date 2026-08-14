@@ -1,0 +1,25 @@
+#!/usr/bin/env nbb
+;; Run the `.cljc` judgements under ClojureScript.
+;;
+;;   bin/test-portable-cljs          (from the repository root)
+;;
+;; The JVM half runs the same namespaces from `clojure -M:test`, because they
+;; are `.cljc` and the test runner lists them. This half is what makes that
+;; extension mean something: without it the JVM would be the only runtime that
+;; had ever executed them, which is the state `bin/test-oracle-cljs` was written
+;; to end for the decision cores.
+;;
+;; No classpath is asked of `deps.edn` here, unlike the oracle gate: these
+;; namespaces depend on nothing outside `src` and `test`. That is a property
+;; worth keeping — a portable judgement that needed a pinned interpreter to run
+;; would not be very portable.
+
+(ns test-portable-cljs
+  (:require ["node:child_process" :as cp]))
+
+(let [{:keys [status]}
+      (js->clj (cp/spawnSync "nbb" #js ["--classpath" "src:test"
+                                        "test/portable_nbb.cljs"]
+                             #js {:stdio "inherit" :encoding "utf8"})
+               :keywordize-keys true)]
+  (set! (.-exitCode js/process) (or status 1)))

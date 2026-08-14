@@ -103,6 +103,46 @@ invalid, and the CA's error names neither:
   but the old certificate is still being served" is the classic ACME operations
   bug and it is a cached context every time.
 
+## Where the code runs
+
+This repository's runtime order puts ClojureScript above the JVM for new code,
+with `:clj` isolated as a compat layer rather than assumed. ADR-0043, ADR-0048
+and this ADR all shipped their host halves as `.clj`, which matched the 111
+`.clj` files already in `src/` and did not match the rule.
+
+Corrected for the judgements, which is the part that had no reason to be
+JVM-only:
+
+| `.cljc`, run on both runtimes | why it could move |
+|---|---|
+| `domain-name` | name shape, service-owned names, freshness, exclusivity — strings, sets and one clock |
+| `mail-domain-records` | SPF/DKIM/DMARC parsing, given the TXT values rather than a resolver |
+| `tls-binding` | the ACME challenge token, and whether a certificate is due |
+
+`bin/test-portable-cljs` runs their tests under nbb, because a `.cljc` file one
+runtime ever executes is a `.clj` file with a longer extension — the state
+`bin/test-oracle-cljs` was written to end for the decision cores, and the same
+trap. One break (dropping the `.` from the suffix check in `service-owned?`)
+fails the same assertion on both.
+
+**What stays `:clj`, and why each one is a platform fact and not a habit:**
+
+- `java.security` and `javax.net.ssl` — the ACME account key, the CSR signature,
+  the KeyStore and the SNI key manager. WebCrypto is async, so porting `acme`
+  means redesigning its call shape, which is a larger decision than this ADR.
+- `javax.naming` DNS, `com.sun.net.httpserver`, `ScheduledExecutorService`, and
+  the Keychain shell-out.
+- `IDN/toASCII`. `url.domainToASCII` is not the same function under STD3 rules,
+  and swapping one for the other would quietly change which names a tenant may
+  claim.
+
+**Not corrected: `interaction.js`.** The settings card's four-state logic was
+added to a 9,000-line hand-written resource that `web.clj` slurps and inlines.
+It is not generated, there is no ClojureScript build for the browser here, and
+rewriting a shared file of that size is not something to do inside this change.
+It is the largest remaining piece of this ADR's surface that the runtime order
+would have written differently.
+
 ## Alternatives
 
 **Leave it an operator fact, as ADR-0043 did.** Defensible, and it leaves the
