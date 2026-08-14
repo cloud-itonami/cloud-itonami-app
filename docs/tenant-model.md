@@ -129,23 +129,33 @@ Until the domain resolves, credentials are signed under the issuer's `did:key`
 rather than an unpublished `did:web`, so they stay verifiable by anyone instead of
 naming an address that answers nothing.
 
-### What a custom domain does today, and what it is designed to do
+### A custom domain passes two gates before it names anything
 
-An owner can prove control of a company domain — `domain_verification` issues a
-TXT challenge at `_itonami-verification.<domain>` and reads public DNS to confirm
-it, exclusively across tenants. **That proof currently names nothing.** It writes
-`:verified-domain` on the tenant, which no code reads; the tenant's `:domain`
-stays the managed `<slug>.<organization-domain-suffix>`, or whatever
-`:organization-domain-overrides` asserts. So the sentence above about
-configuration not proving ownership is true, and the field that carries a proof
-is not the field that names the tenant.
+A tenant carries exactly one `:domain` and one `:domain-source` (ADR-0043).
+`:managed` is `<slug>.<organization-domain-suffix>` and needs no proof of its
+own — the deployment owns that suffix by construction. `:verified` is a name the
+owner proved, and proving it takes two separate facts:
 
-ADR-0043 is the accepted design that joins them: one `:domain` with a
-`:domain-source`, a binding lifecycle of `:pending → :claimed → :live → :lapsed`,
-and two gates — the existing TXT proof for the naming right, and a self-probe
-over the hardened fetch in `credential-trust` for the fact that this process
-actually answers at the name. **It is not implemented.** Until it is, treat a
-verified domain as a record that a proof happened and not as a name.
+1. **the naming right.** `domain_verification/start!` issues a TXT challenge at
+   `_itonami-verification.<domain>`; `claim!` reads public DNS and, on an exact
+   match at that exact owner name, moves the binding to `:claimed`. The claim is
+   exclusive across tenants and **does not name the tenant**.
+2. **the resolution fact.** `activate!` fetches
+   `https://<domain>/.well-known/itonami-domain-binding.json` and checks that
+   what comes back is that binding's own nonce — so DNS points here and a
+   publicly trusted certificate for the name exists. Only then does `:domain`
+   become the custom name, and the `did:web` with it.
+
+`recheck!` re-measures both. A binding that stops answering becomes `:lapsed`
+and the tenant reverts to its managed name; nothing already issued is retracted.
+
+The route that serves the nonce is public — a prober holds no credential for a
+name it is being pointed at for the first time — and answers only for a binding
+whose TXT claim currently holds, resolved from the request `Host` with no
+fallback. Pointing DNS at this deployment without passing gate 1 gets a 404.
+
+`:organization-domain-overrides` was removed with this: it was configuration
+asserting a name, which is what the paragraph above says is not proof.
 
 ## Organization membership as a credential
 

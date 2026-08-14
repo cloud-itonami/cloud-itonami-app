@@ -7843,22 +7843,42 @@
       activeDomainVerification = records.length ? records[records.length - 1] : null;
       const state = $('#domain-verification-state');
       const record = $('#domain-verification-record');
+      const activation = $('#domain-verification-activation');
       if (!activeDomainVerification) {
         state.textContent = '確認済みの会社ドメインはありません。';
         record.hidden = true;
+        activation.hidden = true;
         return;
       }
       const verification = activeDomainVerification;
-      const verified = verification.status === 'verified';
-      state.textContent = verified
-        ? `${verification.domain} は確認済みです。`
-        : `${verification.domain} のTXTレコードをDNSへ追加してください。`;
-      record.hidden = verified;
+      // Four states, not a boolean (ADR-0043). `claimed` is the one worth
+      // spelling out: the proof succeeded and the tenant is still NOT named by
+      // the domain, which a card that said "確認済み" here would hide.
+      const status = verification.status;
+      const domain = verification.domain;
+      const messages = {
+        pending: `${domain} のTXTレコードをDNSへ追加してから「DNSを確認」を押してください。`,
+        claimed: `${domain} の所有権は確認できました。まだこのOrganizationの名前ではありません — DNSをこの deployment に向けてから「有効化」を押してください。`,
+        live: `${domain} はこのOrganizationの名前です。`,
+        lapsed: `${domain} は応答しなくなったため、名前を管理ドメインへ戻しました。発行済みの証明書は取り消していません。`,
+      };
+      state.textContent = messages[status] || `${domain}: ${status}`;
+      record.hidden = status !== 'pending';
+      activation.hidden = status === 'pending';
       $('#domain-verification-record-name').textContent = verification['record-name'] || '—';
       $('#domain-verification-record-value').textContent = verification['record-value'] || '—';
       $('#domain-verification-expiry').textContent = verification['expires-at']
         ? `有効期限: ${formatDate(verification['expires-at'])}` : '—';
-      if (verification.domain) $('#company-domain').value = verification.domain;
+      $('#domain-verification-activation-url').textContent =
+        verification['activation-url'] || '—';
+      // The measurement, not just the verdict. Which of DNS, TLS and routing is
+      // wrong is written in this sentence, and an owner told only "失敗" has to
+      // guess at all three.
+      const probe = verification.probe || {};
+      $('#domain-verification-probe').textContent = probe.error
+        ? `前回の確認: ${probe.error}`
+        : (probe.at ? `前回の確認: ${formatDate(probe.at)} に応答を確認しました。` : '—');
+      if (domain) $('#company-domain').value = domain;
     };
     const loadDomainVerifications = async () => {
       const state = $('#domain-verification-state');
@@ -8444,25 +8464,42 @@
       await navigator.clipboard.writeText(text);
       $('#domain-verification-state').textContent = 'TXTのホスト名と値をコピーしました。';
     });
-    $('#domain-verification-verify').addEventListener('click', async () => {
-      if (!activeDomainVerification) return;
-      const button = $('#domain-verification-verify');
-      button.disabled = true;
-      button.textContent = '確認中…';
-      try {
-        const verification = await postJSON(
-          '/api/identity/domain-verifications/verify',
-          {'verification-id':activeDomainVerification.id}, true);
-        renderDomainVerifications({verifications:[verification]});
-        $('#identity-status').textContent = `${verification.domain} の所有権を確認しました。`;
-        await loadIdentity();
-      } catch (error) {
-        $('#domain-verification-state').textContent = error.message;
-      } finally {
-        button.disabled = false;
-        button.textContent = 'DNSを確認';
-      }
-    });
+    // The three gate steps share one shape: post, re-render from the answer,
+    // reload the identity card because the tenant's own domain can change under
+    // two of them, and put a refusal where the state line is rather than
+    // swallowing it.
+    const runDomainStep = async (selector, path, label, busy, done) => {
+      $(selector).addEventListener('click', async () => {
+        if (!activeDomainVerification) return;
+        const button = $(selector);
+        button.disabled = true;
+        button.textContent = busy;
+        try {
+          const verification = await postJSON(
+            path, {'verification-id':activeDomainVerification.id}, true);
+          renderDomainVerifications({verifications:[verification]});
+          $('#identity-status').textContent = done(verification);
+          await loadIdentity();
+        } catch (error) {
+          $('#domain-verification-state').textContent = error.message;
+        } finally {
+          button.disabled = false;
+          button.textContent = label;
+        }
+      });
+    };
+    runDomainStep('#domain-verification-claim',
+                  '/api/identity/domain-verifications/claim',
+                  'DNSを確認', '確認中…',
+                  (v) => `${v.domain} の所有権を確認しました。次にDNSをこの deployment へ向けてください。`);
+    runDomainStep('#domain-verification-activate',
+                  '/api/identity/domain-verifications/activate',
+                  '有効化', '有効化中…',
+                  (v) => `${v.domain} をこのOrganizationの名前にしました。`);
+    runDomainStep('#domain-verification-recheck',
+                  '/api/identity/domain-verifications/recheck',
+                  '再確認', '再確認中…',
+                  (v) => `${v.domain} を再確認しました（${v.status}）。`);
     $('#project-transfer-form').addEventListener('submit', async (event) => {
       event.preventDefault();
       const button = $('#project-transfer-submit');

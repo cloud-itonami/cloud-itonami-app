@@ -20,6 +20,7 @@
             [cloud.itonami.app.presentation-request :as presentation-request]
             [webauthn.assurance :as credential-assurance]
             [cloud.itonami.app.documents :as documents]
+            [cloud.itonami.app.domain-binding :as domain-binding]
             [cloud.itonami.app.domain-verification :as domain-verification]
             [docs.html :as docs-html]
             [cloud.itonami.app.esign :as esign]
@@ -2030,11 +2031,96 @@
 
       :else (send! exchange 405 {:error {:type "method_not_allowed"}}))))
 
-(defn- route-domain-verification!
-  "Keep the domain-ownership surface out of the already-large HttpHandler
-  method. Returns true only when it handled the request."
+(defn- route-organization-create!
+  "POST /api/identity/organizations — make a tenant, and start a domain claim
+  when the request named a domain.
+
+  Out of line for the same reason `route-domain-verification!` is: `handle`
+  reached javac's 64 KB method limit, and inlining this refused the whole reify.
+
+  A domain may be named at creation, and naming is never binding (ADR-0043).
+  What the owner gets back is the TXT record to publish — a challenge, not a
+  name — and the tenant's own name is managed until both gates pass.
+
+  The domain is checked BEFORE the organization is created, so an unusable one
+  refuses the whole call rather than leaving an organization behind. Catching
+  that refusal to keep the creation would make a rejected domain look exactly
+  like an accepted one, which is the silence this repository keeps finding in
+  its own gates.
+
+  Shaped as a `cond` clause and not a bare body, because `route-scan` reads this
+  file as TEXT: it takes a clause's gate from the `require-*` call between the
+  clause's test and the next clause start. A helper with a session call and no
+  test of its own falls inside the PRECEDING clause's window and rewrites its
+  gate — measured here, where it silently turned `/api/chronicle/delete` into an
+  agent-reachable route and broke `commands-test`."
   [exchange config method path]
   (cond
+    (and (= method "POST") (= path "/api/identity/organizations"))
+    (let [session (require-app-session! exchange)
+          body (read-json exchange)
+          domain (:domain body)
+          claimed? (not (str/blank? (str domain)))]
+      (require-origin! exchange config)
+      (require-csrf! exchange session)
+      (when claimed?
+        (domain-verification/assert-claimable! domain))
+      (let [created (identity/create-organization! session body)]
+        ;; `create-organization!` already required a Passkey session, so the
+        ;; owner authorization is real, and `start-for-organization!` derives it
+        ;; from the membership that call just wrote rather than taking a flag.
+        (when claimed?
+          (domain-verification/start-for-organization!
+           {:user-id (:user-id session)
+            :organization-record-id (:organization-id created)
+            :domain domain
+            :human? (identity/human-session? session)})))
+      (send! exchange 201
+             (identity/public-state
+              (cookie-value exchange identity/cookie-name)))
+      true)
+
+    :else false))
+
+(defn- domain-binding-nonce-route?
+  "Gate B's document (ADR-0043). Literals stay in this file for the route scanner."
+  [method path]
+  (and (= method "GET")
+       (= path "/.well-known/itonami-domain-binding.json")
+       (domain-binding/nonce-route? method path)))
+
+(defn- route-domain-verification!
+  "Keep the domain-ownership surface out of the already-large HttpHandler
+  method. Returns true only when it handled the request.
+
+  \"Already-large\" is not a style note: adding one more branch to `handle`
+  inline made javac's 64 KB method limit refuse the whole reify
+  (`Method code too large!`), which is how this function came to exist. New
+  routes on this subject belong here, including the public one."
+  [exchange config method path]
+  (cond
+    ;; Gate B's document (ADR-0043). Public and unauthenticated by necessity: a
+    ;; prober being pointed at a name for the first time holds no credential for
+    ;; it, and a nonce a caller had to authenticate for would prove nothing
+    ;; about the name. It carries a random nonce and no secret, like
+    ;; `/.well-known/did.json`.
+    ;;
+    ;; Resolved from the Host and answered ONLY for a binding whose TXT claim
+    ;; currently holds — so pointing your own DNS at this deployment yields a
+    ;; 404 until you have passed Gate A for that name, which needs a record in a
+    ;; zone you do not control. Same no-guessing reading as the did:web route
+    ;; (ADR-0025): with no match there is no fallback.
+    (domain-binding-nonce-route? method path)
+    (let [nonce (domain-verification/nonce-for-host
+                 (.getFirst (.getRequestHeaders exchange) "Host"))]
+      (if (str/blank? (str nonce))
+        (send! exchange 404
+               {:error "この名前に対する確認済みのドメイン束縛はありません。"
+                :schema domain-verification/nonce-schema})
+        (send! exchange 200 {:schema domain-verification/nonce-schema
+                             :nonce nonce}))
+      true)
+
     ;; No `require-origin!` on this read, and its absence is the fix rather
     ;; than an omission.
     ;;
@@ -2062,12 +2148,36 @@
       (send! exchange 201 (domain-verification/start! session (read-json exchange)))
       true)
 
+    ;; Gate A. Reads public DNS and reserves the name; it does NOT name the
+    ;; tenant (ADR-0043). Called `/verify` until the two gates were separated,
+    ;; and the rename is the point: what this establishes is a claim.
     (and (= method "POST")
-         (= path "/api/identity/domain-verifications/verify"))
+         (= path "/api/identity/domain-verifications/claim"))
     (let [session (require-human-session! exchange)]
       (require-origin! exchange config)
       (require-csrf! exchange session)
-      (send! exchange 200 (domain-verification/verify! session (read-json exchange)))
+      (send! exchange 200 (domain-verification/claim! session (read-json exchange)))
+      true)
+
+    ;; Gate B. Fetches the name and, if this process answers there with the
+    ;; binding's own nonce, hands the tenant the domain.
+    (and (= method "POST")
+         (= path "/api/identity/domain-verifications/activate"))
+    (let [session (require-human-session! exchange)]
+      (require-origin! exchange config)
+      (require-csrf! exchange session)
+      (send! exchange 200
+             (domain-verification/activate! config session (read-json exchange)))
+      true)
+
+    ;; Re-measure a live binding. A mutation: it can demote a name.
+    (and (= method "POST")
+         (= path "/api/identity/domain-verifications/recheck"))
+    (let [session (require-human-session! exchange)]
+      (require-origin! exchange config)
+      (require-csrf! exchange session)
+      (send! exchange 200
+             (domain-verification/recheck! config session (read-json exchange)))
       true)
 
     :else false))
@@ -2091,6 +2201,7 @@
   (and (= method "GET")
        (= path "/.well-known/did.json")
        (did-web/did-web-route? method path)))
+
 
 (defn handler [config]
   (reify HttpHandler
@@ -2924,14 +3035,8 @@
                      (identity/public-state
                       (cookie-value exchange identity/cookie-name))))
 
-            (and (= method "POST") (= path "/api/identity/organizations"))
-            (let [session (require-app-session! exchange)]
-              (require-origin! exchange config)
-              (require-csrf! exchange session)
-              (identity/create-organization! session (read-json exchange))
-              (send! exchange 201
-                     (identity/public-state
-                      (cookie-value exchange identity/cookie-name))))
+            (route-organization-create! exchange config method path)
+            nil
 
             (route-domain-verification! exchange config method path)
             nil
@@ -5114,6 +5219,9 @@
      (throw (ex-info "server already running" {})))
    (reset! active-config configuration)
    (identity/configure! configuration)
+   ;; Which hostnames this deployment already answers for under its own name, so
+   ;; the guard that refuses them is derived rather than a literal (ADR-0043).
+   (domain-verification/configure! configuration)
    ;; Written here rather than lazily on first enrollment so that a CLI run at
    ;; any point after the server is up has something to read. Creating it is
    ;; idempotent and cheap; a missing key would otherwise look to the operator

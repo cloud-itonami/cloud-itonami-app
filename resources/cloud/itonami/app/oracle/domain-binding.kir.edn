@@ -1,0 +1,276 @@
+{:format :kotoba.kir/v4,
+ :signature {:params [], :result :i64},
+ :functions
+ [{:name nonce-route?,
+   :params [method path],
+   :result :bool,
+   :effects #{},
+   :body
+   (let
+    [__kotoba_and_2 (string=? method "GET")]
+    (if
+     __kotoba_and_2
+     (string=? path "/.well-known/itonami-domain-binding.json")
+     __kotoba_and_2)),
+   :param-types [:string :string]}
+  {:name state-pending,
+   :params [],
+   :result :i64,
+   :effects #{},
+   :body 0,
+   :param-types []}
+  {:name state-claimed,
+   :params [],
+   :result :i64,
+   :effects #{},
+   :body 1,
+   :param-types []}
+  {:name state-live,
+   :params [],
+   :result :i64,
+   :effects #{},
+   :body 2,
+   :param-types []}
+  {:name state-lapsed,
+   :params [],
+   :result :i64,
+   :effects #{},
+   :body 3,
+   :param-types []}
+  {:name may-start?,
+   :params [f],
+   :result :bool,
+   :effects #{},
+   :body
+   (let
+    [__kotoba_and_3
+     (record-get
+      [:record
+       :domain-binding/facts
+       [[:owner-authorized :bool]
+        [:txt-observed :bool]
+        [:claim-exclusive :bool]
+        [:probe-answered :bool]
+        [:probe-confidential :bool]
+        [:probe-fresh :bool]
+        [:name-is-service-owned :bool]
+        [:previously-live :bool]]]
+      f
+      :owner-authorized)]
+    (if
+     __kotoba_and_3
+     (let
+      [__kotoba_and_2
+       (record-get
+        [:record
+         :domain-binding/facts
+         [[:owner-authorized :bool]
+          [:txt-observed :bool]
+          [:claim-exclusive :bool]
+          [:probe-answered :bool]
+          [:probe-confidential :bool]
+          [:probe-fresh :bool]
+          [:name-is-service-owned :bool]
+          [:previously-live :bool]]]
+        f
+        :claim-exclusive)]
+      (if
+       __kotoba_and_2
+       (if
+        (record-get
+         [:record
+          :domain-binding/facts
+          [[:owner-authorized :bool]
+           [:txt-observed :bool]
+           [:claim-exclusive :bool]
+           [:probe-answered :bool]
+           [:probe-confidential :bool]
+           [:probe-fresh :bool]
+           [:name-is-service-owned :bool]
+           [:previously-live :bool]]]
+         f
+         :name-is-service-owned)
+        false
+        true)
+       __kotoba_and_2))
+     __kotoba_and_3)),
+   :param-types [[:ref :domain-binding/facts]]}
+  {:name claim-holds?,
+   :params [f],
+   :result :bool,
+   :effects #{},
+   :body
+   (let
+    [__kotoba_and_3
+     (record-get
+      [:record
+       :domain-binding/facts
+       [[:owner-authorized :bool]
+        [:txt-observed :bool]
+        [:claim-exclusive :bool]
+        [:probe-answered :bool]
+        [:probe-confidential :bool]
+        [:probe-fresh :bool]
+        [:name-is-service-owned :bool]
+        [:previously-live :bool]]]
+      f
+      :txt-observed)]
+    (if
+     __kotoba_and_3
+     (let
+      [__kotoba_and_2
+       (record-get
+        [:record
+         :domain-binding/facts
+         [[:owner-authorized :bool]
+          [:txt-observed :bool]
+          [:claim-exclusive :bool]
+          [:probe-answered :bool]
+          [:probe-confidential :bool]
+          [:probe-fresh :bool]
+          [:name-is-service-owned :bool]
+          [:previously-live :bool]]]
+        f
+        :claim-exclusive)]
+      (if
+       __kotoba_and_2
+       (if
+        (record-get
+         [:record
+          :domain-binding/facts
+          [[:owner-authorized :bool]
+           [:txt-observed :bool]
+           [:claim-exclusive :bool]
+           [:probe-answered :bool]
+           [:probe-confidential :bool]
+           [:probe-fresh :bool]
+           [:name-is-service-owned :bool]
+           [:previously-live :bool]]]
+         f
+         :name-is-service-owned)
+        false
+        true)
+       __kotoba_and_2))
+     __kotoba_and_3)),
+   :param-types [[:ref :domain-binding/facts]]}
+  {:name name-holds?,
+   :params [f],
+   :result :bool,
+   :effects #{},
+   :body
+   (let
+    [__kotoba_and_4 (claim-holds? f)]
+    (if
+     __kotoba_and_4
+     (let
+      [__kotoba_and_3
+       (record-get
+        [:record
+         :domain-binding/facts
+         [[:owner-authorized :bool]
+          [:txt-observed :bool]
+          [:claim-exclusive :bool]
+          [:probe-answered :bool]
+          [:probe-confidential :bool]
+          [:probe-fresh :bool]
+          [:name-is-service-owned :bool]
+          [:previously-live :bool]]]
+        f
+        :probe-answered)]
+      (if
+       __kotoba_and_3
+       (let
+        [__kotoba_and_2
+         (record-get
+          [:record
+           :domain-binding/facts
+           [[:owner-authorized :bool]
+            [:txt-observed :bool]
+            [:claim-exclusive :bool]
+            [:probe-answered :bool]
+            [:probe-confidential :bool]
+            [:probe-fresh :bool]
+            [:name-is-service-owned :bool]
+            [:previously-live :bool]]]
+          f
+          :probe-confidential)]
+        (if
+         __kotoba_and_2
+         (record-get
+          [:record
+           :domain-binding/facts
+           [[:owner-authorized :bool]
+            [:txt-observed :bool]
+            [:claim-exclusive :bool]
+            [:probe-answered :bool]
+            [:probe-confidential :bool]
+            [:probe-fresh :bool]
+            [:name-is-service-owned :bool]
+            [:previously-live :bool]]]
+          f
+          :probe-fresh)
+         __kotoba_and_2))
+       __kotoba_and_3))
+     __kotoba_and_4)),
+   :param-types [[:ref :domain-binding/facts]]}
+  {:name binding-state,
+   :params [f],
+   :result :i64,
+   :effects #{},
+   :body
+   (if
+    (name-holds? f)
+    (state-live)
+    (if
+     (record-get
+      [:record
+       :domain-binding/facts
+       [[:owner-authorized :bool]
+        [:txt-observed :bool]
+        [:claim-exclusive :bool]
+        [:probe-answered :bool]
+        [:probe-confidential :bool]
+        [:probe-fresh :bool]
+        [:name-is-service-owned :bool]
+        [:previously-live :bool]]]
+      f
+      :previously-live)
+     (state-lapsed)
+     (if (claim-holds? f) (state-claimed) (state-pending)))),
+   :param-types [[:ref :domain-binding/facts]]}
+  {:name main,
+   :params [],
+   :result :i64,
+   :effects #{},
+   :body 0,
+   :param-types []}],
+ :oracle-value 0,
+ :schema-identities
+ #:domain-binding{:facts
+                  "fa9264b69205f0fb3dce0792e82b6bff3ed8289c24955355ebe8bedbce1f76f4"},
+ :exports
+ [state-pending
+  state-claimed
+  state-live
+  state-lapsed
+  may-start?
+  claim-holds?
+  name-holds?
+  binding-state
+  nonce-route?
+  main],
+ :schemas
+ #:domain-binding{:facts
+                  [:record
+                   :domain-binding/facts
+                   [[:owner-authorized :bool]
+                    [:txt-observed :bool]
+                    [:claim-exclusive :bool]
+                    [:probe-answered :bool]
+                    [:probe-confidential :bool]
+                    [:probe-fresh :bool]
+                    [:name-is-service-owned :bool]
+                    [:previously-live :bool]]]},
+ :effects #{},
+ :blocks [{:id 0, :instructions [[:const.i64 0] [:return]]}],
+ :entry main}

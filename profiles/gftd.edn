@@ -3,9 +3,17 @@
  :identity
  {:account-domain "gftd.ai"
   :organization-domain-suffix "gftd.ai"
-  ;; The corporate tenant uses its apex domain; managed user organizations
-  ;; remain available as {organization-id}.gftd.ai.
-  :organization-domain-overrides {"gftd" "gftd.ai"}
+  ;; The corporate tenant used to be handed its apex domain here, as
+  ;; `:organization-domain-overrides {"gftd" "gftd.ai"}`. ADR-0043 removed that
+  ;; key: it was this file asserting a name, and `docs/tenant-model.md` says in
+  ;; the same breath that configuration does not prove ownership.
+  ;;
+  ;; To get `gftd.ai` back as the tenant's name, the owner proves it — publish
+  ;; the TXT record the settings card issues under a zone this operator already
+  ;; holds, point the name at this deployment, then activate. Until then the
+  ;; tenant reads as `gftd.gftd.ai`, which is what it has always resolved to.
+  ;; Managed user organizations are unchanged at {organization-id}.gftd.ai.
+  ;;
   ;; Set true in the private production override only after the matching
   ;; did.json documents are live and continuously monitored.
   :publish-did-web? false}

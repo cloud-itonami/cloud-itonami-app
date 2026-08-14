@@ -39,9 +39,14 @@
 (def account-id-pattern #"^[a-z0-9](?:[a-z0-9._-]{1,30}[a-z0-9])?$")
 (def keychain-service "cloud-itonami-app.oauth")
 (def default-identity-profile
+  ;; `:organization-domain-overrides` was here until ADR-0043. It named a tenant
+  ;; by configuration — `{"gftd" "gftd.ai"}` in `profiles/gftd.edn` — while
+  ;; `docs/tenant-model.md` said in the same breath that configuration does not
+  ;; prove ownership. A custom name now comes from the two proofs in
+  ;; `domain_verification`, and an operator who holds the zone passes them in
+  ;; two steps rather than asserting the result in a file.
   {:account-domain "cloud-itonami.app"
    :organization-domain-suffix "cloud-itonami.app"
-   :organization-domain-overrides {}
    :publish-did-web? false})
 (def default-auth-profile
   {:allow-signup? false
@@ -88,15 +93,32 @@
 (defn- account-domain []
   (:account-domain @runtime-identity-profile))
 
-(defn- organization-domain [organization-id]
-  (or (get-in @runtime-identity-profile
-              [:organization-domain-overrides organization-id])
-      (str organization-id "."
-           (:organization-domain-suffix @runtime-identity-profile))))
+(defn managed-domain
+  "The name this deployment issues to a tenant from its own suffix.
+
+  The one name a tenant carries with no proof of its own, and it needs none: the
+  deployment owns the suffix by construction. Every OTHER name a tenant can be
+  called by goes through `domain_verification`'s two gates (ADR-0043), so this
+  is the floor a tenant reverts to when a proven name stops answering.
+
+  Public because `domain_verification` needs the floor to revert to, and it is
+  better read from here than recomputed there."
+  [organization-id]
+  (str organization-id "." (:organization-domain-suffix @runtime-identity-profile)))
+
+(defn did-for-domain
+  "`did:web:<domain>`, or nil while this deployment does not publish.
+
+  Takes the DOMAIN and not a slug, because after ADR-0043 a tenant's name is
+  not always derivable from its slug — a verified domain is where the proofs
+  put it."
+  [domain]
+  (when (and (:publish-did-web? @runtime-identity-profile)
+             (not (str/blank? (str domain))))
+    (str "did:web:" domain)))
 
 (defn- organization-did [organization-id]
-  (when (:publish-did-web? @runtime-identity-profile)
-    (str "did:web:" (organization-domain organization-id))))
+  (did-for-domain (managed-domain organization-id)))
 
 (def provider-catalog
   "Derived from `connector.registry` — see `cloud.itonami.app.connectors`.
@@ -330,7 +352,8 @@
      ;; Named by the handle, like the namespace it is. "Personal" is the
      ;; placeholder `configure-organization!` replaces when the slug is claimed.
      :name (or slug "Personal")
-     :domain (when slug (organization-domain slug))
+     :domain (when slug (managed-domain slug))
+     :domain-source :managed
      :status (if slug :active :pending-profile)
      :subject (identity/subject (or did tenant-id) :organization
                                 {:did did :labels #{:local :personal}})
@@ -509,7 +532,7 @@
   (let [organization (get-in state [:organizations
                                     (:organization-id membership)])]
     (assoc (select-keys organization [:id :organization-id :did :name :domain
-                                      :contact-domain :status])
+                                      :domain-source :status])
            :kind (name (tenant-kind organization))
            :profile-complete? (boolean (:organization-id organization))
            :role (:role membership)
@@ -873,7 +896,7 @@
      :organization (when session
                      (assoc (select-keys organization [:id :organization-id
                                                        :did :name :domain
-                                                       :contact-domain :status])
+                                                       :domain-source :status])
                             :kind (name (tenant-kind organization))
                             :profile-complete?
                             (boolean (:organization-id organization))
@@ -942,7 +965,7 @@
                       {:type :identity/already-registered})))
     (let [organization-record-id (str "org-" (UUID/randomUUID))
           membership-id (str "membership-" (UUID/randomUUID))
-          domain (organization-domain organization-slug)
+          domain (managed-domain organization-slug)
           organization-did (organization-did organization-slug)
           now (store/now)]
       (store/transact!
@@ -957,6 +980,11 @@
                :name (or (some-> organization-name str str/trim not-empty)
                          organization-slug)
                :domain domain
+               ;; Always managed at creation, whatever domain the caller named.
+               ;; A name arrives with its proofs or it does not arrive
+               ;; (ADR-0043); the route turns a `:domain` in the request into a
+               ;; challenge to publish, not into this field.
+               :domain-source :managed
                :status :active
                :subject
                (identity/subject
@@ -981,6 +1009,106 @@
        :slug organization-slug
        :domain domain
        :did organization-did})))
+
+(defn- organization-subject
+  "The subject for a tenant named by `did`, with the labels its kind carries."
+  [organization did]
+  (identity/subject (or did (:id organization)) :organization
+                    {:did did
+                     :labels (if (= :personal (tenant-kind organization))
+                               #{:local :personal}
+                               #{:local :organization})}))
+
+(defn bind-verified-domain!
+  "Give this tenant the domain it PROVED, and the DID that follows from it.
+
+  Called by `domain_verification` once a binding reaches `:live` — both gates
+  passed: a TXT record under the zone, and this process answering at the name
+  with that binding's own nonce (ADR-0043). Authorization was established
+  there; this function is the write.
+
+  Lives here rather than there because the organization record's shape, its
+  `did:web` and its subject are this namespace's, and a second namespace
+  building a subject is how two spellings of the same tenant appear.
+
+  The DID moves with the name, which is the point of proving one. A credential
+  already issued keeps naming the domain that was live when it was issued —
+  nothing here rewrites an assertion that was true when it was made."
+  [organization-record-id domain]
+  (let [now (store/now)
+        did (did-for-domain domain)]
+    (store/transact!
+     (fn [current]
+       (let [organization (get-in current [:identity :organizations
+                                           organization-record-id])]
+         (-> current
+             (update-in [:identity :organizations organization-record-id]
+                        merge
+                        {:domain domain
+                         :domain-source :verified
+                         :did did
+                         :subject (organization-subject organization did)
+                         :updated-at now})
+             (update :events conj
+                     {:type :identity/organization-domain-bound
+                      :at now
+                      :organization-id organization-record-id
+                      :domain domain
+                      :organization-did did})))))
+    {:domain domain :domain-source :verified :did did}))
+
+(defn revert-to-managed-domain!
+  "Take back a name that stopped answering, leaving the managed one.
+
+  A demotion, not a revocation: the tenant stops being CALLED by a name that no
+  longer resolves here, and every credential issued while it did keeps naming
+  it. Retracting those would be a different act with a different mechanism, and
+  this application has none.
+
+  A tenant with no Organization ID yet reverts to no domain rather than to
+  `null.<suffix>` — there is no managed name to fall back to until a slug is
+  claimed."
+  [organization-record-id]
+  (let [now (store/now)
+        state (identity-state (store/snapshot))
+        organization (get-in state [:organizations organization-record-id])
+        slug (:organization-id organization)
+        domain (when slug (managed-domain slug))
+        did (when domain (did-for-domain domain))]
+    (store/transact!
+     (fn [current]
+       (let [organization (get-in current [:identity :organizations
+                                           organization-record-id])]
+         (-> current
+             (update-in [:identity :organizations organization-record-id]
+                        merge
+                        {:domain domain
+                         :domain-source :managed
+                         :did did
+                         :subject (organization-subject organization did)
+                         :updated-at now})
+             (update :events conj
+                     {:type :identity/organization-domain-reverted
+                      :at now
+                      :organization-id organization-record-id
+                      :domain domain})))))
+    {:domain domain :domain-source :managed :did did}))
+
+(defn owner-of-tenant?
+  "Whether `user-id` holds an `:owner` membership in `organization-record-id`.
+
+  Derived from the membership table rather than taken as an argument, so a
+  caller cannot pass authorization in as a flag. `domain_verification` needs
+  this for a tenant that is NOT the session's active one — the organization a
+  create call just made."
+  [user-id organization-record-id]
+  (let [state (identity-state (store/snapshot))]
+    (boolean
+     (some (fn [membership]
+             (and (= user-id (:user-id membership))
+                  (= organization-record-id (:organization-id membership))
+                  (= :owner (:role membership))))
+           (vals (:memberships state))))))
 
 (defn switch-organization!
   "Change this session's active organization after membership proof, and
@@ -1060,10 +1188,15 @@
           membership-id (when organization? (str "membership-" (UUID/randomUUID)))
           personal-membership-id (str "membership-" (UUID/randomUUID))
           organization-domain (when organization-slug
-                                (organization-domain organization-slug))
+                                (managed-domain organization-slug))
           organization-did (when organization-slug
                              (organization-did organization-slug))
-          contact-domain (some-> domain str str/trim str/lower-case not-empty)
+          ;; `domain` is read for the slug above and NOT stored. It used to land
+          ;; in `:contact-domain`, a field written here, handed to the client,
+          ;; and read by nothing — one of the four names for a tenant's domain
+          ;; that ADR-0043 collapsed. A registrant has no Passkey yet, so this
+          ;; call cannot authorize a claim either; the owner starts one from the
+          ;; settings card once enrolled.
           contact-email (normalize-email (or contact-email email))
           owner-name (or (some-> display-name str/trim not-empty)
                          "Passkey user")
@@ -1087,7 +1220,7 @@
              :did organization-did
              :name (or organization-name organization-slug)
              :domain organization-domain
-             :contact-domain contact-domain
+             :domain-source :managed
              :status (if organization-slug :active :pending-profile)
              :subject organization-subject :created-at now})
           user-subject (identity/subject user-id :person
@@ -1804,8 +1937,18 @@
                (not= organization-slug (:account-id owner)))
       (throw (ex-info "個人テナントの ID はアカウント ID と同じである必要があります。"
                       {:type :identity/invalid-registration})))
-    (let [domain (organization-domain organization-slug)
-          organization-did (organization-did organization-slug)
+    (let [;; A name that passed both proofs SURVIVES this call. Re-deriving it
+          ;; from the slug is what this did before ADR-0043, and it is how
+          ;; claiming an Organization ID silently took away a domain the owner
+          ;; had proven and pointed here — the tenant would keep answering at
+          ;; the custom name while calling itself something else.
+          verified? (= :verified (:domain-source organization))
+          domain (if verified?
+                   (:domain organization)
+                   (managed-domain organization-slug))
+          organization-did (if verified?
+                             (did-for-domain domain)
+                             (organization-did organization-slug))
           owner-account-id (if personal?
                              organization-slug
                              (:account-id owner))
@@ -1825,6 +1968,7 @@
                                    organization-slug
                                    (:name organization))
                            :domain domain
+                           :domain-source (if verified? :verified :managed)
                            :status :active
                            :subject
                            (identity/subject

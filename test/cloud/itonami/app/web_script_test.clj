@@ -160,12 +160,22 @@
         js (slurp (io/file "resources/cloud/itonami/app/interaction.js"))]
     (doseq [id ["domain-verification-card" "domain-verification-form"
                 "company-domain" "domain-verification-record-name"
-                "domain-verification-record-value" "domain-verification-verify"]]
+                "domain-verification-record-value" "domain-verification-claim"
+                "domain-verification-activate" "domain-verification-recheck"
+                "domain-verification-probe"]]
       (is (str/includes? html (str "id=\"" id "\"")) id))
     (is (str/includes? js "fetch('/api/identity/domain-verifications')"))
     (is (str/includes? js
                        "postJSON(\n          '/api/identity/domain-verifications'"))
-    (is (str/includes? js "'/api/identity/domain-verifications/verify'"))
+    ;; The two gates are separate calls, and the card drives both (ADR-0043).
+    ;; `/verify` is gone: the name it had said the one proof finished the job.
+    (is (str/includes? js "'/api/identity/domain-verifications/claim'"))
+    (is (str/includes? js "'/api/identity/domain-verifications/activate'"))
+    (is (str/includes? js "'/api/identity/domain-verifications/recheck'"))
+    (is (not (str/includes? js "'/api/identity/domain-verifications/verify'")))
+    ;; The claim state has to be legible AS a claim. A card that said 確認済み
+    ;; here would be describing a tenant that is not yet named by the domain.
+    (is (str/includes? js "まだこのOrganizationの名前ではありません"))
     (is (str/includes? js "initialParams.get('setup-domain')"))))
 
 (deftest capture-is-a-record-only-surface-before-clarification

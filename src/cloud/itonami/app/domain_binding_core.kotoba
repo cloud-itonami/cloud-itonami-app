@@ -1,0 +1,120 @@
+;; Domain binding's DECISION CORE — may this tenant be CALLED by this domain?
+;;
+;; ADR-0043. Four fields in this application used to call themselves a tenant's
+;; domain and the only one carrying a proof was the only one nothing read. This
+;; core is where the proofs are added up, and it exists to keep two facts apart
+;; that look alike and are not:
+;;
+;;   - the NAMING RIGHT. A TXT record under the zone proves whoever wrote it
+;;     controls that zone. It proves nothing about where the name points.
+;;   - the RESOLUTION FACT. An HTTPS fetch of the name that comes back with this
+;;     binding's own nonce proves this process answers there — which needs DNS
+;;     pointing here AND a publicly trusted certificate for the name.
+;;
+;; Publishing `did:web:<domain>` needs both. Collapsing them is how a tenant
+;; gets named by an address that answers nothing, which
+;; `identity/membership-credential-context` already goes out of its way to
+;; avoid.
+;;
+;; `domain_verification.clj` keeps DNS, the outbound fetch, the collections and
+;; every `throw` — an exception is an effect and this core has none. What
+;; crosses is eight booleans the host has already established.
+;;
+;; `name-is-service-owned` is the one that used to be a literal. The guard read
+;; `"itonami.cloud"` while `:organization-domain-suffix` shipped as
+;; `cloud-itonami.app`, so it protected a name this deployment does not issue
+;; and did not protect the ones it does. It is an argument now, derived from the
+;; profile.
+;;
+;; `previously-live` is how `:lapsed` is told from `:claimed` without this core
+;; holding history. A name that was live and no longer answers is not the same
+;; state as one that has never answered: the first has to be taken away from the
+;; tenant, and saying so is the whole point of the state.
+;;
+;; Parity: test/cloud/itonami/app/domain_binding_kotoba_parity_test.clj
+
+(ns cloud.itonami.app.domain-binding
+  (:schemas {;; What the host establishes before asking. Booleans only, and a
+             ;; record because a bare `:bool` parameter is still refused
+             ;; (compiler ADR-0219) while `:bool` FIELDS have always worked.
+             :domain-binding/facts
+             [:record :domain-binding/facts
+              [[:owner-authorized :bool]
+               [:txt-observed :bool]
+               [:claim-exclusive :bool]
+               [:probe-answered :bool]
+               [:probe-confidential :bool]
+               [:probe-fresh :bool]
+               [:name-is-service-owned :bool]
+               [:previously-live :bool]]]})
+  (:export [state-pending state-claimed state-live state-lapsed
+            may-start? claim-holds? name-holds? binding-state
+            nonce-route? main]))
+
+;; Admission of the one public route this binding owns — the sibling of
+;; `health_core.kotoba` (ADR-0038), `oauth_resource_core.kotoba` (ADR-0039) and
+;; `did_web_core.kotoba` (ADR-0040). Which nonce is served, and the 404 when no
+;; binding matches the Host, stay in `domain_verification.clj`; whether this
+;; request is that document is the judgement.
+;;
+;; It lives in this core rather than a fourth file because it is a question
+;; about the same subject. Inverting the shipped KIR must stop this path and
+;; must leave `/.well-known/did.json` answering — a different core, a different
+;; oracle id.
+(defn nonce-route? [method :string path :string] :bool
+  (and (string=? method "GET")
+       (string=? path "/.well-known/itonami-domain-binding.json")))
+
+(defn state-pending [] :i64 0)
+(defn state-claimed [] :i64 1)
+(defn state-live [] :i64 2)
+(defn state-lapsed [] :i64 3)
+
+;; A challenge may be issued. Exclusivity is checked HERE and not only at the
+;; claim: a tenant that is allowed to start a challenge for a name another
+;; tenant already holds would be told to publish a record that can never count.
+(defn may-start? [f [:ref :domain-binding/facts]] :bool
+  (and (record-get f :owner-authorized)
+       (record-get f :claim-exclusive)
+       (not (record-get f :name-is-service-owned))))
+
+;; The naming right, and nothing more. Deliberately does NOT include the
+;; challenge window: the window bounds how long an UNPROVEN challenge stays
+;; answerable, which is a host-side refusal, and folding it in here would expire
+;; a claim that has already been proven.
+(defn claim-holds? [f [:ref :domain-binding/facts]] :bool
+  (and (record-get f :txt-observed)
+       (record-get f :claim-exclusive)
+       (not (record-get f :name-is-service-owned))))
+
+;; The naming right AND the resolution fact. `probe-confidential` is separate
+;; from `probe-answered` because a nonce that came back over a followed redirect
+;; or a plaintext hop is a nonce somebody else could have relayed.
+(defn name-holds? [f [:ref :domain-binding/facts]] :bool
+  (and (claim-holds? f)
+       (record-get f :probe-answered)
+       (record-get f :probe-confidential)
+       (record-get f :probe-fresh)))
+
+;; Ordering is the rule, not an implementation detail.
+;;
+;; `name-holds?` is asked FIRST so a lapsed binding whose probe starts answering
+;; again returns to live rather than being pinned by its own history.
+;;
+;; `previously-live` is asked SECOND, ahead of `claim-holds?`. A binding that
+;; was live and now fails the probe still holds its TXT record, so asking
+;; `claim-holds?` first would report `:claimed` — true, and the wrong answer:
+;; it would leave the tenant named by an address that has stopped answering.
+(defn binding-state [f [:ref :domain-binding/facts]] :i64
+  (if (name-holds? f)
+    (state-live)
+    (if (record-get f :previously-live)
+      (state-lapsed)
+      (if (claim-holds? f)
+        (state-claimed)
+        (state-pending)))))
+
+(defn main [] :i64
+  ;; Sentinel for the wasm host contract. The assertions live in the parity
+  ;; test, where a wrong answer can be compared against a table.
+  0)

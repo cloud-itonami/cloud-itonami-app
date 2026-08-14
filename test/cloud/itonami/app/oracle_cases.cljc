@@ -105,6 +105,27 @@
 
 ;; `:expect` is compared after `:read`, so an `:i64` result is compared as a
 ;; host number on both runtimes rather than as whatever the guest handed back.
+(def binding-facts-record
+  [:record :domain-binding/facts
+   [[:owner-authorized :bool] [:txt-observed :bool] [:claim-exclusive :bool]
+    [:probe-answered :bool] [:probe-confidential :bool] [:probe-fresh :bool]
+    [:name-is-service-owned :bool] [:previously-live :bool]]])
+
+(defn- binding-facts
+  "Eight booleans in declared order, spelled as a map so a case reads as the
+  situation it describes rather than as a row of eight bare trues."
+  [m]
+  (oracle/record
+   binding-facts-record
+   (mapv #(boolean (get m %))
+         [:owner-authorized :txt-observed :claim-exclusive :probe-answered
+          :probe-confidential :probe-fresh :name-is-service-owned
+          :previously-live])))
+
+(def ^:private proven-and-answering
+  {:owner-authorized true :txt-observed true :claim-exclusive true
+   :probe-answered true :probe-confidential true :probe-fresh true})
+
 (def cases
   "{:oracle :export :args :expect} — `:read` defaults to identity."
   (concat
@@ -452,7 +473,102 @@
     {:oracle :session-handoff :export 'claimable?
      :args [(oracle/record session-handoff-claim-record
                            [true true false true])]
-     :expect false}]))
+     :expect false}
+
+    ;; ── domain-binding (ADR-0043) ───────────────────────────────────
+    {:oracle :domain-binding :export 'state-pending :args [] :expect 0 :read oracle/i64-value}
+    {:oracle :domain-binding :export 'state-claimed :args [] :expect 1 :read oracle/i64-value}
+    {:oracle :domain-binding :export 'state-live :args [] :expect 2 :read oracle/i64-value}
+    {:oracle :domain-binding :export 'state-lapsed :args [] :expect 3 :read oracle/i64-value}
+    {:oracle :domain-binding :export 'main :args [] :expect 0 :read oracle/i64-value}
+
+    ;; the one public route this binding owns
+    {:oracle :domain-binding :export 'nonce-route?
+     :args ["GET" "/.well-known/itonami-domain-binding.json"] :expect true}
+    {:oracle :domain-binding :export 'nonce-route?
+     :args ["POST" "/.well-known/itonami-domain-binding.json"] :expect false}
+    {:oracle :domain-binding :export 'nonce-route?
+     :args ["GET" "/.well-known/did.json"] :expect false}
+    {:oracle :domain-binding :export 'nonce-route?
+     :args ["GET" "/.well-known/itonami-domain-binding"] :expect false}
+    {:oracle :domain-binding :export 'nonce-route?
+     :args ["get" "/.well-known/itonami-domain-binding.json"] :expect false}
+
+    ;; may-start? — an owner may be told what to publish
+    {:oracle :domain-binding :export 'may-start?
+     :args [(binding-facts {:owner-authorized true :claim-exclusive true})]
+     :expect true}
+    {:oracle :domain-binding :export 'may-start?
+     :args [(binding-facts {:claim-exclusive true})]
+     :expect false}
+    ;; a name another tenant already holds: refused at the START, so nobody is
+    ;; told to publish a record that could never count
+    {:oracle :domain-binding :export 'may-start?
+     :args [(binding-facts {:owner-authorized true})]
+     :expect false}
+    ;; the deployment's own managed suffix. This was a literal that named the
+    ;; wrong domain; it is an argument now.
+    {:oracle :domain-binding :export 'may-start?
+     :args [(binding-facts {:owner-authorized true :claim-exclusive true
+                            :name-is-service-owned true})]
+     :expect false}
+
+    ;; claim-holds? — the naming right, and deliberately nothing more
+    {:oracle :domain-binding :export 'claim-holds?
+     :args [(binding-facts {:txt-observed true :claim-exclusive true})]
+     :expect true}
+    {:oracle :domain-binding :export 'claim-holds?
+     :args [(binding-facts {:claim-exclusive true})]
+     :expect false}
+    {:oracle :domain-binding :export 'claim-holds?
+     :args [(binding-facts {:txt-observed true :claim-exclusive true
+                            :name-is-service-owned true})]
+     :expect false}
+    ;; a proven claim is NOT a live name — this is the conflation the core exists
+    ;; to prevent
+    {:oracle :domain-binding :export 'name-holds?
+     :args [(binding-facts {:txt-observed true :claim-exclusive true})]
+     :expect false}
+
+    ;; name-holds? — the naming right AND the resolution fact
+    {:oracle :domain-binding :export 'name-holds?
+     :args [(binding-facts proven-and-answering)]
+     :expect true}
+    ;; a nonce relayed over a followed redirect or a plaintext hop is not proof
+    {:oracle :domain-binding :export 'name-holds?
+     :args [(binding-facts (assoc proven-and-answering :probe-confidential false))]
+     :expect false}
+    {:oracle :domain-binding :export 'name-holds?
+     :args [(binding-facts (assoc proven-and-answering :probe-fresh false))]
+     :expect false}
+    ;; the TXT was pulled while the name still answers: the naming right is gone,
+    ;; so the name is gone
+    {:oracle :domain-binding :export 'name-holds?
+     :args [(binding-facts (assoc proven-and-answering :txt-observed false))]
+     :expect false}
+
+    ;; binding-state — the four states, and the two orderings that matter
+    {:oracle :domain-binding :export 'binding-state
+     :args [(binding-facts {:owner-authorized true :claim-exclusive true})]
+     :expect 0 :read oracle/i64-value}
+    {:oracle :domain-binding :export 'binding-state
+     :args [(binding-facts {:owner-authorized true :txt-observed true
+                            :claim-exclusive true})]
+     :expect 1 :read oracle/i64-value}
+    {:oracle :domain-binding :export 'binding-state
+     :args [(binding-facts proven-and-answering)]
+     :expect 2 :read oracle/i64-value}
+    ;; was live, still holds its TXT, no longer answers. Reporting `:claimed`
+    ;; here would be true and would leave the tenant named by a dead address.
+    {:oracle :domain-binding :export 'binding-state
+     :args [(binding-facts {:owner-authorized true :txt-observed true
+                            :claim-exclusive true :previously-live true})]
+     :expect 3 :read oracle/i64-value}
+    ;; and a lapse is not a life sentence: the probe answers again, the name
+    ;; returns. `name-holds?` is asked before `previously-live` for this.
+    {:oracle :domain-binding :export 'binding-state
+     :args [(binding-facts (assoc proven-and-answering :previously-live true))]
+     :expect 2 :read oracle/i64-value}]))
 
 (defn run-case
   "Execute one case through the seam. Returns {:ok? :actual}.

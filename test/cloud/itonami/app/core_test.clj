@@ -284,9 +284,15 @@
       (is (str/includes? web/interaction-js "setMobileMenuOpen"))
       (is (re-find #"id=\"connector-list\"" html))
       (is (re-find #"id=\"member-form\"" html))
+      ;; Both gate steps are on the card, not just the first. ADR-0043 split
+      ;; `verify` into a claim and an activation, and a card that offered only
+      ;; the claim would tell an owner their domain was done when it was not.
       (doseq [id ["domain-verification-card" "domain-verification-form"
                   "company-domain" "domain-verification-record"
-                  "domain-verification-copy" "domain-verification-verify"]]
+                  "domain-verification-copy" "domain-verification-claim"
+                  "domain-verification-activation"
+                  "domain-verification-activation-url"
+                  "domain-verification-activate" "domain-verification-recheck"]]
         (is (re-find (re-pattern (str "id=\\\"" id "\\\"")) html)))
       (is (re-find #"data-view-panel=\"worker\"" html))
       (is (re-find #"id=\"worker-form\"" html))
