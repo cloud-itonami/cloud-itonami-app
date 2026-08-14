@@ -192,8 +192,13 @@ directory and one issuer key. This lets a tenant be *named* by a domain it
 proved. It does not make this a host for tenants that do not trust each other.
 
 **Certificate issuance.** Whether this deployment can terminate TLS for a
-customer's name is an operator fact. Gate B fails until it is true, which is the
-honest reading, and is the same boundary ADR-0025 drew.
+customer's name was an operator fact when this was written. Gate B fails until
+it is true, which is the honest reading, and is the same boundary ADR-0025 drew.
+
+ADR-0045 moved it: the deployment now orders its own certificates over ACME, for
+exactly the domains Gate B has already proven it answers at — HTTP-01 needs the
+CA to fetch a URL at that name, so this proof is the precondition. Gate B still
+measures rather than assumes, which is what this paragraph was really about.
 
 ## Consequences
 

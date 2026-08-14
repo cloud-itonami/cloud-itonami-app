@@ -61,6 +61,7 @@
             [cloud.itonami.app.mail-account :as mail-account]
             [cloud.itonami.app.mail-send :as mail-send]
             [cloud.itonami.app.mail-sync :as mail-sync]
+            [cloud.itonami.app.tls-certificate :as tls]
             [cloud.itonami.app.scheduler :as scheduler]
             [cloud.itonami.app.service :as service]
             [cloud.itonami.app.sites :as sites]
@@ -84,6 +85,10 @@
            [javax.crypto.spec SecretKeySpec]))
 
 (defonce server (atom nil))
+;; The opt-in TLS listener (ADR-0045). Separate from `server` because it is a
+;; different socket with a different lifetime, and a deployment that never
+;; enables it must not have a nil check for it in the plain path.
+(defonce https-server (atom nil))
 (defonce ^:private active-config (atom nil))
 
 (defn- read-json [^HttpExchange exchange]
@@ -280,6 +285,22 @@
       (with-open [out (.getResponseBody exchange)]
         (.write out bytes)))
     (send! exchange 404 {:error "icon-missing"})))
+
+(defn- send-text!
+  "A body the far end compares byte for byte.
+
+  RFC 8555 has the CA fetch the HTTP-01 challenge and compare the response to
+  the key authorization exactly, so this sends the string and nothing else — no
+  JSON envelope, no trailing newline, no charset parameter the spec does not
+  ask for."
+  [^HttpExchange exchange status ^String body]
+  (let [bytes (.getBytes body StandardCharsets/UTF_8)]
+    (doto (.getResponseHeaders exchange)
+      (.set "Content-Type" "text/plain")
+      (.set "Cache-Control" "no-store"))
+    (.sendResponseHeaders exchange status (alength bytes))
+    (with-open [out (.getResponseBody exchange)]
+      (.write out bytes))))
 
 (defn- send-html! [^HttpExchange exchange html]
   ;; 回遊 (local only): every HTML surface this app serves passes through here,
@@ -2101,6 +2122,18 @@
   routes on this subject belong here, including the public one."
   [exchange config method path]
   (cond
+    ;; The ACME HTTP-01 challenge (ADR-0045). Public and unauthenticated because
+    ;; the CA holds no credential for this deployment, and answerable only for a
+    ;; token this process published moments ago for an order it started. Served
+    ;; as text/plain because RFC 8555 says the CA compares the body byte for
+    ;; byte — a JSON wrapper would be a different body.
+    (and (= method "GET") (tls/challenge-token path))
+    (let [authorization (tls/key-authorization-for (tls/challenge-token path))]
+      (if (str/blank? (str authorization))
+        (send! exchange 404 {:error "unknown or expired challenge"})
+        (send-text! exchange 200 authorization))
+      true)
+
     ;; Gate B's document (ADR-0043). Public and unauthenticated by necessity: a
     ;; prober being pointed at a name for the first time holds no credential for
     ;; it, and a nonce a caller had to authenticate for would prove nothing
@@ -5287,6 +5320,16 @@
                       (with-kotobase-federation (handler configuration)
                                                 configuration)
                       configuration))
+     ;; The opt-in TLS listener (ADR-0045), serving the certificates this
+     ;; deployment has been issued and choosing among them by SNI. Default off:
+     ;; this app binds loopback, and a deployment behind a terminator neither
+     ;; needs it nor should be asked for it.
+     (reset! https-server
+             (tls/https-server configuration
+                               (with-canonical-loopback
+                                (with-kotobase-federation (handler configuration)
+                                                          configuration)
+                                configuration)))
      ;; Its own context rather than another branch in `handler`: that method is
      ;; already at the JVM's 64 KB ceiling, and two more lines in its `cond`
      ;; failed to compile with "Method code too large". A longer prefix wins over
@@ -5357,6 +5400,9 @@
   (bots/stop-tick!)
   (updater/stop!)
   (binding-sweep/stop!)
+  (when-let [instance @https-server]
+    (.stop instance 0)
+    (reset! https-server nil))
   (work-reconciler/stop!)
   (when-let [instance @server]
     (.stop instance 0)

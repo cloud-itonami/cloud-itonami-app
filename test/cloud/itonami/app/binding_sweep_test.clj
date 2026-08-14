@@ -2,23 +2,27 @@
   "The one timer that re-measures both authorities.
 
   The sweeps themselves are tested where they live. What this file owns is that
-  BOTH run from one tick and that neither count is folded into the other — an
+  ALL THREE run from one tick and that no count is folded into another — an
   operator reading a single number cannot tell four names and no mail domains
   from two of each."
   (:require [clojure.test :refer [deftest is testing]]
             [cloud.itonami.app.binding-sweep :as sweep]
             [cloud.itonami.app.domain-verification :as naming]
-            [cloud.itonami.app.mail-domain-authority :as mail-authority]))
+            [cloud.itonami.app.mail-domain-authority :as mail-authority]
+            [cloud.itonami.app.tls-certificate :as tls]))
 
 (deftest a-tick-reports-each-authority-separately
   (with-redefs [naming/recheck-all! (fn [_] {:scanned 4 :changed [] :failed []})
                 mail-authority/recheck-all! (fn [] {:scanned 2 :changed []
-                                                    :failed []})]
+                                                    :failed []})
+                tls/renew-all! (fn [_] {:scanned 1 :renewed ["a.example"]
+                                        :failed []})]
     (is (= {:naming {:scanned 4 :changed [] :failed []}
-            :mail {:scanned 2 :changed [] :failed []}}
+            :mail {:scanned 2 :changed [] :failed []}
+            :certificates {:scanned 1 :renewed ["a.example"] :failed []}}
            (sweep/sweep! {})))))
 
-(deftest both-sweeps-run-and-neither-is-skipped
+(deftest all-three-sweeps-run-and-none-is-skipped
   ;; The failure this guards is a tick that quietly stopped calling one of them
   ;; — the counts would still look plausible.
   (let [called (atom #{})]
@@ -26,9 +30,11 @@
                                         {:scanned 0 :changed [] :failed []})
                   mail-authority/recheck-all! (fn [] (swap! called conj :mail)
                                                 {:scanned 0 :changed []
-                                                 :failed []})]
+                                                 :failed []})
+                  tls/renew-all! (fn [_] (swap! called conj :certificates)
+                                   {:scanned 0 :renewed [] :failed []})]
       (sweep/sweep! {})
-      (is (= #{:naming :mail} @called)))))
+      (is (= #{:naming :mail :certificates} @called)))))
 
 (deftest the-sweep-can-be-switched-off-and-stops-cleanly
   (try

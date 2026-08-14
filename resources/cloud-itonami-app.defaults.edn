@@ -26,6 +26,17 @@
  :domain-binding {:recheck? true
                   :interval-hours 12
                   :initial-delay-minutes 15}
+ ;; ACME (ADR-0045). No directory URL is shipped, so nothing is ordered until an
+ ;; operator names one — a default would spend a real CA's rate limit on a
+ ;; deployment that never asked. `cloud.itonami.app.acme/staging-directory` is
+ ;; the one to point at first; its certificates are not publicly trusted, which
+ ;; is exactly what you want while finding out whether the flow works.
+ ;;
+ ;; The listener is off because this app binds loopback and a deployment behind
+ ;; a CDN or reverse proxy already terminates TLS somewhere else.
+ :tls {:directory-url nil
+       :contact []
+       :https {:enabled? false :host "0.0.0.0" :port 8443}}
  :email-login {:enabled? false
                :delivery-endpoint nil
                :access-token-env "CLOUD_ITONAMI_EMAIL_LOGIN_TOKEN"}

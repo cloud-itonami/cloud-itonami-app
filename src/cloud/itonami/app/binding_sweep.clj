@@ -17,7 +17,8 @@
   run one from `server/start!`, and this follows `updater` exactly. The claim
   was written from memory instead of from the source."
   (:require [cloud.itonami.app.domain-verification :as naming]
-            [cloud.itonami.app.mail-domain-authority :as mail-authority])
+            [cloud.itonami.app.mail-domain-authority :as mail-authority]
+            [cloud.itonami.app.tls-certificate :as tls])
   (:import [java.util.concurrent Executors ScheduledExecutorService TimeUnit]))
 
 (defonce ^:private scheduler (atom nil))
@@ -30,7 +31,12 @@
   measured two of each, and an operator reading `8` cannot tell them apart."
   [configuration]
   {:naming (naming/recheck-all! configuration)
-   :mail (mail-authority/recheck-all!)})
+   :mail (mail-authority/recheck-all!)
+   ;; Renewal rides the same timer, and it is the reason the timer must not be
+   ;; slow: a certificate has a hard expiry, and one that lapses takes the name
+   ;; with it — the probe stops validating TLS and the binding lapses too.
+   ;; Visits only certificates inside their renewal window (ADR-0045).
+   :certificates (tls/renew-all! configuration)})
 
 (defn start!
   "Run `sweep!` on an interval.
