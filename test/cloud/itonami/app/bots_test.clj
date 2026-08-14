@@ -5,7 +5,8 @@
   Nothing here calls a model or reaches the network. The two places that would
   — `advance!` and `run-tool!` — are behind the connection gate, and every test
   that would cross it redefines the seam instead."
-  (:require [clojure.string :as str]
+  (:require [clojure.java.io :as io]
+            [clojure.string :as str]
             [clojure.test :refer [deftest is testing]]
             [cloud.itonami.app.agent-control :as agent-control]
             [cloud.itonami.app.bots :as bots]
@@ -50,6 +51,20 @@
                                     :connectors ["com.google.gmail"]}
                                    attrs)))
 
+(defn- git-workspace []
+  (let [root (.toFile (java.nio.file.Files/createTempDirectory
+                       "cloud-itonami-bot-workspace-"
+                       (make-array java.nio.file.attribute.FileAttribute 0)))
+        process (.start (doto (ProcessBuilder.
+                               ^java.util.List
+                               ["/usr/bin/git" "-C" (.getPath root) "init" "-q"
+                                "--initial-branch=main"])
+                          (.redirectErrorStream true)))]
+    (is (zero? (.waitFor process)) (slurp (.getInputStream process)))
+    root))
+
+(declare reaches-for)
+
 (deftest a-bot-belongs-to-the-person-who-made-it
   (with-store
     (fn []
@@ -76,6 +91,25 @@
         (is (every? #(str/starts-with? % "gmail_") tools)
             (str "a Bot given only Gmail reached past it: " (vec tools)))))))
 
+(deftest local-coding-is-an-exact-repo-grant-and-writes-hold
+  (with-store
+    (fn []
+      (let [root (git-workspace)
+            file (io/file root "README.md")
+            b (make-bot alice {:coding? true :workspace (.getPath root)})]
+        (spit file "before\n")
+        (is (= (.getCanonicalPath root) (:bot/workspace b)))
+        (with-redefs [policy/select-provider (fn [_ _] {:id :local})
+                      provider/agent-turn
+                      (reaches-for "workspace_write_file"
+                                   {:path "README.md" :content "after\n"})]
+          (let [message (last (bots/send! nil alice (:bot/id b) "READMEを直して"))
+                card (first (:cards message))]
+            (is (= "before\n" (slurp file)) "write did not run before approval")
+            (is (= "approval" (:kind card)))
+            (is (= "workspace_write_file" (:action card)))
+            (is (str/includes? (:impact card) "local Git workspace"))))))))
+
 (defn- answers
   "A model that says one thing and reaches for nothing."
   [text]
@@ -83,12 +117,34 @@
 
 (defn- reaches-for
   "A model that reaches for `tool` on its first turn and then reports."
-  [tool]
-  (let [turns (atom 0)]
-    (fn [_ _]
-      (if (= 1 (swap! turns inc))
-        {:content "調べます。" :tool-calls [{:id "c1" :name tool :input {}}]}
-        {:content "終わりました。" :tool-calls []}))))
+  ([tool] (reaches-for tool {}))
+  ([tool input]
+   (let [turns (atom 0)]
+     (fn [_ _]
+       (if (= 1 (swap! turns inc))
+         {:content "調べます。" :tool-calls [{:id "c1" :name tool :input input}]}
+         {:content "終わりました。" :tool-calls []})))))
+
+(deftest an-active-streaming-turn-can-be-cancelled-by-its-owner
+  (with-store
+    (fn []
+      (let [b (make-bot alice {})
+            entered (promise)
+            run-id "run-cancel-test"]
+        (with-redefs [policy/select-provider (fn [_ _] {:id :local})
+                      provider/agent-turn-stream!
+                      (fn [_ _ _]
+                        (deliver entered true)
+                        (Thread/sleep 60000)
+                        {:content "too late" :tool-calls []})]
+          (let [work (future (bots/send-stream! nil alice (:bot/id b) "止めて"
+                                                run-id (fn [_])))]
+            (is (= true (deref entered 2000 false)))
+            (is (= {:cancelled true :run-id run-id}
+                   (bots/cancel! alice (:bot/id b) run-id)))
+            (let [messages (deref work 3000 ::timeout)]
+              (is (not= ::timeout messages))
+              (is (= "中止しました。" (:text (last messages)))))))))))
 
 (deftest a-bot-pins-its-model-provider-without-bypassing-policy
   (with-store

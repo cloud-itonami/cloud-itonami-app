@@ -1089,6 +1089,26 @@
         (catch Exception error
           (write-event! {:type "error" :message (.getMessage error)}))))))
 
+(defn- send-bot-stream!
+  [^HttpExchange exchange config session bot-id request]
+  (doto (.getResponseHeaders exchange)
+    (.set "Content-Type" "application/x-ndjson; charset=utf-8")
+    (.set "Cache-Control" "no-store")
+    (.set "X-Content-Type-Options" "nosniff"))
+  (.sendResponseHeaders exchange 200 0)
+  (with-open [writer (OutputStreamWriter. (.getResponseBody exchange)
+                                          StandardCharsets/UTF_8)]
+    (let [write-event! (fn [event]
+                         (.write writer (json/write-str event))
+                         (.write writer "\n")
+                         (.flush writer))]
+      (try
+        (let [messages (bots/send-stream! config session bot-id (:text request)
+                                          (:run-id request) write-event!)]
+          (write-event! {:type "done" :messages messages}))
+        (catch Exception error
+          (write-event! {:type "error" :message (.getMessage error)}))))))
+
 (defn- send-openai-stream!
   "Serve `POST /v1/chat/completions` with `stream: true` as OpenAI SSE.
 
@@ -5044,6 +5064,22 @@
         (require-origin! exchange config)
         (require-csrf! exchange session)
         (send! exchange 200 {:suggestions (bots/suggestions (:connectors body))}))
+
+      (and (= method "POST")
+           (bot-id-from path #"/api/bots/([^/]+)/messages/stream"))
+      (let [bot-id (bot-id-from path #"/api/bots/([^/]+)/messages/stream")
+            body (read-json exchange)]
+        (require-origin! exchange config)
+        (require-csrf! exchange session)
+        (send-bot-stream! exchange config session bot-id body))
+
+      (and (= method "POST")
+           (bot-id-from path #"/api/bots/([^/]+)/messages/[^/]+/cancel"))
+      (let [bot-id (bot-id-from path #"/api/bots/([^/]+)/messages/[^/]+/cancel")
+            run-id (bot-id-from path #"/api/bots/[^/]+/messages/([^/]+)/cancel")]
+        (require-origin! exchange config)
+        (require-csrf! exchange session)
+        (send! exchange 200 (bots/cancel! session bot-id run-id)))
 
       (and (= method "GET") (bot-id-from path #"/api/bots/([^/]+)/messages"))
       (send! exchange 200

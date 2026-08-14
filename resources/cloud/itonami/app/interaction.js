@@ -9114,7 +9114,7 @@
       palette:{colors:[], glyphs:[]},
       selected:null, messages:[], picked:new Set(),
       draft:{color:'blue', glyph:'circle'}, loaded:false, busy:false,
-      browserAvailable:false
+      browserAvailable:false, controller:null, runId:null
     };
     const botAvatar = (node, avatar) => {
       node.dataset.color = avatar?.color || 'blue';
@@ -9523,6 +9523,42 @@
       });
       modelEditor.append(providerSelect, modelInput, saveModel);
       panel.append(modelEditor);
+      const codingEditor = make('div', 'bots-card__row');
+      const codingBox = make('input');
+      codingBox.type = 'checkbox';
+      codingBox.checked = Boolean(bot['coding?']);
+      codingBox.setAttribute('aria-label', 'この PC の Git workspace で coding する');
+      const workspaceInput = make('input');
+      workspaceInput.type = 'text';
+      workspaceInput.maxLength = 4096;
+      workspaceInput.value = bot.workspace || '';
+      workspaceInput.placeholder = '/Users/name/github/project';
+      workspaceInput.setAttribute('aria-label', 'Git workspace の絶対パス');
+      const saveCoding = make('button', 'tool-button', 'Workspace を変更');
+      saveCoding.type = 'button';
+      saveCoding.addEventListener('click', async () => {
+        if (codingBox.checked && !workspaceInput.value.trim()) {
+          botsSetStatus('Git workspace の絶対パスを入れてください。');
+          return;
+        }
+        saveCoding.disabled = true;
+        try {
+          const data = await postJSON(`/api/bots/${bot.id}`, {
+            'coding?':codingBox.checked, workspace:workspaceInput.value.trim()
+          }, true);
+          botsState.bots = data.bots || [];
+          renderBotsRail();
+          renderBotsThread();
+          botsSetStatus(codingBox.checked ? 'Git workspace を変更しました。' : 'Coding を無効にしました。');
+        } catch (error) {
+          saveCoding.disabled = false;
+          botsSetStatus(error.message);
+        }
+      });
+      codingEditor.append(codingBox, workspaceInput, saveCoding);
+      panel.append(codingEditor);
+      panel.append(make('div', null,
+        'Local only: 読み取りは自動、ファイル変更と commit は毎回承認。shell・push・reset は使いません。'));
       if (bot['grant-widens?']) {
         // Surfaced rather than repaired: the two readings need different
         // answers and both need a person to see them.
@@ -9647,6 +9683,10 @@
       const button = $('#bots-create');
       const name = $('#bots-name').value.trim();
       if (!name) { $('#bots-create-status').textContent = '名前を入れてください。'; return; }
+      if ($('#bots-coding').checked && !$('#bots-workspace').value.trim()) {
+        $('#bots-create-status').textContent = 'Git workspace の絶対パスを入れてください。';
+        return;
+      }
       button.disabled = true;
       $('#bots-create-status').textContent = '作成しています…';
       try {
@@ -9658,7 +9698,9 @@
           model:$('#bots-model').value.trim(),
           connectors:[...botsState.picked],
           'writes?':$('#bots-writes').checked,
-          'browser?':$('#bots-browser').checked
+          'browser?':$('#bots-browser').checked,
+          'coding?':$('#bots-coding').checked,
+          workspace:$('#bots-workspace').value.trim()
         }, true);
         botsState.bots = data.bots || [];
         botsState.catalog = data.catalog || [];
@@ -9678,6 +9720,7 @@
     });
 
     const botsInput = $('#bots-input');
+    const botsCancel = $('#bots-cancel');
     const resizeBotsInput = () => {
       botsInput.style.height = 'auto';
       botsInput.style.height = `${Math.min(botsInput.scrollHeight, 192)}px`;
@@ -9690,27 +9733,115 @@
         $('#bots-form').requestSubmit();
       }
     });
+    const openBotsStream = async (botId, text, runId, signal) => {
+      if (!identityState?.csrf) await refreshIdentityForWrite();
+      const send = () => fetch(`/api/bots/${botId}/messages/stream`, {
+        method:'POST', headers:identityHeaders(), signal,
+        body:JSON.stringify({text, 'run-id':runId})
+      });
+      let request = await send();
+      if (request.status === 403) {
+        const failure = await request.json();
+        if (failure?.error?.type === 'invalid-csrf') {
+          await refreshIdentityForWrite();
+          request = await send();
+        } else throw new Error(failure?.error?.message || 'Bot に送信できませんでした。');
+      }
+      if (!request.ok) {
+        const failure = await request.json();
+        throw new Error(failure?.error?.message || 'Bot に送信できませんでした。');
+      }
+      return request;
+    };
+    const readBotsStream = async (request, provisional) => {
+      const reader = request.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+      while (true) {
+        const {value, done} = await reader.read();
+        buffer += decoder.decode(value || new Uint8Array(), {stream:!done});
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || '';
+        for (const line of lines) {
+          if (!line.trim()) continue;
+          const frame = JSON.parse(line);
+          if (frame.type === 'delta') {
+            provisional.textContent += frame.content || '';
+            botsSetStatus('応答中…');
+          } else if (frame.type === 'done') {
+            botsState.messages = frame.messages || [];
+          } else if (frame.type === 'error') {
+            throw new Error(frame.message || 'Bot の実行に失敗しました。');
+          }
+        }
+        if (done) break;
+      }
+    };
     $('#bots-form').addEventListener('submit', async (event) => {
       event.preventDefault();
       const text = botsInput.value.trim();
       if (!text || !botsState.selected || botsState.busy) return;
       botsState.busy = true;
+      const botId = botsState.selected;
+      const runId = crypto.randomUUID();
+      const startedAt = Date.now();
+      botsState.runId = runId;
+      botsState.controller = new AbortController();
       botsInput.value = '';
       resizeBotsInput();
-      botsSetStatus('考えています…');
+      botsCancel.hidden = false;
+      const entry = make('li', 'bots-msg');
+      entry.dataset.role = 'bot';
+      const provisional = make('div', 'bots-msg__bubble');
+      entry.append(provisional);
+      $('#bots-messages').append(entry);
+      const elapsed = window.setInterval(() => {
+        if (provisional.textContent) return;
+        const seconds = Math.floor((Date.now() - startedAt) / 1000);
+        botsSetStatus(seconds >= 30
+          ? `通常より時間がかかっています… ${seconds}秒`
+          : `考えています… ${seconds}秒`);
+      }, 1000);
+      botsSetStatus('考えています… 0秒');
       try {
-        const data = await postJSON(`/api/bots/${botsState.selected}/messages`,
-                                    {text}, true);
-        botsState.messages = data.messages || [];
+        const request = await openBotsStream(botId, text, runId, botsState.controller.signal);
+        await readBotsStream(request, provisional);
         renderBotsThread();
         botsSetStatus('');
         await loadBots({keepSelection:true});
       } catch (error) {
-        botsSetStatus(error.message);
+        botsSetStatus(error.name === 'AbortError' ? '中止しました。' : error.message);
       } finally {
+        window.clearInterval(elapsed);
         botsState.busy = false;
+        botsState.controller = null;
+        botsState.runId = null;
+        botsCancel.hidden = true;
         resizeBotsInput();
       }
+    });
+    botsCancel.addEventListener('click', async () => {
+      const botId = botsState.selected;
+      const runId = botsState.runId;
+      if (!botId || !runId) return;
+      botsCancel.disabled = true;
+      botsSetStatus('中止しています…');
+      try {
+        await postJSON(`/api/bots/${botId}/messages/${encodeURIComponent(runId)}/cancel`, {}, true);
+        window.setTimeout(() => {
+          if (botsState.busy && botsState.runId === runId) {
+            botsState.controller?.abort();
+            refreshBotsThread().catch((error) => botsSetStatus(error.message));
+          }
+        }, 3000);
+      } catch (error) {
+        botsSetStatus(error.message);
+      } finally {
+        botsCancel.disabled = false;
+      }
+    });
+    document.addEventListener('keydown', (event) => {
+      if (event.key === 'Escape' && botsState.busy) botsCancel.click();
     });
 
     onViewChange = () => {

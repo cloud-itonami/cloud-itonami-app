@@ -56,3 +56,19 @@
                                                 :arguments "{}"}}]}
                       "tool_calls")
                      [:tool-calls 0 :name]))))))
+
+(deftest streamed-tool-call-fragments-become-one-normalized-call
+  (let [merge-fragment (private-fn 'merge-tool-fragment)
+        normalize (private-fn 'agent-result)
+        first-part (merge-fragment nil
+                                   {:id "call-1"
+                                    :function {:name "workspace_"
+                                               :arguments "{\"path\":\"READ"}})
+        complete (merge-fragment first-part
+                                 {:function {:name "read"
+                                             :arguments "ME.md\"}"}})]
+    (is (= {:id "call-1" :name "workspace_read"
+            :input {:path "README.md"}}
+           (first (:tool-calls
+                   (normalize {:content "" :tool_calls [complete]}
+                              "tool_calls")))))))

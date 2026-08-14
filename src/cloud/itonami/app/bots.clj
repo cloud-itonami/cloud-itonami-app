@@ -65,6 +65,7 @@
             [cloud.itonami.app.provider :as provider]
             [cloud.itonami.app.routine :as routine]
             [cloud.itonami.app.store :as store]
+            [cloud.itonami.app.workspace-tools :as workspace-tools]
             [connector.invoke :as invoke]
             [connector.model :as cm]
             [connector.ports :as cports]
@@ -77,6 +78,7 @@
            [java.util UUID]))
 
 (def schema "cloud.itonami.app.bots.v1")
+(defonce ^:private active-turns (atom {}))
 
 (def max-turns 8)
 (def max-tool-calls 12)
@@ -371,9 +373,11 @@
   "Create a Bot. `:tools` may be given directly, or derived from `:connectors`
   when the caller is the onboarding screen and has only picked services."
   [configuration session {:keys [name avatar brief connectors tools accounts
-                                 writes? browser? provider-id model]}]
+                                 writes? browser? coding? workspace
+                                 provider-id model]}]
   (validate-provider-choice! configuration provider-id model)
-  (let [now (store/now)
+  (let [workspace (when coding? (workspace-tools/admit-root workspace))
+        now (store/now)
         tools (if (seq tools)
                 (set (map str tools))
                 (default-tools configuration connectors))
@@ -389,6 +393,8 @@
                     :bot/accounts accounts
                     :bot/writes? writes?
                     :bot/browser? browser?
+                    :bot/coding? coding?
+                    :bot/workspace workspace
                     :bot/created-at now
                     :bot/updated-at now})]
     ;; Derive the performer here and discard it. The call is the point: it is
@@ -409,6 +415,12 @@
                         (:provider-id attrs) (:bot/provider-id existing))
         next-model (if (contains? attrs :model)
                      (:model attrs) (:bot/model existing))
+        next-coding (if (contains? attrs :coding?)
+                      (boolean (:coding? attrs)) (:bot/coding? existing))
+        next-workspace (if (contains? attrs :workspace)
+                         (:workspace attrs) (:bot/workspace existing))
+        next-workspace (when next-coding
+                         (workspace-tools/admit-root next-workspace))
         _ (when (or (contains? attrs :provider-id) (contains? attrs :model))
             (validate-provider-choice! configuration next-provider next-model))
         merged (cond-> existing
@@ -423,6 +435,8 @@
                                                     (set (map str (:accounts attrs))))
                  (contains? attrs :writes?) (assoc :bot/writes? (:writes? attrs))
                  (contains? attrs :browser?) (assoc :bot/browser? (:browser? attrs))
+                 (or (contains? attrs :coding?) (contains? attrs :workspace))
+                 (assoc :bot/coding? next-coding :bot/workspace next-workspace)
                  (contains? attrs :enabled?) (assoc :bot/enabled? (:enabled? attrs)))]
      (store-bot! (bot/bot (assoc merged :bot/updated-at (store/now)))))))
 
@@ -504,7 +518,14 @@
 
 (defn- public-bot [configuration did b]
   (let [rows (connectors/catalog-rows configuration)
-        connected (connected-connectors configuration did)]
+        connected (connected-connectors configuration did)
+        local-tools (concat
+                     (when (:bot/browser? b)
+                       (agent-control/browser-tool-definitions configuration))
+                     (when (and (:bot/coding? b) (:bot/workspace b))
+                       workspace-tools/tool-definitions))
+        admitted (into (bot/admitted-tools b rows connected)
+                       (map :name) local-tools)]
     {:id (:bot/id b)
      :name (:bot/name b)
      :avatar {:color (name (get-in b [:bot/avatar :avatar/color]))
@@ -518,12 +539,14 @@
                 (get-in configuration [:routing :default-model]))
      :tools (vec (:bot/tools b))
      :accounts (vec (:bot/accounts b))
-     :admitted-tools (vec (bot/admitted-tools b rows connected))
+     :admitted-tools (vec (sort admitted))
      :grant-widens? (bot/grant-widens? b rows)
      :writes? (:bot/writes? b)
      :browser? (:bot/browser? b)
      :browser-ready? (boolean (and (:bot/browser? b)
                                    (agent-control/browser-enabled? configuration)))
+     :coding? (:bot/coding? b)
+     :workspace (:bot/workspace b)
      :enabled? (:bot/enabled? b)
      :status (name (bot/status b (presence (:bot/id b)
                                            (connected-providers did))))
@@ -660,6 +683,11 @@
     (vec (agent-control/browser-tool-definitions configuration))
     []))
 
+(defn- coding-tools [b]
+  (if (and (:bot/coding? b) (:bot/workspace b))
+    workspace-tools/tool-definitions
+    []))
+
 (defn- tool-definitions
   "The tools the Bot's grant REACHES, as the model sees them.
 
@@ -691,10 +719,12 @@
                                    (or (:connector/description t) (:connector/name t))
                                    (when (= :write (:connector/effect t)) " (write)"))
                  :parameters (:connector/input-schema t)}))]
-    (into (browser-tools configuration b) connector-tools)))
+    (into (into (browser-tools configuration b) (coding-tools b))
+          connector-tools)))
 
 (defn- write-tool? [configuration tool-name]
   (or (agent-control/browser-write? tool-name)
+      (workspace-tools/write-tool? tool-name)
       (let [registry (connectors/enabled configuration)]
         (boolean
          (some (fn [d] (when-let [t (cm/tool d tool-name)]
@@ -702,8 +732,11 @@
                (creg/descriptors registry))))))
 
 (defn- describe-tool [configuration tool-name args]
-  (if (agent-control/browser-tool? tool-name)
-    (agent-control/describe-browser-tool tool-name args)
+  (if (or (agent-control/browser-tool? tool-name)
+          (workspace-tools/tool? tool-name))
+    (if (workspace-tools/tool? tool-name)
+      (workspace-tools/describe tool-name args)
+      (agent-control/describe-browser-tool tool-name args))
     (let [registry (connectors/enabled configuration)
           request (invoke/request-for registry tool-name args)]
       ;; The request WITHOUT the credential — `connector.invoke/request-for`
@@ -716,9 +749,12 @@
              (str " " (pr-str (into (sorted-map) q))))))))
 
 (defn- run-tool! [configuration b selection tool-name args]
-  (let [text (if (agent-control/browser-tool? tool-name)
-               (str (agent-control/call-browser-tool!
-                     configuration (:bot/id b) tool-name args))
+  (let [text (if (or (agent-control/browser-tool? tool-name)
+                     (workspace-tools/tool? tool-name))
+               (str (if (workspace-tools/tool? tool-name)
+                      (workspace-tools/call! (:bot/workspace b) tool-name args)
+                      (agent-control/call-browser-tool!
+                       configuration (:bot/id b) tool-name args)))
                (let [registry (connectors/enabled configuration)
                      result (invoke/call registry tool-name args
                                          {:http (http-port)
@@ -744,6 +780,11 @@
               "approval. Stay inside the domains Settings has allowed. "
               "If a site asks for a password, 2FA, CAPTCHA or payment, stop "
               "and tell the person — do not try to bypass it.\n\n"))
+       (when (and (:bot/coding? b) (:bot/workspace b))
+         (str "You may inspect and edit exactly one local Git repository: "
+              (:bot/workspace b) ". Use workspace and git tools only; there is "
+              "no shell, checkout, reset, push, credential, or remote-write tool. "
+              "File writes and local commits wait for human approval.\n\n"))
        (when (seq (str (:bot/brief b)))
          (str "Standing brief from the person you work for:\n" (:bot/brief b)))))
 
@@ -807,8 +848,11 @@
   anything at all (ADR-0044). `run` carries the facts — `:runnable`, `:blocked`,
   `:tool-provider` — because `turn-admission` assembles them once for all three
   callers."
-  [configuration b run]
+  ([configuration b run] (advance! configuration b run nil))
+  ([configuration b run {:keys [on-event cancelled?]}]
   (loop [run run]
+    (when (and cancelled? (cancelled?))
+      (throw (ex-info "Bot の実行を中止しました。" {:type :bot/cancelled})))
     (cond
       (>= (:turn-count run 0) max-turns)
       (say (:bot/id b) "考える回数の上限に達したので、ここで止めます。何を先にやるか教えてください。" nil)
@@ -818,13 +862,17 @@
 
       :else
       (let [{:keys [provider model]} (provider-choice! configuration b)
-            result (provider/agent-turn
-                    provider
-                    {:model model
+            request {:model model
                      :conversation-id (:bot/id b)
                      :messages (:messages run)
                      :tools (:tools run)
-                     :temperature 0.2})
+                     :temperature 0.2}
+            _ (when on-event (on-event {:type "phase" :phase "model"}))
+            result (if on-event
+                     (provider/agent-turn-stream!
+                      provider request
+                      #(on-event {:type "delta" :content %}))
+                     (provider/agent-turn provider request))
             calls (:tool-calls result)
             _ (when (> (count calls) 1)
                 (throw (ex-info
@@ -892,8 +940,12 @@
                         :title "この Bot が実行しようとしています"
                         :action name
                         :summary (describe-tool configuration name input)
-                        :impact (if (agent-control/browser-tool? name)
+                        :impact (cond
+                                  (agent-control/browser-tool? name)
                                   "承認するとこの Bot 専用の分離ブラウザーのページ状態が変わります。"
+                                  (workspace-tools/tool? name)
+                                  "承認すると選択した local Git workspace のファイルまたは履歴が変わります。remote へは push しません。"
+                                  :else
                                   "承認するとこの Bot が接続済みサービスに書き込みます。")})]))
 
               :else
@@ -905,7 +957,7 @@
                                      :name name :content output}))]
                 (trace! configuration (:bot/id b) name)
                 (save-run! (:bot/id b) run)
-                (recur run)))))))))
+                (recur run))))))))))
 
 (defn- rows-by-provider
   "The connector rows this Bot's grant actually touches, grouped by the OAuth
@@ -1016,11 +1068,13 @@
   (let [rows (connectors/catalog-rows configuration)
         connected (connected-connectors configuration did)
         browser (browser-tools configuration b)
+        coding (coding-tools b)
         {:keys [selection blocked]} (resolve-accounts configuration b did)]
     {:selection selection
      :blocked blocked
      :tool-provider (tool->provider configuration)
-     :runnable (into (into #{} (map :name) browser)
+     :runnable (into (into (into #{} (map :name) browser)
+                           (map :name) coding)
                      (bot/admitted-tools b rows connected))
      :tools (tool-definitions configuration b)}))
 
@@ -1031,7 +1085,9 @@
   second delivery mechanism for the case a person has closed the screen, and
   this application already has one — `work-runtime` — for work that is supposed
   to outlive a window. A chat turn is not that."
-  [configuration session bot-id text]
+  ([configuration session bot-id text]
+   (send! configuration session bot-id text nil))
+  ([configuration session bot-id text advance-options]
   (let [b (owned! session bot-id)
         text (str/trim (str text))]
     (when (str/blank? text)
@@ -1068,8 +1124,51 @@
                           :messages (transcript configuration b
                                                 (conversation bot-id))
                           :turn-count 0
-                          :tool-count 0})))
-      (public-conversation did bot-id))))
+                          :tool-count 0})
+                  advance-options))
+      (public-conversation did bot-id)))))
+
+(defn send-stream!
+  "Run one visible Bot turn with progress events and a cancellable run id."
+  [configuration session bot-id text run-id on-event]
+  (owned! session bot-id)
+  (let [run-id (str/trim (str run-id))
+        cancelled (atom false)
+        entry {:run-id run-id :cancelled cancelled :thread (Thread/currentThread)}]
+    (when (str/blank? run-id)
+      (throw (ex-info "run-id が必要です。" {:type :bot/missing-run-id})))
+    (locking active-turns
+      (when (contains? @active-turns bot-id)
+        (throw (ex-info "この Bot はすでに実行中です。" {:type :bot/already-running})))
+      (swap! active-turns assoc bot-id entry))
+    (try
+      (send! configuration session bot-id text
+             {:on-event on-event :cancelled? #(deref cancelled)})
+      (catch Exception error
+        (if (or @cancelled (= :bot/cancelled (:type (ex-data error))))
+          (do
+            (clear-run! bot-id)
+            (say bot-id "中止しました。" nil)
+            (public-conversation (identity/session-did session) bot-id))
+          (throw error)))
+      (finally
+        ;; Clear the interrupted flag before this pooled HTTP thread is reused.
+        (Thread/interrupted)
+        (locking active-turns
+          (when (= run-id (get-in @active-turns [bot-id :run-id]))
+            (swap! active-turns dissoc bot-id)))))))
+
+(defn cancel!
+  "Cancel the matching active turn. Ownership and run id both have to match."
+  [session bot-id run-id]
+  (owned! session bot-id)
+  (let [entry (get @active-turns bot-id)]
+    (when-not (and entry (= (str run-id) (:run-id entry)))
+      (throw (ex-info "実行中の Bot turn が見つかりません。" {:type :bot/run-not-found})))
+    (reset! (:cancelled entry) true)
+    (provider/cancel-agent-stream! (:thread entry))
+    (.interrupt ^Thread (:thread entry))
+    {:cancelled true :run-id (:run-id entry)}))
 
 (defn- answered-card [bot-id card-id]
   (some (fn [m] (some #(when (= card-id (:card/id %)) %) (:message/cards m)))
