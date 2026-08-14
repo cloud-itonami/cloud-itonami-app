@@ -20,6 +20,7 @@
             [cloud.itonami.app.presentation-request :as presentation-request]
             [webauthn.assurance :as credential-assurance]
             [cloud.itonami.app.documents :as documents]
+            [cloud.itonami.app.binding-sweep :as binding-sweep]
             [cloud.itonami.app.domain-binding :as domain-binding]
             [cloud.itonami.app.domain-verification :as domain-verification]
             [docs.html :as docs-html]
@@ -47,6 +48,7 @@
             [cloud.itonami.app.portfolio :as portfolio]
             [cloud.itonami.app.mail-age-key :as age-key]
             [cloud.itonami.app.mail-authentication :as authentication]
+            [cloud.itonami.app.mail-domain-authority :as mail-authority]
             [cloud.itonami.app.mail-projects :as mail-projects]
             [cloud.itonami.app.project-repository :as project-repository]
             [cloud.itonami.app.project-remote :as project-remote]
@@ -2182,6 +2184,41 @@
 
     :else false))
 
+(defn- route-mail-domain-authority!
+  "The OTHER authority a tenant can prove about a domain (ADR-0043): that mail
+  claiming to be from it can authenticate. Separate routes because it is a
+  separate proof — SPF, DKIM and DMARC, not a TXT token — and holding one never
+  confers the other.
+
+  Out of line for the same reason its neighbour is: `handle` is at javac's
+  64 KB method limit. Each clause carries its own test so `route-scan` reads
+  each one's gate from its own body."
+  [exchange config method path]
+  (cond
+    ;; Same reasoning as the read next door: a browser sends no `Origin` on a
+    ;; same-origin GET, so requiring it would 403 the only caller this has.
+    (and (= method "GET") (= path "/api/identity/mail-domain-authorities"))
+    (let [session (require-human-session! exchange)]
+      (send! exchange 200 (mail-authority/list-for-session session))
+      true)
+
+    (and (= method "POST") (= path "/api/identity/mail-domain-authorities"))
+    (let [session (require-human-session! exchange)]
+      (require-origin! exchange config)
+      (require-csrf! exchange session)
+      (send! exchange 201 (mail-authority/start! session (read-json exchange)))
+      true)
+
+    (and (= method "POST")
+         (= path "/api/identity/mail-domain-authorities/verify"))
+    (let [session (require-human-session! exchange)]
+      (require-origin! exchange config)
+      (require-csrf! exchange session)
+      (send! exchange 200 (mail-authority/verify! session (read-json exchange)))
+      true)
+
+    :else false))
+
 (defn- process-liveness?
   "GET /health (ADR-0038). Literals stay in this file for the route scanner."
   [method path]
@@ -3039,6 +3076,9 @@
             nil
 
             (route-domain-verification! exchange config method path)
+            nil
+
+            (route-mail-domain-authority! exchange config method path)
             nil
 
             (and (= method "POST")
@@ -5234,6 +5274,11 @@
    ;; finds a store that is already open rather than one still being read.
    (bots/start-tick! configuration)
    (updater/start! configuration)
+   ;; Re-measures both proven authorities — a name that stops resolving here and
+   ;; a mail posture whose records were pulled — so neither is carried until
+   ;; somebody happens to look (ADR-0043). Visits nothing on a deployment that
+   ;; has proven nothing.
+   (binding-sweep/start! configuration)
    (let [host (get-in configuration [:server :host])
          port (get-in configuration [:server :port])
          instance (HttpServer/create (InetSocketAddress. host (int port)) 0)]
@@ -5311,6 +5356,7 @@
   (folder-sync/stop!)
   (bots/stop-tick!)
   (updater/stop!)
+  (binding-sweep/stop!)
   (work-reconciler/stop!)
   (when-let [instance @server]
     (.stop instance 0)

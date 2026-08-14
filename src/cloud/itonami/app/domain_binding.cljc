@@ -94,3 +94,65 @@
     (or (get @states code)
         (throw (ex-info "the decision core returned a state this host cannot name"
                         {:type :domain-binding/unknown-state :code code})))))
+
+;; ── mail authority ───────────────────────────────────────────────────────────
+;;
+;; A separate record and separate exports because it is a separate authority:
+;; controlling a zone and being able to authenticate mail from it are different
+;; facts, proven by different records. Sharing the shape would have invited
+;; sharing the answer.
+
+(def ^:private mail-facts-record
+  [:record :domain-binding/mail-facts
+   [[:owner-authorized :bool]
+    [:spf-present :bool]
+    [:spf-closed :bool]
+    [:dkim-present :bool]
+    [:dmarc-present :bool]
+    [:dmarc-enforcing :bool]
+    [:claim-exclusive :bool]
+    [:name-is-service-owned :bool]
+    [:previously-authorized :bool]]])
+
+(def mail-fact-keys
+  "The nine mail facts, in the order the record declares them."
+  [:owner-authorized :spf-present :spf-closed :dkim-present :dmarc-present
+   :dmarc-enforcing :claim-exclusive :name-is-service-owned
+   :previously-authorized])
+
+(defn- mail-facts [m]
+  (let [missing (remove #(contains? m %) mail-fact-keys)]
+    (when (seq missing)
+      (throw (ex-info (str "mail authority facts are incomplete: "
+                           (pr-str (vec missing)))
+                      {:type :domain-binding/incomplete-facts
+                       :missing (vec missing)})))
+    (oracle/record mail-facts-record (mapv #(boolean (get m %)) mail-fact-keys))))
+
+(def mail-states
+  (delay
+    (into {} (map (fn [[state export]]
+                    [(oracle/i64-value (oracle/call :domain-binding export []))
+                     state]))
+          {:pending 'mail-state-pending
+           :authorized 'mail-state-authorized
+           :lapsed 'mail-state-lapsed})))
+
+(defn mail-may-start?
+  "May this tenant start proving mail authority for this name?"
+  [m]
+  (oracle/call :domain-binding 'mail-may-start? [(mail-facts m)]))
+
+(defn mail-authorized?
+  "Do SPF, DKIM and DMARC together authorize this tenant for this domain?"
+  [m]
+  (oracle/call :domain-binding 'mail-authorized? [(mail-facts m)]))
+
+(defn mail-state
+  "`:pending` / `:authorized` / `:lapsed` for these facts."
+  [m]
+  (let [code (oracle/i64-value
+              (oracle/call :domain-binding 'mail-state [(mail-facts m)]))]
+    (or (get @mail-states code)
+        (throw (ex-info "the decision core returned a mail state this host cannot name"
+                        {:type :domain-binding/unknown-state :code code})))))

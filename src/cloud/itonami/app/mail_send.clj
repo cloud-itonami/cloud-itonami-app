@@ -26,6 +26,7 @@
             [clojure.string :as str]
             [cloud.itonami.app.mail-account :as account]
             [cloud.itonami.app.mail-gmail :as gmail]
+            [cloud.itonami.app.mail-domain-authority :as mail-authority]
             [cloud.itonami.app.mail-imap :as imap]
             [cloud.itonami.app.store :as store]
             [mail.message :as message]
@@ -224,6 +225,11 @@
   is a fact about this workspace even when the far end declined to name it."
   [account-id request {:keys [user-did]}]
   (let [account (account/account! account-id user-did)
+        ;; Before the message is built, not after: a refusal that arrived once
+        ;; the provider had already accepted it would be a refusal of nothing.
+        ;; Silent unless another tenant in this deployment has PROVEN mail
+        ;; authority for the From-domain (ADR-0043 mail authority).
+        _ (mail-authority/assert-sender-permitted! (:address account) user-did)
         envelope (draft! account request)
         result (case (:kind account)
                  ;; POP3 reads over POP3 and sends over SMTP, exactly as an

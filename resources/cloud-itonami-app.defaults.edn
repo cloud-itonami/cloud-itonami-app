@@ -17,6 +17,15 @@
             ;; Enable only when the deployment publishes a DID document for
             ;; every generated organization domain.
             :publish-did-web? false}
+ ;; Re-measuring proven custom domains. On by default and free when there are
+ ;; none: the sweep visits `:claimed`, `:live` and `:lapsed` bindings only, so a
+ ;; deployment that has never proven a domain makes no outbound request.
+ ;; `:interval-hours` must stay well inside `domain-verification/probe-freshness`
+ ;; (7 days), or a live name's evidence goes stale between sweeps and the next
+ ;; one demotes it for want of a measurement rather than for a real failure.
+ :domain-binding {:recheck? true
+                  :interval-hours 12
+                  :initial-delay-minutes 15}
  :email-login {:enabled? false
                :delivery-endpoint nil
                :access-token-env "CLOUD_ITONAMI_EMAIL_LOGIN_TOKEN"}
