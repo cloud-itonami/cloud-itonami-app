@@ -338,11 +338,41 @@
                       {:type :bot/forbidden :bot bot-id})))
     b))
 
+(defn- provider-choice!
+  "Resolve this Bot's inference route through the same deployment admission
+  policy as every other model call. A stored id is a preference, never a way
+  around review, TLS, credential, or the deployment egress switch."
+  [configuration b]
+  (let [requested (:bot/provider-id b)
+        selected (policy/select-provider configuration requested)
+        model (or (:bot/model b)
+                  (:default-model selected)
+                  (get-in configuration [:routing :default-model]))]
+    (when-not selected
+      (throw (ex-info "選択した model provider は許可されていません。"
+                      {:type :provider/denied :provider requested})))
+    ;; Small host-test configs intentionally omit routing. A running server
+    ;; always supplies the loaded routing partition and therefore still fails
+    ;; closed on a missing model.
+    (when (and (contains? configuration :routing) (str/blank? (str model)))
+      (throw (ex-info "この Bot の model が設定されていません。"
+                      {:type :provider/model-required
+                       :provider (:id selected)})))
+    {:provider selected :model model}))
+
+(defn- validate-provider-choice!
+  [configuration provider-id model]
+  (when (or provider-id model)
+    (provider-choice! configuration
+                      {:bot/provider-id (some-> provider-id str str/trim not-empty)
+                       :bot/model (some-> model str str/trim not-empty)})))
+
 (defn create!
   "Create a Bot. `:tools` may be given directly, or derived from `:connectors`
   when the caller is the onboarding screen and has only picked services."
   [configuration session {:keys [name avatar brief connectors tools accounts
-                                 writes? browser?]}]
+                                 writes? browser? provider-id model]}]
+  (validate-provider-choice! configuration provider-id model)
   (let [now (store/now)
         tools (if (seq tools)
                 (set (map str tools))
@@ -353,6 +383,8 @@
                     :bot/name name
                     :bot/avatar avatar
                     :bot/brief brief
+                    :bot/provider-id provider-id
+                    :bot/model model
                     :bot/tools tools
                     :bot/accounts accounts
                     :bot/writes? writes?
@@ -370,12 +402,21 @@
   "Change what a Bot is. Name, colour, glyph and brief are free to change and
   change nothing about authority; `tools`, `writes?` and `browser?` are the
   authority, and they are the ones an operator is choosing when they edit."
-  [session bot-id attrs]
-  (let [existing (owned! session bot-id)
+  ([session bot-id attrs] (update! nil session bot-id attrs))
+  ([configuration session bot-id attrs]
+   (let [existing (owned! session bot-id)
+        next-provider (if (contains? attrs :provider-id)
+                        (:provider-id attrs) (:bot/provider-id existing))
+        next-model (if (contains? attrs :model)
+                     (:model attrs) (:bot/model existing))
+        _ (when (or (contains? attrs :provider-id) (contains? attrs :model))
+            (validate-provider-choice! configuration next-provider next-model))
         merged (cond-> existing
                  (contains? attrs :name) (assoc :bot/name (:name attrs))
                  (contains? attrs :avatar) (assoc :bot/avatar (:avatar attrs))
                  (contains? attrs :brief) (assoc :bot/brief (:brief attrs))
+                 (contains? attrs :provider-id) (assoc :bot/provider-id (:provider-id attrs))
+                 (contains? attrs :model) (assoc :bot/model (:model attrs))
                  (contains? attrs :tools) (assoc :bot/tools
                                                  (set (map str (:tools attrs))))
                  (contains? attrs :accounts) (assoc :bot/accounts
@@ -383,7 +424,7 @@
                  (contains? attrs :writes?) (assoc :bot/writes? (:writes? attrs))
                  (contains? attrs :browser?) (assoc :bot/browser? (:browser? attrs))
                  (contains? attrs :enabled?) (assoc :bot/enabled? (:enabled? attrs)))]
-    (store-bot! (bot/bot (assoc merged :bot/updated-at (store/now))))))
+     (store-bot! (bot/bot (assoc merged :bot/updated-at (store/now)))))))
 
 (defn archive!
   "Disable a Bot without deleting its conversation. Deleting would take the
@@ -469,6 +510,12 @@
      :avatar {:color (name (get-in b [:bot/avatar :avatar/color]))
               :glyph (name (get-in b [:bot/avatar :avatar/glyph]))}
      :brief (:bot/brief b)
+     :provider-id (or (:bot/provider-id b)
+                      (get-in configuration [:routing :default-provider]))
+     :model (or (:bot/model b)
+                (:default-model (policy/select-provider
+                                 configuration (:bot/provider-id b)))
+                (get-in configuration [:routing :default-model]))
      :tools (vec (:bot/tools b))
      :accounts (vec (:bot/accounts b))
      :admitted-tools (vec (bot/admitted-tools b rows connected))
@@ -567,6 +614,17 @@
                                 (= (:organization-id session) (:bot/organization %))))
                   (sort-by :bot/created-at))]
     {:bots (mapv #(public-bot configuration did %) mine)
+     :model-providers
+     (into []
+           (keep (fn [candidate]
+                   (when (policy/provider-allowed? configuration candidate)
+                     {:id (:id candidate)
+                      :name (:name candidate)
+                      :model (or (:default-model candidate)
+                                 (when (= (:id candidate)
+                                          (get-in configuration [:routing :default-provider]))
+                                   (get-in configuration [:routing :default-model])))})))
+           (:providers configuration))
      :catalog (catalog configuration did)
      :palette {:colors (mapv name bot/avatar-colors)
                :glyphs (mapv name bot/avatar-glyphs)}
@@ -756,17 +814,20 @@
       (say (:bot/id b) "ツールを呼ぶ回数の上限に達したので、ここで止めます。" nil)
 
       :else
-      (let [selected (policy/select-provider configuration nil)
-            _ (when-not selected
-                (throw (ex-info "選択した model provider は許可されていません。"
-                                {:type :provider/denied})))
+      (let [{:keys [provider model]} (provider-choice! configuration b)
             result (provider/agent-turn
-                    selected
-                    {:model (get-in configuration [:routing :default-model])
+                    provider
+                    {:model model
+                     :conversation-id (:bot/id b)
                      :messages (:messages run)
                      :tools (:tools run)
                      :temperature 0.2})
             calls (:tool-calls result)
+            _ (when (> (count calls) 1)
+                (throw (ex-info
+                        "model provider が複数のツール呼び出しを返したため、安全のため停止しました。"
+                        {:type :agent/multiple-tool-calls
+                         :count (count calls)})))
             run (-> run
                     (update :turn-count (fnil inc 0))
                     (update :messages conj {:role "assistant"

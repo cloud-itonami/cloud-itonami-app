@@ -133,6 +133,16 @@
       (is (not (contains? p :api-key)) (str (:id p) " carries a literal key"))
       (is (or (nil? (:api-key-env p)) (string? (:api-key-env p)))))))
 
+(deftest xai-ships-as-an-explicitly-reviewed-opt-in
+  (let [xai (some #(when (= "xai" (:id %)) %) (:providers (config/load-config)))]
+    (is (= :xai (:kind xai)))
+    (is (= "https://api.x.ai/v1" (:base-url xai)))
+    (is (= "XAI_API_KEY" (:api-key-env xai)))
+    (is (= "grok-4.6" (:default-model xai)))
+    (is (false? (:enabled? xai)))
+    (is (false? (:reviewed? xai)))
+    (is (not (contains? xai :api-key)))))
+
 ;; ---------------------------------------------------------------------------
 ;; a named profile that does not exist is an error, not a silent default
 ;; ---------------------------------------------------------------------------
