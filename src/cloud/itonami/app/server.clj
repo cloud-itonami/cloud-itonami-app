@@ -851,13 +851,13 @@
         (let [result (identity/complete-central-authentication! params)]
           (redirect! exchange
                      (if (:linked? result)
-                       "/?auth=itonami-cloud#settings"
+                       "/?auth=itonami-cloud#/settings"
                        "/?auth=itonami-cloud")
                      {"Set-Cookie" (session-cookie (:token result))}))
         (catch Exception error
           (identity/record-auth-failure! :itonami-cloud error)
           (redirect! exchange
-                     "/?auth=error&provider=itonami-cloud#signin"))))
+                     "/?auth=error&provider=itonami-cloud#/signin"))))
 
     (send! exchange 405 {:error {:type "method_not_allowed"}})))
 
@@ -3212,22 +3212,22 @@
                                 provider params)]
                     (redirect! exchange
                                (str "/?auth=sso&provider=" (name provider)
-                                    "#settings")
+                                    "#/settings")
                                {"Set-Cookie" (session-cookie (:token result))}))
                   (catch Exception error
                     (identity/record-auth-failure! provider error)
                     (redirect! exchange
                                (str "/?auth=error&provider=" (name provider)
-                                    "#settings"))))
+                                    "#/settings"))))
                 (try
                   (identity/complete-oauth! provider params)
                   (redirect! exchange
                              (str "/?connection=connected&provider="
-                                  (name provider) "#settings"))
+                                  (name provider) "#/settings"))
                   (catch Exception _
                     (redirect! exchange
                                (str "/?connection=error&provider="
-                                    (name provider) "#settings"))))))
+                                    (name provider) "#/settings"))))))
 
             (conversation-route? path)
             (handle-conversation! config exchange method path)

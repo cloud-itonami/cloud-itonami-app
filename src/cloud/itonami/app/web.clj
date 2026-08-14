@@ -169,7 +169,8 @@
   .sidebar__utility{padding-top:.5rem;border-top:1px solid var(--color-neutral-solid-gray-200)}
   .local-nav__item{width:100%;border:0;border-radius:.5rem;background:transparent;
     color:var(--color-neutral-solid-gray-800);display:flex;align-items:center;gap:.75rem;
-    min-height:2.75rem;padding:.5rem .75rem;text-align:left;cursor:pointer}
+    min-height:2.75rem;padding:.5rem .75rem;text-align:left;cursor:pointer;
+    text-decoration:none;box-sizing:border-box}
   .local-nav__item:hover{background:var(--color-neutral-solid-gray-50)}
   .local-nav__item:disabled{cursor:not-allowed;opacity:.42;background:transparent}
   .local-nav__item:focus-visible{outline:4px solid var(--color-primitive-yellow-300);outline-offset:1px}
@@ -1177,9 +1178,12 @@
   (slurp (io/resource "cloud/itonami/app/signal.js")))
 
 (defn- nav-item [view title icon badge-id]
-  [:button {:class "local-nav__item" :type "button" :data-view view
-            :data-title title :aria-label title
-            :aria-current (if (= view "chat") "page" "false")}
+  ;; Real `#/name` links (kami-app-nle / ADR-2608080100). The fragment is
+  ;; the SPA address, not a CID — kotoba.protocol.ref refuses fragments
+  ;; as identity (ADR-2608145100).
+  [:a {:class "local-nav__item" :href (str "#/" view)
+       :data-view view :data-title title :aria-label title
+       :aria-current (if (= view "chat") "page" "false")}
    [:span {:class "nav-icon" :aria-hidden "true"} icon]
    [:span {:class "nav-label"} title]
    (when badge-id [:span {:class "nav-badge" :id badge-id} "—"])])
@@ -1205,6 +1209,14 @@
    [:div {:class "view-header__copy"}
     (dds/heading 1 title {:size "36"})
     [:p {:class "view-lead"} lead]]])
+
+(defn- accordion-with-id
+  "DADS accordion with the id on `details`, so a `$('#id')` in the script
+  is a real element id — putting it on `summary` (dds/accordion's :id) would
+  make the lookup a compound selector and fail every-scripted-element-exists."
+  [id summary content]
+  (let [[tag attrs & children] (dds/accordion summary content {})]
+    (into [tag (assoc attrs :id id)] children)))
 
 (defn page-html [configuration]
   (let [cloud? (get-in configuration [:routing :cloud-enabled?])
@@ -2631,76 +2643,67 @@
           [:ul {:class "memory-recent" :id "memory-recent-list"}
            [:li "まだ記憶はありません。"]]]]
         [:section {:class "view signin-view" :data-view-panel "signin" :hidden true}
+         ;; Copy and IA match app-auth `sign_in_page.cljc` (ADR-0045). This
+         ;; panel is a client of that ceremony, not a second one.
          (view-header "サインイン"
-                      "Cloud Itonami を使う本人として、この端末にセッションを作ります。")
-         ;; The headline is a default, not a claim: which entrances this
-         ;; deployment actually has is a runtime fact (`auth-methods`), so the
-         ;; client writes the sentence under it. The previous copy named
-         ;; Passkey, Email and SSO unconditionally, on a screen where an
-         ;; unconfigured Email card is hidden and unconfigured SSO buttons are
-         ;; disabled — it described a deployment rather than this one.
+                      "パスキーでサインインします。Email や SSO を連携済みなら、それでも入れます。")
          [:div {:class "security-callout" :id "passkey-gate-notice"
                 :role "status" :aria-live "polite"}
-          [:strong {:id "signin-gate-headline"} "Itonami Cloud でサインインしてください。"]
+          [:strong {:id "signin-gate-headline"} "パスキーでサインインしてください。"]
           [:span {:id "signin-gate-note"}
-           " auth.itonami.cloud が入口です。この端末の Passkey は追加確認に使います。"]]
+           " 入口は auth.itonami.cloud です。この端末の Passkey は追加確認に使います。"]]
          [:div {:class "signin-layout" :id "identity-onboarding"}
           [:div {:class "local-card"}
-           (dds/heading 2 "サインイン / 新規登録" {:size "24"
-                                                  :id "registration-title"})
+           (dds/heading 2 "サインイン" {:size "24" :id "registration-title"})
            [:p {:class "view-lead" :id "registration-lead"}
-            "auth.itonami.cloud で本人確認します。初めてなら itonami.cloud でパスキーを作ってから戻ります。"]
-           ;; Hosted identity is the entrance (ADR-0035 / ADR-0041). It must
-           ;; be in the HTML, not inside `#registered-auth` which starts
-           ;; hidden — a script that never runs left only local Passkey.
+            "パスキーでサインインします。初めてなら itonami.cloud でパスキーを作ってから戻ります。"]
            [:div {:class "settings-form" :id "itonami-cloud-signin-card"}
-            (dds/heading 3 "Itonami Cloud で続ける" {:size "20"})
+            [:div {:class "local-actions"}
+             ;; Hosted assertion. Same verb as app-auth; the href is the
+             ;; GET navigation from ADR-0042, not a second ceremony.
+             (dds/button "パスキーでサインイン"
+                         {:type :solid-fill :size "lg"
+                          :id "itonami-cloud-signin"
+                          :href "/api/auth/itonami/start"})
+             (dds/button "パスキーを作る"
+                         {:type :text
+                          :id "itonami-enrolment-link"
+                          :href "https://itonami.cloud/signin/"})]
             [:p {:class "form-help"}
-             "auth.itonami.cloud で本人確認し、この端末には短期コードからローカルセッションだけを作ります。"]
-            ;; A real link, not a fetch. POST /start required Origin and
-            ;; 403'd on 127.0.0.1 before the hosted page could open.
-            [:a {:class "primary-action" :id "itonami-cloud-signin"
-                 :href "/api/auth/itonami/start"}
-             "auth.itonami.cloud でサインイン"]
-            [:p {:class "form-help"}
-             [:a {:id "itonami-enrolment-link"
-                  :href "https://itonami.cloud/signin/"}
-              "アカウントを作る（itonami.cloud）"]]]
-           [:div {:class "settings-stack" :id "registered-auth" :hidden true}
-            [:div {:class "settings-form"}
-             (dds/heading 3 "Passkey で続ける" {:size "20"})
-             [:p {:class "form-help"}
-              "この端末の Passkey で本人確認します。認証情報は端末から出ません。"]
-             ;; Secondary. Two identically-styled primary buttons stacked gave
-             ;; a first-time person no recommended path — and this one only
-             ;; works for somebody already registered on THIS device, which is
-             ;; not who is stuck on this screen.
-             [:button {:class "tool-button" :id "passkey-signin" :type "button"}
-              "Passkey でサインイン"]]
-            [:form {:class "settings-form" :id "registration-form"}
-             [:p {:class "form-help"}
-              "この端末だけに User を作る経路です。通常の登録は itonami.cloud のパスキーです。"]
-             [:button {:class "tool-button" :id "registration-submit"
-                       :type "submit"} "この端末だけで登録"]]
-            [:form {:class "settings-form" :id "email-login-form" :hidden true}
-             (dds/heading 3 "Emailで続ける" {:size "20"})
-             [:p {:class "form-help"}
-              "10分間・一回限りのリンクを送ります。新規登録が有効な環境では、そのままUserを作成できます。"]
-             [:div {:class "field"}
-              [:label {:for "email-login-address"} "メールアドレス"]
-              [:input {:id "email-login-address" :name "email" :type "email"
-                       :required true :autocomplete "email"}]]
-             [:button {:class "tool-button" :id "email-login-submit"
-                       :type "submit"} "ログインリンクを送る"]]
-            ;; Hidden until the client knows at least one provider is
-            ;; configured. A card of disabled buttons whose only explanation is
-            ;; a `title` tooltip reads as a broken entrance to anyone on a
-            ;; touch screen, and as an entrance to a screen reader.
-            [:div {:class "settings-form" :id "sso-signin-card" :hidden true}
-             (dds/heading 3 "SSOで続ける" {:size "20"})
-             [:p {:class "form-help"}
-              "Google、Microsoft、GitHubの認証だけを使います。メールやリポジトリへのアクセス権は要求しません。"]
-             [:div {:class "button-row" :id "sso-signin-list"}]]]]
+             "鍵は 1Password / Bitwarden / iCloud キーチェーン / Google パスワードマネージャー のいずれかに保存してください。登録は itonami.cloud で行います。"]]
+           ;; Device-local Passkey / Email / SSO are recovery, not the
+           ;; first-time entrance. Closed until the person opens it, or
+           ;; until an interrupted owner ceremony needs to resume.
+           (accordion-with-id
+            "local-recovery"
+            "この端末の復旧"
+            [:div {:class "settings-stack" :id "registered-auth"}
+             [:div {:class "settings-form"}
+              (dds/heading 3 "この端末の Passkey" {:size "20"})
+              [:p {:class "form-help"}
+               "この端末に既にある Passkey で本人確認します。認証情報は端末から出ません。"]
+              [:button {:class "tool-button" :id "passkey-signin" :type "button"}
+               "この端末の Passkey で続ける"]]
+             [:form {:class "settings-form" :id "registration-form"}
+              [:p {:class "form-help"}
+               "この端末だけに User を作る経路です。通常の登録は itonami.cloud のパスキーです。"]
+              [:button {:class "tool-button" :id "registration-submit"
+                        :type "submit"} "この端末だけで登録"]]
+             [:form {:class "settings-form" :id "email-login-form" :hidden true}
+              (dds/heading 3 "Emailで続ける" {:size "20"})
+              [:p {:class "form-help"}
+               "10分間・一回限りのリンクを送ります。新規登録が有効な環境では、そのままUserを作成できます。"]
+              [:div {:class "field"}
+               [:label {:for "email-login-address"} "メールアドレス"]
+               [:input {:id "email-login-address" :name "email" :type "email"
+                        :required true :autocomplete "email"}]]
+              [:button {:class "tool-button" :id "email-login-submit"
+                        :type "submit"} "ログインリンクを送る"]]
+             [:div {:class "settings-form" :id "sso-signin-card" :hidden true}
+              (dds/heading 3 "SSOで続ける" {:size "20"})
+              [:p {:class "form-help"}
+               "Google、Microsoft、GitHubの認証だけを使います。メールやリポジトリへのアクセス権は要求しません。"]
+              [:div {:class "button-row" :id "sso-signin-list"}]]])]
           [:div {:class "local-card"}
            (dds/heading 2 "招待された User" {:size "24"})
            [:p {:class "form-help"}

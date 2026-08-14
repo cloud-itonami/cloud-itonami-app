@@ -95,7 +95,7 @@
     (is (pos? signin-start))
     (is (> settings-start signin-start))
     (doseq [id ["identity-onboarding" "itonami-cloud-signin" "itonami-enrolment-link"
-                "registration-form" "registered-auth"
+                "registration-form" "registered-auth" "local-recovery"
                 "passkey-signin" "email-login-form" "sso-signin-list"
                 "enrollment-form"]]
       (is (str/includes? signin-html (str "id=\"" id "\"")) id)
@@ -115,11 +115,21 @@
     (is (not (str/includes? signin-html "Passkey の P-256 公開鍵から User DID"))
         "first-time copy must not mint a local did:key as the story")
     (is (str/includes? settings-html "id=\"identity-workspace\""))
-    (is (str/includes? js "const emailLoginToken = new URLSearchParams(initialFragment)"))
+    (is (str/includes? js "const viewFromHash = (raw) => {"))
+    (is (str/includes? js "const emailLoginToken = new URLSearchParams("))
+    (is (str/includes? js "if (location.hash !== target) history.replaceState(null, '', target);"))
+    (is (str/includes? js "window.addEventListener('hashchange'"))
+    (is (str/includes? html "href=\"#/signin\""))
+    (is (str/includes? html "href=\"#/chat\""))
+    (is (str/includes? html "href=\"#/settings\""))
     (is (str/includes? js "const token = emailLoginToken;"))
     (is (not (str/includes? js
                             "const token = new URLSearchParams(location.hash.slice(1))"))
-        "showView must not erase the proof before the one finishing POST")))
+        "showView must not erase the proof before the one finishing POST")
+    (is (str/includes? signin-html "パスキーでサインイン"))
+    (is (str/includes? signin-html "パスキーを作る"))
+    (is (not (str/includes? signin-html "auth.itonami.cloud でサインイン"))
+        "the hostname is not the verb; the hosted page's copy is")))
 
 (deftest the-signin-gate-describes-this-deployment-and-not-a-general-one
   ;; The screen a person meets when the owner ceremony was interrupted:
@@ -150,6 +160,10 @@
         "the gate must be rewritten on every identity render, not once")
     (is (str/includes? js "入口は auth.itonami.cloud")
         "the gate leads with hosted auth when it is configured")
+    (is (str/includes? signin-html "dads-accordion")
+        "device-local recovery is an accordion, not a parallel ceremony")
+    (is (str/includes? js "recovery.open = Boolean(data['passkey-required?'])")
+        "an interrupted owner ceremony opens the recovery accordion")
     ;; The copy that made the promise this deployment could not keep.
     (is (not (str/includes? html "通常の入口は Passkey、Email、SSO です")))
     (is (not (str/includes? js "'Passkey、Email、またはSSOで続行できます。'")))))
