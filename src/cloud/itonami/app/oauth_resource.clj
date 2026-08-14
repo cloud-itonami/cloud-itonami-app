@@ -6,6 +6,7 @@
   resource URL and carry the route's scope. No bearer token is persisted."
   (:require [clojure.data.json :as json]
             [clojure.string :as str]
+            [cloud.itonami.app.kotoba-oracle :as oracle]
             [cloud.itonami.app.store :as store])
   (:import [java.net URI URLEncoder]
            [java.net.http HttpClient HttpRequest HttpRequest$BodyPublishers
@@ -88,6 +89,14 @@
       (throw (ex-info "hosted MCP resource requires HTTPS"
                       {:type :oauth-resource/insecure-resource})))
     (str base "/mcp")))
+
+
+(defn oauth-resource-route? [method path]
+  "Whether this request is the RFC 9728 protected-resource document.
+
+  The judgement is in `oauth_resource_core.kotoba` and RUNS from there.
+  This namespace still owns metadata, resource URL and introspection."
+  (oracle/call :oauth-resource 'oauth-resource-route? [(str method) (str path)]))
 
 (defn metadata-url [configuration]
   (str (str/replace (resource-origin configuration) #"/+$" "")

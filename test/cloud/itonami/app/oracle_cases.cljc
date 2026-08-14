@@ -137,6 +137,18 @@
     {:oracle :health :export 'health-route? :args ["GET" "/"] :expect false}
     {:oracle :health :export 'health-route? :args ["GET" "/healthz"] :expect false}
 
+    ;; ── oauth-resource (RFC 9728 discovery) ────────────────────────
+    {:oracle :oauth-resource :export 'oauth-resource-route?
+     :args ["GET" "/.well-known/oauth-protected-resource/mcp"] :expect true}
+    {:oracle :oauth-resource :export 'oauth-resource-route?
+     :args ["POST" "/.well-known/oauth-protected-resource/mcp"] :expect false}
+    {:oracle :oauth-resource :export 'oauth-resource-route?
+     :args ["GET" "/health"] :expect false}
+    {:oracle :oauth-resource :export 'oauth-resource-route?
+     :args ["GET" "/.well-known/did.json"] :expect false}
+    {:oracle :oauth-resource :export 'oauth-resource-route?
+     :args ["GET" "/.well-known/oauth-protected-resource"] :expect false}
+
     ;; ── fleet-core ──────────────────────────────────────────────────
     {:oracle :fleet-core :export 'catalog-schema-ok?
      :args ["cloud.itonami.fleet-catalog.v1"] :expect true}

@@ -1,0 +1,18 @@
+;; RFC 9728 protected-resource metadata: is THIS request that document?
+;;
+;; Sibling of `health_core.kotoba` (ADR-0038), not a second liveness probe.
+;; The metadata body, resource URL and introspection stay in
+;; `oauth_resource.clj`. Admission of
+;; `GET /.well-known/oauth-protected-resource/mcp` is the only judgement here.
+;;
+;; Inverting the shipped KIR must 404 this path and must leave `/health`
+;; answering (different oracle id). Native-crossable shape: two `:string`
+;; arguments and a `:bool` result. Do not add a self-restriction here without
+;; compiling for `:x86_64-kotoba-v1` first.
+
+(ns cloud.itonami.app.oauth-resource
+  (:export [oauth-resource-route?]))
+
+(defn oauth-resource-route? [method :string path :string] :bool
+  (and (string=? method "GET")
+       (string=? path "/.well-known/oauth-protected-resource/mcp")))

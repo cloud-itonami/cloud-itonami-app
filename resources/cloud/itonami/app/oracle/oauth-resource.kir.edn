@@ -1,0 +1,22 @@
+{:format :kotoba.kir/v4,
+ :signature nil,
+ :functions
+ [{:name oauth-resource-route?,
+   :params [method path],
+   :result :bool,
+   :effects #{},
+   :body
+   (let
+    [__kotoba_and_2 (string=? method "GET")]
+    (if
+     __kotoba_and_2
+     (string=? path "/.well-known/oauth-protected-resource/mcp")
+     __kotoba_and_2)),
+   :param-types [:string :string]}],
+ :oracle-value nil,
+ :schema-identities nil,
+ :exports [oauth-resource-route?],
+ :schemas nil,
+ :effects #{},
+ :blocks [],
+ :entry nil}
