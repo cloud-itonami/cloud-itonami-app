@@ -435,7 +435,17 @@
   ;;   clojure -M:test:gen
   :gen {:main-opts ["-m" "cloud.itonami.app.kotoba-oracle-gen"]}
   :test {:extra-paths ["test"]
-         :extra-deps {datascript/datascript {:mvn/version "1.7.8"}}
+         :extra-deps {datascript/datascript {:mvn/version "1.7.8"}
+                      ;; JVM host for kexe artifacts. TEST-ONLY: the default
+                      ;; suite now runs a one-core native canary
+                      ;; (`native-canary-test`). `native-exec` resolves
+                      ;; `kototama.native.executor` at call time, so nothing
+                      ;; that only runs the KIR interpreter inherits it.
+                      ;; Production `kotoba-oracle/call` stays on the
+                      ;; interpreter (ADR-0037). `tender-native` redirects here.
+                      io.github.kotoba-lang/kototama-native
+                      {:git/url "https://github.com/kotoba-lang/kototama-native.git"
+                       :git/sha "e52b41a68481033f40a511185e3347633612169a"}}
          ;; `kotoba-lang/compiler` is TEST-ONLY here, for the decision-core
          ;; parity gate (`policy-kotoba-parity-test` over
          ;; `src/cloud/itonami/app/policy.kotoba`). No `src/` namespace requires
@@ -477,6 +487,12 @@
          {io.github.kotoba-lang/compiler
           {:git/url "https://github.com/kotoba-lang/compiler.git"
            :git/sha "1644b326eefa0951a6343cee9aff88fe9ba745e2"}
+          ;; kototama-native's own deps.edn names a newer kir. Newest-wins
+          ;; would silently upgrade the interpreter every test loads, and
+          ;; the shipped `*.kir.edn` were emitted for this pin. Hold it.
+          io.github.kotoba-lang/kotoba-kir
+          {:git/url "https://github.com/kotoba-lang/kotoba-kir.git"
+           :git/sha "da24cae65e82f91352c5b96b0c58f21a52911277"}
           io.github.kotoba-lang/io-multiformats
           {:git/url "https://github.com/kotoba-lang/io-multiformats.git"
            :git/sha "dc5200329d2fabce6edb7ca5c87c477cec0ea162"}}

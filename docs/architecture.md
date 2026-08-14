@@ -1303,10 +1303,16 @@ asks about. `fleet_core` and `organism_worker` moved the same way.
 
 That is delegation through the KIR interpreter, not a tendered Wasm component:
 the artifact is loaded and executed in-process, without a capability gate or a
-supervisor around it. These three cores are `kotoba/pure` — no effects, no
+supervisor around it. The cores are `kotoba/pure` — no effects, no
 capabilities — so there is nothing for a tender to gate yet. Tendering becomes
 the next hardening step when a core needs an effect, and this paragraph should
 not be read as claiming it already happened.
+
+The default test suite does run one native-crossable export
+(`policy/loopback-host?`) as machine code, differentially against the same
+compile's interpreter (ADR-0037). That is a canary, not the production path:
+`kotoba-oracle/call` is not pointed at kexe artifacts. Native is a process
+spawn, and the exports that take a record cannot cross a kexe boundary.
 
 ## MCP surface
 
