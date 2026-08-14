@@ -1,4 +1,4 @@
-# ADR-0045: An approval belongs to the instruction it was asked under
+# ADR-0046: An approval belongs to the instruction it was asked under
 
 Status: accepted and implemented
 
