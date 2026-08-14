@@ -9358,6 +9358,16 @@
         node.append(state);
         return node;
       }
+      if (card.standing === 'superseded') {
+        // Asked under an instruction the person has since replaced. The server
+        // refuses it, so rendering 承認して実行 would be a button whose only
+        // outcome is an error — the same failure `authable?` prevents on a
+        // connection card. Say what happened instead (ADR-0046).
+        const state = make('span', 'bots-card__state', '古い指示のため取り下げ');
+        state.dataset.state = 'superseded';
+        node.append(state);
+        return node;
+      }
       const row = make('div', 'bots-card__row');
       const decide = async (decision, button) => {
         button.disabled = true;

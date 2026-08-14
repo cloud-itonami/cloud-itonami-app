@@ -615,6 +615,12 @@ of the connectors you picked and nothing else.
   first write tool stops the loop and becomes an approval card. A Bot may carry
   out what was approved; it may not approve, and no session it could hold makes
   it able to.
+- **An approval belongs to the instruction it was asked under.** If you say
+  something else instead of answering the card, the request is retired rather
+  than left waiting: the card says 古い指示のため取り下げ, the Bot stops
+  reporting 承認待ち, and approving it afterwards is refused. Consent does not
+  outlive the instruction that prompted it — see
+  [ADR-0046](docs/adr/0046-an-approval-belongs-to-the-instruction-it-was-asked-under.md).
 - **Accounts, not providers.** If you have two Google accounts, the Bot asks
   which one before it acts rather than picking. Name them from the connection
   card; add another with `＋ 別のアカウントを追加`.

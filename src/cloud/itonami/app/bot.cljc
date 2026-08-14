@@ -214,6 +214,14 @@
    [[:enabled :bool] [:held-run :bool]
     [:unmet-connection :bool] [:active-run :bool]]])
 
+(def ^:private request-record
+  [:record :bot/request
+   [[:asked-at :i64] [:current :i64] [:answered :bool]]])
+
+(def request-standings
+  "The core's `:i64` standing codes, mapped once."
+  {0 :open 1 :answered 2 :superseded})
+
 (def status-codes
   "The core's `:i64` status codes, mapped once. The numbers are the core's; the
   keywords are this application's."
@@ -279,6 +287,41 @@
                           (boolean (:unmet-connection? presence))
                           (boolean (:active-run? presence))])]))
        :idle))
+
+(defn request-standing
+  "Where one held request stands against the instruction in force now.
+
+  `:open` — still the person's to answer. `:answered` — a decision is recorded.
+  `:superseded` — it was raised under an instruction the person has since
+  replaced.
+
+  A DIRECTION is one instruction from the person and everything the Bot does
+  carrying it out. Approvals are scoped to it, which is the rule this
+  application did not have: a held write survived the person saying something
+  else, so the card stayed on screen with an enabled button, `decide!` refused
+  it as 承認待ちの操作がありません, and the Bot reported `waiting-approval` for
+  the rest of the conversation. Consent must not outlive the instruction it was
+  asked under."
+  [{:keys [asked-at current answered?]}]
+  (get request-standings
+       (oracle/i64-value
+        (oracle/call
+         :bot 'request-standing
+         [(oracle/record request-record
+                         [(oracle/i64 (or asked-at 0))
+                          (oracle/i64 (or current 0))
+                          (boolean answered?)])]))
+       :open))
+
+(defn outstanding?
+  "Whether a held request is still something the person has to deal with."
+  [request]
+  (oracle/call
+   :bot 'outstanding?
+   [(oracle/record request-record
+                   [(oracle/i64 (or (:asked-at request) 0))
+                    (oracle/i64 (or (:current request) 0))
+                    (boolean (:answered? request))])]))
 
 (defn usable-accounts
   "The accounts a Bot may actually use at one provider: the ones it was bound
@@ -494,8 +537,16 @@
   "A held AgentRun, surfaced where the person is already looking.
 
   `:card/decision` is nil until a human session writes one. Nothing on this
-  card is a decision; it is the request, and `may-approve?` guards the write."
-  [{:keys [id run title summary impact action decision]}]
+  card is a decision; it is the request, and `may-approve?` guards the write.
+
+  `:card/direction` is which instruction the Bot was carrying out when it
+  stopped to ask. It is what lets `request-standing` retire the card when the
+  person says something else instead of answering — the card is left exactly as
+  written and the standing is recomputed, for the same reason `:card/state` is
+  recomputed on a connection card. Defaults to 0, which every later direction
+  supersedes: a card written before this field existed cannot be shown to still
+  be waiting for something, because nothing recorded what it was waiting for."
+  [{:keys [id run title summary impact action decision direction]}]
   {:card/id (required! id :card/id)
    :card/kind :approval
    :card/run (required! run :card/run)
@@ -503,6 +554,7 @@
    :card/summary summary
    :card/impact impact
    :card/action action
+   :card/direction (or direction 0)
    :card/decision decision})
 
 (defn message
