@@ -29,42 +29,71 @@ and enrolment KEK lives on that Worker. Serving the ceremony from
    a second identity.
 3. **Do not move the auth host.** `https://auth.itonami.cloud` stays the
    ceremony Name. The CID is a snapshot of the client document.
-4. **Do not publish IPNS `:kotoba.app/latest` in this slice.** Point a name
-   at a CID only after the put has been GET-verified.
+4. **Publish IPNS `:kotoba.app/latest` only after the put has been
+   GET-verified.** The name is this app's own Ed25519 key (`k51…`). The
+   record's Value is `/ipfs/{cid}`. HTTPS Location stays
+   `GET https://kotobase.net/ipfs/{cid}`. kotobase.net `GET /ipns/` is 410
+   (ADR-2608130000); do not restore the P2P proxy. Resolve via delegated
+   DHT routers (`kad.routing`).
 5. **`resources/cloud/itonami/app/kotoba.app.edn` is the last computed
    identity.** Tests recompute the CID from source and fail if it drifted
    without updating the lock. The HTML blob itself is not committed.
-   `:published` is filled only after a GET-verified put.
+   `:published` is filled only after a GET-verified put. `:kotoba.app/latest`
+   is filled only after a DHT GET-verified publish. `:kotoba.app/embed-url`
+   stays `ipfs://{cid}` (snapshot); `ipns://{k51}` is the update channel.
 
 ## Identity of the landed tree
 
+Snapshot (GET-verified archive, #82):
+
 ```
-ipfs://bafkreiey52hai5obtqeg5w2ix63orset4o74kxljif2gwdkxt5upre2wsi
+ipfs://bafkreig4jyeaynm47icfmqj3m5ya7iep2o7c4vk34pwpafm7tnf4tfimny
 ```
 
-801,104 bytes. App id `cloud.itonami.app`, kind `appview`,
+806,249 bytes. App id `cloud.itonami.app`, kind `appview`,
 `appview-of` `{:workspace "desktop"}`.
+
+Update channel:
+
+```
+ipns://k51qzi5uqu5dj6z20sjzztyay81591voe6yofukl0ylsmug9euf934z1g04erd
+```
+
+Sequence 1 (live GET 2026-08-14T12:53Z) still resolves to the previous
+snapshot `ipfs://bafkreiey52hai5obtqeg5w2ix63orset4o74kxljif2gwdkxt5upre2wsi`.
+Sequence 2 PUT to `delegated-ipfs.dev` returned 200, but GET
+`Cache-Control: public, max-age=3600` matches the spec default 1-hour
+record TTL, so the pointer cannot be GET-verified onto #82 until that
+TTL expires. Later records from this publisher use a 5-minute TTL.
 
 ## Implemented
 
 - `cloud.itonami.app.bundle` freezes `publication-config`, hashes UTF-8
   `page-html` as CIDv1 raw sha2-256, builds a `kotoba.protocol.app`
   manifest, and can PUT/GET `https://kotobase.net/ipfs/{cid}`.
+- `cloud.itonami.app.latest` signs a real IPNS Record (`ipns.record`)
+  over `/ipfs/{cid}` and publishes it through `kad.routing` to delegated
+  DHT routers. Seed: env `CLOUD_ITONAMI_APP_IPNS_SEED` / kagi
+  `cloud-itonami-app-latest`.
 - `io.github.kotoba-lang/kotoba-protocol` git pin
   `ca72b830ec27a14e562be2a8dcf92f68901e486b`.
-- Offline tests in `bundle_test.clj`, registered in `test_runner.clj`.
+- Offline tests in `bundle_test.clj` and `latest_test.clj`, registered in
+  `test_runner.clj`.
 
 ## Not implemented
 
-- IPNS `:kotoba.app/latest`.
 - Graph snapshot CID (`:kotoba.graph/cid`). Desktop kgraph still asserts
   locally.
 - Moving `auth.itonami.cloud` or enrolment at `itonami.cloud/signin/`.
+- Storage-backed `GET /ipns/` on kotobase.net (410 until a signed-record
+  archive plane exists). Identity of the channel is still `ipns://{k51}`.
 
 ## Verification
 
 - `cloud.itonami.app.bundle-test`: 5 tests, 21 assertions, 0 failures, 0
   errors. No network.
+- `cloud.itonami.app.latest-test`: 10 tests, 30 assertions, 0 failures, 0
+  errors. Injected router; disposable seed `(byte-array (range 32))`.
 - 2026-08-14 Location: `PUT` 201 then unauthenticated `GET` 200 of
   `https://kotobase.net/ipfs/bafkreiey52hai5obtqeg5w2ix63orset4o74kxljif2gwdkxt5upre2wsi`
   (801,104 bytes, Java HttpClient byte-equal to `page-html`). Worker
@@ -72,10 +101,22 @@ ipfs://bafkreiey52hai5obtqeg5w2ix63orset4o74kxljif2gwdkxt5upre2wsi
   (rotation-by-addition; primary slot was left in place). Archive GET
   `Cache-Control` includes `no-transform` so Cloudflare Web Analytics
   cannot inject `beacon.min.js` into the HTML.
+- 2026-08-14 IPNS: name
+  `k51qzi5uqu5dj6z20sjzztyay81591voe6yofukl0ylsmug9euf934z1g04erd`
+  (kagi item `cloud-itonami-app-latest`, compartment `personal`). Sequence 1
+  value `/ipfs/bafkreiey52hai5obtqeg5w2ix63orset4o74kxljif2gwdkxt5upre2wsi`.
+  `kad.routing/publish` accepted `https://delegated-ipfs.dev/routing/v1`.
+  Independent GET of that router with `Accept: application/vnd.ipfs.ipns-record`
+  returned 200 (331 bytes, sequence 1). Sequence 2 PUT 200 onto
+  `bafkreig4jyeaynm47icfmqj3m5ya7iep2o7c4vk34pwpafm7tnf4tfimny`; GET still
+  served sequence 1 (`Cache-Control: public, max-age=3600`).
+  `GET https://kotobase.net/ipns/{k51}` remains 410 (ADR-2608130000).
 
 ## Resume
 
-IPNS `:kotoba.app/latest` pointing at this CID. Do not move the auth host.
+After sequence 1 TTL (~1h from 12:47Z): run `clojure -M -m cloud.itonami.app.latest`
+so sequence N GET-verifies onto the lock CID. Then graph snapshot CID
+(`:kotoba.graph/cid`). Do not move the auth host.
 
 ## Consequences
 
@@ -95,3 +136,7 @@ IPNS `:kotoba.app/latest` pointing at this CID. Do not move the auth host.
   resume command.
 - 2026-08-14: archive Location live (PUT 201 / GET 200 / byte-equal).
   Worker TOKEN_2 + no-transform. Next: IPNS latest.
+- 2026-08-14: IPNS `:kotoba.app/latest` — real sequence-1 record on
+  delegated DHT (previous snapshot). Sequence 2 PUT 200, GET still TTL-
+  cached. kotobase `/ipns/` stays 410. Next: GET-verify onto current CID,
+  then graph CID.

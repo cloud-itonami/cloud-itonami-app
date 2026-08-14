@@ -1,14 +1,21 @@
 ;; Computed 2026-08-14 from web/page-html (publication-config).
-;; Archive PUT 201 + GET 200 byte-equal the same day.
-;; See docs/adr/0047-the-workspace-document-is-a-raw-cid.md.
+;; Archive PUT 201 + GET 200 byte-equal (#82).
+;; IPNS name k51qzi5uqu5dj6z20sjzztyay81591voe6yofukl0ylsmug9euf934z1g04erd
+;; sequence 1 (live GET) still points at the previous snapshot; sequence 2
+;; PUT 200 but GET Cache-Control max-age=3600. See ADR-0047.
 {:kotoba.app/id "cloud.itonami.app"
  :kotoba.app/version "0.1.0"
  :kotoba.app/kind "appview"
  :kotoba.app/appview-of {:workspace "desktop"}
  :kotoba.app/bundle-cid "bafkreig4jyeaynm47icfmqj3m5ya7iep2o7c4vk34pwpafm7tnf4tfimny"
  :kotoba.app/embed-url "ipfs://bafkreig4jyeaynm47icfmqj3m5ya7iep2o7c4vk34pwpafm7tnf4tfimny"
+ :kotoba.app/latest "k51qzi5uqu5dj6z20sjzztyay81591voe6yofukl0ylsmug9euf934z1g04erd"
  :published {:archive "https://kotobase.net/ipfs/bafkreig4jyeaynm47icfmqj3m5ya7iep2o7c4vk34pwpafm7tnf4tfimny"
              :size 806249
              :at "2026-08-14T12:33:15.829538Z"
              :put-status 201
-             :get-status 200}}
+             :get-status 200}
+ :latest {:cid "bafkreiey52hai5obtqeg5w2ix63orset4o74kxljif2gwdkxt5upre2wsi"
+          :value "/ipfs/bafkreiey52hai5obtqeg5w2ix63orset4o74kxljif2gwdkxt5upre2wsi"
+          :sequence 1
+          :at "2026-08-14T12:47:40.052521Z"}}
