@@ -81,6 +81,37 @@
                                 (https? provider)
                                 (credentialed? provider)])]))
 
+(defn provider-readiness
+  "Public, secret-free evidence for why a provider is or is not admissible.
+
+  This does not decide a second time: `:allowed?` is the Kotoba decision from
+  `provider-allowed?`. The remaining fields expose only the derived booleans
+  that were supplied to that decision, and stable blocker names. No env var
+  value, credential name, URL path, or response body crosses this boundary."
+  [config provider]
+  (let [no-egress? (boolean (some-> (base-url-host provider) loopback-host?))
+        egress-permitted? (boolean (get-in config [:routing :cloud-enabled?]))
+        confidential? (https? provider)
+        authenticated? (credentialed? provider)
+        enabled? (boolean (:enabled? provider))
+        reviewed? (boolean (:reviewed? provider))]
+    {:allowed? (boolean (provider-allowed? config provider))
+     :enabled? enabled?
+     :reviewed? reviewed?
+     :no-egress? no-egress?
+     :egress-permitted? egress-permitted?
+     :confidential? confidential?
+     :authenticated? authenticated?
+     :blocking (cond-> []
+                 (not enabled?) (conj :disabled)
+                 (not reviewed?) (conj :unreviewed)
+                 (and (not no-egress?) (not egress-permitted?))
+                 (conj :cloud-egress-disabled)
+                 (and (not no-egress?) (not confidential?))
+                 (conj :tls-required)
+                 (and (not no-egress?) (not authenticated?))
+                 (conj :credential-missing))}))
+
 (defn select-provider [config requested-id]
   (let [provider-id (or requested-id
                         (get-in config [:routing :default-provider]))]

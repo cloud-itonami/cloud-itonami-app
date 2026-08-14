@@ -612,19 +612,22 @@
         mine (->> (vals (:bots (snapshot)))
                   (filter #(and (= (:user-id session) (:bot/owner %))
                                 (= (:organization-id session) (:bot/organization %))))
-                  (sort-by :bot/created-at))]
+                  (sort-by :bot/created-at))
+        provider-readiness
+        (mapv (fn [candidate]
+                (merge {:id (:id candidate)
+                        :name (:name candidate)
+                        :model (or (:default-model candidate)
+                                   (when (= (:id candidate)
+                                            (get-in configuration [:routing :default-provider]))
+                                     (get-in configuration [:routing :default-model])))}
+                       (policy/provider-readiness configuration candidate)))
+              (:providers configuration))]
     {:bots (mapv #(public-bot configuration did %) mine)
      :model-providers
-     (into []
-           (keep (fn [candidate]
-                   (when (policy/provider-allowed? configuration candidate)
-                     {:id (:id candidate)
-                      :name (:name candidate)
-                      :model (or (:default-model candidate)
-                                 (when (= (:id candidate)
-                                          (get-in configuration [:routing :default-provider]))
-                                   (get-in configuration [:routing :default-model])))})))
-           (:providers configuration))
+     (mapv #(select-keys % [:id :name :model])
+           (filter :allowed? provider-readiness))
+     :model-provider-readiness provider-readiness
      :catalog (catalog configuration did)
      :palette {:colors (mapv name bot/avatar-colors)
                :glyphs (mapv name bot/avatar-glyphs)}

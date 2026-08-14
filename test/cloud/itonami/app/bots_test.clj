@@ -123,6 +123,29 @@
             (is (= "xai" (:provider-id public)))
             (is (= "grok-4.6" (:model public)))))))))
 
+(deftest overview-reports-blocked-providers-without-making-them-selectable
+  (with-store
+    (fn []
+      (let [configuration
+            {:routing {:default-provider "ollama" :default-model "local"
+                       :cloud-enabled? false}
+             :providers [{:id "ollama" :name "Ollama" :kind :ollama
+                          :base-url "http://127.0.0.1:11434"
+                          :enabled? true :reviewed? true}
+                         {:id "xai" :name "Grok (xAI)" :kind :xai
+                          :base-url "https://api.x.ai/v1"
+                          :api-key-env "DEFINITELY_NOT_SET_ANYWHERE"
+                          :enabled? false :reviewed? false}]}
+            view (bots/overview configuration alice)
+            readiness (into {} (map (juxt :id identity))
+                            (:model-provider-readiness view))]
+        (is (= ["ollama"] (mapv :id (:model-providers view))))
+        (is (true? (get-in readiness ["ollama" :allowed?])))
+        (is (false? (get-in readiness ["xai" :allowed?])))
+        (is (= [:disabled :unreviewed :cloud-egress-disabled
+                :credential-missing]
+               (get-in readiness ["xai" :blocking])))))))
+
 (deftest multiple-tool-calls-fail-closed-before-any-effect
   (with-store
     (fn []
