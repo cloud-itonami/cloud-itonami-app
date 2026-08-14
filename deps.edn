@@ -7,6 +7,10 @@
   io.github.kotoba-lang/kaiyu
   {:git/url "https://github.com/kotoba-lang/kaiyu.git"
    :git/sha "1a5cfb23e52e548ac8b1180b7a70505fbb11a78c"}
+  ;; App identity: raw CIDv1 + :kotoba.app/* manifest (zero runtime deps).
+  io.github.kotoba-lang/kotoba-protocol
+  {:git/url "https://github.com/kotoba-lang/kotoba-protocol.git"
+   :git/sha "ca72b830ec27a14e562be2a8dcf92f68901e486b"}
   org.clojure/data.json {:mvn/version "2.5.1"}
 
   ;; The KIR interpreter is a RUNTIME dependency: `cloud.itonami.app.kotoba-
