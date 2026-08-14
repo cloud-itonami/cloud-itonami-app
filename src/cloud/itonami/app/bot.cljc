@@ -71,6 +71,7 @@
 (def max-brief 2000)
 (def max-provider-id 100)
 (def max-model 200)
+(def max-workspace 4096)
 
 ;; ── the record ──────────────────────────────────────────────────────────
 
@@ -143,6 +144,8 @@
         provider-id (optional-name (:bot/provider-id value)
                                    :bot/provider-id max-provider-id)
         model (optional-name (:bot/model value) :bot/model max-model)
+        workspace (optional-name (:bot/workspace value)
+                                 :bot/workspace max-workspace)
         tools (into (sorted-set) (map str) (:bot/tools value))]
     (when (contains? value :bot/status)
       (throw (ex-info "a Bot does not carry a status; it is computed"
@@ -171,6 +174,8 @@
      ;; site with no API at all.
      :bot/writes? (boolean (:bot/writes? value))
      :bot/browser? (boolean (:bot/browser? value))
+     :bot/coding? (boolean (:bot/coding? value))
+     :bot/workspace workspace
      :bot/enabled? (if (contains? value :bot/enabled?)
                      (boolean (:bot/enabled? value))
                      true)

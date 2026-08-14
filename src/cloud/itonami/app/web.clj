@@ -1431,6 +1431,19 @@
               [:span {:class "bots-permission__copy"}
                [:span "API の無いサイトは、このマシンの分離ブラウザーで（実行前に承認する）"]
                [:span {:class "bots-permission__help" :id "bots-browser-help"}]]]
+             [:label {:class "bots-permission"}
+              [:input {:id "bots-coding" :type "checkbox"}]
+              [:span {:class "bots-permission__copy"}
+               [:span "この PC の Git workspace で coding する"]
+               [:span {:class "bots-permission__help"}
+                "読み取りは自動、ファイル変更と commit は毎回承認します。shell・push・reset は使いません。"]]]
+             [:div {:class "field"}
+              [:label {:for "bots-workspace"} "Git workspace の絶対パス"]
+              [:input {:id "bots-workspace" :type "text" :maxlength "4096"
+                       :autocomplete "off"
+                       :placeholder "/Users/name/github/project"}]
+              [:span {:class "form-help"}
+               "既存の Git repository の root を正確に指定します。"]]
              [:button {:class "primary-action" :id "bots-create" :type "button"}
               "はじめる"]
              [:p {:class "drive-create__status" :id "bots-create-status"
@@ -1445,7 +1458,9 @@
              [:textarea {:id "bots-input" :rows "1" :maxlength "8000"
                          :placeholder "この Bot に頼む" :autocomplete "off"}]
              [:button {:class "primary-action" :id "bots-send" :type "submit"
-                       :disabled true} "送る"]]
+                       :disabled true} "送る"]
+             [:button {:class "tool-button" :id "bots-cancel" :type "button"
+                       :hidden true} "中止"]]
             [:p {:class "drive-create__status" :id "bots-thread-status-line"
                  :aria-live "polite"}]]]]]
         [:section {:class "view" :data-view-panel "capture" :hidden true}

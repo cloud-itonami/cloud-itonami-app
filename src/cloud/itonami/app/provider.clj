@@ -142,6 +142,25 @@
   ;; gateway's documented public ceiling and leaves room for the visible reply.
   2048)
 
+(defonce ^:private active-agent-streams (atom {}))
+
+(defn cancel-agent-stream!
+  "Close the provider body owned by `thread`, if headers have already arrived."
+  [thread]
+  (when-let [stream (get @active-agent-streams thread)]
+    (try (.close ^java.io.Closeable stream) (catch Exception _ nil)))
+  true)
+
+(defn- with-active-agent-reader [response consume!]
+  (let [thread (Thread/currentThread)
+        stream (.body response)]
+    (swap! active-agent-streams assoc thread stream)
+    (try
+      (with-open [input stream
+                  reader (BufferedReader. (InputStreamReader. input))]
+        (consume! reader))
+      (finally (swap! active-agent-streams dissoc thread)))))
+
 (defn- agent-request-body
   [provider {:keys [model messages tools temperature reasoning-effort]}]
   (cond-> {:model model
@@ -283,3 +302,75 @@
 
       :else (throw (ex-info "unsupported provider kind" {:provider provider})))
     {:content (.toString content) :usage @usage}))
+
+(defn- append-fragment [current fragment]
+  (str (or current "") (or fragment "")))
+
+(defn- merge-tool-fragment [current call]
+  (let [function (:function call)]
+    {:id (or (:id current) (:id call))
+     :type "function"
+     :function {:name (append-fragment (get-in current [:function :name])
+                                       (:name function))
+                :arguments (append-fragment (get-in current [:function :arguments])
+                                             (:arguments function))}}))
+
+(defn agent-turn-stream!
+  "Stream a tool-capable model turn. Text deltas are visible immediately;
+  fragmented OpenAI tool calls are assembled before Agent Control sees them."
+  [provider request on-delta]
+  (let [content (StringBuilder.)
+        calls (atom {})
+        finish-reason (volatile! nil)
+        body (assoc (agent-request-body provider request) :stream true)]
+    (cond
+      (= :ollama (:kind provider))
+      (let [response (streaming-response
+                      (str (:base-url provider) "/api/chat")
+                      (-> body
+                          (dissoc :temperature :max_tokens :parallel_tool_calls
+                                  :reasoning_effort)
+                          (assoc :options {:temperature (or (:temperature request) 0.2)
+                                           :num_predict (or (:max-output-tokens provider)
+                                                            default-agent-max-tokens)}))
+                      nil)]
+        (with-active-agent-reader
+          response
+          (fn [reader]
+            (doseq [line (line-seq reader) :when (not (str/blank? line))]
+              (let [chunk (json/read-str line :key-fn keyword)
+                    message (:message chunk)
+                    delta (:content message)]
+                (when-let [emitted (emit! on-delta delta)] (.append content emitted))
+                (when-let [tool-calls (seq (:tool_calls message))]
+                  (reset! calls (into {} (map-indexed vector tool-calls))))
+                (when (:done chunk) (vreset! finish-reason (:done_reason chunk))))))))
+
+      (openai-shaped? provider)
+      (let [response (streaming-response
+                      (openai-url provider "/chat/completions")
+                      (assoc body :stream_options {:include_usage true})
+                      (config/env-secret provider)
+                      (xai-headers provider request))]
+        (with-active-agent-reader
+          response
+          (fn [reader]
+            (doseq [line (line-seq reader)
+                    :let [data (when (str/starts-with? line "data:")
+                                 (str/trim (subs line 5)))]
+                    :when (and data (not= data "[DONE]"))]
+              (let [chunk (json/read-str data :key-fn keyword)
+                    choice (get-in chunk [:choices 0])
+                    delta (:delta choice)]
+                (when-let [emitted (emit! on-delta (:content delta))]
+                  (.append content emitted))
+                (doseq [[fallback call] (map-indexed vector (:tool_calls delta))]
+                  (let [index (or (:index call) fallback)]
+                    (swap! calls update index merge-tool-fragment call)))
+                (when-let [reason (:finish_reason choice)]
+                  (vreset! finish-reason reason)))))))
+
+      :else (throw (ex-info "unsupported provider kind" {:provider provider})))
+    (agent-result {:content (.toString content)
+                   :tool_calls (mapv val (sort-by key @calls))}
+                  @finish-reason)))

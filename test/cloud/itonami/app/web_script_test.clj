@@ -97,6 +97,19 @@
            (.indexOf load-bots "await selectBot(botsState.bots[0].id);"))
         "provider readiness renders before the initial selection fast path")))
 
+(deftest bots-expose-bounded-local-coding-and-cancellable-progress
+  (let [html (with-redefs [store/snapshot (constantly (store/initial-state))]
+               (web/page-html config))
+        js (slurp (io/file "resources/cloud/itonami/app/interaction.js"))]
+    (doseq [id ["bots-coding" "bots-workspace" "bots-cancel"]]
+      (is (str/includes? html (str "id=\"" id "\"")) id))
+    (is (str/includes? html "shell・push・reset は使いません"))
+    (is (str/includes? js "messages/stream"))
+    (is (str/includes? js "messages/${encodeURIComponent(runId)}/cancel"))
+    (is (str/includes? js "通常より時間がかかっています…"))
+    (is (str/includes? js "'coding?':$('#bots-coding').checked"))
+    (is (str/includes? js "workspace:$('#bots-workspace').value.trim()"))))
+
 (deftest authenticated-writes-recover-one-stale-csrf-without-relaxing-the-gate
   ;; A resident app is a long-lived single-page document. Hosted sign-in or a
   ;; renewed session can replace its cookie without replacing the JavaScript

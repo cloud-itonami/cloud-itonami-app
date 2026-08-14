@@ -1,38 +1,26 @@
 ;; Computed 2026-08-14 from web/page-html (publication-config).
-;; Titlebar change on main (#85) changed the document CID; lock follows source.
-;; Archive PUT 201 + GET 200 byte-equal 2026-08-14T13:37:07Z (797,675 bytes).
-;; IPNS name k51qzi5uqu5dj6z20sjzztyay81591voe6yofukl0ylsmug9euf934z1g04erd
-;; Sequence 3 origin GET-verified 2026-08-14T13:39:27Z via delegated-ipfs.dev
-;; (CF MISS, cache-bust query). Value is the current bundle CID. Default URL
-;; may still Cache-Control max-age=3600 on sequence 1 until ~13:47Z.
-;; L2 graph CID: chain.core/commit! of protocol.graph overlay
-;; (workspace "desktop" CreateLink → current bundle CID). Identity is the
-;; dag-cbor chain CID (bafy…). Location is the raw CID of the same 181
-;; commit bytes (bafkrei…). Archive PUT 201 + independent GET 200
-;; byte-equal 2026-08-14T13:37:07Z. Do not set :kotoba.graph/head.
+;; Bundle and graph archive PUT 201 + GET 200 byte-equal.
+;; IPNS sequence 4 PUT was accepted, but delegated GET remained stale; the
+;; lock therefore retains the last GET-verified sequence 3 value from main.
 {:kotoba.app/id "cloud.itonami.app"
  :kotoba.app/version "0.1.0"
  :kotoba.app/kind "appview"
  :kotoba.app/appview-of {:workspace "desktop"}
- :kotoba.app/bundle-cid "bafkreiesyfwcohnsr47o2eapym5ahwxzghpxpej253k6d4wygj4hrfnhp4"
- :kotoba.app/embed-url "ipfs://bafkreiesyfwcohnsr47o2eapym5ahwxzghpxpej253k6d4wygj4hrfnhp4"
+ :kotoba.app/bundle-cid "bafkreibbfzewh73wb7n4m3lhsrxrnh3l3wqiabyb4qqqiyxknn22rk4us4"
+ :kotoba.app/embed-url "ipfs://bafkreibbfzewh73wb7n4m3lhsrxrnh3l3wqiabyb4qqqiyxknn22rk4us4"
  :kotoba.app/latest "k51qzi5uqu5dj6z20sjzztyay81591voe6yofukl0ylsmug9euf934z1g04erd"
  :kotoba.graph/name "desktop"
- :kotoba.graph/cid "bafyreifwintjn6lddprilx7xpbxrtorzkuxhjwhs7c4x3c4aippelcipnu"
- :published {:archive "https://kotobase.net/ipfs/bafkreiesyfwcohnsr47o2eapym5ahwxzghpxpej253k6d4wygj4hrfnhp4"
-             :size 797675
-             :at "2026-08-14T13:37:07Z"
-             :put-status 201
-             :get-status 200}
+ :kotoba.graph/cid "bafyreibwiwfvvu4d2h6ysesuzyq32cv7ucuwaeo46top7reut7vezhobta"
+ :published {:archive "https://kotobase.net/ipfs/bafkreibbfzewh73wb7n4m3lhsrxrnh3l3wqiabyb4qqqiyxknn22rk4us4"
+             :size 804368 :at "2026-08-14T13:45:53.388133Z"
+             :put-status 201 :get-status 200}
  :latest {:cid "bafkreiesyfwcohnsr47o2eapym5ahwxzghpxpej253k6d4wygj4hrfnhp4"
           :value "/ipfs/bafkreiesyfwcohnsr47o2eapym5ahwxzghpxpej253k6d4wygj4hrfnhp4"
-          :sequence 3
-          :at "2026-08-14T13:39:27Z"}
- :graph {:cid "bafyreifwintjn6lddprilx7xpbxrtorzkuxhjwhs7c4x3c4aippelcipnu"
-         :raw-cid "bafkreifwintjn6lddprilx7xpbxrtorzkuxhjwhs7c4x3c4aippelcipnu"
-         :bundle-cid "bafkreiesyfwcohnsr47o2eapym5ahwxzghpxpej253k6d4wygj4hrfnhp4"
+          :sequence 3 :at "2026-08-14T13:39:27Z"}
+ :graph {:cid "bafyreibwiwfvvu4d2h6ysesuzyq32cv7ucuwaeo46top7reut7vezhobta"
+         :raw-cid "bafkreibwiwfvvu4d2h6ysesuzyq32cv7ucuwaeo46top7reut7vezhobta"
+         :bundle-cid "bafkreibbfzewh73wb7n4m3lhsrxrnh3l3wqiabyb4qqqiyxknn22rk4us4"
          :size 181
-         :archive "https://kotobase.net/ipfs/bafkreifwintjn6lddprilx7xpbxrtorzkuxhjwhs7c4x3c4aippelcipnu"
-         :at "2026-08-14T13:37:07Z"
-         :put-status 201
-         :get-status 200}}
+         :archive "https://kotobase.net/ipfs/bafkreibwiwfvvu4d2h6ysesuzyq32cv7ucuwaeo46top7reut7vezhobta"
+         :at "2026-08-14T13:47:32.247828Z"
+         :put-status 201 :get-status 200}}
