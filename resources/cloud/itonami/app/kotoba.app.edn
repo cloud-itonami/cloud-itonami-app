@@ -1,0 +1,9 @@
+;; Computed 2026-08-14 from web/page-html (publication-config).
+;; Archive PUT the same day returned 401 unauthorized; GET was 404.
+;; See docs/adr/0047-the-workspace-document-is-a-raw-cid.md.
+{:kotoba.app/id "cloud.itonami.app"
+ :kotoba.app/version "0.1.0"
+ :kotoba.app/kind "appview"
+ :kotoba.app/appview-of {:workspace "desktop"}
+ :kotoba.app/bundle-cid "bafkreiey52hai5obtqeg5w2ix63orset4o74kxljif2gwdkxt5upre2wsi"
+ :kotoba.app/embed-url "ipfs://bafkreiey52hai5obtqeg5w2ix63orset4o74kxljif2gwdkxt5upre2wsi"}
