@@ -13,8 +13,21 @@
     // Capture the one-time proof before showView() replaces the fragment.
     // Reading location.hash again near the end of this file loses the token
     // to the initial view redirect, so a valid link otherwise looks inert.
-    const emailLoginToken = new URLSearchParams(initialFragment).get('email-login');
-    const requestedView = emailLoginToken ? 'settings' : (initialFragment || 'chat');
+    //
+    // Views are addressed as `#/name` (kami-app-nle / ADR-2608080100). The
+    // legacy `#name` form still resolves so old redirects keep working.
+    const viewFromHash = (raw) => {
+      if (!raw) return '';
+      const path = raw.split('?')[0].replace(/^\//, '');
+      if (!path || path.includes('=')) return '';
+      return path;
+    };
+    const emailLoginToken = new URLSearchParams(
+      initialFragment.includes('email-login=')
+        ? (initialFragment.includes('?') ? initialFragment.slice(initialFragment.indexOf('?') + 1) : initialFragment)
+        : ''
+    ).get('email-login');
+    const requestedView = emailLoginToken ? 'settings' : (viewFromHash(initialFragment) || 'chat');
     let appUnlocked = false;
     let appBootstrapped = false;
     // Views whose data is public, so the Passkey gate would protect nothing.
@@ -58,17 +71,21 @@
       // in the information architecture, even when its section starts closed.
       active?.closest('.nav-section')?.setAttribute('open', '');
       $('#current-view').textContent = active?.dataset.title || 'Chat';
-      history.replaceState(null, '', `#${name}`);
+      const target = `#/${name}`;
+      if (location.hash !== target) history.replaceState(null, '', target);
       const brand = document.querySelector('.workspace')?.dataset.brand || 'Cloud Itonami';
       document.title = `${active?.dataset.title || 'Chat'} | ${brand}`;
       currentView = name;
       onViewChange(name);
     };
     $$('.local-nav__item').forEach((item) =>
-      item.addEventListener('click', () => {
-        showView(item.dataset.view);
-        setMobileMenuOpen(false);
-      }));
+      item.addEventListener('click', () => setMobileMenuOpen(false)));
+    window.addEventListener('hashchange', () => {
+      const name = viewFromHash(location.hash.slice(1));
+      if (name && $$('.view').some((panel) => panel.dataset.viewPanel === name)) {
+        showView(name);
+      }
+    });
     showView('signin');
 
     const form = $('#chat-form');
@@ -7925,7 +7942,7 @@
       $('#signin-gate-headline').textContent = resuming
         ? '前回の Passkey 作成が完了していません。'
         : hosted
-          ? 'Itonami Cloud でサインインしてください。'
+          ? 'パスキーでサインインしてください。'
           : 'サインイン方法を選んでください。';
       $('#signin-gate-note').textContent = !supported
         ? (others.length
@@ -7981,6 +7998,11 @@
       onboarding.hidden = data['authenticated?'];
       workspace.hidden = !data['authenticated?'];
       $('#registered-auth').hidden = Boolean(data['authenticated?']);
+      const recovery = $('#local-recovery');
+      if (recovery) {
+        recovery.hidden = Boolean(data['authenticated?']);
+        recovery.open = Boolean(data['passkey-required?']);
+      }
       $('#email-login-form').hidden = Boolean(data['authenticated?']) ||
         !data['email-login-configured?'];
       $('#registration-form').hidden = Boolean(data['registered?']);

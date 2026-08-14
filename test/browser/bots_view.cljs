@@ -70,7 +70,7 @@
                      (swap! console-errors conj
                             (str "HTTP " (.status res) " "
                                  (.method (.request res)) " " (.url res))))))
-          _ (.goto page (str base "/#bots") #js {:waitUntil "networkidle"})
+          _ (.goto page (str base "/#/bots") #js {:waitUntil "networkidle"})
           _ (.waitForTimeout page 1500)]
 
     (println "\n── the view is reachable and rendered ──")

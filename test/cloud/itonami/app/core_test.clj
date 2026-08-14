@@ -267,7 +267,7 @@
       (is (re-find #"data-view-panel=\"settings\"" html))
       (is (re-find #"id=\"registration-form\"" html))
       (is (re-find #"id=\"passkey-gate-notice\"" html))
-      (is (re-find #"サインイン方法を選んでください" html))
+      (is (re-find #"パスキーでサインインしてください" html))
       (is (re-find #"id=\"sso-signin-list\"" html))
       (is (re-find #"id=\"auth-methods-card\"" html))
       (is (re-find #"現在のOrganization" html))
