@@ -31,7 +31,8 @@
   (:require [clojure.java.shell :as shell]
             [clojure.string :as str]
             [cloud.itonami.app.acme :as acme]
-            [cloud.itonami.app.store :as store])
+            [cloud.itonami.app.store :as store]
+            [cloud.itonami.app.tls-binding :as tls-binding])
   (:import [java.io ByteArrayInputStream]
            [java.net InetSocketAddress]
            [java.security KeyFactory KeyStore]
@@ -44,7 +45,9 @@
 
 (def schema "cloud.itonami.app.tls-certificates.v1")
 
-(def challenge-prefix "/.well-known/acme-challenge/")
+;; Re-exported so callers keep one name for it; the value and the token
+;; rules are `tls_binding.cljc`, which runs on both runtimes.
+(def challenge-prefix tls-binding/challenge-prefix)
 
 ;; How long a published challenge token answers. The CA fetches it within
 ;; seconds; anything longer is a URL handing out a key authorization to whoever
@@ -122,9 +125,7 @@
 (defn challenge-token
   "The token in an ACME challenge path, or nil for any other path."
   [path]
-  (when (and (string? path) (str/starts-with? path challenge-prefix))
-    (let [token (subs path (count challenge-prefix))]
-      (when (re-matches #"[A-Za-z0-9_-]{16,256}" token) token))))
+  (tls-binding/challenge-token path))
 
 ;; ── the certificate store ────────────────────────────────────────────────────
 
@@ -146,20 +147,13 @@
 (defn renewal-due?
   "Whether this certificate should be replaced now.
 
-  A missing `:not-after` counts as due. A certificate whose expiry this process
-  cannot read is not a certificate it can promise anything about, and treating
-  the unreadable case as \"fine\" is how a silent failure becomes a green
-  check."
+  The decision is `tls-binding/renewal-due?`; this supplies the clock and the
+  window."
   ([record] (renewal-due? record (Instant/now)))
   ([record now]
-   ;; ONE decision, and it was two until a break test found that neither of them
-   ;; could be told from the other: a missing `:not-after` and an unparseable
-   ;; one both reached `true` by different routes, so inverting either changed
-   ;; nothing any test could see. Collapsed so that `no readable expiry` is a
-   ;; single fact, and breaking it breaks both cases.
-   (let [expiry (try (some-> (:not-after record) Instant/parse)
-                     (catch Exception _ nil))]
-     (or (nil? expiry) (.isAfter (.plus now renew-within) expiry)))))
+   (tls-binding/renewal-due? (:not-after record)
+                             (.toEpochMilli ^Instant now)
+                             (.toMillis renew-within))))
 
 ;; ── ordering ─────────────────────────────────────────────────────────────────
 

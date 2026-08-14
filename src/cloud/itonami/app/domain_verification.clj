@@ -38,6 +38,7 @@
   (:require [clojure.string :as str]
             [cloud.itonami.app.credential-trust :as credential-trust]
             [cloud.itonami.app.domain-binding :as binding]
+            [cloud.itonami.app.domain-name :as domain-name]
             [cloud.itonami.app.identity :as identity]
             [cloud.itonami.app.store :as store])
   (:import [java.net IDN URI]
@@ -96,19 +97,16 @@
   "Whether `domain` is one this deployment already speaks for.
 
   Three sources, all derived: the suffix it issues managed names from, the
-  domain it addresses accounts at, and the origin it serves itself on. Subdomains
-  count — a tenant proving `team.<suffix>` would be proving control of the
-  operator's zone, not of its own."
+  domain it addresses accounts at, and the origin it serves itself on. Gathering
+  them is this namespace's job because they come from the runtime profile;
+  deciding is `domain-name/service-owned?`, which is portable and knows nothing
+  about where the names came from."
   [domain]
-  (let [profile (identity/identity-profile)
-        own (into @runtime-service-hosts
-                  (keep #(some-> % str str/lower-case not-empty))
-                  [(:organization-domain-suffix profile)
-                   (:account-domain profile)])]
-    (boolean (some (fn [host]
-                     (or (= domain host)
-                         (str/ends-with? (str domain) (str "." host))))
-                   own))))
+  (domain-name/service-owned?
+   (let [profile (identity/identity-profile)]
+     (into @runtime-service-hosts
+           [(:organization-domain-suffix profile) (:account-domain profile)]))
+   domain))
 
 ;; ── domains ──────────────────────────────────────────────────────────────────
 
@@ -116,17 +114,16 @@
   "Return a lower-case ASCII DNS name, or nil when the input is not a domain.
   URL syntax, ports, paths, wildcards and public-suffix-only names are refused."
   [value]
+  ;; `IDN/toASCII` is the one part of this that could not move to `.cljc`:
+  ;; Unicode-to-ASCII is a platform primitive and `url.domainToASCII` is not the
+  ;; same function under STD3 rules. Swapping one for the other would change
+  ;; which names a tenant may claim, quietly, in a security boundary. The shape
+  ;; rules are `domain-name/valid-ascii-name?` and run on both runtimes.
   (try
     (let [domain (-> (str value) str/trim (str/replace #"\.$" "")
                      (IDN/toASCII IDN/USE_STD3_ASCII_RULES)
-                     str/lower-case)
-          labels (str/split domain #"\.")]
-      (when (and (<= 3 (count domain) 253)
-                 (<= 2 (count labels))
-                 (every? #(and (<= 1 (count %) 63)
-                               (re-matches #"[a-z0-9](?:[a-z0-9-]*[a-z0-9])?" %))
-                         labels))
-        domain))
+                     str/lower-case)]
+      (when (domain-name/valid-ascii-name? domain) domain))
     (catch Exception _ nil)))
 
 (defn- random-token []
@@ -239,17 +236,13 @@
   point of separating the gates, and a name two tenants can both reserve is a
   name neither of them can safely be told to point at this deployment."
   [all record]
-  (not (boolean
-        (some (fn [other]
-                (and (not= (:id record) (:id other))
-                     (= (:domain record) (:domain other))
-                     (contains? #{:claimed :live} (:status other))))
-              (vals all)))))
+  (domain-name/exclusive? (vals all) (:id record) (:domain record)
+                          #{:claimed :live}))
 
 (defn- probe-fresh? [record now]
-  (boolean
-   (when-let [at (get-in record [:probe :at])]
-     (.isAfter (Instant/parse at) (.minus ^Instant now probe-freshness)))))
+  (domain-name/fresh? (get-in record [:probe :at])
+                      (.toEpochMilli ^Instant now)
+                      (.toMillis probe-freshness)))
 
 (defn facts
   "The eight booleans the decision core is asked about, all established here.

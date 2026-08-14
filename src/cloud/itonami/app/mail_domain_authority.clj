@@ -35,6 +35,8 @@
             [cloud.itonami.app.domain-binding :as binding]
             [cloud.itonami.app.domain-verification :as naming]
             [cloud.itonami.app.identity :as identity]
+            [cloud.itonami.app.domain-name :as domain-name]
+            [cloud.itonami.app.mail-domain-records :as records]
             [cloud.itonami.app.store :as store])
   (:import [java.util UUID]))
 
@@ -52,53 +54,20 @@
   ;; test covers both authorities and neither can quietly reach real DNS.
   (naming/*txt-resolver* owner))
 
-(defn- of-kind
-  "The first TXT value at `owner` that announces itself as `prefix`.
-
-  Announced, not guessed: a zone can hold many TXT records at one name and
-  picking by position rather than by the `v=` tag is how a verification token
-  gets parsed as an SPF policy."
-  [owner prefix]
-  (some (fn [value]
-          (let [v (str/trim (str value))]
-            (when (str/starts-with? (str/lower-case v) prefix) v)))
-        (txt owner)))
-
 (defn spf
-  "`{:present? :closed? :value}` for the domain's SPF record.
-
-  `closed?` is the whole point of reading it. `v=spf1 +all` is a syntactically
-  valid record that authorizes every host on the internet to send as the
-  domain; counting it as proof would be counting a blank page as a signature."
+  "`{:present? :closed? :value}` for the domain's SPF record."
   [domain]
-  (if-let [value (of-kind domain "v=spf1")]
-    {:present? true
-     :closed? (boolean (re-find #"(?i)[-~]all\s*$" value))
-     :value value}
-    {:present? false :closed? false :value nil}))
+  (records/spf (txt domain)))
 
 (defn dkim
-  "`{:present? :value}` for `<selector>._domainkey.<domain>`.
-
-  An empty `p=` is how a key is REVOKED in DKIM, so a record with one is a
-  statement that the key is gone — the opposite of what its presence looks
-  like."
+  "`{:present? :value}` for `<selector>._domainkey.<domain>`."
   [domain selector]
-  (if-let [value (of-kind (str selector "._domainkey." domain) "v=dkim1")]
-    {:present? (boolean (re-find #"(?i)\bp=[A-Za-z0-9+/=]+" value)) :value value}
-    {:present? false :value nil}))
+  (records/dkim (txt (str selector "._domainkey." domain))))
 
 (defn dmarc
   "`{:present? :enforcing? :policy :value}` for `_dmarc.<domain>`."
   [domain]
-  (if-let [value (of-kind (str "_dmarc." domain) "v=dmarc1")]
-    (let [policy (some-> (re-find #"(?i)\bp\s*=\s*(none|quarantine|reject)" value)
-                         second str/lower-case)]
-      {:present? (some? policy)
-       :enforcing? (contains? #{"quarantine" "reject"} policy)
-       :policy policy
-       :value value})
-    {:present? false :enforcing? false :policy nil :value nil}))
+  (records/dmarc (txt (str "_dmarc." domain))))
 
 ;; ── records ──────────────────────────────────────────────────────────────────
 
@@ -114,12 +83,10 @@
              :observed (select-keys (:observed record) [:spf :dkim :dmarc]))))
 
 (defn- claim-exclusive? [all record]
-  (not (boolean
-        (some (fn [other]
-                (and (not= (:id record) (:id other))
-                     (= (:domain record) (:domain other))
-                     (= :authorized (:status other))))
-              (vals all)))))
+  ;; `:authorized` only. Naming reserves at `:claimed` because a tenant must be
+  ;; able to hold a name before cutting DNS over; mail has no such intermediate
+  ;; state, so nothing is reserved until all three records read.
+  (domain-name/exclusive? (vals all) (:id record) (:domain record) #{:authorized}))
 
 (defn facts
   "The nine booleans the core is asked about, all established here."
@@ -341,17 +308,7 @@
         (let [observed (:observed settled)]
           (fail! :mail-domain-authority/not-authorized
                  (str "まだ権限を確認できません: "
-                      (str/join "、"
-                                (cond-> []
-                                  (not (get-in observed [:spf :present?]))
-                                  (conj "SPF レコードがありません")
-                                  (and (get-in observed [:spf :present?])
-                                       (not (get-in observed [:spf :closed?])))
-                                  (conj "SPF が -all / ~all で閉じていません")
-                                  (not (get-in observed [:dkim :present?]))
-                                  (conj "DKIM 公開鍵がありません")
-                                  (not (get-in observed [:dmarc :present?]))
-                                  (conj "DMARC ポリシーがありません"))))
+                      (str/join "、" (records/missing observed)))
                  {:domain (:domain settled) :observed observed})))
       (public-record settled))))
 
