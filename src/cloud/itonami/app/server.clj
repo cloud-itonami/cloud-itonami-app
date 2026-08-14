@@ -783,6 +783,21 @@
       (require-csrf! exchange session)
       (send! exchange 200 (identity/unlink-login-identity! session request)))
 
+    ["GET" "/api/auth/itonami/start"]
+    ;; A document navigation, not a same-origin fetch. Browsers do not send
+    ;; Origin on GET, and requiring one is what made 127.0.0.1 unable to
+    ;; reach auth.itonami.cloud at all. The callback is always
+    ;; `:server :public-origin` (localhost), so after hosted sign-in the
+    ;; person lands on the name WebAuthn and app-auth already agreed on —
+    ;; even if they clicked this link from the bind address.
+    (let [session (identity/session
+                   (cookie-value exchange identity/cookie-name))]
+      (if session
+        (redirect! exchange "/")
+        (redirect! exchange
+                   (:url (identity/start-central-authentication!
+                          nil (origin config))))))
+
     ["POST" "/api/auth/itonami/start"]
     (let [session (identity/session
                    (cookie-value exchange identity/cookie-name))

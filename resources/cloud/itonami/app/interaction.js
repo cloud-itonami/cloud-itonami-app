@@ -8608,7 +8608,13 @@
       } finally { button.disabled = false; }
     });
     $('#itonami-cloud-signin').addEventListener('click', (event) => {
-      startCentralAuth(event.currentTarget);
+      // Browser follows href to GET /api/auth/itonami/start, which 303s to
+      // auth.itonami.cloud. Native webview cannot do WebAuthn, so it keeps
+      // the POST + system-browser handoff.
+      if (nativeSurface()) {
+        event.preventDefault();
+        startCentralAuth(event.currentTarget);
+      }
     });
     $('#itonami-cloud-link').addEventListener('click', (event) => {
       startCentralAuth(event.currentTarget);

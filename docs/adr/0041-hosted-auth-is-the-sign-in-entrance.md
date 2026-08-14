@@ -42,9 +42,9 @@ existing Worker.
 
 ## Consequences
 
-- A person who bookmarks `127.0.0.1:1338` lands on `localhost:1338` before
-  they click sign-in, so Origin, cookie jar, WebAuthn RP ID and OAuth
-  callback agree.
+- A person who bookmarks `127.0.0.1:1338` lands on `localhost:1338` for the
+  document. Sign-in itself no longer depends on that (ADR-0042): starting
+  hosted auth is a GET navigation that always uses the localhost callback.
 - Local Passkey DID minting is still implemented. It is no longer the card
   a first-time person meets.
 - Isolated servers on other ports still derive `redirect_uri` from origin.

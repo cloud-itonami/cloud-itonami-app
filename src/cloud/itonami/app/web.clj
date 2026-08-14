@@ -990,7 +990,9 @@
   .local-actions{display:flex;flex-wrap:wrap;gap:.5rem;align-items:center}
   .primary-action{min-height:2.75rem;border:0;border-radius:.5rem;
     background:var(--color-key-900);color:var(--color-neutral-white);
-    padding:.625rem 1rem;font-weight:700;cursor:pointer}
+    padding:.625rem 1rem;font-weight:700;cursor:pointer;
+    display:inline-flex;align-items:center;justify-content:center;
+    text-decoration:none;box-sizing:border-box}
   .primary-action:disabled{background:var(--color-neutral-solid-gray-300);cursor:not-allowed}
   .security-callout{padding:1rem;border-left:4px solid var(--color-key-600);
     background:var(--color-key-50);font-size:.875rem;line-height:1.7}
@@ -2655,8 +2657,10 @@
             (dds/heading 3 "Itonami Cloud で続ける" {:size "20"})
             [:p {:class "form-help"}
              "auth.itonami.cloud で本人確認し、この端末には短期コードからローカルセッションだけを作ります。"]
-            [:button {:class "primary-action" :id "itonami-cloud-signin"
-                      :type "button"}
+            ;; A real link, not a fetch. POST /start required Origin and
+            ;; 403'd on 127.0.0.1 before the hosted page could open.
+            [:a {:class "primary-action" :id "itonami-cloud-signin"
+                 :href "/api/auth/itonami/start"}
              "auth.itonami.cloud でサインイン"]
             [:p {:class "form-help"}
              [:a {:id "itonami-enrolment-link"

@@ -36,6 +36,7 @@
             [cloud.itonami.app.native-canary-test]
             [cloud.itonami.app.health-kotoba-parity-test]
             [cloud.itonami.app.health-http-test]
+            [cloud.itonami.app.central-auth-http-test]
             [cloud.itonami.app.oauth-resource-kotoba-parity-test]
             [cloud.itonami.app.oauth-resource-http-test]
             [cloud.itonami.app.did-web-kotoba-parity-test]
@@ -175,6 +176,7 @@
     cloud.itonami.app.native-canary-test
     cloud.itonami.app.health-kotoba-parity-test
     cloud.itonami.app.health-http-test
+    cloud.itonami.app.central-auth-http-test
     cloud.itonami.app.oauth-resource-kotoba-parity-test
     cloud.itonami.app.oauth-resource-http-test
     cloud.itonami.app.did-web-kotoba-parity-test
