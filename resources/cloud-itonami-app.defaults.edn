@@ -26,7 +26,7 @@
  :domain-binding {:recheck? true
                   :interval-hours 12
                   :initial-delay-minutes 15}
- ;; ACME (ADR-0045). No directory URL is shipped, so nothing is ordered until an
+ ;; ACME (ADR-0049). No directory URL is shipped, so nothing is ordered until an
  ;; operator names one — a default would spend a real CA's rate limit on a
  ;; deployment that never asked. `cloud.itonami.app.acme/staging-directory` is
  ;; the one to point at first; its certificates are not publicly trusted, which

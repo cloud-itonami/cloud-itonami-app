@@ -1,5 +1,5 @@
 (ns cloud.itonami.app.tls-certificate-test
-  "The certificate surface (ADR-0045).
+  "The certificate surface (ADR-0049).
 
   Three things are worth pinning and one of them needs a real handshake. The
   ACME challenge is a URL this process answers for a few minutes and must stop

@@ -1,4 +1,4 @@
-# ADR-0045: A certificate is ordered for a name this process already answers at
+# ADR-0049: A certificate is ordered for a name this process already answers at
 
 **Status:** accepted and implemented — 2026-08-14.
 
@@ -58,7 +58,7 @@ Proving a name does not order a certificate. A deployment behind a CDN or a
 reverse proxy already terminates TLS and should not be asking a CA for more; a
 rate limit spent on a name somebody else serves is spent for nothing.
 
-Renewal *is* on the timer, riding ADR-0044's sweep, and visits only certificates
+Renewal *is* on the timer, riding ADR-0048's sweep, and visits only certificates
 inside the 30-day window. It is the reason that sweep must not be slow: a
 certificate has a hard expiry, and one that lapses takes the name with it —
 the probe stops validating TLS, and the binding lapses too.
@@ -106,7 +106,7 @@ invalid, and the CA's error names neither:
 ## Alternatives
 
 **Leave it an operator fact, as ADR-0043 did.** Defensible, and it leaves the
-90-day clock outside the loop that ADR-0044 just closed for DNS.
+90-day clock outside the loop that ADR-0048 just closed for DNS.
 
 **Ship a directory URL by default.** One less step for the operator, and it
 spends a real CA's rate limit on every deployment that installs this and never

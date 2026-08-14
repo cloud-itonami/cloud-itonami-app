@@ -85,7 +85,7 @@
            [javax.crypto.spec SecretKeySpec]))
 
 (defonce server (atom nil))
-;; The opt-in TLS listener (ADR-0045). Separate from `server` because it is a
+;; The opt-in TLS listener (ADR-0049). Separate from `server` because it is a
 ;; different socket with a different lifetime, and a deployment that never
 ;; enables it must not have a nil check for it in the plain path.
 (defonce https-server (atom nil))
@@ -2122,7 +2122,7 @@
   routes on this subject belong here, including the public one."
   [exchange config method path]
   (cond
-    ;; The ACME HTTP-01 challenge (ADR-0045). Public and unauthenticated because
+    ;; The ACME HTTP-01 challenge (ADR-0049). Public and unauthenticated because
     ;; the CA holds no credential for this deployment, and answerable only for a
     ;; token this process published moments ago for an order it started. Served
     ;; as text/plain because RFC 8555 says the CA compares the body byte for
@@ -5320,7 +5320,7 @@
                       (with-kotobase-federation (handler configuration)
                                                 configuration)
                       configuration))
-     ;; The opt-in TLS listener (ADR-0045), serving the certificates this
+     ;; The opt-in TLS listener (ADR-0049), serving the certificates this
      ;; deployment has been issued and choosing among them by SNI. Default off:
      ;; this app binds loopback, and a deployment behind a terminator neither
      ;; needs it nor should be asked for it.
