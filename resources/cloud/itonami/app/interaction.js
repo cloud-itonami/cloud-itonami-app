@@ -7493,13 +7493,38 @@
       }
       return result;
     };
-    const writeJSON = async (path, method, body={}, authenticated=false) => {
-      const request = await fetch(path, {
-        method,
-        headers:authenticated ? identityHeaders() : {'Content-Type':'application/json'},
-        body:JSON.stringify(body)
-      });
+    const refreshIdentityForWrite = async () => {
+      // A hosted sign-in, session renewal, or resident-server restart can
+      // replace the cookie while this single-page document stays open.  The
+      // CSRF token belongs to that cookie's session, so the value captured by
+      // the page must move with it.  This same-origin read remains protected
+      // by the browser's origin boundary; it does not weaken the server check.
+      const request = await fetch('/api/identity', {cache:'no-store'});
       const data = await request.json();
+      if (!request.ok || typeof data.csrf !== 'string' || !data.csrf) {
+        throw new Error('セッションを更新できませんでした。もう一度サインインしてください。');
+      }
+      identityState = data;
+    };
+    const writeJSON = async (path, method, body={}, authenticated=false) => {
+      if (authenticated && !identityState?.csrf) await refreshIdentityForWrite();
+      const send = async () => {
+        const request = await fetch(path, {
+          method,
+          headers:authenticated ? identityHeaders() : {'Content-Type':'application/json'},
+          body:JSON.stringify(body)
+        });
+        return {request, data:await request.json()};
+      };
+      let {request, data} = await send();
+      // Retry once, and only for the server's exact stale-CSRF answer.  Other
+      // 403s (origin, authority, policy) must remain refusals rather than being
+      // disguised as session refreshes.
+      if (authenticated && request.status === 403
+          && data?.error?.type === 'invalid-csrf') {
+        await refreshIdentityForWrite();
+        ({request, data} = await send());
+      }
       if (!request.ok) throw new Error(data?.error?.message || '認証要求を完了できませんでした。');
       return data;
     };
