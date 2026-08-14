@@ -129,6 +129,24 @@ Until the domain resolves, credentials are signed under the issuer's `did:key`
 rather than an unpublished `did:web`, so they stay verifiable by anyone instead of
 naming an address that answers nothing.
 
+### What a custom domain does today, and what it is designed to do
+
+An owner can prove control of a company domain — `domain_verification` issues a
+TXT challenge at `_itonami-verification.<domain>` and reads public DNS to confirm
+it, exclusively across tenants. **That proof currently names nothing.** It writes
+`:verified-domain` on the tenant, which no code reads; the tenant's `:domain`
+stays the managed `<slug>.<organization-domain-suffix>`, or whatever
+`:organization-domain-overrides` asserts. So the sentence above about
+configuration not proving ownership is true, and the field that carries a proof
+is not the field that names the tenant.
+
+ADR-0043 is the accepted design that joins them: one `:domain` with a
+`:domain-source`, a binding lifecycle of `:pending → :claimed → :live → :lapsed`,
+and two gates — the existing TXT proof for the naming right, and a self-probe
+over the hardened fetch in `credential-trust` for the fact that this process
+actually answers at the name. **It is not implemented.** Until it is, treat a
+verified domain as a record that a proof happened and not as a name.
+
 ## Organization membership as a credential
 
 Membership is a row in this server's state *and* a W3C Verifiable Credential the
