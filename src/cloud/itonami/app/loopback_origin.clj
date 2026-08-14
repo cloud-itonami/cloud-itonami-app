@@ -3,12 +3,15 @@
 
   This process listens on 127.0.0.1. WebAuthn RP ID, the auth.itonami.cloud
   native client (`localhost:1338` callback), and the session cookie all
-  require the name `localhost`. Opening the IP in a browser is a sign-in that
-  cannot complete: `require-origin!` 403s, and even if it did not, the OAuth
-  callback would mint a cookie on localhost that this tab cannot read.
+  require the name `localhost`. Cookie-borne POSTs from the IP still 403
+  (`require-origin!`). Hosted sign-in itself is a GET navigation
+  (`/api/auth/itonami/start`, ADR-0042) that always uses the localhost
+  callback, so clicking the entrance from the bind address still opens
+  auth.itonami.cloud.
 
-  The document (`GET /`) is therefore sent to localhost on the same port.
-  API routes stay put so probes against the bind address keep working."
+  The document (`GET /`) is still sent to localhost on the same port so the
+  signed-in app and WebAuthn share one name. Other API routes stay put so
+  probes against the bind address keep working."
   (:require [clojure.string :as str])
   (:import [java.net URI]))
 
