@@ -131,6 +131,12 @@
     {:oracle :policy :export 'provider-allowed?
      :args [(oracle/record provider-record [true true false true true false])] :expect false}
 
+    ;; ── health ─────────────────────────────────────────────────────
+    {:oracle :health :export 'health-route? :args ["GET" "/health"] :expect true}
+    {:oracle :health :export 'health-route? :args ["POST" "/health"] :expect false}
+    {:oracle :health :export 'health-route? :args ["GET" "/"] :expect false}
+    {:oracle :health :export 'health-route? :args ["GET" "/healthz"] :expect false}
+
     ;; ── fleet-core ──────────────────────────────────────────────────
     {:oracle :fleet-core :export 'catalog-schema-ok?
      :args ["cloud.itonami.fleet-catalog.v1"] :expect true}

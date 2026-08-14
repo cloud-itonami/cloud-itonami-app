@@ -20,6 +20,7 @@
             [clojure.test :refer [deftest is testing]]
             [cloud.itonami.app.kotoba-oracle :as oracle]
             [cloud.itonami.app.kotoba-oracle-gen :as gen]
+            [cloud.itonami.app.health :as health]
             [cloud.itonami.app.policy :as policy]
             [kotoba.compiler.core :as compiler]))
 
@@ -63,6 +64,27 @@
           "and followed it in both directions")
       (finally (oracle/deregister-kir! :policy)))
     (is (true? (policy/loopback-host? "127.0.0.1")) "restored")))
+
+(deftest the-health-host-reads-the-artifact-rather-than-keeping-a-copy
+  ;; Same shape as the policy invert above. The HTTP handler is a separate
+  ;; check (`health-http-test`): this one is the host half, so a copy of the
+  ;; two equals inside `health.cljc` would fail here before a request ran.
+  (let [inverted (:kir (compiler/compile-source
+                        (str "(ns cloud.itonami.app.health"
+                             "  (:export [health-route?]))"
+                             "(defn health-route? [method :string path :string] :bool"
+                             "  (if (and (string=? method \"GET\") (string=? path \"/health\"))"
+                             "    false true))")
+                        gen/target {}))]
+    (is (true? (health/health-route? "GET" "/health")) "the shipped answer")
+    (try
+      (oracle/register-kir! :health inverted)
+      (is (false? (health/health-route? "GET" "/health"))
+          "the host followed the artifact")
+      (is (true? (health/health-route? "POST" "/health"))
+          "and followed it in both directions")
+      (finally (oracle/deregister-kir! :health)))
+    (is (true? (health/health-route? "GET" "/health")) "restored")))
 
 (deftest a-record-crosses-the-entry-boundary
   ;; `policy-kotoba-parity-test` used to say it could not, and built zero-arg
