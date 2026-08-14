@@ -2639,30 +2639,30 @@
          ;; disabled — it described a deployment rather than this one.
          [:div {:class "security-callout" :id "passkey-gate-notice"
                 :role "status" :aria-live "polite"}
-          [:strong {:id "signin-gate-headline"} "サインイン方法を選んでください。"]
+          [:strong {:id "signin-gate-headline"} "Itonami Cloud でサインインしてください。"]
           [:span {:id "signin-gate-note"}
-           " 重要操作では Passkey を追加確認します。"]]
+           " auth.itonami.cloud が入口です。この端末の Passkey は追加確認に使います。"]]
          [:div {:class "signin-layout" :id "identity-onboarding"}
           [:div {:class "local-card"}
            (dds/heading 2 "サインイン / 新規登録" {:size "24"
                                                   :id "registration-title"})
            [:p {:class "view-lead" :id "registration-lead"}
-            "いつもの認証方法を選べます。SSOとEmailは新規登録にも使え、Passkeyは重要操作の追加確認にも使います。"]
-           [:form {:class "settings-form" :id "registration-form"}
+            "auth.itonami.cloud で本人確認します。初めてなら itonami.cloud でパスキーを作ってから戻ります。"]
+           ;; Hosted identity is the entrance (ADR-0035 / ADR-0041). It must
+           ;; be in the HTML, not inside `#registered-auth` which starts
+           ;; hidden — a script that never runs left only local Passkey.
+           [:div {:class "settings-form" :id "itonami-cloud-signin-card"}
+            (dds/heading 3 "Itonami Cloud で続ける" {:size "20"})
             [:p {:class "form-help"}
-             "Passkey の P-256 公開鍵から User DID（did:key）を生成します。秘密鍵は端末から出ません。"]
-            ;; Secondary: registering a Passkey is a path for a device that
-            ;; has none, not the default answer to "how do I get in".
-            [:button {:class "tool-button" :id "registration-submit"
-                      :type "submit"} "Passkey で登録"]]
+             "auth.itonami.cloud で本人確認し、この端末には短期コードからローカルセッションだけを作ります。"]
+            [:button {:class "primary-action" :id "itonami-cloud-signin"
+                      :type "button"}
+             "auth.itonami.cloud でサインイン"]
+            [:p {:class "form-help"}
+             [:a {:id "itonami-enrolment-link"
+                  :href "https://itonami.cloud/signin/"}
+              "アカウントを作る（itonami.cloud）"]]]
            [:div {:class "settings-stack" :id "registered-auth" :hidden true}
-            [:div {:class "settings-form" :id "itonami-cloud-signin-card"}
-             (dds/heading 3 "Itonami Cloud で続ける" {:size "20"})
-             [:p {:class "form-help"}
-              "auth.itonami.cloud で本人確認し、この端末には短期コードからローカルセッションだけを作ります。"]
-             [:button {:class "primary-action" :id "itonami-cloud-signin"
-                       :type "button"}
-              "auth.itonami.cloud でサインイン"]]
             [:div {:class "settings-form"}
              (dds/heading 3 "Passkey で続ける" {:size "20"})
              [:p {:class "form-help"}
@@ -2673,6 +2673,11 @@
              ;; not who is stuck on this screen.
              [:button {:class "tool-button" :id "passkey-signin" :type "button"}
               "Passkey でサインイン"]]
+            [:form {:class "settings-form" :id "registration-form"}
+             [:p {:class "form-help"}
+              "この端末だけに User を作る経路です。通常の登録は itonami.cloud のパスキーです。"]
+             [:button {:class "tool-button" :id "registration-submit"
+                       :type "submit"} "この端末だけで登録"]]
             [:form {:class "settings-form" :id "email-login-form" :hidden true}
              (dds/heading 3 "Emailで続ける" {:size "20"})
              [:p {:class "form-help"}

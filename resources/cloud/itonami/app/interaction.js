@@ -7729,6 +7729,12 @@
       const providers = (methods.sso || []).filter((p) => p['configured?']);
       const centralConfigured = Boolean(methods.central?.['configured?']);
       $('#itonami-cloud-signin-card').hidden = !centralConfigured;
+      const enrol = $('#itonami-enrolment-link');
+      if (enrol) {
+        const url = methods.central?.['enrolment-url'];
+        if (url) enrol.setAttribute('href', url);
+        enrol.hidden = !url || Boolean(data['authenticated?']);
+      }
       const signin = $('#sso-signin-list');
       signin.replaceChildren();
       providers.forEach((provider) => {
@@ -7895,9 +7901,12 @@
       const others = otherSigninMethods(data);
       const resuming = Boolean(data['passkey-required?']);
       const supported = passkeySupported();
+      const hosted = others.includes('auth.itonami.cloud');
       $('#signin-gate-headline').textContent = resuming
         ? '前回の Passkey 作成が完了していません。'
-        : 'サインイン方法を選んでください。';
+        : hosted
+          ? 'Itonami Cloud でサインインしてください。'
+          : 'サインイン方法を選んでください。';
       $('#signin-gate-note').textContent = !supported
         ? (others.length
           ? ` このブラウザは Passkey / WebAuthn に対応していません。${others.join('、')}で続けられます。`
@@ -7908,6 +7917,11 @@
           // way in while another is sitting on it unmentioned.
           ? ` アカウントはできていて、Passkey だけがありません。下のボタンで続きから作成します。${
             others.length ? `${others.join('、')}でも入れます。` : ''}`
+          : hosted
+            ? ` 入口は auth.itonami.cloud です。この端末の Passkey は追加確認に使います。${
+              others.filter((name) => name !== 'auth.itonami.cloud').length
+                ? others.filter((name) => name !== 'auth.itonami.cloud').join('、') + 'でも入れます。'
+                : ''}`
           : others.length
             ? ` この端末で使える入口は Passkey、${others.join('、')} です。重要操作では Passkey を追加確認します。`
             : ' この端末で使える入口は Passkey だけです。重要操作では Passkey を追加確認します。';

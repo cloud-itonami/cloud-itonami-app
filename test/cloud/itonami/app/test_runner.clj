@@ -106,6 +106,7 @@
             [cloud.itonami.app.domain-verification-http-test]
             [cloud.itonami.app.email-login-test]
             [cloud.itonami.app.identity-lifecycle-test]
+            [cloud.itonami.app.loopback-origin-test]
             [cloud.itonami.app.sso-login-test]
             [cloud.itonami.app.documents-test]
             [cloud.itonami.app.workspace-reachability-test]
@@ -225,6 +226,7 @@
     cloud.itonami.app.domain-verification-http-test
     cloud.itonami.app.email-login-test
     cloud.itonami.app.identity-lifecycle-test
+    cloud.itonami.app.loopback-origin-test
     cloud.itonami.app.sso-login-test
     cloud.itonami.app.documents-test
     cloud.itonami.app.email-login-test
