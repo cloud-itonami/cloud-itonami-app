@@ -68,7 +68,21 @@
  ;; `:base-url`, because a provider that called itself local while pointing
  ;; somewhere else is exactly the case the flag could not catch.
  :providers
- [{:id "murakumo"
+ [{:id "xai"
+   :name "Grok (xAI)"
+   :kind :xai
+   :base-url "https://api.x.ai/v1"
+   :api-key-env "XAI_API_KEY"
+   :default-model "grok-4.6"
+   :reasoning-effort "medium"
+   :max-output-tokens 8192
+   :local? false
+   ;; A distribution cannot consent to sending a tenant's Bot transcript to
+   ;; xAI. Operators must enable cloud routing, export XAI_API_KEY, and mark
+   ;; this exact destination reviewed before it appears in the Bot picker.
+   :reviewed? false
+   :enabled? false}
+  {:id "murakumo"
    :name "Murakumo fleet"
    :kind :openai-compatible
    ;; `murakumo-main` is an ALIAS the fleet resolves, never a concrete model
@@ -81,6 +95,7 @@
    ;; which the provider layer refused with `unsupported provider kind` — the
    ;; refusal is why it was found the same day.
    :base-url "https://api.murakumo.cloud/v1"
+   :default-model "murakumo-main"
    :api-key-env "MURAKUMO_API_KEY"
    :local? false
    ;; Shipped off and unreviewed. The distribution is tenant-neutral: it cannot

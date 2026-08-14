@@ -1414,6 +1414,15 @@
               [:label {:for "bots-brief"} "この Bot に任せること"]
               [:textarea {:id "bots-brief" :maxlength "2000" :rows "4"
                           :placeholder "毎朝わたしの受信箱を見て、返事が要るものと待てるものを分けて。"}]]
+             [:div {:class "field"}
+              [:label {:for "bots-provider"} "Model provider"]
+              [:select {:id "bots-provider"}]
+              [:span {:class "form-help" :id "bots-provider-help"}
+               "この配備で許可された provider だけを表示します。"]]
+             [:div {:class "field"}
+              [:label {:for "bots-model"} "Model"]
+              [:input {:id "bots-model" :type "text" :maxlength "200"
+                       :autocomplete "off" :placeholder "model id"}]]
              [:label {:class "bots-permission"}
               [:input {:id "bots-writes" :type "checkbox"}]
               [:span "書き込みも任せる（実行前に毎回わたしが承認する）"]]

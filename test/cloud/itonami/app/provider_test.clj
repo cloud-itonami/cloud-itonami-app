@@ -7,6 +7,7 @@
 
 (deftest agent-turn-reserves-output-after-reasoning
   (let [body ((private-fn 'agent-request-body)
+              {:kind :openai-compatible}
               {:model "murakumo-main"
                :messages [{:role "user" :content "hello"}]
                :tools []})]
@@ -15,6 +16,28 @@
     (testing "the ordinary provider fields are preserved"
       (is (= "murakumo-main" (:model body)))
       (is (= [{:role "user" :content "hello"}] (:messages body))))))
+
+(deftest grok-agent-turn-keeps-one-effect-authority
+  (let [body ((private-fn 'agent-request-body)
+              {:kind :xai :reasoning-effort "high"
+               :max-output-tokens 4096}
+              {:model "grok-4.6"
+               :messages [{:role "user" :content "check mail"}]
+               :tools [{:name "gmail_search_messages"
+                        :description "Search mail"
+                        :parameters {:type "object"}}]})]
+    (is (= "grok-4.6" (:model body)))
+    (is (= 4096 (:max_tokens body)))
+    (is (= "high" (:reasoning_effort body)))
+    (is (false? (:parallel_tool_calls body)))
+    (is (= "function" (get-in body [:tools 0 :type]))))
+  (testing "a Bot id becomes xAI's opaque conversation correlation header"
+    (is (= {"x-grok-conv-id" "bot-123"}
+           ((private-fn 'xai-headers)
+            {:kind :xai} {:conversation-id "bot-123"}))))
+  (testing "the xAI-only header is never sent to another provider"
+    (is (nil? ((private-fn 'xai-headers)
+               {:kind :openai-compatible} {:conversation-id "bot-123"})))))
 
 (deftest an-empty-finished-turn-is-not-a-silent-answer
   (let [normalize (private-fn 'agent-result)]

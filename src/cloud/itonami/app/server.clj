@@ -5175,7 +5175,7 @@
             body (read-json exchange)]
         (require-origin! exchange config)
         (require-csrf! exchange session)
-        (bots/update! session bot-id body)
+        (bots/update! config session bot-id body)
         (send! exchange 200 (bots/overview config session)))
 
       :else (send! exchange 405 {:error {:type "method_not_allowed"}}))))

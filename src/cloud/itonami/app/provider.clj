@@ -16,11 +16,15 @@
 (defn- request-json
   ([method url body] (request-json method url body nil))
   ([method url body api-key]
+   (request-json method url body api-key nil))
+  ([method url body api-key headers]
    (let [builder (-> (HttpRequest/newBuilder (URI/create url))
                      (.timeout (Duration/ofSeconds 120))
                      (.header "Accept" "application/json")
                      (.header "Content-Type" "application/json"))
          _ (when api-key (.header builder "Authorization" (str "Bearer " api-key)))
+         _ (doseq [[header value] headers :when (some? value)]
+             (.header builder (name header) (str value)))
          request (case method
                    :get (.GET builder)
                    :post (.POST builder
@@ -36,27 +40,37 @@
        (throw (ex-info "model provider request failed"
                        {:status status :url url :response parsed}))))))
 
+(defn- openai-shaped? [provider]
+  (contains? #{:openai-compatible :xai} (:kind provider)))
+
+(defn- openai-url [provider path]
+  (str (str/replace (:base-url provider) #"/$" "") path))
+
+(defn- xai-headers [provider request]
+  (when (and (= :xai (:kind provider)) (:conversation-id request))
+    {"x-grok-conv-id" (:conversation-id request)}))
+
 (defn list-models [provider]
-  (case (:kind provider)
-    :ollama
+  (cond
+    (openai-shaped? provider)
+    (mapv (fn [model]
+            {:id (:id model) :object "model" :owned_by (:id provider)
+             :provider (:id provider)})
+          (:data (request-json :get (openai-url provider "/models")
+                               nil (config/env-secret provider))))
+
+    (= :ollama (:kind provider))
     (mapv (fn [model]
             {:id (:name model) :object "model" :owned_by (:id provider)
              :provider (:id provider)})
           (:models (request-json :get (str (:base-url provider) "/api/tags") nil)))
 
-    :openai-compatible
-    (mapv (fn [model]
-            {:id (:id model) :object "model" :owned_by (:id provider)
-             :provider (:id provider)})
-          (:data (request-json :get (str (str/replace (:base-url provider) #"/$" "")
-                                         "/models")
-                               nil (config/env-secret provider))))
-    []))
+    :else []))
 
 (defn chat
-  [provider {:keys [model messages temperature]}]
-  (case (:kind provider)
-    :ollama
+  [provider {:keys [model messages temperature] :as request}]
+  (cond
+    (= :ollama (:kind provider))
     (let [result (request-json
                   :post (str (:base-url provider) "/api/chat")
                   {:model model :messages messages :stream false
@@ -67,17 +81,22 @@
                :total_tokens (+ (get result :prompt_eval_count 0)
                                 (get result :eval_count 0))}})
 
-    :openai-compatible
+    (openai-shaped? provider)
     (let [result (request-json
-                  :post (str (str/replace (:base-url provider) #"/$" "")
-                             "/chat/completions")
-                  {:model model :messages messages :stream false
-                   :temperature (or temperature 0.7)}
-                  (config/env-secret provider))]
+                  :post (openai-url provider "/chat/completions")
+                  (cond-> {:model model :messages messages :stream false
+                           :temperature (or temperature 0.7)}
+                    (= :xai (:kind provider))
+                    (assoc :max_tokens (or (:max-output-tokens provider) 8192)
+                           :reasoning_effort (or (:reasoning-effort request)
+                                                 (:reasoning-effort provider)
+                                                 "medium")))
+                  (config/env-secret provider)
+                  (xai-headers provider request))]
       {:content (get-in result [:choices 0 :message :content])
        :usage (:usage result)})
 
-    (throw (ex-info "unsupported provider kind" {:provider provider}))))
+    :else (throw (ex-info "unsupported provider kind" {:provider provider}))))
 
 (defn- tool-definition [{:keys [name description parameters]}]
   {:type "function"
@@ -115,7 +134,7 @@
            :input (parse-arguments (get-in call [:function :arguments]))})
         (range) (or calls [])))
 
-(def ^:private agent-max-tokens
+(def ^:private default-agent-max-tokens
   ;; api.murakumo.cloud routes murakumo-main to a reasoning model. When this is
   ;; omitted the public gateway supplies 512, and the model can spend the whole
   ;; allowance on reasoning: HTTP 200, finish_reason=length, content="". A Bot
@@ -124,13 +143,22 @@
   2048)
 
 (defn- agent-request-body
-  [{:keys [model messages tools temperature]}]
-  {:model model
-   :messages (mapv provider-message messages)
-   :tools (mapv tool-definition tools)
-   :stream false
-   :temperature (or temperature 0.2)
-   :max_tokens agent-max-tokens})
+  [provider {:keys [model messages tools temperature reasoning-effort]}]
+  (cond-> {:model model
+           :messages (mapv provider-message messages)
+           :tools (mapv tool-definition tools)
+           :stream false
+           :temperature (or temperature 0.2)
+           :max_tokens (or (:max-output-tokens provider)
+                           default-agent-max-tokens)}
+    (= :xai (:kind provider))
+    ;; Cloud Itonami's authority model admits, runs and audits one effect at a
+    ;; time. Grok defaults to parallel calls, so leaving this implicit would
+    ;; either discard calls or create a batch approval authority we do not have.
+    (assoc :parallel_tool_calls false
+           :reasoning_effort (or reasoning-effort
+                                 (:reasoning-effort provider)
+                                 "medium"))))
 
 (defn- agent-result
   [message finish-reason]
@@ -147,45 +175,51 @@
 (defn agent-turn
   "One non-streaming tool-capable model turn, normalized for Agent Control."
   [provider request]
-  (let [body (agent-request-body request)]
-    (case (:kind provider)
-      :ollama
+  (let [body (agent-request-body provider request)]
+    (cond
+      (= :ollama (:kind provider))
       (let [result (request-json :post (str (:base-url provider) "/api/chat")
                                  (-> body
-                                     (dissoc :temperature :max_tokens)
+                                     (dissoc :temperature :max_tokens
+                                             :parallel_tool_calls :reasoning_effort)
                                      (assoc :options {:temperature
                                                       (or (:temperature request) 0.2)
-                                                      :num_predict agent-max-tokens})))
+                                                      :num_predict (or (:max-output-tokens provider)
+                                                                       default-agent-max-tokens)})))
             message (:message result)]
         (agent-result message (:done_reason result)))
 
-      :openai-compatible
+      (openai-shaped? provider)
       (let [result (request-json
                     :post
-                    (str (str/replace (:base-url provider) #"/$" "")
-                         "/chat/completions")
-                    body (config/env-secret provider))
+                    (openai-url provider "/chat/completions")
+                    body (config/env-secret provider)
+                    (xai-headers provider request))
             message (get-in result [:choices 0 :message])]
         (agent-result message (get-in result [:choices 0 :finish_reason])))
 
-      (throw (ex-info "unsupported provider kind" {:provider provider})))))
+      :else (throw (ex-info "unsupported provider kind" {:provider provider})))))
 
-(defn- streaming-response [url body api-key]
-  (let [builder (-> (HttpRequest/newBuilder (URI/create url))
-                    (.timeout (Duration/ofSeconds 120))
-                    (.header "Accept" "*/*")
-                    (.header "Content-Type" "application/json"))
-        _ (when api-key
-            (.header builder "Authorization" (str "Bearer " api-key)))
-        request (-> builder
-                    (.POST (HttpRequest$BodyPublishers/ofString
-                            (json/write-str body)))
-                    .build)
-        response (.send client request (HttpResponse$BodyHandlers/ofInputStream))]
-    (when-not (<= 200 (.statusCode response) 299)
-      (throw (ex-info "model provider streaming request failed"
-                      {:status (.statusCode response) :url url})))
-    response))
+(defn- streaming-response
+  ([url body api-key] (streaming-response url body api-key nil))
+  ([url body api-key headers]
+   (let [builder (-> (HttpRequest/newBuilder (URI/create url))
+                     (.timeout (Duration/ofSeconds 120))
+                     (.header "Accept" "*/*")
+                     (.header "Content-Type" "application/json"))
+         _ (when api-key
+             (.header builder "Authorization" (str "Bearer " api-key)))
+         _ (doseq [[header value] headers :when (some? value)]
+             (.header builder (name header) (str value)))
+         request (-> builder
+                     (.POST (HttpRequest$BodyPublishers/ofString
+                             (json/write-str body)))
+                     .build)
+         response (.send client request (HttpResponse$BodyHandlers/ofInputStream))]
+     (when-not (<= 200 (.statusCode response) 299)
+       (throw (ex-info "model provider streaming request failed"
+                       {:status (.statusCode response) :url url})))
+     response)))
 
 (defn- emit! [on-delta content]
   (when (and (string? content) (seq content))
@@ -194,11 +228,11 @@
 
 (defn chat-stream!
   "Stream provider deltas to `on-delta` and return the complete result."
-  [provider {:keys [model messages temperature]} on-delta]
+  [provider {:keys [model messages temperature] :as request} on-delta]
   (let [content (StringBuilder.)
         usage (volatile! nil)]
-    (case (:kind provider)
-      :ollama
+    (cond
+      (= :ollama (:kind provider))
       (let [response
             (streaming-response
              (str (:base-url provider) "/api/chat")
@@ -220,15 +254,20 @@
                           :total_tokens (+ (get chunk :prompt_eval_count 0)
                                            (get chunk :eval_count 0))}))))))
 
-      :openai-compatible
+      (openai-shaped? provider)
       (let [response
             (streaming-response
-             (str (str/replace (:base-url provider) #"/$" "")
-                  "/chat/completions")
-             {:model model :messages messages :stream true
-              :stream_options {:include_usage true}
-              :temperature (or temperature 0.7)}
-             (config/env-secret provider))]
+             (openai-url provider "/chat/completions")
+             (cond-> {:model model :messages messages :stream true
+                      :stream_options {:include_usage true}
+                      :temperature (or temperature 0.7)}
+               (= :xai (:kind provider))
+               (assoc :max_tokens (or (:max-output-tokens provider) 8192)
+                      :reasoning_effort (or (:reasoning-effort request)
+                                            (:reasoning-effort provider)
+                                            "medium")))
+             (config/env-secret provider)
+             (xai-headers provider request))]
         (with-open [reader (BufferedReader.
                             (InputStreamReader. (.body response)))]
           (doseq [line (line-seq reader)
@@ -242,5 +281,5 @@
               (when-let [chunk-usage (:usage chunk)]
                 (vreset! usage chunk-usage))))))
 
-      (throw (ex-info "unsupported provider kind" {:provider provider})))
+      :else (throw (ex-info "unsupported provider kind" {:provider provider})))
     {:content (.toString content) :usage @usage}))

@@ -74,6 +74,19 @@
         (is (zero? exit) (str source " does not parse under node " version ":\n" err))))
     (println "web-script-test: node is not on PATH, so the interaction layer was not parsed.")))
 
+(deftest bots-bind-an-admitted-provider-and-model
+  (let [html (with-redefs [store/snapshot (constantly (store/initial-state))]
+               (web/page-html config))
+        js (slurp (io/file "resources/cloud/itonami/app/interaction.js"))]
+    (doseq [id ["bots-provider" "bots-provider-help" "bots-model"]]
+      (is (str/includes? html (str "id=\"" id "\"")) id))
+    (is (str/includes? js "data['model-providers'] || []"))
+    (is (str/includes? js "'provider-id':$('#bots-provider').value"))
+    (is (str/includes? js "model:$('#bots-model').value.trim()"))
+    (is (str/includes? js "`/api/bots/${bot.id}`"))
+    (is (str/includes? js "'provider-id':providerSelect.value"))
+    (is (str/includes? js "Model: ${bot['provider-id']} / ${bot.model}"))))
+
 (deftest authenticated-writes-recover-one-stale-csrf-without-relaxing-the-gate
   ;; A resident app is a long-lived single-page document. Hosted sign-in or a
   ;; renewed session can replace its cookie without replacing the JavaScript

@@ -9106,7 +9106,7 @@
     // what is outstanding, and a second derivation in the client is how a
     // sidebar starts showing "working" for a Bot that is actually waiting.
     const botsState = {
-      bots:[], catalog:[], palette:{colors:[], glyphs:[]},
+      bots:[], catalog:[], modelProviders:[], palette:{colors:[], glyphs:[]},
       selected:null, messages:[], routines:[], picked:new Set(),
       draft:{color:'blue', glyph:'circle'}, loaded:false, busy:false,
       browserAvailable:false
@@ -9241,6 +9241,33 @@
         glyphRow.append(swatch);
       });
     };
+    const renderBotsModelProviders = () => {
+      const select = $('#bots-provider');
+      const model = $('#bots-model');
+      if (!select || !model) return;
+      const previous = select.value;
+      select.replaceChildren();
+      botsState.modelProviders.forEach((provider) => {
+        const option = make('option', null, provider.name || provider.id);
+        option.value = provider.id;
+        option.dataset.model = provider.model || '';
+        select.append(option);
+      });
+      if (botsState.modelProviders.some((provider) => provider.id === previous)) {
+        select.value = previous;
+      }
+      select.disabled = !botsState.modelProviders.length;
+      model.disabled = !botsState.modelProviders.length;
+      const selected = botsState.modelProviders.find((provider) => provider.id === select.value);
+      if (!model.value || !previous) model.value = selected?.model || '';
+      $('#bots-provider-help').textContent = botsState.modelProviders.length
+        ? 'この配備で許可された provider だけを表示します。'
+        : '許可された model provider がありません。Settings の routing を確認してください。';
+    };
+    $('#bots-provider').addEventListener('change', (event) => {
+      const selected = botsState.modelProviders.find((provider) => provider.id === event.target.value);
+      $('#bots-model').value = selected?.model || '';
+    });
     const renderBotsSuggestions = async () => {
       const holder = $('#bots-suggestions');
       holder.replaceChildren();
@@ -9432,6 +9459,51 @@
       panel.append(make('div', null,
         `届く範囲: ${bot['admitted-tools'].length} 個のツール` +
         `${bot['writes?'] ? '（書き込みは承認のうえで実行）' : '（読み取りのみ）'}`));
+      panel.append(make('div', null,
+        `Model: ${bot['provider-id']} / ${bot.model}`));
+      const modelEditor = make('div', 'bots-card__row');
+      const providerSelect = make('select');
+      providerSelect.setAttribute('aria-label', 'Model provider');
+      botsState.modelProviders.forEach((provider) => {
+        const option = make('option', null, provider.name || provider.id);
+        option.value = provider.id;
+        option.dataset.model = provider.model || '';
+        option.selected = provider.id === bot['provider-id'];
+        providerSelect.append(option);
+      });
+      const modelInput = make('input');
+      modelInput.type = 'text';
+      modelInput.maxLength = 200;
+      modelInput.value = bot.model || '';
+      modelInput.setAttribute('aria-label', 'Model');
+      providerSelect.addEventListener('change', () => {
+        modelInput.value = providerSelect.selectedOptions[0]?.dataset.model || '';
+      });
+      const saveModel = make('button', 'tool-button', 'Model を変更');
+      saveModel.type = 'button';
+      saveModel.disabled = !botsState.modelProviders.length;
+      saveModel.addEventListener('click', async () => {
+        if (!modelInput.value.trim()) {
+          botsSetStatus('Model id を入れてください。');
+          return;
+        }
+        saveModel.disabled = true;
+        try {
+          const data = await postJSON(`/api/bots/${bot.id}`, {
+            'provider-id':providerSelect.value, model:modelInput.value.trim()
+          }, true);
+          botsState.bots = data.bots || [];
+          botsState.modelProviders = data['model-providers'] || botsState.modelProviders;
+          renderBotsRail();
+          renderBotsThread();
+          botsSetStatus('Model を変更しました。');
+        } catch (error) {
+          saveModel.disabled = false;
+          botsSetStatus(error.message);
+        }
+      });
+      modelEditor.append(providerSelect, modelInput, saveModel);
+      panel.append(modelEditor);
       if (bot['grant-widens?']) {
         // Surfaced rather than repaired: the two readings need different
         // answers and both need a person to see them.
@@ -9511,6 +9583,7 @@
         if (!request.ok) throw new Error(data?.error?.message || 'Bots を読めませんでした。');
         botsState.bots = data.bots || [];
         botsState.catalog = data.catalog || [];
+        botsState.modelProviders = data['model-providers'] || [];
         botsState.palette = data.palette || botsState.palette;
         botsState.browserAvailable = Boolean(data['browser-available?']);
         botsState.loaded = true;
@@ -9522,6 +9595,7 @@
         renderBotsRail();
         renderBotsServiceGrid();
         renderBotsPalette();
+        renderBotsModelProviders();
         showBotsPane();
         if (botsState.selected) renderBotsThread();
       } catch (error) { botsSetStatus(error.message); }
@@ -9531,6 +9605,7 @@
       $('#bots-step-services').hidden = true;
       $('#bots-step-create').hidden = false;
       renderBotsPalette();
+      renderBotsModelProviders();
       renderBotsSuggestions();
       syncBotsBrowserPermission();
     });
@@ -9554,6 +9629,8 @@
           name,
           avatar:{color:botsState.draft.color, glyph:botsState.draft.glyph},
           brief:$('#bots-brief').value,
+          'provider-id':$('#bots-provider').value,
+          model:$('#bots-model').value.trim(),
           connectors:[...botsState.picked],
           'writes?':$('#bots-writes').checked,
           'browser?':$('#bots-browser').checked

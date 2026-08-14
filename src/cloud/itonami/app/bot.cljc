@@ -69,6 +69,8 @@
 
 (def max-name 60)
 (def max-brief 2000)
+(def max-provider-id 100)
+(def max-model 200)
 
 ;; ── the record ──────────────────────────────────────────────────────────
 
@@ -83,6 +85,10 @@
     (throw (ex-info (str field " is longer than " limit " characters")
                     {:type :bot/invalid :field field :limit limit})))
   value)
+
+(defn- optional-name [value field limit]
+  (when-let [value (some-> value str str/trim not-empty)]
+    (bounded! value field limit)))
 
 (defn avatar
   "Normalize an avatar, refusing a colour or glyph this build does not have.
@@ -134,6 +140,9 @@
                  (required! :bot/name)
                  (bounded! :bot/name max-name))
         brief (bounded! (:bot/brief value) :bot/brief max-brief)
+        provider-id (optional-name (:bot/provider-id value)
+                                   :bot/provider-id max-provider-id)
+        model (optional-name (:bot/model value) :bot/model max-model)
         tools (into (sorted-set) (map str) (:bot/tools value))]
     (when (contains? value :bot/status)
       (throw (ex-info "a Bot does not carry a status; it is computed"
@@ -145,6 +154,11 @@
      :bot/name (str/trim name)
      :bot/avatar (avatar (:bot/avatar value))
      :bot/brief (some-> brief str/trim)
+     ;; The model provider is capability routing, not part of the Bot's
+     ;; persona. Nil preserves pre-ADR-0050 Bots: they follow the deployment's
+     ;; routing default until somebody explicitly pins a provider and model.
+     :bot/provider-id provider-id
+     :bot/model model
      :bot/tools tools
      ;; WHICH accounts, not just which services. Empty means "the person's",
      ;; which is what somebody with one account at each provider means and

@@ -90,6 +90,55 @@
         {:content "調べます。" :tool-calls [{:id "c1" :name tool :input {}}]}
         {:content "終わりました。" :tool-calls []}))))
 
+(deftest a-bot-pins-its-model-provider-without-bypassing-policy
+  (with-store
+    (fn []
+      (let [configuration {:routing {:default-provider "ollama"
+                                     :default-model "local-default"}
+                           :providers [{:id "xai" :name "Grok (xAI)"
+                                        :default-model "grok-4.6"}]}
+            requested (atom [])
+            turn (atom nil)]
+        (with-redefs [policy/select-provider
+                      (fn [_ id]
+                        (swap! requested conj id)
+                        (when (= "xai" id) {:id "xai" :kind :xai
+                                             :default-model "grok-4.6"}))
+                      policy/provider-allowed? (fn [_ _] true)
+                      provider/agent-turn
+                      (fn [selected request]
+                        (reset! turn {:provider selected :request request})
+                        {:content "Grok からの回答" :tool-calls []})]
+          (let [b (bots/create! configuration alice
+                                {:name "Grok worker"
+                                 :connectors ["com.google.gmail"]
+                                 :provider-id "xai"
+                                 :model "grok-4.6"})
+                public (first (:bots (bots/overview configuration alice)))]
+            (bots/send! configuration alice (:bot/id b) "こんにちは")
+            (is (every? #{"xai"} @requested))
+            (is (= "xai" (get-in @turn [:provider :id])))
+            (is (= "grok-4.6" (get-in @turn [:request :model])))
+            (is (= (:bot/id b) (get-in @turn [:request :conversation-id])))
+            (is (= "xai" (:provider-id public)))
+            (is (= "grok-4.6" (:model public)))))))))
+
+(deftest multiple-tool-calls-fail-closed-before-any-effect
+  (with-store
+    (fn []
+      (let [b (make-bot alice {})]
+        (with-redefs [policy/select-provider (fn [_ _] {:id :local})
+                      provider/agent-turn
+                      (fn [_ _]
+                        {:content nil
+                         :tool-calls [{:id "c1" :name "gmail_search_messages" :input {}}
+                                      {:id "c2" :name "gmail_search_messages" :input {}}]})]
+          (try
+            (bots/send! nil alice (:bot/id b) "二つ調べて")
+            (is false "a batch must not be reduced to its first call")
+            (catch clojure.lang.ExceptionInfo error
+              (is (= :agent/multiple-tool-calls (:type (ex-data error)))))))))))
+
 (deftest a-bot-with-nothing-connected-asks-when-it-reaches-for-the-tool
   (with-store
     (fn []
