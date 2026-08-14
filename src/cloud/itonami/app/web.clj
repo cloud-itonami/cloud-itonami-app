@@ -1419,6 +1419,7 @@
               [:select {:id "bots-provider"}]
               [:span {:class "form-help" :id "bots-provider-help"}
                "この配備で許可された provider だけを表示します。"]]
+             [:ul {:class "form-help" :id "bots-provider-readiness"}]
              [:div {:class "field"}
               [:label {:for "bots-model"} "Model"]
               [:input {:id "bots-model" :type "text" :maxlength "200"

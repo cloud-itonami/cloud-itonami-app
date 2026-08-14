@@ -232,6 +232,26 @@
                          :base-url "https://api.example.com/v1"
                          :api-key-env "PATH"})))))
 
+(deftest readiness-explains-the-same-decision-without-exposing-secrets
+  (let [remote {:enabled? false :reviewed? false
+                :base-url "http://api.example.com/private/path"
+                :api-key-env "DEFINITELY_NOT_SET_ANYWHERE"}
+        readiness (policy/provider-readiness (config-for false) remote)]
+    (is (false? (:allowed? readiness)))
+    (is (= [:disabled :unreviewed :cloud-egress-disabled
+            :tls-required :credential-missing]
+           (:blocking readiness)))
+    (is (not (contains? readiness :api-key-env)))
+    (is (not (some #(re-find #"example|PRIVATE|DEFINITELY" (str %))
+                   (tree-seq coll? seq readiness)))))
+  (let [local (policy/provider-readiness
+               (config-for false)
+               {:enabled? true :reviewed? true
+                :base-url "http://127.0.0.1:11434"})]
+    (is (true? (:allowed? local)))
+    (is (true? (:no-egress? local)))
+    (is (empty? (:blocking local)))))
+
 ;; ---------------------------------------------------------------------------
 ;; the core stays a core
 

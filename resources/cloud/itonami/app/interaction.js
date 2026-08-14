@@ -9106,7 +9106,8 @@
     // what is outstanding, and a second derivation in the client is how a
     // sidebar starts showing "working" for a Bot that is actually waiting.
     const botsState = {
-      bots:[], catalog:[], modelProviders:[], palette:{colors:[], glyphs:[]},
+      bots:[], catalog:[], modelProviders:[], providerReadiness:[],
+      palette:{colors:[], glyphs:[]},
       selected:null, messages:[], routines:[], picked:new Set(),
       draft:{color:'blue', glyph:'circle'}, loaded:false, busy:false,
       browserAvailable:false
@@ -9263,6 +9264,18 @@
       $('#bots-provider-help').textContent = botsState.modelProviders.length
         ? 'この配備で許可された provider だけを表示します。'
         : '許可された model provider がありません。Settings の routing を確認してください。';
+      const readiness = $('#bots-provider-readiness');
+      readiness.replaceChildren();
+      const blockerText = {
+        'disabled':'無効', 'unreviewed':'未レビュー',
+        'cloud-egress-disabled':'cloud egress 無効',
+        'tls-required':'HTTPS 必須', 'credential-missing':'credential 未設定'
+      };
+      botsState.providerReadiness.forEach((provider) => {
+        const blockers = (provider.blocking || []).map((item) => blockerText[item] || item);
+        readiness.append(make('li', null,
+          `${provider.name || provider.id}: ${provider['allowed?'] ? '利用可能' : blockers.join('・')}`));
+      });
     };
     $('#bots-provider').addEventListener('change', (event) => {
       const selected = botsState.modelProviders.find((provider) => provider.id === event.target.value);
@@ -9584,6 +9597,7 @@
         botsState.bots = data.bots || [];
         botsState.catalog = data.catalog || [];
         botsState.modelProviders = data['model-providers'] || [];
+        botsState.providerReadiness = data['model-provider-readiness'] || [];
         botsState.palette = data.palette || botsState.palette;
         botsState.browserAvailable = Boolean(data['browser-available?']);
         botsState.loaded = true;
