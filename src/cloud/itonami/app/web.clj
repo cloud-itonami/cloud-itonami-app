@@ -399,6 +399,7 @@
   .bots-card__state{margin-left:auto;font-size:.8125rem;font-weight:600}
   .bots-card__state[data-state='connected']{color:var(--color-semantic-success-1)}
   .bots-card__state[data-state='waiting']{color:var(--color-neutral-solid-gray-600)}
+  .bots-card__state[data-state='superseded']{color:var(--color-neutral-solid-gray-600)}
   .bots-option{display:flex;align-items:center;gap:.625rem;width:100%;
     border:1px solid var(--color-neutral-solid-gray-200);border-radius:.5rem;
     background:var(--color-neutral-white);padding:.625rem .75rem;cursor:pointer;

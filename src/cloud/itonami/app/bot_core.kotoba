@@ -96,12 +96,33 @@
               [[:enabled :bool]
                [:held-run :bool]
                [:unmet-connection :bool]
-               [:active-run :bool]]]})
+               [:active-run :bool]]]
+             ;; One held request, against the instruction being given now.
+             ;;
+             ;; `asked-at` is the direction the request was raised under — the
+             ;; person's instruction the Bot was carrying out when it stopped to
+             ;; ask. `current` is the direction in force at the moment somebody
+             ;; is answering. They differ exactly when the person has said
+             ;; something else since, and that difference is the whole reason
+             ;; this record exists: an approval given now would be consent for
+             ;; work the person has already moved on from.
+             ;;
+             ;; `answered` is whether a decision was already recorded, kept
+             ;; separate from the directions because "already decided" and
+             ;; "belongs to an older instruction" are different refusals and the
+             ;; person is owed the right one.
+             :bot/request
+             [:record :bot/request
+              [[:asked-at :i64]
+               [:current :i64]
+               [:answered :bool]]]})
   (:export [status-disabled status-idle status-working
             status-waiting-connection status-waiting-approval
             account-connect account-use account-ask
+            request-open request-answered request-superseded
             write-effect? tool-admitted? may-approve? grant-widens?
-            usable-accounts account-disposition status main]))
+            usable-accounts account-disposition status
+            request-standing outstanding? main]))
 
 (defn status-disabled [] :i64 0)
 (defn status-idle [] :i64 1)
@@ -200,6 +221,36 @@
           (status-working)
           (status-idle))))
     (status-disabled)))
+
+(defn request-open [] :i64 0)
+(defn request-answered [] :i64 1)
+(defn request-superseded [] :i64 2)
+
+(defn request-standing [r [:ref :bot/request]] :i64
+  ;; Where a held request stands, right now.
+  ;;
+  ;; Answered first. A decision that was recorded is a fact about the past and
+  ;; nothing the person says afterwards unmakes it; reporting it as superseded
+  ;; would erase a decision they actually gave.
+  ;;
+  ;; Then direction. A request raised under an instruction the person has since
+  ;; replaced is SUPERSEDED, not open — approving it now would be consent for
+  ;; work they moved on from, and leaving it open is what let a Bot report
+  ;; itself as waiting for an approval it would refuse to accept.
+  ;;
+  ;; `>` and not `>=`: a request asked under the direction still in force is
+  ;; open. Only a LATER direction retires it.
+  (if (record-get r :answered)
+    (request-answered)
+    (if (> (record-get r :current) (record-get r :asked-at))
+      (request-superseded)
+      (request-open))))
+
+(defn outstanding? [r [:ref :bot/request]] :bool
+  ;; Whether this request is still something the person has to deal with — the
+  ;; one question `status` needs, so that a superseded card stops making a Bot
+  ;; say `waiting-approval` for the rest of the conversation.
+  (= (request-standing r) (request-open)))
 
 (defn main [] :i64
   ;; Sentinel for the wasm host contract, not a battery. The assertions live in

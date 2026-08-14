@@ -207,6 +207,34 @@
 
 (defn- new-id [prefix] (str prefix "-" (UUID/randomUUID)))
 
+;; ── direction ───────────────────────────────────────────────────────────
+;;
+;; A DIRECTION is one instruction from the person, and everything the Bot does
+;; carrying it out. It is the unit an approval is scoped to: `bot/request-standing`
+;; retires a held request the moment a later direction exists, because approving
+;; it then would be consent for work the person has already moved on from.
+;;
+;; Counted from 1, so that 0 can mean "before this Bot was ever asked anything"
+;; for a card written before this field existed. Such a card is superseded by
+;; the first direction, which is the right answer for it: nobody can still be
+;; waiting on a request raised by a build that did not record what it was for.
+
+(defn- direction
+  "The instruction in force for this Bot."
+  [bot-id]
+  (get-in (snapshot) [:directions bot-id] 0))
+
+(defn- open-approval-cards
+  "The approval cards this Bot has not had a decision recorded on. Says nothing
+  about whether they are still ANSWERABLE — that is `bot/request-standing`'s,
+  and the two were the same question until a held request could outlive its
+  direction."
+  [bot-id]
+  (for [m (get-in (snapshot) [:conversations bot-id] [])
+        c (:message/cards m)
+        :when (and (= :approval (:card/kind c)) (nil? (:card/decision c)))]
+    c))
+
 ;; ── connections ─────────────────────────────────────────────────────────
 
 (defn accounts-by-provider
@@ -413,8 +441,21 @@
   [providers card]
   (contains? providers (:card/connector card)))
 
+(defn- request-of
+  "A stored approval card, as the record `bot/request-standing` decides from."
+  [bot-id card]
+  {:asked-at (:card/direction card 0)
+   :current (direction bot-id)
+   :answered? (some? (:card/decision card))})
+
 (defn- presence [bot-id providers]
-  {:held-run? (boolean (seq (open-cards bot-id :approval #(nil? (:card/decision %)))))
+  {;; Outstanding, not merely undecided. A held write survives the person
+   ;; saying something else — the run is replaced and `decide!` refuses the old
+   ;; card — so counting undecided cards made a Bot report `waiting-approval`
+   ;; for the rest of the conversation, about a request it would no longer
+   ;; accept. Measured 2026-08-14 before this changed.
+   :held-run? (boolean (seq (filter #(bot/outstanding? (request-of bot-id %))
+                                    (open-approval-cards bot-id))))
    :unmet-connection? (boolean (seq (open-cards bot-id :connection
                                                 #(and (#{:offered :waiting} (:card/state %))
                                                       (not (met? providers %))))))
@@ -480,23 +521,32 @@
   `met?`. `providers` is the set of provider names connected now; an empty set
   leaves every card as it was recorded, which is what a caller that does not
   know should get."
-  ([c] (public-card c #{}))
-  ([c providers]
+  ([c] (public-card c #{} nil))
+  ([c providers] (public-card c providers nil))
+  ([c providers bot-id]
    (cond-> (unqualify c)
      (= :connection (:card/kind c))
      (assoc :authable? (provider-authable? (keyword (:card/connector c))))
 
      (and (= :connection (:card/kind c)) (met? providers c))
-     (assoc :state "connected"))))
+     (assoc :state "connected")
+
+     ;; The same recomputation for the other card that carries a button. A
+     ;; superseded request must not render an enabled 承認する: pressing it
+     ;; reaches `decide!` and comes back as a refusal, which is the failure
+     ;; `:authable?` exists to prevent, one card over.
+     (and (= :approval (:card/kind c)) (some? bot-id))
+     (assoc :standing (name (bot/request-standing (request-of bot-id c)))))))
 
 (defn- public-message
-  ([m] (public-message m #{}))
-  ([m providers]
+  ([m] (public-message m #{} nil))
+  ([m providers] (public-message m providers nil))
+  ([m providers bot-id]
    {:id (:message/id m)
     :role (name (:message/role m))
     :text (:message/text m)
     :at (:message/at m)
-    :cards (mapv #(public-card % providers) (:message/cards m))}))
+    :cards (mapv #(public-card % providers bot-id) (:message/cards m))}))
 
 (defn- public-conversation
   "One Bot's conversation, as the client should see it now. Every route that
@@ -505,7 +555,7 @@
   ended up correct on the Bots screen and stale everywhere else."
   [did bot-id]
   (let [providers (connected-providers did)]
-    (mapv #(public-message % providers) (conversation bot-id))))
+    (mapv #(public-message % providers bot-id) (conversation bot-id))))
 
 (defn overview
   "Everything the Bots screen needs on load: the Bots, and — when there are
@@ -774,6 +824,7 @@
                      [(bot/approval-card
                        {:id card-id
                         :run (:id run)
+                        :direction (direction (:bot/id b))
                         :title "この Bot が実行しようとしています"
                         :action name
                         :summary (describe-tool configuration name input)
@@ -925,6 +976,12 @@
       (throw (ex-info "メッセージが長すぎます。" {:type :bot/message-too-long})))
     (when-not (:bot/enabled? b)
       (throw (ex-info "この Bot は停止しています。" {:type :bot/disabled})))
+    ;; A new instruction is a new direction, and it starts BEFORE the message is
+    ;; recorded — everything from here belongs to it, including the request the
+    ;; Bot may raise on this turn. Whatever the previous direction left waiting
+    ;; is superseded by the fact of this one existing; nothing is rewritten,
+    ;; because the person did not decide anything, they moved on.
+    (transact! update-in [:directions bot-id] (fnil inc 0))
     (append! bot-id (bot/message {:id (new-id "msg") :bot bot-id :role :person
                                   :text text :at (store/now)}))
     (let [did (identity/session-did session)
@@ -1023,6 +1080,16 @@
                 :authorized? (= (:user-id session) (:bot/owner b))})
       (throw (ex-info "この承認はこのセッションでは行えません。"
                       {:type :bot/approval-refused :bot bot-id})))
+    ;; Which refusal the person is owed, when there is one. "There is nothing
+    ;; held" and "you have since asked for something else" are different facts,
+    ;; and the second used to be reported as the first — so a person who pressed
+    ;; 承認する on a card still showing an enabled button was told the Bot had
+    ;; nothing waiting, which was true of the run and false of what they were
+    ;; looking at.
+    (let [card (some #(when (= card-id (:card/id %)) %) (open-approval-cards bot-id))]
+      (when (and card (= :superseded (bot/request-standing (request-of bot-id card))))
+        (throw (ex-info "この承認はもう古い指示のものです。必要ならもう一度頼んでください。"
+                        {:type :bot/superseded :bot bot-id :card card-id}))))
     (let [run (get-in (snapshot) [:runs bot-id])
           call (:pending-call run)]
       (when-not (and call (= card-id (:pending-card run)))

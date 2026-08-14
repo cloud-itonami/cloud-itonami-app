@@ -271,6 +271,60 @@
        (status-idle))))
     (status-disabled)),
    :param-types [[:ref :bot/presence]]}
+  {:name request-open,
+   :params [],
+   :result :i64,
+   :effects #{},
+   :body 0,
+   :param-types []}
+  {:name request-answered,
+   :params [],
+   :result :i64,
+   :effects #{},
+   :body 1,
+   :param-types []}
+  {:name request-superseded,
+   :params [],
+   :result :i64,
+   :effects #{},
+   :body 2,
+   :param-types []}
+  {:name request-standing,
+   :params [r],
+   :result :i64,
+   :effects #{},
+   :body
+   (if
+    (record-get
+     [:record
+      :bot/request
+      [[:asked-at :i64] [:current :i64] [:answered :bool]]]
+     r
+     :answered)
+    (request-answered)
+    (if
+     (>
+      (record-get
+       [:record
+        :bot/request
+        [[:asked-at :i64] [:current :i64] [:answered :bool]]]
+       r
+       :current)
+      (record-get
+       [:record
+        :bot/request
+        [[:asked-at :i64] [:current :i64] [:answered :bool]]]
+       r
+       :asked-at))
+     (request-superseded)
+     (request-open))),
+   :param-types [[:ref :bot/request]]}
+  {:name outstanding?,
+   :params [r],
+   :result :bool,
+   :effects #{},
+   :body (= (request-standing r) (request-open)),
+   :param-types [[:ref :bot/request]]}
   {:name main,
    :params [],
    :result :i64,
@@ -280,13 +334,15 @@
  :oracle-value 0,
  :schema-identities
  #:bot{:accounts
-       "ddf27d1e6efd899ad04e3313837e69c4ac07355ff9c75fca3b3931850199b5f7",
+       "391b8ed9a1bb5bc0a95c9e4a1428dfdc955a98a8d11935cff5bd5fd5893fb50f",
        :admission
-       "7633ab6d3725e62637d47057abd285a477a5e383957284f2b5efda69f46ccf71",
+       "ecb9881e3f4ea398700fab397a8a6c92b092ceac93e5e2a338ea2428a5776d81",
        :decision
-       "9a025a90af55f1c8a08cb1c69aa30e20cdeb6f04e81031597bf059f670aba62d",
+       "c0a4b21327d9791d5a135f898e4b1d1c1c026befd57f1b028eafb4c8d35454fe",
        :presence
-       "cc9071a596484d069da3a27c1dd66a4e1407f28de11763be48d9b6ff2515c36d"},
+       "d4c1a845177540c90b922cee166c2eef84bca7e7360c054b4cf5292684591848",
+       :request
+       "36471c7ff21c0e6dd5d2eeaf9689cbc275a818ea857a1d19569d87d3180cb89f"},
  :exports
  [status-disabled
   status-idle
@@ -296,6 +352,9 @@
   account-connect
   account-use
   account-ask
+  request-open
+  request-answered
+  request-superseded
   write-effect?
   tool-admitted?
   may-approve?
@@ -303,6 +362,8 @@
   usable-accounts
   account-disposition
   status
+  request-standing
+  outstanding?
   main],
  :schemas
  #:bot{:admission
@@ -329,7 +390,11 @@
         [[:enabled :bool]
          [:held-run :bool]
          [:unmet-connection :bool]
-         [:active-run :bool]]]},
+         [:active-run :bool]]],
+       :request
+       [:record
+        :bot/request
+        [[:asked-at :i64] [:current :i64] [:answered :bool]]]},
  :effects #{},
  :blocks [{:id 0, :instructions [[:const.i64 0] [:return]]}],
  :entry main}

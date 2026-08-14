@@ -270,6 +270,106 @@
                clojure.lang.ExceptionInfo #"承認待ちの操作がありません"
                (bots/decide! nil alice (:bot/id b) "card-1" "approved"))))))))
 
+;; ── an approval belongs to the instruction it was asked under ───────────
+
+(defn- proposes-write
+  "A model that proposes one write on its first turn and then reports."
+  []
+  (let [turns (atom 0)]
+    (fn [_ _]
+      (if (= 1 (swap! turns inc))
+        {:content "送ります。" :tool-calls [{:id "c1" :name "gmail_send_message"
+                                         :input {}}]}
+        {:content "終わりました。" :tool-calls []}))))
+
+(defn- held-card [b]
+  (->> (bots/messages alice (:bot/id b))
+       (mapcat :cards)
+       (filter #(= "approval" (:kind %)))
+       first))
+
+(defn- run-tool-var []
+  (ns-resolve 'cloud.itonami.app.bots 'run-tool!))
+
+(deftest a-new-instruction-retires-a-held-approval
+  ;; Measured 2026-08-14 before this changed: sending a second message replaced
+  ;; the run, so `decide!` on the first card threw 承認待ちの操作がありません —
+  ;; while `overview` went on reporting `waiting-approval` for the rest of the
+  ;; conversation and the card kept rendering an enabled 承認する. The person
+  ;; was shown a live control for a request the application had already dropped.
+  (with-store
+    (fn []
+      (connect! "conn-1" :google "sub-1" "jun@example.com")
+      (let [b (make-bot alice {:writes? true})]
+        (with-redefs [policy/select-provider (fn [_ _] {:id :local})
+                      provider/agent-turn (proposes-write)]
+          (bots/send! nil alice (:bot/id b) "メール送って"))
+        (let [card (held-card b)]
+          (is (= "approval" (:kind card)))
+          (is (= "open" (:standing card)))
+          (is (= "waiting-approval"
+                 (:status (first (:bots (bots/overview nil alice))))))
+
+          (testing "the person says something else instead of answering"
+            (with-redefs [policy/select-provider (fn [_ _] {:id :local})
+                          provider/agent-turn (answers "はい。")]
+              (bots/send! nil alice (:bot/id b) "やっぱりいい、天気の話をして"))
+
+            (testing "the request is superseded, not still open"
+              (is (= "superseded" (:standing (held-card b))))
+              (is (nil? (:decision (held-card b)))
+                  "nothing was decided — the person moved on, and the record
+                   must not claim otherwise"))
+
+            (testing "and the Bot stops reporting that it is waiting"
+              (is (= "idle" (:status (first (:bots (bots/overview nil alice)))))))
+
+            (testing "answering it now says which refusal it is"
+              (is (thrown-with-msg?
+                   clojure.lang.ExceptionInfo #"もう古い指示のもの"
+                   (bots/decide! nil alice (:bot/id b) (:id card) "approved"))))))))))
+
+(deftest a-decision-already-given-is-not-unmade-by-a-later-instruction
+  ;; The other ordering. `request-standing` tests `answered` before direction,
+  ;; because a decision the person actually gave is a fact about the past.
+  (with-store
+    (fn []
+      (connect! "conn-1" :google "sub-1" "jun@example.com")
+      (let [b (make-bot alice {:writes? true})
+            ran (atom [])]
+        (with-redefs-fn {(run-tool-var) (fn [_ _ _ n _] (swap! ran conj n) "sent")}
+          (fn []
+            (with-redefs [policy/select-provider (fn [_ _] {:id :local})
+                          provider/agent-turn (proposes-write)]
+              (bots/send! nil alice (:bot/id b) "メール送って")
+              (bots/decide! nil alice (:bot/id b) (:id (held-card b)) "rejected"))))
+        (is (= "rejected" (:decision (held-card b))))
+        (is (empty? @ran) "a rejected write must not have run")
+        (with-redefs [policy/select-provider (fn [_ _] {:id :local})
+                      provider/agent-turn (answers "はい。")]
+          (bots/send! nil alice (:bot/id b) "別の話"))
+        (is (= "answered" (:standing (held-card b)))
+            "a later instruction must not turn a recorded decision into a
+             superseded request")))))
+
+(deftest an-approval-asked-under-the-current-instruction-still-works
+  ;; The change must not make approvals unanswerable. A card raised on this
+  ;; turn is answered on this turn.
+  (with-store
+    (fn []
+      (connect! "conn-1" :google "sub-1" "jun@example.com")
+      (let [b (make-bot alice {:writes? true})
+            ran (atom [])]
+        (with-redefs-fn {(run-tool-var) (fn [_ _ _ n _] (swap! ran conj n) "sent")}
+          (fn []
+            (with-redefs [policy/select-provider (fn [_ _] {:id :local})
+                          provider/agent-turn (proposes-write)]
+              (bots/send! nil alice (:bot/id b) "メール送って")
+              (bots/decide! nil alice (:bot/id b) (:id (held-card b)) "approved"))))
+        (is (= ["gmail_send_message"] @ran) "the approved write ran")
+        (is (= "approved" (:decision (held-card b))))
+        (is (= "answered" (:standing (held-card b))))))))
+
 (deftest an-archived-bot-keeps-its-conversation-and-stops-working
   (with-store
     (fn []

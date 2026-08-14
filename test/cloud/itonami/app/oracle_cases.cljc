@@ -74,6 +74,10 @@
   [:record :bot/presence
    [[:enabled :bool] [:held-run :bool] [:unmet-connection :bool] [:active-run :bool]]])
 
+(def request-record
+  [:record :bot/request
+   [[:asked-at :i64] [:current :i64] [:answered :bool]]])
+
 (def routine-presence-record
   [:record :routine/presence
    [[:enabled :bool] [:held-run :bool] [:active-run :bool]
@@ -332,7 +336,39 @@
      :expect 0 :read oracle/i64-value}
     {:oracle :bot :export 'status
      :args [(oracle/record presence-record [true false false true])]
-     :expect 2 :read oracle/i64-value}]
+     :expect 2 :read oracle/i64-value}
+    {:oracle :bot :export 'request-open :args [] :expect 0 :read oracle/i64-value}
+    {:oracle :bot :export 'request-answered :args [] :expect 1 :read oracle/i64-value}
+    {:oracle :bot :export 'request-superseded :args [] :expect 2 :read oracle/i64-value}
+    ;; Asked under the direction still in force: open.
+    {:oracle :bot :export 'request-standing
+     :args [(oracle/record request-record [(oracle/i64 3) (oracle/i64 3) false])]
+     :expect 0 :read oracle/i64-value}
+    ;; The person has said something else since: superseded.
+    {:oracle :bot :export 'request-standing
+     :args [(oracle/record request-record [(oracle/i64 3) (oracle/i64 4) false])]
+     :expect 2 :read oracle/i64-value}
+    ;; Answered outranks direction. A decision the person actually gave is not
+    ;; unmade by them going on to say something else — reversing these two
+    ;; branches erases it.
+    {:oracle :bot :export 'request-standing
+     :args [(oracle/record request-record [(oracle/i64 3) (oracle/i64 9) true])]
+     :expect 1 :read oracle/i64-value}
+    ;; A card written before `:card/direction` existed carries 0, and every
+    ;; real direction is 1 or more, so it reads as superseded rather than as a
+    ;; request somebody is still waiting on.
+    {:oracle :bot :export 'request-standing
+     :args [(oracle/record request-record [(oracle/i64 0) (oracle/i64 1) false])]
+     :expect 2 :read oracle/i64-value}
+    {:oracle :bot :export 'outstanding?
+     :args [(oracle/record request-record [(oracle/i64 2) (oracle/i64 2) false])]
+     :expect true}
+    {:oracle :bot :export 'outstanding?
+     :args [(oracle/record request-record [(oracle/i64 2) (oracle/i64 3) false])]
+     :expect false}
+    {:oracle :bot :export 'outstanding?
+     :args [(oracle/record request-record [(oracle/i64 2) (oracle/i64 2) true])]
+     :expect false}]
 
    ;; ── work-transitions ────────────────────────────────────────────
    ;; An older-format artifact: every parameter is an implicit `:i64`, and the
