@@ -77,6 +77,28 @@
         (is (every? #(str/starts-with? % "gmail_") tools)
             (str "a Bot given only Gmail reached past it: " (vec tools)))))))
 
+(deftest a-bot-created-without-connectors-inherits-the-deployment-grant
+  (with-store
+    (fn []
+      ;; Create no longer asks "what do you use every day?". Connection is
+      ;; Settings; the grant is this deployment's enabled set.
+      (let [b (bots/create! nil alice {:name "named peer"})
+            gmail-only (make-bot alice {:connectors ["com.google.gmail"]})]
+        (is (seq (:bot/tools b)))
+        (is (contains? (:bot/tools b) "gmail_search_messages"))
+        (is (> (count (:bot/tools b)) (count (:bot/tools gmail-only)))
+            "omitting connectors does not produce an empty grant")))))
+
+(deftest create-ignores-a-csrf-field-on-the-wire
+  (with-store
+    (fn []
+      (let [b (bots/create! nil alice {:name "エンジニア"
+                                       :csrf "not-a-grant"
+                                       :brief "毎朝わたしの受信箱を見て、返事が要るものと待てるものを分けて。"
+                                       :writes? true})]
+        (is (= "エンジニア" (:bot/name b)))
+        (is (true? (:bot/writes? b)))))))
+
 (defn- with-model [f]
   (with-redefs [policy/select-provider (fn [_ _] {:id :local :name "local"})
                 provider/agent-turn (fn [_ _] {:content "はい。" :tool-calls []})]

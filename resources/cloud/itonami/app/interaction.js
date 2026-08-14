@@ -7477,17 +7477,48 @@
       return result;
     };
     const writeJSON = async (path, method, body={}, authenticated=false) => {
-      const request = await fetch(path, {
-        method,
-        headers:authenticated ? identityHeaders() : {'Content-Type':'application/json'},
-        body:JSON.stringify(body)
-      });
-      const data = await request.json();
-      if (!request.ok) throw new Error(data?.error?.message || '認証要求を完了できませんでした。');
+      // Authenticated writes carry CSRF in the JSON body as well as the
+      // header. Native webviews treat `X-CLOUD-ITONAMI-CSRF` as a CORS
+      // preflight; `/api/bots` used to 401 that OPTIONS and the page showed
+      // `Failed to fetch`. Body CSRF lets those POSTs omit the header.
+      const payload = (authenticated === 'body-csrf')
+        ? Object.assign({}, body, {csrf: identityState?.csrf || ''})
+        : body;
+      const headers = authenticated === 'body-csrf'
+        ? {'Content-Type':'application/json'}
+        : authenticated ? identityHeaders() : {'Content-Type':'application/json'};
+      let request;
+      try {
+        request = await fetch(path, {
+          method,
+          credentials: 'same-origin',
+          headers,
+          body: JSON.stringify(payload)
+        });
+      } catch (error) {
+        if (/failed to fetch|load failed|networkerror|network request failed/i
+            .test(error.message || '')) {
+          throw new Error('サーバーに届きませんでした。ページを再読み込みしてから、もう一度はじめてください。');
+        }
+        throw error;
+      }
+      const text = await request.text();
+      let data = {};
+      if (text) {
+        try { data = JSON.parse(text); }
+        catch (_) {
+          throw new Error(request.ok
+            ? '応答を読めませんでした。'
+            : (text.slice(0, 180) || `HTTP ${request.status}`));
+        }
+      }
+      if (!request.ok) throw new Error(data?.error?.message || `HTTP ${request.status}`);
       return data;
     };
     const postJSON = (path, body={}, authenticated=false) =>
       writeJSON(path, 'POST', body, authenticated);
+    const botsPost = (path, body={}) =>
+      writeJSON(path, 'POST', body, 'body-csrf');
     const memoryControls = {
       local:$('#memory-local-toggle'), screen:$('#memory-screen-toggle'),
       tool:$('#memory-tool-toggle')
@@ -9017,7 +9048,7 @@
     // sidebar starts showing "working" for a Bot that is actually waiting.
     const botsState = {
       bots:[], catalog:[], palette:{colors:[], glyphs:[]},
-      selected:null, messages:[], routines:[], picked:new Set(),
+      selected:null, messages:[], routines:[],
       draft:{color:'blue', glyph:'circle'}, loaded:false, busy:false,
       browserAvailable:false
     };
@@ -9066,59 +9097,6 @@
         badge.dataset.tone = needing ? 'warn' : 'ok';
       }
     };
-    const renderBotsServiceGrid = () => {
-      const query = $('#bots-service-search').value.trim().toLowerCase();
-      const grid = $('#bots-service-grid');
-      grid.replaceChildren();
-      let noTools = 0;
-      let noClient = 0;
-      botsState.catalog.forEach((service) => {
-        if (query && !service.name.toLowerCase().includes(query)) return;
-        // A connector with no enabled tool cannot do anything for a Bot, and
-        // offering it would be an invitation to authorize an account for
-        // nothing. Shown, disabled, and labelled — not silently dropped.
-        //
-        // The same holds one step earlier: a connector whose OAuth client is
-        // not configured on this machine has nothing to authorize AGAINST, so
-        // picking it produces a Bot that can only ever answer 'connect first'
-        // with a button that fails. Two reasons, reported apart, because they
-        // are fixed in different places.
-        const hasTools = service['enabled-tool-count'] > 0 && service['configurable?'];
-        const authable = service['authable?'] !== false;
-        const usable = hasTools && authable;
-        if (!hasTools) noTools += 1;
-        else if (!authable) noClient += 1;
-        const tile = make('button', 'bots-tile');
-        tile.type = 'button';
-        tile.disabled = !usable;
-        tile.setAttribute('aria-pressed', String(botsState.picked.has(service.id)));
-        const copy = make('div', 'bots-tile__copy');
-        copy.append(make('span', 'bots-tile__name', service.name),
-                    make('span', 'bots-tile__meta',
-                         usable
-                           ? `${service['enabled-tool-count']} 個のツール${service['connected?'] ? '・接続済み' : ''}`
-                           : hasTools
-                             ? 'OAuth クライアント設定が必要です'
-                             : 'このビルドでは有効なツールがありません'));
-        tile.append(copy);
-        if (botsState.picked.has(service.id)) {
-          tile.append(make('span', 'bots-tile__check', '✓'));
-        }
-        tile.addEventListener('click', () => {
-          if (botsState.picked.has(service.id)) botsState.picked.delete(service.id);
-          else botsState.picked.add(service.id);
-          renderBotsServiceGrid();
-        });
-        grid.append(tile);
-      });
-      $('#bots-service-note').textContent = [
-        noTools ? `${noTools} 件はこのビルドに有効なツールが無いので選べません。` : '',
-        noClient
-          ? `${noClient} 件は OAuth クライアントが未設定なので選べません（Settings の接続に同じ表示が出ます）。`
-          : '',
-      ].filter(Boolean).join(' ');
-      $('#bots-services-next').disabled = botsState.picked.size === 0;
-    };
     const renderBotsPalette = () => {
       const preview = botAvatar($('#bots-avatar-preview'), botsState.draft);
       preview.textContent = '';
@@ -9158,8 +9136,10 @@
       holder.replaceChildren();
       let suggestions = [];
       try {
-        const data = await postJSON('/api/bots/suggestions',
-                                    {connectors:[...botsState.picked]}, true);
+        const data = await botsPost('/api/bots/suggestions',
+                                    {connectors:(botsState.catalog || [])
+                                      .filter((row) => row['enabled-tool-count'] > 0)
+                                      .map((row) => row.id)});
         suggestions = data.suggestions || [];
       } catch (_) { return; }
       suggestions.forEach((suggestion) => {
@@ -9203,8 +9183,8 @@
           const label = window.prompt('このアカウントの呼び名', account.label || '');
           if (label === null) return;
           try {
-            await postJSON('/api/bots/accounts/label',
-                           {connection:account.id, label}, true);
+            await botsPost('/api/bots/accounts/label',
+                           {connection:account.id, label});
             await refreshBotsThread();
           } catch (error) { botsSetStatus(error.message); }
         });
@@ -9266,8 +9246,8 @@
                       make('span', null, option.label));
         button.addEventListener('click', async () => {
           try {
-            const data = await postJSON(
-              `/api/bots/${botId}/cards/${card.id}/answer`, {answer:option.key}, true);
+            const data = await botsPost(
+              `/api/bots/${botId}/cards/${card.id}/answer`, {answer:option.key});
             botsState.messages = data.messages || [];
             renderBotsThread();
           } catch (error) { botsSetStatus(error.message); }
@@ -9294,8 +9274,8 @@
         button.disabled = true;
         botsSetStatus(decision === 'approved' ? '実行しています…' : '取り消しています…');
         try {
-          const data = await postJSON(
-            `/api/bots/${botId}/cards/${card.id}/decide`, {decision}, true);
+          const data = await botsPost(
+            `/api/bots/${botId}/cards/${card.id}/decide`, {decision});
           botsState.messages = data.messages || [];
           renderBotsThread();
           botsSetStatus('');
@@ -9434,29 +9414,22 @@
           return;
         }
         renderBotsRail();
-        renderBotsServiceGrid();
         renderBotsPalette();
+        if (!botsState.selected) renderBotsSuggestions();
         showBotsPane();
         if (botsState.selected) renderBotsThread();
       } catch (error) { botsSetStatus(error.message); }
     };
-    $('#bots-service-search').addEventListener('input', renderBotsServiceGrid);
-    $('#bots-services-next').addEventListener('click', () => {
-      $('#bots-step-services').hidden = true;
-      $('#bots-step-create').hidden = false;
-      renderBotsPalette();
-      renderBotsSuggestions();
-      syncBotsBrowserPermission();
-    });
     $('#bots-new').addEventListener('click', () => {
       botsState.selected = null;
       botsState.messages = [];
-      $('#bots-step-services').hidden = false;
-      $('#bots-step-create').hidden = true;
       renderBotsRail();
-      renderBotsServiceGrid();
+      renderBotsPalette();
+      renderBotsSuggestions();
+      syncBotsBrowserPermission();
       showBotsPane();
     });
+    $('#bots-open-settings')?.addEventListener('click', () => showView('settings'));
     $('#bots-create').addEventListener('click', async () => {
       const button = $('#bots-create');
       const name = $('#bots-name').value.trim();
@@ -9464,14 +9437,13 @@
       button.disabled = true;
       $('#bots-create-status').textContent = '作成しています…';
       try {
-        const data = await postJSON('/api/bots', {
+        const data = await botsPost('/api/bots', {
           name,
           avatar:{color:botsState.draft.color, glyph:botsState.draft.glyph},
           brief:$('#bots-brief').value,
-          connectors:[...botsState.picked],
           'writes?':$('#bots-writes').checked,
           'browser?':$('#bots-browser').checked
-        }, true);
+        });
         botsState.bots = data.bots || [];
         botsState.catalog = data.catalog || [];
         $('#bots-create-status').textContent = '';
@@ -9521,8 +9493,8 @@
           run.disabled = true;
           $('#bots-routine-status').textContent = '実行しています…';
           try {
-            const data = await postJSON(
-              `/api/bots/${botsState.selected}/routines/${routine.id}/start`, {}, true);
+            const data = await botsPost(
+              `/api/bots/${botsState.selected}/routines/${routine.id}/start`, {});
             botsState.messages = data.messages || [];
             renderBotsThread();
             $('#bots-routine-status').textContent = '';
@@ -9537,8 +9509,8 @@
         forget.type = 'button';
         forget.addEventListener('click', async () => {
           try {
-            await postJSON(
-              `/api/bots/${botsState.selected}/routines/${routine.id}/forget`, {}, true);
+            await botsPost(
+              `/api/bots/${botsState.selected}/routines/${routine.id}/forget`, {});
             await loadRoutines(botsState.selected);
           } catch (error) { $('#bots-routine-status').textContent = error.message; }
         });
@@ -9583,9 +9555,9 @@
       button.disabled = true;
       $('#bots-routine-status').textContent = '残しています…';
       try {
-        await postJSON(`/api/bots/${botsState.selected}/routines`, {
+        await botsPost(`/api/bots/${botsState.selected}/routines`, {
           name, intent:$('#bots-routine-intent').value
-        }, true);
+        });
         $('#bots-routine-name').value = '';
         $('#bots-routine-intent').value = '';
         $('#bots-routine-status').textContent = '';
@@ -9603,7 +9575,7 @@
       button.disabled = true;
       $('#bots-handoff-status').textContent = '引き継いでいます…';
       try {
-        await postJSON(`/api/bots/${botsState.selected}/handoff`, {to, task}, true);
+        await botsPost(`/api/bots/${botsState.selected}/handoff`, {to, task});
         $('#bots-handoff-task').value = '';
         $('#bots-handoff-status').textContent = '';
         // Follow the work. The messages that came back are the TARGET's, and
@@ -9635,8 +9607,8 @@
       resizeBotsInput();
       botsSetStatus('考えています…');
       try {
-        const data = await postJSON(`/api/bots/${botsState.selected}/messages`,
-                                    {text}, true);
+        const data = await botsPost(`/api/bots/${botsState.selected}/messages`,
+                                    {text});
         botsState.messages = data.messages || [];
         renderBotsThread();
         botsSetStatus('');

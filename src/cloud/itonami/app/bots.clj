@@ -256,19 +256,17 @@
   (boolean (some-> provider identity/provider-config :configured?)))
 
 (defn catalog
-  "Every connector this build carries, with whether it is connected — the
-  'What do you use every day?' grid.
+  "Every connector this build carries, with whether it is connected.
 
   Derived from the registry, so it lists what this deployment can actually
   offer rather than a picture of an integrations page. A connector this build
-  does not carry is absent, which is the honest answer.
+  does not carry is absent, which is the honest answer. Connection itself is
+  Settings — a Bot does not pick services at create time.
 
   `:authable?` is the second reason a row can be unofferable, and it has to be
   reported separately from `:enabled-tool-count` because the two send a person
   to different places: no enabled tool is something an operator turns on in
-  this build, no OAuth client is something they configure for this machine.
-  Collapsing them into one disabled tile would repeat the mistake this grid's
-  own comment warns about — offering an authorization that leads nowhere."
+  this build, no OAuth client is something they configure for this machine."
   [configuration did]
   (let [connected (connected-connectors configuration did)]
     (mapv (fn [row]
@@ -287,18 +285,25 @@
           (connectors/catalog-rows configuration))))
 
 (defn- default-tools
-  "The tools a Bot starts with for the connectors somebody picked: every
-  ENABLED tool those connectors offer, and nothing from a connector they did
-  not pick. Computed rather than chosen, for the same reason
-  `connectors/default-enabled-tools` is."
+  "The tools a Bot starts with.
+
+  When the caller names connectors, the grant is those connectors' enabled
+  tools. When they name none, the grant is every tool this deployment has
+  enabled — OAuth lives in Settings, not on the create screen. Computed
+  rather than chosen, for the same reason `connectors/default-enabled-tools`
+  is."
   [configuration picked]
-  (let [picked (into #{} (map str) picked)]
+  (let [rows (connectors/catalog-rows configuration)
+        picked (into #{} (map str) picked)
+        wanted? (if (seq picked)
+                  #(contains? picked (str (:id %)))
+                  (constantly true))]
     (into (sorted-set)
-          (comp (filter #(contains? picked (str (:id %))))
+          (comp (filter wanted?)
                 (mapcat :tools)
                 (filter :enabled?)
                 (map :name))
-          (connectors/catalog-rows configuration))))
+          rows)))
 
 ;; ── the record ──────────────────────────────────────────────────────────
 
@@ -401,7 +406,8 @@
 
 (defn create!
   "Create a Bot. `:tools` may be given directly, or derived from `:connectors`
-  when the caller is the onboarding screen and has only picked services."
+  when a caller still names services. With neither, the grant is this
+  deployment's enabled set — the person connects those services in Settings."
   [configuration session {:keys [name avatar brief connectors tools accounts
                                  writes? browser?]}]
   (let [now (store/now)

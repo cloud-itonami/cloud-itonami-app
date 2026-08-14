@@ -1386,20 +1386,13 @@
            [:ul {:class "bots-rail__list" :id "bots-list"}]
            [:p {:class "bots-rail__empty" :id "bots-rail-empty"} "まだ Bot がいません"]]
           [:div {:class "bots-main"}
-           ;; The onboarding pair from a first run: pick what you use, then
-           ;; make the first Bot. Hidden once one exists.
+           ;; Create is identity — name, face, brief. Connectors live in
+           ;; Settings (「サービス接続」), shared across this person's Bots.
            [:div {:class "bots-onboard" :id "bots-onboard" :hidden true}
-            [:div {:class "bots-onboard__step" :id "bots-step-services"}
-             (dds/heading 2 "毎日なにを使っていますか?" {:size "28"})
+            [:div {:class "bots-onboard__step" :id "bots-step-create"}
+             (dds/heading 2 "新しい Bot" {:size "28"})
              [:p {:class "view-lead"}
-              "この build が実際に持っているサービスだけを出しています。選んだものが、最初の Bot が触れる範囲になります。"]
-             [:input {:class "bots-search" :id "bots-service-search" :type "search"
-                      :placeholder "探す" :autocomplete "off"}]
-             [:div {:class "bots-grid" :id "bots-service-grid"}]
-             [:p {:class "form-help" :id "bots-service-note"}]
-             [:button {:class "primary-action" :id "bots-services-next" :type "button"}
-              "次へ"]]
-            [:div {:class "bots-onboard__step" :id "bots-step-create" :hidden true}
+              "名前と任せることがこの Bot です。Gmail などのコネクタは Settings の「サービス接続」で共通に繋ぎ、この人の Bot が同じ接続を使います。"]
              [:div {:class "bots-avatar-preview"}
               [:span {:class "bot-avatar bot-avatar--xl" :id "bots-avatar-preview"}]]
              [:div {:class "bots-swatches" :id "bots-color-row" :role "radiogroup"
@@ -1424,6 +1417,9 @@
                [:span {:class "bots-permission__help" :id "bots-browser-help"}]]]
              [:button {:class "primary-action" :id "bots-create" :type "button"}
               "はじめる"]
+             [:p {:class "form-help"}
+              [:button {:class "tool-button" :id "bots-open-settings" :type "button"}
+               "サービス接続を開く"]]
              [:p {:class "drive-create__status" :id "bots-create-status"
                   :aria-live "polite"}]
              [:div {:class "bots-suggestions" :id "bots-suggestions"}]]]
@@ -2795,7 +2791,7 @@
             [:div {:class "local-card"}
              (dds/heading 2 "サービス接続" {:size "24"})
              [:p {:class "view-lead"}
-              "読み取り権限を用途別に確認し、owner の操作で接続します。接続先の token は macOS Keychain に保存されます。"]
+              "Bots が使うコネクタです。ここで一度繋ぐと、この人の Bot が共通して使えます。読み取り権限を用途別に確認し、owner の操作で接続します。接続先の token は macOS Keychain に保存されます。"]
              [:div {:class "connector-list" :id "connector-list"}
               [:div {:class "skeleton"}]]]
             ;; Mailboxes, listed one per account rather than one per provider:

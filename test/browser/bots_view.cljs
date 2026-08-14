@@ -83,33 +83,31 @@
       (check! "the Bots panel is the visible one" (nil? panel-hidden))
       (check! "the header names the view" (= "Bots" (str/trim (or current "")))))
 
-    (println "\n── onboarding is derived from the registry ──")
-    (p/let [tiles (.count (.locator page ".bots-tile"))
-            names (.allTextContents (.locator page ".bots-tile__name"))
-            usable (.count (.locator page ".bots-tile:not([disabled])"))]
-      (check! (str "the service grid rendered " tiles " connectors") (= 8 tiles))
-      (check! "it names the real connectors, not placeholders"
-              (and (some #(= "Gmail" %) names) (some #(= "GitHub" %) names)))
-      (check! "connectors with no enabled tool are shown disabled, not dropped"
-              (and (pos? usable) (< usable tiles))))
+    (println "\n── create is identity; connectors live in Settings ──")
+    (p/let [picker (.count (.locator page "#bots-service-search"))
+            name-visible (.isVisible page "#bots-name")
+            settings-link (.isVisible page "#bots-open-settings")
+            _ (.click page ".local-nav__item[data-view='settings']")
+            _ (.waitForTimeout page 1200)
+            cards (.count (.locator page ".connector-card"))
+            settings-copy (.textContent page "[data-view-panel='settings']")
+            _ (.click page ".local-nav__item[data-view='bots']")
+            _ (.waitForTimeout page 800)]
+      (check! "the daily-use picker is not on the create path" (zero? picker))
+      (check! "create opens on name and face" name-visible)
+      (check! "a door to Settings connectors is on the form" settings-link)
+      (check! "Settings lists the shared connectors" (pos? cards))
+      (check! "Settings says Bots share the connection"
+              (str/includes? (or settings-copy "") "Bots が使うコネクタ")))
 
     (println "\n── the avatar picker ──")
-    (p/let [_ (.fill page "#bots-service-search" "gmail")
-            _ (.waitForTimeout page 300)
-            filtered (.count (.locator page ".bots-tile"))
-            _ (.click page ".bots-tile")
-            _ (.waitForTimeout page 300)
-            next-disabled (.isDisabled page "#bots-services-next")
-            _ (.click page "#bots-services-next")
-            _ (.waitForTimeout page 800)
-            colors (.count (.locator page "#bots-color-row .bots-swatch"))
+    (p/let [colors (.count (.locator page "#bots-color-row .bots-swatch"))
             glyphs (.count (.locator page "#bots-glyph-row .bots-swatch"))
             suggestions (.count (.locator page ".bots-suggestion"))]
-      (check! "search narrows the grid" (= 1 filtered))
-      (check! "Next is enabled once something is picked" (not next-disabled))
       (check! "ten colours" (= 10 colors))
       (check! "eight glyphs" (= 8 glyphs))
-      (check! "a suggestion is offered for the picked connector" (pos? suggestions))
+      (check! "a suggestion is offered from the deployment's connectors"
+              (pos? suggestions))
       (check! "the isolated-browser permission is on the create step"
               (.isVisible page "#bots-browser")))
 

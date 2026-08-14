@@ -445,11 +445,17 @@
               {:type :identity/agent-session-forbidden})))
     (identity/require-passkey! session)))
 
-(defn- require-csrf-header! [exchange session]
-  (when-not (= (:csrf session)
-               (.getFirst (.getRequestHeaders exchange) "X-CLOUD-ITONAMI-CSRF"))
-    (throw (ex-info "CSRF token が一致しません。"
-                    {:type :identity/invalid-csrf}))))
+(defn- csrf-presented
+  "The CSRF value this request offered.
+
+  The header is the usual browser channel. The JSON body is the same token
+  for surfaces that cannot send a custom header — a native webview that
+  treats `X-CLOUD-ITONAMI-CSRF` as a CORS preflight, which then 401s on
+  this handler and surfaces in the page as `Failed to fetch`."
+  [exchange body]
+  (or (not-empty (.getFirst (.getRequestHeaders exchange) "X-CLOUD-ITONAMI-CSRF"))
+      (let [from-body (:csrf body)]
+        (when (string? from-body) (not-empty from-body)))))
 
 (defn- require-csrf!
   "CSRF token must match — for a cookie-borne request.
@@ -457,10 +463,16 @@
   CSRF exists because a browser attaches the cookie by itself. Nothing attaches
   a bearer token by itself, so there is no confused deputy to defend against and
   requiring the header would only mean the CLI has to fetch and echo a value
-  that proves nothing."
-  [exchange session]
-  (when-not (bearer-token exchange)
-    (require-csrf-header! exchange session)))
+  that proves nothing.
+
+  Three-arity reads `:csrf` from the JSON body as well as the header, so a
+  caller that already consumed the body can still present the token."
+  ([exchange session] (require-csrf! exchange session nil))
+  ([exchange session body]
+   (when-not (bearer-token exchange)
+     (when-not (= (:csrf session) (csrf-presented exchange body))
+       (throw (ex-info "CSRF token が一致しません。"
+                       {:type :identity/invalid-csrf}))))))
 
 (defn- route-kotobase-federation! [exchange config]
   (let [session (require-human-session! exchange)]
@@ -4842,23 +4854,21 @@
   boundary that only holds at the innermost check is one refactor from not
   holding — so the outer gate refuses the whole family."
   [config exchange method path]
-  (let [session (require-human-session! exchange)]
+  (let [session (require-human-session! exchange)
+        body (when (= method "POST") (read-json exchange))]
+    (when (= method "POST")
+      (require-origin! exchange config)
+      (require-csrf! exchange session body))
     (cond
       (and (= method "GET") (= path "/api/bots"))
       (send! exchange 200 (bots/overview config session))
 
       (and (= method "POST") (= path "/api/bots"))
-      (let [body (read-json exchange)]
-        (require-origin! exchange config)
-        (require-csrf! exchange session)
-        (bots/create! config session body)
-        (send! exchange 200 (bots/overview config session)))
+      (do (bots/create! config session (dissoc body :csrf))
+          (send! exchange 200 (bots/overview config session)))
 
       (and (= method "POST") (= path "/api/bots/suggestions"))
-      (let [body (read-json exchange)]
-        (require-origin! exchange config)
-        (require-csrf! exchange session)
-        (send! exchange 200 {:suggestions (bots/suggestions (:connectors body))}))
+      (send! exchange 200 {:suggestions (bots/suggestions (:connectors body))})
 
       (and (= method "GET") (bot-id-from path #"/api/bots/([^/]+)/messages"))
       (send! exchange 200
@@ -4866,20 +4876,14 @@
                          session (bot-id-from path #"/api/bots/([^/]+)/messages"))})
 
       (and (= method "POST") (bot-id-from path #"/api/bots/([^/]+)/messages"))
-      (let [bot-id (bot-id-from path #"/api/bots/([^/]+)/messages")
-            body (read-json exchange)]
-        (require-origin! exchange config)
-        (require-csrf! exchange session)
+      (let [bot-id (bot-id-from path #"/api/bots/([^/]+)/messages")]
         (send! exchange 200
                {:messages (bots/send! config session bot-id (:text body))}))
 
       (and (= method "POST")
            (bot-id-from path #"/api/bots/([^/]+)/cards/[^/]+/answer"))
       (let [bot-id (bot-id-from path #"/api/bots/([^/]+)/cards/[^/]+/answer")
-            card-id (bot-id-from path #"/api/bots/[^/]+/cards/([^/]+)/answer")
-            body (read-json exchange)]
-        (require-origin! exchange config)
-        (require-csrf! exchange session)
+            card-id (bot-id-from path #"/api/bots/[^/]+/cards/([^/]+)/answer")]
         (send! exchange 200
                {:messages (bots/answer! config session bot-id card-id
                                         (:answer body))}))
@@ -4893,19 +4897,13 @@
       ;; Bots sharing a Google account must see the same name for it — so it is
       ;; not under a bot id even though this is where somebody does it.
       (and (= method "POST") (= path "/api/bots/accounts/label"))
-      (let [body (read-json exchange)]
-        (require-origin! exchange config)
-        (require-csrf! exchange session)
-        (send! exchange 200
-               (bots/label-account! session (:connection body) (:label body))))
+      (send! exchange 200
+             (bots/label-account! session (:connection body) (:label body)))
 
       (and (= method "POST")
            (bot-id-from path #"/api/bots/([^/]+)/cards/[^/]+/decide"))
       (let [bot-id (bot-id-from path #"/api/bots/([^/]+)/cards/[^/]+/decide")
-            card-id (bot-id-from path #"/api/bots/[^/]+/cards/([^/]+)/decide")
-            body (read-json exchange)]
-        (require-origin! exchange config)
-        (require-csrf! exchange session)
+            card-id (bot-id-from path #"/api/bots/[^/]+/cards/([^/]+)/decide")]
         (send! exchange 200
                {:messages (bots/decide! config session bot-id card-id
                                         (:decision body))}))
@@ -4919,9 +4917,7 @@
       ;; and putting it under one Bot would invite a caller to tick per Bot and
       ;; call that a schedule.
       (and (= method "POST") (= path "/api/bots/routines/fire"))
-      (do (require-origin! exchange config)
-          (require-csrf! exchange session)
-          (send! exchange 200 (bots/fire-due! config session (store/now))))
+      (send! exchange 200 (bots/fire-due! config session (store/now)))
 
       (and (= method "GET") (bot-id-from path #"/api/bots/([^/]+)/routines"))
       (send! exchange 200
@@ -4930,19 +4926,15 @@
                          (bot-id-from path #"/api/bots/([^/]+)/routines"))})
 
       (and (= method "POST") (bot-id-from path #"/api/bots/([^/]+)/routines"))
-      (let [bot-id (bot-id-from path #"/api/bots/([^/]+)/routines")
-            body (read-json exchange)]
-        (require-origin! exchange config)
-        (require-csrf! exchange session)
+      (let [bot-id (bot-id-from path #"/api/bots/([^/]+)/routines")]
         (send! exchange 200
-               {:routine (bots/record-routine! config session bot-id body)}))
+               {:routine (bots/record-routine! config session bot-id
+                                               (dissoc body :csrf))}))
 
       (and (= method "POST")
            (bot-id-from path #"/api/bots/([^/]+)/routines/[^/]+/start"))
       (let [bot-id (bot-id-from path #"/api/bots/([^/]+)/routines/[^/]+/start")
             routine-id (bot-id-from path #"/api/bots/[^/]+/routines/([^/]+)/start")]
-        (require-origin! exchange config)
-        (require-csrf! exchange session)
         (send! exchange 200
                {:messages (bots/start-routine! config session bot-id routine-id)}))
 
@@ -4950,19 +4942,15 @@
            (bot-id-from path #"/api/bots/([^/]+)/routines/[^/]+/forget"))
       (let [bot-id (bot-id-from path #"/api/bots/([^/]+)/routines/[^/]+/forget")
             routine-id (bot-id-from path #"/api/bots/[^/]+/routines/([^/]+)/forget")]
-        (require-origin! exchange config)
-        (require-csrf! exchange session)
         (send! exchange 200 (bots/forget-routine! session bot-id routine-id)))
 
       (and (= method "POST")
            (bot-id-from path #"/api/bots/([^/]+)/routines/[^/]+"))
       (let [bot-id (bot-id-from path #"/api/bots/([^/]+)/routines/[^/]+")
-            routine-id (bot-id-from path #"/api/bots/[^/]+/routines/([^/]+)")
-            body (read-json exchange)]
-        (require-origin! exchange config)
-        (require-csrf! exchange session)
+            routine-id (bot-id-from path #"/api/bots/[^/]+/routines/([^/]+)")]
         (send! exchange 200
-               {:routine (bots/update-routine! config session bot-id routine-id body)}))
+               {:routine (bots/update-routine! config session bot-id routine-id
+                                               (dissoc body :csrf))}))
 
       ;; ── handoff ───────────────────────────────────────────────────
       ;; The target is in the BODY rather than the path. Both Bots are checked
@@ -4970,10 +4958,7 @@
       ;; though the pair were the resource, and what is being created is one
       ;; message with a sender.
       (and (= method "POST") (bot-id-from path #"/api/bots/([^/]+)/handoff"))
-      (let [from-bot-id (bot-id-from path #"/api/bots/([^/]+)/handoff")
-            body (read-json exchange)]
-        (require-origin! exchange config)
-        (require-csrf! exchange session)
+      (let [from-bot-id (bot-id-from path #"/api/bots/([^/]+)/handoff")]
         (send! exchange 200
                (bots/hand-off! config session from-bot-id (:to body)
                                {:task (:task body) :depth (:depth body)})))
@@ -4986,21 +4971,16 @@
 
       (and (= method "POST")
            (bot-id-from path #"/api/bots/([^/]+)/peers/message"))
-      (let [from-bot-id (bot-id-from path #"/api/bots/([^/]+)/peers/message")
-            body (read-json exchange)]
-        (require-origin! exchange config)
-        (require-csrf! exchange session)
+      (let [from-bot-id (bot-id-from path #"/api/bots/([^/]+)/peers/message")]
         (send! exchange 200
                (bots/peer-message! config session from-bot-id (:to body)
                                    (:text body))))
 
       (and (= method "POST") (bot-id-from path #"/api/bots/([^/]+)/groups"))
-      (let [from-bot-id (bot-id-from path #"/api/bots/([^/]+)/groups")
-            body (read-json exchange)]
-        (require-origin! exchange config)
-        (require-csrf! exchange session)
+      (let [from-bot-id (bot-id-from path #"/api/bots/([^/]+)/groups")]
         (send! exchange 200
-               {:conversation (bots/peer-group! session from-bot-id body)}))
+               {:conversation (bots/peer-group! session from-bot-id
+                                                (dissoc body :csrf))}))
 
       (and (= method "GET") (bot-id-from path #"/api/bots/([^/]+)/memory"))
       (send! exchange 200
@@ -5009,29 +4989,51 @@
                          (bot-id-from path #"/api/bots/([^/]+)/memory"))})
 
       (and (= method "POST") (bot-id-from path #"/api/bots/([^/]+)/memory"))
-      (let [bot-id (bot-id-from path #"/api/bots/([^/]+)/memory")
-            body (read-json exchange)]
-        (require-origin! exchange config)
-        (require-csrf! exchange session)
+      (let [bot-id (bot-id-from path #"/api/bots/([^/]+)/memory")]
         (send! exchange 200
                {:memories (bots/remember! session bot-id (:text body))}))
 
       (and (= method "POST") (bot-id-from path #"/api/bots/([^/]+)/archive"))
       (let [bot-id (bot-id-from path #"/api/bots/([^/]+)/archive")]
-        (require-origin! exchange config)
-        (require-csrf! exchange session)
         (bots/archive! session bot-id)
         (send! exchange 200 (bots/overview config session)))
 
       (and (= method "POST") (bot-id-from path #"/api/bots/([^/]+)"))
-      (let [bot-id (bot-id-from path #"/api/bots/([^/]+)")
-            body (read-json exchange)]
-        (require-origin! exchange config)
-        (require-csrf! exchange session)
-        (bots/update! session bot-id body)
+      (let [bot-id (bot-id-from path #"/api/bots/([^/]+)")]
+        (bots/update! session bot-id (dissoc body :csrf))
         (send! exchange 200 (bots/overview config session)))
 
       :else (send! exchange 405 {:error {:type "method_not_allowed"}}))))
+
+(defn- loopback-http-origin?
+  "Whether Origin is this machine's loopback HTTP surface.
+
+  Used to answer CORS preflight on `/api/bots` without opening the family to
+  a page that is not this app. `localhost` and `127.0.0.1` are both named
+  because the bind address and the WebAuthn name are not the same string."
+  [value]
+  (boolean
+   (and (string? value)
+        (re-matches #"http://(localhost|127\.0\.0\.1|\[::1\])(:\d+)?" value))))
+
+(defn- send-bots-options!
+  "Answer CORS preflight without a session.
+
+  `handle-bots!` requires a human session first. An OPTIONS preflight does
+  not carry the cookie, so it used to 401, and the browser reported that as
+  `Failed to fetch` on the POST that followed — create looked broken while
+  GET `/api/bots` (no preflight) still worked."
+  [^HttpExchange exchange]
+  (let [request-origin (.getFirst (.getRequestHeaders exchange) "Origin")
+        headers (cond-> {"Allow" "GET, POST, OPTIONS"}
+                  (loopback-http-origin? request-origin)
+                  (assoc "Access-Control-Allow-Origin" request-origin
+                         "Access-Control-Allow-Credentials" "true"
+                         "Access-Control-Allow-Headers"
+                         "Content-Type, X-CLOUD-ITONAMI-CSRF"
+                         "Access-Control-Allow-Methods" "GET, POST, OPTIONS"
+                         "Vary" "Origin"))]
+    (send-empty! exchange 204 headers)))
 
 (defn- bots-handler
   "Its own context, for the reason `/api/chronicle` has one: `handler` is at the
@@ -5042,7 +5044,9 @@
       (let [method (.getRequestMethod exchange)
             path (.getPath (.getRequestURI exchange))]
         (try
-          (handle-bots! config exchange method path)
+          (if (= method "OPTIONS")
+            (send-bots-options! exchange)
+            (handle-bots! config exchange method path))
           (catch clojure.lang.ExceptionInfo error
             (send! exchange
                    (case (:type (ex-data error))
@@ -5073,7 +5077,12 @@
                             :message (.getMessage error)}}))
           (catch Exception error
             (send! exchange 500 {:error {:type "internal_error"
-                                         :message (.getMessage error)}})))))))
+                                         :message (or (.getMessage error)
+                                                      (.getName (class error)))}}))
+          (catch Throwable error
+            (send! exchange 500 {:error {:type "internal_error"
+                                         :message (or (.getMessage error)
+                                                      (.getName (class error)))}})))))))
 
 (defn- chronicle-handler [config]
   (reify HttpHandler
