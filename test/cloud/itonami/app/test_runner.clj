@@ -34,6 +34,8 @@
             [cloud.itonami.app.portfolio-test]
             [cloud.itonami.app.policy-kotoba-parity-test]
             [cloud.itonami.app.native-canary-test]
+            [cloud.itonami.app.health-kotoba-parity-test]
+            [cloud.itonami.app.health-http-test]
             [cloud.itonami.app.fleet-core-kotoba-parity-test]
             [cloud.itonami.app.organism-worker-kotoba-parity-test]
             ;; b17e0c6 added this and did not register it, so the runner's own
@@ -166,6 +168,8 @@
     cloud.itonami.app.portfolio-test
     cloud.itonami.app.policy-kotoba-parity-test
     cloud.itonami.app.native-canary-test
+    cloud.itonami.app.health-kotoba-parity-test
+    cloud.itonami.app.health-http-test
     cloud.itonami.app.fleet-core-kotoba-parity-test
     cloud.itonami.app.organism-worker-kotoba-parity-test
     cloud.itonami.app.kotoba-oracle-test

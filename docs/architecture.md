@@ -1301,6 +1301,12 @@ shipped `resources/cloud/itonami/app/oracle/policy.kir.edn` through
 Clojure side only projects the two config maps into the four booleans the rule
 asks about. `fleet_core` and `organism_worker` moved the same way.
 
+`GET /health` is the first HTTP judgement on that seam (ADR-0038). The JVM
+still owns the socket — amu's http-ingress kit is host-listen and its
+`:native-aot` is pending — and the JSON body stays a host constant. Kotoba
+admits the named route. A handler that kept the two string equals and dropped
+the call would still 200, so the HTTP test inverts the artifact.
+
 That is delegation through the KIR interpreter, not a tendered Wasm component:
 the artifact is loaded and executed in-process, without a capability gate or a
 supervisor around it. The cores are `kotoba/pure` — no effects, no

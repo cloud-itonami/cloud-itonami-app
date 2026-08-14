@@ -31,6 +31,7 @@
             [cloud.itonami.app.operator :as operator]
             [cloud.itonami.app.pageview :as pageview]
             [cloud.itonami.app.funding :as funding]
+            [cloud.itonami.app.health :as health]
             [cloud.itonami.app.identity :as identity]
             [cloud.itonami.app.fax :as fax]
             [cloud.itonami.app.lawfirm :as lawfirm]
@@ -2064,7 +2065,8 @@
             (and (= method "GET") (= path "/"))
             (send-html! exchange (web/page-html config))
 
-            (and (= method "GET") (= path "/health"))
+            (and (= method "GET") (= path "/health")
+                 (health/health-route? method path))
             (send! exchange 200 {:ok true :service "cloud-itonami-app"
                                  :schema "cloud.itonami.app.health.v1"})
 

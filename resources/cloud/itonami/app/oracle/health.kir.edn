@@ -1,0 +1,19 @@
+{:format :kotoba.kir/v4,
+ :signature nil,
+ :functions
+ [{:name health-route?,
+   :params [method path],
+   :result :bool,
+   :effects #{},
+   :body
+   (let
+    [__kotoba_and_2 (string=? method "GET")]
+    (if __kotoba_and_2 (string=? path "/health") __kotoba_and_2)),
+   :param-types [:string :string]}],
+ :oracle-value nil,
+ :schema-identities nil,
+ :exports [health-route?],
+ :schemas nil,
+ :effects #{},
+ :blocks [],
+ :entry nil}

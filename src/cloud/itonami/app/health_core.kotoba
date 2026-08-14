@@ -1,0 +1,35 @@
+;; The public health route's DECISION CORE — whether this request is the
+;; process-liveness probe.
+;;
+;; The JVM still owns the socket. amu's http-ingress kit is host-listen,
+;; guest-poll, and its `:native-aot` is pending; this file does not pretend
+;; otherwise (ADR-0038). What moves here is the judgement the handler used to
+;; write as two string equals: GET and `/health`. The JSON body is not a
+;; decision and stays a host constant.
+;;
+;; `health.cljc` CALLS this file through `cloud.itonami.app.kotoba-oracle`,
+;; from the shipped `resources/cloud/itonami/app/oracle/health.kir.edn`. There
+;; is one implementation. The host still names the path in `server.clj` so the
+;; route scanner can see it; Kotoba is the admission of that named route. A
+;; handler that kept the two equals and dropped this call would still 200, so
+;; `health-http-test` inverts the artifact and requires `/health` to stop
+;; answering.
+;;
+;; ## The native slice
+;;
+;; Two `:string` arguments and a `:bool` result. That is the native-crossable
+;; surface (`:i64` / `:bool` / `:string`); a record is not required. `and`
+;; desugars to nested `let`/`if` and compiles on both native ISAs — measured
+;; on `policy.kotoba`. Do not add a self-restriction here without compiling
+;; for `:x86_64-kotoba-v1` first.
+;;
+;; Temporary spelling, as everywhere in this migration (ADR-2608650000): none
+;; beyond staying inside the word-typed slice. Removal condition: none of
+;; this is a workaround for a missing construct.
+
+(ns cloud.itonami.app.health
+  (:export [health-route?]))
+
+(defn health-route? [method :string path :string] :bool
+  (and (string=? method "GET")
+       (string=? path "/health")))
