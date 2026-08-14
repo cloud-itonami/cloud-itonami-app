@@ -41,6 +41,15 @@ and enrolment KEK lives on that Worker. Serving the ceremony from
    `:published` is filled only after a GET-verified put. `:kotoba.app/latest`
    is filled only after a DHT GET-verified publish. `:kotoba.app/embed-url`
    stays `ipfs://{cid}` (snapshot); `ipns://{k51}` is the update channel.
+6. **L2 graph identity is `:kotoba.graph/cid`**, the dag-cbor CID from
+   `chain.core/commit!` of one overlay edge (workspace `desktop` → the
+   GET-verified bundle CID). Protocol does not hash (ADR-2608145400).
+7. **Archive Location of that commit is the raw CID of the same bytes.**
+   kotobase `PUT /ipfs/:cid` accepts only raw CIDv1. Do not PUT the
+   identity CID string (400 `not-raw-sha256`). Do not put the raw CID on
+   a `:kotoba.*` key (ADR-2608148200).
+8. **Do not set `:kotoba.graph/head`.** That is naming (IPNS), not this
+   snapshot. Session kgraph datoms stay local.
 
 ## Identity of the landed tree
 
@@ -177,3 +186,5 @@ Do not move the auth host. Default delegated GET may still show sequence
   the post-#85 document CID. Location GET-verified (181 bytes). IPNS
   sequence 3 origin GET-verified onto the new bundle CID. Next: do not
   move the auth host.
+- 2026-08-14: Decision 6–8. Identity vs archive Location is repo-wide
+  ADR-2608148200.
