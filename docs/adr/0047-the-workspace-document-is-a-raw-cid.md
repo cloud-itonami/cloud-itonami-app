@@ -56,7 +56,6 @@ ipfs://bafkreiey52hai5obtqeg5w2ix63orset4o74kxljif2gwdkxt5upre2wsi
 
 ## Not implemented
 
-- Live archive Location. Put was refused (below).
 - IPNS `:kotoba.app/latest`.
 - Graph snapshot CID (`:kotoba.graph/cid`). Desktop kgraph still asserts
   locally.
@@ -66,35 +65,17 @@ ipfs://bafkreiey52hai5obtqeg5w2ix63orset4o74kxljif2gwdkxt5upre2wsi
 
 - `cloud.itonami.app.bundle-test`: 5 tests, 21 assertions, 0 failures, 0
   errors. No network.
-- `PUT https://kotobase.net/ipfs/bafkreicbanjf7iaojle7suieajvj2dkbz43udqonyoimldsvtau7wqkbiq`
-  (CID of the tree *before* a later `main` fast-forward of `interaction.js`)
-  returned **401** `{"error":"unauthorized"}`. kagi item
-  `KOTOBASE_ARCHIVE_TOKEN` is present (compartment `net-kotobase`);
-  `KOTOBASE_ARCHIVE_TOKEN_2` is not. The Worker rejected the Bearer.
-  Unauthenticated GET of that CID returned **404**. The lock CID after
-  landing is the current tree. Location is not live until the Worker
-  secret and the kagi item are the same value again.
+- 2026-08-14 Location: `PUT` 201 then unauthenticated `GET` 200 of
+  `https://kotobase.net/ipfs/bafkreiey52hai5obtqeg5w2ix63orset4o74kxljif2gwdkxt5upre2wsi`
+  (801,104 bytes, Java HttpClient byte-equal to `page-html`). Worker
+  `KOTOBASE_ARCHIVE_TOKEN_2` accepts the kagi `KOTOBASE_ARCHIVE_TOKEN`
+  (rotation-by-addition; primary slot was left in place). Archive GET
+  `Cache-Control` includes `no-transform` so Cloudflare Web Analytics
+  cannot inject `beacon.min.js` into the HTML.
 
 ## Resume
 
-When the archive token matches the live Worker, two steps (different
-working directories):
-
-1. From the superproject root, read the one kagi item (do not print it):
-
-```
-KAGI_HOME=$HOME/.kagi orgs/kotoba-lang/kagi/bin/kagi get KOTOBASE_ARCHIVE_TOKEN
-```
-
-2. In a `cloud-itonami-app` checkout, pass that value as
-   `KOTOBASE_ARCHIVE_TOKEN` and run:
-
-```
-clojure -M -m cloud.itonami.app.bundle put
-```
-
-That GET-verifies bytes and writes `:published` into the lock. Then IPNS
-`:kotoba.app/latest` is the next slice, not this one.
+IPNS `:kotoba.app/latest` pointing at this CID. Do not move the auth host.
 
 ## Consequences
 
@@ -112,3 +93,5 @@ That GET-verifies bytes and writes `:published` into the lock. Then IPNS
 - 2026-08-14: accepted. Compute + lock + tests landed on `main`.
 - 2026-08-14: closing record — merge SHA, west pin, current CID, PUT 401,
   resume command.
+- 2026-08-14: archive Location live (PUT 201 / GET 200 / byte-equal).
+  Worker TOKEN_2 + no-transform. Next: IPNS latest.
