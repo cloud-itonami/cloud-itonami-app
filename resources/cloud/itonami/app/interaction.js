@@ -9602,6 +9602,9 @@
         botsState.browserAvailable = Boolean(data['browser-available?']);
         botsState.loaded = true;
         syncBotsBrowserPermission();
+        // Provider readiness belongs to the overview, not to the selected
+        // thread. Render it before the initial selectBot fast path returns.
+        renderBotsModelProviders();
         if (!options.keepSelection && !botsState.selected && botsState.bots.length) {
           await selectBot(botsState.bots[0].id);
           return;
@@ -9609,7 +9612,6 @@
         renderBotsRail();
         renderBotsServiceGrid();
         renderBotsPalette();
-        renderBotsModelProviders();
         showBotsPane();
         if (botsState.selected) renderBotsThread();
       } catch (error) { botsSetStatus(error.message); }

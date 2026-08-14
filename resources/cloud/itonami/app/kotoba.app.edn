@@ -5,10 +5,10 @@
  :kotoba.app/version "0.1.0"
  :kotoba.app/kind "appview"
  :kotoba.app/appview-of {:workspace "desktop"}
- :kotoba.app/bundle-cid "bafkreiey52hai5obtqeg5w2ix63orset4o74kxljif2gwdkxt5upre2wsi"
- :kotoba.app/embed-url "ipfs://bafkreiey52hai5obtqeg5w2ix63orset4o74kxljif2gwdkxt5upre2wsi"
- :published {:archive "https://kotobase.net/ipfs/bafkreiey52hai5obtqeg5w2ix63orset4o74kxljif2gwdkxt5upre2wsi"
-             :size 801104
-             :at "2026-08-14T11:57:25.232235Z"
+ :kotoba.app/bundle-cid "bafkreig4jyeaynm47icfmqj3m5ya7iep2o7c4vk34pwpafm7tnf4tfimny"
+ :kotoba.app/embed-url "ipfs://bafkreig4jyeaynm47icfmqj3m5ya7iep2o7c4vk34pwpafm7tnf4tfimny"
+ :published {:archive "https://kotobase.net/ipfs/bafkreig4jyeaynm47icfmqj3m5ya7iep2o7c4vk34pwpafm7tnf4tfimny"
+             :size 806249
+             :at "2026-08-14T12:33:15.829538Z"
              :put-status 201
              :get-status 200}}
