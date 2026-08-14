@@ -115,24 +115,49 @@
            :input (parse-arguments (get-in call [:function :arguments]))})
         (range) (or calls [])))
 
+(def ^:private agent-max-tokens
+  ;; api.murakumo.cloud routes murakumo-main to a reasoning model. When this is
+  ;; omitted the public gateway supplies 512, and the model can spend the whole
+  ;; allowance on reasoning: HTTP 200, finish_reason=length, content="". A Bot
+  ;; then appears to accept the person's message without answering. 2048 is the
+  ;; gateway's documented public ceiling and leaves room for the visible reply.
+  2048)
+
+(defn- agent-request-body
+  [{:keys [model messages tools temperature]}]
+  {:model model
+   :messages (mapv provider-message messages)
+   :tools (mapv tool-definition tools)
+   :stream false
+   :temperature (or temperature 0.2)
+   :max_tokens agent-max-tokens})
+
+(defn- agent-result
+  [message finish-reason]
+  (let [result {:content (:content message)
+                :tool-calls (normalize-tool-calls (:tool_calls message))}]
+    (when (and (str/blank? (:content result))
+               (empty? (:tool-calls result)))
+      (throw (ex-info
+              "モデルが回答本文を返しませんでした。もう一度送ってください。"
+              {:type :provider/empty-response
+               :finish-reason finish-reason})))
+    result))
+
 (defn agent-turn
   "One non-streaming tool-capable model turn, normalized for Agent Control."
-  [provider {:keys [model messages tools temperature]}]
-  (let [body {:model model
-              :messages (mapv provider-message messages)
-              :tools (mapv tool-definition tools)
-              :stream false
-              :temperature (or temperature 0.2)}]
+  [provider request]
+  (let [body (agent-request-body request)]
     (case (:kind provider)
       :ollama
       (let [result (request-json :post (str (:base-url provider) "/api/chat")
                                  (-> body
-                                     (dissoc :temperature)
+                                     (dissoc :temperature :max_tokens)
                                      (assoc :options {:temperature
-                                                      (or temperature 0.2)})))
+                                                      (or (:temperature request) 0.2)
+                                                      :num_predict agent-max-tokens})))
             message (:message result)]
-        {:content (:content message)
-         :tool-calls (normalize-tool-calls (:tool_calls message))})
+        (agent-result message (:done_reason result)))
 
       :openai-compatible
       (let [result (request-json
@@ -141,8 +166,7 @@
                          "/chat/completions")
                     body (config/env-secret provider))
             message (get-in result [:choices 0 :message])]
-        {:content (:content message)
-         :tool-calls (normalize-tool-calls (:tool_calls message))})
+        (agent-result message (get-in result [:choices 0 :finish_reason])))
 
       (throw (ex-info "unsupported provider kind" {:provider provider})))))
 
