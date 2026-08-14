@@ -116,8 +116,27 @@ against that ADR.
 
 ## Verification
 
-`clojure -M:test` — 1457 tests, 8688 assertions, 0 failures, 0 errors
-(baseline `96fc44e`: 1447 / 8656, also clean).
+`clojure -M:test` on this branch — **1467 tests, 8814 assertions, 0 failures,
+0 errors.**
+
+The parent `96fc44e` was not run separately, and the number to compare against
+is not the one ADR-0044 recorded. That ADR measured 1447 / 8656 on its own
+branch *before* it merged, and the domain-binding work (ADR-0043) landed on
+`main` in between — so 1447 is not this change's baseline, and quoting it here
+would have made this change look like it added twenty tests.
+
+Counted statically instead, which is exact:
+
+```
+git grep -c '^(deftest' <rev> -- 'test/**/*.clj' 'test/**/*.cljc'
+  e073007  (ADR-0044 branch point)  1436
+  96fc44e  (this change's parent)   1457   +21 from the ADR-0043 merge
+  HEAD     (this change)            1460   +3, which is exactly these three
+```
+
+The ten parity cases add assertions and not tests: the oracle corpus is driven
+by `doseq` inside one `deftest`, so a case is an assertion. Noticing that the
+arithmetic did not close is what surfaced the wrong baseline.
 
 The measurement above was taken before the change and is reproduced as
 `a-new-instruction-retires-a-held-approval`, which asserts the standing, the
