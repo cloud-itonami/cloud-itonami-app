@@ -122,6 +122,7 @@
             [cloud.itonami.app.web-script-test]
             [cloud.itonami.app.bundle-test]
             [cloud.itonami.app.latest-test]
+            [cloud.itonami.app.graph-test]
             [cloud.itonami.app.work-governance-test]
             [cloud.itonami.app.github-projects-writeback-test]
             [cloud.itonami.app.github-projects-source-test]
@@ -251,6 +252,7 @@
     cloud.itonami.app.web-script-test
     cloud.itonami.app.bundle-test
     cloud.itonami.app.latest-test
+    cloud.itonami.app.graph-test
     cloud.itonami.app.work-governance-test
     cloud.itonami.app.github-projects-writeback-test
     cloud.itonami.app.github-projects-source-test

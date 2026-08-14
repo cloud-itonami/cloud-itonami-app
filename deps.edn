@@ -11,6 +11,11 @@
   io.github.kotoba-lang/kotoba-protocol
   {:git/url "https://github.com/kotoba-lang/kotoba-protocol.git"
    :git/sha "ca72b830ec27a14e562be2a8dcf92f68901e486b"}
+  ;; L2 graph CID: protocol.graph overlay + chain.core/commit! (ADR-2608145400).
+  ;; Protocol does not hash and does not depend on chain.
+  io.github.kotoba-lang/chain
+  {:git/url "https://github.com/kotoba-lang/chain.git"
+   :git/sha "9646b8b858085fdb1172482ce9ce77d6739c75de"}
   ;; IPNS latest pointer: real IPNS Record + delegated DHT routing.
   ;; Exclude ipns's ed25519 / dag-cbor so cacao's org-ietf-* copies of the
   ;; same namespaces (ed25519.core, cbor.core) win.
@@ -498,6 +503,14 @@
          ;; `clojure -M:test -e "(println :ok)"` → `No such var: mf/sha384`.
          ;; Holding it at the app's own pin keeps the parity gate from changing
          ;; what every other test in this repo is compiled against.
+         ;;
+         ;; `io-ipld` is the same class of hold. Compiler 1644b32 names
+         ;; `14b53ae` (`ipld.link` → `multiformats.base32`). Newest-wins
+         ;; would replace chain's hasher pin `45917645` (uses
+         ;; `multiformats.core`). `14b53ae` cannot load against the
+         ;; `dc520032` override: that pin folded base32 into core and has
+         ;; no `multiformats.base32` ns. Compiler source does not require
+         ;; ipld; chain.core/commit! does.
          :override-deps
          {io.github.kotoba-lang/compiler
           {:git/url "https://github.com/kotoba-lang/compiler.git"
@@ -510,7 +523,10 @@
            :git/sha "da24cae65e82f91352c5b96b0c58f21a52911277"}
           io.github.kotoba-lang/io-multiformats
           {:git/url "https://github.com/kotoba-lang/io-multiformats.git"
-           :git/sha "dc5200329d2fabce6edb7ca5c87c477cec0ea162"}}
+           :git/sha "dc5200329d2fabce6edb7ca5c87c477cec0ea162"}
+          io.github.kotoba-lang/io-ipld
+          {:git/url "https://github.com/kotoba-lang/io-ipld.git"
+           :git/sha "4591764514239c4777f227a7a56d46c901e2a4a0"}}
          :jvm-opts ["-Dcloud.itonami.data-dir=target/test-data"]
          :main-opts ["-m" "cloud.itonami.app.test-runner"]}
   :lint {:replace-deps {clj-kondo/clj-kondo {:mvn/version "2024.11.14"}}

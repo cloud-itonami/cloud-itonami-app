@@ -44,14 +44,16 @@ and enrolment KEK lives on that Worker. Serving the ceremony from
 
 ## Identity of the landed tree
 
-Snapshot (GET-verified archive, #82):
+Snapshot (GET-verified archive, after #85 titlebar):
 
 ```
-ipfs://bafkreig4jyeaynm47icfmqj3m5ya7iep2o7c4vk34pwpafm7tnf4tfimny
+ipfs://bafkreiesyfwcohnsr47o2eapym5ahwxzghpxpej253k6d4wygj4hrfnhp4
 ```
 
-806,249 bytes. App id `cloud.itonami.app`, kind `appview`,
-`appview-of` `{:workspace "desktop"}`.
+797,675 bytes. App id `cloud.itonami.app`, kind `appview`,
+`appview-of` `{:workspace "desktop"}`. Previous snapshot
+`ipfs://bafkreig4jyeaynm47icfmqj3m5ya7iep2o7c4vk34pwpafm7tnf4tfimny`
+(806,249 bytes) remains GET-able; it is no longer the lock.
 
 Update channel:
 
@@ -59,12 +61,25 @@ Update channel:
 ipns://k51qzi5uqu5dj6z20sjzztyay81591voe6yofukl0ylsmug9euf934z1g04erd
 ```
 
-Sequence 2 GET-verified 2026-08-14T13:02:53Z: origin at
-`delegated-ipfs.dev` (Cloudflare `cf-cache-status: MISS`) returns value
-`/ipfs/bafkreig4jyeaynm47icfmqj3m5ya7iep2o7c4vk34pwpafm7tnf4tfimny`.
-The default URL without a cache-bust query still serves sequence 1 until
-the 1-hour `Cache-Control` from 12:47Z expires (~13:47Z). Later records
+Sequence 3 origin GET-verified 2026-08-14T13:39:27Z: origin at
+`delegated-ipfs.dev` (Cloudflare `cf-cache-status: MISS`, cache-bust
+query) returns value
+`/ipfs/bafkreiesyfwcohnsr47o2eapym5ahwxzghpxpej253k6d4wygj4hrfnhp4`.
+The default URL without a cache-bust query may still serve sequence 1
+until ~13:47Z (`Cache-Control: max-age=3600` from 12:47Z). Later records
 from this publisher use a 5-minute TTL.
+
+Graph snapshot (GET-verified archive, 181 bytes):
+
+```
+ipfs://bafkreifwintjn6lddprilx7xpbxrtorzkuxhjwhs7c4x3c4aippelcipnu
+```
+
+`:kotoba.graph/name` `desktop`. `:kotoba.graph/cid`
+`bafyreifwintjn6lddprilx7xpbxrtorzkuxhjwhs7c4x3c4aippelcipnu`
+(dag-cbor chain commit of the overlay onto the current bundle CID).
+Location is the raw CID of the same bytes. `:kotoba.graph/head` is not
+set.
 
 ## Implemented
 
@@ -77,13 +92,18 @@ from this publisher use a 5-minute TTL.
   `cloud-itonami-app-latest`.
 - `io.github.kotoba-lang/kotoba-protocol` git pin
   `ca72b830ec27a14e562be2a8dcf92f68901e486b`.
-- Offline tests in `bundle_test.clj` and `latest_test.clj`, registered in
-  `test_runner.clj`.
+- `io.github.kotoba-lang/chain` git pin
+  `9646b8b858085fdb1172482ce9ce77d6739c75de`. Hasher is
+  `chain.core/commit!` (ADR-2608145400). Protocol does not hash.
+- `cloud.itonami.app.graph` seals one overlay edge (workspace `desktop`
+  → GET-verified bundle CID) and records `:kotoba.graph/cid` (dag-cbor
+  chain CID). Archive Location is the raw CID of the same commit bytes.
+  Session kgraph datoms stay local. `:kotoba.graph/head` is not set.
+- Offline tests in `bundle_test.clj`, `latest_test.clj`, and
+  `graph_test.clj`, registered in `test_runner.clj`.
 
 ## Not implemented
 
-- Graph snapshot CID (`:kotoba.graph/cid`). Desktop kgraph still asserts
-  locally.
 - Moving `auth.itonami.cloud` or enrolment at `itonami.cloud/signin/`.
 - Storage-backed `GET /ipns/` on kotobase.net (410 until a signed-record
   archive plane exists). Identity of the channel is still `ipns://{k51}`.
@@ -94,6 +114,9 @@ from this publisher use a 5-minute TTL.
   errors. No network.
 - `cloud.itonami.app.latest-test`: 10 tests, 30 assertions, 0 failures, 0
   errors. Injected router; disposable seed `(byte-array (range 32))`.
+- `cloud.itonami.app.graph-test`: 8 tests, 32 assertions, 0 failures, 0
+  errors. Offline in-memory chain store plus lock ratchet. No live PUT
+  in the suite.
 - 2026-08-14 Location: `PUT` 201 then unauthenticated `GET` 200 of
   `https://kotobase.net/ipfs/bafkreiey52hai5obtqeg5w2ix63orset4o74kxljif2gwdkxt5upre2wsi`
   (801,104 bytes, Java HttpClient byte-equal to `page-html`). Worker
@@ -111,15 +134,22 @@ from this publisher use a 5-minute TTL.
   `/ipfs/bafkreiey52hai5obtqeg5w2ix63orset4o74kxljif2gwdkxt5upre2wsi`.
   Sequence 2 origin GET 200 at 13:02:53Z (`cf-cache-status: MISS`, cache-bust
   query) value `/ipfs/bafkreig4jyeaynm47icfmqj3m5ya7iep2o7c4vk34pwpafm7tnf4tfimny`
-  (lock CID). Archive GET of that CID remains 200 / 806,249 bytes.
-  `GET https://kotobase.net/ipns/{k51}` remains 410 (ADR-2608130000).
+  (then-current bundle CID). Archive GET of that CID remains 200 / 806,249
+  bytes. `GET https://kotobase.net/ipns/{k51}` remains 410 (ADR-2608130000).
+- 2026-08-14 after #85: document CID
+  `bafkreiesyfwcohnsr47o2eapym5ahwxzghpxpej253k6d4wygj4hrfnhp4`
+  (797,675 bytes, PUT 201 / GET 200 byte-equal). L2 graph chain CID
+  `bafyreifwintjn6lddprilx7xpbxrtorzkuxhjwhs7c4x3c4aippelcipnu`.
+  Location PUT 201 then independent GET 200 of
+  `https://kotobase.net/ipfs/bafkreifwintjn6lddprilx7xpbxrtorzkuxhjwhs7c4x3c4aippelcipnu`
+  (181 bytes, byte-equal). IPNS sequence 3 origin GET 200 at 13:39:27Z
+  (`cf-cache-status: MISS`) value `/ipfs/bafkreiesyfwcohnsr47o2eapym5ahwxzghpxpej253k6d4wygj4hrfnhp4`.
+  Auth hosts were not moved. kotobase `/ipns/` remains 410.
 
 ## Resume
 
-Graph snapshot CID (`:kotoba.graph/cid`). Do not move the auth host.
-Do not republish IPNS until the lock CID changes: sequence 2 already
-points at it. Default delegated GET may still show sequence 1 until
-~13:47Z; origin already serves sequence 2.
+Do not move the auth host. Default delegated GET may still show sequence
+1 until ~13:47Z; origin already serves sequence 3.
 
 ## Consequences
 
@@ -143,3 +173,7 @@ points at it. Default delegated GET may still show sequence 1 until
   delegated DHT (previous snapshot). Sequence 2 PUT 200, GET still TTL-
   cached. kotobase `/ipns/` stays 410. Next: GET-verify onto current CID,
   then graph CID.
+- 2026-08-14: `:kotoba.graph/cid` sealed via `chain.core/commit!` onto
+  the post-#85 document CID. Location GET-verified (181 bytes). IPNS
+  sequence 3 origin GET-verified onto the new bundle CID. Next: do not
+  move the auth host.

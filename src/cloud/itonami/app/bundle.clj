@@ -95,9 +95,10 @@
 
 (defn put-archive!
   "PUT the raw object. Returns {:status :body :url}. Does not print the token."
-  [{:keys [cid bytes token]
+  [{:keys [cid bytes token content-type]
     :or {token (or (System/getenv "KOTOBASE_ARCHIVE_TOKEN")
-                   (System/getenv "KOTOBASE_ARCHIVE_TOKEN_2"))}}]
+                   (System/getenv "KOTOBASE_ARCHIVE_TOKEN_2"))
+         content-type "text/html"}}]
   (when (str/blank? token)
     (throw (ex-info "archive put token missing"
                     {:env "KOTOBASE_ARCHIVE_TOKEN"})))
@@ -105,7 +106,7 @@
         req (-> (HttpRequest/newBuilder (URI/create url))
                 (.timeout (Duration/ofSeconds 60))
                 (.header "Authorization" (str "Bearer " token))
-                (.header "Content-Type" "text/html")
+                (.header "Content-Type" (str content-type))
                 (.PUT (HttpRequest$BodyPublishers/ofByteArray bytes))
                 .build)
         resp (.send ^HttpClient (http-client) req
@@ -196,6 +197,8 @@
       (println "get" (get-in result [:get :status]) (get-in result [:get :url])))
     "latest"
     ((requiring-resolve 'cloud.itonami.app.latest/-main))
+    "graph"
+    ((requiring-resolve 'cloud.itonami.app.graph/-main))
     (let [{:keys [cid size problems manifest]} (snapshot)]
       (println "cid" cid)
       (println "size" size)
