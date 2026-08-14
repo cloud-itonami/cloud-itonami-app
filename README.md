@@ -618,12 +618,16 @@ of the connectors you picked and nothing else.
 - **Accounts, not providers.** If you have two Google accounts, the Bot asks
   which one before it acts rather than picking. Name them from the connection
   card; add another with `＋ 別のアカウントを追加`.
-- **Its computer is this machine's isolated browser.** Bots do not get a cloud
-  VM, so a Bot does not run while this machine is asleep. When you opt a Bot
-  into the browser (and Settings has enabled it), that Bot gets its own
-  profile — cookies are not shared with other Bots — and opening, clicking and
-  typing wait for approval the same way a send does. See
-  [ADR-0036](docs/adr/0036-a-bots-computer-is-this-machines-isolated-browser.md).
+- **Its computer is this machine, shared among this person's Bots.** Bots do
+  not get a cloud VM, so a Bot does not run while this machine is asleep.
+  When you opt a Bot into the browser (and Settings has enabled it), it gets
+  a screen on **this person's** computer — cookies and logins are shared with
+  their other Bots; memory is not. Opening, clicking and typing wait for
+  approval the same way a send does. Peers talk by DM / group chat
+  (`send_message`), which is not a grant-transfer. See
+  [ADR-0036](docs/adr/0036-a-bots-computer-is-this-machines-isolated-browser.md)
+  and
+  [ADR-0041](docs/adr/0041-bots-are-persistent-peers-memory-isolated-computer-shared.md).
   Long-running work that should outlive sleep belongs to the governed WorkItem
   path instead.
 

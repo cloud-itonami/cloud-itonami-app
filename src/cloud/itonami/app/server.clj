@@ -849,37 +849,44 @@
     (str "agent:" (:id session))
     (:user-id session)))
 
-(defn- organization-directory-principals [organization-id organization-slug]
-  (let [identity-state (:identity (store/snapshot))
-        humans (for [membership (vals (:memberships identity-state))
-                     :when (= organization-id (:organization-id membership))
-                     :let [user (get-in identity-state [:users (:user-id membership)])]
-                     :when user]
-                 [(:id user)
-                  {:id (:id user) :did (:did user)
-                   :name (or (:display-name user) (:email user) (:id user))
-                   :kind "human"}])
-        agents (for [agent (agent-session/sessions)
-                     :when (= organization-id (:organization-id agent))]
-                 [(str "agent:" (:id agent))
-                  {:id (str "agent:" (:id agent))
-                   :name (or (:label agent) (:id agent)) :kind "agent"
-                   :status (if (or (:revoked? agent) (:expired? agent))
-                             "inactive" "active")}])
-        organisms (for [worker (:items (organism-gateway/directory organization-slug))]
-                    [(str "organism:" (:ao.worker/id worker))
-                     {:id (str "organism:" (:ao.worker/id worker))
-                      :did (:ao.worker/subject worker)
-                      :name (:ao.worker/id worker) :kind "organism"
-                      :status (name (:ao.worker/status worker))}])]
-    (into {} (concat humans agents organisms))))
+(defn- organization-directory-principals
+  ([organization-id organization-slug]
+   (organization-directory-principals organization-id organization-slug nil))
+  ([organization-id organization-slug owner-id]
+   (let [identity-state (:identity (store/snapshot))
+         humans (for [membership (vals (:memberships identity-state))
+                      :when (= organization-id (:organization-id membership))
+                      :let [user (get-in identity-state [:users (:user-id membership)])]
+                      :when user]
+                  [(:id user)
+                   {:id (:id user) :did (:did user)
+                    :name (or (:display-name user) (:email user) (:id user))
+                    :kind "human"}])
+         agents (for [agent (agent-session/sessions)
+                      :when (= organization-id (:organization-id agent))]
+                  [(str "agent:" (:id agent))
+                   {:id (str "agent:" (:id agent))
+                    :name (or (:label agent) (:id agent)) :kind "agent"
+                    :status (if (or (:revoked? agent) (:expired? agent))
+                              "inactive" "active")}])
+         organisms (for [worker (:items (organism-gateway/directory organization-slug))]
+                     [(str "organism:" (:ao.worker/id worker))
+                      {:id (str "organism:" (:ao.worker/id worker))
+                       :did (:ao.worker/subject worker)
+                       :name (:ao.worker/id worker) :kind "organism"
+                       :status (name (:ao.worker/status worker))}])
+         bots (when owner-id
+                (dissoc (bots/mailbox-principals organization-id owner-id)
+                        owner-id))]
+     (into {} (concat humans agents organisms bots)))))
 
 (defn- messenger-principals
   "The addressable identities in the active organization.
 
   WorkerRuns are deliberately absent: they are restart-ephemeral executions,
-  not identities. Agent sessions and OrganismWorkers are stable enough to be
-  addressed independently and remain visibly non-human."
+  not identities. Agent sessions, OrganismWorkers, and same-owner Bots
+  (`bot:<id>`, ADR-0041) are stable enough to be addressed independently and
+  remain visibly non-human."
   [exchange session]
   (let [context (identity-context exchange)
         organization-id (:active-organization-id context)
@@ -893,7 +900,8 @@
                        :kind "human"}]))
               (get-in context [:organization :users]))
         principals (merge (organization-directory-principals
-                           organization-id organization-slug)
+                           organization-id organization-slug
+                           (:user-id session))
                           context-humans)
         actor (messenger-actor session)]
     ;; A test or a newly enrolled session can be valid before its directory
@@ -4953,6 +4961,44 @@
                (bots/hand-off! config session from-bot-id (:to body)
                                {:task (:task body) :depth (:depth body)})))
 
+      ;; ── peers (before the `/api/bots/([^/]+)` catch-all) ──────────
+      (and (= method "GET") (bot-id-from path #"/api/bots/([^/]+)/peers"))
+      (send! exchange 200
+             {:peers (bots/peers session
+                                 (bot-id-from path #"/api/bots/([^/]+)/peers"))})
+
+      (and (= method "POST")
+           (bot-id-from path #"/api/bots/([^/]+)/peers/message"))
+      (let [from-bot-id (bot-id-from path #"/api/bots/([^/]+)/peers/message")
+            body (read-json exchange)]
+        (require-origin! exchange config)
+        (require-csrf! exchange session)
+        (send! exchange 200
+               (bots/peer-message! config session from-bot-id (:to body)
+                                   (:text body))))
+
+      (and (= method "POST") (bot-id-from path #"/api/bots/([^/]+)/groups"))
+      (let [from-bot-id (bot-id-from path #"/api/bots/([^/]+)/groups")
+            body (read-json exchange)]
+        (require-origin! exchange config)
+        (require-csrf! exchange session)
+        (send! exchange 200
+               {:conversation (bots/peer-group! session from-bot-id body)}))
+
+      (and (= method "GET") (bot-id-from path #"/api/bots/([^/]+)/memory"))
+      (send! exchange 200
+             {:memories (bots/memories
+                         session
+                         (bot-id-from path #"/api/bots/([^/]+)/memory"))})
+
+      (and (= method "POST") (bot-id-from path #"/api/bots/([^/]+)/memory"))
+      (let [bot-id (bot-id-from path #"/api/bots/([^/]+)/memory")
+            body (read-json exchange)]
+        (require-origin! exchange config)
+        (require-csrf! exchange session)
+        (send! exchange 200
+               {:memories (bots/remember! session bot-id (:text body))}))
+
       (and (= method "POST") (bot-id-from path #"/api/bots/([^/]+)/archive"))
       (let [bot-id (bot-id-from path #"/api/bots/([^/]+)/archive")]
         (require-origin! exchange config)
@@ -5002,6 +5048,9 @@
                      :routine/no-demonstration 409
                      :routine/too-many 409
                      :handoff/refused 409
+                     :peer/refused 409
+                     :peer/foreign-memory 403
+                     :peer/no-session 409
                      400)
                    {:error {:type (name (or (:type (ex-data error)) :bot/error))
                             :message (.getMessage error)}}))

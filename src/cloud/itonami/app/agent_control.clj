@@ -18,15 +18,14 @@
 (def default-session-name
   "The browser profile used when nobody has said whose work this is.
 
-  It is a SHARED profile, and that is the whole hazard this namespace used to
-  carry silently: the isolated browser keeps cookies and logged-in sessions,
-  so every caller reaching these tools was reusing one identity. A Bot that
-  signed into a service left that session sitting there for the next one.
-  Isolation was per MACHINE when the thing people reason about is per Bot."
+  Same-owner Bots share one computer (ADR-0041): cookies, logins and files
+  belong to the person, not to a Bot. Different owners still get different
+  computers. A caller that names no owner keeps this shared default, which
+  is the original hazard — only use it when the work is not a Bot's."
   "cloud-itonami-agent")
 
 (def ^:dynamic *browser-session*
-  "Whose browser profile the tools act in, for the current call.
+  "Which computer (cookie jar) the tools act in, for the current call.
 
   Dynamic rather than a parameter because `execute-tool!` dispatches on a tool
   NAME and its callers are several layers up; threading an argument would have
@@ -34,18 +33,38 @@
   that says nothing keeps the previous behaviour exactly."
   nil)
 
+(def ^:dynamic *browser-screen*
+  "Which screen on that computer the tools act in.
+
+  Same-owner Bots share `*browser-session*` and get different screens so they
+  can operate in parallel. The browser host may ignore this; the binding is
+  still the semantic."
+  nil)
+
 (defn session-for
-  "A stable browser-profile name for one principal.
+  "A stable directory-safe name for one principal.
 
   Derived from the principal's id rather than its display name: a name can be
   changed, and two Bots may share one. Non-alphanumerics are folded to `-` so
-  the value is safe as a directory component, and the prefix keeps it
-  recognisable next to the shared profile in a process listing."
+  the value is safe as a directory component."
   [principal-id]
   (let [id (str/replace (str principal-id) #"[^A-Za-z0-9_-]+" "-")]
     (if (str/blank? id)
       default-session-name
       (str default-session-name "-" id))))
+
+(defn computer-for
+  "The shared browser profile for one person's computer.
+
+  Same owner → same cookies and logins. Different owners stay apart."
+  [owner-id]
+  (session-for owner-id))
+
+(defn screen-for
+  "The screen assigned to one Bot on its owner's computer."
+  [bot-id]
+  (let [id (str/replace (str bot-id) #"[^A-Za-z0-9_-]+" "-")]
+    (if (str/blank? id) "default" id)))
 
 (def ^:private max-output 24000)
 
@@ -249,6 +268,7 @@
   (run-command!
    (into ["agent-browser"] args)
    45 {"AGENT_BROWSER_SESSION" (or *browser-session* default-session-name)
+       "AGENT_BROWSER_SCREEN" (or *browser-screen* "default")
        "AGENT_BROWSER_HEADED" "true"}))
 
 (defn- allowed-url! [settings value]
@@ -502,20 +522,26 @@
   (approval-summary (str tool-name) (or input {})))
 
 (defn call-browser-tool!
-  "Run one isolated-browser tool as a named principal.
+  "Run one isolated-browser tool on a person's computer, on one Bot's screen.
 
-  The profile is `session-for`, so two Bots do not share cookies. This is the
-  seam ADR-0034 left unwired: the field existed, the profile name existed, and
-  nothing in a Bot turn called through."
-  [configuration principal-id tool-name input]
-  (let [name (str tool-name)]
+  `principal-or-ctx` is either an owner id (legacy: computer and screen are
+  that id) or `{:owner owner-id :bot bot-id}`. Same-owner Bots therefore share
+  cookies and keep separate screens (ADR-0041)."
+  [configuration principal-or-ctx tool-name input]
+  (let [name (str tool-name)
+        ctx (if (map? principal-or-ctx)
+              principal-or-ctx
+              {:owner principal-or-ctx :bot principal-or-ctx})
+        owner (:owner ctx)
+        bot (:bot ctx)]
     (when-not (browser-tool? name)
       (throw (ex-info "browser tool ではありません。"
                       {:type :agent/unknown-tool :tool name})))
     (when-not (browser-enabled? configuration)
       (throw (ex-info "分離ブラウザーは有効ではありません。"
                       {:type :agent/browser-disabled :tool name})))
-    (binding [*browser-session* (session-for principal-id)]
+    (binding [*browser-session* (computer-for owner)
+              *browser-screen* (screen-for bot)]
       (execute-tool! (or configuration {}) name (or input {})))))
 
 (defn- approval [run-id tool-name input]

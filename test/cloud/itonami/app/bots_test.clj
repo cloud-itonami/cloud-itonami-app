@@ -11,6 +11,7 @@
             [cloud.itonami.app.bots :as bots]
             [cloud.itonami.app.config :as config]
             [cloud.itonami.app.identity :as identity]
+            [cloud.itonami.app.peer :as peer]
             [cloud.itonami.app.policy :as policy]
             [cloud.itonami.app.provider :as provider]
             [cloud.itonami.app.store :as store]
@@ -409,7 +410,7 @@
                     "call-browser-tool! must not run until the person approves")
                 (is (= "approval" (:kind card)))
                 (is (= "browser_open" (:action card)))
-                (is (str/includes? (str (:impact card)) "分離ブラウザー"))))))))))
+                (is (str/includes? (str (:impact card)) "共有コンピューター"))))))))))
 
 (deftest browser-snapshot-runs-without-hold
   (with-store
@@ -421,6 +422,7 @@
         (with-redefs-fn {(execute-tool-var)
                          (fn [_ name input]
                            (swap! executed conj {:session agent-control/*browser-session*
+                                                 :screen agent-control/*browser-screen*
                                                  :name name :input input})
                            "tree")}
           (fn []
@@ -435,8 +437,10 @@
               (let [messages (bots/send! browser-on alice (:bot/id b) "ページを見て")]
                 (is (= 1 (count @executed)))
                 (is (= "browser_snapshot" (:name (first @executed))))
-                (is (= (agent-control/session-for (:bot/id b))
+                (is (= (agent-control/computer-for (:user-id alice))
                        (:session (first @executed))))
+                (is (= (agent-control/screen-for (:bot/id b))
+                       (:screen (first @executed))))
                 (is (not-any? #(= "approval" (:kind %))
                               (mapcat :cards messages)))))))))))
 
@@ -450,6 +454,7 @@
         (with-redefs-fn {(execute-tool-var)
                          (fn [_ name input]
                            (swap! executed conj {:session agent-control/*browser-session*
+                                                 :screen agent-control/*browser-screen*
                                                  :name name :input input})
                            "opened")}
           (fn []
@@ -468,24 +473,35 @@
                 (bots/decide! browser-on alice (:bot/id b) (:id card) "approved")
                 (is (= 1 (count @executed)))
                 (is (= "browser_open" (:name (first @executed))))
-                (is (= (agent-control/session-for (:bot/id b))
-                       (:session (first @executed))))))))))))
+                (is (= (agent-control/computer-for (:user-id alice))
+                       (:session (first @executed))))
+                (is (= (agent-control/screen-for (:bot/id b))
+                       (:screen (first @executed))))))))))))
 
-(deftest call-browser-tool-binds-the-profile-to-the-bot
+(deftest call-browser-tool-binds-the-owners-computer-and-the-bots-screen
   (with-store
     (fn []
       (let [seen (atom [])]
         (with-redefs-fn {(execute-tool-var)
                          (fn [_ name _]
-                           (swap! seen conj [agent-control/*browser-session* name])
+                           (swap! seen conj {:session agent-control/*browser-session*
+                                             :screen agent-control/*browser-screen*
+                                             :name name})
                            "ok")}
           (fn []
-            (agent-control/call-browser-tool! browser-on "bot-a" "browser_snapshot" {})
-            (agent-control/call-browser-tool! browser-on "bot-b" "browser_snapshot" {})))
-        (is (= [(agent-control/session-for "bot-a")
-                (agent-control/session-for "bot-b")]
-               (mapv first @seen)))
-        (is (not= (ffirst @seen) (first (second @seen))))))))
+            (agent-control/call-browser-tool!
+             browser-on {:owner "alice" :bot "bot-a"} "browser_snapshot" {})
+            (agent-control/call-browser-tool!
+             browser-on {:owner "alice" :bot "bot-b"} "browser_snapshot" {})))
+        (is (= (agent-control/computer-for "alice")
+               (:session (first @seen))
+               (:session (second @seen)))
+            "same owner, same computer")
+        (is (not= (:screen (first @seen)) (:screen (second @seen)))
+            "each Bot has its own screen")
+        (is (= [(agent-control/screen-for "bot-a")
+                (agent-control/screen-for "bot-b")]
+               (mapv :screen @seen)))))))
 
 (deftest call-browser-tool-refuses-computer-use-and-a-disabled-browser
   (with-store
@@ -502,3 +518,85 @@
         (is false "a disabled browser must not execute")
         (catch clojure.lang.ExceptionInfo e
           (is (= :agent/browser-disabled (:type (ex-data e)))))))))
+
+(deftest same-owner-bots-share-a-computer-and-not-memory
+  (with-store
+    (fn []
+      (let [research (make-bot alice {:name "research"})
+            review (make-bot alice {:name "review"})]
+        (is (peer/computer-shared? research review
+                                   {:source-owner "alice" :target-owner "alice"}))
+        (is (peer/foreign-memory? research review
+                                  {:source-owner "alice" :target-owner "alice"}))
+        (bots/remember! alice (:bot/id research) "only the researcher knows this")
+        (is (= ["only the researcher knows this"]
+               (map :text (bots/memories alice (:bot/id research)))))
+        (is (empty? (bots/memories alice (:bot/id review))))
+        (is (thrown-with-msg? clojure.lang.ExceptionInfo #"別の Bot の記憶"
+                              (bots/memory-of review research)))
+        (is (= 1 (count (bots/memory-of research research))))
+        (is (.isDirectory (java.io.File. (bots/computer-dir "alice") "files")))))))
+
+(deftest a-peer-message-is-not-a-grant-and-wakes-an-idle-bot
+  (with-store
+    (fn []
+      (connect! "conn-1" :google "sub-1" "jun@example.com")
+      (let [research (make-bot alice {:name "research"
+                                      :tools ["gmail_search_messages"]})
+            review (make-bot alice {:name "review"
+                                    :tools ["gmail_search_messages" "gmail_send_message"]})
+            turns (atom 0)]
+        (is (not= (:bot/tools research) (:bot/tools review)))
+        (with-redefs [policy/select-provider (fn [_ _] {:id :local})
+                      provider/agent-turn
+                      (fn [_ _]
+                        (swap! turns inc)
+                        {:content "見ました。" :tool-calls []})]
+          (let [result (bots/peer-message! nil alice (:bot/id research)
+                                           (:bot/id review) "この下書きを見て")]
+            (is (true? (:accepted? result)))
+            (is (true? (:computer-shared? result)))
+            (is (pos? @turns) "the idle reviewer is woken")
+            (is (some #(str/includes? (str (:text %)) "research")
+                       (bots/messages alice (:bot/id review)))
+                "the person can see the handoff in the reviewer's 1:1")))
+        (is (= #{"gmail_search_messages"} (:bot/tools research))
+            "messaging did not copy the sender a send grant")
+        (is (contains? (:bot/tools review) "gmail_send_message"))))))
+
+(deftest a-peer-message-does-not-cross-owners
+  (with-store
+    (fn []
+      (let [mine (make-bot alice {:name "mine"})
+            theirs (make-bot bob {:name "theirs"})]
+        (is (thrown-with-msg? clojure.lang.ExceptionInfo #"このセッションのもの"
+                              (bots/peer-message! nil alice (:bot/id mine)
+                                                  (:bot/id theirs) "hello")))
+        (is (false? (peer/may-message? mine theirs
+                                       {:source-owner "alice"
+                                        :target-owner "bob"})))))))
+
+(deftest send-message-tool-talks-to-a-peer
+  (with-store
+    (fn []
+      (connect! "conn-1" :google "sub-1" "jun@example.com")
+      (let [research (make-bot alice {:name "research"})
+            review (make-bot alice {:name "review"})
+            turns (atom 0)]
+        (with-redefs [policy/select-provider (fn [_ _] {:id :local})
+                      provider/agent-turn
+                      (fn [_ request]
+                        (let [n (swap! turns inc)]
+                          (cond
+                            (and (= 1 n)
+                                 (some #(= "send_message" (:name %))
+                                       (:tools request)))
+                            {:content ""
+                             :tool-calls [{:id "c1" :name "send_message"
+                                           :input {:to (:bot/id review)
+                                                   :text "review this"}}]}
+                            :else
+                            {:content "done" :tool-calls []})))]
+          (bots/send! nil alice (:bot/id research) "レビューして")
+          (is (some #(str/includes? (str (:text %)) "メッセージ")
+                    (bots/messages alice (:bot/id review)))))))))

@@ -168,13 +168,15 @@ so the view change is state and not navigation.
 
 ## What this does not do
 
-- **No Bot-scoped memory.** `chronicle` remains device-scoped and opt-in; a Bot
-  does not yet accumulate preferences across conversations.
-- **No parallel Bots.** Turns are synchronous, one at a time.
+- **No Chronicle for Bots.** `chronicle` remains device-scoped and opt-in;
+  a Bot's durable notes are its own store (ADR-0041), not the person's
+  Chronicle, and not another Bot's notes.
 - **No cloud VM.** A Bot's computer is this machine. That is the thesis, not a
-  remaining gap; the isolated-browser dispatch is ADR-0036.
+  remaining gap. Same-owner Bots share that computer; cognition stays isolated
+  (ADR-0041). The isolated-browser dispatch is ADR-0036, sharing is ADR-0041.
 
 Cadence is routines (traces → schedule → `fire-due!`), not a standing brief
 that runs on a timer by itself. `:bot/browser?` is dispatched: a Bot turn that
-opted in, on a machine that has the browser on, receives the isolated-browser
-tools and holds writes for approval.
+opted in, on a machine that has the browser on, receives the shared-computer
+browser tools and holds writes for approval. Peer DMs are mailbox traffic,
+not a parent/subagent chain.

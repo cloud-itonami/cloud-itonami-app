@@ -360,23 +360,26 @@
         (is (= #{"alice" "bob"} (set (map :user results))))
         (is (some :error results) "and the failure is reported, not swallowed")))))
 
-;; ── browser session isolation ────────────────────────────────────────
+;; ── browser computer sharing ─────────────────────────────────────────
 
-(deftest browser-profiles-are-per-principal
-  ;; The isolated browser keeps cookies and logged-in sessions, so a shared
-  ;; profile means a Bot that signs into a service leaves that session for the
-  ;; next one. Isolation was per MACHINE where people reason per Bot.
-  (testing "two principals get two profiles"
-    (is (not= (agent-control/session-for "bot-a")
-              (agent-control/session-for "bot-b"))))
-  (testing "the same principal is stable across calls"
-    (is (= (agent-control/session-for "bot-a")
-           (agent-control/session-for "bot-a"))))
-  (testing "the value is safe as a directory component"
+(deftest browser-computers-are-per-owner-screens-are-per-bot
+  ;; Same-owner Bots share cookies and logins (ADR-0041). Different owners
+  ;; still get different computers. Isolation was per Bot; sharing is the
+  ;; Grok shape this application now takes, on this machine.
+  (testing "two owners get two computers"
+    (is (not= (agent-control/computer-for "alice")
+              (agent-control/computer-for "bob"))))
+  (testing "two Bots of one owner share a computer and not a screen"
+    (is (= (agent-control/computer-for "alice")
+           (agent-control/computer-for "alice")))
+    (is (not= (agent-control/screen-for "bot-a")
+              (agent-control/screen-for "bot-b"))))
+  (testing "session-for remains a directory-safe sanitizer"
     (is (re-matches #"[A-Za-z0-9_-]+"
                     (agent-control/session-for "bot/../../etc:passwd"))))
   (testing "an empty principal falls back rather than producing a bare prefix"
     (is (= agent-control/default-session-name (agent-control/session-for "")))
     (is (= agent-control/default-session-name (agent-control/session-for nil))))
   (testing "saying nothing keeps the previous behaviour"
-    (is (nil? agent-control/*browser-session*))))
+    (is (nil? agent-control/*browser-session*))
+    (is (nil? agent-control/*browser-screen*))))
