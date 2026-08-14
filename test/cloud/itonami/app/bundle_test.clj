@@ -41,7 +41,7 @@
 (deftest the-published-lock-matches-the-current-document
   (let [published (bundle/published-manifest)
         {:keys [cid manifest]} (bundle/snapshot)]
-    (is (map? published) "kotoba.app.edn is the last published identity")
+    (is (map? published) "kotoba.app.edn is the last computed identity")
     (is (= cid (:kotoba.app/bundle-cid published))
         "source changed; republish before landing")
     (is (= (:kotoba.app/embed-url manifest)

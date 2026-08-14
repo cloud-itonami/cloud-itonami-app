@@ -81,7 +81,8 @@
      :problems (app/validate-manifest manifest)}))
 
 (defn published-manifest
-  "Last put recorded in the repo, or nil."
+  "Last computed identity recorded in the repo, or nil.
+  `:published` inside the map is filled only after a GET-verified put."
   []
   (when-let [res (io/resource published-resource)]
     (edn/read-string (slurp res))))
