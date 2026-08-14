@@ -77,11 +77,20 @@ ipfs://bafkreiey52hai5obtqeg5w2ix63orset4o74kxljif2gwdkxt5upre2wsi
 
 ## Resume
 
-When the archive token matches the live Worker:
+When the archive token matches the live Worker, two steps (different
+working directories):
+
+1. From the superproject root, read the one kagi item (do not print it):
 
 ```
-KOTOBASE_ARCHIVE_TOKEN="$(KAGI_HOME=$HOME/.kagi orgs/kotoba-lang/kagi/bin/kagi get KOTOBASE_ARCHIVE_TOKEN)" \
-  clojure -M -m cloud.itonami.app.bundle put
+KAGI_HOME=$HOME/.kagi orgs/kotoba-lang/kagi/bin/kagi get KOTOBASE_ARCHIVE_TOKEN
+```
+
+2. In a `cloud-itonami-app` checkout, pass that value as
+   `KOTOBASE_ARCHIVE_TOKEN` and run:
+
+```
+clojure -M -m cloud.itonami.app.bundle put
 ```
 
 That GET-verifies bytes and writes `:published` into the lock. Then IPNS
