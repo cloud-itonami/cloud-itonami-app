@@ -130,6 +130,27 @@
     (is (str/includes? refresh "botsState.latestTurn = data.turn")
         "a Goal that finished in the resident must replace the browser's provisional running turn")))
 
+(deftest bots-reconcile-cli-and-mcp-messages-while-the-view-is-open
+  (let [js (slurp (io/file "resources/cloud/itonami/app/interaction.js"))
+        sync (second (re-find
+                      #"(?s)const syncBotsFromResident = async \(\) => \{(.*?)\n    \};"
+                      js))]
+    (is sync "the resident synchronizer remains independently inspectable")
+    (is (str/includes? js "threadVersion:null, syncTimer:null, syncing:false"))
+    (is (str/includes? sync "fetch(`/api/bots/${botId}/messages`, {cache:'no-store'})"))
+    (is (str/includes? sync "version !== botsState.threadVersion")
+        "unchanged conversations do not rebuild the thread")
+    (is (str/includes? sync "document.hidden || botsState.busy")
+        "background tabs and the UI's own active stream are not raced")
+    (is (str/includes? sync "stickToBottom")
+        "an external message does not pull a person away from older history")
+    (is (str/includes? sync "botsState.latestTurn = data.turn || null")
+        "CLI/MCP lifecycle state replaces the browser's stale state")
+    (is (str/includes? js "document.addEventListener('visibilitychange'")
+        "returning to the app requests an immediate reconciliation")
+    (is (str/includes? js "scheduleBotsRealtime(0);")
+        "opening Bots does not wait one interval for the first reconciliation")))
+
 (deftest bots-pass-server-status-to-decorative-living-faces
   (let [js (slurp (io/file "resources/cloud/itonami/app/interaction.js"))]
     (is (str/includes? js "const botAvatar = (node, avatar, status = null) =>"))
