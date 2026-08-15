@@ -200,7 +200,11 @@
  ;; explicitly gave a schedule. With no scheduled routine it is a store read
  ;; that finds nothing. Set `:enabled? false` to stop it looking at all.
  :bots {:mail-domain "mail.itonami.cloud"
-        :tick {:enabled? true :interval-seconds 60}}
+        :tick {:enabled? true :interval-seconds 60}
+        ;; Resident startup jobs share the inference plane with interactive
+        ;; conversations. One start per tick controls bursts; max-active also
+        ;; prevents a slow run from overlapping the next tick.
+        :workforce {:max-starts-per-tick 1 :max-active 1}}
  :chronicle {:interval-seconds 60
              ;; Every switch is still opt-in per user. This is only the cadence
              ;; used after screen context has explicitly been enabled.
