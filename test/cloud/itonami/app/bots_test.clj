@@ -463,6 +463,8 @@
   (with-store
     (fn []
       (let [b (make-bot alice {})]
+        (is (false? (:omakase? (first (:bots (bots/overview nil alice)))))
+            "legacy and default Bots expose a boolean, never null")
         ;; Reaching decide! at all requires a held call; the refusal must come
         ;; before that check, so an agent session is told no rather than told
         ;; there is nothing to approve.
