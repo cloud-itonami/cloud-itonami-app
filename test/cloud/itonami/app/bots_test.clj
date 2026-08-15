@@ -421,6 +421,28 @@
           (is (= "checkpointed" (get-in turn [:job :state]))
               "restart is a resumable checkpoint, not a failed visible turn"))))))
 
+(deftest a-provider-failure-ends-the-silent-gap-with-a-visible-bot-message
+  (with-store
+    (fn []
+      (let [b (make-bot alice {})]
+        (with-redefs [policy/select-provider (fn [_ _] {:id :local})
+                      provider/agent-turn-stream!
+                      (fn [_ _ _]
+                        (throw (ex-info "model provider streaming request failed"
+                                        {:type :provider/http-error :status 503})))]
+          (is (thrown? clojure.lang.ExceptionInfo
+                       (bots/send-stream! nil alice (:bot/id b) "続けて"
+                                          "provider-failure-visible-1"
+                                          (constantly nil))))
+          (let [message (last (bots/messages alice (:bot/id b)))
+                turn (bots/latest-turn alice (:bot/id b))]
+            (is (= "bot" (:role message)))
+            (is (re-find #"失敗" (:text message))
+                "an accepted direction must not end with the person's unanswered bubble")
+            (is (= "failed" (:state turn)))
+            (is (= "provider/http-error" (:error-type turn)))
+            (is (= 503 (:error-status turn)))))))))
+
 (deftest an-active-streaming-turn-can-be-cancelled-by-its-owner
   (with-store
     (fn []

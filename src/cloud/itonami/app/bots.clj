@@ -1262,7 +1262,8 @@
      :updated-at (:turn/updated-at turn)
      :finished-at (:turn/finished-at turn)
      :elapsed-seconds elapsed
-     :error-type (some-> (:turn/error-type turn) str (subs 1))})))
+     :error-type (some-> (:turn/error-type turn) str (subs 1))
+     :error-status (:turn/error-status turn)})))
 
 (defn latest-turn [session bot-id]
   (owned! session bot-id)
@@ -1326,6 +1327,18 @@
              :turn/model (:model run)
              :turn/usage (:usage run)}
             attrs))))
+
+(defn- visible-failure-message [error]
+  (let [{:keys [type status]} (ex-data error)]
+    (case type
+      :bot/cancelled nil
+      :provider/empty-response
+      "モデルから回答を受け取れませんでした。依頼は記録されています。もう一度送ると再試行できます。"
+      :provider/http-error
+      (str "モデルへの接続に失敗しました"
+           (when status (str "（HTTP " status "）"))
+           "。依頼は記録されています。もう一度送ると再試行できます。")
+      "実行に失敗しました。依頼は記録されています。もう一度送ると再試行できます。")))
 
 (defn- goal-event! [kind data]
   (when *goal-event!* (*goal-event!* kind data)))
@@ -1853,22 +1866,27 @@
       ;; around a service nobody authorized — is kept, one step later and where
       ;; it is true: `advance!` stops at the CALL, before the tool is reached,
       ;; and the card arrives then.
-      (if (empty? (:tools admission))
-        (say bot-id
-             "使えるツールがひとつもありません。Settings で有効にするか、この Bot の権限を見直してください。"
-             nil)
-        (advance! configuration b
-                  (merge admission
-                         {:id (or (:run-id advance-options) (new-id "run"))
-                          :goal? goal?
-                          :objective (when goal? text)
-                          :messages (transcript configuration b
-                                                (conversation bot-id)
-                                                (when goal? text))
-                          :turn-count 0
-                          :tool-count 0
-                          :usage nil})
-                  advance-options))
+      (try
+        (if (empty? (:tools admission))
+          (say bot-id
+               "使えるツールがひとつもありません。Settings で有効にするか、この Bot の権限を見直してください。"
+               nil)
+          (advance! configuration b
+                    (merge admission
+                           {:id (or (:run-id advance-options) (new-id "run"))
+                            :goal? goal?
+                            :objective (when goal? text)
+                            :messages (transcript configuration b
+                                                  (conversation bot-id)
+                                                  (when goal? text))
+                            :turn-count 0
+                            :tool-count 0
+                            :usage nil})
+                    advance-options))
+        (catch Exception error
+          (when-let [message (visible-failure-message error)]
+            (say bot-id message nil))
+          (throw error)))
       (public-conversation did bot-id)))))
 
 (defn send-stream!
@@ -1939,6 +1957,7 @@
                                  {:turn/state :failed
                                   :turn/phase :failed
                                   :turn/finished-at (store/now)
+                                  :turn/error-status (:status (ex-data error))
                                   :turn/error-type (or (:type (ex-data error))
                                                        :internal-error)}))
             (throw error))))
@@ -2008,6 +2027,7 @@
                                                              :internal-error)})))
         (append-goal-event! run-id :run/failed
                             {:error-type (or (:type (ex-data error)) :internal-error)
+                             :error-status (:status (ex-data error))
                              :message (.getMessage error)}))
       (finally
         (swap! goal-workers dissoc run-id)))))

@@ -110,6 +110,7 @@
     (is (str/includes? js "通常より時間がかかっています…"))
     (is (str/includes? js "'goal?':goal"))
     (is (str/includes? js "provider の請求額が未提供のため未算出"))
+    (is (str/includes? js "HTTP ${turn['error-status']}"))
     (is (str/includes? js "renderBotsRun(botsState.latestTurn)"))
     (is (str/includes? js "frame.type === 'phase'"))
     (is (str/includes? js "progress.phase = frame.phase"))
@@ -118,6 +119,16 @@
     (is (str/includes? js "append(personEntry, entry)"))
     (is (str/includes? js "'coding?':$('#bots-coding').checked"))
     (is (str/includes? js "workspace:$('#bots-workspace').value.trim()"))))
+
+(deftest detached-goal-polling-refreshes-the-durable-turn-not-only-messages
+  (let [js (slurp (io/file "resources/cloud/itonami/app/interaction.js"))
+        refresh (second (re-find
+                         #"(?s)const refreshBotsThread = async \(\) => \{(.*?)\n    \};"
+                         js))]
+    (is refresh "the detached-goal poll target remains independently inspectable")
+    (is (str/includes? refresh "botsState.messages = data.messages || []"))
+    (is (str/includes? refresh "botsState.latestTurn = data.turn")
+        "a Goal that finished in the resident must replace the browser's provisional running turn")))
 
 (deftest bots-pass-server-status-to-decorative-living-faces
   (let [js (slurp (io/file "resources/cloud/itonami/app/interaction.js"))]

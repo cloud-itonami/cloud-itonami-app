@@ -9190,7 +9190,10 @@
       if (tokens && turn.cost?.status === 'not-calculated') {
         node.append(make('div', 'bots-run__meta', '利用料: provider の請求額が未提供のため未算出'));
       }
-      if (turn['error-type']) node.append(make('div', 'bots-run__meta', `error: ${turn['error-type']}`));
+      if (turn['error-type']) {
+        const status = turn['error-status'] ? ` · HTTP ${turn['error-status']}` : '';
+        node.append(make('div', 'bots-run__meta', `error: ${turn['error-type']}${status}`));
+      }
     };
     const renderBotsRail = () => {
       const list = $('#bots-list');
@@ -9775,6 +9778,7 @@
       const data = await request.json();
       if (!request.ok) throw new Error(data?.error?.message || '会話を読めませんでした。');
       botsState.messages = data.messages || [];
+      botsState.latestTurn = data.turn || botsState.latestTurn;
       renderBotsThread();
     };
     const showBotsPane = () => {

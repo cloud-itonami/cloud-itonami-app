@@ -5098,9 +5098,10 @@
         (send! exchange 200 (bots/cancel! session bot-id run-id)))
 
       (and (= method "GET") (bot-id-from path #"/api/bots/([^/]+)/messages"))
-      (send! exchange 200
-             {:messages (bots/messages
-                         session (bot-id-from path #"/api/bots/([^/]+)/messages"))})
+      (let [bot-id (bot-id-from path #"/api/bots/([^/]+)/messages")]
+        (send! exchange 200
+               {:messages (bots/messages session bot-id)
+                :turn (bots/latest-turn session bot-id)}))
 
       (and (= method "GET")
            (bot-id-from path #"/api/bots/([^/]+)/mailbox"))
@@ -5308,10 +5309,10 @@
 
       (and (= method "GET")
            (bot-id-from path #"/api/agent-bots/([^/]+)/messages"))
-      (send! exchange 200
-             {:messages (bots/messages
-                         session
-                         (bot-id-from path #"/api/agent-bots/([^/]+)/messages"))})
+      (let [bot-id (bot-id-from path #"/api/agent-bots/([^/]+)/messages")]
+        (send! exchange 200
+               {:messages (bots/messages session bot-id)
+                :turn (bots/latest-turn session bot-id)}))
 
       (and (= method "POST")
            (bot-id-from path #"/api/agent-bots/([^/]+)/messages"))
