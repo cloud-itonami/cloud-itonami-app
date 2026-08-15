@@ -12,6 +12,8 @@
    {:name "bot_messages" :description "Read one owned Bot's durable conversation."
     :parameters {:type "object" :required ["bot_id"]
                  :properties {:bot_id {:type "string"}}}}
+   {:name "workforce_status" :description "Read the installed startup workforce and resident-job status. Configuration remains human-only."
+    :parameters {:type "object" :properties {}}}
    {:name "bot_task" :description "Submit one task to an owned Bot and wait for its bounded result. Omakase writes execute with receipts."
     :parameters {:type "object" :required ["bot_id" "text"]
                  :properties {:bot_id {:type "string"} :text {:type "string"}}}}
@@ -39,6 +41,8 @@
     "bots_list" (client/request! configuration :get "/api/agent-bots")
     "bot_messages" (client/request! configuration :get
                                          (str "/api/agent-bots/" bot_id "/messages"))
+    "workforce_status" (client/request! configuration :get
+                                         "/api/agent-bots/workforce")
     "bot_task" (client/request-with-timeout!
                  configuration :post (str "/api/agent-bots/" bot_id "/messages") 660
                  {:text text})

@@ -457,6 +457,9 @@
 (defn bot-list [configuration]
   (client/request! configuration :get "/api/agent-bots"))
 
+(defn bot-workforce [configuration]
+  (client/request! configuration :get "/api/agent-bots/workforce"))
+
 (defn bot-messages [configuration flags]
   (client/request! configuration :get
                    (str "/api/agent-bots/" (required-flag flags :id) "/messages")))
@@ -514,6 +517,7 @@
        "  business bind --id <business-id> [--repos a,b] [--canvas c]\n"
        "                [--model path] [--leverage path] [--adoptions a,b] [--lei L]\n\n"
        "  bots list\n"
+       "  bots workforce\n"
        "  bots messages --id <bot-id>\n"
        "  bots task --id <bot-id> --text <依頼>\n"
        "  bots handoff --from <bot-id> --to <bot-id> --task <依頼> [--depth N]\n"
@@ -546,6 +550,7 @@
       ["business" "create"] (business-create configuration flags)
       ["business" "bind"] (business-bind configuration flags)
       ["bots" "list"] (bot-list configuration)
+      ["bots" "workforce"] (bot-workforce configuration)
       ["bots" "messages"] (bot-messages configuration flags)
       ["bots" "task"] (bot-task configuration flags)
       ["bots" "handoff"] (bot-handoff configuration flags)

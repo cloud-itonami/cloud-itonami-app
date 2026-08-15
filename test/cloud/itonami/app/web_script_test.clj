@@ -97,6 +97,16 @@
            (.indexOf load-bots "await selectBot(botsState.bots[0].id);"))
         "provider readiness renders before the initial selection fast path")))
 
+(deftest startup-workforce-is-visible-and-human-provisioned
+  (let [html (with-redefs [store/snapshot (constantly (store/initial-state))]
+               (web/page-html config))
+        js (slurp (io/file "resources/cloud/itonami/app/interaction.js"))]
+    (is (str/includes? html "id=\"bots-workforce\""))
+    (is (str/includes? js "'/api/bots/workforce/provision'"))
+    (is (str/includes? js "bot.business?.name || '個人Bot'"))
+    (is (str/includes? js "Capability policy は職務上の境界です。"))
+    (is (str/includes? js "既存の会話と実行履歴は保持されています。"))))
+
 (deftest bots-expose-bounded-local-coding-and-cancellable-goal-progress
   (let [html (with-redefs [store/snapshot (constantly (store/initial-state))]
                (web/page-html config))

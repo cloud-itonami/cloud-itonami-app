@@ -72,6 +72,7 @@
             [cloud.itonami.app.updater :as updater]
             [cloud.itonami.app.web :as web]
             [cloud.itonami.app.worker :as worker]
+            [cloud.itonami.app.workforce :as workforce]
             [cloud.itonami.app.work-approval :as work-approval]
             [cloud.itonami.app.work-reconciler :as work-reconciler]
             [cloud.itonami.app.work-runtime :as work-runtime]
@@ -5068,6 +5069,16 @@
         (bots/create! config session body)
         (send! exchange 200 (bots/overview config session)))
 
+      (and (= method "GET") (= path "/api/bots/workforce"))
+      (send! exchange 200 (bots/workforce-status session))
+
+      (and (= method "POST") (= path "/api/bots/workforce/provision"))
+      (do (require-origin! exchange config)
+          (require-csrf! exchange session)
+          (send! exchange 200
+                 (bots/provision-workforce! config session
+                                            (workforce/load-catalog))))
+
       (and (= method "POST") (= path "/api/bots/suggestions"))
       (let [body (read-json exchange)]
         (require-origin! exchange config)
@@ -5291,6 +5302,11 @@
                      :routine/no-demonstration 409
                      :routine/too-many 409
                      :handoff/refused 409
+                     :workforce/unavailable 503
+                     :workforce/timeout 504
+                     :workforce/command-failed 502
+                     :workforce/unreadable 502
+                     :workforce/invalid-catalog 502
                      400)
                    {:error {:type (name (or (:type (ex-data error)) :bot/error))
                             :message (.getMessage error)}}))
@@ -5307,6 +5323,9 @@
     (cond
       (and (= method "GET") (= path "/api/agent-bots"))
       (send! exchange 200 (bots/overview config session))
+
+      (and (= method "GET") (= path "/api/agent-bots/workforce"))
+      (send! exchange 200 (bots/workforce-status session))
 
       (and (= method "GET")
            (bot-id-from path #"/api/agent-bots/([^/]+)/messages"))
