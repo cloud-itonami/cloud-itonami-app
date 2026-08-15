@@ -145,6 +145,22 @@
       (check! "new Bot is a titlebar action" new-visible)
       (check! "routine and handoff controls are not exposed to the person" (zero? routine-controls)))
 
+    (println "\n── a compact desktop remains one application viewport ──")
+    (p/let [_ (.setViewportSize page #js {:width 900 :height 700})
+            _ (.waitForTimeout page 300)
+            rail-visible (.isVisible page ".bots-rail")
+            composer-visible (.isVisible page ".bots-composer")
+            composer-box (.boundingBox (.locator page ".bots-composer"))
+            viewport-height (.evaluate page "window.innerHeight")
+            document-height (.evaluate page "document.documentElement.scrollHeight")]
+      (check! "the Bot rail remains visible at 900px" rail-visible)
+      (check! "the composer remains visible without document scrolling"
+              (and composer-visible
+                   composer-box
+                   (<= (+ (.-y composer-box) (.-height composer-box)) viewport-height)))
+      (check! "the document itself does not scroll vertically"
+              (<= document-height viewport-height)))
+
     ;; This message asks for the inbox, so the Bot has to reach for a Gmail
     ;; tool, and reaching for one nobody authorized is what produces the card.
     ;; The card is no longer a precondition of the turn — a Bot with an
