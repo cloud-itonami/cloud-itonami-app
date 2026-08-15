@@ -38,8 +38,9 @@
     (is (= "2026-08-01" (:since s)) "an earlier day moves the boundary back, never forward")))
 
 (deftest a-report-says-which-kind-of-empty-it-is
-  (let [state {:kaiyu {:since "2026-08-01"
-                       :views {"2026-08-08" {"mail" 3 "chat" 1}
+  (let [today (subs (str (java.time.Instant/now)) 0 10)
+        state {:kaiyu {:since "2026-08-01"
+                       :views {today {"mail" 3 "chat" 1}
                                "2026-01-01" {"mail" 99}}}}
         r (k/report state {:days 7})]
     (is (= [{:route "mail" :count 3} {:route "chat" :count 1}] (get-in r [:views :rows]))

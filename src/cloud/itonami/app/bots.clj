@@ -39,17 +39,14 @@
 
   ## What a Bot's 'own computer' is here
 
-  Not a cloud VM. This application's thesis is that anything leaving this
-  machine has to be NAMED and REVIEWED before it can happen (ADR-2608130100),
-  and a per-Bot VM inverts it: the Bot's work would happen somewhere the
-  fail-closed policy does not reach, so the review would cover the chat window
-  and nothing the Bot actually did. Note the thesis is about the policy
-  reaching the work, not about the work being local — a reviewed, encrypted,
-  credentialed provider is admissible; an unreachable one is not. A Bot's
-  computer is therefore this machine, entered through a narrow door — its own
-  grant, its own token resolution, its own conversation — and heavy or
-  long-running work goes to the externally supervised OrganismWorkers
-  (`work-organism-dispatch`) that already exist for it.
+  ADR-0051 adds a local OCI virtual computer without weakening the earlier
+  rule that effects must remain inside this process's review boundary. It has
+  no network or credentials, mounts one admitted standalone Git root, and every
+  shell command is held for a human. The host launches Docker with fixed argv;
+  only /bin/bash inside the container interprets the command. Multiple Bots may
+  have separate containers, while a per-workspace lock prevents concurrent
+  mutation of one repository. Heavy or long-running governed work still goes
+  to the externally supervised OrganismWorkers (`work-organism-dispatch`).
 
   The honest cost: a Bot does not run while this machine is asleep. That is a
   real difference from the product this is modelled on, and it is a
@@ -65,6 +62,7 @@
             [cloud.itonami.app.provider :as provider]
             [cloud.itonami.app.routine :as routine]
             [cloud.itonami.app.store :as store]
+            [cloud.itonami.app.virtual-shell :as virtual-shell]
             [cloud.itonami.app.workspace-tools :as workspace-tools]
             [connector.invoke :as invoke]
             [connector.model :as cm]
@@ -373,10 +371,12 @@
   "Create a Bot. `:tools` may be given directly, or derived from `:connectors`
   when the caller is the onboarding screen and has only picked services."
   [configuration session {:keys [name avatar brief connectors tools accounts
-                                 writes? browser? coding? workspace
+                                 writes? browser? coding? virtual-shell? workspace
                                  provider-id model]}]
   (validate-provider-choice! configuration provider-id model)
-  (let [workspace (when coding? (workspace-tools/admit-root workspace))
+  (let [workspace (cond
+                    virtual-shell? (virtual-shell/admit-workspace workspace)
+                    coding? (workspace-tools/admit-root workspace))
         now (store/now)
         tools (if (seq tools)
                 (set (map str tools))
@@ -394,6 +394,7 @@
                     :bot/writes? writes?
                     :bot/browser? browser?
                     :bot/coding? coding?
+                    :bot/virtual-shell? virtual-shell?
                     :bot/workspace workspace
                     :bot/created-at now
                     :bot/updated-at now})]
@@ -417,9 +418,16 @@
                      (:model attrs) (:bot/model existing))
         next-coding (if (contains? attrs :coding?)
                       (boolean (:coding? attrs)) (:bot/coding? existing))
+        next-virtual-shell (if (contains? attrs :virtual-shell?)
+                             (boolean (:virtual-shell? attrs))
+                             (:bot/virtual-shell? existing))
         next-workspace (if (contains? attrs :workspace)
                          (:workspace attrs) (:bot/workspace existing))
-        next-workspace (when next-coding
+        next-workspace (cond
+                         next-virtual-shell
+                         (virtual-shell/admit-workspace next-workspace)
+
+                         next-coding
                          (workspace-tools/admit-root next-workspace))
         _ (when (or (contains? attrs :provider-id) (contains? attrs :model))
             (validate-provider-choice! configuration next-provider next-model))
@@ -435,8 +443,12 @@
                                                     (set (map str (:accounts attrs))))
                  (contains? attrs :writes?) (assoc :bot/writes? (:writes? attrs))
                  (contains? attrs :browser?) (assoc :bot/browser? (:browser? attrs))
-                 (or (contains? attrs :coding?) (contains? attrs :workspace))
-                 (assoc :bot/coding? next-coding :bot/workspace next-workspace)
+                 (or (contains? attrs :coding?)
+                     (contains? attrs :virtual-shell?)
+                     (contains? attrs :workspace))
+                 (assoc :bot/coding? next-coding
+                        :bot/virtual-shell? next-virtual-shell
+                        :bot/workspace next-workspace)
                  (contains? attrs :enabled?) (assoc :bot/enabled? (:enabled? attrs)))]
      (store-bot! (bot/bot (assoc merged :bot/updated-at (store/now)))))))
 
@@ -523,7 +535,9 @@
                      (when (:bot/browser? b)
                        (agent-control/browser-tool-definitions configuration))
                      (when (and (:bot/coding? b) (:bot/workspace b))
-                       workspace-tools/tool-definitions))
+                       workspace-tools/tool-definitions)
+                     (when (and (:bot/virtual-shell? b) (:bot/workspace b))
+                       virtual-shell/tool-definitions))
         admitted (into (bot/admitted-tools b rows connected)
                        (map :name) local-tools)]
     {:id (:bot/id b)
@@ -546,6 +560,9 @@
      :browser-ready? (boolean (and (:bot/browser? b)
                                    (agent-control/browser-enabled? configuration)))
      :coding? (:bot/coding? b)
+     :virtual-shell? (:bot/virtual-shell? b)
+     :virtual-shell-ready? (boolean (and (:bot/virtual-shell? b)
+                                         (virtual-shell/available?)))
      :workspace (:bot/workspace b)
      :enabled? (:bot/enabled? b)
      :status (name (bot/status b (presence (:bot/id b)
@@ -684,9 +701,12 @@
     []))
 
 (defn- coding-tools [b]
-  (if (and (:bot/coding? b) (:bot/workspace b))
-    workspace-tools/tool-definitions
-    []))
+  (into (if (and (:bot/coding? b) (:bot/workspace b))
+          workspace-tools/tool-definitions
+          [])
+        (if (and (:bot/virtual-shell? b) (:bot/workspace b))
+          virtual-shell/tool-definitions
+          [])))
 
 (defn- tool-definitions
   "The tools the Bot's grant REACHES, as the model sees them.
@@ -725,6 +745,7 @@
 (defn- write-tool? [configuration tool-name]
   (or (agent-control/browser-write? tool-name)
       (workspace-tools/write-tool? tool-name)
+      (virtual-shell/write-tool? tool-name)
       (let [registry (connectors/enabled configuration)]
         (boolean
          (some (fn [d] (when-let [t (cm/tool d tool-name)]
@@ -733,10 +754,12 @@
 
 (defn- describe-tool [configuration tool-name args]
   (if (or (agent-control/browser-tool? tool-name)
-          (workspace-tools/tool? tool-name))
-    (if (workspace-tools/tool? tool-name)
-      (workspace-tools/describe tool-name args)
-      (agent-control/describe-browser-tool tool-name args))
+          (workspace-tools/tool? tool-name)
+          (virtual-shell/tool? tool-name))
+    (cond
+      (workspace-tools/tool? tool-name) (workspace-tools/describe tool-name args)
+      (virtual-shell/tool? tool-name) (virtual-shell/describe tool-name args)
+      :else (agent-control/describe-browser-tool tool-name args))
     (let [registry (connectors/enabled configuration)
           request (invoke/request-for registry tool-name args)]
       ;; The request WITHOUT the credential — `connector.invoke/request-for`
@@ -750,9 +773,18 @@
 
 (defn- run-tool! [configuration b selection tool-name args]
   (let [text (if (or (agent-control/browser-tool? tool-name)
-                     (workspace-tools/tool? tool-name))
-               (str (if (workspace-tools/tool? tool-name)
+                     (workspace-tools/tool? tool-name)
+                     (virtual-shell/tool? tool-name))
+               (str (cond
+                      (workspace-tools/tool? tool-name)
                       (workspace-tools/call! (:bot/workspace b) tool-name args)
+
+                      (virtual-shell/tool? tool-name)
+                      (virtual-shell/call! {:bot-id (:bot/id b)
+                                            :workspace (:bot/workspace b)}
+                                           tool-name args)
+
+                      :else
                       (agent-control/call-browser-tool!
                        configuration (:bot/id b) tool-name args)))
                (let [registry (connectors/enabled configuration)
@@ -782,9 +814,18 @@
               "and tell the person — do not try to bypass it.\n\n"))
        (when (and (:bot/coding? b) (:bot/workspace b))
          (str "You may inspect and edit exactly one local Git repository: "
-              (:bot/workspace b) ". Use workspace and git tools only; there is "
-              "no shell, checkout, reset, push, credential, or remote-write tool. "
+              (:bot/workspace b) ". Use workspace and git tools for bounded "
+              "file operations. "
+              (when-not (:bot/virtual-shell? b)
+                "There is no shell, checkout, reset, push, credential, or remote-write tool. ")
               "File writes and local commits wait for human approval.\n\n"))
+       (when (and (:bot/virtual-shell? b) (:bot/workspace b))
+         (str "You have a dedicated OCI virtual computer for general shell work. "
+              "Its only host mount is this Git root at /workspace; it has no "
+              "network, host credentials, Docker socket, or Linux capabilities. "
+              "Every virtual_shell command waits for human approval. Prefer "
+              "small commands with an explicit timeout, inspect results, and "
+              "never claim a host or remote action occurred.\n\n"))
        (when (seq (str (:bot/brief b)))
          (str "Standing brief from the person you work for:\n" (:bot/brief b)))))
 
@@ -945,6 +986,8 @@
                                   "承認するとこの Bot 専用の分離ブラウザーのページ状態が変わります。"
                                   (workspace-tools/tool? name)
                                   "承認すると選択した local Git workspace のファイルまたは履歴が変わります。remote へは push しません。"
+                                  (virtual-shell/tool? name)
+                                  "承認すると、この Bot 専用のnetwork-disabled仮想環境内でcommandを実行します。選択したGit workspaceは書き換わる場合があります。"
                                   :else
                                   "承認するとこの Bot が接続済みサービスに書き込みます。")})]))
 
@@ -1167,8 +1210,19 @@
       (throw (ex-info "実行中の Bot turn が見つかりません。" {:type :bot/run-not-found})))
     (reset! (:cancelled entry) true)
     (provider/cancel-agent-stream! (:thread entry))
+    (virtual-shell/cancel! bot-id)
     (.interrupt ^Thread (:thread entry))
     {:cancelled true :run-id (:run-id entry)}))
+
+(defn cancel-shell!
+  "Cancel an approved shell command without granting access to another Bot."
+  [session bot-id]
+  (owned! session bot-id)
+  (let [result (virtual-shell/cancel! bot-id)]
+    (when-not (:cancelled result)
+      (throw (ex-info "実行中の仮想shellが見つかりません。"
+                      {:type :bot/shell-run-not-found})))
+    result))
 
 (defn- answered-card [bot-id card-id]
   (some (fn [m] (some #(when (= card-id (:card/id %)) %) (:message/cards m)))

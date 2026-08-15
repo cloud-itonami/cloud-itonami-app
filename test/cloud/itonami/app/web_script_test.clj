@@ -103,12 +103,22 @@
         js (slurp (io/file "resources/cloud/itonami/app/interaction.js"))]
     (doseq [id ["bots-coding" "bots-workspace" "bots-cancel"]]
       (is (str/includes? html (str "id=\"" id "\"")) id))
-    (is (str/includes? html "shell・push・reset は使いません"))
+    (is (str/includes? html "ファイル変更と commit は毎回承認"))
     (is (str/includes? js "messages/stream"))
     (is (str/includes? js "messages/${encodeURIComponent(runId)}/cancel"))
     (is (str/includes? js "通常より時間がかかっています…"))
     (is (str/includes? js "'coding?':$('#bots-coding').checked"))
     (is (str/includes? js "workspace:$('#bots-workspace').value.trim()"))))
+
+(deftest bots-expose-one-approved-virtual-shell-per-bot
+  (let [html (with-redefs [store/snapshot (constantly (store/initial-state))]
+               (web/page-html config))
+        js (slurp (io/file "resources/cloud/itonami/app/interaction.js"))]
+    (is (str/includes? html "id=\"bots-virtual-shell\""))
+    (is (str/includes? html "隔離された仮想環境"))
+    (is (str/includes? js "'virtual-shell?':$('#bots-virtual-shell').checked"))
+    (is (str/includes? js "bot['virtual-shell?']"))
+    (is (str/includes? js "`/api/bots/${botId}/shell/cancel`"))))
 
 (deftest authenticated-writes-recover-one-stale-csrf-without-relaxing-the-gate
   ;; A resident app is a long-lived single-page document. Hosted sign-in or a

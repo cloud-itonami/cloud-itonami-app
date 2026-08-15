@@ -9114,7 +9114,7 @@
       palette:{colors:[], glyphs:[]},
       selected:null, messages:[], picked:new Set(),
       draft:{color:'blue', glyph:'circle'}, loaded:false, busy:false,
-      browserAvailable:false, controller:null, runId:null
+      browserAvailable:false, controller:null, runId:null, shellBusy:false
     };
     const botAvatar = (node, avatar) => {
       node.dataset.color = avatar?.color || 'blue';
@@ -9441,6 +9441,12 @@
       const decide = async (decision, button) => {
         button.disabled = true;
         botsSetStatus(decision === 'approved' ? '実行しています…' : '取り消しています…');
+        const shellCommand = decision === 'approved' && card.action === 'virtual_shell';
+        if (shellCommand) {
+          botsState.shellBusy = true;
+          botsState.busy = true;
+          botsCancel.hidden = false;
+        }
         try {
           const data = await postJSON(
             `/api/bots/${botId}/cards/${card.id}/decide`, {decision}, true);
@@ -9451,6 +9457,13 @@
         } catch (error) {
           button.disabled = false;
           botsSetStatus(error.message);
+        } finally {
+          if (shellCommand) {
+            botsState.shellBusy = false;
+            botsState.busy = false;
+            botsCancel.hidden = true;
+            resizeBotsInput();
+          }
         }
       };
       const approve = make('button', 'primary-action', '承認して実行');
@@ -9528,6 +9541,10 @@
       codingBox.type = 'checkbox';
       codingBox.checked = Boolean(bot['coding?']);
       codingBox.setAttribute('aria-label', 'この PC の Git workspace で coding する');
+      const virtualShellBox = make('input');
+      virtualShellBox.type = 'checkbox';
+      virtualShellBox.checked = Boolean(bot['virtual-shell?']);
+      virtualShellBox.setAttribute('aria-label', '隔離された仮想環境で汎用shellを使う');
       const workspaceInput = make('input');
       workspaceInput.type = 'text';
       workspaceInput.maxLength = 4096;
@@ -9537,28 +9554,34 @@
       const saveCoding = make('button', 'tool-button', 'Workspace を変更');
       saveCoding.type = 'button';
       saveCoding.addEventListener('click', async () => {
-        if (codingBox.checked && !workspaceInput.value.trim()) {
+        if ((codingBox.checked || virtualShellBox.checked) && !workspaceInput.value.trim()) {
           botsSetStatus('Git workspace の絶対パスを入れてください。');
           return;
         }
         saveCoding.disabled = true;
         try {
           const data = await postJSON(`/api/bots/${bot.id}`, {
-            'coding?':codingBox.checked, workspace:workspaceInput.value.trim()
+            'coding?':codingBox.checked,
+            'virtual-shell?':virtualShellBox.checked,
+            workspace:workspaceInput.value.trim()
           }, true);
           botsState.bots = data.bots || [];
           renderBotsRail();
           renderBotsThread();
-          botsSetStatus(codingBox.checked ? 'Git workspace を変更しました。' : 'Coding を無効にしました。');
+          botsSetStatus(codingBox.checked || virtualShellBox.checked
+            ? 'Git workspace と仮想環境を変更しました。'
+            : 'Coding と仮想shellを無効にしました。');
         } catch (error) {
           saveCoding.disabled = false;
           botsSetStatus(error.message);
         }
       });
-      codingEditor.append(codingBox, workspaceInput, saveCoding);
+      codingEditor.append(codingBox, virtualShellBox, workspaceInput, saveCoding);
       panel.append(codingEditor);
       panel.append(make('div', null,
-        'Local only: 読み取りは自動、ファイル変更と commit は毎回承認。shell・push・reset は使いません。'));
+        bot['virtual-shell?']
+          ? `仮想shell: Bot専用・networkなし・全command承認${bot['virtual-shell-ready?'] ? '（ready）' : '（image未準備）'}`
+          : 'Local coding: 読み取りは自動、ファイル変更と commit は毎回承認。'));
       if (bot['grant-widens?']) {
         // Surfaced rather than repaired: the two readings need different
         // answers and both need a person to see them.
@@ -9683,7 +9706,8 @@
       const button = $('#bots-create');
       const name = $('#bots-name').value.trim();
       if (!name) { $('#bots-create-status').textContent = '名前を入れてください。'; return; }
-      if ($('#bots-coding').checked && !$('#bots-workspace').value.trim()) {
+      if (($('#bots-coding').checked || $('#bots-virtual-shell').checked) &&
+          !$('#bots-workspace').value.trim()) {
         $('#bots-create-status').textContent = 'Git workspace の絶対パスを入れてください。';
         return;
       }
@@ -9700,6 +9724,7 @@
           'writes?':$('#bots-writes').checked,
           'browser?':$('#bots-browser').checked,
           'coding?':$('#bots-coding').checked,
+          'virtual-shell?':$('#bots-virtual-shell').checked,
           workspace:$('#bots-workspace').value.trim()
         }, true);
         botsState.bots = data.bots || [];
@@ -9823,10 +9848,14 @@
     botsCancel.addEventListener('click', async () => {
       const botId = botsState.selected;
       const runId = botsState.runId;
-      if (!botId || !runId) return;
+      if (!botId || (!runId && !botsState.shellBusy)) return;
       botsCancel.disabled = true;
       botsSetStatus('中止しています…');
       try {
+        if (botsState.shellBusy) {
+          await postJSON(`/api/bots/${botId}/shell/cancel`, {}, true);
+          return;
+        }
         await postJSON(`/api/bots/${botId}/messages/${encodeURIComponent(runId)}/cancel`, {}, true);
         window.setTimeout(() => {
           if (botsState.busy && botsState.runId === runId) {
