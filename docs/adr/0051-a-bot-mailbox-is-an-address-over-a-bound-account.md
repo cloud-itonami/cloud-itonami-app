@@ -76,9 +76,10 @@ require same-origin and CSRF checks.
 ## Verification
 
 - `itonami-cloud-webhooks`: TypeScript check passes.
-- `bots-test`: 38 tests / 137 assertions, zero failures and errors, including
+- `bots-test`: 39 tests / 145 assertions, zero failures and errors, including
   stable addresses, recipient isolation, bound-account provisioning and the
-  write-authority refusal.
+  write-authority refusal. The generated command registry was regenerated from
+  the three new routes and its route-count consistency test passes.
 - Production Worker deployment `34823e6e-ef60-4601-bb87-f510d5fb9aa1` exposes
   the final `bot-mail` contract, including per-Bot routing-rule creation.
 - A literal Bot rule was created through the production provision endpoint.
@@ -91,3 +92,19 @@ require same-origin and CSRF checks.
 - Verification-only Bot rules, KV registrations and two relay events were
   removed after measurement. The pre-existing `test@mail.itonami.cloud` rule
   was not changed.
+
+## Session closure
+
+Closed 2026-08-15 with the implementation merged to
+`cloud-itonami/cloud-itonami-app` main at
+`70f59af1a4a463963ec5f295ede5e3dcb470cef2`. The superproject advanced the
+`cloud-itonami-app` west pin to that commit in
+`c140f34fcf592d2c02d6badf63caae7a0d3ba5fa` after server-side default-branch
+reachability and forward-only checks (`ahead=2`, `behind=0`).
+
+The production observations above establish the two directions separately:
+Cloudflare accepted inbound mail and retained its durable signal until ack;
+Resend accepted outbound mail and Gmail received it. They do not claim that a
+self-addressed Bot-to-Bot message is a distinct third path: Resend suppressed a
+repeat after the verification recipient had bounced. No production routing
+rule or KV registration created solely for verification remains.
