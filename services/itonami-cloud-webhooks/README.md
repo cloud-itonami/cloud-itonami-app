@@ -11,12 +11,21 @@ Cloudflare Worker event gateway for Cloud Itonami mail synchronization.
 - `POST https://hooks.itonami.cloud/v1/events/ack`
 - `POST https://hooks.itonami.cloud/v1/account-links/upsert`
 - `GET https://hooks.itonami.cloud/v1/account-links?subjectDid=did:...`
+- `POST https://hooks.itonami.cloud/v1/bot-mailboxes`
+- `POST https://hooks.itonami.cloud/v1/bot-mail/send`
 
 The webhook endpoints validate provider-specific secrets and place only change
 signals in Cloudflare KV. OAuth tokens and message bodies are never sent to the
 Worker. A local Cloud Itonami process polls with a bearer token from macOS
 Keychain, runs Gmail `history.list` or Microsoft Graph delta sync locally, then
 acknowledges the queued signal.
+
+Bot mail uses the same authenticated relay boundary. Each immutable Bot ID is
+registered as `bot-<uuid>@mail.itonami.cloud` with one already-connected destination
+mailbox. Cloudflare Email Routing forwards the original message without storing
+its body in KV; the local mailbox sync persists it and selects it by the original
+`To` address. Outbound mail is accepted only for a registered Bot/address pair
+and is sent by Resend with that address as `From`.
 
 ## Passkey / Wallet Account Links
 
@@ -61,6 +70,9 @@ The Worker requires:
 - `RELAY_ACCESS_TOKEN`
 - `GOOGLE_VERIFICATION_TOKEN`
 - `GRAPH_CLIENT_STATE`
+- `RESEND_API_KEY`
+- `EMAIL_ROUTING_API_TOKEN` (Email Routing rule write permission for the
+  `itonami.cloud` zone)
 
 Optional strict Pub/Sub OIDC validation:
 

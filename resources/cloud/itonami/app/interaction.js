@@ -9480,6 +9480,61 @@
         `${bot['writes?'] ? '（書き込みは承認のうえで実行）' : '（読み取りのみ）'}`));
       panel.append(make('div', null,
         `Model: ${bot['provider-id']} / ${bot.model}`));
+      const mailboxCard = make('div', 'bots-card');
+      mailboxCard.append(make('strong', null, 'Mailbox'),
+        make('div', null, bot.email || 'アドレス未発行'));
+      const mailboxStatus = make('div', null,
+        bot['mailbox-ready?'] ? '送受信できます' : '受信先アカウントを1つ選んでください');
+      const mailboxActions = make('div', 'bots-card__row');
+      const openMailbox = make('button', 'tool-button', '受信箱を読む');
+      openMailbox.type = 'button';
+      openMailbox.addEventListener('click', async () => {
+        openMailbox.disabled = true;
+        try {
+          const request = await fetch(`/api/bots/${bot.id}/mailbox`);
+          const data = await request.json();
+          if (!request.ok) throw new Error(data?.error?.message || 'Mailbox を読めませんでした。');
+          mailboxStatus.textContent = `受信 ${data.inbound.length} 件 / 送信 ${data.sent.length} 件`;
+          const list = make('ul');
+          data.inbound.slice(0, 10).forEach((mail) =>
+            list.append(make('li', null, `${mail.subject || '(件名なし)'} — ${mail['from-email'] || ''}`)));
+          mailboxCard.append(list);
+        } catch (error) { botsSetStatus(error.message); }
+        finally { openMailbox.disabled = false; }
+      });
+      const provisionMailbox = make('button', 'tool-button', '受信先を接続');
+      provisionMailbox.type = 'button';
+      provisionMailbox.hidden = Boolean(bot['mailbox-ready?']);
+      provisionMailbox.addEventListener('click', async () => {
+        provisionMailbox.disabled = true;
+        try {
+          await postJSON(`/api/bots/${bot.id}/mailbox/provision`, {}, true);
+          mailboxStatus.textContent = '送受信できます';
+          provisionMailbox.hidden = true;
+        } catch (error) { botsSetStatus(error.message); }
+        finally { provisionMailbox.disabled = false; }
+      });
+      const sendDetails = make('details');
+      const sendSummary = make('summary', null, 'この Bot からメールを送る');
+      const recipient = make('input'); recipient.type = 'email'; recipient.placeholder = 'to@example.com';
+      const subject = make('input'); subject.type = 'text'; subject.placeholder = '件名';
+      const mailText = make('textarea'); mailText.placeholder = '本文';
+      const sendButton = make('button', 'tool-button', '送信'); sendButton.type = 'button';
+      sendButton.disabled = !bot['writes?'];
+      sendButton.addEventListener('click', async () => {
+        sendButton.disabled = true;
+        try {
+          await postJSON(`/api/bots/${bot.id}/mailbox/send`,
+            {to:recipient.value, subject:subject.value, text:mailText.value}, true);
+          mailboxStatus.textContent = '送信しました';
+          recipient.value = ''; subject.value = ''; mailText.value = '';
+        } catch (error) { botsSetStatus(error.message); }
+        finally { sendButton.disabled = !bot['writes?']; }
+      });
+      sendDetails.append(sendSummary, recipient, subject, mailText, sendButton);
+      mailboxActions.append(openMailbox, provisionMailbox);
+      mailboxCard.append(mailboxStatus, mailboxActions, sendDetails);
+      panel.append(mailboxCard);
       const modelEditor = make('div', 'bots-card__row');
       const providerSelect = make('select');
       providerSelect.setAttribute('aria-label', 'Model provider');

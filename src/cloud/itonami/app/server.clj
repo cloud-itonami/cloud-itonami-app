@@ -5086,6 +5086,27 @@
              {:messages (bots/messages
                          session (bot-id-from path #"/api/bots/([^/]+)/messages"))})
 
+      (and (= method "GET")
+           (bot-id-from path #"/api/bots/([^/]+)/mailbox"))
+      (send! exchange 200
+             (bots/mailbox config session
+                           (bot-id-from path #"/api/bots/([^/]+)/mailbox")))
+
+      (and (= method "POST")
+           (bot-id-from path #"/api/bots/([^/]+)/mailbox/provision"))
+      (let [bot-id (bot-id-from path #"/api/bots/([^/]+)/mailbox/provision")]
+        (require-origin! exchange config)
+        (require-csrf! exchange session)
+        (send! exchange 200 (bots/provision-mailbox! config session bot-id)))
+
+      (and (= method "POST")
+           (bot-id-from path #"/api/bots/([^/]+)/mailbox/send"))
+      (let [bot-id (bot-id-from path #"/api/bots/([^/]+)/mailbox/send")
+            body (read-json exchange)]
+        (require-origin! exchange config)
+        (require-csrf! exchange session)
+        (send! exchange 200 (bots/send-mail! config session bot-id body)))
+
       (and (= method "POST") (bot-id-from path #"/api/bots/([^/]+)/messages"))
       (let [bot-id (bot-id-from path #"/api/bots/([^/]+)/messages")
             body (read-json exchange)]

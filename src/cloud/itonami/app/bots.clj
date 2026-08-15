@@ -61,8 +61,11 @@
             [cloud.itonami.app.connectors :as connectors]
             [cloud.itonami.app.handoff :as handoff]
             [cloud.itonami.app.identity :as identity]
+            [cloud.itonami.app.mail-account :as mail-account]
+            [cloud.itonami.app.mail-sync :as mail-sync]
             [cloud.itonami.app.policy :as policy]
             [cloud.itonami.app.provider :as provider]
+            [cloud.itonami.app.relay :as relay]
             [cloud.itonami.app.routine :as routine]
             [cloud.itonami.app.store :as store]
             [cloud.itonami.app.workspace-tools :as workspace-tools]
@@ -87,6 +90,22 @@
 (def max-tool-output-chars 6000)
 (def max-trace 60)
 (def max-routines 40)
+
+(defn mailbox-address
+  "The stable RFC mailbox for a Bot. The id is immutable, unlike its name."
+  [configuration bot-id]
+  (str (str/lower-case (str bot-id)) "@"
+       (or (get-in configuration [:bots :mail-domain]) "mail.itonami.cloud")))
+
+(defn- mail-destination
+  "The one bound mailbox a Bot can receive through, or nil when ambiguous."
+  [session b]
+  (let [accounts (mail-account/accounts (identity/session-did session))
+        bound (:bot/accounts b)
+        usable (if (seq bound)
+                 (filter #(contains? bound (:connection-id %)) accounts)
+                 accounts)]
+    (when (= 1 (count usable)) (first usable))))
 
 ;; ── ports ───────────────────────────────────────────────────────────────
 
@@ -201,6 +220,9 @@
       {:schema schema :bots {} :conversations {} :runs {}}))
 
 (defn- snapshot [] (partition* (store/snapshot)))
+
+(defn- mailbox-registration [bot-id]
+  (get-in (snapshot) [:mailboxes bot-id] {:status :pending}))
 
 (defn- transact! [f & args]
   (store/transact!
@@ -378,10 +400,11 @@
   (validate-provider-choice! configuration provider-id model)
   (let [workspace (when coding? (workspace-tools/admit-root workspace))
         now (store/now)
+        id (new-id "bot")
         tools (if (seq tools)
                 (set (map str tools))
                 (default-tools configuration connectors))
-        b (bot/bot {:bot/id (new-id "bot")
+        b (bot/bot {:bot/id id
                     :bot/organization (:organization-id session)
                     :bot/owner (:user-id session)
                     :bot/name name
@@ -389,6 +412,7 @@
                     :bot/brief brief
                     :bot/provider-id provider-id
                     :bot/model model
+                    :bot/email (mailbox-address configuration id)
                     :bot/tools tools
                     :bot/accounts accounts
                     :bot/writes? writes?
@@ -402,7 +426,29 @@
     ;; and it runs before the Bot is durable rather than the first time
     ;; somebody asks for an org chart.
     (bot/->performer b)
-    (store-bot! b)))
+    (store-bot! b)
+    ;; Provisioning is deliberately best-effort at creation. The durable Bot
+    ;; and its address do not disappear because a laptop is offline; overview
+    ;; reports whether the relay has a concrete destination yet.
+    (when-let [destination (and (relay/configured? configuration)
+                                (mail-destination session b))]
+      (try
+        (let [result (relay/provision-bot-mailbox!
+                      configuration {:bot-id id
+                                     :organization (:bot/organization b)
+                                     :address (:bot/email b)
+                                     :destination (:address destination)})]
+          (transact! assoc-in [:mailboxes id]
+                     {:status :ready :address (:bot/email b)
+                      :destination (:address destination)
+                      :provisioned-at (store/now)})
+          result)
+        (catch Exception error
+          (transact! assoc-in [:mailboxes id]
+                     {:status :pending :address (:bot/email b)
+                      :last-error-at (store/now)
+                      :last-error-type (:type (ex-data error))}))))
+    b))
 
 (defn update!
   "Change what a Bot is. Name, colour, glyph and brief are free to change and
@@ -539,6 +585,8 @@
                 (get-in configuration [:routing :default-model]))
      :tools (vec (:bot/tools b))
      :accounts (vec (:bot/accounts b))
+     :email (or (:bot/email b) (mailbox-address configuration (:bot/id b)))
+     :mailbox-ready? (= :ready (:status (mailbox-registration (:bot/id b))))
      :admitted-tools (vec (sort admitted))
      :grant-widens? (bot/grant-widens? b rows)
      :writes? (:bot/writes? b)
@@ -551,6 +599,82 @@
      :status (name (bot/status b (presence (:bot/id b)
                                            (connected-providers did))))
      :updated-at (:bot/updated-at b)}))
+
+(defn- address-list [value]
+  (cond
+    (nil? value) []
+    (string? value) (->> (str/split value #"[,;]") (map str/trim)
+                         (remove str/blank?) vec)
+    (sequential? value) (->> value (map (comp str/trim str))
+                             (remove str/blank?) vec)
+    :else []))
+
+(defn- addressed-to? [address message]
+  (let [address (str/lower-case address)]
+    (some #(= address (str/lower-case %))
+          (re-seq #"[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]+@[A-Za-z0-9.-]+"
+                  (str (:to message))))))
+
+(defn mailbox
+  "Mail delivered to this Bot address plus its durable sent receipts."
+  [configuration session bot-id]
+  (let [b (owned! session bot-id)
+        address (or (:bot/email b) (mailbox-address configuration bot-id))
+        inbound (->> (mail-sync/messages)
+                     (filter #(addressed-to? address %))
+                     (mapv #(select-keys % [:id :account-id :thread-id :message-id
+                                            :subject :from :from-email :to :snippet
+                                            :body :received-at :read? :labels])))
+        sent (vec (get-in (store/snapshot) [:bot-mail :sent bot-id] []))]
+    {:schema "cloud.itonami.app.bot-mailbox.v1"
+     :address address
+     :ready? (= :ready (:status (mailbox-registration bot-id)))
+     :inbound inbound :sent sent}))
+
+(defn provision-mailbox!
+  "Bind the Bot address to exactly one owned external mailbox."
+  [configuration session bot-id]
+  (let [b (owned! session bot-id)
+        destination (mail-destination session b)]
+    (when-not destination
+      (throw (ex-info "Bot の受信先メールアカウントを1つに特定できません。"
+                      {:type :bot/mail-account-required})))
+    (let [address (or (:bot/email b) (mailbox-address configuration bot-id))
+          result (relay/provision-bot-mailbox!
+                  configuration {:bot-id bot-id
+                                 :organization (:bot/organization b)
+                                 :address address
+                                 :destination (:address destination)})]
+      (transact! assoc-in [:mailboxes bot-id]
+                 {:status :ready :address address
+                  :destination (:address destination)
+                  :provisioned-at (store/now)})
+      result)))
+
+(defn send-mail!
+  "Send as this Bot through Resend, never as an arbitrary From address."
+  [configuration session bot-id request]
+  (let [b (owned! session bot-id)
+        _ (when-not (:bot/enabled? b)
+            (throw (ex-info "この Bot は停止しています。" {:type :bot/disabled})))
+        _ (when-not (:bot/writes? b)
+            (throw (ex-info "この Bot には送信権限がありません。"
+                            {:type :bot/mail-write-not-granted})))
+        to (address-list (:to request))
+        cc (address-list (:cc request))
+        _ (when (or (empty? to) (str/blank? (str (:subject request))))
+            (throw (ex-info "宛先と件名が必要です。" {:type :bot/invalid-mail})))
+        address (or (:bot/email b) (mailbox-address configuration bot-id))
+        result (relay/send-bot-mail!
+                configuration {:bot-id bot-id :organization (:bot/organization b)
+                               :from address :name (:bot/name b) :to to :cc cc
+                               :subject (str (:subject request))
+                               :text (str (:text request))
+                               :in-reply-to (:in-reply-to request)})
+        sent {:id (:id result) :from address :to to :cc cc
+              :subject (str (:subject request)) :sent-at (store/now)}]
+    (store/transact! update-in [:bot-mail :sent bot-id] (fnil conj []) sent)
+    {:schema "cloud.itonami.app.bot-mail-send.v1" :sent sent}))
 
 (defn- unqualify
   "Drop the namespace from every key, and render keyword VALUES as strings.
