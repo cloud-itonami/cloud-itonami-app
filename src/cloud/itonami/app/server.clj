@@ -1104,10 +1104,14 @@
                          (.flush writer))]
       (try
         (let [messages (bots/send-stream! config session bot-id (:text request)
-                                          (:run-id request) write-event!)]
-          (write-event! {:type "done" :messages messages}))
+                                          (:run-id request)
+                                          (boolean (:goal request))
+                                          write-event!)]
+          (write-event! {:type "done" :messages messages
+                         :turn (bots/latest-turn session bot-id)}))
         (catch Exception error
-          (write-event! {:type "error" :message (.getMessage error)}))))))
+          (write-event! {:type "error" :message (.getMessage error)
+                         :turn (bots/latest-turn session bot-id)}))))))
 
 (defn- send-openai-stream!
   "Serve `POST /v1/chat/completions` with `stream: true` as OpenAI SSE.

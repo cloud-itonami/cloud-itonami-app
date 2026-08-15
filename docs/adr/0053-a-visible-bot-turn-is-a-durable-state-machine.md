@@ -50,6 +50,28 @@ body cannot be reconstructed after process death. Durable recovery means a
 truthful terminal fact from which the person can retry, not replaying an effect
 whose completion is unknown.
 
+### Goal execution addendum
+
+A person may mark one direction as a Goal. In that mode, a prose capability
+statement is progress rather than a terminal answer. The host continues the
+bounded model/tool loop until the model calls one of two host-owned terminal
+tools: `goal_complete` with a summary and concrete evidence, or `goal_blocked`
+with the exact external prerequisite. The ordinary chat path still terminates
+on prose. Completion additionally requires at least one admitted tool to have
+actually executed, so evidence-free capability prose cannot be relabeled as
+success. Goal runs have a larger but finite ceiling of 24 model turns and 32
+tool calls; admission, approval, cancellation, and isolated-workspace rules do
+not change.
+
+The lifecycle record adds the objective, provider/model, accumulated provider
+token usage, tool/turn counts, result, and evidence. It deliberately does not
+invent a price: current chat providers return token usage but no billed amount,
+so the UI reports the fee as not calculated. The mobile run card shows the
+live phase, elapsed seconds, tool count, tokens, and the last durable terminal
+fact. This follows the useful observable pattern in the installed Anysphere
+`Grok Bot.app`—progress, elapsed time, commands, and token usage are distinct
+from chat text—without adopting that application's authority model.
+
 ## Consequences
 
 - Conversation text no longer has to impersonate execution state.
@@ -57,6 +79,9 @@ whose completion is unknown.
 - The UI distinguishes accepted, model wait, proposed tool, response, failure,
   cancellation, and restart interruption instead of calling all silence
   "thinking".
+- Goal directions cannot terminate with “I can help”; they end only with an
+  evidence-bearing completion claim, a concrete blocker, cancellation, or a
+  finite budget.
 - This is not Bot-scoped semantic memory and does not yet resolve an ambiguous
   coding direction to one west project. Those require a separately admitted
   context envelope and per-field data classification.
