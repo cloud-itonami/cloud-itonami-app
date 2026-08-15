@@ -31,7 +31,7 @@
                                    (.digest (java.security.MessageDigest/getInstance "SHA-256")
                                             bytes))))
     (is (= (:kotoba.app/bundle-cid (bundle/published-manifest)) bundle-cid))
-    (is (= "desktop" (:kotoba.graph/name entity)))
+    (is (= "mobile" (:kotoba.graph/name entity)))
     (is (= cid (:kotoba.graph/cid entity)))
     (is (false? (:log-dirty? store)))
     (is (chain/verify-chain (fn [c]
@@ -72,7 +72,7 @@
                                 record))))
         (pr-str record))
     (is (= cid (:kotoba.graph/cid record)))
-    (is (= "desktop" (:kotoba.graph/name record)))
+    (is (= "mobile" (:kotoba.graph/name record)))
     (is (= (:kotoba.app/id manifest) (:kotoba.app/id record)))))
 
 (deftest the-published-lock-matches-the-current-graph
@@ -81,7 +81,7 @@
     (is (= cid (:kotoba.graph/cid published))
         "source or overlay changed; reseal before landing")
     (is (= raw-cid (get-in published [:graph :raw-cid])))
-    (is (= "desktop" (:kotoba.graph/name published)))
+    (is (= "mobile" (:kotoba.graph/name published)))
     (is (nil? (:kotoba.graph/head published)))))
 
 (deftest publish-points-at-the-chain-cid

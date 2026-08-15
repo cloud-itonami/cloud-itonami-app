@@ -79,6 +79,7 @@
       if (location.hash !== target) history.replaceState(null, '', target);
       const brand = document.querySelector('.workspace')?.dataset.brand || 'Cloud Itonami';
       document.title = `${active?.dataset.title || 'Chat'} | ${brand}`;
+      document.body.dataset.currentView = name;
       currentView = name;
       onViewChange(name);
     };
@@ -9140,6 +9141,8 @@
         const item = make('button', 'bots-rail__item');
         item.type = 'button';
         item.setAttribute('aria-current', String(bot.id === botsState.selected));
+        item.setAttribute('aria-label',
+          `${bot.name}、${botsStatusText[bot.status] || bot.status}`);
         const avatar = botAvatar(make('span', 'bot-avatar'), bot.avatar, bot.status);
         const copy = make('div', 'bots-rail__copy');
         copy.append(make('span', 'bots-rail__name', bot.name),

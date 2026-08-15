@@ -23,7 +23,7 @@
            [java.time Instant]
            [java.util Arrays]))
 
-(def workspace-name "desktop")
+(def workspace-name "mobile")
 (def workspace-body
   (.getBytes (str "{:kotoba.graph/name \"" workspace-name "\"}\n")
              StandardCharsets/UTF_8))

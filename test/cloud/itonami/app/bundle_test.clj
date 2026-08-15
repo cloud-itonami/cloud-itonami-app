@@ -46,3 +46,16 @@
         "source changed; republish before landing")
     (is (= (:kotoba.app/embed-url manifest)
            (:kotoba.app/embed-url published)))))
+
+(deftest republishing-preserves-the-monotonic-latest-record
+  (let [path (.getPath (java.io.File/createTempFile "kotoba-app-lock" ".edn"))
+        old {:kotoba.app/latest "k51-existing"
+             :latest {:cid "bafkreiold" :sequence 3}}
+        _ (spit path (str (pr-str old) "\n"))
+        {:keys [cid manifest size]} (bundle/snapshot)
+        written (bundle/write-published!
+                 path {:manifest manifest :cid cid :size size
+                       :put {:status 201} :get {:status 200}})]
+    (is (= "k51-existing" (:kotoba.app/latest written)))
+    (is (= 3 (get-in written [:latest :sequence])))
+    (is (= cid (:kotoba.app/bundle-cid written)))))

@@ -1096,13 +1096,16 @@
     .connector-card .tool-button{grid-column:1/-1;width:100%}
     .local-actions{justify-content:stretch}.local-actions .dads-button{width:100%}
   }
-  @media(max-width:40rem){
+  /* Cloud Itonami deliberately has one touch layout. These are unconditional:
+     the installed window and an ordinary browser use the same phone UI. */
     :root{--mobile-nav-height:calc(4.5rem + env(safe-area-inset-bottom))}
     body[data-identity-gate='required'] .workspace{padding-bottom:0}
     body[data-identity-gate='required'] .sidebar{display:none}
     .project-select{max-width:9rem}
     body.has-mobile-menu{overflow:hidden}
     .workspace{display:block;min-height:100dvh;padding-bottom:var(--mobile-nav-height)}
+    body[data-current-view='chat'] .workspace,
+    body[data-current-view='bots'] .workspace{padding-bottom:0}
     .sidebar{position:fixed;inset:auto 0 0 0;z-index:40;width:auto;height:var(--mobile-nav-height);
       display:block;padding:0;background:var(--color-neutral-white);
       border:0;border-top:1px solid var(--color-neutral-solid-gray-200);overflow:visible}
@@ -1154,11 +1157,24 @@
     #bots-titlebar-context{gap:.375rem}
     .view{padding:1rem}.view-header h1{font-size:1.75rem;line-height:1.3}.view-lead{line-height:1.7}
     .bots-view{height:calc(100dvh - 4rem - env(safe-area-inset-top) - var(--mobile-nav-height));padding:0}
+    /* On a phone the Bot picker is a horizontal touch rail. A vertical rail
+       consumed scarce message width and left the conversation looking like
+       an empty desktop pane. The selected Bot's name remains in the titlebar;
+       every avatar button carries its full accessible name. */
+    .bots-shell{display:flex;flex-direction:column}
+    .bots-main{flex:1}
+    .bots-rail{display:block;flex:0 0 auto;padding:.375rem .75rem;border-right:0;
+      border-bottom:1px solid var(--color-neutral-solid-gray-200);overflow-x:auto}
+    .bots-rail__list{display:flex;gap:.375rem;overflow-x:auto;scrollbar-width:none}
+    .bots-rail__list::-webkit-scrollbar{display:none}
+    .bots-rail__list>li{flex:0 0 auto}
+    .bots-rail__item{position:relative;justify-content:center;width:3rem;padding:.5rem .25rem}
+    .bots-rail__copy,.bots-rail__empty{display:none}
+    .bots-rail__item .bots-dot{position:absolute;right:.3rem;bottom:.3rem}
     .global-status{top:calc(4.5rem + env(safe-area-inset-top));left:1rem;right:1rem}
     .chat-shell{height:calc(100dvh - 4rem - var(--mobile-nav-height))}
     .data-card,.settings-card{padding:1rem}
     input,select,textarea,button{max-width:100%}
-  }
   /* WCAG 2.3.3, and kotoba-uiux rule 7. Both animations in this stylesheet are
      INFINITE and decorative -- a typing indicator and a loading shimmer -- which
      is the exact category `reduce` exists for; an animation that never stops is
@@ -1290,12 +1306,12 @@
          (nav-item "chat" "Chat" "✦" nil)
          (nav-item "bots" "Bots" "◕" "bots-count")
          (nav-item "capture" "Capture" "＋" "capture-count")
-         (nav-item "messenger" "Messenger" "◇" "messenger-count")
-         (nav-item "projects" "Projects" "▦" "projects-count")
-         (nav-item "sites" "Sites" "▦" "sites-count")
-         (nav-item "drive" "Drive" "◇" "drive-count")]
+         (nav-item "messenger" "Messenger" "◇" "messenger-count")]
         [:div {:class "nav-overflow-panel" :id "mobile-overflow-panel"}
          [:div {:class "nav-secondary authenticated-only" :hidden true}
+          (nav-item "projects" "Projects" "▦" "projects-count")
+          (nav-item "sites" "Sites" "▦" "sites-count")
+          (nav-item "drive" "Drive" "◇" "drive-count")
           (nav-section
            "business-design" "事業設計" "◱"
            [(nav-item "portfolio" "Portfolio" "▤" "portfolio-count")
@@ -1419,8 +1435,8 @@
            [:p {:class "visually-hidden" :id "request-status"
                 :role "status" :aria-live "polite"}
             "ローカルモデルを準備中です。"]]]]
-        ;; Bots. Two panes, not a document: the list is how you find one and
-        ;; the thread is how you work with it, and both are always on screen so
+        ;; Bots. Two regions, not a document: the horizontal list is how you
+        ;; find one and the thread is how you work with it. Both stay visible so
         ;; a Bot that is waiting for you cannot be somewhere you are not
         ;; looking. Everything inside is built by the client from /api/bots —
         ;; the markup here is the frame, because the number of Bots and the

@@ -225,6 +225,10 @@
     (is (.isFile icon) (str "app.kotoba.edn names a missing icon: " (:app/icon manifest)))
     (is (empty? (:macos/permissions manifest)))
     (is (= :kotoba/web (get-in manifest [:runtime :surface])))
+    (is (= {:width 430 :height 860 :min-width 360 :min-height 640}
+           (select-keys (get-in manifest [:runtime :window])
+                        [:width :height :min-width :min-height]))
+        "the installed app opens as the phone-shaped surface it is designed for")
     ;; The window must point at the surface this server actually serves; the
     ;; ORIGIN is load-bearing for WebAuthn and for `require-origin!` and cannot
     ;; drift. The query may carry surface facts and does — `?surface=native` is
@@ -279,9 +283,12 @@
       (is (re-find #"class=\"mobile-menu-toggle\"[^>]*aria-expanded=\"false\"" html))
       (is (re-find #"aria-label=\"メニューを閉じる\"" html))
       (is (str/includes? web/app-css "overflow-y:auto"))
-      (is (str/includes? web/app-css "@media(max-width:40rem)"))
+      (is (not (str/includes? web/app-css "@media(max-width:40rem)")))
+      (is (str/includes? web/app-css
+                         ".workspace{display:block;min-height:100dvh;padding-bottom:var(--mobile-nav-height)}"))
       (is (str/includes? web/app-css "--mobile-nav-height"))
       (is (str/includes? web/interaction-js "setMobileMenuOpen"))
+      (is (str/includes? web/interaction-js "document.body.dataset.currentView = name"))
       (is (re-find #"id=\"connector-list\"" html))
       (is (re-find #"id=\"member-form\"" html))
       ;; Both gate steps are on the card, not just the first. ADR-0043 split
@@ -326,13 +333,16 @@
     (is (not (re-find #"id=\"bots-routines-panel\"" html)))
     (is (not (re-find #"id=\"bots-handoff-send\"" html)))))
 
-(deftest bots-remain-a-single-viewport-pane-at-compact-widths
-  ;; A small desktop window used to hide the rail at 60rem and let the Bots
-  ;; view grow with its messages, putting the composer below the document fold.
+(deftest bots-remain-a-single-viewport-pane-in-the-phone-layout
   (is (str/includes? web/app-css
                      ".bots-view{max-width:none;padding:0;height:calc(100dvh - 5rem);overflow:hidden}"))
   (is (str/includes? web/app-css
                      ".bots-shell{grid-template-columns:4rem minmax(0,1fr)}"))
+  (is (str/includes? web/app-css
+                     ".bots-shell{display:flex;flex-direction:column}"))
+  (is (str/includes? web/app-css ".bots-main{flex:1}"))
+  (is (str/includes? web/app-css
+                     ".bots-rail__list{display:flex;gap:.375rem;overflow-x:auto"))
   (is (not (str/includes? web/app-css ".bots-rail{display:none}")))
   (is (str/includes? web/app-css
                      ".bots-thread__scroll{flex:1;min-height:0;overflow-y:auto"))

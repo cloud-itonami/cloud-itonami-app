@@ -55,6 +55,7 @@
                                            :domain "localhost"
                                            :path "/"}])
           page (.newPage context)
+          _ (.setViewportSize page #js {:width 390 :height 844})
           _ (.on page "console"
                  (fn [msg]
                    (when (= "error" (.type msg))
@@ -153,15 +154,17 @@
       (check! "new Bot is a titlebar action" new-visible)
       (check! "routine and handoff controls are not exposed to the person" (zero? routine-controls)))
 
-    (println "\n── a compact desktop remains one application viewport ──")
-    (p/let [_ (.setViewportSize page #js {:width 900 :height 700})
-            _ (.waitForTimeout page 300)
+    (println "\n── the phone layout remains one application viewport ──")
+    (p/let [_ (.waitForTimeout page 300)
             rail-visible (.isVisible page ".bots-rail")
+            rail-direction (.evaluate page
+                                      "getComputedStyle(document.querySelector('.bots-rail__list')).display")
             composer-visible (.isVisible page ".bots-composer")
             composer-box (.boundingBox (.locator page ".bots-composer"))
             viewport-height (.evaluate page "window.innerHeight")
             document-height (.evaluate page "document.documentElement.scrollHeight")]
-      (check! "the Bot rail remains visible at 900px" rail-visible)
+      (check! "the horizontal Bot picker remains visible at 390px"
+              (and rail-visible (= "flex" rail-direction)))
       (check! "the composer remains visible without document scrolling"
               (and composer-visible
                    composer-box
