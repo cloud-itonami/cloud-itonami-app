@@ -14,6 +14,7 @@
             [cloud.itonami.app.identity :as identity]
             [cloud.itonami.app.policy :as policy]
             [cloud.itonami.app.provider :as provider]
+            [cloud.itonami.app.relay :as relay]
             [cloud.itonami.app.store :as store]
             [connector.ports :as cports]))
 
@@ -50,6 +51,66 @@
   (bots/create! nil session (merge {:name "workspace worker"
                                     :connectors ["com.google.gmail"]}
                                    attrs)))
+
+(deftest every-bot-has-a-stable-mailbox-and-sees-only-mail-addressed-to-it
+  (with-store
+    (fn []
+      (let [b (make-bot alice {})
+            address (:bot/email b)]
+        (is (re-matches #"bot-[0-9a-f-]{36}@mail\.itonami\.cloud" address))
+        (swap! store/state assoc-in [:mail :messages "gmail:1|for-bot"]
+               {:id "gmail:1|for-bot" :account-id "gmail:1" :kind :gmail
+                :provider-message-id "for-bot" :thread-id "thread-1"
+                :subject "Botへ" :from "Sender" :from-email "sender@example.com"
+                :to (str "Team <" address ">") :body "work" :snippet "work"
+                :labels #{:inbox} :read? false
+                :received-at "2026-08-15T00:00:00Z"})
+        (swap! store/state assoc-in [:mail :messages "gmail:1|for-person"]
+               {:id "gmail:1|for-person" :account-id "gmail:1" :kind :gmail
+                :provider-message-id "for-person" :thread-id "thread-2"
+                :subject "Personへ" :from "Sender" :from-email "sender@example.com"
+                :to "alice@example.com" :body "private" :snippet "private"
+                :labels #{:inbox} :read? false
+                :received-at "2026-08-15T00:01:00Z"})
+        (is (= ["gmail:1|for-bot"]
+               (mapv :id (:inbound (bots/mailbox nil alice (:bot/id b))))))
+        (bots/update! alice (:bot/id b) {:name "renamed"})
+        (is (= address (:email (first (:bots (bots/overview nil alice)))))
+            "renaming a Bot does not rename its mailbox")))))
+
+(deftest bot-mail-provisioning-and-sending-use-the-owned-bound-account
+  (with-store
+    (fn []
+      (connect! "conn-1" :google "subject-1" "alice@example.com")
+      (let [b (make-bot alice {:accounts ["conn-1"] :writes? true})
+            provisioned (atom nil)
+            sent (atom nil)]
+        (with-redefs [relay/provision-bot-mailbox!
+                      (fn [_ request] (reset! provisioned request) {:ok true})
+                      relay/send-bot-mail!
+                      (fn [_ request] (reset! sent request) {:id "resend-1"})]
+          (bots/provision-mailbox! {} alice (:bot/id b))
+          (is (= "alice@example.com" (:destination @provisioned)))
+          (is (= (:bot/email b) (:address @provisioned)))
+          (is (true? (:ready? (bots/mailbox {} alice (:bot/id b)))))
+          (let [result (bots/send-mail! {} alice (:bot/id b)
+                                        {:to "customer@example.com"
+                                         :subject "Hello" :text "Body"})]
+            (is (= (:bot/email b) (:from @sent)))
+            (is (= ["customer@example.com"] (:to @sent)))
+            (is (= "resend-1" (get-in result [:sent :id])))
+            (is (= 1 (count (get-in @store/state
+                                    [:bot-mail :sent (:bot/id b)]))))))))))
+
+(deftest a-bot-without-write-authority-cannot-send-mail
+  (with-store
+    (fn []
+      (let [b (make-bot alice {:writes? false})]
+        (is (= :bot/mail-write-not-granted
+               (try (bots/send-mail! {} alice (:bot/id b)
+                                     {:to "x@example.com" :subject "x" :text "x"})
+                    nil
+                    (catch clojure.lang.ExceptionInfo e (:type (ex-data e))))))))))
 
 (defn- git-workspace []
   (let [root (.toFile (java.nio.file.Files/createTempDirectory

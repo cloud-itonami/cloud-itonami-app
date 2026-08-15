@@ -144,6 +144,7 @@
         provider-id (optional-name (:bot/provider-id value)
                                    :bot/provider-id max-provider-id)
         model (optional-name (:bot/model value) :bot/model max-model)
+        email (optional-name (:bot/email value) :bot/email 320)
         workspace (optional-name (:bot/workspace value)
                                  :bot/workspace max-workspace)
         tools (into (sorted-set) (map str) (:bot/tools value))]
@@ -162,6 +163,9 @@
      ;; routing default until somebody explicitly pins a provider and model.
      :bot/provider-id provider-id
      :bot/model model
+     ;; Stable mailbox identity. It is minted from the immutable Bot id by the
+     ;; host and is not editable with the Bot's display name.
+     :bot/email email
      :bot/tools tools
      ;; WHICH accounts, not just which services. Empty means "the person's",
      ;; which is what somebody with one account at each provider means and

@@ -5,11 +5,14 @@ interface Env {
   GOOGLE_PUSH_AUDIENCE?: string;
   GOOGLE_PUSH_SERVICE_ACCOUNT?: string;
   GRAPH_CLIENT_STATE: string;
+  RESEND_API_KEY: string;
+  EMAIL_ROUTING_API_TOKEN: string;
+  CLOUDFLARE_ZONE_ID: string;
 }
 
 type MailEvent = {
   id: string;
-  provider: "google" | "microsoft";
+  provider: "google" | "microsoft" | "bot-mail";
   tenant: string;
   receivedAt: string;
   payload: Record<string, unknown>;
@@ -35,6 +38,123 @@ type AccountLink = {
   status: "active" | "revoked";
   "connected-at": string;
   "revoked-at"?: string;
+};
+
+type BotMailbox = {
+  schema: "cloud.itonami.bot-mailbox.v1";
+  botId: string;
+  organization: string;
+  address: string;
+  destination: string;
+  createdAt: string;
+  updatedAt: string;
+  routingRuleId: string;
+};
+
+const mailboxKey = (address: string) => `bot-mailbox:${address.toLowerCase()}`;
+const emailPattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+const validBotMailbox = (value: Record<string, unknown>) => {
+  const address = String(value.address || "").toLowerCase();
+  return /^bot-[0-9a-f-]{36}@mail\.itonami\.cloud$/.test(address) &&
+    /^[A-Za-z0-9._:@/-]{1,200}$/.test(String(value.botId || "")) &&
+    /^[A-Za-z0-9._:@/-]{1,200}$/.test(String(value.organization || "")) &&
+    emailPattern.test(String(value.destination || ""));
+};
+
+const createEmailRoutingRule = async (env: Env, address: string) => {
+  const response = await fetch(
+    `https://api.cloudflare.com/client/v4/zones/${env.CLOUDFLARE_ZONE_ID}/email/routing/rules`,
+    {
+      method: "POST",
+      headers: { Authorization: `Bearer ${env.EMAIL_ROUTING_API_TOKEN}`,
+        "content-type": "application/json" },
+      body: JSON.stringify({
+        name: `${address} -> itonami-cloud-webhooks`, enabled: true,
+        matchers: [{ type: "literal", field: "to", value: address }],
+        actions: [{ type: "worker", value: ["itonami-cloud-webhooks"] }],
+      }),
+    },
+  );
+  const payload = await response.json() as {
+    success?: boolean; result?: { id?: string }; errors?: unknown[];
+  };
+  if (!response.ok || !payload.success || !payload.result?.id) {
+    console.error("email routing rule creation failed", {
+      status: response.status, errors: payload.errors,
+    });
+    throw new Error("email_routing_rule_failed");
+  }
+  return payload.result.id;
+};
+
+const registerBotMailbox = async (request: Request, env: Env) => {
+  if (!relayAuthorized(request, env)) return json({ error: "unauthorized" }, 401);
+  const body = await request.json() as Record<string, unknown>;
+  if (!validBotMailbox(body)) return json({ error: "invalid_bot_mailbox" }, 400);
+  const address = String(body.address).toLowerCase();
+  const previous = await env.EVENTS.get<BotMailbox>(mailboxKey(address), "json");
+  if (previous && (previous.botId !== body.botId ||
+      previous.organization !== body.organization)) {
+    return json({ error: "address_already_registered" }, 409);
+  }
+  const now = new Date().toISOString();
+  const routingRuleId = previous?.routingRuleId ||
+    await createEmailRoutingRule(env, address);
+  const mailbox: BotMailbox = {
+    schema: "cloud.itonami.bot-mailbox.v1",
+    botId: String(body.botId),
+    organization: String(body.organization),
+    address,
+    destination: String(body.destination).toLowerCase(),
+    createdAt: previous?.createdAt || now,
+    updatedAt: now,
+    routingRuleId,
+  };
+  await env.EVENTS.put(mailboxKey(address), JSON.stringify(mailbox));
+  return json({ ok: true, address, destination: mailbox.destination });
+};
+
+const cleanHeader = (value: unknown, maximum = 998) =>
+  String(value || "").replace(/[\r\n]+/g, " ").trim().slice(0, maximum);
+
+const sendBotMail = async (request: Request, env: Env) => {
+  if (!relayAuthorized(request, env)) return json({ error: "unauthorized" }, 401);
+  const body = await request.json() as Record<string, unknown>;
+  const from = String(body.from || "").toLowerCase();
+  const mailbox = await env.EVENTS.get<BotMailbox>(mailboxKey(from), "json");
+  if (!mailbox || mailbox.botId !== body.botId ||
+      mailbox.organization !== body.organization) {
+    return json({ error: "unregistered_bot_mailbox" }, 403);
+  }
+  const to = Array.isArray(body.to) ? body.to.map(String).filter((v) => emailPattern.test(v)) : [];
+  const cc = Array.isArray(body.cc) ? body.cc.map(String).filter((v) => emailPattern.test(v)) : [];
+  const requestedCc = Array.isArray(body.cc) ? body.cc.length : 0;
+  if (!to.length || to.length > 100 || cc.length > 100 ||
+      to.length !== (Array.isArray(body.to) ? body.to.length : 0) ||
+      cc.length !== requestedCc) {
+    return json({ error: "invalid_recipients" }, 400);
+  }
+  const name = cleanHeader(body.name, 120);
+  const subject = cleanHeader(body.subject);
+  if (!subject) return json({ error: "subject_required" }, 400);
+  const headers: Record<string, string> = {};
+  if (body.inReplyTo) {
+    headers["In-Reply-To"] = cleanHeader(body.inReplyTo, 512);
+    headers.References = headers["In-Reply-To"];
+  }
+  const response = await fetch("https://api.resend.com/emails", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${env.RESEND_API_KEY}`,
+      "content-type": "application/json" },
+    body: JSON.stringify({
+      from: name ? `${name} <${from}>` : from,
+      to, cc, subject, text: String(body.text || "").slice(0, 1_000_000), headers,
+    }),
+  });
+  const result = await response.json() as Record<string, unknown>;
+  if (!response.ok) return json({ error: "resend_rejected", status: response.status }, 502);
+  return json({ ok: true, id: result.id, from, to, cc }, 202);
 };
 
 const json = (body: unknown, status = 200) =>
@@ -327,7 +447,7 @@ export default {
         return json({
           status: "ok",
           service: "itonami-cloud-webhooks",
-          capabilities: ["mail-events", "account-links"],
+          capabilities: ["mail-events", "account-links", "bot-mail"],
         });
       }
       if (request.method === "POST" && pathname === "/v1/webhooks/google") {
@@ -348,10 +468,35 @@ export default {
       if (request.method === "GET" && pathname === "/v1/account-links") {
         return listAccountLinks(request, env);
       }
+      if (request.method === "POST" && pathname === "/v1/bot-mailboxes") {
+        return registerBotMailbox(request, env);
+      }
+      if (request.method === "POST" && pathname === "/v1/bot-mail/send") {
+        return sendBotMail(request, env);
+      }
       return json({ error: "not_found" }, 404);
     } catch (error) {
       console.error("webhook request failed", error);
       return json({ error: "internal_error" }, 500);
     }
+  },
+  async email(message: ForwardableEmailMessage, env: Env): Promise<void> {
+    const address = message.to.toLowerCase();
+    const mailbox = await env.EVENTS.get<BotMailbox>(mailboxKey(address), "json");
+    if (!mailbox) {
+      message.setReject("550 unknown Bot mailbox");
+      return;
+    }
+    // The Worker keeps no body. Cloudflare forwards the original RFC message
+    // to the explicitly bound account; local sync persists it and selects it
+    // into the Bot mailbox by the original To header.
+    await message.forward(mailbox.destination);
+    await enqueue(env, {
+      id: message.headers.get("message-id") || crypto.randomUUID(),
+      provider: "bot-mail",
+      tenant: mailbox.organization,
+      receivedAt: new Date().toISOString(),
+      payload: { botId: mailbox.botId, address, destination: mailbox.destination },
+    });
   },
 } satisfies ExportedHandler<Env>;

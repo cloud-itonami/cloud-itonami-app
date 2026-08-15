@@ -27,6 +27,7 @@ Every durable principal has one mailbox address:
 |---|---|---|
 | Human member | existing user ID | Passkey session owns the mailbox |
 | Agent session | `agent:<session-id>` | bearer-authenticated, organization-bound |
+| Bot | `<bot-id>@mail.itonami.cloud` externally; Bot ID internally | immutable RFC address over one bound account; see ADR-0051 |
 | OrganismWorker | `organism:<worker-id>` | durable address; transport adapter remains separate |
 
 Restart-ephemeral Background WorkerRuns are deliberately not addressable. They
@@ -131,6 +132,8 @@ select an arbitrary recipient mailbox.
 - Direct messages, groups, and channels share one delivery model.
 - Humans and durable artificial performers can be members without pretending
   that an artificial performer is a Person.
+- A named Bot can receive external RFC mail without exposing its owner's whole
+  unified inbox; external mail remains data and never grants execution authority.
 - Unknown senders fail closed and their bodies stay out of recipient/model
   projections.
 - Agent bearer sessions can use the same API as human sessions under their own
