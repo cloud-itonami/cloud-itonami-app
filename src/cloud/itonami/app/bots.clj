@@ -2194,20 +2194,21 @@
                    :turn/goal? goal?
                    :turn/objective (when goal? text)})
     (try
-      (on-event {:type "phase" :phase "accepted"})
-      (let [emit! (fn [event]
-                    (when (= "phase" (:type event))
-                      ;; A live phase belongs to this process and the stream.
-                      ;; Keep it in memory so a 14 MB application state is not
-                      ;; rewritten for every model/tool boundary. The durable
-                      ;; accepted record is enough to detect a lost process;
-                      ;; the final write records the last observed progress.
-                      (swap! progress merge
-                             (cond-> {:turn/phase (keyword (:phase event))}
-                               (:tool event) (assoc :turn/tool (:tool event))
-                               (:tool-count event)
-                               (assoc :turn/tool-count (:tool-count event)))))
-                    (on-event event))
+      (when on-event (on-event {:type "phase" :phase "accepted"}))
+      (let [emit! (when on-event
+                    (fn [event]
+                      (when (= "phase" (:type event))
+                        ;; A live phase belongs to this process and the stream.
+                        ;; Keep it in memory so a 14 MB application state is not
+                        ;; rewritten for every model/tool boundary. The durable
+                        ;; accepted record is enough to detect a lost process;
+                        ;; the final write records the last observed progress.
+                        (swap! progress merge
+                               (cond-> {:turn/phase (keyword (:phase event))}
+                                 (:tool event) (assoc :turn/tool (:tool event))
+                                 (:tool-count event)
+                                 (assoc :turn/tool-count (:tool-count event)))))
+                      (on-event event)))
             messages (send! configuration session bot-id text
                             {:on-event emit! :cancelled? #(deref cancelled)
                              :on-finish #(reset! outcome %)
@@ -2294,7 +2295,11 @@
       (update-goal-job! run-id update :job/attempt (fnil inc 0))
       (binding [*goal-event!* #(append-goal-event! run-id %1 %2)]
         (if (zero? (long (or attempt 0)))
-          (send-stream! configuration session bot objective run-id true (constantly nil))
+          ;; A detached Goal has no delta consumer. Passing a pretend callback
+          ;; selected the streaming provider path anyway and made resident jobs
+          ;; depend on a 120-second body stream that nobody observed. Nil keeps
+          ;; cancellation/turn durability while selecting the bounded JSON turn.
+          (send-stream! configuration session bot objective run-id true nil)
           (resume-goal-turn! configuration session bot run-id)))
       (let [state (:state (latest-turn session bot))
             status (case state

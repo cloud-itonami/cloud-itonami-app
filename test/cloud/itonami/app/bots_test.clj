@@ -461,7 +461,11 @@
         (with-redefs
           [policy/select-provider (fn [_ _] {:id :local})
            provider/agent-turn-stream!
-           (fn [_ _ _]
+           (fn [& _]
+             (throw (ex-info "detached Goal must not stream"
+                             {:type :test/unexpected-stream})))
+           provider/agent-turn
+           (fn [_ _]
              (case (swap! calls inc)
                1 (do (deliver entered true)
                      (deref release 3000 nil)
