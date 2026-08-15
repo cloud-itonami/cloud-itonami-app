@@ -209,6 +209,11 @@
 
 (defn -main [& _]
   (let [configuration (config/load-config)]
-    (serve! configuration
-            (BufferedReader. (java.io.InputStreamReader. System/in "UTF-8"))
-            (java.io.OutputStreamWriter. System/out "UTF-8"))))
+    (try
+      (serve! configuration
+              (BufferedReader. (java.io.InputStreamReader. System/in "UTF-8"))
+              (java.io.OutputStreamWriter. System/out "UTF-8"))
+      ;; Keychain reads use futures to drain the `security` subprocess. Their
+      ;; agent executor otherwise keeps a finished stdio server alive until the
+      ;; pool's idle timeout, even though the MCP client has closed stdin.
+      (finally (shutdown-agents)))))

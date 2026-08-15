@@ -10,6 +10,7 @@
             [clojure.test :refer [deftest is testing]]
             [cloud.itonami.app.business-tools :as business-tools]
             [cloud.itonami.app.bot-tools :as bot-tools]
+            [cloud.itonami.app.config :as config]
             [cloud.itonami.app.mcp :as mcp]
             [cloud.itonami.app.payment-tools :as payment-tools]
             [cloud.itonami.app.store :as store]
@@ -35,6 +36,18 @@
 (defn- rpc [id method params]
   (cond-> {"jsonrpc" "2.0" "id" id "method" method}
     params (assoc "params" params)))
+
+(deftest stdio-main-releases-agent-executors-after-eof
+  (let [served? (atom false)
+        shut-down? (atom false)]
+    (with-redefs [config/load-config (constantly {})
+                  mcp/serve! (fn [& _] (reset! served? true))
+                  clojure.core/shutdown-agents
+                  (fn [] (reset! shut-down? true))]
+      (mcp/-main))
+    (is @served?)
+    (is @shut-down?
+        "Keychain-draining futures must not keep a disconnected MCP JVM alive")))
 
 (deftest initialize-reports-the-server
   (let [[response] (exchange enabled [(rpc 1 "initialize" nil)])]
