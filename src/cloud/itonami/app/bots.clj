@@ -2395,17 +2395,37 @@
 (defn fire-due-workforce!
   "Start a bounded number of due startup jobs for one live human session.
   Jobs are staggered when provisioned and fixed-delay after submission, so a
-  restart cannot unleash the whole company at once."
+  restart cannot unleash the whole company at once. The active limit is global
+  to the owner's workforce: limiting starts per tick alone still permits jobs
+  from successive ticks to overlap on a capacity-one inference provider."
   [configuration session now]
-  (let [limit (long (or (get-in configuration [:bots :workforce :max-starts-per-tick]) 1))
-        jobs (->> (vals (:workforce-jobs (snapshot)))
-                  (filter #(and (= (:user-id session) (:workforce.job/owner %))
-                                (= (:organization-id session)
-                                   (:workforce.job/organization %))
-                                (workforce-job-due? % now)))
+  (let [owned-jobs (->> (vals (:workforce-jobs (snapshot)))
+                        (filter #(and (= (:user-id session)
+                                         (:workforce.job/owner %))
+                                      (= (:organization-id session)
+                                         (:workforce.job/organization %)))))
+        active (count (filter #(workforce-bot-active?
+                                (:workforce.job/bot %))
+                              owned-jobs))
+        max-active (max 0 (long (or (get-in configuration
+                                            [:bots :workforce :max-active])
+                                    1)))
+        available (max 0 (- max-active active))
+        starts-per-tick (max 0 (long (or (get-in configuration
+                                                [:bots :workforce
+                                                 :max-starts-per-tick])
+                                         1)))
+        limit (min starts-per-tick available)
+        jobs (->> owned-jobs
+                  (filter #(workforce-job-due? % now))
                   (sort-by (juxt :workforce.job/next-run-at :workforce.job/key)))]
     (loop [remaining jobs
-           result {:started [] :skipped []}]
+           result {:started []
+                   :skipped (if (and (seq jobs) (zero? available))
+                              [{:reason :workforce-capacity
+                                :active active
+                                :limit max-active}]
+                              [])}]
       (if (or (empty? remaining) (>= (count (:started result)) limit))
         result
         (let [job (first remaining)

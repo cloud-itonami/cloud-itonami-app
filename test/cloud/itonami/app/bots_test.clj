@@ -126,6 +126,43 @@
               (is (str/includes? (second (first @submitted))
                                  "advance exactly one bounded step")))))))))
 
+(deftest resident-workforce-does-not-overlap-an-active-job-across-bots
+  (with-store
+    (fn []
+      (with-redefs [workspace-tools/admit-root (fn [path] path)]
+        (let [second-role (-> (engineer-entry)
+                              (assoc :key "cloud-itonami/qa")
+                              (assoc :role {:id :qa :name "QA" :job :qa}))
+              catalog (workforce-catalog [(engineer-entry) second-role])
+              submitted (atom [])
+              now "2026-08-16T00:00:00Z"]
+          (bots/provision-workforce! {} alice catalog)
+          (swap! store/state update-in [:bots :workforce-jobs]
+                 (fn [jobs]
+                   (into {} (map (fn [[id job]]
+                                   [id (assoc job :workforce.job/next-run-at
+                                              "2026-08-15T00:00:00Z")]))
+                         jobs)))
+          (let [active-bot (-> @store/state :bots :workforce-jobs vals first
+                               :workforce.job/bot)
+                active-var (ns-resolve 'cloud.itonami.app.bots
+                                       'workforce-bot-active?)]
+            (with-redefs-fn
+              {active-var #(= active-bot %)
+               #'bots/submit-goal!
+               (fn [_ _ bot-id objective run-id]
+                 (swap! submitted conj [bot-id objective run-id])
+                 {:id run-id})}
+              (fn []
+                (let [result (bots/fire-due-workforce!
+                              {:bots {:workforce {:max-starts-per-tick 1
+                                                  :max-active 1}}}
+                              alice now)]
+                  (is (empty? (:started result)))
+                  (is (empty? @submitted))
+                  (is (= {:reason :workforce-capacity :active 1 :limit 1}
+                         (first (:skipped result)))))))))))))
+
 (deftest every-bot-has-a-stable-mailbox-and-sees-only-mail-addressed-to-it
   (with-store
     (fn []
