@@ -38,7 +38,8 @@
      (if (<= 200 status 299)
        parsed
        (throw (ex-info "model provider request failed"
-                       {:status status :url url :response parsed}))))))
+                       {:type :provider/http-error
+                        :status status :url url :response parsed}))))))
 
 (defn- openai-shaped? [provider]
   (contains? #{:openai-compatible :xai} (:kind provider)))
@@ -244,7 +245,8 @@
          response (.send client request (HttpResponse$BodyHandlers/ofInputStream))]
      (when-not (<= 200 (.statusCode response) 299)
        (throw (ex-info "model provider streaming request failed"
-                       {:status (.statusCode response) :url url})))
+                       {:type :provider/http-error
+                        :status (.statusCode response) :url url})))
      response)))
 
 (defn- emit! [on-delta content]
