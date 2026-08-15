@@ -9115,7 +9115,8 @@
       palette:{colors:[], glyphs:[]},
       selected:null, messages:[], picked:new Set(),
       draft:{color:'blue', glyph:'circle'}, loaded:false, busy:false,
-      browserAvailable:false, controller:null, runId:null, shellBusy:false
+      browserAvailable:false, controller:null, runId:null, shellBusy:false,
+      latestRun:null
     };
     const botAvatar = (node, avatar, status = null) => {
       node.dataset.color = avatar?.color || 'blue';
@@ -9132,6 +9133,33 @@
     };
     const botsSetStatus = (message) => {
       $('#bots-thread-status-line').textContent = message || '';
+    };
+    const botsRunStateText = {
+      'working':'進行中', 'planning':'計画中', 'continuing':'継続中',
+      'waiting-approval':'承認待ち', 'completed':'完了', 'blocked':'阻害',
+      'failed':'失敗', 'cancelled':'中止'
+    };
+    const renderBotsRun = (run) => {
+      const node = $('#bots-run');
+      node.replaceChildren();
+      node.hidden = !run;
+      if (!run) return;
+      const row = make('div', 'bots-run__row');
+      const visibleState = run.status === 'working' ? run.phase : run.status;
+      row.append(make('span', 'bots-run__state',
+                      botsRunStateText[visibleState] || visibleState));
+      const usage = run.usage || {};
+      const tokens = usage.total_tokens ?? usage.totalTokens ?? 0;
+      const provider = [run.provider, run.model].filter(Boolean).join(' / ');
+      row.append(make('span', 'bots-run__meta',
+        `${run['elapsed-seconds'] || 0}秒 · ${run['tool-count'] || 0} tools · ${tokens} tokens`));
+      if (provider) row.append(make('span', 'bots-run__meta', provider));
+      node.append(row);
+      if (run.objective) node.append(make('div', 'bots-run__objective', run.objective));
+      if (tokens && run.cost?.status === 'not-calculated') {
+        node.append(make('div', 'bots-run__meta', '利用料: provider の請求額が未提供のため未算出'));
+      }
+      if (run.error) node.append(make('div', 'bots-run__meta', `error: ${run.error}`));
     };
     const renderBotsRail = () => {
       const list = $('#bots-list');
@@ -9489,6 +9517,8 @@
       const holder = $('#bots-messages');
       holder.replaceChildren();
       if (!bot) return;
+      if (!botsState.latestRun) botsState.latestRun = bot['latest-run'] || null;
+      renderBotsRun(botsState.latestRun);
       botAvatar($('#bots-titlebar-avatar'), bot.avatar, bot.status);
       $('#bots-titlebar-name').textContent = bot.name;
       $('#bots-titlebar-status').textContent = botsStatusText[bot.status] || bot.status;
@@ -9726,6 +9756,9 @@
     };
     const selectBot = async (botId) => {
       botsState.selected = botId;
+      const selectedBot = botsState.bots.find((bot) => bot.id === botId);
+      botsState.latestRun = selectedBot?.['latest-run'] || null;
+      $('#bots-goal').checked = Boolean(selectedBot?.['coding?'] || selectedBot?.['virtual-shell?']);
       renderBotsRail();
       showBotsPane();
       try {
@@ -9851,11 +9884,11 @@
         $('#bots-form').requestSubmit();
       }
     });
-    const openBotsStream = async (botId, text, runId, signal) => {
+    const openBotsStream = async (botId, text, runId, goal, signal) => {
       if (!identityState?.csrf) await refreshIdentityForWrite();
       const send = () => fetch(`/api/bots/${botId}/messages/stream`, {
         method:'POST', headers:identityHeaders(), signal,
-        body:JSON.stringify({text, 'run-id':runId})
+        body:JSON.stringify({text, goal, 'run-id':runId})
       });
       let request = await send();
       if (request.status === 403) {
@@ -9885,10 +9918,29 @@
           const frame = JSON.parse(line);
           if (frame.type === 'delta') {
             provisional.textContent += frame.content || '';
+            if (botsState.latestRun) botsState.latestRun.phase = 'working';
+            renderBotsRun(botsState.latestRun);
             botsSetStatus('応答中…');
+          } else if (frame.type === 'phase') {
+            if (botsState.latestRun) {
+              botsState.latestRun.status = 'working';
+              botsState.latestRun.phase = frame.phase;
+              renderBotsRun(botsState.latestRun);
+            }
+            botsSetStatus(botsRunStateText[frame.phase] || frame.phase);
+          } else if (frame.type === 'tool') {
+            if (botsState.latestRun) {
+              botsState.latestRun.phase = 'working';
+              botsState.latestRun['tool-count'] = frame['tool-count'] || 0;
+              renderBotsRun(botsState.latestRun);
+            }
+            botsSetStatus(`${frame.tool} · ${frame['tool-count'] || 0} tools`);
           } else if (frame.type === 'done') {
             botsState.messages = frame.messages || [];
+            botsState.latestRun = frame.run || botsState.latestRun;
           } else if (frame.type === 'error') {
+            botsState.latestRun = frame.run || botsState.latestRun;
+            renderBotsRun(botsState.latestRun);
             throw new Error(frame.message || 'Bot の実行に失敗しました。');
           }
         }
@@ -9902,7 +9954,14 @@
       botsState.busy = true;
       const botId = botsState.selected;
       const runId = crypto.randomUUID();
+      const goal = $('#bots-goal').checked;
       const startedAt = Date.now();
+      botsState.latestRun = {
+        id:runId, 'goal?':goal, objective:goal ? text : null,
+        status:'working', phase:'planning', 'elapsed-seconds':0,
+        'tool-count':0, usage:null
+      };
+      renderBotsRun(botsState.latestRun);
       botsState.runId = runId;
       botsState.controller = new AbortController();
       botsInput.value = '';
@@ -9914,15 +9973,20 @@
       entry.append(provisional);
       $('#bots-messages').append(entry);
       const elapsed = window.setInterval(() => {
-        if (provisional.textContent) return;
         const seconds = Math.floor((Date.now() - startedAt) / 1000);
+        if (botsState.latestRun?.id === runId) {
+          botsState.latestRun['elapsed-seconds'] = seconds;
+          renderBotsRun(botsState.latestRun);
+        }
+        if (provisional.textContent) return;
         botsSetStatus(seconds >= 30
           ? `通常より時間がかかっています… ${seconds}秒`
           : `考えています… ${seconds}秒`);
       }, 1000);
       botsSetStatus('考えています… 0秒');
       try {
-        const request = await openBotsStream(botId, text, runId, botsState.controller.signal);
+        const request = await openBotsStream(botId, text, runId, goal,
+                                             botsState.controller.signal);
         await readBotsStream(request, provisional);
         renderBotsThread();
         botsSetStatus('');

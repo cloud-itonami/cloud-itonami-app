@@ -180,16 +180,18 @@
                                  "medium"))))
 
 (defn- agent-result
-  [message finish-reason]
-  (let [result {:content (:content message)
-                :tool-calls (normalize-tool-calls (:tool_calls message))}]
+  ([message finish-reason] (agent-result message finish-reason nil))
+  ([message finish-reason usage]
+  (let [result (cond-> {:content (:content message)
+                        :tool-calls (normalize-tool-calls (:tool_calls message))}
+                 usage (assoc :usage usage))]
     (when (and (str/blank? (:content result))
                (empty? (:tool-calls result)))
       (throw (ex-info
               "モデルが回答本文を返しませんでした。もう一度送ってください。"
               {:type :provider/empty-response
                :finish-reason finish-reason})))
-    result))
+    result)))
 
 (defn agent-turn
   "One non-streaming tool-capable model turn, normalized for Agent Control."
@@ -206,7 +208,11 @@
                                                       :num_predict (or (:max-output-tokens provider)
                                                                        default-agent-max-tokens)})))
             message (:message result)]
-        (agent-result message (:done_reason result)))
+        (agent-result message (:done_reason result)
+                      {:prompt_tokens (get result :prompt_eval_count 0)
+                       :completion_tokens (get result :eval_count 0)
+                       :total_tokens (+ (get result :prompt_eval_count 0)
+                                        (get result :eval_count 0))}))
 
       (openai-shaped? provider)
       (let [result (request-json
@@ -215,7 +221,8 @@
                     body (config/env-secret provider)
                     (xai-headers provider request))
             message (get-in result [:choices 0 :message])]
-        (agent-result message (get-in result [:choices 0 :finish_reason])))
+        (agent-result message (get-in result [:choices 0 :finish_reason])
+                      (:usage result)))
 
       :else (throw (ex-info "unsupported provider kind" {:provider provider})))))
 
@@ -322,6 +329,7 @@
   (let [content (StringBuilder.)
         calls (atom {})
         finish-reason (volatile! nil)
+        usage (volatile! nil)
         body (assoc (agent-request-body provider request) :stream true)]
     (cond
       (= :ollama (:kind provider))
@@ -344,7 +352,13 @@
                 (when-let [emitted (emit! on-delta delta)] (.append content emitted))
                 (when-let [tool-calls (seq (:tool_calls message))]
                   (reset! calls (into {} (map-indexed vector tool-calls))))
-                (when (:done chunk) (vreset! finish-reason (:done_reason chunk))))))))
+                (when (:done chunk)
+                  (vreset! finish-reason (:done_reason chunk))
+                  (vreset! usage
+                           {:prompt_tokens (get chunk :prompt_eval_count 0)
+                            :completion_tokens (get chunk :eval_count 0)
+                            :total_tokens (+ (get chunk :prompt_eval_count 0)
+                                             (get chunk :eval_count 0))})))))))
 
       (openai-shaped? provider)
       (let [response (streaming-response
@@ -368,9 +382,11 @@
                   (let [index (or (:index call) fallback)]
                     (swap! calls update index merge-tool-fragment call)))
                 (when-let [reason (:finish_reason choice)]
-                  (vreset! finish-reason reason)))))))
+                  (vreset! finish-reason reason))
+                (when-let [chunk-usage (:usage chunk)]
+                  (vreset! usage chunk-usage)))))))
 
       :else (throw (ex-info "unsupported provider kind" {:provider provider})))
     (agent-result {:content (.toString content)
                    :tool_calls (mapv val (sort-by key @calls))}
-                  @finish-reason)))
+                  @finish-reason @usage)))

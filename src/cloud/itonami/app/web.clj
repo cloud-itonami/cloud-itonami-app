@@ -402,6 +402,14 @@
     color:var(--color-neutral-solid-gray-700)}
   .bots-thread__panel ul{margin:.25rem 0 0;padding-left:1.25rem}
   .bots-thread__scroll{flex:1;min-height:0;overflow-y:auto;padding:1rem}
+  .bots-run{max-width:44rem;margin:0 auto .75rem;padding:.75rem .875rem;
+    border:1px solid var(--color-neutral-solid-gray-200);border-radius:.75rem;
+    background:var(--color-neutral-white);display:grid;gap:.375rem}
+  .bots-run[hidden]{display:none}
+  .bots-run__row{display:flex;align-items:center;gap:.5rem;flex-wrap:wrap}
+  .bots-run__state{font-weight:600}
+  .bots-run__meta{font-size:.8125rem;color:var(--color-neutral-solid-gray-600)}
+  .bots-run__objective{font-size:.875rem;line-height:1.5;overflow-wrap:anywhere}
   .bots-thread__messages{list-style:none;margin:0 auto;padding:0;display:grid;
     gap:.75rem;max-width:44rem}
   .bots-msg{display:grid;gap:.5rem}
@@ -440,8 +448,9 @@
   .bots-option__key{display:inline-flex;align-items:center;justify-content:center;
     width:1.5rem;height:1.5rem;border-radius:.25rem;font-size:.75rem;
     background:var(--color-neutral-solid-gray-100)}
-  .bots-composer{display:flex;gap:.5rem;align-items:flex-end;padding:.75rem 1rem;
+  .bots-composer{display:flex;flex-wrap:wrap;gap:.5rem;align-items:flex-end;padding:.75rem 1rem;
     border-top:1px solid var(--color-neutral-solid-gray-200)}
+  .bots-composer__goal{flex:1 0 100%;font-size:.8125rem}
   .bots-composer textarea{flex:1;resize:none;padding:.625rem .75rem;
     border-radius:.75rem;border:1px solid var(--color-neutral-solid-gray-300);
     max-height:12rem;font:inherit}
@@ -1527,8 +1536,12 @@
            [:div {:class "bots-thread" :id "bots-thread" :hidden true}
             [:div {:class "bots-thread__panel" :id "bots-thread-panel" :hidden true}]
             [:div {:class "bots-thread__scroll" :id "bots-thread-scroll"}
+             [:div {:class "bots-run" :id "bots-run" :hidden true}]
              [:ol {:class "bots-thread__messages" :id "bots-messages"}]]
             [:form {:class "bots-composer" :id "bots-form"}
+             [:label {:class "bots-permission bots-composer__goal"}
+              [:input {:id "bots-goal" :type "checkbox"}]
+              [:span "Goal — 完了または具体的な阻害まで進める"]]
              [:textarea {:id "bots-input" :rows "1" :maxlength "8000"
                          :placeholder "この Bot に頼む" :autocomplete "off"}]
              [:button {:class "primary-action" :id "bots-send" :type "submit"
