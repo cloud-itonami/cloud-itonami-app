@@ -9171,6 +9171,22 @@
       if (provider) row.append(make('span', 'bots-run__meta', provider));
       node.append(row);
       if (turn.objective) node.append(make('div', 'bots-run__objective', turn.objective));
+      const plan = turn.job?.plan || [];
+      if (plan.length) {
+        const list = make('ol', 'bots-run__plan');
+        plan.forEach((step) => {
+          const mark = step.state === 'verified' ? '✓' :
+            (step.state === 'running' ? '…' : '○');
+          list.append(make('li', `bots-run__step bots-run__step--${step.state}`,
+                           `${mark} ${step.title}`));
+        });
+        node.append(list);
+        const receipts = (turn.job.events || [])
+          .filter((event) => event.kind === 'action/finished').length;
+        const children = (turn.job.children || []).length;
+        node.append(make('div', 'bots-run__meta',
+          `AgentRun: ${turn.job.state} · ${children} child runs · ${receipts} execution receipts`));
+      }
       if (tokens && turn.cost?.status === 'not-calculated') {
         node.append(make('div', 'bots-run__meta', '利用料: provider の請求額が未提供のため未算出'));
       }
@@ -9958,6 +9974,18 @@
         if (done) break;
       }
     };
+    const followDetachedGoal = async (botId, runId, signal) => {
+      for (let poll = 0; poll < 1200; poll += 1) {
+        if (signal.aborted) throw new DOMException('Aborted', 'AbortError');
+        await new Promise((resolve) => window.setTimeout(resolve, 1000));
+        await refreshBotsThread();
+        renderBotsRun(botsState.latestTurn);
+        const state = botsState.latestTurn?.state;
+        if (botsState.latestTurn?.id === runId && state !== 'running') return;
+        if (botsState.selected !== botId) return;
+      }
+      throw new Error('Goal は background で継続しています。後でこの Bot を開いて確認してください。');
+    };
     $('#bots-form').addEventListener('submit', async (event) => {
       event.preventDefault();
       const text = botsInput.value.trim();
@@ -10007,6 +10035,9 @@
           progress.phase = frame.phase;
           progress.tool = frame.tool || null;
         });
+        if (goal && botsState.latestTurn?.state === 'running') {
+          await followDetachedGoal(botId, runId, botsState.controller.signal);
+        }
         renderBotsRun(botsState.latestTurn);
         renderBotsThread();
         botsSetStatus('');

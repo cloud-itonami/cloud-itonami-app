@@ -5,7 +5,8 @@
   Nothing here calls a model or reaches the network. The two places that would
   — `advance!` and `run-tool!` — are behind the connection gate, and every test
   that would cross it redefines the seam instead."
-  (:require [clojure.java.io :as io]
+  (:require [agent.run :as agent-run]
+            [clojure.java.io :as io]
             [clojure.string :as str]
             [clojure.test :refer [deftest is testing]]
             [cloud.itonami.app.agent-control :as agent-control]
@@ -333,6 +334,92 @@
             (is (= "blocked" (:state turn)))
             (is (= "private repository cannot be read" (:result turn)))
             (is (= ["grant repository access"] (:evidence turn)))))))))
+
+(deftest durable-goal-detaches-plans-runs-read-actions-in-parallel-and-verifies
+  (with-store
+    (fn []
+      (let [root (git-workspace)
+            b (make-bot alice {:coding? true :workspace (.getPath root)})
+            entered (promise)
+            release (promise)
+            calls (atom 0)
+            run-id "goal-durable-parallel-1"]
+        (with-redefs
+          [policy/select-provider (fn [_ _] {:id :local})
+           provider/agent-turn-stream!
+           (fn [_ _ _]
+             (case (swap! calls inc)
+               1 (do (deliver entered true)
+                     (deref release 3000 nil)
+                     {:content "" :tool-calls
+                      [{:id "plan" :name "goal_plan"
+                        :input {:steps [{:id "inspect" :title "Inspect repository"}]}}]})
+               2 {:content "" :tool-calls
+                  [{:id "status" :name "git_status" :input {}}
+                   {:id "diff" :name "git_diff" :input {}}]}
+               3 {:content "" :tool-calls
+                  [{:id "verify-step" :name "goal_step_complete"
+                    :input {:step_id "inspect" :summary "repository inspected"
+                            :evidence ["status and log receipts"]}}]}
+               {:content "" :tool-calls
+                [{:id "finish" :name "goal_complete"
+                  :input {:summary "inspection completed"
+                          :evidence ["host verifier passed"]}}]}))]
+          (let [submitted (bots/submit-goal! nil alice (:bot/id b)
+                                             "Inspect the repository" run-id)]
+            (is (= run-id (:id submitted)))
+            (is (= true (deref entered 2000 false)))
+            (is (= "running" (:state (bots/latest-turn alice (:bot/id b))))
+                "the API-facing submit returned while the worker was still running")
+            (deliver release true)
+            (loop [remaining 100]
+              (when (and (pos? remaining)
+                         (= "running" (:state (bots/latest-turn alice (:bot/id b)))))
+                (Thread/sleep 25)
+                (recur (dec remaining))))
+            (let [turn (bots/latest-turn alice (:bot/id b))
+                  job (:job turn)
+                  kinds (mapv :kind (:events job))]
+              (is (= "completed" (:state turn)))
+              (is (= "succeeded" (:state job)))
+              (is (= [{:id "inspect" :title "Inspect repository"
+                       :depends-on [] :state "verified"
+                       :summary "repository inspected"}]
+                     (:plan job)))
+              (is (= 2 (count (filter #{"action/finished"} kinds))))
+              (is (= 2 (count (:children job))))
+              (is (every? #(and (= run-id (:parent %))
+                                 (= "succeeded" (:state %)))
+                          (:children job)))
+              (is (some #{"verifier/step-passed"} kinds))
+              (is (some #{"verifier/goal-passed"} kinds)))))))))
+
+(deftest restart-checkpoints-a-running-goal-instead-of-marking-it-interrupted
+  (with-store
+    (fn []
+      (let [b (make-bot alice {})
+            run-id "goal-restart-checkpoint-1"
+            queued (agent-run/agent-run {:id run-id :goal "resume me"} 1)
+            leased (agent-run/transition queued :leased 2 {})
+            running (agent-run/transition leased :running 3 {})]
+        (store/transact!
+         (fn [state]
+           (-> state
+               (assoc-in [:bots :goal-jobs run-id]
+                         {:job/id run-id :job/bot (:bot/id b) :job/session alice
+                          :job/objective "resume me" :job/run running
+                          :job/plan [] :job/events [] :job/attempt 1})
+               (assoc-in [:bots :turn-history (:bot/id b)]
+                         [{:turn/id run-id :turn/bot (:bot/id b)
+                           :turn/state :running :turn/phase :model
+                           :turn/goal? true :turn/objective "resume me"
+                           :turn/started-at "2026-08-15T00:00:00Z"}]))))
+        (bots/recover-interrupted!)
+        (let [turn (bots/latest-turn alice (:bot/id b))]
+          (is (= "running" (:state turn)))
+          (is (= "resuming" (:phase turn)))
+          (is (= "checkpointed" (get-in turn [:job :state]))
+              "restart is a resumable checkpoint, not a failed visible turn"))))))
 
 (deftest an-active-streaming-turn-can-be-cancelled-by-its-owner
   (with-store

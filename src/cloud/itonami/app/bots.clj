@@ -51,7 +51,8 @@
   The honest cost: a Bot does not run while this machine is asleep. That is a
   real difference from the product this is modelled on, and it is a
   consequence of the thesis rather than an oversight."
-  (:require [clojure.data.json :as json]
+  (:require [agent.run :as agent-run]
+            [clojure.data.json :as json]
             [clojure.string :as str]
             [cloud.itonami.app.agent-control :as agent-control]
             [cloud.itonami.app.bot :as bot]
@@ -76,10 +77,28 @@
             HttpResponse$BodyHandlers]
            [java.security MessageDigest]
            [java.time Duration]
-           [java.util UUID]))
+           [java.util UUID]
+           [java.util.concurrent Executors ExecutorService Future ThreadFactory TimeUnit]))
 
 (def schema "cloud.itonami.app.bots.v1")
 (defonce ^:private active-turns (atom {}))
+(defonce ^:private goal-workers (atom {}))
+(defn- daemon-pool [size prefix]
+  (let [counter (atom 0)]
+    (Executors/newFixedThreadPool
+     size
+     (reify ThreadFactory
+       (newThread [_ runnable]
+         (doto (Thread. runnable (str prefix "-" (swap! counter inc)))
+           (.setDaemon true)))))))
+(defonce ^:private goal-executor
+  (daemon-pool 3 "itonami-goal"))
+(defonce ^:private parallel-tool-executor
+  (daemon-pool 3 "itonami-goal-tool"))
+
+(def ^:dynamic *goal-event!*
+  "Host-owned ledger hook. Model text cannot write receipts directly."
+  nil)
 
 (def max-turns 8)
 (def max-tool-calls 12)
@@ -93,7 +112,24 @@
 (def max-turn-history 40)
 
 (def goal-tool-definitions
-  [{:name "goal_complete"
+  [{:name "goal_plan"
+    :description "Create or revise the bounded execution plan before acting. Use 1-8 concrete steps."
+    :parameters {:type "object"
+                 :properties {:steps {:type "array"
+                                      :items {:type "object"
+                                              :properties {:id {:type "string"}
+                                                           :title {:type "string"}
+                                                           :depends_on {:type "array" :items {:type "string"}}}
+                                              :required ["id" "title"]}}}
+                 :required ["steps"]}}
+   {:name "goal_step_complete"
+    :description "Request verification of one plan step after tools for that step actually executed."
+    :parameters {:type "object"
+                 :properties {:step_id {:type "string"}
+                              :summary {:type "string"}
+                              :evidence {:type "array" :items {:type "string"}}}
+                 :required ["step_id" "summary" "evidence"]}}
+   {:name "goal_complete"
     :description "Finish the active goal only after the requested outcome has been verified."
     :parameters {:type "object"
                  :properties {:summary {:type "string"}
@@ -247,6 +283,97 @@
   nil)
 
 (defn- new-id [prefix] (str prefix "-" (UUID/randomUUID)))
+
+(defn- now-ms [] (System/currentTimeMillis))
+
+(defn- receipt-sha256 [value]
+  (let [digest (.digest (MessageDigest/getInstance "SHA-256")
+                        (.getBytes (str value) java.nio.charset.StandardCharsets/UTF_8))]
+    (apply str (map #(format "%02x" (bit-and (int %) 0xff)) digest))))
+
+(defn- goal-job [run-id]
+  (get-in (snapshot) [:goal-jobs run-id]))
+
+(defn- update-goal-job! [run-id f & args]
+  (apply transact! update-in [:goal-jobs run-id] f args))
+
+(defn- append-goal-event!
+  "Append one host-observed event. The bounded vector is the action/receipt/
+  verifier ledger shown to the person; provider prose never enters it."
+  [run-id kind data]
+  (let [event {:event/id (new-id "event") :event/kind kind
+               :event/at (store/now) :event/data data}]
+    (update-goal-job! run-id
+                      (fn [job]
+                        (-> job
+                            (update :job/events #(vec (take-last 200 (conj (vec %) event))))
+                            (assoc :job/updated-at (:event/at event)))))
+    event))
+
+(defn- transition-goal-run! [run-id status attrs]
+  (update-goal-job!
+   run-id
+   (fn [job]
+     (let [run (:job/run job)
+           next-run (if (= status (:agent.run/status run))
+                      (merge run attrs {:agent.run/updated-at (now-ms)})
+                      (agent-run/transition run status (now-ms) attrs))]
+       (assoc job :job/run next-run :job/updated-at (store/now))))))
+
+(defn- clean-plan [steps]
+  (let [steps (vec (take 8 steps))
+        clean (mapv (fn [index step]
+                      {:step/id (or (some-> (:id step) str str/trim not-empty)
+                                    (str "step-" (inc index)))
+                       :step/title (some-> (:title step) str str/trim)
+                       :step/depends-on (set (map str (or (:depends_on step) [])))
+                       :step/state :pending})
+                    (range) steps)
+        ids (set (map :step/id clean))]
+    (when-not (and (seq clean)
+                   (every? (comp seq :step/title) clean)
+                   (= (count clean) (count ids))
+                   (every? #(every? ids (:step/depends-on %)) clean)
+                   (every? #(not (contains? (:step/depends-on %) (:step/id %))) clean))
+      (throw (ex-info "goal plan must contain 1-8 unique, valid steps"
+                      {:type :bot/invalid-goal-plan})))
+    clean))
+
+(defn- plan-step [run-id step-id]
+  (some #(when (= step-id (:step/id %)) %) (:job/plan (goal-job run-id))))
+
+(defn- action-receipts [run-id]
+  (filter #(= :action/finished (:event/kind %)) (:job/events (goal-job run-id))))
+
+(defn- plan-complete? [run-id]
+  (let [plan (:job/plan (goal-job run-id))]
+    (and (seq plan) (every? #(= :verified (:step/state %)) plan))))
+
+(defn- public-goal-job [job]
+  (when job
+    {:id (:job/id job)
+     :bot-id (:job/bot job)
+     :objective (:job/objective job)
+     :state (some-> job :job/run :agent.run/status name)
+     :plan (mapv (fn [step]
+                   {:id (:step/id step) :title (:step/title step)
+                    :depends-on (vec (:step/depends-on step))
+                    :state (name (:step/state step))
+                    :summary (:step/summary step)})
+                 (:job/plan job))
+     :children (mapv (fn [run]
+                       {:id (:agent.run/id run)
+                        :parent (:agent.run/parent run)
+                        :goal (:agent.run/goal run)
+                        :state (name (:agent.run/status run))})
+                     (vals (:job/children job)))
+     :events (mapv (fn [event]
+                     {:id (:event/id event) :kind (str (namespace (:event/kind event))
+                                                       "/" (name (:event/kind event)))
+                      :at (:event/at event) :data (:event/data event)})
+                   (:job/events job))
+     :created-at (:job/created-at job)
+     :updated-at (:job/updated-at job)}))
 
 ;; ── direction ───────────────────────────────────────────────────────────
 ;;
@@ -996,7 +1123,10 @@
          (str "Standing brief from the person you work for:\n" (:bot/brief b)))
        (when goal
          (str "\n\nAn active goal is attached to this turn. Treat the objective as work, not as a request to describe your capabilities. "
+              "First call goal_plan with a small dependency-aware plan. "
               "Inspect the available evidence and take the next safe tool action immediately. "
+              "After executing tools for a step, call goal_step_complete so the host can verify its execution receipt. "
+              "Independent read-only tool calls may be requested together and the host will run at most three concurrently. "
               "Keep working across turns; a prose answer is progress, not completion. "
               "Call goal_complete only after the requested outcome is verified, with concrete evidence. "
               "Call goal_blocked only for a specific external prerequisite that you cannot obtain or retry. "
@@ -1057,6 +1187,8 @@
                                next-turn))))))
     nil))
 
+(declare enqueue-goal!)
+
 (defn recover-interrupted!
   "Close turns that were running in the previous process.
 
@@ -1064,7 +1196,8 @@
   in-memory `active-turns` after process start is evidence that a persisted
   `:running` record cannot still have an owner; reporting it as interrupted is
   recovery, while silently calling it idle loses the user's work."
-  []
+  ([] (recover-interrupted! nil))
+  ([configuration]
   (let [at (store/now)]
     (transact!
      update :turn-history
@@ -1073,7 +1206,8 @@
              (for [[bot-id turns] (or by-bot {})]
                [bot-id
                 (mapv (fn [turn]
-                        (if (= :running (:turn/state turn))
+                        (if (and (= :running (:turn/state turn))
+                                 (not (:turn/goal? turn)))
                           (assoc turn
                                  :turn/state :interrupted
                                  :turn/phase :interrupted
@@ -1081,8 +1215,23 @@
                                  :turn/finished-at at
                                  :turn/error-type :server-restarted)
                           turn))
-                      turns)])))))
-  nil)
+                      turns)]))))
+    ;; A Goal owns a durable AgentRun and checkpoint. A process restart is a
+    ;; lease loss, not a failed user request. Requeue every non-terminal job.
+    (doseq [[run-id job] (:goal-jobs (snapshot))
+            :let [status (get-in job [:job/run :agent.run/status])]
+            :when (contains? #{:queued :leased :running :checkpointed} status)]
+      (case status
+        :leased (transition-goal-run! run-id :queued
+                                      {:agent.run/checkpoint-reason :server-restarted})
+        :running (transition-goal-run! run-id :checkpointed
+                                       {:agent.run/checkpoint-reason :server-restarted})
+        nil)
+      (record-turn! (:job/bot job) run-id
+                    {:turn/state :running :turn/phase :resuming
+                     :turn/goal? true :turn/objective (:job/objective job)})
+      (when configuration (enqueue-goal! configuration run-id)))
+    nil)))
 
 (defn- public-turn [turn]
   (when turn
@@ -1117,7 +1266,9 @@
 
 (defn latest-turn [session bot-id]
   (owned! session bot-id)
-  (public-turn (last (get-in (snapshot) [:turn-history bot-id]))))
+  (let [turn (last (get-in (snapshot) [:turn-history bot-id]))]
+    (cond-> (public-turn turn)
+      (:turn/goal? turn) (assoc :job (public-goal-job (goal-job (:turn/id turn)))))))
 
 ;; ── the demonstration ───────────────────────────────────────────────────
 
@@ -1176,6 +1327,87 @@
              :turn/usage (:usage run)}
             attrs))))
 
+(defn- goal-event! [kind data]
+  (when *goal-event!* (*goal-event!* kind data)))
+
+(defn- current-plan-step-id [run]
+  (when-let [run-id (:id run)]
+    (let [plan (:job/plan (goal-job run-id))
+          verified (set (keep #(when (= :verified (:step/state %)) (:step/id %)) plan))]
+      (:step/id
+       (first (filter #(and (= :pending (:step/state %))
+                            (every? verified (:step/depends-on %)))
+                      plan))))))
+
+(defn- execute-read-call! [configuration b run call]
+  (let [{:keys [name input]} call
+        blocked (get (:blocked run) (get (:tool-provider run) name))
+        child-id (str (:id run) "/child/" (:id call))]
+    (when (or blocked
+              (not (contains? (:runnable run) name))
+              (contains? goal-tool-names name)
+              (write-tool? configuration name))
+      (throw (ex-info "parallel calls must be admitted independent read-only tools"
+                      {:type :agent/unsafe-parallel-tools :tool name})))
+    (let [child (agent-run/agent-run
+                 {:id child-id :goal (str "Execute independent read action: " name)
+                  :project "cloud-itonami-bots" :mode :local :runner :bot-tool
+                  :parent (:id run) :actor (:bot/id b) :capabilities #{name}}
+                 (now-ms))
+          child (agent-run/transition child :leased (now-ms) {})
+          child (agent-run/transition child :running (now-ms) {})]
+      (update-goal-job! (:id run) assoc-in [:job/children child-id] child)
+      (goal-event! :subagent/started {:child-run-id child-id :tool name
+                                      :step-id (current-plan-step-id run)})
+      (goal-event! :action/started {:action/id (:id call) :child-run-id child-id
+                                    :tool name :step-id (current-plan-step-id run)})
+      (let [started (now-ms)]
+        (try
+          (let [output (run-tool! configuration b (:selection run) name input)
+                receipt {:action/id (:id call) :child-run-id child-id :tool name
+                         :step-id (current-plan-step-id run)
+                         :duration-ms (- (now-ms) started)
+                         :output-sha256 (receipt-sha256 output)}]
+            (trace! configuration (:bot/id b) name)
+            (update-goal-job! (:id run) update-in [:job/children child-id]
+                              agent-run/transition :succeeded (now-ms)
+                              {:agent.run/receipt receipt})
+            (goal-event! :action/finished receipt)
+            (goal-event! :subagent/succeeded {:child-run-id child-id})
+            {:call call :output output :receipt receipt})
+          (catch Exception error
+            (update-goal-job! (:id run) update-in [:job/children child-id]
+                              agent-run/transition :failed (now-ms)
+                              {:agent.run/error-type (or (:type (ex-data error))
+                                                         :internal-error)})
+            (goal-event! :subagent/failed {:child-run-id child-id
+                                           :error-type (or (:type (ex-data error))
+                                                           :internal-error)})
+            (throw error)))))))
+
+(defn- execute-parallel-read-calls! [configuration b run calls on-event]
+  (when (> (count calls) 3)
+    (throw (ex-info "parallel tool limit is three"
+                    {:type :agent/parallel-tool-limit :count (count calls)})))
+  (let [tasks (mapv #(.submit ^ExecutorService parallel-tool-executor
+                             ^java.util.concurrent.Callable
+                             (bound-fn []
+                               (execute-read-call! configuration b run %)))
+                    calls)
+        results (mapv #(.get ^Future %) tasks)
+        next-run (reduce (fn [r {:keys [call output]}]
+                           (-> r
+                               (update :tool-count (fnil inc 0))
+                               (update :messages conj
+                                       {:role "tool" :tool-call-id (:id call)
+                                        :name (:name call) :content output})))
+                         run results)]
+    (when on-event
+      (on-event {:type "phase" :phase "tools-executed"
+                 :tool-count (:tool-count next-run)
+                 :parallel-count (count results)}))
+    next-run))
+
 (defn- advance!
   "Turn until the Bot is done or needs a person.
 
@@ -1230,11 +1462,6 @@
                       #(on-event {:type "delta" :content %}))
                      (provider/agent-turn provider request))
             calls (:tool-calls result)
-            _ (when (> (count calls) 1)
-                (throw (ex-info
-                        "model provider が複数のツール呼び出しを返したため、安全のため停止しました。"
-                        {:type :agent/multiple-tool-calls
-                         :count (count calls)})))
             run (-> run
                     (update :turn-count (fnil inc 0))
                     (assoc :provider (some-> (:id provider) name)
@@ -1243,7 +1470,8 @@
                     (update :messages conj {:role "assistant"
                                             :content (:content result)
                                             :tool-calls calls}))]
-        (if (empty? calls)
+        (cond
+          (empty? calls)
           (if (:goal? run)
             (let [run (update run :messages conj
                               {:role "user"
@@ -1257,6 +1485,17 @@
               (finish-visible! on-finish run :completed
                                {:turn/result (:content result)})
               (say (:bot/id b) (:content result) nil)))
+
+          (> (count calls) 1)
+          (if (:goal? run)
+            (let [run (execute-parallel-read-calls! configuration b run calls on-event)]
+              (save-run! (:bot/id b) run)
+              (recur run))
+            (throw (ex-info
+                    "model provider が複数のツール呼び出しを返したため、安全のため停止しました。"
+                    {:type :agent/multiple-tool-calls :count (count calls)})))
+
+          :else
           (let [{:keys [name input] :as call} (first calls)
                 _ (when on-event
                     (on-event {:type "phase" :phase "tool-proposed"
@@ -1268,12 +1507,66 @@
                 ;; asking on turns that never touched a connector.
                 blocked (get (:blocked run) (get (:tool-provider run) name))]
             (cond
+              (= "goal_plan" name)
+              (if (:goal? run)
+                (let [content
+                      (try
+                        (let [plan (clean-plan (:steps input))]
+                          (update-goal-job! (:id run) assoc :job/plan plan)
+                          (append-goal-event! (:id run) :plan/recorded
+                                              {:steps (mapv #(select-keys % [:step/id :step/title
+                                                                             :step/depends-on]) plan)})
+                          "Plan recorded. Execute the first dependency-ready step.")
+                        (catch Exception error (.getMessage error)))]
+                  (recur (update run :messages conj
+                                 {:role "tool" :tool-call-id (:id call) :name name
+                                  :content content})))
+                (recur (update run :messages conj
+                               {:role "tool" :tool-call-id (:id call) :name name
+                                :content "goal_plan is available only in Goal mode."})))
+
+              (= "goal_step_complete" name)
+              (let [step-id (some-> (:step_id input) str str/trim)
+                    step (plan-step (:id run) step-id)
+                    dependencies (set (:step/depends-on step))
+                    verified (set (keep #(when (= :verified (:step/state %)) (:step/id %))
+                                        (:job/plan (goal-job (:id run)))))
+                    receipts (filter #(= step-id (get-in % [:event/data :step-id]))
+                                     (action-receipts (:id run)))
+                    summary (some-> (:summary input) str str/trim)
+                    evidence (vec (remove str/blank? (map str (:evidence input))))]
+                (if (and step (= :pending (:step/state step))
+                         (every? verified dependencies) (seq receipts)
+                         (seq summary) (seq evidence))
+                  (do
+                    (update-goal-job!
+                     (:id run) update :job/plan
+                     (fn [plan]
+                       (mapv #(if (= step-id (:step/id %))
+                                (assoc % :step/state :verified :step/summary summary
+                                       :step/evidence evidence)
+                                %) plan)))
+                    (append-goal-event! (:id run) :verifier/step-passed
+                                        {:step-id step-id :receipt-count (count receipts)
+                                         :evidence evidence})
+                    (recur (update run :messages conj
+                                   {:role "tool" :tool-call-id (:id call) :name name
+                                    :content "Host verifier passed this step."})))
+                  (recur (update run :messages conj
+                                 {:role "tool" :tool-call-id (:id call) :name name
+                                  :content "Step verification requires a dependency-ready plan step, a host execution receipt, summary, and evidence."}))))
+
               (= "goal_complete" name)
               (let [summary (some-> (:summary input) str str/trim)
                     evidence (->> (:evidence input) (map str) (remove str/blank?) vec)]
                 (if (and (:goal? run) (pos? (:tool-count run 0))
+                         (or (nil? (goal-job (:id run)))
+                             (plan-complete? (:id run)))
                          (seq summary) (seq evidence))
                   (do
+                    (append-goal-event! (:id run) :verifier/goal-passed
+                                        {:receipt-count (count (action-receipts (:id run)))
+                                         :evidence evidence})
                     (clear-run! (:bot/id b))
                     (when on-event (on-event {:type "phase" :phase "verifying"}))
                     (finish-visible! on-finish run :completed
@@ -1282,7 +1575,7 @@
                   (recur (update run :messages conj
                                  {:role "tool" :tool-call-id (:id call)
                                   :name name
-                                  :content "goal_complete requires at least one executed tool, a non-empty summary, and concrete evidence."}))))
+                                  :content "goal_complete requires a fully host-verified plan, at least one executed tool, a non-empty summary, and concrete evidence."}))))
 
               (= "goal_blocked" name)
               (let [reason (some-> (:reason input) str str/trim)
@@ -1347,7 +1640,16 @@
                         _ (say (:bot/id b)
                                (or (:content result) "おまかせで実行します。")
                                [receipt])
+                        started (now-ms)
+                        _ (goal-event! :action/started
+                                       {:action/id (:id call) :tool name
+                                        :step-id (current-plan-step-id run)})
                         output (run-tool! configuration b (:selection run) name input)
+                        _ (goal-event! :action/finished
+                                       {:action/id (:id call) :tool name
+                                        :step-id (current-plan-step-id run)
+                                        :duration-ms (- (now-ms) started)
+                                        :output-sha256 (receipt-sha256 output)})
                         run (-> run
                                 (update :tool-count (fnil inc 0))
                                 (update :messages conj
@@ -1370,7 +1672,16 @@
                          [card]))))
 
               :else
-              (let [output (run-tool! configuration b (:selection run) name input)
+              (let [started (now-ms)
+                    _ (goal-event! :action/started
+                                   {:action/id (:id call) :tool name
+                                    :step-id (current-plan-step-id run)})
+                    output (run-tool! configuration b (:selection run) name input)
+                    _ (goal-event! :action/finished
+                                   {:action/id (:id call) :tool name
+                                    :step-id (current-plan-step-id run)
+                                    :duration-ms (- (now-ms) started)
+                                    :output-sha256 (receipt-sha256 output)})
                     run (-> run
                             (update :tool-count (fnil inc 0))
                             (update :messages conj
@@ -1638,6 +1949,128 @@
           (when (= run-id (get-in @active-turns [bot-id :run-id]))
             (swap! active-turns dissoc bot-id))))))))
 
+(defn- resume-goal-turn! [configuration session bot-id run-id]
+  (let [b (owned! session bot-id)
+        saved (get-in (snapshot) [:runs bot-id])
+        outcome (atom nil)
+        cancelled (atom false)
+        entry {:run-id run-id :cancelled cancelled :progress (atom {})
+               :thread (Thread/currentThread)}]
+    (when-not (= run-id (:id saved))
+      (throw (ex-info "durable Goal checkpoint was not found"
+                      {:type :bot/goal-checkpoint-missing :run-id run-id})))
+    (locking active-turns
+      (when (contains? @active-turns bot-id)
+        (throw (ex-info "この Bot はすでに実行中です。" {:type :bot/already-running})))
+      (swap! active-turns assoc bot-id entry))
+    (try
+      (let [did (identity/session-did session)
+            admission (turn-admission configuration b did true)
+            run (merge saved admission)
+            messages (do
+                       (advance! configuration b run
+                                 {:cancelled? #(deref cancelled)
+                                  :on-finish #(reset! outcome %)})
+                       (public-conversation did bot-id))]
+        (record-turn! bot-id run-id
+                      (merge {:turn/state :completed :turn/phase :completed
+                              :turn/finished-at (store/now)} @outcome))
+        messages)
+      (finally
+        (Thread/interrupted)
+        (locking active-turns (swap! active-turns dissoc bot-id))))))
+
+(defn- run-goal-job! [configuration run-id]
+  (let [{:job/keys [bot session objective attempt]} (goal-job run-id)]
+    (try
+      (transition-goal-run! run-id :leased {:agent.run/lease "local-bots-goal"})
+      (transition-goal-run! run-id :running {})
+      (append-goal-event! run-id :run/started {:attempt (inc (long (or attempt 0)))})
+      (update-goal-job! run-id update :job/attempt (fnil inc 0))
+      (binding [*goal-event!* #(append-goal-event! run-id %1 %2)]
+        (if (zero? (long (or attempt 0)))
+          (send-stream! configuration session bot objective run-id true (constantly nil))
+          (resume-goal-turn! configuration session bot run-id)))
+      (let [state (:state (latest-turn session bot))
+            status (case state
+                     "completed" :succeeded
+                     ("blocked" "waiting-approval") :held
+                     "cancelled" :cancelled
+                     :failed)]
+        (transition-goal-run! run-id status
+                              {:agent.run/result state
+                               :agent.run/finished-at (now-ms)}))
+      (catch Exception error
+        (let [status (get-in (goal-job run-id) [:job/run :agent.run/status])]
+          (when (contains? #{:leased :running :checkpointed} status)
+            (transition-goal-run! run-id :failed
+                                  {:agent.run/error-type (or (:type (ex-data error))
+                                                             :internal-error)})))
+        (append-goal-event! run-id :run/failed
+                            {:error-type (or (:type (ex-data error)) :internal-error)
+                             :message (.getMessage error)}))
+      (finally
+        (swap! goal-workers dissoc run-id)))))
+
+(defn- finish-goal-run-from-visible! [run-id state]
+  (let [status (case state
+                 "completed" :succeeded
+                 ("blocked" "waiting-approval") :held
+                 "cancelled" :cancelled
+                 :failed)]
+    (transition-goal-run! run-id status
+                          {:agent.run/result state
+                           :agent.run/finished-at (now-ms)})))
+
+(defn enqueue-goal! [configuration run-id]
+  (locking goal-workers
+    (when-not (contains? @goal-workers run-id)
+      (swap! goal-workers assoc run-id
+             (.submit ^ExecutorService goal-executor
+                      ^java.util.concurrent.Callable
+                      (fn [] (run-goal-job! configuration run-id))))))
+  run-id)
+
+(defn submit-goal!
+  "Persist and enqueue a Goal. The returned AgentRun is independent of the
+  HTTP response; closing the mobile screen does not cancel it."
+  [configuration session bot-id text run-id]
+  (let [b (owned! session bot-id)
+        text (str/trim (str text))
+        run-id (str/trim (str run-id))]
+    (when (or (str/blank? text) (str/blank? run-id))
+      (throw (ex-info "Goal text and run-id are required" {:type :bot/invalid-goal})))
+    (when-not (:bot/enabled? b)
+      (throw (ex-info "この Bot は停止しています。" {:type :bot/disabled})))
+    (when (some #(agent-run/active? (:job/run %)) (vals (:goal-jobs (snapshot))))
+      ;; Preserve the existing one-active-turn-per-Bot invariant, but allow
+      ;; other Bots to use the three worker slots.
+      (when (some #(and (= bot-id (:job/bot %))
+                        (agent-run/active? (:job/run %)))
+                  (vals (:goal-jobs (snapshot))))
+        (throw (ex-info "この Bot はすでに Goal を実行中です。"
+                        {:type :bot/already-running}))))
+    (let [at (store/now)
+          run (agent-run/agent-run
+               {:id run-id :goal text :project "cloud-itonami-bots"
+                :mode :local :runner :bots
+                :actor (:bot/id b)
+                :capabilities (:bot/tools b)
+                :budget {:max-turns max-goal-turns
+                         :max-tool-calls max-goal-tool-calls}}
+               (now-ms))
+          job {:job/id run-id :job/bot bot-id
+               :job/session (select-keys session [:user-id :organization-id :kind])
+               :job/objective text :job/run run :job/plan [] :job/events []
+               :job/attempt 0 :job/created-at at :job/updated-at at}]
+      (transact! assoc-in [:goal-jobs run-id] job)
+      (record-turn! bot-id run-id
+                    {:turn/state :running :turn/phase :queued :turn/goal? true
+                     :turn/objective text})
+      (append-goal-event! run-id :run/submitted {:goal text})
+      (enqueue-goal! configuration run-id)
+      (public-goal-job (goal-job run-id)))))
+
 (defn cancel!
   "Cancel the matching active turn. Ownership and run id both have to match."
   [session bot-id run-id]
@@ -1767,8 +2200,28 @@
                                            cards))))
                          messages)))
       (if (= :approved decision)
-        (let [output (run-tool! configuration b (:selection run)
-                                (:name call) (:input call))
+        (let [goal? (boolean (goal-job (:id run)))
+              _ (when goal?
+                  (transition-goal-run! (:id run) :running
+                                        {:agent.run/resumed-by :approval}))
+              started (now-ms)
+              execute! (fn []
+                         (goal-event! :action/started
+                                      {:action/id (:id call) :tool (:name call)
+                                       :step-id (current-plan-step-id run)})
+                         (let [output (run-tool! configuration b (:selection run)
+                                                 (:name call) (:input call))]
+                           (goal-event! :action/finished
+                                        {:action/id (:id call) :tool (:name call)
+                                         :step-id (current-plan-step-id run)
+                                         :duration-ms (- (now-ms) started)
+                                         :output-sha256 (receipt-sha256 output)})
+                           output))
+              output (if goal?
+                       (binding [*goal-event!*
+                                 #(append-goal-event! (:id run) %1 %2)]
+                         (execute!))
+                       (execute!))
               run (-> run
                       (update :tool-count (fnil inc 0))
                       (update :messages conj {:role "tool"
@@ -1785,15 +2238,28 @@
                         {:turn/state :running :turn/phase :tool-executed
                          :turn/tool (:name call)
                          :turn/tool-count (:tool-count run)})
-          (advance! configuration b run
-                    {:on-finish #(record-turn!
-                                  bot-id (:id run)
-                                  (assoc % :turn/finished-at (store/now))) }))
+          (let [continue! #(advance! configuration b run
+                                     {:on-finish (fn [outcome]
+                                                   (record-turn!
+                                                    bot-id (:id run)
+                                                    (assoc outcome :turn/finished-at
+                                                           (store/now))))})]
+            (if goal?
+              (binding [*goal-event!*
+                        #(append-goal-event! (:id run) %1 %2)]
+                (continue!))
+              (continue!)))
+          (when goal?
+            (finish-goal-run-from-visible!
+             (:id run) (:state (latest-turn session bot-id)))))
         (do (clear-run! bot-id)
             (record-turn! bot-id (:id run)
                           {:turn/state :cancelled :turn/phase :cancelled
                            :turn/result "write rejected"
                            :turn/finished-at (store/now)})
+            (when (goal-job (:id run))
+              (transition-goal-run! (:id run) :cancelled
+                                    {:agent.run/result :write-rejected}))
             (say bot-id "わかりました。この操作はしません。" nil))))
     (public-conversation (identity/session-did session) bot-id)))
 
