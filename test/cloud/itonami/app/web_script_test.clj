@@ -107,6 +107,11 @@
     (is (str/includes? js "messages/stream"))
     (is (str/includes? js "messages/${encodeURIComponent(runId)}/cancel"))
     (is (str/includes? js "通常より時間がかかっています…"))
+    (is (str/includes? js "frame.type === 'phase'"))
+    (is (str/includes? js "progress.phase = frame.phase"))
+    (is (str/includes? js "前回の実行はアプリの再起動で中断されました。"))
+    (is (str/includes? js "personEntry.dataset.role = 'person'"))
+    (is (str/includes? js "append(personEntry, entry)"))
     (is (str/includes? js "'coding?':$('#bots-coding').checked"))
     (is (str/includes? js "workspace:$('#bots-workspace').value.trim()"))))
 

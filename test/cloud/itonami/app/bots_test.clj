@@ -171,6 +171,71 @@
             (is (= "workspace_write_file" (:action card)))
             (is (str/includes? (:impact card) "local Git workspace"))))))))
 
+(deftest a-visible-turn-has-a-durable-lifecycle-and-real-phases
+  (with-store
+    (fn []
+      (let [root (git-workspace)
+            b (make-bot alice {:coding? true :workspace (.getPath root)})
+            calls (atom 0)
+            events (atom [])]
+        (with-redefs [policy/select-provider (fn [_ _] {:id :local})
+                      provider/agent-turn-stream!
+                      (fn [_ _ on-delta]
+                        (if (= 1 (swap! calls inc))
+                          {:content "確認します。"
+                           :tool-calls [{:id "call-1" :name "git_status" :input {}}]}
+                          (do (on-delta "完了しました。")
+                              {:content "完了しました。" :tool-calls []})))]
+          (bots/send-stream! nil alice (:bot/id b) "状態を確認して"
+                             "run-visible-1" #(swap! events conj %)))
+        (let [turn (:last-turn (first (:bots (bots/overview nil alice))))]
+          (is (= "completed" (:state turn)))
+          (is (= "completed" (:phase turn)))
+          (is (= "git_status" (:tool turn)))
+          (is (= ["accepted" "model" "tool-proposed" "model"]
+                 (mapv :phase (filter #(= "phase" (:type %)) @events))))
+          (is (some #(= {:type "delta" :content "完了しました。"} %) @events)))))))
+
+(deftest server-start-closes-a-running-turn-as-interrupted
+  (with-store
+    (fn []
+      (let [b (make-bot alice {})
+            bot-id (:bot/id b)]
+        (swap! store/state assoc-in [:bots :turn-history bot-id]
+               [{:turn/id "run-before-restart"
+                 :turn/bot bot-id
+                 :turn/state :running
+                 :turn/phase :model
+                 :turn/started-at "2026-08-15T08:09:49Z"
+                 :turn/updated-at "2026-08-15T08:09:49Z"}])
+        (bots/recover-interrupted!)
+        (let [turn (:last-turn (first (:bots (bots/overview nil alice))))]
+          (is (= "interrupted" (:state turn)))
+          (is (= "interrupted" (:phase turn)))
+          (is (= "server-restarted" (:error-type turn)))
+          (is (some? (:finished-at turn))))))))
+
+(deftest a-provider-failure-closes-the-visible-turn
+  (with-store
+    (fn []
+      (let [root (git-workspace)
+            b (make-bot alice {:coding? true :workspace (.getPath root)})]
+        (with-redefs [policy/select-provider (fn [_ _] {:id :local})
+                      provider/agent-turn-stream!
+                      (fn [& _]
+                        (throw (ex-info "provider unavailable"
+                                        {:type :provider/unavailable})))]
+          (is (= :provider/unavailable
+                 (try
+                   (bots/send-stream! nil alice (:bot/id b) "確認して"
+                                      "run-failed-1" (constantly nil))
+                   nil
+                   (catch clojure.lang.ExceptionInfo error
+                     (:type (ex-data error)))))))
+        (let [turn (:last-turn (first (:bots (bots/overview nil alice))))]
+          (is (= "failed" (:state turn)))
+          (is (= "provider/unavailable" (:error-type turn))))))))
+
 (deftest a-general-shell-is-per-bot-virtualized-and-always-holds
   (with-store
     (fn []
