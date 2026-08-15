@@ -5442,6 +5442,10 @@
    (mail-sync/start! configuration)
    (chronicle/start! configuration)
    (folder-sync/start! configuration)
+   ;; A process cannot resume an HTTP/model stream owned by its predecessor.
+   ;; Close those durable records before accepting a new direction so the UI
+   ;; reports an interruption rather than an idle Bot that silently lost work.
+   (bots/recover-interrupted!)
    ;; After the surfaces it drives, so a routine that fires on the first pass
    ;; finds a store that is already open rather than one still being read.
    (bots/start-tick! configuration)

@@ -88,6 +88,7 @@
 (def max-tool-output-chars 6000)
 (def max-trace 60)
 (def max-routines 40)
+(def max-turn-history 40)
 
 (defn mailbox-address
   "The stable RFC mailbox for a Bot. The id is immutable, unlike its name."
@@ -576,9 +577,12 @@
                                                       (not (met? providers %))))))
    :active-run? (boolean (get-in (snapshot) [:runs bot-id :pending-call]))})
 
+(declare public-turn)
+
 (defn- public-bot [configuration did b]
   (let [rows (connectors/catalog-rows configuration)
         connected (connected-connectors configuration did)
+        last-turn (last (get-in (snapshot) [:turn-history (:bot/id b)]))
         local-tools (concat
                      (when (:bot/browser? b)
                        (agent-control/browser-tool-definitions configuration))
@@ -615,6 +619,7 @@
      :virtual-shell-ready? (boolean (and (:bot/virtual-shell? b)
                                          (virtual-shell/available?)))
      :workspace (:bot/workspace b)
+     :last-turn (public-turn last-turn)
      :enabled? (:bot/enabled? b)
      :status (name (bot/status b (presence (:bot/id b)
                                            (connected-providers did))))
@@ -990,6 +995,71 @@
 (defn- clear-run! [bot-id]
   (transact! update :runs dissoc bot-id))
 
+;; ── visible turn lifecycle ─────────────────────────────────────────────
+
+(defn- record-turn!
+  "Upsert one bounded, durable lifecycle record for a visible Bot turn.
+
+  The conversation records what was said. This record answers the different
+  question of what happened when no answer was said — especially when the
+  process stopped between accepting a direction and receiving a model token."
+  [bot-id run-id attrs]
+  (let [at (store/now)]
+    (transact!
+     update-in [:turn-history bot-id]
+     (fn [turns]
+       (let [turns (vec turns)
+             previous (some #(when (= run-id (:turn/id %)) %) turns)
+             next-turn (merge {:turn/id run-id
+                               :turn/bot bot-id
+                               :turn/state :running
+                               :turn/phase :accepted
+                               :turn/started-at at}
+                              previous attrs {:turn/updated-at at})]
+         (vec (take-last max-turn-history
+                         (conj (filterv #(not= run-id (:turn/id %)) turns)
+                               next-turn))))))
+    nil))
+
+(defn recover-interrupted!
+  "Close turns that were running in the previous process.
+
+  Called once during server start, before Bots can accept new work. An empty
+  in-memory `active-turns` after process start is evidence that a persisted
+  `:running` record cannot still have an owner; reporting it as interrupted is
+  recovery, while silently calling it idle loses the user's work."
+  []
+  (let [at (store/now)]
+    (transact!
+     update :turn-history
+     (fn [by-bot]
+       (into {}
+             (for [[bot-id turns] (or by-bot {})]
+               [bot-id
+                (mapv (fn [turn]
+                        (if (= :running (:turn/state turn))
+                          (assoc turn
+                                 :turn/state :interrupted
+                                 :turn/phase :interrupted
+                                 :turn/updated-at at
+                                 :turn/finished-at at
+                                 :turn/error-type :server-restarted)
+                          turn))
+                      turns)])))))
+  nil)
+
+(defn- public-turn [turn]
+  (when turn
+    {:id (:turn/id turn)
+     :state (name (:turn/state turn))
+     :phase (name (:turn/phase turn))
+     :tool (:turn/tool turn)
+     :direction (:turn/direction turn)
+     :started-at (:turn/started-at turn)
+     :updated-at (:turn/updated-at turn)
+     :finished-at (:turn/finished-at turn)
+     :error-type (some-> (:turn/error-type turn) str (subs 1))}))
+
 ;; ── the demonstration ───────────────────────────────────────────────────
 
 (defn- trace!
@@ -1090,6 +1160,9 @@
           (do (clear-run! (:bot/id b))
               (say (:bot/id b) (:content result) nil))
           (let [{:keys [name input] :as call} (first calls)
+                _ (when on-event
+                    (on-event {:type "phase" :phase "tool-proposed"
+                               :tool name}))
                 ;; The provider this call needs, and — when that provider is
                 ;; not resolved for this Bot — the card that resolves it. This
                 ;; is the moment the connection question becomes NECESSARY:
@@ -1345,23 +1418,61 @@
   (owned! session bot-id)
   (let [run-id (str/trim (str run-id))
         cancelled (atom false)
-        entry {:run-id run-id :cancelled cancelled :thread (Thread/currentThread)}]
+        progress (atom {:turn/phase :accepted})
+        entry {:run-id run-id :cancelled cancelled :progress progress
+               :thread (Thread/currentThread)}]
     (when (str/blank? run-id)
       (throw (ex-info "run-id が必要です。" {:type :bot/missing-run-id})))
     (locking active-turns
       (when (contains? @active-turns bot-id)
         (throw (ex-info "この Bot はすでに実行中です。" {:type :bot/already-running})))
       (swap! active-turns assoc bot-id entry))
+    (record-turn! bot-id run-id
+                  {:turn/direction (inc (direction bot-id))
+                   :turn/state :running
+                   :turn/phase :accepted})
     (try
-      (send! configuration session bot-id text
-             {:on-event on-event :cancelled? #(deref cancelled)})
+      (on-event {:type "phase" :phase "accepted"})
+      (let [emit! (fn [event]
+                    (when (= "phase" (:type event))
+                      ;; A live phase belongs to this process and the stream.
+                      ;; Keep it in memory so a 14 MB application state is not
+                      ;; rewritten for every model/tool boundary. The durable
+                      ;; accepted record is enough to detect a lost process;
+                      ;; the final write records the last observed progress.
+                      (swap! progress merge
+                             (cond-> {:turn/phase (keyword (:phase event))}
+                               (:tool event) (assoc :turn/tool (:tool event)))))
+                    (on-event event))
+            messages (send! configuration session bot-id text
+                            {:on-event emit! :cancelled? #(deref cancelled)})]
+        (record-turn! bot-id run-id
+                      (merge @progress
+                             {:turn/state (if @cancelled :cancelled :completed)
+                              :turn/phase (if @cancelled :cancelled :completed)
+                              :turn/finished-at (store/now)}))
+        messages)
       (catch Exception error
         (if (or @cancelled (= :bot/cancelled (:type (ex-data error))))
           (do
             (clear-run! bot-id)
             (say bot-id "中止しました。" nil)
+            (record-turn! bot-id run-id
+                          (merge @progress
+                                 {:turn/state :cancelled
+                                  :turn/phase :cancelled
+                                  :turn/finished-at (store/now)
+                                  :turn/error-type :bot/cancelled}))
             (public-conversation (identity/session-did session) bot-id))
-          (throw error)))
+          (do
+            (record-turn! bot-id run-id
+                          (merge @progress
+                                 {:turn/state :failed
+                                  :turn/phase :failed
+                                  :turn/finished-at (store/now)
+                                  :turn/error-type (or (:type (ex-data error))
+                                                       :internal-error)}))
+            (throw error))))
       (finally
         ;; Clear the interrupted flag before this pooled HTTP thread is reused.
         (Thread/interrupted)

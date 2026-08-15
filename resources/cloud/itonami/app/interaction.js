@@ -9133,6 +9133,21 @@
     const botsSetStatus = (message) => {
       $('#bots-thread-status-line').textContent = message || '';
     };
+    const botsPhaseText = (phase, tool = null) => ({
+      accepted:'依頼を受け付けました。',
+      model:'モデルの応答を待っています…',
+      'tool-proposed':tool ? `${tool} を確認しています…` : 'ツールを確認しています…',
+      completed:'完了しました。',
+      cancelled:'中止しました。',
+      failed:'実行に失敗しました。',
+      interrupted:'前回の実行はアプリの再起動で中断されました。'
+    }[phase] || '実行しています…');
+    const botsShowLastTurn = (bot) => {
+      const turn = bot?.['last-turn'];
+      if (turn?.state === 'interrupted' || turn?.state === 'failed') {
+        botsSetStatus(botsPhaseText(turn.state, turn.tool));
+      }
+    };
     const renderBotsRail = () => {
       const list = $('#bots-list');
       list.replaceChildren();
@@ -9734,6 +9749,7 @@
         if (!request.ok) throw new Error(data?.error?.message || '会話を読めませんでした。');
         botsState.messages = data.messages || [];
         renderBotsThread();
+        botsShowLastTurn(botsState.bots.find((candidate) => candidate.id === botId));
       } catch (error) { botsSetStatus(error.message); }
     };
     const syncBotsBrowserPermission = () => {
@@ -9871,7 +9887,7 @@
       }
       return request;
     };
-    const readBotsStream = async (request, provisional) => {
+    const readBotsStream = async (request, provisional, onPhase) => {
       const reader = request.body.getReader();
       const decoder = new TextDecoder();
       let buffer = '';
@@ -9886,6 +9902,9 @@
           if (frame.type === 'delta') {
             provisional.textContent += frame.content || '';
             botsSetStatus('応答中…');
+          } else if (frame.type === 'phase') {
+            onPhase(frame);
+            botsSetStatus(botsPhaseText(frame.phase, frame.tool));
           } else if (frame.type === 'done') {
             botsState.messages = frame.messages || [];
           } else if (frame.type === 'error') {
@@ -9903,6 +9922,7 @@
       const botId = botsState.selected;
       const runId = crypto.randomUUID();
       const startedAt = Date.now();
+      const progress = {phase:'accepted', tool:null};
       botsState.runId = runId;
       botsState.controller = new AbortController();
       botsInput.value = '';
@@ -9912,23 +9932,31 @@
       entry.dataset.role = 'bot';
       const provisional = make('div', 'bots-msg__bubble');
       entry.append(provisional);
-      $('#bots-messages').append(entry);
+      const personEntry = make('li', 'bots-msg');
+      personEntry.dataset.role = 'person';
+      personEntry.append(make('div', 'bots-msg__bubble', text));
+      $('#bots-messages').append(personEntry, entry);
       const elapsed = window.setInterval(() => {
         if (provisional.textContent) return;
         const seconds = Math.floor((Date.now() - startedAt) / 1000);
+        const phase = botsPhaseText(progress.phase, progress.tool);
         botsSetStatus(seconds >= 30
-          ? `通常より時間がかかっています… ${seconds}秒`
-          : `考えています… ${seconds}秒`);
+          ? `${phase} 通常より時間がかかっています… ${seconds}秒`
+          : `${phase} ${seconds}秒`);
       }, 1000);
-      botsSetStatus('考えています… 0秒');
+      botsSetStatus(`${botsPhaseText(progress.phase)} 0秒`);
       try {
         const request = await openBotsStream(botId, text, runId, botsState.controller.signal);
-        await readBotsStream(request, provisional);
+        await readBotsStream(request, provisional, (frame) => {
+          progress.phase = frame.phase;
+          progress.tool = frame.tool || null;
+        });
         renderBotsThread();
         botsSetStatus('');
         await loadBots({keepSelection:true});
       } catch (error) {
         botsSetStatus(error.name === 'AbortError' ? '中止しました。' : error.message);
+        await refreshBotsThread().catch(() => {});
       } finally {
         window.clearInterval(elapsed);
         botsState.busy = false;
