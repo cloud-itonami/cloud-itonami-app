@@ -1,0 +1,37 @@
+#!/usr/bin/env nbb
+;; Run the local MCP stdio adapter against the same resident installation as
+;; `bin/itonami`. MCP clients keep this process open and own its stdin/stdout.
+(ns itonami-mcp
+  (:require ["node:child_process" :as child-process]
+            ["node:fs" :as fs]
+            ["node:path" :as path]
+            [nbb.core :refer [*file*]]))
+
+(def app-directory
+  (fs/realpathSync (path/resolve (path/dirname *file*) "..")))
+(def home-directory
+  (some-> (aget js/process.env "HOME") fs/realpathSync))
+(def resident-app-directory
+  (when home-directory (path/resolve home-directory ".cloud-itonami" "app")))
+(def child-environment
+  (js/Object.assign #js {} js/process.env
+                    #js {"CLOUD_ITONAMI_APP_DIR" app-directory}))
+
+(when (and resident-app-directory
+           (= app-directory resident-app-directory)
+           (nil? (aget child-environment "CLOUD_ITONAMI_DATA_DIR")))
+  (aset child-environment "CLOUD_ITONAMI_DATA_DIR"
+        (path/resolve home-directory ".cloud-itonami" "data")))
+
+(def result
+  (child-process/spawnSync
+   "clojure" (into-array ["-M:mcp"])
+   #js {:cwd app-directory :stdio "inherit" :env child-environment}))
+
+(when-let [error (.-error result)]
+  (binding [*print-fn* *print-err-fn*]
+    (println (str "itonami-mcp: clojure を実行できませんでした: "
+                  (.-message error))))
+  (set! (.-exitCode js/process) 127))
+
+(set! (.-exitCode js/process) (or (.-status result) 0))

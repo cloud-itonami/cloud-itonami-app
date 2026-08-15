@@ -226,6 +226,12 @@ bin/itonami workspace drive documents rename --document doc-1 --title "New"
 bin/itonami esign envelopes show env-1          # positional path parameters work too
 ```
 
+For a local MCP client, configure the stdio command as `bin/itonami-mcp`.
+When these launchers live in `~/.cloud-itonami/app`, both default to the
+resident store at `~/.cloud-itonami/data`; an explicit
+`CLOUD_ITONAMI_DATA_DIR` still wins. One `itonami auth login` therefore binds
+both CLI and MCP to the same Keychain session and enrollment root.
+
 The commands are generated from the routes `server.clj` serves, not written by
 hand — `commands-test` re-derives them and fails if the checked-in registry has
 fallen behind, so `itonami commands` reports real coverage rather than a claim.
