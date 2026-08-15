@@ -5101,7 +5101,8 @@
       (let [bot-id (bot-id-from path #"/api/bots/([^/]+)/messages")]
         (send! exchange 200
                {:messages (bots/messages session bot-id)
-                :turn (bots/latest-turn session bot-id)}))
+                :turn (bots/latest-turn session bot-id)
+                :handoffs (bots/handoff-runs session bot-id)}))
 
       (and (= method "GET")
            (bot-id-from path #"/api/bots/([^/]+)/mailbox"))
@@ -5312,7 +5313,8 @@
       (let [bot-id (bot-id-from path #"/api/agent-bots/([^/]+)/messages")]
         (send! exchange 200
                {:messages (bots/messages session bot-id)
-                :turn (bots/latest-turn session bot-id)}))
+                :turn (bots/latest-turn session bot-id)
+                :handoffs (bots/handoff-runs session bot-id)}))
 
       (and (= method "POST")
            (bot-id-from path #"/api/agent-bots/([^/]+)/messages"))
@@ -5321,6 +5323,16 @@
         (require-origin! exchange config)
         (require-csrf! exchange session)
         (send! exchange 200 {:messages (bots/send! config session bot-id (:text body))}))
+
+      (and (= method "POST")
+           (bot-id-from path #"/api/agent-bots/([^/]+)/handoff"))
+      (let [from-bot-id (bot-id-from path #"/api/agent-bots/([^/]+)/handoff")
+            body (read-json exchange)]
+        (require-origin! exchange config)
+        (require-csrf! exchange session)
+        (send! exchange 200
+               (bots/hand-off! config session from-bot-id (:to body)
+                               {:task (:task body) :depth (:depth body)})))
 
       (and (= method "POST")
            (bot-id-from path #"/api/agent-bots/([^/]+)/cards/[^/]+/decide"))
@@ -5361,6 +5373,7 @@
                      :bot/not-found 404
                      :bot/disabled 409
                      :bot/not-held 409
+                     :handoff/refused 409
                      400)
                    {:error {:type (name (or (:type (ex-data error)) :bot/error))
                             :message (.getMessage error)}}))

@@ -199,10 +199,16 @@
                 tenant-tools/available? (constantly false)
                 payment-tools/available? (constantly false)]
     (let [names (set (map :name (mcp/published-tools disabled)))]
-      (is (= #{"bots_list" "bot_messages" "bot_task" "bot_decide" "bot_cancel"}
+      (is (= #{"bots_list" "bot_messages" "bot_task" "bot_handoff"
+               "bot_decide" "bot_cancel"}
              (set (filter #(or (= "bots_list" %) (str/starts-with? % "bot_"))
                           names))))))
   (with-redefs [bot-tools/call-tool
-                (fn [_ name input] {:tool name :bot (:bot_id input)})]
+                (fn [_ name input]
+                  {:tool name :bot (or (:bot_id input) (:from_bot_id input))})]
     (is (= {:tool "bot_task" :bot "bot-1"}
-           (mcp/invoke {} "bot_task" {"bot_id" "bot-1" "text" "test"})))))
+           (mcp/invoke {} "bot_task" {"bot_id" "bot-1" "text" "test"})))
+    (is (= {:tool "bot_handoff" :bot "bot-a"}
+           (mcp/invoke {} "bot_handoff"
+                       {"from_bot_id" "bot-a" "to_bot_id" "bot-b"
+                        "task" "verify"})))))

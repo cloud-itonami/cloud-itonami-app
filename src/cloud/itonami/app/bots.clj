@@ -100,6 +100,11 @@
   "Host-owned ledger hook. Model text cannot write receipts directly."
   nil)
 
+(def ^:dynamic *context-id* nil)
+(def ^:dynamic *message-source* :bot)
+(def ^:dynamic *handoff-id* nil)
+(def ^:dynamic *from-bot* nil)
+
 (def max-turns 8)
 (def max-tool-calls 12)
 (def max-goal-turns 24)
@@ -110,6 +115,8 @@
 (def max-trace 60)
 (def max-routines 40)
 (def max-turn-history 40)
+(def max-contexts 120)
+(def max-context-messages 40)
 
 (def goal-tool-definitions
   [{:name "goal_plan"
@@ -664,11 +671,55 @@
                (vec (take-last max-conversation (conj (vec messages) message)))))
   message)
 
+(defn- context-message
+  "The only durable message fields admitted to a model context envelope.
+
+  Cards may contain effect descriptions and account choices, and tool results
+  live only in the resumable run. Neither belongs in ambient conversation
+  context. Keeping this projection explicit prevents a future message field
+  from silently becoming provider input."
+  [message]
+  (select-keys message [:message/id :message/role :message/text :message/at
+                        :message/direction :message/source :message/handoff-id
+                        :message/from-bot]))
+
+(defn- store-context!
+  [context-id b direction source messages attrs]
+  (let [context (merge
+                 {:context/id context-id
+                  :context/bot (:bot/id b)
+                  :context/direction (long (or direction 0))
+                  :context/source source
+                  :context/messages (mapv context-message
+                                          (take-last max-context-messages messages))
+                  :context/classification
+                  {:messages :owner-private
+                   :workspace :local-path
+                   :credentials :excluded
+                   :tool-results :excluded}
+                  :context/created-at (store/now)}
+                 attrs)]
+    (transact!
+     (fn [partition]
+       (let [contexts (assoc (or (:contexts partition) {}) context-id context)
+             keep (->> contexts vals
+                       (sort-by :context/created-at)
+                       (take-last max-contexts)
+                       (map (juxt :context/id identity))
+                       (into {}))]
+         (assoc partition :contexts keep))))
+    context))
+
 (defn- say
   "One Bot turn, appended."
   [bot-id text cards]
   (append! bot-id (bot/message {:id (new-id "msg") :bot bot-id :role :bot
-                                :text text :cards cards :at (store/now)})))
+                                :text text :cards cards :at (store/now)
+                                :direction (direction bot-id)
+                                :context-id *context-id*
+                                :source *message-source*
+                                :handoff-id *handoff-id*
+                                :from-bot *from-bot*})))
 
 ;; ── what the Bot is waiting for ─────────────────────────────────────────
 
@@ -906,11 +957,21 @@
   ([m] (public-message m #{} nil))
   ([m providers] (public-message m providers nil))
   ([m providers bot-id]
-   {:id (:message/id m)
-    :role (name (:message/role m))
-    :text (:message/text m)
-    :at (:message/at m)
-    :cards (mapv #(public-card % providers bot-id) (:message/cards m))}))
+   (cond-> {:id (:message/id m)
+            :role (name (:message/role m))
+            :text (:message/text m)
+            :at (:message/at m)
+            :cards (mapv #(public-card % providers bot-id) (:message/cards m))}
+     (some? (:message/direction m))
+     (assoc :direction (:message/direction m))
+     (:message/context-id m)
+     (assoc :context-id (:message/context-id m))
+     (:message/source m)
+     (assoc :source (name (:message/source m)))
+     (:message/handoff-id m)
+     (assoc :handoff-id (:message/handoff-id m))
+     (:message/from-bot m)
+     (assoc :from-bot (:message/from-bot m)))))
 
 (defn- public-conversation
   "One Bot's conversation, as the client should see it now. Every route that
@@ -964,6 +1025,19 @@
 (defn messages [session bot-id]
   (owned! session bot-id)
   (public-conversation (identity/session-did session) bot-id))
+
+(declare public-handoff-run)
+
+(defn handoff-runs
+  "The bounded exchanges this Bot sent or received, newest last."
+  [session bot-id]
+  (owned! session bot-id)
+  (->> (vals (:handoff-runs (snapshot)))
+       (filter #(or (= bot-id (:handoff.run/from %))
+                    (= bot-id (:handoff.run/to %))))
+       (sort-by :handoff.run/started-at)
+       (take-last max-turn-history)
+       (mapv public-handoff-run)))
 
 ;; ── the loop ────────────────────────────────────────────────────────────
 
@@ -1231,6 +1305,21 @@
                     {:turn/state :running :turn/phase :resuming
                      :turn/goal? true :turn/objective (:job/objective job)})
       (when configuration (enqueue-goal! configuration run-id)))
+    ;; A handoff has two provider turns but no replayable external lease. If
+    ;; the process dies between them, keep the transcript and close the run
+    ;; truthfully; replaying could duplicate tools executed by either Bot.
+    (transact!
+     update :handoff-runs
+     (fn [runs]
+       (into {}
+             (for [[run-id run] (or runs {})]
+               [run-id
+                (if (= :running (:handoff.run/state run))
+                  (assoc run :handoff.run/state :interrupted
+                         :handoff.run/error-type :server-restarted
+                         :handoff.run/updated-at at
+                         :handoff.run/finished-at at)
+                  run)]))))
     nil)))
 
 (defn- public-turn [turn]
@@ -1258,6 +1347,7 @@
      :result (:turn/result turn)
      :evidence (:turn/evidence turn)
      :direction (:turn/direction turn)
+     :context-id (:turn/context-id turn)
      :started-at (:turn/started-at turn)
      :updated-at (:turn/updated-at turn)
      :finished-at (:turn/finished-at turn)
@@ -1321,6 +1411,7 @@
     (on-finish
      (merge {:turn/state state
              :turn/phase state
+             :turn/context-id (:context-id run)
              :turn/turn-count (:turn-count run 0)
              :turn/tool-count (:tool-count run 0)
              :turn/provider (:provider run)
@@ -1854,9 +1945,17 @@
     ;; is superseded by the fact of this one existing; nothing is rewritten,
     ;; because the person did not decide anything, they moved on.
     (transact! update-in [:directions bot-id] (fnil inc 0))
-    (append! bot-id (bot/message {:id (new-id "msg") :bot bot-id :role :person
-                                  :text text :at (store/now)}))
-    (let [did (identity/session-did session)
+    (let [current-direction (direction bot-id)
+          context-id (new-id "context")
+          person-message
+          (bot/message {:id (new-id "msg") :bot bot-id :role :person
+                        :text text :at (store/now)
+                        :direction current-direction
+                        :context-id context-id :source :person})
+          _ (append! bot-id person-message)
+          context (store-context! context-id b current-direction :person
+                                  (conversation bot-id) {})
+          did (identity/session-did session)
           admission (turn-admission configuration b did goal?)]
       ;; The turn is taken. An unauthorized connector is no longer a reason to
       ;; refuse the message: it used to be, and the cost was a Bot that
@@ -1866,27 +1965,30 @@
       ;; around a service nobody authorized — is kept, one step later and where
       ;; it is true: `advance!` stops at the CALL, before the tool is reached,
       ;; and the card arrives then.
-      (try
-        (if (empty? (:tools admission))
-          (say bot-id
-               "使えるツールがひとつもありません。Settings で有効にするか、この Bot の権限を見直してください。"
-               nil)
-          (advance! configuration b
-                    (merge admission
-                           {:id (or (:run-id advance-options) (new-id "run"))
-                            :goal? goal?
-                            :objective (when goal? text)
-                            :messages (transcript configuration b
-                                                  (conversation bot-id)
-                                                  (when goal? text))
-                            :turn-count 0
-                            :tool-count 0
-                            :usage nil})
-                    advance-options))
-        (catch Exception error
-          (when-let [message (visible-failure-message error)]
-            (say bot-id message nil))
-          (throw error)))
+      (binding [*context-id* context-id
+                *message-source* :bot]
+        (try
+          (if (empty? (:tools admission))
+            (say bot-id
+                 "使えるツールがひとつもありません。Settings で有効にするか、この Bot の権限を見直してください。"
+                 nil)
+            (advance! configuration b
+                      (merge admission
+                             {:id (or (:run-id advance-options) (new-id "run"))
+                              :context-id context-id
+                              :goal? goal?
+                              :objective (when goal? text)
+                              :messages (transcript configuration b
+                                                    (:context/messages context)
+                                                    (when goal? text))
+                              :turn-count 0
+                              :tool-count 0
+                              :usage nil})
+                      advance-options))
+          (catch Exception error
+            (when-let [message (visible-failure-message error)]
+              (say bot-id message nil))
+            (throw error))))
       (public-conversation did bot-id)))))
 
 (defn send-stream!
@@ -1986,7 +2088,8 @@
       (let [did (identity/session-did session)
             admission (turn-admission configuration b did true)
             run (merge saved admission)
-            messages (do
+            messages (binding [*context-id* (:context-id run)
+                               *message-source* :bot]
                        (advance! configuration b run
                                  {:cancelled? #(deref cancelled)
                                   :on-finish #(reset! outcome %)})
@@ -2548,15 +2651,42 @@
 
 ;; ── handoff ─────────────────────────────────────────────────────────────
 
+(defn- public-handoff-run [run]
+  (when run
+    {:id (:handoff.run/id run)
+     :handoff-id (:handoff.run/handoff run)
+     :from (:handoff.run/from run)
+     :to (:handoff.run/to run)
+     :state (name (:handoff.run/state run))
+     :rounds (:handoff.run/rounds run)
+     :target-context-id (:handoff.run/target-context run)
+     :source-context-id (:handoff.run/source-context run)
+     :started-at (:handoff.run/started-at run)
+     :updated-at (:handoff.run/updated-at run)
+     :finished-at (:handoff.run/finished-at run)
+     :error-type (some-> (:handoff.run/error-type run) name)}))
+
+(defn- update-handoff-run! [run-id f & args]
+  (apply transact! update-in [:handoff-runs run-id] f args)
+  (get-in (snapshot) [:handoff-runs run-id]))
+
 (defn hand-off!
-  "One Bot giving work to another.
+  "One bounded two-way conversation between two Bots.
 
   What crosses is a message and its provenance. What does not cross is any
   part of the sender's grant: `handoff/->request` has no field for it, and the
   target runs the task through `advance!` with ITS OWN tools — the same call
   `send!` makes when a person types. A Bot that could reach a connector by
   asking a Bot that holds it would make every per-Bot grant advisory, and this
-  is the one place that could have been arranged."
+  is the one place that could have been arranged.
+
+  The target answers in an isolated context containing only the attributed
+  task, never its ambient conversation. That result is then delivered to the
+  source in a second isolated context and the source gets one synthesis turn.
+  Two rounds are enough to make a handoff a conversation rather than a
+  fire-and-forget message, while remaining finite without trusting model prose
+  to decide whether an agent loop should stop. The run and both context ids are
+  durable before the caller receives the response."
   [configuration session from-bot-id to-bot-id {:keys [task depth]}]
   (let [source (owned! session from-bot-id)
         target (owned! session to-bot-id)
@@ -2579,26 +2709,97 @@
                               :to to-bot-id
                               :task task
                               :depth (handoff/next-depth source target context)
-                              :at (store/now)})]
+                              :at (store/now)})
+          handoff-id (:handoff/id h)
+          run-id (new-id "handoff-run")
+          target-context-id (new-id "context")
+          target-direction (direction to-bot-id)
+          target-message
+          (bot/message {:id (new-id "msg") :bot to-bot-id :role :person
+                        :text (str (:bot/name source) " からの引き継ぎ: "
+                                   (:handoff/task h))
+                        :at (store/now) :direction target-direction
+                        :context-id target-context-id :source :handoff
+                        :handoff-id handoff-id :from-bot from-bot-id})
+          started-at (store/now)]
       (transact! update-in [:handoffs to-bot-id]
                  (fn [entries] (vec (take-last max-trace (conj (vec entries) h)))))
-      ;; Written into the TARGET's conversation, attributed. A message that
-      ;; appeared without saying which Bot put it there is one the person
-      ;; cannot audit.
-      (append! to-bot-id
-               (bot/message {:id (new-id "msg") :bot to-bot-id :role :person
-                             :text (str (:bot/name source) " からの引き継ぎ: "
-                                        (:handoff/task h))
-                             :at (store/now)}))
-      (advance! configuration target
-                (merge (turn-admission configuration target did)
-                       {:id (new-id "run")
-                        :messages (transcript configuration target
-                                              (conversation to-bot-id))
-                        :turn-count 0
-                        :tool-count 0}))
-      {:handoff (unqualify h)
-       :messages (public-conversation did to-bot-id)})))
+      (transact! assoc-in [:handoff-runs run-id]
+                 {:handoff.run/id run-id :handoff.run/handoff handoff-id
+                  :handoff.run/from from-bot-id :handoff.run/to to-bot-id
+                  :handoff.run/state :running :handoff.run/rounds 0
+                  :handoff.run/target-context target-context-id
+                  :handoff.run/started-at started-at
+                  :handoff.run/updated-at started-at})
+      (append! to-bot-id target-message)
+      (let [target-context
+            (store-context! target-context-id target target-direction :handoff
+                            [target-message]
+                            {:context/handoff-id handoff-id
+                             :context/from-bot from-bot-id})]
+        (try
+          (binding [*context-id* target-context-id
+                    *message-source* :handoff
+                    *handoff-id* handoff-id
+                    *from-bot* from-bot-id]
+            (advance! configuration target
+                      (merge (turn-admission configuration target did)
+                             {:id (new-id "run") :context-id target-context-id
+                              :messages (transcript configuration target
+                                                    (:context/messages target-context))
+                              :turn-count 0 :tool-count 0})))
+          (update-handoff-run! run-id assoc
+                               :handoff.run/rounds 1
+                               :handoff.run/updated-at (store/now))
+          (let [target-result (last (conversation to-bot-id))
+                source-context-id (new-id "context")
+                source-direction (direction from-bot-id)
+                source-message
+                (bot/message
+                 {:id (new-id "msg") :bot from-bot-id :role :person
+                  :text (str (:bot/name target) " からの応答: "
+                             (:message/text target-result))
+                  :at (store/now) :direction source-direction
+                  :context-id source-context-id :source :handoff
+                  :handoff-id handoff-id :from-bot to-bot-id})
+                _ (append! from-bot-id source-message)
+                source-context
+                (store-context! source-context-id source source-direction :handoff
+                                [source-message]
+                                {:context/handoff-id handoff-id
+                                 :context/from-bot to-bot-id})]
+            (update-handoff-run! run-id assoc
+                                 :handoff.run/source-context source-context-id
+                                 :handoff.run/updated-at (store/now))
+            (binding [*context-id* source-context-id
+                      *message-source* :handoff
+                      *handoff-id* handoff-id
+                      *from-bot* to-bot-id]
+              (advance! configuration source
+                        (merge (turn-admission configuration source did)
+                               {:id (new-id "run") :context-id source-context-id
+                                :messages (transcript configuration source
+                                                      (:context/messages source-context))
+                                :turn-count 0 :tool-count 0})))
+            (let [finished-at (store/now)
+                  run (update-handoff-run! run-id assoc
+                                           :handoff.run/state :completed
+                                           :handoff.run/rounds 2
+                                           :handoff.run/updated-at finished-at
+                                           :handoff.run/finished-at finished-at)]
+              {:handoff (unqualify h)
+               :run (public-handoff-run run)
+               :messages (public-conversation did to-bot-id)
+               :source-messages (public-conversation did from-bot-id)}))
+          (catch Exception error
+            (let [finished-at (store/now)]
+              (update-handoff-run! run-id assoc
+                                   :handoff.run/state :failed
+                                   :handoff.run/updated-at finished-at
+                                   :handoff.run/finished-at finished-at
+                                   :handoff.run/error-type
+                                   (or (:type (ex-data error)) :internal-error)))
+            (throw error)))))))
 
 ;; ── the tick ────────────────────────────────────────────────────────────
 ;;

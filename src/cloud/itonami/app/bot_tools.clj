@@ -15,6 +15,12 @@
    {:name "bot_task" :description "Submit one task to an owned Bot and wait for its bounded result. Omakase writes execute with receipts."
     :parameters {:type "object" :required ["bot_id" "text"]
                  :properties {:bot_id {:type "string"} :text {:type "string"}}}}
+   {:name "bot_handoff" :description "Run one bounded, durable two-way handoff between two owned Bots. Each Bot keeps its own grants and isolated context."
+    :parameters {:type "object" :required ["from_bot_id" "to_bot_id" "task"]
+                 :properties {:from_bot_id {:type "string"}
+                              :to_bot_id {:type "string"}
+                              :task {:type "string"}
+                              :depth {:type "integer"}}}}
    {:name "bot_decide" :description "Approve or reject a held write. Agent sessions are accepted only when that Bot's human-enabled omakase mode is on."
     :parameters {:type "object" :required ["bot_id" "card_id" "decision"]
                  :properties {:bot_id {:type "string"} :card_id {:type "string"}
@@ -27,7 +33,8 @@
 (defn tool? [name] (contains? tool-names name))
 (defn available? [configuration] (client/available? configuration))
 
-(defn call-tool [configuration name {:keys [bot_id text card_id decision run_id]}]
+(defn call-tool [configuration name {:keys [bot_id text card_id decision run_id
+                                             from_bot_id to_bot_id task depth]}]
   (case name
     "bots_list" (client/request! configuration :get "/api/agent-bots")
     "bot_messages" (client/request! configuration :get
@@ -35,6 +42,10 @@
     "bot_task" (client/request-with-timeout!
                  configuration :post (str "/api/agent-bots/" bot_id "/messages") 660
                  {:text text})
+    "bot_handoff" (client/request-with-timeout!
+                    configuration :post
+                    (str "/api/agent-bots/" from_bot_id "/handoff") 660
+                    {:to to_bot_id :task task :depth depth})
     "bot_decide" (client/request-with-timeout!
                    configuration :post
                    (str "/api/agent-bots/" bot_id "/cards/" card_id "/decide") 660

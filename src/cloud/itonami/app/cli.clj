@@ -467,6 +467,14 @@
    (str "/api/agent-bots/" (required-flag flags :id) "/messages") 660
    {:text (required-flag flags :text)}))
 
+(defn bot-handoff [configuration flags]
+  (client/request-with-timeout!
+   configuration :post
+   (str "/api/agent-bots/" (required-flag flags :from) "/handoff") 660
+   {:to (required-flag flags :to)
+    :task (required-flag flags :task)
+    :depth (some-> (get flags :depth) parse-long)}))
+
 (defn bot-decide [configuration flags]
   (client/request-with-timeout!
    configuration :post
@@ -508,6 +516,7 @@
        "  bots list\n"
        "  bots messages --id <bot-id>\n"
        "  bots task --id <bot-id> --text <依頼>\n"
+       "  bots handoff --from <bot-id> --to <bot-id> --task <依頼> [--depth N]\n"
        "  bots decide --id <bot-id> --card <card-id> --decision approved|rejected\n"
        "  bots cancel --id <bot-id> --run <run-id>\n\n"
        "Bot設定と通常モードの承認はブラウザ専用です。CLI承認はおまかせBotだけです。\n"))
@@ -539,6 +548,7 @@
       ["bots" "list"] (bot-list configuration)
       ["bots" "messages"] (bot-messages configuration flags)
       ["bots" "task"] (bot-task configuration flags)
+      ["bots" "handoff"] (bot-handoff configuration flags)
       ["bots" "decide"] (bot-decide configuration flags)
       ["bots" "cancel"] (bot-cancel configuration flags)
       (if-let [resolved (commands/resolve-command named)]

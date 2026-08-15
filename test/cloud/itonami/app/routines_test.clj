@@ -246,6 +246,74 @@
         (testing "the chain position is recorded so the ceiling can be reached"
           (is (= 1 (:depth (:handoff result)))))))))
 
+(deftest a-handoff-is-an-isolated-two-way-durable-conversation
+  ;; The target may have an unrelated private history. A handoff gets a fresh
+  ;; context envelope, then its result comes back to the source for one bounded
+  ;; synthesis turn. Neither property follows from merely appending a message
+  ;; to the target conversation.
+  (with-store
+    (fn []
+      (let [source (make-bot alice {:name "研究"})
+            target (make-bot alice {:name "検証"})
+            requests (atom [])]
+        (with-redefs [policy/select-provider (fn [_ _] {:id :test :local? true})
+                      provider/agent-turn
+                      (fn [_ request]
+                        (swap! requests conj request)
+                        {:content (if (= 1 (count @requests))
+                                    "検証結果です"
+                                    "検証結果を受け取り、結論をまとめました")
+                         :tool-calls []})]
+          ;; Pre-existing target history must not enter the delegated context.
+          (bots/send! nil alice (:bot/id target) "TARGET-PRIVATE-HISTORY")
+          (reset! requests [])
+          (let [result (bots/hand-off! nil alice (:bot/id source) (:bot/id target)
+                                       {:task "この仮説を検証して"})
+                target-request (first @requests)
+                source-request (second @requests)
+                source-messages (bots/messages alice (:bot/id source))
+                target-messages (bots/messages alice (:bot/id target))]
+            (testing "the target gets only the attributed handoff envelope"
+              (is (not-any? #(str/includes? (str (:content %)) "TARGET-PRIVATE-HISTORY")
+                            (:messages target-request)))
+              (is (some #(str/includes? (str (:content %)) "この仮説を検証して")
+                        (:messages target-request))))
+            (testing "the target result returns to the source and the source continues"
+              (is (= 2 (count @requests)))
+              (is (some #(str/includes? (str (:content %)) "検証結果です")
+                        (:messages source-request)))
+              (is (= "検証結果を受け取り、結論をまとめました"
+                     (:text (last source-messages)))))
+            (testing "both transcripts expose one durable, attributable handoff"
+              (is (= "completed" (get-in result [:run :state])))
+              (is (= 2 (get-in result [:run :rounds])))
+              (is (= [(:run result)]
+                     (bots/handoff-runs alice (:bot/id source))))
+              (is (every? :context-id
+                          (filter #(= "handoff" (:source %))
+                                  (concat source-messages target-messages))))
+              (is (= #{(:id (:handoff result))}
+                     (set (keep :handoff-id
+                                (filter #(= "handoff" (:source %))
+                                        (concat source-messages target-messages)))))))))))))
+
+(deftest restart-closes-an-in-flight-handoff-without-replaying-it
+  (with-store
+    (fn []
+      (store/transact!
+       (fn [state]
+         (assoc-in state [:bots :handoff-runs "handoff-run-1"]
+                   {:handoff.run/id "handoff-run-1"
+                    :handoff.run/state :running
+                    :handoff.run/rounds 1
+                    :handoff.run/started-at "2026-08-15T00:00:00Z"})))
+      (bots/recover-interrupted!)
+      (let [run (get-in @store/state [:bots :handoff-runs "handoff-run-1"])]
+        (is (= :interrupted (:handoff.run/state run)))
+        (is (= :server-restarted (:handoff.run/error-type run)))
+        (is (= 1 (:handoff.run/rounds run))
+            "recovery records the observed round and never replays a Bot")))))
+
 (deftest an-empty-handoff-is-refused
   (with-store
     (fn []
