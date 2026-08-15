@@ -8,6 +8,9 @@
   "observability": {
     "enabled": true
   },
+  "vars": {
+    "CLOUDFLARE_ZONE_ID": "4ea304cb1d465cb9ba7ea89d8a0d6750"
+  },
   "routes": [
     {
       "pattern": "hooks.itonami.cloud",

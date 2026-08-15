@@ -37,7 +37,8 @@ the reason this is worth a decision record rather than a screen:
 ## Decision
 
 A **Bot** is a durable record — id, tenant, owner, name, avatar, standing
-brief, a tool grant, an account binding, two permissions — and nothing else.
+brief, a tool grant, an account binding, an immutable mailbox address, two
+permissions — and nothing else.
 It is an identity placed over the capabilities above, and the design work is
 making sure that is all it is.
 
@@ -136,6 +137,9 @@ with no API at all, which is what connectors structurally cannot cover.
 - The Bots view is two panes inside the existing single-page shell, and the
   onboarding grid is derived from the registry, so it lists what this build can
   actually offer rather than a picture of an integrations page.
+- The immutable Bot ID now also names its RFC mailbox. Delivery and Resend
+  sending are an address over the Bot's existing bound account, not a second
+  credential or a capability granted by its display name (ADR-0051).
 - `bot_core.kotoba` is the sixth shipped decision core and is native
   word-typed qualified. `kotoba-oracle-test` already gates every declared core
   against a fresh compile, so it needed no new drift test.

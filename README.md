@@ -513,6 +513,9 @@ POST   /api/mail/accounts/{id}/sync    one mailbox, now
 POST   /api/mail/send                  {:account-id :to :cc :subject :text}
 GET    /api/mail-sync                  what each mailbox last did
 POST   /api/mail-sync/sync             all of them
+GET    /api/bots/{id}/mailbox          one Bot's received/sent projection
+POST   /api/bots/{id}/mailbox/provision bind its address to one owned mailbox
+POST   /api/bots/{id}/mailbox/send     send as that registered Bot via Resend
 ```
 
 Sync is **off unless asked for** (`:mail-sync :enabled?`) — a workspace that
@@ -624,6 +627,12 @@ of the connectors you picked and nothing else.
 - **Accounts, not providers.** If you have two Google accounts, the Bot asks
   which one before it acts rather than picking. Name them from the connection
   card; add another with `＋ 別のアカウントを追加`.
+- **Each Bot has a mailbox.** Its immutable ID becomes
+  `<bot-id>@mail.itonami.cloud`; renaming the Bot does not rename the address.
+  Cloudflare Email Routing forwards inbound mail to one bound account, the
+  existing local sync persists it, and the Bot mailbox selects only mail whose
+  original `To` names that address. Outbound mail uses Resend and refuses an
+  arbitrary `From`; see [ADR-0051](docs/adr/0051-a-bot-mailbox-is-an-address-over-a-bound-account.md).
 - **The authorization is asked for when it is needed.** A Bot whose Gmail has
   never been authorized still holds an ordinary conversation; the connection
   card arrives on the turn the Bot reaches for a Gmail tool, naming the

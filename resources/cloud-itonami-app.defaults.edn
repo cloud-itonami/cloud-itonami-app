@@ -194,7 +194,8 @@
  ;; acts only for a person whose session is live, and only on routines they
  ;; explicitly gave a schedule. With no scheduled routine it is a store read
  ;; that finds nothing. Set `:enabled? false` to stop it looking at all.
- :bots {:tick {:enabled? true :interval-seconds 60}}
+ :bots {:mail-domain "mail.itonami.cloud"
+        :tick {:enabled? true :interval-seconds 60}}
  :chronicle {:interval-seconds 60
              ;; Every switch is still opt-in per user. This is only the cadence
              ;; used after screen context has explicitly been enabled.
