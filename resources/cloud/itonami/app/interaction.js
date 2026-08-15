@@ -9116,9 +9116,12 @@
       draft:{color:'blue', glyph:'circle'}, loaded:false, busy:false,
       browserAvailable:false, controller:null, runId:null, shellBusy:false
     };
-    const botAvatar = (node, avatar) => {
+    const botAvatar = (node, avatar, status = null) => {
       node.dataset.color = avatar?.color || 'blue';
       node.dataset.glyph = avatar?.glyph || 'circle';
+      if (status) node.dataset.status = status;
+      else delete node.dataset.status;
+      node.setAttribute('aria-hidden', 'true');
       return node;
     };
     const botsStatusText = {
@@ -9137,7 +9140,7 @@
         const item = make('button', 'bots-rail__item');
         item.type = 'button';
         item.setAttribute('aria-current', String(bot.id === botsState.selected));
-        const avatar = botAvatar(make('span', 'bot-avatar'), bot.avatar);
+        const avatar = botAvatar(make('span', 'bot-avatar'), bot.avatar, bot.status);
         const copy = make('div', 'bots-rail__copy');
         copy.append(make('span', 'bots-rail__name', bot.name),
                     make('span', 'bots-rail__last',
@@ -9481,7 +9484,7 @@
       const holder = $('#bots-messages');
       holder.replaceChildren();
       if (!bot) return;
-      botAvatar($('#bots-titlebar-avatar'), bot.avatar);
+      botAvatar($('#bots-titlebar-avatar'), bot.avatar, bot.status);
       $('#bots-titlebar-name').textContent = bot.name;
       $('#bots-titlebar-status').textContent = botsStatusText[bot.status] || bot.status;
       $('#bots-titlebar-identity').hidden = false;

@@ -110,6 +110,16 @@
     (is (str/includes? js "'coding?':$('#bots-coding').checked"))
     (is (str/includes? js "workspace:$('#bots-workspace').value.trim()"))))
 
+(deftest bots-pass-server-status-to-decorative-living-faces
+  (let [js (slurp (io/file "resources/cloud/itonami/app/interaction.js"))]
+    (is (str/includes? js "const botAvatar = (node, avatar, status = null) =>"))
+    (is (str/includes? js "node.dataset.status = status"))
+    (is (str/includes? js "node.setAttribute('aria-hidden', 'true')"))
+    (is (str/includes? js
+                       "botAvatar(make('span', 'bot-avatar'), bot.avatar, bot.status)"))
+    (is (str/includes? js
+                       "botAvatar($('#bots-titlebar-avatar'), bot.avatar, bot.status)"))))
+
 (deftest bots-expose-one-approved-virtual-shell-per-bot
   (let [html (with-redefs [store/snapshot (constantly (store/initial-state))]
                (web/page-html config))
