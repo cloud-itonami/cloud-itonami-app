@@ -107,6 +107,12 @@
       (doseq [k [:server :privacy :providers :authorities :identity :credentials]]
         (is (contains? c k) (str "missing " k))))))
 
+(deftest murakumo-agent-output-fits-the-non-streaming-client-bound
+  (let [provider (some #(when (= "murakumo" (:id %)) %)
+                       (:providers (config/load-config)))]
+    (is (= 512 (:max-output-tokens provider)))
+    (is (= "murakumo-main" (:default-model provider)))))
+
 ;; ---------------------------------------------------------------------------
 ;; secrets are read from the environment, never held in config
 ;; ---------------------------------------------------------------------------

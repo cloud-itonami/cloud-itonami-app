@@ -96,6 +96,11 @@
    ;; refusal is why it was found the same day.
    :base-url "https://api.murakumo.cloud/v1"
    :default-model "murakumo-main"
+   ;; The current Qwen3.8 fleet decodes around 10 tok/s. A non-streaming
+   ;; 2048-token agent turn can therefore exceed this client's 120 s HTTP
+   ;; bound even while the service is healthy. 512 leaves room for a concise
+   ;; role/tool decision and measured at 24 s on the live endpoint.
+   :max-output-tokens 512
    :api-key-env "MURAKUMO_API_KEY"
    :local? false
    ;; Shipped off and unreviewed. The distribution is tenant-neutral: it cannot
