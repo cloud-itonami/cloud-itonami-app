@@ -97,16 +97,20 @@
            (.indexOf load-bots "await selectBot(botsState.bots[0].id);"))
         "provider readiness renders before the initial selection fast path")))
 
-(deftest bots-expose-bounded-local-coding-and-cancellable-progress
+(deftest bots-expose-bounded-local-coding-and-cancellable-goal-progress
   (let [html (with-redefs [store/snapshot (constantly (store/initial-state))]
                (web/page-html config))
         js (slurp (io/file "resources/cloud/itonami/app/interaction.js"))]
-    (doseq [id ["bots-coding" "bots-workspace" "bots-cancel"]]
+    (doseq [id ["bots-coding" "bots-workspace" "bots-cancel"
+                "bots-goal" "bots-run"]]
       (is (str/includes? html (str "id=\"" id "\"")) id))
     (is (str/includes? html "ファイル変更と commit は毎回承認"))
     (is (str/includes? js "messages/stream"))
     (is (str/includes? js "messages/${encodeURIComponent(runId)}/cancel"))
     (is (str/includes? js "通常より時間がかかっています…"))
+    (is (str/includes? js "'goal?':goal"))
+    (is (str/includes? js "provider の請求額が未提供のため未算出"))
+    (is (str/includes? js "renderBotsRun(botsState.latestTurn)"))
     (is (str/includes? js "frame.type === 'phase'"))
     (is (str/includes? js "progress.phase = frame.phase"))
     (is (str/includes? js "前回の実行はアプリの再起動で中断されました。"))

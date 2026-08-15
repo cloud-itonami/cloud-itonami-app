@@ -83,12 +83,30 @@
 
 (def max-turns 8)
 (def max-tool-calls 12)
+(def max-goal-turns 24)
+(def max-goal-tool-calls 32)
 (def max-message-chars 8000)
 (def max-conversation 200)
 (def max-tool-output-chars 6000)
 (def max-trace 60)
 (def max-routines 40)
 (def max-turn-history 40)
+
+(def goal-tool-definitions
+  [{:name "goal_complete"
+    :description "Finish the active goal only after the requested outcome has been verified."
+    :parameters {:type "object"
+                 :properties {:summary {:type "string"}
+                              :evidence {:type "array" :items {:type "string"}}}
+                 :required ["summary" "evidence"]}}
+   {:name "goal_blocked"
+    :description "Stop the active goal only when a concrete external prerequisite prevents further progress."
+    :parameters {:type "object"
+                 :properties {:reason {:type "string"}
+                              :needed {:type "string"}}
+                 :required ["reason" "needed"]}}])
+
+(def ^:private goal-tool-names (into #{} (map :name) goal-tool-definitions))
 
 (defn mailbox-address
   "The stable RFC mailbox for a Bot. The id is immutable, unlike its name."
@@ -937,7 +955,7 @@
       (str (subs text 0 max-tool-output-chars) "…")
       text)))
 
-(defn- system-prompt [b configuration]
+(defn- system-prompt [b configuration goal]
   (str "You are " (:bot/name b) ", a bounded worker inside Cloud Itonami. "
        "Use exactly one tool per turn. Prefer reading before writing. "
        "Never request, reveal or repeat a password, token, MFA code or other "
@@ -975,19 +993,37 @@
               "small commands with an explicit timeout, inspect results, and "
               "never claim a host or remote action occurred.\n\n"))
        (when (seq (str (:bot/brief b)))
-         (str "Standing brief from the person you work for:\n" (:bot/brief b)))))
+         (str "Standing brief from the person you work for:\n" (:bot/brief b)))
+       (when goal
+         (str "\n\nAn active goal is attached to this turn. Treat the objective as work, not as a request to describe your capabilities. "
+              "Inspect the available evidence and take the next safe tool action immediately. "
+              "Keep working across turns; a prose answer is progress, not completion. "
+              "Call goal_complete only after the requested outcome is verified, with concrete evidence. "
+              "Call goal_blocked only for a specific external prerequisite that you cannot obtain or retry. "
+              "Never ask the person to run a command or inspect a file that an admitted tool can reach.\n\n"
+              "Active objective:\n" goal))))
 
 (defn- transcript
   "The durable conversation, as a model transcript. Built here rather than
   stored in provider shape: `:person`/`:bot` is what this application records,
   and a stored `\"user\"`/`\"assistant\"` transcript would be a second copy of
   the conversation whose only purpose is to be sent somewhere."
-  [configuration b messages]
-  (into [{:role "system" :content (system-prompt b configuration)}]
+  ([configuration b messages] (transcript configuration b messages nil))
+  ([configuration b messages goal]
+  (into [{:role "system" :content (system-prompt b configuration goal)}]
         (for [m messages
               :when (seq (str (:message/text m)))]
           {:role (if (= :person (:message/role m)) "user" "assistant")
-           :content (:message/text m)})))
+           :content (:message/text m)}))))
+
+(defn- usage-value [usage key]
+  (long (or (get usage key) (get usage (name key)) 0)))
+
+(defn- merge-usage [total usage]
+  (when (or total usage)
+    (into {}
+          (for [key [:prompt_tokens :completion_tokens :total_tokens]]
+            [key (+ (usage-value total key) (usage-value usage key))]))))
 
 (defn- save-run! [bot-id run]
   (transact! assoc-in [:runs bot-id] run))
@@ -1050,15 +1086,38 @@
 
 (defn- public-turn [turn]
   (when turn
+    (let [finished-at (or (:turn/finished-at turn) (store/now))
+          elapsed (try
+                    (.toSeconds
+                     (java.time.Duration/between
+                      (java.time.Instant/parse (:turn/started-at turn))
+                      (java.time.Instant/parse finished-at)))
+                    (catch Exception _ 0))]
     {:id (:turn/id turn)
      :state (name (:turn/state turn))
      :phase (name (:turn/phase turn))
      :tool (:turn/tool turn)
+     :goal? (boolean (:turn/goal? turn))
+     :objective (:turn/objective turn)
+     :turn-count (:turn/turn-count turn 0)
+     :tool-count (:turn/tool-count turn 0)
+     :provider (:turn/provider turn)
+     :model (:turn/model turn)
+     :usage (:turn/usage turn)
+     :cost {:status "not-calculated"
+            :reason "provider usage does not include a billed amount"}
+     :result (:turn/result turn)
+     :evidence (:turn/evidence turn)
      :direction (:turn/direction turn)
      :started-at (:turn/started-at turn)
      :updated-at (:turn/updated-at turn)
      :finished-at (:turn/finished-at turn)
-     :error-type (some-> (:turn/error-type turn) str (subs 1))}))
+     :elapsed-seconds elapsed
+     :error-type (some-> (:turn/error-type turn) str (subs 1))})))
+
+(defn latest-turn [session bot-id]
+  (owned! session bot-id)
+  (public-turn (last (get-in (snapshot) [:turn-history bot-id]))))
 
 ;; ── the demonstration ───────────────────────────────────────────────────
 
@@ -1105,6 +1164,18 @@
     :summary (describe-tool configuration (:name call) (:input call))
     :impact (approval-impact (:name call))}))
 
+(defn- finish-visible! [on-finish run state attrs]
+  (when on-finish
+    (on-finish
+     (merge {:turn/state state
+             :turn/phase state
+             :turn/turn-count (:turn-count run 0)
+             :turn/tool-count (:tool-count run 0)
+             :turn/provider (:provider run)
+             :turn/model (:model run)
+             :turn/usage (:usage run)}
+            attrs))))
+
 (defn- advance!
   "Turn until the Bot is done or needs a person.
 
@@ -1121,16 +1192,29 @@
   `:tool-provider` — because `turn-admission` assembles them once for all three
   callers."
   ([configuration b run] (advance! configuration b run nil))
-  ([configuration b run {:keys [on-event cancelled?]}]
+  ([configuration b run {:keys [on-event cancelled? on-finish]}]
   (loop [run run]
+    (save-run! (:bot/id b) run)
     (when (and cancelled? (cancelled?))
       (throw (ex-info "Bot の実行を中止しました。" {:type :bot/cancelled})))
     (cond
-      (>= (:turn-count run 0) max-turns)
-      (say (:bot/id b) "考える回数の上限に達したので、ここで止めます。何を先にやるか教えてください。" nil)
+      (>= (:turn-count run 0) (if (:goal? run) max-goal-turns max-turns))
+      (let [text (if (:goal? run)
+                   "Goal は未完了です。turn の上限に達したため、安全に停止しました。"
+                   "考える回数の上限に達したので、ここで止めます。何を先にやるか教えてください。")]
+        (clear-run! (:bot/id b))
+        (finish-visible! on-finish run :failed
+                         {:turn/error-type :turn-budget-exhausted})
+        (say (:bot/id b) text nil))
 
-      (>= (:tool-count run 0) max-tool-calls)
-      (say (:bot/id b) "ツールを呼ぶ回数の上限に達したので、ここで止めます。" nil)
+      (>= (:tool-count run 0) (if (:goal? run)
+                                max-goal-tool-calls
+                                max-tool-calls))
+      (do
+        (clear-run! (:bot/id b))
+        (finish-visible! on-finish run :failed
+                         {:turn/error-type :tool-budget-exhausted})
+        (say (:bot/id b) "ツールを呼ぶ回数の上限に達したので、ここで止めます。" nil))
 
       :else
       (let [{:keys [provider model]} (provider-choice! configuration b)
@@ -1153,12 +1237,26 @@
                          :count (count calls)})))
             run (-> run
                     (update :turn-count (fnil inc 0))
+                    (assoc :provider (some-> (:id provider) name)
+                           :model model)
+                    (update :usage merge-usage (:usage result))
                     (update :messages conj {:role "assistant"
                                             :content (:content result)
                                             :tool-calls calls}))]
         (if (empty? calls)
-          (do (clear-run! (:bot/id b))
-              (say (:bot/id b) (:content result) nil))
+          (if (:goal? run)
+            (let [run (update run :messages conj
+                              {:role "user"
+                               :content (str "The goal is still active. Your previous prose did not complete it. "
+                                             "Take the next admitted tool action now, or call goal_complete with verified evidence, "
+                                             "or goal_blocked with the exact external prerequisite.")})]
+              (when on-event (on-event {:type "phase" :phase "continuing"}))
+              (recur run))
+            (do
+              (clear-run! (:bot/id b))
+              (finish-visible! on-finish run :completed
+                               {:turn/result (:content result)})
+              (say (:bot/id b) (:content result) nil)))
           (let [{:keys [name input] :as call} (first calls)
                 _ (when on-event
                     (on-event {:type "phase" :phase "tool-proposed"
@@ -1170,6 +1268,36 @@
                 ;; asking on turns that never touched a connector.
                 blocked (get (:blocked run) (get (:tool-provider run) name))]
             (cond
+              (= "goal_complete" name)
+              (let [summary (some-> (:summary input) str str/trim)
+                    evidence (->> (:evidence input) (map str) (remove str/blank?) vec)]
+                (if (and (:goal? run) (pos? (:tool-count run 0))
+                         (seq summary) (seq evidence))
+                  (do
+                    (clear-run! (:bot/id b))
+                    (when on-event (on-event {:type "phase" :phase "verifying"}))
+                    (finish-visible! on-finish run :completed
+                                     {:turn/result summary :turn/evidence evidence})
+                    (say (:bot/id b) summary nil))
+                  (recur (update run :messages conj
+                                 {:role "tool" :tool-call-id (:id call)
+                                  :name name
+                                  :content "goal_complete requires at least one executed tool, a non-empty summary, and concrete evidence."}))))
+
+              (= "goal_blocked" name)
+              (let [reason (some-> (:reason input) str str/trim)
+                    needed (some-> (:needed input) str str/trim)]
+                (if (and (:goal? run) (seq reason) (seq needed))
+                  (do
+                    (clear-run! (:bot/id b))
+                    (finish-visible! on-finish run :blocked
+                                     {:turn/result reason :turn/evidence [needed]})
+                    (say (:bot/id b) (str reason "\n必要なもの: " needed) nil))
+                  (recur (update run :messages conj
+                                 {:role "tool" :tool-call-id (:id call)
+                                  :name name
+                                  :content "goal_blocked requires a reason and the exact prerequisite."}))))
+
               ;; Checked before `:runnable`, and the order is the decision. A
               ;; provider can be connected — so its tools are admitted — while
               ;; the account to use is still ambiguous, which is `:ask`. Running
@@ -1183,6 +1311,8 @@
               ;; transcript written before it. The person says it again, to a
               ;; Bot that can now do it.
               (do (clear-run! (:bot/id b))
+                  (finish-visible! on-finish run :blocked
+                                   {:turn/result "connector authorization required"})
                   (say (:bot/id b)
                        (if (= :connection (:card/kind blocked))
                          (str (:card/title blocked)
@@ -1196,6 +1326,8 @@
               ;; true thing in the Bot's own transcript.
               (not (contains? (:runnable run) name))
               (do (clear-run! (:bot/id b))
+                  (finish-visible! on-finish run :failed
+                                   {:turn/error-type :tool-not-admitted})
                   (say (:bot/id b)
                        (str "「" name "」はこの Bot が使えるツールではありません。")
                        nil))
@@ -1222,12 +1354,17 @@
                                         {:role "tool" :tool-call-id (:id call)
                                          :name name :content output}))]
                     (trace! configuration (:bot/id b) name)
+                    (when on-event
+                      (on-event {:type "phase" :phase "tool-executed"
+                                 :tool name :tool-count (:tool-count run)}))
                     (save-run! (:bot/id b) run)
                     (recur run))
                   ;; Normal mode stops. The person decides from this exact run.
                   (do
                     (save-run! (:bot/id b) (assoc run :pending-call call
                                                   :pending-card card-id))
+                    (finish-visible! on-finish run :waiting-approval
+                                     {:turn/tool name})
                     (say (:bot/id b)
                          (or (:content result) "この操作には承認が必要です。")
                          [card]))))
@@ -1240,6 +1377,9 @@
                                     {:role "tool" :tool-call-id (:id call)
                                      :name name :content output}))]
                 (trace! configuration (:bot/id b) name)
+                (when on-event
+                  (on-event {:type "phase" :phase "tool-executed"
+                             :tool name :tool-count (:tool-count run)}))
                 (save-run! (:bot/id b) run)
                 (recur run))))))))))
 
@@ -1348,7 +1488,8 @@
   `advance!` asks one question of one set. They are admitted by a different
   gate — `browser-tools` already applied it — and they carry no provider, so
   they can never be blocked on an authorization."
-  [configuration b did]
+  ([configuration b did] (turn-admission configuration b did false))
+  ([configuration b did goal?]
   (let [rows (connectors/catalog-rows configuration)
         connected (connected-connectors configuration did)
         browser (browser-tools configuration b)
@@ -1357,10 +1498,12 @@
     {:selection selection
      :blocked blocked
      :tool-provider (tool->provider configuration)
-     :runnable (into (into (into #{} (map :name) browser)
-                           (map :name) coding)
-                     (bot/admitted-tools b rows connected))
-     :tools (tool-definitions configuration b)}))
+     :runnable (cond-> (into (into (into #{} (map :name) browser)
+                                   (map :name) coding)
+                             (bot/admitted-tools b rows connected))
+                 goal? (into goal-tool-names))
+     :tools (cond-> (tool-definitions configuration b)
+              goal? (into goal-tool-definitions))})))
 
 (defn send!
   "One message to a Bot, and its answer.
@@ -1373,7 +1516,8 @@
    (send! configuration session bot-id text nil))
   ([configuration session bot-id text advance-options]
   (let [b (owned! session bot-id)
-        text (str/trim (str text))]
+        text (str/trim (str text))
+        goal? (boolean (:goal? advance-options))]
     (when (str/blank? text)
       (throw (ex-info "メッセージが空です。" {:type :bot/empty-message})))
     (when (> (count text) max-message-chars)
@@ -1389,7 +1533,7 @@
     (append! bot-id (bot/message {:id (new-id "msg") :bot bot-id :role :person
                                   :text text :at (store/now)}))
     (let [did (identity/session-did session)
-          admission (turn-admission configuration b did)]
+          admission (turn-admission configuration b did goal?)]
       ;; The turn is taken. An unauthorized connector is no longer a reason to
       ;; refuse the message: it used to be, and the cost was a Bot that
       ;; answered "先に接続が要ります" to hello, to thanks, and to every
@@ -1404,21 +1548,28 @@
              nil)
         (advance! configuration b
                   (merge admission
-                         {:id (new-id "run")
+                         {:id (or (:run-id advance-options) (new-id "run"))
+                          :goal? goal?
+                          :objective (when goal? text)
                           :messages (transcript configuration b
-                                                (conversation bot-id))
+                                                (conversation bot-id)
+                                                (when goal? text))
                           :turn-count 0
-                          :tool-count 0})
+                          :tool-count 0
+                          :usage nil})
                   advance-options))
       (public-conversation did bot-id)))))
 
 (defn send-stream!
   "Run one visible Bot turn with progress events and a cancellable run id."
-  [configuration session bot-id text run-id on-event]
+  ([configuration session bot-id text run-id on-event]
+   (send-stream! configuration session bot-id text run-id false on-event))
+  ([configuration session bot-id text run-id goal? on-event]
   (owned! session bot-id)
   (let [run-id (str/trim (str run-id))
         cancelled (atom false)
         progress (atom {:turn/phase :accepted})
+        outcome (atom nil)
         entry {:run-id run-id :cancelled cancelled :progress progress
                :thread (Thread/currentThread)}]
     (when (str/blank? run-id)
@@ -1430,7 +1581,9 @@
     (record-turn! bot-id run-id
                   {:turn/direction (inc (direction bot-id))
                    :turn/state :running
-                   :turn/phase :accepted})
+                   :turn/phase :accepted
+                   :turn/goal? goal?
+                   :turn/objective (when goal? text)})
     (try
       (on-event {:type "phase" :phase "accepted"})
       (let [emit! (fn [event]
@@ -1442,15 +1595,20 @@
                       ;; the final write records the last observed progress.
                       (swap! progress merge
                              (cond-> {:turn/phase (keyword (:phase event))}
-                               (:tool event) (assoc :turn/tool (:tool event)))))
+                               (:tool event) (assoc :turn/tool (:tool event))
+                               (:tool-count event)
+                               (assoc :turn/tool-count (:tool-count event)))))
                     (on-event event))
             messages (send! configuration session bot-id text
-                            {:on-event emit! :cancelled? #(deref cancelled)})]
+                            {:on-event emit! :cancelled? #(deref cancelled)
+                             :on-finish #(reset! outcome %)
+                             :run-id run-id :goal? goal?})]
         (record-turn! bot-id run-id
                       (merge @progress
                              {:turn/state (if @cancelled :cancelled :completed)
-                              :turn/phase (if @cancelled :cancelled :completed)
-                              :turn/finished-at (store/now)}))
+                              :turn/phase (if @cancelled :cancelled :completed)}
+                             @outcome
+                             {:turn/finished-at (store/now)}))
         messages)
       (catch Exception error
         (if (or @cancelled (= :bot/cancelled (:type (ex-data error))))
@@ -1478,7 +1636,7 @@
         (Thread/interrupted)
         (locking active-turns
           (when (= run-id (get-in @active-turns [bot-id :run-id]))
-            (swap! active-turns dissoc bot-id)))))))
+            (swap! active-turns dissoc bot-id))))))))
 
 (defn cancel!
   "Cancel the matching active turn. Ownership and run id both have to match."
@@ -1623,8 +1781,19 @@
           ;; execution path that does not go through the loop's own call site.
           (trace! configuration bot-id (:name call))
           (save-run! bot-id run)
-          (advance! configuration b run))
+          (record-turn! bot-id (:id run)
+                        {:turn/state :running :turn/phase :tool-executed
+                         :turn/tool (:name call)
+                         :turn/tool-count (:tool-count run)})
+          (advance! configuration b run
+                    {:on-finish #(record-turn!
+                                  bot-id (:id run)
+                                  (assoc % :turn/finished-at (store/now))) }))
         (do (clear-run! bot-id)
+            (record-turn! bot-id (:id run)
+                          {:turn/state :cancelled :turn/phase :cancelled
+                           :turn/result "write rejected"
+                           :turn/finished-at (store/now)})
             (say bot-id "わかりました。この操作はしません。" nil))))
     (public-conversation (identity/session-did session) bot-id)))
 

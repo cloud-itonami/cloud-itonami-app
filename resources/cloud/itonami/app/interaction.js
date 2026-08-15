@@ -9115,7 +9115,8 @@
       palette:{colors:[], glyphs:[]},
       selected:null, messages:[], picked:new Set(),
       draft:{color:'blue', glyph:'circle'}, loaded:false, busy:false,
-      browserAvailable:false, controller:null, runId:null, shellBusy:false
+      browserAvailable:false, controller:null, runId:null, shellBusy:false,
+      latestTurn:null
     };
     const botAvatar = (node, avatar, status = null) => {
       node.dataset.color = avatar?.color || 'blue';
@@ -9137,6 +9138,11 @@
       accepted:'依頼を受け付けました。',
       model:'モデルの応答を待っています…',
       'tool-proposed':tool ? `${tool} を確認しています…` : 'ツールを確認しています…',
+      'tool-executed':tool ? `${tool} を実行しました。` : 'ツールを実行しました。',
+      continuing:'Goal を継続しています…',
+      verifying:'完了条件を確認しています…',
+      'waiting-approval':'承認を待っています。',
+      blocked:'外部条件により停止しました。',
       completed:'完了しました。',
       cancelled:'中止しました。',
       failed:'実行に失敗しました。',
@@ -9147,6 +9153,28 @@
       if (turn?.state === 'interrupted' || turn?.state === 'failed') {
         botsSetStatus(botsPhaseText(turn.state, turn.tool));
       }
+    };
+    const renderBotsRun = (turn) => {
+      const node = $('#bots-run');
+      node.replaceChildren();
+      node.hidden = !turn;
+      if (!turn) return;
+      const row = make('div', 'bots-run__row');
+      const visibleState = turn.state === 'running' ? turn.phase : turn.state;
+      row.append(make('span', 'bots-run__state',
+                      botsPhaseText(visibleState, turn.tool)));
+      const usage = turn.usage || {};
+      const tokens = usage.total_tokens ?? usage.totalTokens ?? 0;
+      const provider = [turn.provider, turn.model].filter(Boolean).join(' / ');
+      row.append(make('span', 'bots-run__meta',
+        `${turn['elapsed-seconds'] || 0}秒 · ${turn['tool-count'] || 0} tools · ${tokens} tokens`));
+      if (provider) row.append(make('span', 'bots-run__meta', provider));
+      node.append(row);
+      if (turn.objective) node.append(make('div', 'bots-run__objective', turn.objective));
+      if (tokens && turn.cost?.status === 'not-calculated') {
+        node.append(make('div', 'bots-run__meta', '利用料: provider の請求額が未提供のため未算出'));
+      }
+      if (turn['error-type']) node.append(make('div', 'bots-run__meta', `error: ${turn['error-type']}`));
     };
     const renderBotsRail = () => {
       const list = $('#bots-list');
@@ -9504,6 +9532,8 @@
       const holder = $('#bots-messages');
       holder.replaceChildren();
       if (!bot) return;
+      if (!botsState.latestTurn) botsState.latestTurn = bot['last-turn'] || null;
+      renderBotsRun(botsState.latestTurn);
       botAvatar($('#bots-titlebar-avatar'), bot.avatar, bot.status);
       $('#bots-titlebar-name').textContent = bot.name;
       $('#bots-titlebar-status').textContent = botsStatusText[bot.status] || bot.status;
@@ -9741,6 +9771,9 @@
     };
     const selectBot = async (botId) => {
       botsState.selected = botId;
+      const selectedBot = botsState.bots.find((bot) => bot.id === botId);
+      botsState.latestTurn = selectedBot?.['last-turn'] || null;
+      $('#bots-goal').checked = Boolean(selectedBot?.['coding?'] || selectedBot?.['virtual-shell?']);
       renderBotsRail();
       showBotsPane();
       try {
@@ -9867,11 +9900,11 @@
         $('#bots-form').requestSubmit();
       }
     });
-    const openBotsStream = async (botId, text, runId, signal) => {
+    const openBotsStream = async (botId, text, runId, goal, signal) => {
       if (!identityState?.csrf) await refreshIdentityForWrite();
       const send = () => fetch(`/api/bots/${botId}/messages/stream`, {
         method:'POST', headers:identityHeaders(), signal,
-        body:JSON.stringify({text, 'run-id':runId})
+        body:JSON.stringify({text, goal, 'run-id':runId})
       });
       let request = await send();
       if (request.status === 403) {
@@ -9904,10 +9937,21 @@
             botsSetStatus('応答中…');
           } else if (frame.type === 'phase') {
             onPhase(frame);
+            if (botsState.latestTurn) {
+              botsState.latestTurn.state = 'running';
+              botsState.latestTurn.phase = frame.phase;
+              botsState.latestTurn.tool = frame.tool || botsState.latestTurn.tool;
+              botsState.latestTurn['tool-count'] = frame['tool-count'] ||
+                botsState.latestTurn['tool-count'] || 0;
+              renderBotsRun(botsState.latestTurn);
+            }
             botsSetStatus(botsPhaseText(frame.phase, frame.tool));
           } else if (frame.type === 'done') {
             botsState.messages = frame.messages || [];
+            botsState.latestTurn = frame.turn || botsState.latestTurn;
           } else if (frame.type === 'error') {
+            botsState.latestTurn = frame.turn || botsState.latestTurn;
+            renderBotsRun(botsState.latestTurn);
             throw new Error(frame.message || 'Bot の実行に失敗しました。');
           }
         }
@@ -9921,8 +9965,15 @@
       botsState.busy = true;
       const botId = botsState.selected;
       const runId = crypto.randomUUID();
+      const goal = $('#bots-goal').checked;
       const startedAt = Date.now();
       const progress = {phase:'accepted', tool:null};
+      botsState.latestTurn = {
+        id:runId, 'goal?':goal, objective:goal ? text : null,
+        state:'running', phase:'accepted', 'elapsed-seconds':0,
+        'tool-count':0, usage:null
+      };
+      renderBotsRun(botsState.latestTurn);
       botsState.runId = runId;
       botsState.controller = new AbortController();
       botsInput.value = '';
@@ -9937,8 +9988,12 @@
       personEntry.append(make('div', 'bots-msg__bubble', text));
       $('#bots-messages').append(personEntry, entry);
       const elapsed = window.setInterval(() => {
-        if (provisional.textContent) return;
         const seconds = Math.floor((Date.now() - startedAt) / 1000);
+        if (botsState.latestTurn?.id === runId) {
+          botsState.latestTurn['elapsed-seconds'] = seconds;
+          renderBotsRun(botsState.latestTurn);
+        }
+        if (provisional.textContent) return;
         const phase = botsPhaseText(progress.phase, progress.tool);
         botsSetStatus(seconds >= 30
           ? `${phase} 通常より時間がかかっています… ${seconds}秒`
@@ -9946,11 +10001,13 @@
       }, 1000);
       botsSetStatus(`${botsPhaseText(progress.phase)} 0秒`);
       try {
-        const request = await openBotsStream(botId, text, runId, botsState.controller.signal);
+        const request = await openBotsStream(botId, text, runId, goal,
+                                             botsState.controller.signal);
         await readBotsStream(request, provisional, (frame) => {
           progress.phase = frame.phase;
           progress.tool = frame.tool || null;
         });
+        renderBotsRun(botsState.latestTurn);
         renderBotsThread();
         botsSetStatus('');
         await loadBots({keepSelection:true});

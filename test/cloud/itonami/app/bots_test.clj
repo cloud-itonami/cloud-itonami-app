@@ -192,7 +192,7 @@
           (is (= "completed" (:state turn)))
           (is (= "completed" (:phase turn)))
           (is (= "git_status" (:tool turn)))
-          (is (= ["accepted" "model" "tool-proposed" "model"]
+          (is (= ["accepted" "model" "tool-proposed" "tool-executed" "model"]
                  (mapv :phase (filter #(= "phase" (:type %)) @events))))
           (is (some #(= {:type "delta" :content "完了しました。"} %) @events)))))))
 
@@ -271,6 +271,68 @@
        (if (= 1 (swap! turns inc))
          {:content "調べます。" :tool-calls [{:id "c1" :name tool :input input}]}
          {:content "終わりました。" :tool-calls []})))))
+
+(deftest goal-mode-keeps-working-until-an-explicit-verified-terminal
+  (with-store
+    (fn []
+      (let [root (git-workspace)
+            b (make-bot alice {:coding? true :workspace (.getPath root)})
+            turns (atom 0)
+            requests (atom [])]
+        (with-redefs [policy/select-provider (fn [_ _] {:id :local})
+                      provider/agent-turn-stream!
+                      (fn [_ request _]
+                        (swap! requests conj request)
+                        (case (swap! turns inc)
+                          1 {:content "対応できます。" :tool-calls []
+                             :usage {:prompt_tokens 10 :completion_tokens 2
+                                     :total_tokens 12}}
+                          2 {:content "状態を確認します。"
+                             :tool-calls [{:id "c1" :name "git_status" :input {}}]
+                             :usage {:prompt_tokens 20 :completion_tokens 3
+                                     :total_tokens 23}}
+                          {:content ""
+                           :tool-calls [{:id "c2" :name "goal_complete"
+                                        :input {:summary "確認まで完了しました。"
+                                                :evidence ["git status を実行"]}}]
+                           :usage {:prompt_tokens 30 :completion_tokens 4
+                                   :total_tokens 34}}))]
+          (let [messages (bots/send-stream! nil alice (:bot/id b)
+                                            "repo の状態を確認して"
+                                            "goal-test-1" true (constantly nil))
+                turn (bots/latest-turn alice (:bot/id b))]
+            (is (= 3 @turns)
+                "a prose capability statement must not terminate an active goal")
+            (is (some #(= "goal_complete" (:name %))
+                      (:tools (first @requests))))
+            (is (some #(str/includes? (str (:content %)) "still active")
+                      (:messages (second @requests))))
+            (is (= "completed" (:state turn)))
+            (is (true? (:goal? turn)))
+            (is (= 1 (:tool-count turn)))
+            (is (= {:prompt_tokens 60 :completion_tokens 9 :total_tokens 69}
+                   (:usage turn)))
+            (is (= "not-calculated" (get-in turn [:cost :status])))
+            (is (= ["git status を実行"] (:evidence turn)))
+            (is (= "確認まで完了しました。" (:text (last messages))))))))))
+
+(deftest goal-mode-records-a-concrete-blocker
+  (with-store
+    (fn []
+      (let [b (make-bot alice {})]
+        (with-redefs [policy/select-provider (fn [_ _] {:id :local})
+                      provider/agent-turn-stream!
+                      (fn [_ _ _]
+                        {:content ""
+                         :tool-calls [{:id "blocked-1" :name "goal_blocked"
+                                      :input {:reason "private repository cannot be read"
+                                              :needed "grant repository access"}}]})]
+          (bots/send-stream! nil alice (:bot/id b) "repositoryを調べて"
+                             "goal-blocked-1" true (constantly nil))
+          (let [turn (bots/latest-turn alice (:bot/id b))]
+            (is (= "blocked" (:state turn)))
+            (is (= "private repository cannot be read" (:result turn)))
+            (is (= ["grant repository access"] (:evidence turn)))))))))
 
 (deftest an-active-streaming-turn-can-be-cancelled-by-its-owner
   (with-store

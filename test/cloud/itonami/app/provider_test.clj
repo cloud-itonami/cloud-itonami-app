@@ -57,6 +57,12 @@
                       "tool_calls")
                      [:tool-calls 0 :name]))))))
 
+(deftest normalized-agent-results-preserve-provider-usage
+  (let [normalize (private-fn 'agent-result)
+        usage {:prompt_tokens 120 :completion_tokens 30 :total_tokens 150}]
+    (is (= usage
+           (:usage (normalize {:content "done"} "stop" usage))))))
+
 (deftest streamed-tool-call-fragments-become-one-normalized-call
   (let [merge-fragment (private-fn 'merge-tool-fragment)
         normalize (private-fn 'agent-result)
