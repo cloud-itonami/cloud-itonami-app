@@ -1,6 +1,7 @@
 (ns cloud.itonami.app.relay
   (:require [clojure.data.json :as json]
-            [clojure.string :as str])
+            [clojure.string :as str]
+            [cloud.itonami.app.identity :as identity])
   (:import [java.net URI URLEncoder]
            [java.net.http HttpClient HttpRequest HttpRequest$BodyPublishers
             HttpResponse$BodyHandlers]
@@ -18,7 +19,10 @@
 (defn- access-token [config]
   (let [env-name (setting config :access-token-env
                           "CLOUD_ITONAMI_RELAY_ACCESS_TOKEN")]
-    (some-> (System/getenv env-name) str/trim not-empty)))
+    (or (some-> (System/getenv env-name) str/trim not-empty)
+        ;; One known item, never enumeration. This is the same credential the
+        ;; mail-sync push poller already uses for this relay.
+        (identity/keychain-find "cloud-itonami-app.webhooks" "relay-access"))))
 
 (defn configured? [config]
   (boolean (and (get-in config [:cloud-relay :base-url])
@@ -80,3 +84,25 @@
    (request! config "POST" "/v1/aliases/reserve"
              {:accountId account-id :destination destination})
    :configured? true))
+
+(defn provision-bot-mailbox!
+  "Register one immutable Bot address and the mailbox that receives it."
+  [config {:keys [bot-id organization address destination]}]
+  (when (or (str/blank? (str bot-id))
+            (str/blank? (str organization))
+            (str/blank? (str address))
+            (str/blank? (str destination)))
+    (throw (ex-info "Bot mailbox の登録内容が不足しています。"
+                    {:type :relay/invalid-destination})))
+  (request! config "POST" "/v1/bot-mailboxes"
+            {:botId bot-id :organization organization
+             :address address :destination destination}))
+
+(defn send-bot-mail!
+  "Send through the relay's Resend boundary as a registered Bot address."
+  [config {:keys [bot-id organization from name to cc subject text
+                  in-reply-to]}]
+  (request! config "POST" "/v1/bot-mail/send"
+            {:botId bot-id :organization organization :from from :name name
+             :to (vec to) :cc (vec cc) :subject subject :text text
+             :inReplyTo in-reply-to}))
