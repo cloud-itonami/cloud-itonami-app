@@ -121,6 +121,30 @@ and should not share an approval prompt that has to describe both. A Bot may
 hold both — `:bot/browser?` opts it into `agent-control`'s surface for sites
 with no API at all, which is what connectors structurally cannot cover.
 
+### The human surface shows presence, not orchestration
+
+Routines and handoffs remain Bot capabilities, but they are not primary human
+controls in the Bots view. A person needs to choose a Bot, see whether it is
+available or blocked, converse with it, and create one. The Bot can retain and
+use the rest without turning its internal operating model into a form the
+person must maintain. Consequently the selected Bot's identity, status and
+actions occupy the application's existing titlebar; the conversation, not a
+routine or handoff editor, is the body of the view.
+
+The list of Bots is presence, not optional navigation. At wide widths it is a
+named list; at compact desktop widths it becomes a persistent 4rem rail rather
+than disappearing. The Bots route itself is one viewport: the conversation
+scrolls internally and the composer remains visible. This preserves Bot
+selection and the next human action in windows as small as 900 by 700 pixels.
+
+The avatar also carries deliberately bounded non-verbal presence. CSS
+pseudo-elements add eyes, with slow breathing, blinking and wandering gaze;
+per-glyph phase offsets prevent a synchronized dashboard effect. The
+server-derived status changes only timing and posture: working is quicker,
+waiting scans sooner, and disabled sleeps and desaturates. It does not infer
+emotion or authority. The face is `aria-hidden`; status remains text plus a
+status dot, and `prefers-reduced-motion` stops every Bot animation.
+
 ## Consequences
 
 - The connector registry is reachable for the first time. Anything that can
@@ -134,9 +158,10 @@ with no API at all, which is what connectors structurally cannot cover.
   outstanding, ordered so that waiting for a person outranks working — a Bot
   blocked on an approval while reporting itself as busy is the exact failure
   the screen exists to prevent.
-- The Bots view is two panes inside the existing single-page shell, and the
-  onboarding grid is derived from the registry, so it lists what this build can
-  actually offer rather than a picture of an integrations page.
+- The Bots view is a persistent Bot list/rail plus conversation inside the
+  existing single-page shell. Its onboarding grid is derived from the registry,
+  so it lists what this build can actually offer rather than a picture of an
+  integrations page.
 - The immutable Bot ID now also names its RFC mailbox. Delivery and Resend
   sending are an address over the Bot's existing bound account, not a second
   credential or a capability granted by its display name (ADR-0051).
@@ -169,6 +194,26 @@ the blind spot, not the assertion.
 The harness also confirmed the single-page property this application requires
 (ADR-2608080100): a value set on `window` survives crossing to Chat and back,
 so the view change is state and not navigation.
+
+## Human-surface verification, measured
+
+The minimal surface and titlebar landed in PR #85 (`15d6e3c`), the fixed
+single-viewport layout in PR #89 (`6187a5e`), and animated presence in PR #91
+(`9a3139c`). All three are merged into the default branch.
+
+- At 900 by 700 pixels, real-Chrome computed layout reported the compact Bot
+  rail as displayed at 64 pixels, the composer bottom at 700 pixels, document
+  height at 700 pixels, and the conversation as the internal scroll owner.
+- The motion render reported `bot-breathe`, `bot-blink`, and `bot-look`, with
+  `aria-hidden=true` and server statuses `waiting-connection`, `working`,
+  `idle`, and `disabled` reaching the avatar.
+- The viewport slice passed 39 tests / 310 assertions. The presence slice
+  passed 54 tests / 463 assertions. Both had zero failures and zero errors;
+  JavaScript syntax, whitespace checks, and the design-quality gate also
+  passed, with design quality 100.00 against a minimum of 95.
+- A static 900 by 700 real-Chrome render was inspected after each slice. These
+  checks establish the compact desktop contract; they do not claim a mobile
+  layout or autonomous parallel Bots.
 
 ## What this does not do
 
