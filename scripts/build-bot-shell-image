@@ -1,0 +1,15 @@
+#!/bin/sh
+set -eu
+
+repo_dir=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
+docker_bin=/usr/local/bin/docker
+if [ ! -x "$docker_bin" ]; then docker_bin=/opt/homebrew/bin/docker; fi
+if [ ! -x "$docker_bin" ]; then
+  echo "Docker runtime is required." >&2
+  exit 1
+fi
+
+exec "$docker_bin" build \
+  --tag cloud-itonami-shell:1 \
+  --file "$repo_dir/resources/cloud-itonami-bot-shell/Dockerfile" \
+  "$repo_dir/resources/cloud-itonami-bot-shell"

@@ -175,6 +175,7 @@
      :bot/writes? (boolean (:bot/writes? value))
      :bot/browser? (boolean (:bot/browser? value))
      :bot/coding? (boolean (:bot/coding? value))
+     :bot/virtual-shell? (boolean (:bot/virtual-shell? value))
      :bot/workspace workspace
      :bot/enabled? (if (contains? value :bot/enabled?)
                      (boolean (:bot/enabled? value))

@@ -5074,6 +5074,13 @@
         (send-bot-stream! exchange config session bot-id body))
 
       (and (= method "POST")
+           (bot-id-from path #"/api/bots/([^/]+)/shell/cancel"))
+      (let [bot-id (bot-id-from path #"/api/bots/([^/]+)/shell/cancel")]
+        (require-origin! exchange config)
+        (require-csrf! exchange session)
+        (send! exchange 200 (bots/cancel-shell! session bot-id)))
+
+      (and (= method "POST")
            (bot-id-from path #"/api/bots/([^/]+)/messages/[^/]+/cancel"))
       (let [bot-id (bot-id-from path #"/api/bots/([^/]+)/messages/[^/]+/cancel")
             run-id (bot-id-from path #"/api/bots/[^/]+/messages/([^/]+)/cancel")]

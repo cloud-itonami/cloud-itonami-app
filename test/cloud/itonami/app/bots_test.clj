@@ -110,6 +110,27 @@
             (is (= "workspace_write_file" (:action card)))
             (is (str/includes? (:impact card) "local Git workspace"))))))))
 
+(deftest a-general-shell-is-per-bot-virtualized-and-always-holds
+  (with-store
+    (fn []
+      (let [root (git-workspace)
+            b (make-bot alice {:coding? true :virtual-shell? true
+                               :workspace (.getPath root)})]
+        (with-redefs [policy/select-provider (fn [_ _] {:id :local})
+                      provider/agent-turn
+                      (reaches-for "virtual_shell"
+                                   {:command "git status --short"
+                                    :timeout_seconds 20})]
+          (let [public (first (:bots (bots/overview nil alice)))
+                message (last (bots/send! nil alice (:bot/id b) "shellで確認して"))
+                card (first (:cards message))]
+            (is (:virtual-shell? public))
+            (is (some #{"virtual_shell"} (:admitted-tools public)))
+            (is (= "approval" (:kind card)))
+            (is (= "virtual_shell" (:action card)))
+            (is (str/includes? (:summary card) "networkなし"))
+            (is (str/includes? (:impact card) "専用"))))))))
+
 (defn- answers
   "A model that says one thing and reaches for nothing."
   [text]

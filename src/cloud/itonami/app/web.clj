@@ -1449,14 +1449,20 @@
               [:span {:class "bots-permission__copy"}
                [:span "この PC の Git workspace で coding する"]
                [:span {:class "bots-permission__help"}
-                "読み取りは自動、ファイル変更と commit は毎回承認します。shell・push・reset は使いません。"]]]
+                "読み取りは自動、ファイル変更と commit は毎回承認します。"]]]
+             [:label {:class "bots-permission"}
+              [:input {:id "bots-virtual-shell" :type "checkbox"}]
+              [:span {:class "bots-permission__copy"}
+               [:span "隔離された仮想環境で汎用shellを使う"]
+               [:span {:class "bots-permission__help"}
+                "Bot専用・networkなし・毎回承認。選択したGit rootだけを共有します。"]]]
              [:div {:class "field"}
               [:label {:for "bots-workspace"} "Git workspace の絶対パス"]
               [:input {:id "bots-workspace" :type "text" :maxlength "4096"
                        :autocomplete "off"
                        :placeholder "/Users/name/github/project"}]
               [:span {:class "form-help"}
-               "既存の Git repository の root を正確に指定します。"]]
+               "codingまたは仮想shellに共有する、既存Git repositoryのrootを正確に指定します。"]]
              [:button {:class "primary-action" :id "bots-create" :type "button"}
               "はじめる"]
              [:p {:class "drive-create__status" :id "bots-create-status"

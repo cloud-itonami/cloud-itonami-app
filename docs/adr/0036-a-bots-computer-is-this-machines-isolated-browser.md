@@ -1,6 +1,6 @@
 # ADR-0036: A Bot's computer is this machine's isolated browser
 
-**Status:** accepted — 2026-08-13
+**Status:** accepted for browser authority; VM refusal superseded by ADR-0051 — 2026-08-15
 
 ## Context
 
