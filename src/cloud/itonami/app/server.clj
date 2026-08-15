@@ -5237,6 +5237,10 @@
       (and (= method "POST") (bot-id-from path #"/api/bots/([^/]+)"))
       (let [bot-id (bot-id-from path #"/api/bots/([^/]+)")
             body (read-json exchange)]
+        ;; Kept explicit in this branch as well as at the handler boundary so
+        ;; route-scan records configuration mutation as human-only. The
+        ;; separate /api/agent-bots surface intentionally has no counterpart.
+        (require-human-session! exchange)
         (require-origin! exchange config)
         (require-csrf! exchange session)
         (bots/update! config session bot-id body)
@@ -5276,6 +5280,77 @@
                      :routine/no-demonstration 409
                      :routine/too-many 409
                      :handoff/refused 409
+                     400)
+                   {:error {:type (name (or (:type (ex-data error)) :bot/error))
+                            :message (.getMessage error)}}))
+          (catch Exception error
+            (send! exchange 500 {:error {:type "internal_error"
+                                         :message (.getMessage error)}})))))))
+
+(defn- handle-agent-bots!
+  "The narrow CLI/MCP Bot surface. Agent sessions may submit and observe work,
+  cancel their owner's run, and decide a held card only when that Bot already
+  carries human-enabled omakase. They cannot create a Bot or widen its grant."
+  [config exchange method path]
+  (let [session (require-app-session! exchange)]
+    (cond
+      (and (= method "GET") (= path "/api/agent-bots"))
+      (send! exchange 200 (bots/overview config session))
+
+      (and (= method "GET")
+           (bot-id-from path #"/api/agent-bots/([^/]+)/messages"))
+      (send! exchange 200
+             {:messages (bots/messages
+                         session
+                         (bot-id-from path #"/api/agent-bots/([^/]+)/messages"))})
+
+      (and (= method "POST")
+           (bot-id-from path #"/api/agent-bots/([^/]+)/messages"))
+      (let [bot-id (bot-id-from path #"/api/agent-bots/([^/]+)/messages")
+            body (read-json exchange)]
+        (require-origin! exchange config)
+        (require-csrf! exchange session)
+        (send! exchange 200 {:messages (bots/send! config session bot-id (:text body))}))
+
+      (and (= method "POST")
+           (bot-id-from path #"/api/agent-bots/([^/]+)/cards/[^/]+/decide"))
+      (let [bot-id (bot-id-from path #"/api/agent-bots/([^/]+)/cards/[^/]+/decide")
+            card-id (bot-id-from path #"/api/agent-bots/[^/]+/cards/([^/]+)/decide")
+            body (read-json exchange)]
+        (require-origin! exchange config)
+        (require-csrf! exchange session)
+        (send! exchange 200
+               {:messages (bots/decide! config session bot-id card-id
+                                        (:decision body))}))
+
+      (and (= method "POST")
+           (bot-id-from path #"/api/agent-bots/([^/]+)/messages/[^/]+/cancel"))
+      (let [bot-id (bot-id-from path #"/api/agent-bots/([^/]+)/messages/[^/]+/cancel")
+            run-id (bot-id-from path #"/api/agent-bots/[^/]+/messages/([^/]+)/cancel")]
+        (require-origin! exchange config)
+        (require-csrf! exchange session)
+        (send! exchange 200 (bots/cancel! session bot-id run-id)))
+
+      :else (send! exchange 405 {:error {:type "method_not_allowed"}}))))
+
+(defn- agent-bots-handler [config]
+  (reify HttpHandler
+    (handle [_ exchange]
+      (let [method (.getRequestMethod exchange)
+            path (.getPath (.getRequestURI exchange))]
+        (try
+          (handle-agent-bots! config exchange method path)
+          (catch clojure.lang.ExceptionInfo error
+            (send! exchange
+                   (case (:type (ex-data error))
+                     :identity/unauthenticated 401
+                     :identity/invalid-origin 403
+                     :identity/invalid-csrf 403
+                     :bot/forbidden 403
+                     :bot/approval-refused 403
+                     :bot/not-found 404
+                     :bot/disabled 409
+                     :bot/not-held 409
                      400)
                    {:error {:type (name (or (:type (ex-data error)) :bot/error))
                             :message (.getMessage error)}}))
@@ -5408,6 +5483,8 @@
                      (chronicle-handler configuration))
      (.createContext instance "/api/bots"
                      (bots-handler configuration))
+     (.createContext instance "/api/agent-bots"
+                     (agent-bots-handler configuration))
      (.createContext instance "/api/update"
                      (update-handler configuration))
      (.createContext instance "/api/folder-sync"

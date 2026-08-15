@@ -9,6 +9,7 @@
             [clojure.string :as str]
             [clojure.test :refer [deftest is testing]]
             [cloud.itonami.app.business-tools :as business-tools]
+            [cloud.itonami.app.bot-tools :as bot-tools]
             [cloud.itonami.app.mcp :as mcp]
             [cloud.itonami.app.payment-tools :as payment-tools]
             [cloud.itonami.app.store :as store]
@@ -178,3 +179,17 @@
     (is (= {:tool "tenant_connection_status" :connection "tc-1"}
            (mcp/invoke {} "tenant_connection_status"
                        {"connection_id" "tc-1"})))))
+
+(deftest bot-tools-are-published-and-delegate-only-with-an-agent-session
+  (with-redefs [bot-tools/available? (constantly true)
+                business-tools/available? (constantly false)
+                tenant-tools/available? (constantly false)
+                payment-tools/available? (constantly false)]
+    (let [names (set (map :name (mcp/published-tools disabled)))]
+      (is (= #{"bots_list" "bot_messages" "bot_task" "bot_decide" "bot_cancel"}
+             (set (filter #(or (= "bots_list" %) (str/starts-with? % "bot_"))
+                          names))))))
+  (with-redefs [bot-tools/call-tool
+                (fn [_ name input] {:tool name :bot (:bot_id input)})]
+    (is (= {:tool "bot_task" :bot "bot-1"}
+           (mcp/invoke {} "bot_task" {"bot_id" "bot-1" "text" "test"})))))

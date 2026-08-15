@@ -18,7 +18,7 @@
 
   `cloud.itonami.app.commands` reads a registry produced from `server.clj`'s own
   routes. Hand-writing them made this a second list of what the app can do, and
-  two lists drift one way: measured 2026-08-05, seventeen commands against 222
+  two lists drift one way: measured 2026-08-05, the original seventeen commands against 222
   routes, with nothing anywhere reporting the gap. Now `itonami commands` prints
   the coverage it actually has, and a route added without regenerating the
   registry breaks the suite.
@@ -48,9 +48,8 @@
 
   ## What it is not
 
-  It cannot approve anything. `approve/finish` needs a WebAuthn user-verifying
-  assertion; no agent and no CLI can produce one (ADR-0006). An agent session
-  may ask, record, and carry out what a human already approved.
+  It cannot create or widen a Bot. It may submit work and, only for a Bot whose
+  owner enabled omakase in the app, approve its held shell/mail/Git write.
 
   Usage:
 
@@ -450,6 +449,36 @@
     (unwrap (call configuration :post (str "/api/business/" id "/bind")
                   {:token (require-token configuration) :body body}))))
 
+(defn- required-flag [flags key]
+  (or (get flags key)
+      (throw (ex-info (str "--" (name key) " が必要です")
+                      {:type :cli/missing-flag :flag key}))))
+
+(defn bot-list [configuration]
+  (client/request! configuration :get "/api/agent-bots"))
+
+(defn bot-messages [configuration flags]
+  (client/request! configuration :get
+                   (str "/api/agent-bots/" (required-flag flags :id) "/messages")))
+
+(defn bot-task [configuration flags]
+  (client/request-with-timeout!
+   configuration :post
+   (str "/api/agent-bots/" (required-flag flags :id) "/messages") 660
+   {:text (required-flag flags :text)}))
+
+(defn bot-decide [configuration flags]
+  (client/request-with-timeout!
+   configuration :post
+   (str "/api/agent-bots/" (required-flag flags :id) "/cards/"
+        (required-flag flags :card) "/decide") 660
+   {:decision (required-flag flags :decision)}))
+
+(defn bot-cancel [configuration flags]
+  (client/request! configuration :post
+                   (str "/api/agent-bots/" (required-flag flags :id)
+                        "/messages/" (required-flag flags :run) "/cancel") {}))
+
 (def usage
   (str "itonami — cloud-itonami-app CLI\n\n"
        "  up                     headless server を起動（動いていれば何もしない）\n"
@@ -476,7 +505,12 @@
        "  business create --slug <slug> [--name N] [--note X]\n"
        "  business bind --id <business-id> [--repos a,b] [--canvas c]\n"
        "                [--model path] [--leverage path] [--adoptions a,b] [--lei L]\n\n"
-       "資金・決済・承認の操作はブラウザの Passkey が必要で、CLI からは実行できません。\n"))
+       "  bots list\n"
+       "  bots messages --id <bot-id>\n"
+       "  bots task --id <bot-id> --text <依頼>\n"
+       "  bots decide --id <bot-id> --card <card-id> --decision approved|rejected\n"
+       "  bots cancel --id <bot-id> --run <run-id>\n\n"
+       "Bot設定と通常モードの承認はブラウザ専用です。CLI承認はおまかせBotだけです。\n"))
 
 (defn- run-server-command
   "Anything that needs the server. Reached only after `ensure-server!`, so the
@@ -502,6 +536,11 @@
       ["business" "list"] (business-list configuration)
       ["business" "create"] (business-create configuration flags)
       ["business" "bind"] (business-bind configuration flags)
+      ["bots" "list"] (bot-list configuration)
+      ["bots" "messages"] (bot-messages configuration flags)
+      ["bots" "task"] (bot-task configuration flags)
+      ["bots" "decide"] (bot-decide configuration flags)
+      ["bots" "cancel"] (bot-cancel configuration flags)
       (if-let [resolved (commands/resolve-command named)]
         (run-command configuration resolved flags)
         (throw (ex-info

@@ -501,6 +501,72 @@
 (defn- run-tool-var []
   (ns-resolve 'cloud.itonami.app.bots 'run-tool!))
 
+(deftest omakase-runs-an-admitted-gmail-send-and-leaves-a-receipt
+  (with-store
+    (fn []
+      (connect! "conn-1" :google "sub-1" "jun@example.com")
+      (let [b (make-bot alice {:accounts ["conn-1"]
+                               :writes? true
+                               :omakase? true})
+            ran (atom [])]
+        (with-redefs-fn
+          {(run-tool-var) (fn [_ _ _ name _]
+                            (swap! ran conj name)
+                            "sent")}
+          (fn []
+            (with-redefs [policy/select-provider (fn [_ _] {:id :local})
+                          provider/agent-turn (proposes-write)]
+              (bots/send! nil alice (:bot/id b) "メール送って"))))
+        (let [card (held-card b)
+              shown (first (:bots (bots/overview nil alice)))]
+          (is (= ["gmail_send_message"] @ran))
+          (is (= "approved" (:decision card)))
+          (is (= "omakase" (:decision-mode card)))
+          (is (= "bot" (:decided-by card)))
+          (is (= "answered" (:standing card)))
+          (is (= "idle" (:status shown)))
+          (is (true? (:omakase? shown))))))))
+
+(deftest an-agent-may-decide-only-a-held-write-covered-by-human-enabled-omakase
+  (with-store
+    (fn []
+      (connect! "conn-1" :google "sub-1" "jun@example.com")
+      (let [b (make-bot alice {:accounts ["conn-1"] :writes? true})
+            ran (atom [])]
+        (with-redefs [policy/select-provider (fn [_ _] {:id :local})
+                      provider/agent-turn (proposes-write)]
+          (bots/send! nil alice (:bot/id b) "メール送って"))
+        (let [card (held-card b)]
+          ;; Only the human configuration surface can set this bit.
+          (bots/update! nil alice (:bot/id b) {:omakase? true})
+          (with-redefs-fn
+            {(run-tool-var) (fn [_ _ _ name _]
+                              (swap! ran conj name)
+                              "sent")}
+            (fn []
+              (with-redefs [policy/select-provider (fn [_ _] {:id :local})
+                            provider/agent-turn
+                            (fn [_ _] {:content "完了" :tool-calls []})]
+                (bots/decide! nil (assoc alice :kind :agent)
+                              (:bot/id b) (:id card) "approved"))))
+          (is (= ["gmail_send_message"] @ran))
+          (is (= "omakase" (:decision-mode (held-card b))))
+          (is (= "agent-session" (:decided-by (held-card b)))))))))
+
+(deftest omakase-does-not-delegate-other-connector-or-browser-writes
+  (with-store
+    (fn []
+      (let [b (make-bot alice {:writes? true :omakase? true})]
+        (doseq [tool ["calendar_create_event" "browser_click"]]
+          (swap! store/state assoc-in [:runs (:bot/id b)]
+                 {:pending-card "card-1"
+                  :pending-call {:id "call-1" :name tool :input {}}})
+          (is (thrown-with-msg?
+               clojure.lang.ExceptionInfo #"このセッションでは行えません"
+               (bots/decide! nil (assoc alice :kind :agent)
+                             (:bot/id b) "card-1" "approved"))
+              tool))))))
+
 (deftest a-new-instruction-retires-a-held-approval
   ;; Measured 2026-08-14 before this changed: sending a second message replaced
   ;; the run, so `decide!` on the first card threw 承認待ちの操作がありません —

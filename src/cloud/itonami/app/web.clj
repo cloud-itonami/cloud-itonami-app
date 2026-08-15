@@ -1473,6 +1473,12 @@
               [:input {:id "bots-writes" :type "checkbox"}]
               [:span "書き込みも任せる（実行前に毎回わたしが承認する）"]]
              [:label {:class "bots-permission"}
+              [:input {:id "bots-omakase" :type "checkbox"}]
+              [:span {:class "bots-permission__copy"}
+               [:span "おまかせモード（Bot自身が承認して実行する）"]
+               [:span {:class "bots-permission__help"}
+                "shell・メール送信・Git変更を待たずに実行し、承認receiptを会話へ残します。"]]]
+             [:label {:class "bots-permission"}
               [:input {:id "bots-browser" :type "checkbox"}]
               [:span {:class "bots-permission__copy"}
                [:span "API の無いサイトは、このマシンの分離ブラウザーで（実行前に承認する）"]
