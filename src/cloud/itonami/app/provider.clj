@@ -171,14 +171,17 @@
            :temperature (or temperature 0.2)
            :max_tokens (or (:max-output-tokens provider)
                            default-agent-max-tokens)}
+    (openai-shaped? provider)
+    ;; Cloud Itonami admits, runs and audits one capability at a time. This is
+    ;; also a compatibility boundary: some OpenAI-shaped inference servers can
+    ;; emit parallel calls but reject the continuation containing several tool
+    ;; results. Serial calls keep every continuation portable and replayable.
+    (assoc :parallel_tool_calls false)
+
     (= :xai (:kind provider))
-    ;; Cloud Itonami's authority model admits, runs and audits one effect at a
-    ;; time. Grok defaults to parallel calls, so leaving this implicit would
-    ;; either discard calls or create a batch approval authority we do not have.
-    (assoc :parallel_tool_calls false
-           :reasoning_effort (or reasoning-effort
-                                 (:reasoning-effort provider)
-                                 "medium"))))
+    (assoc :reasoning_effort (or reasoning-effort
+                                (:reasoning-effort provider)
+                                "medium"))))
 
 (defn- agent-result
   ([message finish-reason] (agent-result message finish-reason nil))

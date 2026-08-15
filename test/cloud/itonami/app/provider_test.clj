@@ -39,6 +39,19 @@
     (is (nil? ((private-fn 'xai-headers)
                {:kind :openai-compatible} {:conversation-id "bot-123"})))))
 
+(deftest openai-compatible-agent-turn-keeps-one-tool-continuation
+  (let [body ((private-fn 'agent-request-body)
+              {:kind :openai-compatible :max-output-tokens 512}
+              {:model "murakumo-main"
+               :messages [{:role "user" :content "inspect the repository"}]
+               :tools [{:name "workspace_list"
+                        :description "List workspace files"
+                        :parameters {:type "object"}}]})]
+    (is (false? (:parallel_tool_calls body)))
+    (is (= 512 (:max_tokens body)))
+    (is (nil? (:reasoning_effort body))
+        "xAI-specific reasoning policy is not sent to Murakumo")))
+
 (deftest an-empty-finished-turn-is-not-a-silent-answer
   (let [normalize (private-fn 'agent-result)]
     (try
