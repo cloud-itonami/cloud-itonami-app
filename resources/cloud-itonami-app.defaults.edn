@@ -204,7 +204,9 @@
         ;; Resident startup jobs share the inference plane with interactive
         ;; conversations. One start per tick controls bursts; max-active also
         ;; prevents a slow run from overlapping the next tick.
-        :workforce {:max-starts-per-tick 1 :max-active 1}}
+        :workforce {:max-starts-per-tick 1
+                    :max-active 1
+                    :max-tool-calls 8}}
  :chronicle {:interval-seconds 60
              ;; Every switch is still opt-in per user. This is only the cadence
              ;; used after screen context has explicitly been enabled.
