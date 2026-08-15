@@ -127,8 +127,66 @@
                                  "advance exactly one bounded step"))
               (is (str/includes? (second (first @submitted))
                                  "at most two repository read calls"))
-              (is (= {:max-tool-calls 4 :max-tool-output-chars 1600}
+              (is (= {:max-tool-calls 4 :max-tool-output-chars 1600
+                      :resident-workforce? true}
                      (nth (first @submitted) 3))))))))))
+
+(deftest resident-empty-response-after-read-receipts-becomes-a-safe-no-op
+  (with-store
+    (fn []
+      (let [b (make-bot alice {})
+            bot-id (:bot/id b)
+            run-id "resident-empty-response-1"
+            queued (agent-run/agent-run {:id run-id :goal "bounded tick"} 1)
+            leased (agent-run/transition queued :leased 2 {})
+            running (agent-run/transition leased :running 3 {})
+            complete! (ns-resolve 'cloud.itonami.app.bots
+                                  'complete-resident-empty-response!)]
+        (store/transact!
+         (fn [state]
+           (-> state
+               (assoc-in [:bots :goal-jobs run-id]
+                         {:job/id run-id :job/bot bot-id :job/session alice
+                          :job/objective "bounded tick" :job/run running
+                          :job/resident-workforce? true :job/plan []
+                          :job/events [{:event/id "receipt-1"
+                                        :event/kind :action/finished
+                                        :event/at "2026-08-16T00:00:01Z"
+                                        :event/data {:tool "workspace_list"
+                                                     :output-sha256 "abc123"}}]})
+               (assoc-in [:bots :turn-history bot-id]
+                         [{:turn/id run-id :turn/bot bot-id
+                           :turn/state :failed :turn/phase :failed
+                           :turn/goal? true :turn/objective "bounded tick"
+                           :turn/error-type :provider/empty-response
+                           :turn/started-at "2026-08-16T00:00:00Z"}]))))
+        (is (true? (complete! run-id
+                              (ex-info "empty" {:type :provider/empty-response}))))
+        (let [turn (bots/latest-turn alice bot-id)]
+          (is (= "completed" (:state turn)))
+          (is (= "succeeded" (get-in turn [:job :state])))
+          (is (= 1 (:tool-count turn)))
+          (is (= ["workspace_list output sha256:abc123"] (:evidence turn)))
+          (is (some #{"run/no-op-completed"}
+                    (map :kind (get-in turn [:job :events]))))
+          (is (str/includes? (:text (last (bots/messages alice bot-id)))
+                             "safe no-op")))))))
+
+(deftest interactive-empty-response-is-not-reclassified-as-a-resident-no-op
+  (with-store
+    (fn []
+      (let [b (make-bot alice {})
+            run-id "interactive-empty-response-1"
+            complete! (ns-resolve 'cloud.itonami.app.bots
+                                  'complete-resident-empty-response!)]
+        (swap! store/state assoc-in [:bots :goal-jobs run-id]
+               {:job/id run-id :job/bot (:bot/id b)
+                :job/resident-workforce? false
+                :job/events [{:event/kind :action/finished
+                              :event/data {:tool "workspace_list"
+                                           :output-sha256 "abc123"}}]})
+        (is (nil? (complete! run-id
+                             (ex-info "empty" {:type :provider/empty-response}))))))))
 
 (deftest resident-workforce-does-not-overlap-an-active-job-across-bots
   (with-store

@@ -35,6 +35,20 @@ a persistent Goal that advances exactly one bounded step or records a no-op.
 It never crosses business repositories. The tick runs only for a live human
 session and never creates, refreshes or impersonates one.
 
+Resident inference is globally capacity-bounded to one active workforce job.
+A tick may make at most two repository reads, the host admits at most four tool
+calls, and only the first 1,600 characters of a tool result return to model
+context; the complete result remains represented by its SHA-256 receipt. Tool
+calls are sent sequentially to the OpenAI-shaped provider.
+
+If that provider returns an empty final answer after at least one read receipt,
+only a workforce tick terminates as a safe no-op. The record says that no write
+or external effect occurred and cites the read receipt hashes; it does not
+claim that the model interpreted the evidence or advanced the business. An
+interactive turn, a tick without a receipt, and every other provider error keep
+their ordinary failure semantics. This bounded terminal state prevents an
+uninterpreted read from becoming an endless resident retry loop.
+
 Provisioning is available only through the human, origin- and CSRF-protected
 route. MCP exposes status but cannot provision. Residency therefore changes
 latency, not authority.
