@@ -9116,7 +9116,7 @@
       selected:null, messages:[], picked:new Set(),
       draft:{color:'blue', glyph:'circle'}, loaded:false, busy:false,
       browserAvailable:false, controller:null, runId:null, shellBusy:false,
-      latestTurn:null
+      latestTurn:null, threadVersion:null, syncTimer:null, syncing:false
     };
     const botAvatar = (node, avatar, status = null) => {
       node.dataset.color = avatar?.color || 'blue';
@@ -9546,11 +9546,47 @@
       node.append(row);
       return node;
     };
-    const renderBotsThread = () => {
-      const bot = botsState.bots.find((candidate) => candidate.id === botsState.selected);
+    const botsThreadVersion = (data) => JSON.stringify({
+      messages:(data.messages || []).map((message) => ({
+        id:message.id, role:message.role, text:message.text,
+        cards:message.cards || [], direction:message.direction,
+        contextId:message['context-id']
+      })),
+      turn:data.turn ? {
+        id:data.turn.id, state:data.turn.state, phase:data.turn.phase,
+        tool:data.turn.tool, updatedAt:data.turn['updated-at']
+      } : null,
+      handoffs:(data.handoffs || []).map((handoff) => ({
+        id:handoff.id, state:handoff.state, updatedAt:handoff['updated-at']
+      }))
+    });
+    const renderBotsMessages = (bot, options = {}) => {
       const holder = $('#bots-messages');
       holder.replaceChildren();
       if (!bot) return;
+      botsState.messages.forEach((message) => {
+        const entry = make('li', 'bots-msg');
+        entry.dataset.role = message.role;
+        if (message.text) entry.append(make('div', 'bots-msg__bubble', message.text));
+        (message.cards || []).forEach((card) => {
+          if (card.kind === 'connection') entry.append(botsConnectionCard(card, bot.id));
+          else if (card.kind === 'choice') entry.append(botsChoiceCard(card, bot.id));
+          else if (card.kind === 'approval') entry.append(botsApprovalCard(card, bot.id));
+        });
+        holder.append(entry);
+      });
+      requestAnimationFrame(() => {
+        const scroll = $('#bots-thread-scroll');
+        if (options.stickToBottom !== false) scroll.scrollTop = scroll.scrollHeight;
+        else if (Number.isFinite(options.scrollTop)) scroll.scrollTop = options.scrollTop;
+      });
+    };
+    const renderBotsThread = () => {
+      const bot = botsState.bots.find((candidate) => candidate.id === botsState.selected);
+      if (!bot) {
+        $('#bots-messages').replaceChildren();
+        return;
+      }
       if (!botsState.latestTurn) botsState.latestTurn = bot['last-turn'] || null;
       renderBotsRun(botsState.latestTurn);
       botAvatar($('#bots-titlebar-avatar'), bot.avatar, bot.status);
@@ -9756,21 +9792,7 @@
         bot['admitted-tools'].forEach((tool) => list.append(make('li', null, tool)));
         panel.append(list);
       }
-      botsState.messages.forEach((message) => {
-        const entry = make('li', 'bots-msg');
-        entry.dataset.role = message.role;
-        if (message.text) entry.append(make('div', 'bots-msg__bubble', message.text));
-        (message.cards || []).forEach((card) => {
-          if (card.kind === 'connection') entry.append(botsConnectionCard(card, bot.id));
-          else if (card.kind === 'choice') entry.append(botsChoiceCard(card, bot.id));
-          else if (card.kind === 'approval') entry.append(botsApprovalCard(card, bot.id));
-        });
-        holder.append(entry);
-      });
-      requestAnimationFrame(() => {
-        const scroll = $('#bots-thread-scroll');
-        scroll.scrollTop = scroll.scrollHeight;
-      });
+      renderBotsMessages(bot);
     };
     const refreshBotsThread = async () => {
       if (!botsState.selected) return;
@@ -9779,6 +9801,7 @@
       if (!request.ok) throw new Error(data?.error?.message || '会話を読めませんでした。');
       botsState.messages = data.messages || [];
       botsState.latestTurn = data.turn || botsState.latestTurn;
+      botsState.threadVersion = botsThreadVersion(data);
       renderBotsThread();
     };
     const showBotsPane = () => {
@@ -9801,10 +9824,70 @@
         const data = await request.json();
         if (!request.ok) throw new Error(data?.error?.message || '会話を読めませんでした。');
         botsState.messages = data.messages || [];
+        botsState.threadVersion = botsThreadVersion(data);
         renderBotsThread();
         botsShowLastTurn(botsState.bots.find((candidate) => candidate.id === botId));
       } catch (error) { botsSetStatus(error.message); }
     };
+    const stopBotsRealtime = () => {
+      if (botsState.syncTimer) window.clearTimeout(botsState.syncTimer);
+      botsState.syncTimer = null;
+    };
+    const scheduleBotsRealtime = (delay = 1000) => {
+      stopBotsRealtime();
+      if (!appUnlocked || currentView !== 'bots') return;
+      botsState.syncTimer = window.setTimeout(syncBotsFromResident, delay);
+    };
+    const syncBotsFromResident = async () => {
+      botsState.syncTimer = null;
+      if (!appUnlocked || currentView !== 'bots') return;
+      if (document.hidden || botsState.busy || botsState.syncing || !botsState.selected) {
+        scheduleBotsRealtime(document.hidden ? 5000 : 1000);
+        return;
+      }
+      botsState.syncing = true;
+      const botId = botsState.selected;
+      try {
+        const request = await fetch(`/api/bots/${botId}/messages`, {cache:'no-store'});
+        const data = await request.json();
+        if (!request.ok) throw new Error(data?.error?.message || '会話を同期できませんでした。');
+        if (botsState.selected !== botId) return;
+        const version = botsThreadVersion(data);
+        if (version !== botsState.threadVersion) {
+          const scroll = $('#bots-thread-scroll');
+          const previousTop = scroll.scrollTop;
+          const stickToBottom = scroll.scrollHeight - scroll.scrollTop - scroll.clientHeight < 48;
+          botsState.messages = data.messages || [];
+          botsState.latestTurn = data.turn || null;
+          botsState.threadVersion = version;
+          const overviewRequest = await fetch('/api/bots', {cache:'no-store'});
+          const overview = await overviewRequest.json();
+          if (overviewRequest.ok && botsState.selected === botId) {
+            botsState.bots = overview.bots || botsState.bots;
+            renderBotsRail();
+          }
+          if (botsState.selected !== botId) return;
+          const bot = botsState.bots.find((candidate) => candidate.id === botId);
+          renderBotsRun(botsState.latestTurn);
+          if (bot) {
+            botAvatar($('#bots-titlebar-avatar'), bot.avatar, bot.status);
+            $('#bots-titlebar-status').textContent = botsStatusText[bot.status] || bot.status;
+          }
+          renderBotsMessages(bot, {stickToBottom, scrollTop:previousTop});
+          botsSetStatus('CLI / MCP からの会話を同期しました。');
+        }
+      } catch (error) {
+        // A transient resident restart should not turn a still-readable thread
+        // into an error pane. Keep the conversation and retry; a successful
+        // manual action will still surface its own error through the normal UI.
+      } finally {
+        botsState.syncing = false;
+        scheduleBotsRealtime();
+      }
+    };
+    document.addEventListener('visibilitychange', () => {
+      if (!document.hidden && currentView === 'bots') scheduleBotsRealtime(0);
+    });
     const syncBotsBrowserPermission = () => {
       const box = $('#bots-browser');
       const help = $('#bots-browser-help');
@@ -10088,7 +10171,10 @@
 
     onViewChange = () => {
       scheduleWorkerPoll();
-      if (currentView === 'bots') loadBots({keepSelection:botsState.loaded});
+      if (currentView === 'bots') {
+        loadBots({keepSelection:botsState.loaded});
+        scheduleBotsRealtime(0);
+      } else stopBotsRealtime();
       scheduleOrganismPoll();
       // Computed the first time the pane is actually opened, then left alone
       // until the button is pressed — it is expensive and it is not live data.
