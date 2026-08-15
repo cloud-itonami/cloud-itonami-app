@@ -679,8 +679,12 @@ not grant execution. The concrete grant is deliberately narrower: one admitted
 business Git repository, no connector, browser, virtual shell, or omakase
 authority, and repository writes remain behind the existing approval governor.
 The resident tick starts at most one due job by default, with deterministic
-staggering and fixed delay. It runs only while a real human session remains
-live; residency never mints or extends authority. See
+staggering and fixed delay. A tick is limited to two repository reads, four
+host tool calls, and 1,600 characters of each tool result in model context;
+complete outputs retain SHA-256 receipts. An empty final provider answer after
+a read closes only that resident tick as an explicitly recorded safe no-op,
+never as an inferred business result. It runs only while a real human session
+remains live; residency never mints or extends authority. See
 [ADR-0056](docs/adr/0056-startup-workforces-are-governed-resident-bot-jobs.md).
 
 MCP exposes `workforce_status` as read-only operational evidence. Provisioning

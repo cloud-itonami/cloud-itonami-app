@@ -2285,6 +2285,42 @@
         (Thread/interrupted)
         (locking active-turns (swap! active-turns dissoc bot-id))))))
 
+(defn- complete-resident-empty-response! [run-id error]
+  (let [{:job/keys [bot resident-workforce?]} (goal-job run-id)
+        receipts (vec (action-receipts run-id))]
+    (when (and resident-workforce?
+               (= :provider/empty-response (:type (ex-data error)))
+               (seq receipts))
+      (let [summary (str "Provider returned no final answer after "
+                         (count receipts)
+                         " bounded repository read receipt(s). "
+                         "No write or external effect was attempted; this resident tick completed as a safe no-op.")
+            evidence (mapv (fn [event]
+                             (let [data (:event/data event)]
+                               (str (:tool data) " output sha256:"
+                                    (:output-sha256 data))))
+                           receipts)]
+        ;; The provider cannot be allowed to turn a read-only resident tick into
+        ;; an endless retry loop. Receipts prove what was observed without
+        ;; pretending that the model interpreted it or that business work was
+        ;; completed. Interactive turns retain the ordinary failure behavior.
+        (clear-run! bot)
+        (record-turn! bot run-id
+                      {:turn/state :completed :turn/phase :completed
+                       :turn/result summary :turn/evidence evidence
+                       :turn/tool-count (count receipts)
+                       :turn/error-type nil :turn/error-status nil
+                       :turn/finished-at (store/now)})
+        (say bot summary nil)
+        (append-goal-event! run-id :run/no-op-completed
+                            {:reason :provider/empty-response
+                             :receipt-count (count receipts)
+                             :evidence evidence})
+        (transition-goal-run! run-id :succeeded
+                              {:agent.run/result :safe-no-op
+                               :agent.run/finished-at (now-ms)})
+        true))))
+
 (defn- run-goal-job! [configuration run-id]
   (let [{:job/keys [bot session objective attempt max-tool-calls
                     max-tool-output-chars]}
@@ -2319,15 +2355,16 @@
                               {:agent.run/result state
                                :agent.run/finished-at (now-ms)}))
       (catch Exception error
-        (let [status (get-in (goal-job run-id) [:job/run :agent.run/status])]
-          (when (contains? #{:leased :running :checkpointed} status)
-            (transition-goal-run! run-id :failed
-                                  {:agent.run/error-type (or (:type (ex-data error))
-                                                             :internal-error)})))
-        (append-goal-event! run-id :run/failed
-                            {:error-type (or (:type (ex-data error)) :internal-error)
-                             :error-status (:status (ex-data error))
-                             :message (.getMessage error)}))
+        (when-not (complete-resident-empty-response! run-id error)
+          (let [status (get-in (goal-job run-id) [:job/run :agent.run/status])]
+            (when (contains? #{:leased :running :checkpointed} status)
+              (transition-goal-run! run-id :failed
+                                    {:agent.run/error-type (or (:type (ex-data error))
+                                                               :internal-error)})))
+          (append-goal-event! run-id :run/failed
+                              {:error-type (or (:type (ex-data error)) :internal-error)
+                               :error-status (:status (ex-data error))
+                               :message (.getMessage error)})))
       (finally
         (swap! goal-workers dissoc run-id)))))
 
@@ -2356,7 +2393,7 @@
   ([configuration session bot-id text run-id]
    (submit-goal! configuration session bot-id text run-id {}))
   ([configuration session bot-id text run-id
-    {:keys [max-tool-calls max-tool-output-chars]}]
+    {:keys [max-tool-calls max-tool-output-chars resident-workforce?]}]
   (let [b (owned! session bot-id)
         text (str/trim (str text))
         run-id (str/trim (str run-id))]
@@ -2387,6 +2424,7 @@
                :job/objective text :job/run run :job/plan [] :job/events []
                :job/max-tool-calls max-tool-calls
                :job/max-tool-output-chars max-tool-output-chars
+               :job/resident-workforce? (boolean resident-workforce?)
                :job/attempt 0 :job/created-at at :job/updated-at at}]
       (transact! assoc-in [:goal-jobs run-id] job)
       (record-turn! bot-id run-id
@@ -2487,7 +2525,8 @@
                         (max 1 (long (or (get-in configuration
                                                [:bots :workforce
                                                 :max-tool-output-chars])
-                                         1600)))})
+                                         1600)))
+                        :resident-workforce? true})
                       (transact! update-in [:workforce-jobs bot-id]
                                  merge {:workforce.job/last-submitted-at now
                                         :workforce.job/last-run-id run-id
