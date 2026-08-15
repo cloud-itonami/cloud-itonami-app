@@ -1103,12 +1103,17 @@
                          (.write writer "\n")
                          (.flush writer))]
       (try
-        (let [messages (bots/send-stream! config session bot-id (:text request)
-                                          (:run-id request)
-                                          (boolean (:goal request))
-                                          write-event!)]
-          (write-event! {:type "done" :messages messages
-                         :turn (bots/latest-turn session bot-id)}))
+        (if (:goal request)
+          (let [job (bots/submit-goal! config session bot-id (:text request)
+                                       (:run-id request))]
+            (write-event! {:type "accepted" :job job})
+            (write-event! {:type "done" :background true
+                           :messages (bots/messages session bot-id)
+                           :turn (bots/latest-turn session bot-id)}))
+          (let [messages (bots/send-stream! config session bot-id (:text request)
+                                            (:run-id request) false write-event!)]
+            (write-event! {:type "done" :messages messages
+                           :turn (bots/latest-turn session bot-id)})))
         (catch Exception error
           (write-event! {:type "error" :message (.getMessage error)
                          :turn (bots/latest-turn session bot-id)}))))))
@@ -5446,10 +5451,10 @@
    (mail-sync/start! configuration)
    (chronicle/start! configuration)
    (folder-sync/start! configuration)
-   ;; A process cannot resume an HTTP/model stream owned by its predecessor.
-   ;; Close those durable records before accepting a new direction so the UI
-   ;; reports an interruption rather than an idle Bot that silently lost work.
-   (bots/recover-interrupted!)
+   ;; Ordinary HTTP/model streams are closed as interrupted. Goal AgentRuns
+   ;; checkpoint and requeue from their durable transcript before new work is
+   ;; accepted, so a restart does not silently discard an objective.
+   (bots/recover-interrupted! configuration)
    ;; After the surfaces it drives, so a routine that fires on the first pass
    ;; finds a store that is already open rather than one still being read.
    (bots/start-tick! configuration)

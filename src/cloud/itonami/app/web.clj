@@ -410,6 +410,9 @@
   .bots-run__state{font-weight:600}
   .bots-run__meta{font-size:.8125rem;color:var(--color-neutral-solid-gray-600)}
   .bots-run__objective{font-size:.875rem;line-height:1.5;overflow-wrap:anywhere}
+  .bots-run__plan{margin:.125rem 0;padding-left:1.5rem;font-size:.8125rem;
+    line-height:1.6;color:var(--color-neutral-solid-gray-700)}
+  .bots-run__step--verified{color:var(--color-semantic-success-2)}
   .bots-thread__messages{list-style:none;margin:0 auto;padding:0;display:grid;
     gap:.75rem;max-width:44rem}
   .bots-msg{display:grid;gap:.5rem}

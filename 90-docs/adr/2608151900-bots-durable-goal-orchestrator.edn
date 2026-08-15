@@ -1,0 +1,51 @@
+[{:db/id -1
+  :adr/id "ADR-2608151900"
+  :adr/title "Bots Goal is a durable AgentRun with host receipts and bounded child runs"
+  :adr/status "accepted"
+  :adr/date "2026-08-15"
+  :adr/body
+  "## Decision
+
+The mobile Bots Goal path is detached from its HTTP stream. Submission creates
+one persistent `agent.run/AgentRun`; a local three-slot worker pool owns the
+execution, so closing the screen does not cancel it. A server restart turns a
+running Goal into a checkpoint and re-enqueues it. Ordinary chat remains a
+synchronous visible turn.
+
+The Goal provider must first record a dependency-aware plan of one to eight
+steps. Tool actions, output digests, bounded duration, child-run identity and
+verifier decisions are appended by the host. Provider prose cannot manufacture
+an execution receipt. `goal_complete` is admitted only after every plan step
+has a host action receipt and has passed the step verifier.
+
+A provider may request up to three independent read-only tools together. Each
+becomes a child AgentRun whose `:agent.run/parent` is the Goal run. The host runs
+those children concurrently. Unknown, connector-blocked, write, approval, and
+Goal-control tools are refused on the parallel path; writes keep the existing
+single approval boundary.
+
+## Why
+
+The earlier Goal loop kept an HTTP request open, stored only a visible turn,
+relabelled every running turn as interrupted after restart, rejected multiple
+tool calls, and accepted model-written evidence as completion. It therefore
+looked active while still behaving like a long chat response.
+
+This adapter uses the application's existing AgentRun vocabulary instead of
+inventing another scheduler. The visible turn remains the mobile projection;
+the AgentRun, plan, child runs and append-only event ledger are the durable
+execution truth.
+
+## Bounds
+
+This is process-resident execution, not a claim that work continues while the
+Mac is asleep. Parallelism is read-only and capped at three. Coding writes do
+not yet receive automatic worktree merge arbitration; they remain serialized
+behind the established approval or omakase receipt.
+
+## Verification
+
+Tests prove that submit returns while the provider is blocked, two read actions
+finish as sibling child AgentRuns, the plan cannot finish without host receipts,
+step and Goal verifiers append receipts, and restart recovery produces a
+resumable checkpoint rather than an interrupted terminal."}]
