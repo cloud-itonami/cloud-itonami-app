@@ -1296,7 +1296,10 @@
              (str " " (pr-str (into (sorted-map) q))))))))
 
 (defn- run-tool! [configuration b selection tool-name args]
-  (let [text (if (or (agent-control/browser-tool? tool-name)
+  (let [limit (max 1 (long (or (get-in configuration
+                                      [:bots :goal :max-tool-output-chars])
+                                max-tool-output-chars)))
+        text (if (or (agent-control/browser-tool? tool-name)
                      (workspace-tools/tool? tool-name)
                      (virtual-shell/tool? tool-name))
                (str (cond
@@ -1316,8 +1319,9 @@
                                          {:http (http-port)
                                           :tokens (tokens-port configuration selection)})]
                  (if (string? result) result (pr-str result))))]
-    (if (> (count text) max-tool-output-chars)
-      (str (subs text 0 max-tool-output-chars) "…")
+    (if (> (count text) limit)
+      (str (subs text 0 limit)
+           "\n[tool output truncated for model context; full output is represented by the host receipt hash]")
       text)))
 
 (defn- system-prompt [b configuration goal]
@@ -2282,12 +2286,16 @@
         (locking active-turns (swap! active-turns dissoc bot-id))))))
 
 (defn- run-goal-job! [configuration run-id]
-  (let [{:job/keys [bot session objective attempt max-tool-calls]}
+  (let [{:job/keys [bot session objective attempt max-tool-calls
+                    max-tool-output-chars]}
         (goal-job run-id)
         configuration (cond-> configuration
                         max-tool-calls
                         (assoc-in [:bots :goal :max-tool-calls]
-                                  max-tool-calls))]
+                                  max-tool-calls)
+                        max-tool-output-chars
+                        (assoc-in [:bots :goal :max-tool-output-chars]
+                                  max-tool-output-chars))]
     (try
       (transition-goal-run! run-id :leased {:agent.run/lease "local-bots-goal"})
       (transition-goal-run! run-id :running {})
@@ -2347,7 +2355,8 @@
   HTTP response; closing the mobile screen does not cancel it."
   ([configuration session bot-id text run-id]
    (submit-goal! configuration session bot-id text run-id {}))
-  ([configuration session bot-id text run-id {:keys [max-tool-calls]}]
+  ([configuration session bot-id text run-id
+    {:keys [max-tool-calls max-tool-output-chars]}]
   (let [b (owned! session bot-id)
         text (str/trim (str text))
         run-id (str/trim (str run-id))]
@@ -2377,6 +2386,7 @@
                :job/session (select-keys session [:user-id :organization-id :kind])
                :job/objective text :job/run run :job/plan [] :job/events []
                :job/max-tool-calls max-tool-calls
+               :job/max-tool-output-chars max-tool-output-chars
                :job/attempt 0 :job/created-at at :job/updated-at at}]
       (transact! assoc-in [:goal-jobs run-id] job)
       (record-turn! bot-id run-id
@@ -2404,7 +2414,7 @@
        " / " (get-in b [:bot/role :name]) ".\n"
        (:workforce.job/objective job) "\n\n"
        "Inspect current evidence inside the admitted business repository and advance exactly one bounded step. "
-       "Use at most four repository read calls before completing or blocking this resident tick. "
+       "Use at most two repository read calls before completing or blocking this resident tick. "
        "Keep observed facts, forecasts and proposals separate. Do not cross into another business. "
        "If there is no safe actionable change, record the evidence for a no-op and complete the goal; do not invent work. "
        "Any write or external effect remains subject to the concrete tool grant and its governor."))
@@ -2472,7 +2482,12 @@
                        {:max-tool-calls
                         (max 1 (long (or (get-in configuration
                                                [:bots :workforce :max-tool-calls])
-                                         8)))})
+                                         4)))
+                        :max-tool-output-chars
+                        (max 1 (long (or (get-in configuration
+                                               [:bots :workforce
+                                                :max-tool-output-chars])
+                                         1600)))})
                       (transact! update-in [:workforce-jobs bot-id]
                                  merge {:workforce.job/last-submitted-at now
                                         :workforce.job/last-run-id run-id

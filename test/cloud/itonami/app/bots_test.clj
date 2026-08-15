@@ -126,8 +126,8 @@
               (is (str/includes? (second (first @submitted))
                                  "advance exactly one bounded step"))
               (is (str/includes? (second (first @submitted))
-                                 "at most four repository read calls"))
-              (is (= {:max-tool-calls 8}
+                                 "at most two repository read calls"))
+              (is (= {:max-tool-calls 4 :max-tool-output-chars 1600}
                      (nth (first @submitted) 3))))))))))
 
 (deftest resident-workforce-does-not-overlap-an-active-job-across-bots
@@ -856,6 +856,14 @@
 
 (defn- run-tool-var []
   (ns-resolve 'cloud.itonami.app.bots 'run-tool!))
+
+(deftest resident-tool-output-budget-truncates-only-the-model-context
+  (with-redefs [workspace-tools/call! (fn [& _] "abcdefghijklmnop")]
+    (let [output ((deref (run-tool-var))
+                  {:bots {:goal {:max-tool-output-chars 5}}}
+                  {:bot/workspace "/tmp"} nil "workspace_read" {})]
+      (is (str/starts-with? output "abcde\n"))
+      (is (str/includes? output "full output is represented by the host receipt hash")))))
 
 (deftest omakase-runs-an-admitted-gmail-send-and-leaves-a-receipt
   (with-store
