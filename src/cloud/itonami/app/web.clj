@@ -285,10 +285,42 @@
   .bots-rail__last{font-size:.8125rem;color:var(--color-neutral-solid-gray-600);
     overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   /* The avatar. One element, two custom properties, so the same markup is a
-     swatch in the picker and a face in the rail. */
+     swatch in the picker and a face in the rail. Eyes are pseudo-elements:
+     decorative life never becomes extra DOM or an accessible-name fragment. */
   .bot-avatar{display:inline-flex;align-items:center;justify-content:center;
     width:2rem;height:2rem;flex:0 0 auto;background:var(--bot-color,#4a6fd4);
-    color:var(--color-neutral-white);font-size:.875rem;position:relative}
+    color:var(--color-neutral-white);font-size:.875rem;position:relative;
+    animation:bot-breathe var(--bot-breathe-time,4.8s) ease-in-out var(--bot-phase,0s) infinite;
+    transform-origin:50% 80%}
+  .bot-avatar::before,.bot-avatar::after{content:'';position:absolute;z-index:1;
+    pointer-events:none}
+  /* Two white eyes from one box and its shadow. */
+  .bot-avatar::before{width:.42em;height:.5em;left:calc(50% - .52em);top:38%;
+    border-radius:50%;background:var(--color-neutral-white);
+    box-shadow:.62em 0 0 var(--color-neutral-white);transform-origin:50% 55%;
+    animation:bot-blink 6.4s ease-in-out var(--bot-phase,0s) infinite}
+  /* Two pupils move together, giving a readable wandering gaze without JS. */
+  .bot-avatar::after{width:.18em;height:.24em;left:calc(50% - .4em);top:44%;
+    border-radius:50%;background:var(--color-neutral-solid-gray-900);
+    box-shadow:.62em 0 0 var(--color-neutral-solid-gray-900);
+    animation:bot-look var(--bot-look-time,7.2s) ease-in-out var(--bot-phase,0s) infinite}
+  .bot-avatar[data-glyph='bean'],.bot-avatar[data-glyph='wave']{--bot-phase:-1.3s}
+  .bot-avatar[data-glyph='block'],.bot-avatar[data-glyph='drop']{--bot-phase:-2.6s}
+  .bot-avatar[data-glyph='wide'],.bot-avatar[data-glyph='cloud']{--bot-phase:-3.9s}
+  .bot-avatar[data-glyph='wedge']{--bot-phase:-5.2s}
+  .bot-avatar[data-status='working']{--bot-breathe-time:2.4s;--bot-look-time:4.2s}
+  .bot-avatar[data-status='waiting-approval'],
+  .bot-avatar[data-status='waiting-connection']{--bot-look-time:4.8s}
+  .bot-avatar[data-status='disabled']{animation:none;filter:saturate(.35)}
+  .bot-avatar[data-status='disabled']::before{animation:none;transform:scaleY(.22)}
+  .bot-avatar[data-status='disabled']::after{animation:none}
+  @keyframes bot-breathe{0%,100%{transform:translateY(0) scale(1)}
+    50%{transform:translateY(-.08rem) scale(1.025)}}
+  @keyframes bot-blink{0%,42%,46%,100%{transform:scaleY(1)}
+    43%,45%{transform:scaleY(.08)}}
+  @keyframes bot-look{0%,18%,82%,100%{transform:translateX(0)}
+    28%,42%{transform:translateX(.1em)}
+    58%,72%{transform:translateX(-.08em)}}
   .bot-avatar--xl{width:4.5rem;height:4.5rem;font-size:1.75rem}
   .bot-avatar[data-glyph='circle']{border-radius:50%}
   .bot-avatar[data-glyph='bean']{border-radius:50% 50% 45% 55% / 55% 45% 55% 45%}
@@ -1144,6 +1176,7 @@
   @media (prefers-reduced-motion: reduce){
     .typing span{animation:none;opacity:1}
     .skeleton{animation:none;background:var(--color-neutral-solid-gray-100)}
+    .bot-avatar,.bot-avatar::before,.bot-avatar::after{animation:none}
   }
   ")
 

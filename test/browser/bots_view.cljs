@@ -127,14 +127,22 @@
             rail-name (.textContent page ".bots-rail__name")
             thread-hidden (.getAttribute (.locator page "#bots-thread") "hidden")
             thread-name (.textContent page "#bots-titlebar-name")
-            avatar-color (.getAttribute (.locator page "#bots-titlebar-avatar") "data-color")]
+            avatar-color (.getAttribute (.locator page "#bots-titlebar-avatar") "data-color")
+            avatar-status (.getAttribute (.locator page "#bots-titlebar-avatar") "data-status")
+            eye-content (.evaluate page
+                                   "getComputedStyle(document.querySelector('#bots-titlebar-avatar'), '::before').content")
+            pupil-content (.evaluate page
+                                     "getComputedStyle(document.querySelector('#bots-titlebar-avatar'), '::after').content")]
       (check! "the picker changes the preview" (and (= "orange" preview-color)
                                                     (= "drop" preview-glyph)))
       (check! "the Bot appears in the rail" (= 1 rail))
       (check! "under the name it was given" (= "workspace worker" (str/trim (or rail-name ""))))
       (check! "and the thread opened on it" (and (nil? thread-hidden)
                                                  (= "workspace worker" (str/trim (or thread-name "")))))
-      (check! "carrying the colour that was picked" (= "orange" avatar-color)))
+      (check! "carrying the colour that was picked" (= "orange" avatar-color))
+      (check! "carrying the server-derived status into its movement" (some? avatar-status))
+      (check! "the face has eyes and pupils" (and (= "\"\"" eye-content)
+                                                   (= "\"\"" pupil-content))))
 
     (println "\n── the titlebar keeps human controls minimal ──")
     (p/let [titlebar-visible (.isVisible page "#bots-titlebar-context")

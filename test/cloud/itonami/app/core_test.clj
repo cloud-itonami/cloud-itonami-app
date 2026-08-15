@@ -338,6 +338,15 @@
                      ".bots-thread__scroll{flex:1;min-height:0;overflow-y:auto"))
   (is (str/includes? web/app-css ".global-status{position:fixed")))
 
+(deftest bot-faces-have-eyes-life-and-a-still-accessible-state
+  (is (str/includes? web/app-css ".bot-avatar::before,.bot-avatar::after{content:''"))
+  (is (str/includes? web/app-css "@keyframes bot-breathe"))
+  (is (str/includes? web/app-css "@keyframes bot-blink"))
+  (is (str/includes? web/app-css "@keyframes bot-look"))
+  (is (str/includes? web/app-css ".bot-avatar[data-status='working']"))
+  (is (str/includes? web/app-css
+                     ".bot-avatar,.bot-avatar::before,.bot-avatar::after{animation:none}")))
+
 (deftest app-css-only-references-design-system-tokens-that-exist
   ;; An undefined custom property makes the whole declaration invalid at
   ;; computed-value time, so it does not fall back to the cascade — it silently
