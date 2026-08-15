@@ -315,3 +315,13 @@
         picker (second (re-find #"(?s)const refreshEsignDocuments = \(\) => \{(.*?)\n    \};" js))]
     (is (some? picker) "refreshEsignDocuments is still spelled that way")
     (is (str/includes? picker "!item['file?']"))))
+
+(deftest bot-omakase-is-an-explicit-human-setting-with-a-visible-receipt
+  (let [html (with-redefs [store/snapshot (constantly (store/initial-state))]
+               (web/page-html config))
+        js (slurp (io/file "resources/cloud/itonami/app/interaction.js"))]
+    (is (str/includes? html "id=\"bots-omakase\""))
+    (is (str/includes? html "shell・メール送信・Git変更"))
+    (is (str/includes? js "'omakase?':$('#bots-omakase').checked"))
+    (is (str/includes? js "{'omakase?':omakaseBox.checked}"))
+    (is (str/includes? js "'おまかせ承認済み'"))))

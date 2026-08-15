@@ -31,13 +31,12 @@
   colour, glyph and brief are not among them. There is no persona field to
   consult, in the file where consulting one would matter.
 
-  ## What a Bot may not do, ever
+  ## Approval and omakase
 
-  Approve. `may-approve?` tests the actor kind first and alone, so no
-  combination of the other facts reaches the human branch for an agent. This
-  restates `agent-session`'s rule — 'An agent may ask, record, and carry out
-  what was approved. It may not approve.' — at the one place a Bot could
-  plausibly be argued into an exception, because it looks like a teammate.
+  Normal Bots may not approve. `may-approve?` remains the human approval gate.
+  A separately stored `:bot/omakase?` is a standing owner delegation: the host
+  records an approval receipt and executes admitted writes without parking the
+  run. It does not widen tools, workspace, accounts, network or credentials.
 
   ## Where the effects are
 
@@ -180,6 +179,9 @@
      :bot/browser? (boolean (:bot/browser? value))
      :bot/coding? (boolean (:bot/coding? value))
      :bot/virtual-shell? (boolean (:bot/virtual-shell? value))
+     ;; Standing delegation, intentionally independent of writes/tool reach.
+     ;; It changes WHEN an already-admitted write runs, never WHAT is admitted.
+     :bot/omakase? (boolean (:bot/omakase? value))
      :bot/workspace workspace
      :bot/enabled? (if (contains? value :bot/enabled?)
                      (boolean (:bot/enabled? value))

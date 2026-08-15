@@ -91,10 +91,10 @@
   "One request. Returns `{:status :body}`; throws only if the server cannot be
   reached at all, which is a different failure from a refusal and should not be
   reported as one."
-  [configuration method path {:keys [body token]}]
+  [configuration method path {:keys [body token timeout-seconds]}]
   (let [builder (-> (HttpRequest/newBuilder
                      (URI/create (str (base-url configuration) path)))
-                    (.timeout (Duration/ofSeconds 30))
+                    (.timeout (Duration/ofSeconds (long (or timeout-seconds 30))))
                     (.header "Content-Type" "application/json"))]
     (when token
       (.header builder "Authorization" (str "Bearer " token)))
@@ -139,6 +139,16 @@
                                    "を実行してください")
                               {:type :app-client/no-session})))]
     (unwrap (call configuration method path {:body body :token t}))))
+
+(defn request-with-timeout!
+  "Like request!, for bounded agent turns which legitimately outlive a normal
+  control-plane request. The caller still supplies a finite timeout."
+  [configuration method path timeout-seconds & [body]]
+  (let [t (or (token configuration)
+              (throw (ex-info "agent session がありません。先に auth login を実行してください"
+                              {:type :app-client/no-session})))]
+    (unwrap (call configuration method path
+                  {:body body :token t :timeout-seconds timeout-seconds}))))
 
 (defn available?
   "Whether this process can act: a token exists AND the server accepts it.

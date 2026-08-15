@@ -44,3 +44,16 @@
            (:type (ex-data
                    (try (client/base-url {})
                         (catch clojure.lang.ExceptionInfo e e))))))))
+
+(deftest bots-cli-submits-a-bounded-long-running-task
+  (let [seen (atom nil)]
+    (with-redefs [client/request-with-timeout!
+                  (fn [_ method path seconds body]
+                    (reset! seen [method path seconds body])
+                    {:messages [{:text "done"}]})]
+      (is (= {:messages [{:text "done"}]}
+             (cli/run {} ["bots" "task" "--id" "bot-1"
+                          "--text" "repo を確認して"])))
+      (is (= [:post "/api/agent-bots/bot-1/messages" 660
+              {:text "repo を確認して"}]
+             @seen)))))

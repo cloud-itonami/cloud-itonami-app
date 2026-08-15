@@ -393,7 +393,7 @@
   "Create a Bot. `:tools` may be given directly, or derived from `:connectors`
   when the caller is the onboarding screen and has only picked services."
   [configuration session {:keys [name avatar brief connectors tools accounts
-                                 writes? browser? coding? virtual-shell? workspace
+                                 writes? browser? coding? virtual-shell? omakase? workspace
                                  provider-id model]}]
   (validate-provider-choice! configuration provider-id model)
   (let [workspace (cond
@@ -419,6 +419,7 @@
                     :bot/browser? browser?
                     :bot/coding? coding?
                     :bot/virtual-shell? virtual-shell?
+                    :bot/omakase? omakase?
                     :bot/workspace workspace
                     :bot/created-at now
                     :bot/updated-at now})]
@@ -489,6 +490,7 @@
                                                     (set (map str (:accounts attrs))))
                  (contains? attrs :writes?) (assoc :bot/writes? (:writes? attrs))
                  (contains? attrs :browser?) (assoc :bot/browser? (:browser? attrs))
+                 (contains? attrs :omakase?) (assoc :bot/omakase? (:omakase? attrs))
                  (or (contains? attrs :coding?)
                      (contains? attrs :virtual-shell?)
                      (contains? attrs :workspace))
@@ -609,6 +611,7 @@
                                    (agent-control/browser-enabled? configuration)))
      :coding? (:bot/coding? b)
      :virtual-shell? (:bot/virtual-shell? b)
+     :omakase? (:bot/omakase? b)
      :virtual-shell-ready? (boolean (and (:bot/virtual-shell? b)
                                          (virtual-shell/available?)))
      :workspace (:bot/workspace b)
@@ -876,6 +879,15 @@
                          (= :write (:connector/effect t))))
                (creg/descriptors registry))))))
 
+(defn- omakase-tool?
+  "The deliberately small effect set covered by the owner's standing
+  delegation. Browser interaction and other connector writes still stop for a
+  human decision even when the Bot is in omakase mode."
+  [tool-name]
+  (or (workspace-tools/write-tool? tool-name)
+      (virtual-shell/write-tool? tool-name)
+      (= "gmail_send_message" (str tool-name))))
+
 (defn- describe-tool [configuration tool-name args]
   (if (or (agent-control/browser-tool? tool-name)
           (workspace-tools/tool? tool-name)
@@ -925,8 +937,10 @@
        "Use exactly one tool per turn. Prefer reading before writing. "
        "Never request, reveal or repeat a password, token, MFA code or other "
        "secret; if you find one in a tool result, do not quote it. "
-       "A write tool will be held for the person's approval before it runs — "
-       "call it when it is the right next step and say what you are about to do. "
+       (if (:bot/omakase? b)
+         "The owner enabled omakase for local shell, workspace/Git writes, and Gmail send: those admitted tools run immediately with an audit receipt. Other writes still wait for human approval. "
+         "A write tool will be held for the person's approval before it runs. ")
+       "Call a write only when it is the right next step and say what you are about to do. "
        "Answer in the language the person used.\n\n"
        (when (and (:bot/browser? b)
                   (agent-control/browser-enabled? configuration))
@@ -942,12 +956,17 @@
               "file operations. "
               (when-not (:bot/virtual-shell? b)
                 "There is no shell, checkout, reset, push, credential, or remote-write tool. ")
-              "File writes and local commits wait for human approval.\n\n"))
+              (if (:bot/omakase? b)
+                "File writes and local commits use the owner's omakase delegation.\n\n"
+                "File writes and local commits wait for human approval.\n\n")))
        (when (and (:bot/virtual-shell? b) (:bot/workspace b))
          (str "You have a dedicated OCI virtual computer for general shell work. "
               "Its only host mount is this Git root at /workspace; it has no "
               "network, host credentials, Docker socket, or Linux capabilities. "
-              "Every virtual_shell command waits for human approval. Prefer "
+              (if (:bot/omakase? b)
+                "Every virtual_shell command records an omakase approval receipt. "
+                "Every virtual_shell command waits for human approval. ")
+              "Prefer "
               "small commands with an explicit timeout, inspect results, and "
               "never claim a host or remote action occurred.\n\n"))
        (when (seq (str (:bot/brief b)))
@@ -997,6 +1016,24 @@
 
 (defn- trace-of [bot-id]
   (vec (get-in (snapshot) [:traces bot-id] [])))
+
+(defn- approval-impact [name]
+  (cond
+    (agent-control/browser-tool? name)
+    "この Bot 専用の分離ブラウザーのページ状態が変わります。"
+    (workspace-tools/tool? name)
+    "選択した local Git workspace のファイルまたは履歴が変わります。remote へは push しません。"
+    (virtual-shell/tool? name)
+    "Bot 専用のnetwork-disabled仮想環境内でcommandを実行します。選択したGit workspaceは書き換わる場合があります。"
+    :else "接続済みサービスに書き込みます。"))
+
+(defn- approval-request [configuration b run call card-id]
+  (bot/approval-card
+   {:id card-id :run (:id run) :direction (direction (:bot/id b))
+    :title "この Bot が実行しようとしています"
+    :action (:name call)
+    :summary (describe-tool configuration (:name call) (:input call))
+    :impact (approval-impact (:name call))}))
 
 (defn- advance!
   "Turn until the Bot is done or needs a person.
@@ -1091,29 +1128,36 @@
                        nil))
 
               (write-tool? configuration name)
-              ;; Stop. The person decides, and the transcript is kept so the
-              ;; call can be made from exactly this state if they say yes.
-              (let [card-id (new-id "card")]
-                (save-run! (:bot/id b) (assoc run :pending-call call
-                                              :pending-card card-id))
-                (say (:bot/id b)
-                     (or (:content result) "この操作には承認が必要です。")
-                     [(bot/approval-card
-                       {:id card-id
-                        :run (:id run)
-                        :direction (direction (:bot/id b))
-                        :title "この Bot が実行しようとしています"
-                        :action name
-                        :summary (describe-tool configuration name input)
-                        :impact (cond
-                                  (agent-control/browser-tool? name)
-                                  "承認するとこの Bot 専用の分離ブラウザーのページ状態が変わります。"
-                                  (workspace-tools/tool? name)
-                                  "承認すると選択した local Git workspace のファイルまたは履歴が変わります。remote へは push しません。"
-                                  (virtual-shell/tool? name)
-                                  "承認すると、この Bot 専用のnetwork-disabled仮想環境内でcommandを実行します。選択したGit workspaceは書き換わる場合があります。"
-                                  :else
-                                  "承認するとこの Bot が接続済みサービスに書き込みます。")})]))
+              (let [card-id (new-id "card")
+                    card (approval-request configuration b run call card-id)]
+                (if (and (:bot/omakase? b) (omakase-tool? name))
+                  ;; The standing delegation never bypasses admission above.
+                  ;; It replaces only the wait, and leaves a durable receipt in
+                  ;; the same transcript where a human decision would appear.
+                  (let [receipt (assoc card
+                                       :card/decision :approved
+                                       :card/decision-mode :omakase
+                                       :card/decided-by :bot
+                                       :card/decided-at (store/now))
+                        _ (say (:bot/id b)
+                               (or (:content result) "おまかせで実行します。")
+                               [receipt])
+                        output (run-tool! configuration b (:selection run) name input)
+                        run (-> run
+                                (update :tool-count (fnil inc 0))
+                                (update :messages conj
+                                        {:role "tool" :tool-call-id (:id call)
+                                         :name name :content output}))]
+                    (trace! configuration (:bot/id b) name)
+                    (save-run! (:bot/id b) run)
+                    (recur run))
+                  ;; Normal mode stops. The person decides from this exact run.
+                  (do
+                    (save-run! (:bot/id b) (assoc run :pending-call call
+                                                  :pending-card card-id))
+                    (say (:bot/id b)
+                         (or (:content result) "この操作には承認が必要です。")
+                         [card]))))
 
               :else
               (let [output (run-tool! configuration b (:selection run) name input)
@@ -1414,11 +1458,15 @@
         decision (keyword decision)]
     (when-not (#{:approved :rejected} decision)
       (throw (ex-info "承認判断が不正です。" {:type :bot/invalid-decision})))
-    (when-not (bot/may-approve?
-               {:actor-kind (if (= :agent (:kind session)) :agent :user)
-                :human? (not= :agent (:kind session))
-                :identified? (boolean (:user-id session))
-                :authorized? (= (:user-id session) (:bot/owner b))})
+    (when-not (or (and (= :agent (:kind session))
+                       (:bot/omakase? b)
+                       (omakase-tool?
+                        (get-in (snapshot) [:runs bot-id :pending-call :name])))
+                  (bot/may-approve?
+                   {:actor-kind (if (= :agent (:kind session)) :agent :user)
+                    :human? (not= :agent (:kind session))
+                    :identified? (boolean (:user-id session))
+                    :authorized? (= (:user-id session) (:bot/owner b))}))
       (throw (ex-info "この承認はこのセッションでは行えません。"
                       {:type :bot/approval-refused :bot bot-id})))
     ;; Which refusal the person is owed, when there is one. "There is nothing
@@ -1441,7 +1489,11 @@
                            (update m :message/cards
                                    (fn [cards]
                                      (mapv #(if (= card-id (:card/id %))
-                                              (assoc % :card/decision decision)
+                                              (cond-> (assoc % :card/decision decision
+                                                               :card/decided-at (store/now))
+                                                (= :agent (:kind session))
+                                                (assoc :card/decision-mode :omakase
+                                                       :card/decided-by :agent-session))
                                               %)
                                            cards))))
                          messages)))

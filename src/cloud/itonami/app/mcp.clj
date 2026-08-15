@@ -19,10 +19,12 @@
   that is a boundary rather than an omission — they take a screenshot of whatever
   the operator is looking at, and their approval path in agent-control checks the
   frontmost application between approval and action. Neither survives translation
-  to a protocol whose consent model belongs to the client. Mail, calendar, drive
-  and chat are not exposed either: those sit behind the Passkey session on
-  `/api/*`, and reaching around that from a surface with no session would weaken
-  a gate the app means.
+  to a protocol whose consent model belongs to the client. Raw mail, calendar,
+  drive and chat connector tools are not exposed either. The Bot adapter is the
+  bounded exception: it carries an app agent session to `/api/agent-bots`, can
+  submit work to a Bot whose grants were configured by a human, and can decide
+  only the local-shell, workspace/Git, or Gmail-send operation covered by that
+  Bot's human-enabled omakase delegation.
 
   The 事業 surface reaches around nothing either: `business-tools` is an HTTP
   client of THIS APP's own /api/business routes, carrying an agent session
@@ -57,6 +59,7 @@
             [clojure.string :as str]
             [cloud.itonami.app.config :as config]
             [cloud.itonami.app.business-tools :as business-tools]
+            [cloud.itonami.app.bot-tools :as bot-tools]
             [cloud.itonami.app.fleet :as fleet]
             [cloud.itonami.app.payment-tools :as payment-tools]
             [cloud.itonami.app.store :as store]
@@ -98,6 +101,7 @@
   (cond-> []
     (fleet-enabled? configuration) (into fleet/tools)
     (business-tools/available? configuration) (into business-tools/tools)
+    (bot-tools/available? configuration) (into bot-tools/tools)
     (tenant-tools/available? configuration) (into tenant-tools/tools)
     (payment-tools/available? configuration) (into payment-tools/tools)))
 
@@ -133,6 +137,8 @@
         ;; tool list would otherwise keep calling a surface that is no longer
         ;; bound to anyone.
         payment-tool? (payment-tools/call-tool configuration tool-name input)
+        (bot-tools/tool? tool-name)
+        (bot-tools/call-tool configuration tool-name input)
         (business-tools/tool? tool-name)
         (business-tools/call-tool configuration tool-name input)
         (tenant-tools/tool? tool-name)

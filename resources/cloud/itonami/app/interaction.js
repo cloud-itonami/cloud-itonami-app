@@ -9425,7 +9425,9 @@
       if (card.impact) node.append(make('div', 'bots-card__summary', card.impact));
       if (card.decision) {
         const state = make('span', 'bots-card__state',
-                           card.decision === 'approved' ? '承認済み' : '却下しました');
+                           card.decision === 'approved'
+                             ? (card['decision-mode'] === 'omakase' ? 'おまかせ承認済み' : '承認済み')
+                             : '却下しました');
         state.dataset.state = card.decision;
         node.append(state);
         return node;
@@ -9493,7 +9495,9 @@
       panel.replaceChildren();
       panel.append(make('div', null,
         `届く範囲: ${bot['admitted-tools'].length} 個のツール` +
-        `${bot['writes?'] ? '（書き込みは承認のうえで実行）' : '（読み取りのみ）'}`));
+        `${bot['writes?']
+          ? (bot['omakase?'] ? '（おまかせで書き込み）' : '（書き込みは承認のうえで実行）')
+          : '（読み取りのみ）'}`));
       panel.append(make('div', null,
         `Model: ${bot['provider-id']} / ${bot.model}`));
       const mailboxCard = make('div', 'bots-card');
@@ -9594,6 +9598,33 @@
       });
       modelEditor.append(providerSelect, modelInput, saveModel);
       panel.append(modelEditor);
+      const omakaseEditor = make('div', 'bots-card__row');
+      const omakaseBox = make('input');
+      omakaseBox.type = 'checkbox';
+      omakaseBox.checked = Boolean(bot['omakase?']);
+      omakaseBox.setAttribute('aria-label', 'おまかせモード');
+      const omakaseLabel = make('span', null,
+        'おまかせモード — shell・メール送信・Git変更をBot自身が承認');
+      const saveOmakase = make('button', 'tool-button', 'おまかせ設定を保存');
+      saveOmakase.type = 'button';
+      saveOmakase.addEventListener('click', async () => {
+        saveOmakase.disabled = true;
+        try {
+          const data = await postJSON(`/api/bots/${bot.id}`,
+            {'omakase?':omakaseBox.checked}, true);
+          botsState.bots = data.bots || [];
+          renderBotsRail();
+          renderBotsThread();
+          botsSetStatus(omakaseBox.checked
+            ? 'おまかせモードを有効にしました。以後の書き込みは待たずに実行します。'
+            : 'おまかせモードを無効にしました。');
+        } catch (error) {
+          saveOmakase.disabled = false;
+          botsSetStatus(error.message);
+        }
+      });
+      omakaseEditor.append(omakaseBox, omakaseLabel, saveOmakase);
+      panel.append(omakaseEditor);
       const codingEditor = make('div', 'bots-card__row');
       const codingBox = make('input');
       codingBox.type = 'checkbox';
@@ -9780,6 +9811,7 @@
           model:$('#bots-model').value.trim(),
           connectors:[...botsState.picked],
           'writes?':$('#bots-writes').checked,
+          'omakase?':$('#bots-omakase').checked,
           'browser?':$('#bots-browser').checked,
           'coding?':$('#bots-coding').checked,
           'virtual-shell?':$('#bots-virtual-shell').checked,
