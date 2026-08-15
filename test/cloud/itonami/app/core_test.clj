@@ -326,6 +326,18 @@
     (is (not (re-find #"id=\"bots-routines-panel\"" html)))
     (is (not (re-find #"id=\"bots-handoff-send\"" html)))))
 
+(deftest bots-remain-a-single-viewport-pane-at-compact-widths
+  ;; A small desktop window used to hide the rail at 60rem and let the Bots
+  ;; view grow with its messages, putting the composer below the document fold.
+  (is (str/includes? web/app-css
+                     ".bots-view{max-width:none;padding:0;height:calc(100dvh - 5rem);overflow:hidden}"))
+  (is (str/includes? web/app-css
+                     ".bots-shell{grid-template-columns:4rem minmax(0,1fr)}"))
+  (is (not (str/includes? web/app-css ".bots-rail{display:none}")))
+  (is (str/includes? web/app-css
+                     ".bots-thread__scroll{flex:1;min-height:0;overflow-y:auto"))
+  (is (str/includes? web/app-css ".global-status{position:fixed")))
+
 (deftest app-css-only-references-design-system-tokens-that-exist
   ;; An undefined custom property makes the whole declaration invalid at
   ;; computed-value time, so it does not fall back to the cascade — it silently

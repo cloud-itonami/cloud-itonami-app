@@ -262,7 +262,9 @@
      written. Elsewhere in this stylesheet each rule declares it — that
      convention is exactly what a person adding a rule can forget. */
   .bots-view, .bots-view *{box-sizing:border-box}
-  .bots-view{max-width:none;padding:0;height:100%}
+  /* Bots is an application pane, not a long document. Its rail and composer
+     stay in the viewport while only the thread scrolls. */
+  .bots-view{max-width:none;padding:0;height:calc(100dvh - 5rem);overflow:hidden}
   .bots-shell{display:grid;grid-template-columns:17rem 1fr;height:100%;min-height:0}
   .bots-rail{display:flex;flex-direction:column;min-height:0;gap:.25rem;
     padding:.75rem;border-right:1px solid var(--color-neutral-solid-gray-200);
@@ -412,10 +414,13 @@
     border-radius:.75rem;border:1px solid var(--color-neutral-solid-gray-300);
     max-height:12rem;font:inherit}
   @media (max-width:60rem){
-    .bots-shell{grid-template-columns:1fr}
-    .bots-rail{display:none}
-    .bots-shell[data-pane='rail'] .bots-rail{display:flex}
-    .bots-shell[data-pane='rail'] .bots-main{display:none}
+    /* Keep Bot identity and waiting state reachable at every desktop width.
+       The compact rail spends width on recognition, not repeated labels. */
+    .bots-shell{grid-template-columns:4rem minmax(0,1fr)}
+    .bots-rail{display:flex;padding:.5rem .375rem}
+    .bots-rail__item{position:relative;justify-content:center;padding:.5rem .25rem}
+    .bots-rail__copy,.bots-rail__empty{display:none}
+    .bots-rail__item .bots-dot{position:absolute;right:.3rem;bottom:.3rem}
   }
   .chat-shell{position:relative;display:flex;flex-direction:column;
     height:calc(100vh - 5rem);min-height:32rem;background:var(--color-neutral-white)}
@@ -990,6 +995,10 @@
     background:var(--color-primitive-green-50);color:var(--color-semantic-success-2)}
   .settings-notice:empty{display:none}
   .settings-notice--error{background:var(--color-primitive-red-50);color:var(--color-semantic-error-1)}
+  /* Workspace feedback is transient and must not make an application pane
+     taller than the viewport. It overlays the pane like a toast. */
+  .global-status{position:fixed;z-index:35;top:6rem;left:18rem;right:1rem;
+    margin:0;box-shadow:0 .25rem 1rem rgb(0 0 0 / .08)}
   .member-list{list-style:none;margin:1rem 0 0;padding:0}
   .member-list li{display:flex;justify-content:space-between;gap:1rem;padding:.75rem 0;
     border-top:1px solid var(--color-neutral-solid-gray-200)}
@@ -1031,6 +1040,8 @@
     .nav-badge{display:none}
     .topbar{min-height:auto;padding:.75rem 1rem}.topbar__meta{display:none}
     .view{padding:1rem}.view-header{display:block}.view-header .dads-button{margin-top:1rem}
+    .bots-view{height:calc(100dvh - 3.75rem);padding:0}
+    .global-status{top:4.5rem;left:14rem}
     .signin-layout{grid-template-columns:1fr}
     .chat-view{padding:0}.chat-shell{height:calc(100dvh - 3.75rem)}
     .chat-header{padding:.5rem .75rem}.chat-header .model-pill{display:none}
@@ -1110,6 +1121,8 @@
     .bots-titlebar__copy{display:none}
     #bots-titlebar-context{gap:.375rem}
     .view{padding:1rem}.view-header h1{font-size:1.75rem;line-height:1.3}.view-lead{line-height:1.7}
+    .bots-view{height:calc(100dvh - 4rem - env(safe-area-inset-top) - var(--mobile-nav-height));padding:0}
+    .global-status{top:calc(4.5rem + env(safe-area-inset-top));left:1rem;right:1rem}
     .chat-shell{height:calc(100dvh - 4rem - var(--mobile-nav-height))}
     .data-card,.settings-card{padding:1rem}
     input,select,textarea,button{max-width:100%}
