@@ -122,10 +122,21 @@
       (.connectTimeout (Duration/ofSeconds 30))
       .build))
 
+(defn cache-busted-url
+  "A delegated router may CDN-cache GET beyond the IPNS record TTL. A publish
+  must verify the record that was just accepted, not a still-valid cached
+  predecessor, so each read gets a transport-only query nonce. Routers ignore
+  unknown query parameters; the signed IPNS name and record are unchanged."
+  [url nonce]
+  (str url (if (str/includes? url "?") "&" "?") "fresh=" nonce))
+
 (defn kad-http
   "Synchronous http-fn for `kad.routing`. Body is octets either way."
   [{:keys [method url headers body]}]
-  (let [bldr (reduce-kv (fn [b k v]
+  (let [url (if (= method :get)
+              (cache-busted-url url (System/nanoTime))
+              url)
+        bldr (reduce-kv (fn [b k v]
                           (.header b (name k) (str v)))
                         (-> (HttpRequest/newBuilder (URI/create url))
                             (.timeout (Duration/ofSeconds 45)))

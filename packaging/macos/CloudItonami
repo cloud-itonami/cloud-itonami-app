@@ -65,4 +65,4 @@ fi
   --title "Cloud Itonami" \
   --icon "$resources_dir/icon.png" \
   --web-url http://localhost:1338/ \
-  --width 1100 --height 860 --min-width 720 --min-height 600
+  --width 430 --height 860 --min-width 360 --min-height 640

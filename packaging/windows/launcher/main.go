@@ -102,7 +102,7 @@ func startServer(installDir, dataDir, logDir string) error {
 
 func openWindow() error {
 	if edge, err := exec.LookPath("msedge.exe"); err == nil {
-		return exec.Command(edge, "--app=http://localhost:1338/", "--new-window").Start()
+		return exec.Command(edge, "--app=http://localhost:1338/", "--new-window", "--window-size=430,860").Start()
 	}
 	return exec.Command("cmd.exe", "/c", "start", "", "http://localhost:1338/").Start()
 }

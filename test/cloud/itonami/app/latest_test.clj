@@ -34,6 +34,13 @@
   (is (thrown? clojure.lang.ExceptionInfo (latest/parse-seed "abcd")))
   (is (bytes? (latest/parse-seed (apply str (repeat 64 "a"))))))
 
+(deftest delegated-router-reads-bypass-a-stale-http-cache
+  (is (= "https://router.example/ipns/k51?fresh=5"
+         (latest/cache-busted-url "https://router.example/ipns/k51" 5)))
+  (is (= "https://router.example/ipns/k51?format=raw&fresh=6"
+         (latest/cache-busted-url
+          "https://router.example/ipns/k51?format=raw" 6))))
+
 (deftest the-name-is-a-k51-from-the-seed
   (let [name (latest/name-from-seed disposable-seed)]
     (is (re-matches #"k51[a-z0-9]{50,}" name))

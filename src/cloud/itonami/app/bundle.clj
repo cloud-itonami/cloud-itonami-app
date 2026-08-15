@@ -70,7 +70,7 @@
         manifest {:kotoba.app/id app-id
                   :kotoba.app/version app-version
                   :kotoba.app/kind "appview"
-                  :kotoba.app/appview-of {:workspace "desktop"}
+                  :kotoba.app/appview-of {:workspace "mobile"}
                   :kotoba.app/bundle-cid cid
                   :kotoba.app/embed-url (str "ipfs://" cid)}]
     {:bytes body
@@ -131,9 +131,14 @@
 
 (defn write-published!
   "Record the last published identity. Extra keys are not :kotoba.app/* so
-  validate-manifest still sees only the protocol attrs."
+  validate-manifest still sees only the protocol attrs. Preserve the graph and
+  monotonically increasing latest record: dropping `:latest` here makes the
+  next IPNS publish restart at sequence 1, which an existing DHT record must
+  reject as stale."
   [path {:keys [manifest cid size put get]}]
-  (let [record (merge manifest
+  (let [previous (when (.isFile (io/file path))
+                   (edn/read-string (slurp path)))
+        record (merge previous manifest
                       {:published {:archive (str archive-origin "/ipfs/" cid)
                                    :size size
                                    :at (str (Instant/now))

@@ -141,7 +141,7 @@ same surface in an application window:
 ```bash
 clojure -M:server &
 open -na "Google Chrome" --args --app="http://localhost:1338/" \
-  --window-size=1400,1120 --window-position=140,60
+  --window-size=430,860 --window-position=140,60
 ```
 
 Two things about that invocation are load bearing, both measured the same day.
@@ -157,6 +157,11 @@ There is one user interface, the web surface, built on jp-go-dds. A second
 on 2026-08-06: it had become the older of the two while remaining the one the
 launcher preferred, so running the app showed the older interface.
 `kotoba-lang/shell` is still a dependency for EventKit and Keychain.
+
+That interface is intentionally smartphone-only: navigation stays at the
+bottom, content is one column, and the packaged window opens at 430×860. A
+desktop browser serves the same touch layout rather than a separate desktop
+information architecture.
 
 The server binds to `127.0.0.1` by default. The browser intentionally uses
 `http://localhost:1338`, which is required for the WebAuthn localhost
