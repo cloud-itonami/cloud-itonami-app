@@ -104,6 +104,14 @@ from anywhere. It parses no flags and interprets no results — a launcher that
 understood the commands would be a second place for them to be wrong. Written in
 nbb, per the workspace rule that new scripts are ClojureScript.
 
+The resident layout is one further part of that resolution. A launcher located
+at `~/.cloud-itonami/app/bin/itonami` defaults `CLOUD_ITONAMI_DATA_DIR` to
+`~/.cloud-itonami/data`, matching the launchd service; otherwise `auth login`
+would silently read `app/data/agent-enrollment.key` while the server owns the
+sibling store. Explicit configuration continues to win. `bin/itonami-mcp`
+applies the same rule to the stdio adapter, so CLI and MCP resolve one Keychain
+session against one local ownership root.
+
 ### What is deliberately not a command
 
 - **The 18 funding, settlement and governed-approval routes.** `approve/finish`

@@ -5,9 +5,58 @@
 
 (defn- temporary-directory []
   (.toFile
-   (java.nio.file.Files/createTempDirectory
+    (java.nio.file.Files/createTempDirectory
     "cloud-itonami-launcher-test"
     (make-array java.nio.file.attribute.FileAttribute 0))))
+
+(defn- run-resident-script
+  [launcher explicit-data-dir]
+  (let [home (temporary-directory)
+        app (io/file home ".cloud-itonami" "app")
+        bin (io/file app "bin")
+        fake-bin (io/file home "fake-bin")
+        installed (io/file bin launcher)
+        fake-clojure (io/file fake-bin "clojure")
+        _ (.mkdirs bin)
+        _ (.mkdirs fake-bin)
+        _ (io/copy (io/file "bin" launcher) installed)
+        _ (spit fake-clojure
+                (str "#!/bin/sh\n"
+                     "printf '%s\\n' \"$CLOUD_ITONAMI_APP_DIR\"\n"
+                     "printf '%s\\n' \"$CLOUD_ITONAMI_DATA_DIR\"\n"
+                     "printf '%s\\n' \"$*\"\n"))
+        _ (.setExecutable fake-clojure true)
+        process (ProcessBuilder. ^java.util.List
+                                 (cond-> ["nbb" (.getPath installed)]
+                                   (= launcher "itonami") (conj "status")))
+        environment (.environment process)
+        _ (.put environment "HOME" (.getCanonicalPath home))
+        _ (.put environment "PATH"
+                (str (.getCanonicalPath fake-bin) ":" (get environment "PATH")))
+        _ (if explicit-data-dir
+            (.put environment "CLOUD_ITONAMI_DATA_DIR" explicit-data-dir)
+            (.remove environment "CLOUD_ITONAMI_DATA_DIR"))
+        started (.start process)
+        stdout (slurp (.getInputStream started))
+        stderr (slurp (.getErrorStream started))
+        status (.waitFor started)]
+    {:status status :stderr stderr :lines (str/split-lines stdout)
+     :app (.getCanonicalPath app)
+     :data (.getCanonicalPath (io/file home ".cloud-itonami" "data"))}))
+
+(deftest resident-command-launchers-share-the-resident-data-directory
+  (doseq [[launcher alias] [["itonami" "-M:cli status"]
+                            ["itonami-mcp" "-M:mcp"]]]
+    (let [{:keys [status stderr lines app data]}
+          (run-resident-script launcher nil)]
+      (is (zero? status) stderr)
+      (is (= [app data alias] lines) launcher))))
+
+(deftest an-explicit-data-directory-wins-in-the-resident-launcher
+  (let [explicit "/tmp/cloud-itonami-explicit-data"
+        {:keys [status stderr lines]} (run-resident-script "itonami" explicit)]
+    (is (zero? status) stderr)
+    (is (= explicit (second lines)))))
 
 (deftest resident-clone-resolves-shell-from-workspace-root
   (let [root (temporary-directory)

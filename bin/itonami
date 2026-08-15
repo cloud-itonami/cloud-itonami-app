@@ -10,18 +10,36 @@
 ;;
 ;; This resolves the app directory from its own path — the script lives in
 ;; `bin/`, so the app is its parent — and runs the CLI there with the arguments
-;; it was given. Nothing else. It is deliberately not a second front end: it does
-;; not parse a flag, add a default, or interpret a result, because a launcher
-;; that understood the commands would be a second place for them to be wrong.
+;; it was given. A resident install also resolves its sibling data directory:
+;; `~/.cloud-itonami/app` and `~/.cloud-itonami/data` are one installation, and
+;; letting the CLI fall back to `app/data` would make `auth login` read a
+;; different enrollment key from the launchd server. An explicit environment
+;; value still wins. The launcher does not otherwise parse or interpret a
+;; command, because that would make it a second front end.
 ;;
 ;; Written in nbb rather than shell, per the workspace rule that new scripts are
 ;; ClojureScript.
 (ns itonami
   (:require ["node:child_process" :as child-process]
+            ["node:fs" :as fs]
             ["node:path" :as path]
             [nbb.core :refer [*file*]]))
 
-(def app-directory (path/resolve (path/dirname *file*) ".."))
+(def app-directory
+  (fs/realpathSync (path/resolve (path/dirname *file*) "..")))
+(def home-directory
+  (some-> (aget js/process.env "HOME") fs/realpathSync))
+(def resident-app-directory
+  (when home-directory (path/resolve home-directory ".cloud-itonami" "app")))
+(def child-environment
+  (js/Object.assign #js {} js/process.env
+                    #js {"CLOUD_ITONAMI_APP_DIR" app-directory}))
+
+(when (and resident-app-directory
+           (= app-directory resident-app-directory)
+           (nil? (aget child-environment "CLOUD_ITONAMI_DATA_DIR")))
+  (aset child-environment "CLOUD_ITONAMI_DATA_DIR"
+        (path/resolve home-directory ".cloud-itonami" "data")))
 
 (def result
   (child-process/spawnSync
@@ -32,8 +50,7 @@
         ;; The CLI starts a headless server when there is not one, and that child
         ;; must outlive this process. `spawnSync` waits for the CLI, not for its
         ;; grandchild, so nothing here needs to keep the launcher alive.
-        :env (js/Object.assign #js {} js/process.env
-                               #js {"CLOUD_ITONAMI_APP_DIR" app-directory})}))
+        :env child-environment}))
 
 (when-let [error (.-error result)]
   (binding [*print-fn* *print-err-fn*]

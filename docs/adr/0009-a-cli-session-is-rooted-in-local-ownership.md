@@ -156,6 +156,15 @@ all, so it has no snapshot to go stale, and routing a pure read of a bundled
 resource through HTTP would add a running-server requirement to the one
 capability that does not need one.
 
+The local ownership root must also be one value across those clients. In the
+resident layout, launchd owns `~/.cloud-itonami/data`; a CLI or MCP process
+started from `~/.cloud-itonami/app` must not silently fall back to the checkout's
+`app/data`, because it would read a different enrollment key while sending the
+resulting token to the resident server. The `bin/itonami` and
+`bin/itonami-mcp` launchers therefore default to the sibling resident data
+directory in that layout, while preserving an explicit
+`CLOUD_ITONAMI_DATA_DIR` override.
+
 **Not converted: `payment-tools`.** It still calls `funding/*` and
 `authority-api/*` in-process and therefore still has the stale-snapshot hazard.
 It is also, as of this change, unreachable in practice: it needs a
