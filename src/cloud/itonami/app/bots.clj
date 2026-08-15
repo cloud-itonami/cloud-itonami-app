@@ -1719,9 +1719,11 @@
                          {:turn/error-type :turn-budget-exhausted})
         (say (:bot/id b) text nil))
 
-      (>= (:tool-count run 0) (if (:goal? run)
-                                max-goal-tool-calls
-                                max-tool-calls))
+      (>= (:tool-count run 0)
+          (if (:goal? run)
+            (long (or (get-in configuration [:bots :goal :max-tool-calls])
+                      max-goal-tool-calls))
+            max-tool-calls))
       (do
         (clear-run! (:bot/id b))
         (finish-visible! on-finish run :failed
@@ -2279,7 +2281,12 @@
         (locking active-turns (swap! active-turns dissoc bot-id))))))
 
 (defn- run-goal-job! [configuration run-id]
-  (let [{:job/keys [bot session objective attempt]} (goal-job run-id)]
+  (let [{:job/keys [bot session objective attempt max-tool-calls]}
+        (goal-job run-id)
+        configuration (cond-> configuration
+                        max-tool-calls
+                        (assoc-in [:bots :goal :max-tool-calls]
+                                  max-tool-calls))]
     (try
       (transition-goal-run! run-id :leased {:agent.run/lease "local-bots-goal"})
       (transition-goal-run! run-id :running {})
@@ -2333,7 +2340,9 @@
 (defn submit-goal!
   "Persist and enqueue a Goal. The returned AgentRun is independent of the
   HTTP response; closing the mobile screen does not cancel it."
-  [configuration session bot-id text run-id]
+  ([configuration session bot-id text run-id]
+   (submit-goal! configuration session bot-id text run-id {}))
+  ([configuration session bot-id text run-id {:keys [max-tool-calls]}]
   (let [b (owned! session bot-id)
         text (str/trim (str text))
         run-id (str/trim (str run-id))]
@@ -2356,11 +2365,13 @@
                 :actor (:bot/id b)
                 :capabilities (:bot/tools b)
                 :budget {:max-turns max-goal-turns
-                         :max-tool-calls max-goal-tool-calls}}
+                         :max-tool-calls (or max-tool-calls
+                                             max-goal-tool-calls)}}
                (now-ms))
           job {:job/id run-id :job/bot bot-id
                :job/session (select-keys session [:user-id :organization-id :kind])
                :job/objective text :job/run run :job/plan [] :job/events []
+               :job/max-tool-calls max-tool-calls
                :job/attempt 0 :job/created-at at :job/updated-at at}]
       (transact! assoc-in [:goal-jobs run-id] job)
       (record-turn! bot-id run-id
@@ -2368,7 +2379,7 @@
                      :turn/objective text})
       (append-goal-event! run-id :run/submitted {:goal text})
       (enqueue-goal! configuration run-id)
-      (public-goal-job (goal-job run-id)))))
+      (public-goal-job (goal-job run-id))))))
 
 (defn- workforce-job-due? [job now]
   (and (:workforce.job/enabled? job)
@@ -2388,6 +2399,7 @@
        " / " (get-in b [:bot/role :name]) ".\n"
        (:workforce.job/objective job) "\n\n"
        "Inspect current evidence inside the admitted business repository and advance exactly one bounded step. "
+       "Use at most four repository read calls before completing or blocking this resident tick. "
        "Keep observed facts, forecasts and proposals separate. Do not cross into another business. "
        "If there is no safe actionable change, record the evidence for a no-op and complete the goal; do not invent work. "
        "Any write or external effect remains subject to the concrete tool grant and its governor."))
@@ -2449,8 +2461,13 @@
                           cadence (:workforce.job/cadence-minutes job)
                           next-at (str (.plusSeconds (java.time.Instant/parse now)
                                                      (* 60 cadence)))]
-                      (submit-goal! configuration session bot-id
-                                    (workforce-goal b job) run-id)
+                      (submit-goal!
+                       configuration session bot-id
+                       (workforce-goal b job) run-id
+                       {:max-tool-calls
+                        (max 1 (long (or (get-in configuration
+                                               [:bots :workforce :max-tool-calls])
+                                         8)))})
                       (transact! update-in [:workforce-jobs bot-id]
                                  merge {:workforce.job/last-submitted-at now
                                         :workforce.job/last-run-id run-id

@@ -115,8 +115,8 @@
                                               "2026-08-15T00:00:00Z")]))
                          jobs)))
           (with-redefs [bots/submit-goal!
-                        (fn [_ _ bot-id objective run-id]
-                          (swap! submitted conj [bot-id objective run-id])
+                        (fn [_ _ bot-id objective run-id options]
+                          (swap! submitted conj [bot-id objective run-id options])
                           {:id run-id})]
             (let [result (bots/fire-due-workforce!
                           {:bots {:workforce {:max-starts-per-tick 1}}}
@@ -124,7 +124,11 @@
               (is (= 1 (count (:started result))))
               (is (= 1 (count @submitted)))
               (is (str/includes? (second (first @submitted))
-                                 "advance exactly one bounded step")))))))))
+                                 "advance exactly one bounded step"))
+              (is (str/includes? (second (first @submitted))
+                                 "at most four repository read calls"))
+              (is (= {:max-tool-calls 8}
+                     (nth (first @submitted) 3))))))))))
 
 (deftest resident-workforce-does-not-overlap-an-active-job-across-bots
   (with-store
@@ -150,7 +154,7 @@
             (with-redefs-fn
               {active-var #(= active-bot %)
                #'bots/submit-goal!
-               (fn [_ _ bot-id objective run-id]
+               (fn [_ _ bot-id objective run-id _options]
                  (swap! submitted conj [bot-id objective run-id])
                  {:id run-id})}
               (fn []
