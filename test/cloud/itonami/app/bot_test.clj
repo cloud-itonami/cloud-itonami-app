@@ -71,6 +71,21 @@
              :performer/dodaf-types [:dodaf/person]
              :performer/actor {:actor/kind :agent :actor/id "bot-1"}}))))))
 
+(deftest workforce-policy-is-preserved-without-becoming-authority
+  (let [plain (a-bot {:bot/tools #{}
+                      :bot/workforce-key "cloud-itonami/engineer"
+                      :bot/responsibilities ["Keep the service healthy"]
+                      :bot/capability-policy
+                      [{:capability :repository.write
+                        :decision :autonomous}
+                       {:capability :funds.move
+                        :decision :blocked}]})]
+    (is (= [{:capability "repository.write" :decision :autonomous :note nil}
+            {:capability "funds.move" :decision :blocked :note nil}]
+           (:bot/capability-policy plain)))
+    (is (empty? (bot/admitted-tools plain catalog #{"com.google.gmail"}))
+        "an autonomous job policy is not a connector or tool grant")))
+
 (deftest a-bot-refuses-a-stored-status
   ;; Status is computed from what is outstanding. A stored one could disagree
   ;; with reality, and the disagreement would be invisible.

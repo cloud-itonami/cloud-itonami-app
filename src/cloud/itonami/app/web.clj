@@ -273,6 +273,9 @@
     overflow-y:auto;min-height:0}
   .bots-rail__empty{margin:.5rem .25rem;color:var(--color-neutral-solid-gray-600);
     font-size:.875rem}
+  .bots-rail__group{position:sticky;top:0;z-index:1;margin:0;padding:.625rem .5rem .25rem;
+    background:var(--color-neutral-solid-gray-50);color:var(--color-neutral-solid-gray-600);
+    font-size:.75rem;font-weight:700;letter-spacing:.02em}
   .bots-rail__item{display:flex;align-items:center;gap:.625rem;width:100%;border:0;
     border-radius:.5rem;background:transparent;padding:.5rem;cursor:pointer;
     text-align:left;min-height:3rem}
@@ -463,7 +466,7 @@
     .bots-shell{grid-template-columns:4rem minmax(0,1fr)}
     .bots-rail{display:flex;padding:.5rem .375rem}
     .bots-rail__item{position:relative;justify-content:center;padding:.5rem .25rem}
-    .bots-rail__copy,.bots-rail__empty{display:none}
+    .bots-rail__copy,.bots-rail__empty,.bots-rail__group{display:none}
     .bots-rail__item .bots-dot{position:absolute;right:.3rem;bottom:.3rem}
   }
   .chat-shell{position:relative;display:flex;flex-direction:column;
@@ -1181,7 +1184,7 @@
     .bots-rail__list::-webkit-scrollbar{display:none}
     .bots-rail__list>li{flex:0 0 auto}
     .bots-rail__item{position:relative;justify-content:center;width:3rem;padding:.5rem .25rem}
-    .bots-rail__copy,.bots-rail__empty{display:none}
+    .bots-rail__copy,.bots-rail__empty,.bots-rail__group{display:none}
     .bots-rail__item .bots-dot{position:absolute;right:.3rem;bottom:.3rem}
     .global-status{top:calc(4.5rem + env(safe-area-inset-top));left:1rem;right:1rem}
     .chat-shell{height:calc(100dvh - 4rem - var(--mobile-nav-height))}
@@ -1384,6 +1387,8 @@
          [:button {:class "tool-button" :id "bots-thread-tools" :type "button"
                    :aria-expanded "false" :aria-controls "bots-thread-panel"
                    :title "この Bot が届く範囲" :hidden true} "▤"]
+         [:button {:class "tool-button" :id "bots-workforce" :type "button"
+                   :title "8事業の職務Botを常駐化"} "会社Bot"]
          [:button {:class "tool-button" :id "bots-new" :type "button"
                    :aria-label "新しい Bot を作る"} "＋"]]]
        [:main {:id "main-content"}

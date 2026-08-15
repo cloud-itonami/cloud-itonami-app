@@ -665,6 +665,28 @@ Turns are synchronous and bounded — 8 model turns and 12 tool calls per
 message. A Bot also answers on a schedule when a routine has been made from an
 executed trace; the tick uses a live session and never mints one.
 
+### Startup workforces
+
+`会社Bot` reconciles the governed `network-awai/loop-yakuwari` registry into
+the eight startup businesses (`cloud-itonami`, `nexus-x402`, `club-shinshi`,
+`app-aozora`, `network-isekai`, `net-babiniku`, `cloud-murakumo`, and
+`net-kotobase`). The current projection is 70 job Bots: business owner,
+product manager, engineer, QA, designer, sales, marketer, supporter,
+financial chief, and the explicitly declared kaizen roles where applicable.
+
+Each Bot carries its responsibility and capability policy, but those fields do
+not grant execution. The concrete grant is deliberately narrower: one admitted
+business Git repository, no connector, browser, virtual shell, or omakase
+authority, and repository writes remain behind the existing approval governor.
+The resident tick starts at most one due job by default, with deterministic
+staggering and fixed delay. It runs only while a real human session remains
+live; residency never mints or extends authority. See
+[ADR-0056](docs/adr/0056-startup-workforces-are-governed-resident-bot-jobs.md).
+
+MCP exposes `workforce_status` as read-only operational evidence. Provisioning
+is human-only because it creates durable Bots and jobs; an agent session cannot
+use MCP to widen or install its own workforce.
+
 The view is covered by `test/browser/bots_view.cljs`, which drives it in a real
 browser against a running server; the JVM suite cannot see the client.
 

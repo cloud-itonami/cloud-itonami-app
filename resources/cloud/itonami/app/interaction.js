@@ -9199,7 +9199,20 @@
       const list = $('#bots-list');
       list.replaceChildren();
       $('#bots-rail-empty').hidden = botsState.bots.length > 0;
-      botsState.bots.forEach((bot) => {
+      let currentGroup = null;
+      [...botsState.bots]
+        .sort((a, b) => {
+          const aGroup = a.business?.name || '個人Bot';
+          const bGroup = b.business?.name || '個人Bot';
+          return aGroup.localeCompare(bGroup, 'ja') ||
+            (a.role?.name || a.name).localeCompare(b.role?.name || b.name, 'ja');
+        })
+        .forEach((bot) => {
+        const group = bot.business?.name || '個人Bot';
+        if (group !== currentGroup) {
+          currentGroup = group;
+          list.append(make('li', 'bots-rail__group', group));
+        }
         const item = make('button', 'bots-rail__item');
         item.type = 'button';
         item.setAttribute('aria-current', String(bot.id === botsState.selected));
@@ -9603,6 +9616,40 @@
           : '（読み取りのみ）'}`));
       panel.append(make('div', null,
         `Model: ${bot['provider-id']} / ${bot.model}`));
+      if (bot['workforce-key']) {
+        const workforceCard = make('div', 'bots-card');
+        workforceCard.append(
+          make('strong', null,
+            `${bot.business?.name || '事業'} · ${bot.role?.name || '職務Bot'}`),
+          make('div', 'bots-card__summary', bot.brief || ''));
+        const responsibilities = bot.responsibilities || [];
+        if (responsibilities.length) {
+          const list = make('ul', 'bots-card__scopes');
+          responsibilities.forEach((item) => list.append(make('li', null, item)));
+          workforceCard.append(make('div', 'bots-card__summary', 'Responsibility'), list);
+        }
+        const decisions = {
+          autonomous:'自律', 'voice-required':'合議',
+          'approval-required':'承認必須', blocked:'禁止'
+        };
+        const capabilities = bot['capability-policy'] || [];
+        if (capabilities.length) {
+          const list = make('ul', 'bots-card__scopes');
+          capabilities.forEach((entry) => list.append(make('li', null,
+            `${entry.capability}: ${decisions[entry.decision] || entry.decision}`)));
+          workforceCard.append(make('div', 'bots-card__summary', 'Capability policy'), list);
+        }
+        const job = bot['resident-job'];
+        if (job) {
+          const next = job['next-run-at']
+            ? new Date(job['next-run-at']).toLocaleString('ja-JP') : '未設定';
+          workforceCard.append(make('div', 'bots-card__state',
+            `${job['enabled?'] ? '常駐中' : '停止中'} · ${job['cadence-minutes']}分周期 · 次回 ${next}`));
+        }
+        workforceCard.append(make('div', 'form-help',
+          'Capability policy は職務上の境界です。実行権限は上の「届く範囲」と承認ゲートを越えません。'));
+        panel.append(workforceCard);
+      }
       const mailboxCard = make('div', 'bots-card');
       mailboxCard.append(make('strong', null, 'Mailbox'),
         make('div', null, bot.email || 'アドレス未発行'));
@@ -9945,6 +9992,22 @@
       renderBotsRail();
       renderBotsServiceGrid();
       showBotsPane();
+    });
+    $('#bots-workforce').addEventListener('click', async () => {
+      const button = $('#bots-workforce');
+      button.disabled = true;
+      botsSetStatus('8事業の職務Botを照合しています…');
+      try {
+        const status = await postJSON('/api/bots/workforce/provision', {}, true);
+        await loadBots({keepSelection:true});
+        botsSetStatus(
+          `${status.businesses}事業 / ${status.bots}職務Botを常駐化しました。` +
+          '既存の会話と実行履歴は保持されています。');
+      } catch (error) {
+        botsSetStatus(error.message);
+      } finally {
+        button.disabled = false;
+      }
     });
     $('#bots-create').addEventListener('click', async () => {
       const button = $('#bots-create');

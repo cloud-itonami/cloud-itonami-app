@@ -71,6 +71,37 @@
 (def max-provider-id 100)
 (def max-model 200)
 (def max-workspace 4096)
+(def max-responsibilities 12)
+(def max-responsibility 1000)
+(def max-capability-policy 40)
+
+(def capability-decisions
+  #{:autonomous :voice-required :approval-required :blocked})
+
+(declare bounded!)
+
+(defn- responsibilities [values]
+  (mapv #(-> % str str/trim (bounded! :bot/responsibility max-responsibility))
+        (take max-responsibilities (remove #(str/blank? (str %)) values))))
+
+(defn- capability-policy [values]
+  (mapv (fn [entry]
+          (let [raw-capability (:capability entry)
+                capability (some-> (if (keyword? raw-capability)
+                                     (name raw-capability)
+                                     (str raw-capability))
+                                   not-empty)
+                decision (keyword (name (or (:decision entry) :blocked)))]
+            (when-not capability
+              (throw (ex-info "workforce capability requires a name"
+                              {:type :bot/invalid :field :bot/capability-policy})))
+            (when-not (contains? capability-decisions decision)
+              (throw (ex-info "unknown workforce capability decision"
+                              {:type :bot/invalid :field :bot/capability-policy
+                               :decision decision})))
+            {:capability capability :decision decision
+             :note (some-> (:note entry) str str/trim not-empty)}))
+        (take max-capability-policy values)))
 
 ;; ── the record ──────────────────────────────────────────────────────────
 
@@ -183,6 +214,15 @@
      ;; It changes WHEN an already-admitted write runs, never WHAT is admitted.
      :bot/omakase? (boolean (:bot/omakase? value))
      :bot/workspace workspace
+     ;; Workforce metadata explains a job; it is deliberately not consulted by
+     ;; tool admission. `:bot/tools`, workspace/coding and the existing effect
+     ;; governor remain the complete execution authority.
+     :bot/workforce-key (optional-name (:bot/workforce-key value)
+                                       :bot/workforce-key 200)
+     :bot/business (:bot/business value)
+     :bot/role (:bot/role value)
+     :bot/responsibilities (responsibilities (:bot/responsibilities value))
+     :bot/capability-policy (capability-policy (:bot/capability-policy value))
      :bot/enabled? (if (contains? value :bot/enabled?)
                      (boolean (:bot/enabled? value))
                      true)

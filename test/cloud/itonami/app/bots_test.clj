@@ -17,6 +17,7 @@
             [cloud.itonami.app.provider :as provider]
             [cloud.itonami.app.relay :as relay]
             [cloud.itonami.app.store :as store]
+            [cloud.itonami.app.workspace-tools :as workspace-tools]
             [connector.ports :as cports]))
 
 (defn- with-store [f]
@@ -52,6 +53,78 @@
   (bots/create! nil session (merge {:name "workspace worker"
                                     :connectors ["com.google.gmail"]}
                                    attrs)))
+
+(defn- workforce-catalog [roles]
+  {:schema "network.awai.workforce-bots.v1"
+   :businesses (if (seq roles) 1 0)
+   :roles roles
+   :source {:path "/registry"}})
+
+(defn- engineer-entry []
+  {:key "cloud-itonami/engineer"
+   :business {:id :cloud-itonami :name "Cloud Itonami"}
+   :role {:id :engineer :name "Engineer" :job :engineer}
+   :objective "Advance one verified engineering step."
+   :responsibilities ["Verify before changing"]
+   :capabilities [{:capability :repository.write :decision :approval-required}]
+   :workspace "orgs/network-awai/cloud-itonami"
+   :cadence-minutes 60})
+
+(deftest workforce-provisioning-is-idempotent-owner-isolated-and-narrow
+  (with-store
+    (fn []
+      (with-redefs [workspace-tools/admit-root (fn [path] path)]
+        (let [catalog (workforce-catalog [(engineer-entry)])
+              first-status (bots/provision-workforce! {} alice catalog)
+              first-bot (first (:bots (bots/overview {} alice)))]
+          (is (= {:businesses 1 :bots 1 :enabled 1}
+                 (select-keys first-status [:businesses :bots :enabled])))
+          (is (empty? (:tools first-bot)))
+          (is (false? (:writes? first-bot)))
+          (is (true? (:coding? first-bot)))
+          (is (= "approval-required"
+                 (get-in first-bot [:capability-policy 0 :decision])))
+          (bots/provision-workforce! {} alice catalog)
+          (is (= 1 (count (:bots (bots/overview {} alice))))
+              "reconcile does not duplicate a deterministic role Bot")
+          (bots/provision-workforce! {} bob catalog)
+          (is (= 1 (count (:bots (bots/overview {} bob))))
+              "the same job key is isolated by owner")
+          (bots/provision-workforce! {} alice (workforce-catalog []))
+          (is (= 0 (:enabled (bots/workforce-status alice))))
+          (is (= "disabled" (:status (first (:bots (bots/overview {} alice)))))
+              "a removed role is retained for evidence but stopped")
+          (is (= 1 (:enabled (bots/workforce-status bob)))
+              "reconciling alice cannot stop bob's resident job"))))))
+
+(deftest resident-workforce-starts-at-most-the-configured-number-per-tick
+  (with-store
+    (fn []
+      (with-redefs [workspace-tools/admit-root (fn [path] path)]
+        (let [second-role (-> (engineer-entry)
+                              (assoc :key "cloud-itonami/qa")
+                              (assoc :role {:id :qa :name "QA" :job :qa}))
+              catalog (workforce-catalog [(engineer-entry) second-role])
+              submitted (atom [])
+              now "2026-08-16T00:00:00Z"]
+          (bots/provision-workforce! {} alice catalog)
+          (swap! store/state update-in [:bots :workforce-jobs]
+                 (fn [jobs]
+                   (into {} (map (fn [[id job]]
+                                   [id (assoc job :workforce.job/next-run-at
+                                              "2026-08-15T00:00:00Z")]))
+                         jobs)))
+          (with-redefs [bots/submit-goal!
+                        (fn [_ _ bot-id objective run-id]
+                          (swap! submitted conj [bot-id objective run-id])
+                          {:id run-id})]
+            (let [result (bots/fire-due-workforce!
+                          {:bots {:workforce {:max-starts-per-tick 1}}}
+                          alice now)]
+              (is (= 1 (count (:started result))))
+              (is (= 1 (count @submitted)))
+              (is (str/includes? (second (first @submitted))
+                                 "advance exactly one bounded step")))))))))
 
 (deftest every-bot-has-a-stable-mailbox-and-sees-only-mail-addressed-to-it
   (with-store

@@ -57,3 +57,13 @@
       (is (= [:post "/api/agent-bots/bot-1/messages" 660
               {:text "repo を確認して"}]
              @seen)))))
+
+(deftest bots-cli-reads-the-resident-workforce-without-configuring-it
+  (let [seen (atom nil)]
+    (with-redefs [client/request!
+                  (fn [_ method path]
+                    (reset! seen [method path])
+                    {:businesses 8 :bots 70 :enabled 70})]
+      (is (= {:businesses 8 :bots 70 :enabled 70}
+             (cli/run {} ["bots" "workforce"])))
+      (is (= [:get "/api/agent-bots/workforce"] @seen)))))

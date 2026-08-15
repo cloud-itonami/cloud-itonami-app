@@ -53,6 +53,7 @@
   consequence of the thesis rather than an oversight."
   (:require [agent.run :as agent-run]
             [clojure.data.json :as json]
+            [clojure.java.io :as io]
             [clojure.string :as str]
             [cloud.itonami.app.agent-control :as agent-control]
             [cloud.itonami.app.bot :as bot]
@@ -277,7 +278,8 @@
 
 (defn- partition* [state]
   (or (:bots state)
-      {:schema schema :bots {} :conversations {} :runs {}}))
+      {:schema schema :bots {} :conversations {} :runs {}
+       :workforce-jobs {} :workforces {}}))
 
 (defn- snapshot [] (partition* (store/snapshot)))
 
@@ -660,6 +662,155 @@
   [session bot-id]
   (update! session bot-id {:enabled? false}))
 
+;; ── governed startup workforce ─────────────────────────────────────────
+
+(declare workforce-status)
+
+(defn- stable-workforce-id [session key]
+  (str "bot-workforce-"
+       (UUID/nameUUIDFromBytes
+        (.getBytes (str (:organization-id session) ":" (:user-id session) ":" key)
+                   java.nio.charset.StandardCharsets/UTF_8))))
+
+(def workforce-avatar
+  {:business-owner {:avatar/color :clay :avatar/glyph :wedge}
+   :product-manager {:avatar/color :violet :avatar/glyph :block}
+   :engineer {:avatar/color :blue :avatar/glyph :circle}
+   :qa {:avatar/color :green :avatar/glyph :drop}
+   :designer {:avatar/color :pink :avatar/glyph :bean}
+   :sales {:avatar/color :orange :avatar/glyph :wide}
+   :marketer {:avatar/color :amber :avatar/glyph :wave}
+   :supporter {:avatar/color :teal :avatar/glyph :cloud}
+   :financial-chief {:avatar/color :slate :avatar/glyph :block}
+   :kaizen-analyst {:avatar/color :green :avatar/glyph :wave}})
+
+(defn- workforce-workspace [entry]
+  (let [root (or (System/getenv "CLOUD_ITONAMI_WORKSPACE_ROOT")
+                 (System/getProperty "user.dir"))]
+    (workspace-tools/admit-root
+     (.getCanonicalPath (io/file root (:workspace entry))))))
+
+(defn- next-workforce-run [now key cadence]
+  (let [uuid (UUID/nameUUIDFromBytes (.getBytes key "UTF-8"))
+        spread (mod (bit-and Long/MAX_VALUE (.getLeastSignificantBits uuid)) cadence)]
+    (str (.plusSeconds (java.time.Instant/parse now) (* 60 spread)))))
+
+(defn provision-workforce!
+  "Idempotently project a complete governed role catalog into Bots and
+  durable resident jobs. Existing conversations and run history stay put.
+
+  Capability policy is explanatory data. Concrete execution is intentionally
+  narrower: one admitted Git root, no connector grants, and every workspace
+  write held by the existing approval governor."
+  [configuration session catalog]
+  (let [now (store/now)
+        entries (:roles catalog)
+        previous (snapshot)
+        owner-key [(:organization-id session) (:user-id session)]
+        desired
+        (mapv
+         (fn [entry]
+           (let [key (:key entry)
+                 id (stable-workforce-id session key)
+                 existing (get-in previous [:bots id])
+                 job-role (get-in entry [:role :job])
+                 cadence (long (:cadence-minutes entry))
+                 b (bot/bot
+                    {:bot/id id
+                     :bot/organization (:organization-id session)
+                     :bot/owner (:user-id session)
+                     :bot/name (str (get-in entry [:business :name]) " · "
+                                    (get-in entry [:role :name]))
+                     :bot/avatar (get workforce-avatar job-role bot/default-avatar)
+                     :bot/brief (:objective entry)
+                     :bot/provider-id "murakumo"
+                     :bot/model "murakumo-main"
+                     :bot/email (mailbox-address configuration id)
+                     :bot/tools #{} :bot/accounts #{}
+                     :bot/writes? false :bot/browser? false
+                     :bot/coding? true :bot/virtual-shell? false
+                     :bot/omakase? false
+                     :bot/workspace (workforce-workspace entry)
+                     :bot/workforce-key key
+                     :bot/business (:business entry)
+                     :bot/role (:role entry)
+                     :bot/responsibilities (:responsibilities entry)
+                     :bot/capability-policy (:capabilities entry)
+                     :bot/enabled? true
+                     :bot/created-at (or (:bot/created-at existing) now)
+                     :bot/updated-at now})
+                 old-job (get-in previous [:workforce-jobs id])
+                 job {:workforce.job/schema "cloud.itonami.app.workforce-job.v1"
+                      :workforce.job/key key :workforce.job/bot id
+                      :workforce.job/owner (:user-id session)
+                      :workforce.job/organization (:organization-id session)
+                      :workforce.job/objective (:objective entry)
+                      :workforce.job/cadence-minutes cadence
+                      :workforce.job/enabled? true
+                      :workforce.job/next-run-at
+                      (or (:workforce.job/next-run-at old-job)
+                          (next-workforce-run now key cadence))
+                      :workforce.job/last-submitted-at
+                      (:workforce.job/last-submitted-at old-job)
+                      :workforce.job/last-run-id (:workforce.job/last-run-id old-job)
+                      :workforce.job/created-at
+                      (or (:workforce.job/created-at old-job) now)
+                      :workforce.job/updated-at now}]
+             (bot/->performer b)
+             {:bot b :job job}))
+         entries)
+        desired-ids (into #{} (map (comp :workforce.job/bot :job)) desired)
+        stale-ids (->> (vals (:bots previous))
+                       (filter #(and (:bot/workforce-key %)
+                                     (= (:user-id session) (:bot/owner %))
+                                     (= (:organization-id session)
+                                        (:bot/organization %))))
+                       (map :bot/id)
+                       (remove desired-ids)
+                       set)]
+    (transact!
+     (fn [partition]
+       (let [reconciled
+             (reduce (fn [p {:keys [bot job]}]
+                       (-> p
+                           (assoc-in [:bots (:bot/id bot)] bot)
+                           (assoc-in [:workforce-jobs (:bot/id bot)] job)))
+                     partition desired)
+             retired
+             (reduce (fn [p id]
+                       (-> p
+                           (assoc-in [:bots id :bot/enabled?] false)
+                           (assoc-in [:bots id :bot/updated-at] now)
+                           (assoc-in [:workforce-jobs id :workforce.job/enabled?] false)
+                           (assoc-in [:workforce-jobs id :workforce.job/updated-at] now)))
+                     reconciled stale-ids)]
+         (assoc-in retired [:workforces owner-key]
+                   {:schema (:schema catalog)
+                    :businesses (:businesses catalog)
+                    :roles (count entries)
+                    :source (:source catalog)
+                    :owner (:user-id session)
+                    :organization (:organization-id session)
+                    :provisioned-at now}))))
+    (workforce-status session)))
+
+(defn workforce-status [session]
+  (let [partition (snapshot)
+        workforce (get-in partition [:workforces
+                                     [(:organization-id session) (:user-id session)]])
+        jobs (->> (vals (:workforce-jobs partition))
+                  (filter #(and (= (:user-id session) (:workforce.job/owner %))
+                                (= (:organization-id session)
+                                   (:workforce.job/organization %)))))]
+    {:schema "cloud.itonami.app.workforce-status.v1"
+     :installed? (boolean workforce)
+     :businesses (or (:businesses workforce) 0)
+     :bots (or (:roles workforce) 0)
+     :enabled (count (filter :workforce.job/enabled? jobs))
+     :next-run-at (some->> jobs (keep :workforce.job/next-run-at) sort first)
+     :source (:source workforce)
+     :provisioned-at (:provisioned-at workforce)}))
+
 ;; ── conversation ────────────────────────────────────────────────────────
 
 (defn- conversation [bot-id]
@@ -815,6 +966,19 @@
      :virtual-shell-ready? (boolean (and (:bot/virtual-shell? b)
                                          (virtual-shell/available?)))
      :workspace (:bot/workspace b)
+     :workforce-key (:bot/workforce-key b)
+     :business (:bot/business b)
+     :role (:bot/role b)
+     :responsibilities (:bot/responsibilities b)
+     :capability-policy
+     (mapv #(update % :decision name) (:bot/capability-policy b))
+     :resident-job
+     (when-let [job (get-in (snapshot) [:workforce-jobs (:bot/id b)])]
+       {:enabled? (:workforce.job/enabled? job)
+        :cadence-minutes (:workforce.job/cadence-minutes job)
+        :next-run-at (:workforce.job/next-run-at job)
+        :last-submitted-at (:workforce.job/last-submitted-at job)
+        :last-run-id (:workforce.job/last-run-id job)})
      :last-turn (public-turn last-turn)
      :enabled? (:bot/enabled? b)
      :status (name (bot/status b (presence (:bot/id b)
@@ -1166,6 +1330,18 @@
          "A write tool will be held for the person's approval before it runs. ")
        "Call a write only when it is the right next step and say what you are about to do. "
        "Answer in the language the person used.\n\n"
+       (when (:bot/workforce-key b)
+         (str "You are one governed startup role, not the business owner and not a free-ranging agent.\n"
+              "Business: " (get-in b [:bot/business :name])
+              " (" (get-in b [:bot/business :repo]) ")\n"
+              "Job: " (get-in b [:bot/role :name]) "\n"
+              "Responsibilities:\n"
+              (str/join "\n" (map #(str "- " %) (:bot/responsibilities b))) "\n"
+              "Capability policy (descriptive; concrete tools remain the execution ceiling):\n"
+              (str/join "\n"
+                        (map #(str "- " (:capability %) ": " (name (:decision %)))
+                             (:bot/capability-policy b)))
+              "\nNever act across another business. Blocked capabilities stay blocked; approval-required and voice-required effects must not be reframed as autonomous.\n\n"))
        (when (and (:bot/browser? b)
                   (agent-control/browser-enabled? configuration))
          (str "You have an isolated browser of your own on this machine. "
@@ -2194,6 +2370,80 @@
       (enqueue-goal! configuration run-id)
       (public-goal-job (goal-job run-id)))))
 
+(defn- workforce-job-due? [job now]
+  (and (:workforce.job/enabled? job)
+       (try
+         (not (.isAfter (java.time.Instant/parse (:workforce.job/next-run-at job))
+                        (java.time.Instant/parse now)))
+         (catch Exception _ false))))
+
+(defn- workforce-bot-active? [bot-id]
+  (or (contains? @active-turns bot-id)
+      (some #(and (= bot-id (:job/bot %))
+                  (agent-run/active? (:job/run %)))
+            (vals (:goal-jobs (snapshot))))))
+
+(defn- workforce-goal [b job]
+  (str "Resident startup job tick for " (get-in b [:bot/business :name])
+       " / " (get-in b [:bot/role :name]) ".\n"
+       (:workforce.job/objective job) "\n\n"
+       "Inspect current evidence inside the admitted business repository and advance exactly one bounded step. "
+       "Keep observed facts, forecasts and proposals separate. Do not cross into another business. "
+       "If there is no safe actionable change, record the evidence for a no-op and complete the goal; do not invent work. "
+       "Any write or external effect remains subject to the concrete tool grant and its governor."))
+
+(defn fire-due-workforce!
+  "Start a bounded number of due startup jobs for one live human session.
+  Jobs are staggered when provisioned and fixed-delay after submission, so a
+  restart cannot unleash the whole company at once."
+  [configuration session now]
+  (let [limit (long (or (get-in configuration [:bots :workforce :max-starts-per-tick]) 1))
+        jobs (->> (vals (:workforce-jobs (snapshot)))
+                  (filter #(and (= (:user-id session) (:workforce.job/owner %))
+                                (= (:organization-id session)
+                                   (:workforce.job/organization %))
+                                (workforce-job-due? % now)))
+                  (sort-by (juxt :workforce.job/next-run-at :workforce.job/key)))]
+    (loop [remaining jobs
+           result {:started [] :skipped []}]
+      (if (or (empty? remaining) (>= (count (:started result)) limit))
+        result
+        (let [job (first remaining)
+              result
+              (let [bot-id (:workforce.job/bot job)
+                    b (bot-by-id bot-id)]
+                (cond
+                  (or (nil? b) (not (:bot/enabled? b)))
+                  (update result :skipped conj
+                          {:job (:workforce.job/key job)
+                           :reason :bot-disabled-or-missing})
+
+                  (workforce-bot-active? bot-id)
+                  (update result :skipped conj
+                          {:job (:workforce.job/key job)
+                           :reason :bot-active})
+
+                  :else
+                  (try
+                    (let [run-id (new-id "workforce-run")
+                          cadence (:workforce.job/cadence-minutes job)
+                          next-at (str (.plusSeconds (java.time.Instant/parse now)
+                                                     (* 60 cadence)))]
+                      (submit-goal! configuration session bot-id
+                                    (workforce-goal b job) run-id)
+                      (transact! update-in [:workforce-jobs bot-id]
+                                 merge {:workforce.job/last-submitted-at now
+                                        :workforce.job/last-run-id run-id
+                                        :workforce.job/next-run-at next-at
+                                        :workforce.job/updated-at now})
+                      (update result :started conj (:workforce.job/key job)))
+                    (catch Exception error
+                      (update result :skipped conj
+                              {:job (:workforce.job/key job)
+                               :reason (or (:type (ex-data error))
+                                           :internal-error)})))))]
+          (recur (rest remaining) result))))))
+
 (defn cancel!
   "Cancel the matching active turn. Ownership and run id both have to match."
   [session bot-id run-id]
@@ -2858,9 +3108,15 @@
   [configuration now]
   (mapv (fn [session]
           (try
-            (assoc (fire-due! configuration session now) :user (:user-id session))
+            (let [routines (fire-due! configuration session now)
+                  workforce (fire-due-workforce! configuration session now)]
+              {:user (:user-id session)
+               :started (:started routines) :skipped (:skipped routines)
+               :workforce-started (:started workforce)
+               :workforce-skipped (:skipped workforce)})
             (catch Exception error
               {:user (:user-id session) :started [] :skipped []
+               :workforce-started [] :workforce-skipped []
                :error (.getMessage error)})))
         (tick-sessions configuration)))
 
