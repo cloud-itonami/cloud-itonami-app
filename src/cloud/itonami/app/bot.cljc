@@ -587,16 +587,22 @@
   "One turn. `:message/role` is `:person` or `:bot` — not `:user`/`:assistant`,
   which are the model transcript's words for the same two speakers and would
   invite this durable record to be passed to a provider as-is."
-  [{:keys [id bot role text cards at]}]
+  [{:keys [id bot role text cards at direction context-id source handoff-id
+           from-bot]}]
   (when-not (#{:person :bot} role)
     (throw (ex-info "a message is from a person or a bot"
                     {:type :bot/invalid-message :role role})))
-  {:message/id (required! id :message/id)
-   :message/bot (required! bot :message/bot)
-   :message/role role
-   :message/text (or text "")
-   :message/cards (vec cards)
-   :message/at at})
+  (cond-> {:message/id (required! id :message/id)
+           :message/bot (required! bot :message/bot)
+           :message/role role
+           :message/text (or text "")
+           :message/cards (vec cards)
+           :message/at at}
+    (some? direction) (assoc :message/direction (long direction))
+    context-id (assoc :message/context-id (str context-id))
+    source (assoc :message/source (keyword source))
+    handoff-id (assoc :message/handoff-id (str handoff-id))
+    from-bot (assoc :message/from-bot (str from-bot))))
 
 (defn answer-choice
   "Record an answer onto a choice card inside a conversation, returning the
