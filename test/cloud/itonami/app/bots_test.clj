@@ -597,6 +597,44 @@
           (is (= "checkpointed" (get-in turn [:job :state]))
               "restart is a resumable checkpoint, not a failed visible turn"))))))
 
+(deftest a-resumed-goal-failure-closes-the-visible-turn
+  (with-store
+    (fn []
+      (let [b (make-bot alice {})
+            bot-id (:bot/id b)
+            run-id "goal-resume-failure-1"
+            queued (agent-run/agent-run {:id run-id :goal "resume me"} 1)
+            leased (agent-run/transition queued :leased 2 {})
+            running (agent-run/transition leased :running 3 {})
+            checkpointed (agent-run/transition running :checkpointed 4 {})
+            run! (ns-resolve 'cloud.itonami.app.bots 'run-goal-job!)
+            resume! (ns-resolve 'cloud.itonami.app.bots 'resume-goal-turn!)]
+        (store/transact!
+         (fn [state]
+           (-> state
+               (assoc-in [:bots :goal-jobs run-id]
+                         {:job/id run-id :job/bot bot-id :job/session alice
+                          :job/objective "resume me" :job/run checkpointed
+                          :job/plan [] :job/events [] :job/attempt 1})
+               (assoc-in [:bots :turn-history bot-id]
+                         [{:turn/id run-id :turn/bot bot-id
+                           :turn/state :running :turn/phase :resuming
+                           :turn/goal? true :turn/objective "resume me"
+                           :turn/started-at "2026-08-16T00:00:00Z"}]))))
+        (with-redefs-fn
+          {resume! (fn [& _]
+                     (throw (ex-info "resume provider failed"
+                                     {:type :provider/http-error :status 503})))}
+          #(run! nil run-id))
+        (let [turn (bots/latest-turn alice bot-id)]
+          (is (= "failed" (:state turn)))
+          (is (= "failed" (:phase turn)))
+          (is (= "provider/http-error" (:error-type turn)))
+          (is (= 503 (:error-status turn)))
+          (is (some? (:finished-at turn)))
+          (is (= "failed" (get-in turn [:job :state]))
+              "the durable AgentRun and visible turn close together"))))))
+
 (deftest a-provider-failure-ends-the-silent-gap-with-a-visible-bot-message
   (with-store
     (fn []
