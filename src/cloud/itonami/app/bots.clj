@@ -2293,13 +2293,18 @@
         (Thread/interrupted)
         (locking active-turns (swap! active-turns dissoc bot-id))))))
 
-(defn- complete-resident-empty-response! [run-id error]
+(defn- complete-resident-provider-no-op! [run-id error]
   (let [{:job/keys [bot resident-workforce?]} (goal-job run-id)
-        receipts (vec (action-receipts run-id))]
+        receipts (vec (action-receipts run-id))
+        {:keys [type status]} (ex-data error)]
     (when (and resident-workforce?
-               (= :provider/empty-response (:type (ex-data error)))
+               (contains? #{:provider/empty-response :provider/http-error} type)
                (seq receipts))
-      (let [summary (str "Provider returned no final answer after "
+      (let [summary (str (if (= :provider/http-error type)
+                           (str "Provider became unavailable"
+                                (when status (str " (HTTP " status ")")))
+                           "Provider returned no final answer")
+                         " after "
                          (count receipts)
                          " bounded repository read receipt(s). "
                          "No write or external effect was attempted; this resident tick completed as a safe no-op.")
@@ -2321,7 +2326,8 @@
                        :turn/finished-at (store/now)})
         (say bot summary nil)
         (append-goal-event! run-id :run/no-op-completed
-                            {:reason :provider/empty-response
+                            {:reason type
+                             :error-status status
                              :receipt-count (count receipts)
                              :evidence evidence})
         (transition-goal-run! run-id :succeeded
@@ -2372,7 +2378,7 @@
                               {:agent.run/result state
                                :agent.run/finished-at (now-ms)}))
       (catch Exception error
-        (when-not (complete-resident-empty-response! run-id error)
+        (when-not (complete-resident-provider-no-op! run-id error)
           (let [error-type (or (:type (ex-data error)) :internal-error)
                 error-status (:status (ex-data error))
                 status (get-in (goal-job run-id) [:job/run :agent.run/status])]
