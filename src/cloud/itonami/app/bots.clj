@@ -110,6 +110,7 @@
 (def max-tool-calls 12)
 (def max-goal-turns 24)
 (def max-goal-tool-calls 32)
+(def ^:private default-resident-max-output-tokens 1024)
 (def max-message-chars 8000)
 (def max-conversation 200)
 (def max-tool-output-chars 6000)
@@ -1692,6 +1693,17 @@
                  :parallel-count (count results)}))
     next-run))
 
+(defn- agent-request [configuration b run model]
+  (cond-> {:model model
+           :conversation-id (:bot/id b)
+           :messages (:messages run)
+           :tools (:tools run)
+           :temperature 0.2}
+    (and (:goal? run)
+         (get-in configuration [:bots :goal :max-output-tokens]))
+    (assoc :max-output-tokens
+           (get-in configuration [:bots :goal :max-output-tokens]))))
+
 (defn- advance!
   "Turn until the Bot is done or needs a person.
 
@@ -1736,11 +1748,7 @@
 
       :else
       (let [{:keys [provider model]} (provider-choice! configuration b)
-            request {:model model
-                     :conversation-id (:bot/id b)
-                     :messages (:messages run)
-                     :tools (:tools run)
-                     :temperature 0.2}
+            request (agent-request configuration b run model)
             _ (when on-event (on-event {:type "phase" :phase "model"}))
             result (if on-event
                      (provider/agent-turn-stream!
@@ -2321,17 +2329,26 @@
                                :agent.run/finished-at (now-ms)})
         true))))
 
-(defn- run-goal-job! [configuration run-id]
-  (let [{:job/keys [bot session objective attempt max-tool-calls
-                    max-tool-output-chars]}
-        (goal-job run-id)
-        configuration (cond-> configuration
+(defn- goal-job-configuration
+  [configuration {:job/keys [max-tool-calls max-tool-output-chars
+                             resident-workforce?]}]
+  (cond-> configuration
                         max-tool-calls
                         (assoc-in [:bots :goal :max-tool-calls]
                                   max-tool-calls)
                         max-tool-output-chars
                         (assoc-in [:bots :goal :max-tool-output-chars]
-                                  max-tool-output-chars))]
+                                  max-tool-output-chars)
+                        resident-workforce?
+                        (assoc-in [:bots :goal :max-output-tokens]
+                                  (long (or (get-in configuration
+                                                    [:bots :workforce
+                                                     :max-output-tokens])
+                                            default-resident-max-output-tokens)))))
+
+(defn- run-goal-job! [configuration run-id]
+  (let [{:job/keys [bot session objective attempt] :as job} (goal-job run-id)
+        configuration (goal-job-configuration configuration job)]
     (try
       (transition-goal-run! run-id :leased {:agent.run/lease "local-bots-goal"})
       (transition-goal-run! run-id :running {})
