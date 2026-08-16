@@ -34,6 +34,29 @@
 (def ^:private alice {:user-id "alice" :organization-id "org-1" :kind :passkey})
 (def ^:private bob {:user-id "bob" :organization-id "org-1" :kind :passkey})
 
+(defn- private-fn [name]
+  (some-> (ns-resolve 'cloud.itonami.app.bots name) deref))
+
+(deftest resident-goals-have-a-smaller-inference-envelope
+  (let [configure (private-fn 'goal-job-configuration)
+        request (private-fn 'agent-request)
+        resident-config (configure {} {:job/resident-workforce? true})
+        ordinary-config (configure {} {:job/resident-workforce? false})
+        b {:bot/id "bot-1"}
+        run {:goal? true :messages [] :tools []}]
+    (is (= 1024 (get-in resident-config
+                        [:bots :goal :max-output-tokens])))
+    (is (= 1024 (:max-output-tokens
+                 (request resident-config b run "murakumo-main"))))
+    (is (nil? (:max-output-tokens
+               (request ordinary-config b run "murakumo-main")))
+        "human-created goals keep the provider's ordinary quality envelope")
+    (testing "an operator can tune the resident ceiling without code"
+      (is (= 1536
+             (get-in (configure {:bots {:workforce {:max-output-tokens 1536}}}
+                                {:job/resident-workforce? true})
+                     [:bots :goal :max-output-tokens]))))))
+
 (defn- connect!
   "Seed one live external account for alice, the way `complete-oauth!` would:
   one connection row per external account, keyed by its subject."

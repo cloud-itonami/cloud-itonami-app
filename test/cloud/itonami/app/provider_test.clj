@@ -1,6 +1,9 @@
 (ns cloud.itonami.app.provider-test
   (:require [clojure.test :refer [deftest is testing]]
-            [cloud.itonami.app.provider :as provider]))
+            [clojure.data.json :as json]
+            [cloud.itonami.app.provider :as provider])
+  (:import [com.sun.net.httpserver HttpServer HttpHandler]
+           [java.net InetSocketAddress]))
 
 (defn- private-fn [name]
   (some-> (ns-resolve 'cloud.itonami.app.provider name) deref))
@@ -16,6 +19,62 @@
     (testing "the ordinary provider fields are preserved"
       (is (= "murakumo-main" (:model body)))
       (is (= [{:role "user" :content "hello"}] (:messages body))))))
+
+(deftest agent-turn-honors-a-narrower-request-envelope
+  (let [body ((private-fn 'agent-request-body)
+              {:kind :openai-compatible :max-output-tokens 2048}
+              {:model "murakumo-main" :messages [] :tools []
+               :max-output-tokens 1024})]
+    (is (= 1024 (:max_tokens body))
+        "a resident request can be bounded without shrinking human turns")))
+
+(deftest transient-json-provider-failures-retry-once
+  (let [attempts (atom 0)
+        server (HttpServer/create (InetSocketAddress. "127.0.0.1" 0) 0)]
+    (.createContext
+     server "/chat"
+     (reify HttpHandler
+       (handle [_ exchange]
+         (let [attempt (swap! attempts inc)
+               [status payload] (if (= 1 attempt)
+                                  [502 {:error "temporary"}]
+                                  [200 {:ok true}])
+               bytes (.getBytes (json/write-str payload) "UTF-8")]
+           (.sendResponseHeaders exchange status (alength bytes))
+           (with-open [out (.getResponseBody exchange)]
+             (.write out bytes))))))
+    (.start server)
+    (try
+      (let [url (str "http://127.0.0.1:"
+                     (.getPort (.getAddress server)) "/chat")]
+        (is (= {:ok true} ((private-fn 'request-json) :post url {:x 1})))
+        (is (= 2 @attempts)))
+      (finally (.stop server 0)))))
+
+(deftest permanent-json-provider-failures-do-not-loop
+  (let [attempts (atom 0)
+        server (HttpServer/create (InetSocketAddress. "127.0.0.1" 0) 0)]
+    (.createContext
+     server "/chat"
+     (reify HttpHandler
+       (handle [_ exchange]
+         (swap! attempts inc)
+         (let [bytes (.getBytes "{\"error\":\"bad request\"}" "UTF-8")]
+           (.sendResponseHeaders exchange 400 (alength bytes))
+           (with-open [out (.getResponseBody exchange)]
+             (.write out bytes))))))
+    (.start server)
+    (try
+      (let [url (str "http://127.0.0.1:"
+                     (.getPort (.getAddress server)) "/chat")]
+        (try
+          ((private-fn 'request-json) :post url {:x 1})
+          (is false "HTTP 400 must fail")
+          (catch clojure.lang.ExceptionInfo error
+            (is (= 400 (:status (ex-data error))))
+            (is (= 1 (:attempts (ex-data error))))))
+        (is (= 1 @attempts)))
+      (finally (.stop server 0)))))
 
 (deftest grok-agent-turn-keeps-one-effect-authority
   (let [body ((private-fn 'agent-request-body)

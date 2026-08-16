@@ -13,33 +13,50 @@
       (.connectTimeout (Duration/ofSeconds 4))
       .build))
 
+(def ^:private retryable-http-statuses #{429 500 502 503 504})
+(def ^:private max-transient-retries 1)
+(def ^:private transient-retry-delay-ms 250)
+
 (defn- request-json
   ([method url body] (request-json method url body nil))
   ([method url body api-key]
    (request-json method url body api-key nil))
   ([method url body api-key headers]
-   (let [builder (-> (HttpRequest/newBuilder (URI/create url))
-                     (.timeout (Duration/ofSeconds 120))
-                     (.header "Accept" "application/json")
-                     (.header "Content-Type" "application/json"))
-         _ (when api-key (.header builder "Authorization" (str "Bearer " api-key)))
-         _ (doseq [[header value] headers :when (some? value)]
-             (.header builder (name header) (str value)))
-         request (case method
-                   :get (.GET builder)
-                   :post (.POST builder
-                                (HttpRequest$BodyPublishers/ofString
-                                 (json/write-str body))))
-         response (.send client (.build request)
-                         (HttpResponse$BodyHandlers/ofString))
-         status (.statusCode response)
-         parsed (try (json/read-str (.body response) :key-fn keyword)
-                     (catch Exception _ {:raw (.body response)}))]
-     (if (<= 200 status 299)
-       parsed
-       (throw (ex-info "model provider request failed"
-                       {:type :provider/http-error
-                        :status status :url url :response parsed}))))))
+   (loop [attempt 0]
+     (let [builder (-> (HttpRequest/newBuilder (URI/create url))
+                       (.timeout (Duration/ofSeconds 120))
+                       (.header "Accept" "application/json")
+                       (.header "Content-Type" "application/json"))
+           _ (when api-key (.header builder "Authorization" (str "Bearer " api-key)))
+           _ (doseq [[header value] headers :when (some? value)]
+               (.header builder (name header) (str value)))
+           request (case method
+                     :get (.GET builder)
+                     :post (.POST builder
+                                  (HttpRequest$BodyPublishers/ofString
+                                   (json/write-str body))))
+           response (.send client (.build request)
+                           (HttpResponse$BodyHandlers/ofString))
+           status (.statusCode response)
+           parsed (try (json/read-str (.body response) :key-fn keyword)
+                       (catch Exception _ {:raw (.body response)}))]
+       (cond
+         (<= 200 status 299) parsed
+
+         (and (< attempt max-transient-retries)
+              (contains? retryable-http-statuses status))
+         (do
+           ;; Generation has no external effect until a returned tool call is
+           ;; admitted. One retry absorbs a transient gateway failure without
+           ;; monopolizing the capacity-one resident workforce indefinitely.
+           (Thread/sleep transient-retry-delay-ms)
+           (recur (inc attempt)))
+
+         :else
+         (throw (ex-info "model provider request failed"
+                         {:type :provider/http-error
+                          :status status :url url :response parsed
+                          :attempts (inc attempt)})))))))
 
 (defn- openai-shaped? [provider]
   (contains? #{:openai-compatible :xai} (:kind provider)))
@@ -163,13 +180,15 @@
       (finally (swap! active-agent-streams dissoc thread)))))
 
 (defn- agent-request-body
-  [provider {:keys [model messages tools temperature reasoning-effort]}]
+  [provider {:keys [model messages tools temperature reasoning-effort
+                    max-output-tokens]}]
   (cond-> {:model model
            :messages (mapv provider-message messages)
            :tools (mapv tool-definition tools)
            :stream false
            :temperature (or temperature 0.2)
-           :max_tokens (or (:max-output-tokens provider)
+           :max_tokens (or max-output-tokens
+                           (:max-output-tokens provider)
                            default-agent-max-tokens)}
     (openai-shaped? provider)
     ;; Cloud Itonami admits, runs and audits one capability at a time. This is
@@ -209,7 +228,8 @@
                                              :parallel_tool_calls :reasoning_effort)
                                      (assoc :options {:temperature
                                                       (or (:temperature request) 0.2)
-                                                      :num_predict (or (:max-output-tokens provider)
+                                                      :num_predict (or (:max-output-tokens request)
+                                                                       (:max-output-tokens provider)
                                                                        default-agent-max-tokens)})))
             message (:message result)]
         (agent-result message (:done_reason result)
