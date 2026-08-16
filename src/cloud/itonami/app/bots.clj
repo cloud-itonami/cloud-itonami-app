@@ -2356,11 +2356,22 @@
                                :agent.run/finished-at (now-ms)}))
       (catch Exception error
         (when-not (complete-resident-empty-response! run-id error)
-          (let [status (get-in (goal-job run-id) [:job/run :agent.run/status])]
+          (let [error-type (or (:type (ex-data error)) :internal-error)
+                error-status (:status (ex-data error))
+                status (get-in (goal-job run-id) [:job/run :agent.run/status])]
             (when (contains? #{:leased :running :checkpointed} status)
               (transition-goal-run! run-id :failed
-                                    {:agent.run/error-type (or (:type (ex-data error))
-                                                               :internal-error)})))
+                                    {:agent.run/error-type error-type
+                                     :agent.run/finished-at (now-ms)}))
+            ;; The AgentRun and the human-facing turn are two projections of
+            ;; one execution. A resumed Goal used to fail only the AgentRun,
+            ;; leaving Bots UI permanently at running/resuming after the
+            ;; worker had already stopped. Close both in the same catch path.
+            (record-turn! bot run-id
+                          {:turn/state :failed :turn/phase :failed
+                           :turn/finished-at (store/now)
+                           :turn/error-type error-type
+                           :turn/error-status error-status}))
           (append-goal-event! run-id :run/failed
                               {:error-type (or (:type (ex-data error)) :internal-error)
                                :error-status (:status (ex-data error))
