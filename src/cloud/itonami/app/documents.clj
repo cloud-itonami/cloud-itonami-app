@@ -50,6 +50,7 @@
             [clojure.string :as str]
             [cloud.itonami.app.capability :as capability]
             [cloud.itonami.app.filecoin :as filecoin]
+            [cloud.itonami.app.kotobase-objects :as kotobase-objects]
             [cloud.itonami.app.config :as config]
             [cloud.itonami.app.store :as store]
             [cloud.itonami.app.storj :as storj]
@@ -260,11 +261,32 @@
   not. Not Filecoin: `cloud.itonami.app.filecoin` addresses by content, so it
   names its own references, and `drive.object/write-item` requires the caller
   to name one. The two are not interchangeable at this seam and the
-  difference is silent if it is not said — see `cloud.itonami.app.storj`."
+  difference is silent if it is not said — see `cloud.itonami.app.storj`.
+
+  `CLOUD_ITONAMI_DRIVE_OBJECT_STORE=kotobase` selects the UnixFS/kotobase
+  store instead. **Chosen explicitly and never inferred**, even though its
+  credential is often already present: `KOTOBASE_ARCHIVE_TOKEN` is set
+  wherever this app publishes its own document, and picking the store from
+  that would move every existing Drive to a different backend on the next
+  deploy. Objects are not migrated — references already in the workspace go
+  on naming the store that holds them, and a switch is a decision about
+  where *new* bytes go."
   []
-  (if (storj/configured?)
-    (storj/store {:prefix "drive/"})
-    (fs/store (objects-dir))))
+  (case (some-> (System/getenv "CLOUD_ITONAMI_DRIVE_OBJECT_STORE")
+                str/trim not-empty str/lower-case)
+    "kotobase" (if (kotobase-objects/configured?)
+                 (kotobase-objects/store)
+                 ;; Selected and unusable is a misconfiguration, not a
+                 ;; reason to quietly write somewhere else: a Drive that
+                 ;; fell back would hold references the operator believes
+                 ;; are CIDs.
+                 (throw (ex-info "CLOUD_ITONAMI_DRIVE_OBJECT_STORE=kotobase needs KOTOBASE_ARCHIVE_TOKEN"
+                                 {:type :drive/store-misconfigured})))
+    "storj" (storj/store {:prefix "drive/"})
+    "fs" (fs/store (objects-dir))
+    (if (storj/configured?)
+      (storj/store {:prefix "drive/"})
+      (fs/store (objects-dir)))))
 
 (defonce ^:private cached-store (atom nil))
 
@@ -811,10 +833,25 @@
 
 (defonce ^:private write-lock (Object.))
 
-(defn- object-ref []
-  ;; `drive.store.fs` refuses a reference that could become a path, so this
-  ;; stays inside its alphabet on purpose.
-  (str "obj-" (UUID/randomUUID)))
+(defn- object-ref
+  "The reference this write files its bytes under.
+
+  A content-addressed store answers for itself — a UUID handed to one would
+  be a second name for bytes that already have a real one, and the CID is
+  the thing a reader outside this application can use. Every other store
+  gets the UUID: `drive.store.fs` refuses a reference that could become a
+  path, so this stays inside its alphabet on purpose.
+
+  `otherwise` is a thunk rather than a value because the one caller with a
+  second answer — `upload!`, whose fallback is the PieceCID — would
+  otherwise hash the whole file to produce a reference the store is about to
+  replace."
+  ([object-store bytes] (object-ref object-store bytes nil))
+  ([object-store bytes otherwise]
+   (or (when (satisfies? kotobase-objects/IContentAddressed object-store)
+         (kotobase-objects/content-ref object-store bytes))
+       (when otherwise (otherwise))
+       (str "obj-" (UUID/randomUUID)))))
 
 (defn- locate-folder!
   "Which Drive a new item belongs in, and where in it.
@@ -1351,9 +1388,9 @@
                       (not= owner actor)
                       (assoc-in [:drive.workspace/items id :drive/permissions]
                                 {owner :owner actor :editor}))
-             written (object/write-item staged object-store id actor
-                                        (envelope-bytes envelope)
-                                        {:object-ref (object-ref)
+             body (envelope-bytes envelope)
+             written (object/write-item staged object-store id actor body
+                                        {:object-ref (object-ref object-store body)
                                          :created-at created-at})]
          (if (:ok? written)
            ;; Persisted under the *folder owner*, because that is whose
@@ -1442,9 +1479,9 @@
                        ;; is the save that corrects what it claims to be.
                        (assoc-in [:drive.workspace/items id :drive/media-type]
                                  stored-media-type))
-          written (object/write-item retitled object-store id actor
-                                     (envelope-bytes envelope)
-                                     {:object-ref (object-ref)
+          body (envelope-bytes envelope)
+          written (object/write-item retitled object-store id actor body
+                                     {:object-ref (object-ref object-store body)
                                       :created-at (store/now)})]
       (if (:ok? written)
         ;; Under the owner's path, not the actor's. Writing it back under the
@@ -2676,7 +2713,14 @@
                     (assoc-in [:drive.workspace/items id :drive/permissions]
                               {owner :owner actor :editor}))
            written (object/write-item staged object-store id actor bytes
-                                      {:object-ref (filecoin/piece-ref bytes)
+                                      {;; A store that names its own
+                                       ;; references wins over the PieceCID:
+                                       ;; both are content-derived, and the
+                                       ;; one the store can actually resolve
+                                       ;; is the one that has to be recorded.
+                                       :object-ref
+                                       (object-ref object-store bytes
+                                                   #(filecoin/piece-ref bytes))
                                        :created-at created-at})]
        (if (:ok? written)
          (do (store/transact! assoc-in (workspace-path owner) (:workspace written))
