@@ -147,6 +147,33 @@
         "an operator who turns on file contents is told which approval that surfaces as")
     (is (str/includes? (connectors/describe config) "WIDER"))))
 
+(deftest also-adds-to-the-computed-default-rather-than-replacing-it
+  (testing "the Microsoft calendar, turned on the way an operator should"
+    (let [config {:connectors
+                  {:enabled {:also ["microsoft_graph_list_events"
+                                    "microsoft_graph_get_schedule"]}}}
+          on (set (creg/tool-names (connectors/enabled config)))]
+      (is (contains? on "microsoft_graph_list_events"))
+      (is (contains? on "microsoft_graph_get_schedule"))
+      (is (= (into (connectors/default-enabled-tools)
+                   ["microsoft_graph_list_events" "microsoft_graph_get_schedule"])
+             on)
+          "the default is still computed — naming one widener does not pin the rest")
+      (is (= {:microsoft ["Calendars.Read"]} (connectors/widened-scopes config))
+          "and the one scope this surfaces is named, so the reconnect is expected")
+      (is (str/includes? (connectors/describe config) "WIDER")))))
+
+(deftest also-cannot-be-mistaken-for-the-default-moving
+  (testing "nothing is on for a deployment that did not ask"
+    (let [on (connectors/default-enabled-tools)]
+      (is (not (contains? on "microsoft_graph_list_events")))
+      (is (not (contains? on "microsoft_graph_get_schedule")))
+      (is (empty? (connectors/widened-scopes)))))
+  (testing "and an empty :tools with an :also is that one tool, not the default"
+    (let [only (connectors/enabled
+                {:connectors {:enabled {:tools [] :also ["microsoft_graph_get_schedule"]}}})]
+      (is (= ["microsoft_graph_get_schedule"] (creg/tool-names only))))))
+
 (deftest the-catalog-rows-show-what-is-off-as-well-as-on
   (let [rows (connectors/catalog-rows)
         by-id (into {} (map (juxt :id identity)) rows)]
