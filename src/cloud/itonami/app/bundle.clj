@@ -15,18 +15,16 @@
   Put is `PUT https://kotobase.net/ipfs/{cid}` (Bearer
   `KOTOBASE_ARCHIVE_TOKEN`). The server recomputes sha256; mismatch is 422.
   Cap is 4 MiB (`kotobase.archive-put/max-object-bytes`)."
-  (:require [clojure.edn :as edn]
+  (:require [cloud.itonami.app.archive :as archive]
+            [clojure.edn :as edn]
             [clojure.java.io :as io]
             [clojure.string :as str]
             [cloud.itonami.app.web :as web]
             [kotoba.protocol.app :as app]
             [kotoba.protocol.cid :as cid])
-  (:import [java.net URI]
-           [java.net.http HttpClient HttpRequest HttpRequest$BodyPublishers
-            HttpResponse$BodyHandlers]
-           [java.nio.charset StandardCharsets]
+  (:import [java.nio.charset StandardCharsets]
            [java.security MessageDigest]
-           [java.time Duration Instant]
+           [java.time Instant]
            [java.util Arrays]))
 
 (def publication-config
@@ -41,8 +39,11 @@
 
 (def app-id "cloud.itonami.app")
 (def app-version "0.1.0")
-(def archive-origin "https://kotobase.net")
-(def max-object-bytes (* 4 1024 1024))
+;; The archive transport moved to `cloud.itonami.app.archive` when the Drive
+;; became its third caller. These stay as the names `graph` and the tests
+;; already use.
+(def archive-origin archive/origin)
+(def max-object-bytes archive/max-object-bytes)
 (def published-resource "cloud/itonami/app/kotoba.app.edn")
 
 (defn document-html
@@ -58,10 +59,7 @@
   [^bytes body]
   (mapv #(bit-and % 0xff) (.digest (MessageDigest/getInstance "SHA-256") body)))
 
-(defn raw-cid
-  "CIDv1 raw sha2-256 of `body` (`bafkrei…`). Same layout archive-put verifies."
-  [^bytes body]
-  (cid/cid-bytes->string (into [0x01 0x55 0x12 0x20] (sha256 body))))
+(def raw-cid archive/raw-cid)
 
 (defn snapshot
   []
@@ -87,47 +85,16 @@
   (when-let [res (io/resource published-resource)]
     (edn/read-string (slurp res))))
 
-(defn- http-client
-  []
-  (-> (HttpClient/newBuilder)
-      (.connectTimeout (Duration/ofSeconds 30))
-      .build))
-
 (defn put-archive!
   "PUT the raw object. Returns {:status :body :url}. Does not print the token."
-  [{:keys [cid bytes token content-type]
-    :or {token (or (System/getenv "KOTOBASE_ARCHIVE_TOKEN")
-                   (System/getenv "KOTOBASE_ARCHIVE_TOKEN_2"))
-         content-type "text/html"}}]
-  (when (str/blank? token)
-    (throw (ex-info "archive put token missing"
-                    {:env "KOTOBASE_ARCHIVE_TOKEN"})))
-  (let [url (str archive-origin "/ipfs/" cid)
-        req (-> (HttpRequest/newBuilder (URI/create url))
-                (.timeout (Duration/ofSeconds 60))
-                (.header "Authorization" (str "Bearer " token))
-                (.header "Content-Type" (str content-type))
-                (.PUT (HttpRequest$BodyPublishers/ofByteArray bytes))
-                .build)
-        resp (.send ^HttpClient (http-client) req
-                    (HttpResponse$BodyHandlers/ofString))]
-    {:status (.statusCode resp)
-     :body (.body resp)
-     :url url}))
+  [{:keys [cid bytes token content-type] :or {content-type "text/html"}}]
+  (archive/put! (cond-> {:cid cid :bytes bytes :content-type content-type}
+                  token (assoc :token token))))
 
 (defn get-archive
   "Unauthenticated GET of the archived bytes."
   [cid]
-  (let [url (str archive-origin "/ipfs/" cid)
-        req (-> (HttpRequest/newBuilder (URI/create url))
-                (.timeout (Duration/ofSeconds 30))
-                (.GET)
-                .build)
-        resp (.send ^HttpClient (http-client) req
-                    (HttpResponse$BodyHandlers/ofByteArray))]
-    {:status (.statusCode resp)
-     :bytes (.body resp)
-     :url url}))
+  (archive/get-bytes cid))
 
 (defn write-published!
   "Record the last published identity. Extra keys are not :kotoba.app/* so

@@ -263,6 +263,13 @@
   {:git/url "https://github.com/kotoba-lang/drive.git"
    :git/sha "20f6f4940a60061b692aa53ae501e2d36f8bf010"}
 
+  ;; UnixFS file DAGs — the reference `cloud.itonami.app.kotobase-objects`
+  ;; stores under is the CID `ipfs add` prints for the same bytes, which is
+  ;; the whole reason that store exists. It carries `ipld.dag-pb` under it.
+  io.github.kotoba-lang/tech-ipfs-specs-unixfs
+  {:git/url "https://github.com/kotoba-lang/tech-ipfs-specs-unixfs.git"
+   :git/sha "7370c94ecc22ffd88f4cb0040ae2407bf3a9d4c7"}
+
   ;; The practice record this app can host. `cloud-itonami/lawfirm` owns every
   ;; rule about what a practice may do; `cloud.itonami.app.lawfirm` owns only
   ;; the effects — the archive inbox as arrivals, the Drive as folders, and
@@ -523,10 +530,10 @@
            :git/sha "da24cae65e82f91352c5b96b0c58f21a52911277"}
           io.github.kotoba-lang/io-multiformats
           {:git/url "https://github.com/kotoba-lang/io-multiformats.git"
-           :git/sha "dc5200329d2fabce6edb7ca5c87c477cec0ea162"}
+           :git/sha "e7ae323d3ccbb9aacc92edfd2f3dda20d9b90eed"}
           io.github.kotoba-lang/io-ipld
           {:git/url "https://github.com/kotoba-lang/io-ipld.git"
-           :git/sha "4591764514239c4777f227a7a56d46c901e2a4a0"}}
+           :git/sha "c7b8f76b707ec22fa1692907201d44db54d98f13"}}
          :jvm-opts ["-Dcloud.itonami.data-dir=target/test-data"]
          :main-opts ["-m" "cloud.itonami.app.test-runner"]}
   :lint {:replace-deps {clj-kondo/clj-kondo {:mvn/version "2024.11.14"}}
