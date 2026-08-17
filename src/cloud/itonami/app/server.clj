@@ -29,6 +29,7 @@
             [cloud.itonami.app.executor :as executor]
             [cloud.itonami.app.filecoin :as filecoin]
             [cloud.itonami.app.folder-sync :as folder-sync]
+            [cloud.itonami.app.nfs :as nfs-service]
             [cloud.itonami.app.fleet :as fleet]
             [cloud.itonami.app.operator :as operator]
             [cloud.itonami.app.pageview :as pageview]
@@ -5484,6 +5485,11 @@
    (mail-sync/start! configuration)
    (chronicle/start! configuration)
    (folder-sync/start! configuration)
+   ;; The Drive as a volume the OS mounts (ADR-0058). Off unless the
+   ;; deployment configured `:nfs {:enabled? true :actor …}` — a Drive that
+   ;; became network-reachable because a port happened to be free is the
+   ;; failure that decision exists to avoid.
+   (nfs-service/start! configuration)
    ;; Ordinary HTTP/model streams are closed as interrupted. Goal AgentRuns
    ;; checkpoint and requeue from their durable transcript before new work is
    ;; accepted, so a restart does not silently discard an objective.
@@ -5584,6 +5590,7 @@
   (mail-sync/stop!)
   (chronicle/stop!)
   (folder-sync/stop!)
+  (nfs-service/stop!)
   (bots/stop-tick!)
   (updater/stop!)
   (binding-sweep/stop!)

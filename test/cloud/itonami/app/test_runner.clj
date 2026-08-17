@@ -124,6 +124,7 @@
             [cloud.itonami.app.web-script-test]
             [cloud.itonami.app.bundle-test]
             [cloud.itonami.app.kotobase-objects-test]
+            [cloud.itonami.app.drive-fs-test]
             [cloud.itonami.app.latest-test]
             [cloud.itonami.app.graph-test]
             [cloud.itonami.app.work-governance-test]
@@ -257,6 +258,7 @@
     cloud.itonami.app.web-script-test
     cloud.itonami.app.bundle-test
     cloud.itonami.app.kotobase-objects-test
+    cloud.itonami.app.drive-fs-test
     cloud.itonami.app.latest-test
     cloud.itonami.app.graph-test
     cloud.itonami.app.work-governance-test

@@ -270,6 +270,22 @@
   {:git/url "https://github.com/kotoba-lang/tech-ipfs-specs-unixfs.git"
    :git/sha "7370c94ecc22ffd88f4cb0040ae2407bf3a9d4c7"}
 
+  ;; The Drive as a mountable volume (ADR-2608171200). NFSv3 was chosen by
+  ;; measurement, not taste: it is the only surface macOS mounts with no
+  ;; kernel extension, no third-party install, no code signing and no root.
+  ;; `nfs.v3/IFilesystem` is the seam `cloud.itonami.app.drive-fs` fills.
+  io.github.kotoba-lang/org-ietf-nfs
+  {:git/url "https://github.com/kotoba-lang/org-ietf-nfs.git"
+   :git/sha "ed3a3593a2c8d39b9f6e4cba3e8adc0b436a73c4"}
+
+  ;; kekkai.acl is pure, deny-by-default and port-granular — the
+  ;; authorization NFSv3 does not have. org-ietf-nfs deliberately does not
+  ;; depend on it; this application depends on both, which is where the join
+  ;; belongs.
+  io.github.kotoba-lang/kekkai
+  {:git/url "https://github.com/kotoba-lang/kekkai.git"
+   :git/sha "7c344b1ab9c5a5879b8b3970f2dd939927ab7539"}
+
   ;; The practice record this app can host. `cloud-itonami/lawfirm` owns every
   ;; rule about what a practice may do; `cloud.itonami.app.lawfirm` owns only
   ;; the effects — the archive inbox as arrivals, the Drive as folders, and

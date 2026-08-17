@@ -853,6 +853,25 @@
        (when otherwise (otherwise))
        (str "obj-" (UUID/randomUUID)))))
 
+(defn object-ref-for
+  "The reference a caller must name for `bytes` in `object-store`.
+
+  Public because `cloud.itonami.app.drive-fs` writes through the same seam
+  from outside this namespace: a content-addressed store has to be asked,
+  and a UUID handed to one would be a second name for bytes that already
+  have a real one."
+  [object-store bytes]
+  (object-ref object-store bytes))
+
+(defn save-workspace!
+  "Persist one principal's Drive.
+
+  The path is private on purpose — `[:drive :workspaces owner]` is this
+  namespace's shape and a second copy of it in another file is how the two
+  drift. Callers outside get this instead."
+  [owner workspace]
+  (store/transact! assoc-in (workspace-path owner) workspace))
+
 (defn- locate-folder!
   "Which Drive a new item belongs in, and where in it.
 
