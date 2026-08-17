@@ -148,11 +148,27 @@
   `configuration` may name connector ids and tool names under
   `[:connectors :enabled]`; absent, the computed default applies. An explicit
   empty list is respected — a deployment that wants no external services says
-  so and gets none."
+  so and gets none.
+
+  `:tools` REPLACES the computed default; `:also` ADDS to it. Both are needed,
+  and the distinction is the point of this namespace restated at the
+  configuration layer. An operator who wants one widener — say Microsoft's
+  calendar — would otherwise have to paste the whole default set beside it,
+  and that literal is exactly what `default-enabled-tools` exists to avoid: it
+  is computed from `historical-grant`, so a connector added to a later build
+  arrives already on for the tools that grant covered. A pasted list freezes
+  the set at the day it was pasted, and nothing reports that it has frozen.
+  With `:also` the default stays computed and the deployment names only its
+  own departure from it — which is what `widened-scopes` then reports.
+
+  `:also` is honoured against an explicitly empty `:tools` too: naming a tool
+  is a decision, and an empty list is a decision about the default, not a veto
+  of a later line in the same map."
   ([] (enabled nil))
   ([configuration]
    (let [tools (get-in configuration [:connectors :enabled :tools] ::default)
          tools (if (= ::default tools) (default-enabled-tools) (set tools))
+         tools (into tools (get-in configuration [:connectors :enabled :also]))
          ids (or (some-> (get-in configuration [:connectors :enabled :connectors]) set)
                  (into #{} (map cp/id) (creg/providers all)))]
      (creg/select all ids tools))))
