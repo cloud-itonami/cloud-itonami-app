@@ -109,9 +109,14 @@ shipped ordering yields one link with an empty hash.
   directory beside it would be a second answer to where a file lives, which is the same
   objection ADR-0047 raised against a directory for the app document.
 - Migration of objects already in the fs or Storj stores.
-- `net-kotobase/ipfs` still ships the transposed codec. Its origin gateway cannot read
-  what this store writes, and could not read kubo's output before this either. Fixing
-  it is a separate change in a separate repository.
+- ~~`net-kotobase/ipfs` still ships the transposed codec.~~ **Fixed and deployed
+  2026-08-17.** Its node codec now delegates to `ipld.dag-pb`, its conformance fixtures
+  were republished as spec-conformant blocks (every dag-pb CID changed, every raw CID
+  unchanged), and the live gateway serves a multi-block UnixFS file assembled from them
+  — 38/38 conformance probes passing against worker version
+  `8503b135-965f-4910-880f-145d0c02a827`. The CIDs it published before that were hashes
+  of bytes no IPFS implementation accepts as DAG-PB, so they were never resolvable by
+  anything but that Worker; they are gone rather than migrated.
 
 ## Verification
 

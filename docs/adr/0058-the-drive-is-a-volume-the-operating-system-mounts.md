@@ -109,6 +109,20 @@ and no SMB, and neither did anything else in the workspace.
   A file saved in Finder is an IPFS CID in the kotobase archive, and nothing
   in between had to be exported.
 
+## Resume
+
+The adapter is landed and the mount is proven; nothing here is half-finished.
+The next things anyone would want, in the order they are worth doing:
+
+1. **Serve it from the app rather than a command.** `nfs-service/mount-command`
+   prints the line; nothing runs it. A desktop app that mounts its own Drive on
+   sign-in is a small step from here and the reason `:port 0` exists.
+2. **Rename detection in `folder_sync`** (ADR-0027 lists it unimplemented). With
+   content-addressed refs a rename is now recognisable as the same CID at a new
+   path, which is what makes it cheap.
+3. **NLM locking**, so `nolocks` can go and two clients can share a file.
+4. **Packed blocks** (ADR-2608160100) — one request per block is the write cost.
+
 ## Consequences
 
 - The Drive can be opened by any application, with a path, without this app
