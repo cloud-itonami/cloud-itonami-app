@@ -5262,7 +5262,9 @@
             body (read-json exchange)]
         ;; Kept explicit in this branch as well as at the handler boundary so
         ;; route-scan records configuration mutation as human-only. The
-        ;; separate /api/agent-bots surface intentionally has no counterpart.
+        ;; /api/agent-bots surface has no counterpart for THIS verb: it can
+        ;; re-provision from the declared registry (2026-08-18), but it cannot
+        ;; create a Bot or widen a grant, which is what this route does.
         (require-human-session! exchange)
         (require-origin! exchange config)
         (require-csrf! exchange session)
@@ -5317,8 +5319,9 @@
 
 (defn- handle-agent-bots!
   "The narrow CLI/MCP Bot surface. Agent sessions may submit and observe work,
-  cancel their owner's run, and decide a held card only when that Bot already
-  carries human-enabled omakase. They cannot create a Bot or widen its grant."
+  cancel their owner's run, re-provision the workforce from the declared
+  registry, and decide a held card only when that Bot already carries
+  human-enabled omakase. They cannot create a Bot or widen its grant."
   [config exchange method path]
   (let [session (require-app-session! exchange)]
     (cond
@@ -5327,6 +5330,27 @@
 
       (and (= method "GET") (= path "/api/agent-bots/workforce"))
       (send! exchange 200 (bots/workforce-status session))
+
+      ;; Re-provisioning is on the agent surface (owner directive 2026-08-18)
+      ;; and it is the ONLY configuration verb that is. The reason it can be
+      ;; here without breaking `handle-bots!`'s argument is that the caller does
+      ;; not name anything: `provision-workforce!` reconciles the installed Bots
+      ;; to what `network-awai/loop-yakuwari` declares, so authority comes from
+      ;; a reviewed repository, not from the request. Creating a Bot and
+      ;; widening a grant stay human-only, where that argument does not hold.
+      ;;
+      ;; The trade this makes, stated plainly: write access to the registry
+      ;; checkout is now equivalent to configuring the workforce, because an
+      ;; agent that can edit `businesses.edn` can now also make it live. That
+      ;; was already true of a human with the same access; it is newly true of
+      ;; an agent session.
+      ;;
+      ;; Why this is not a CSRF hole: CSRF defends a browser session against a
+      ;; page the person did not mean to submit. There is no browser here. The
+      ;; browser route keeps its check, unchanged.
+      (and (= method "POST") (= path "/api/agent-bots/workforce/provision"))
+      (send! exchange 200
+             (bots/provision-workforce! config session (workforce/load-catalog)))
 
       (and (= method "GET")
            (bot-id-from path #"/api/agent-bots/([^/]+)/messages"))

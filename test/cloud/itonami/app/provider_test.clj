@@ -8,6 +8,36 @@
 (defn- private-fn [name]
   (some-> (ns-resolve 'cloud.itonami.app.provider name) deref))
 
+(deftest a-capped-budget-turns-reasoning-off
+  ;; A reasoning model spends output tokens on `thinking` before it emits any
+  ;; text, so a tight cap does not shorten the answer -- it removes it.
+  ;; Measured 2026-08-18 against murakumo-main, one realistic resident payload,
+  ;; same cap both ways: thinking on -> stop=max_tokens, 4656 thinking chars,
+  ;; ZERO text; thinking off -> stop=end_turn, 2150 chars of text.
+  ;;
+  ;; That is what 11 consecutive resident ticks of one Bot looked like from
+  ;; the outside between 2026-08-15 and 2026-08-18: "Provider returned no final
+  ;; answer ... completed as a safe no-op", every time.
+  (testing "the caller's disable-thinking? reaches the wire"
+    (let [body ((private-fn 'agent-request-body)
+                {:kind :openai-compatible}
+                {:model "murakumo-main"
+                 :messages [{:role "user" :content "hello"}]
+                 :tools []
+                 :max-output-tokens 1024
+                 :disable-thinking? true})]
+      (is (= 1024 (:max_tokens body)))
+      (is (= {:enable_thinking false} (:chat_template_kwargs body))
+          "without this the cap is spent on thinking and no text block is reached")))
+  (testing "an uncapped turn keeps reasoning -- this is not a global kill switch"
+    (let [body ((private-fn 'agent-request-body)
+                {:kind :openai-compatible}
+                {:model "murakumo-main"
+                 :messages [{:role "user" :content "hello"}]
+                 :tools []})]
+      (is (nil? (:chat_template_kwargs body))
+          "interactive turns have budget for both, and reasoning is worth having"))))
+
 (deftest agent-turn-reserves-output-after-reasoning
   (let [body ((private-fn 'agent-request-body)
               {:kind :openai-compatible}

@@ -1702,7 +1702,12 @@
     (and (:goal? run)
          (get-in configuration [:bots :goal :max-output-tokens]))
     (assoc :max-output-tokens
-           (get-in configuration [:bots :goal :max-output-tokens]))))
+           (get-in configuration [:bots :goal :max-output-tokens])
+           ;; Capping the budget and leaving reasoning on is the same as asking
+           ;; for no answer: the model spends the cap thinking and never reaches
+           ;; a text block. See the measurement in provider/agent-request-body.
+           ;; These two go together -- do not set one without the other.
+           :disable-thinking? true)))
 
 (defn- advance!
   "Turn until the Bot is done or needs a person.

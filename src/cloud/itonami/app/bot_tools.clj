@@ -1,9 +1,18 @@
 (ns cloud.itonami.app.bot-tools
   "CLI/MCP adapter for owner-scoped Bot work.
 
-  Configuration remains human-only. This surface can list, submit, inspect,
-  cancel, and—only for a human-enabled omakase Bot—decide a held write. Every
-  stateful operation goes to the resident process over its agent-session API."
+  This surface can list, submit, inspect, cancel, re-provision the workforce
+  from the declared registry, and—only for a human-enabled omakase Bot—decide a
+  held write. Every stateful operation goes to the resident process over its
+  agent-session API.
+
+  Creating a Bot and widening a grant remain human-only. Re-provisioning does
+  not belong to that family: the caller names nothing, and the workforce is
+  reconciled to what `network-awai/loop-yakuwari` declares, so the authority
+  comes from a reviewed repository rather than from the call. Owner directive,
+  2026-08-18 — before it, an objective edited in the registry could not reach a
+  running Bot without a person opening the browser, and the workforce here had
+  been running a three-day-old projection for exactly that reason."
   (:require [cloud.itonami.app.app-client :as client]))
 
 (def tools
@@ -12,7 +21,9 @@
    {:name "bot_messages" :description "Read one owned Bot's durable conversation."
     :parameters {:type "object" :required ["bot_id"]
                  :properties {:bot_id {:type "string"}}}}
-   {:name "workforce_status" :description "Read the installed startup workforce and resident-job status. Configuration remains human-only."
+   {:name "workforce_status" :description "Read the installed startup workforce and resident-job status, including when it was last provisioned. A projection older than the registry means running Bots carry stale objectives."
+    :parameters {:type "object" :properties {}}}
+   {:name "workforce_provision" :description "Re-provision the workforce from the declared registry, so registry edits reach running Bots. Reconciles to what loop-yakuwari declares; it cannot create a Bot or widen a grant."
     :parameters {:type "object" :properties {}}}
    {:name "bot_task" :description "Submit one task to an owned Bot and wait for its bounded result. Omakase writes execute with receipts."
     :parameters {:type "object" :required ["bot_id" "text"]
@@ -43,6 +54,12 @@
                                          (str "/api/agent-bots/" bot_id "/messages"))
     "workforce_status" (client/request! configuration :get
                                          "/api/agent-bots/workforce")
+    ;; Provisioning walks the registry and reconciles every declared role, so it
+    ;; is slower than the other reads -- give it the long-call path rather than
+    ;; the default timeout.
+    "workforce_provision" (client/request-with-timeout!
+                            configuration :post
+                            "/api/agent-bots/workforce/provision" 120 {})
     "bot_task" (client/request-with-timeout!
                  configuration :post (str "/api/agent-bots/" bot_id "/messages") 660
                  {:text text})
