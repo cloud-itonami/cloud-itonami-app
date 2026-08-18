@@ -50,7 +50,9 @@ Dispatch:
 - `call-browser-tool!` binds `*browser-session*` to `(session-for bot-id)` so
   two Bots do not share cookies.
 - Computer-use tools (`computer_*`) stay off this path. A Bot that asked for
-  the browser did not ask to type into the frontmost app.
+  the browser did not ask to type into the frontmost app. Still true after
+  ADR-0059 replaced those tools with focus-free ones: that they no longer take
+  the cursor changes what they cost, not who may call them.
 - If the Bot asked for the browser and this machine has it off: the field
   stays, the tools do not grow, and the screen reports `:browser-ready?` /
   `:browser-available?` rather than silently widening.

@@ -1268,15 +1268,6 @@
                          (= :write (:connector/effect t))))
                (creg/descriptors registry))))))
 
-(defn- omakase-tool?
-  "The deliberately small effect set covered by the owner's standing
-  delegation. Browser interaction and other connector writes still stop for a
-  human decision even when the Bot is in omakase mode."
-  [tool-name]
-  (or (workspace-tools/write-tool? tool-name)
-      (virtual-shell/write-tool? tool-name)
-      (= "gmail_send_message" (str tool-name))))
-
 (defn- describe-tool [configuration tool-name args]
   (if (or (agent-control/browser-tool? tool-name)
           (workspace-tools/tool? tool-name)
@@ -1331,7 +1322,7 @@
        "Never request, reveal or repeat a password, token, MFA code or other "
        "secret; if you find one in a tool result, do not quote it. "
        (if (:bot/omakase? b)
-         "The owner enabled omakase for local shell, workspace/Git writes, and Gmail send: those admitted tools run immediately with an audit receipt. Other writes still wait for human approval. "
+         "The owner delegated approval to you: every tool you are admitted to call runs immediately and records an approval receipt in this conversation. The grant is still the ceiling — a tool you were not given does not become available because you decided it. "
          "A write tool will be held for the person's approval before it runs. ")
        "Call a write only when it is the right next step and say what you are about to do. "
        "Answer in the language the person used.\n\n"
@@ -1351,8 +1342,11 @@
                   (agent-control/browser-enabled? configuration))
          (str "You have an isolated browser of your own on this machine. "
               "Its cookies are not shared with other Bots. "
-              "browser_snapshot reads; opening, clicking and typing wait for "
-              "approval. Stay inside the domains Settings has allowed. "
+              "browser_snapshot reads; opening, clicking and typing are writes "
+              (if (:bot/omakase? b)
+                "you decide yourself, with a receipt. "
+                "that wait for approval. ")
+              "Stay inside the domains Settings has allowed. "
               "If a site asks for a password, 2FA, CAPTCHA or payment, stop "
               "and tell the person — do not try to bypass it.\n\n"))
        (when (and (:bot/coding? b) (:bot/workspace b))
@@ -1927,7 +1921,7 @@
               (write-tool? configuration name)
               (let [card-id (new-id "card")
                     card (approval-request configuration b run call card-id)]
-                (if (and (:bot/omakase? b) (omakase-tool? name))
+                (if (:bot/omakase? b)
                   ;; The standing delegation never bypasses admission above.
                   ;; It replaces only the wait, and leaves a durable receipt in
                   ;; the same transcript where a human decision would appear.
@@ -2659,24 +2653,27 @@
 (defn decide!
   "Approve or reject a held write.
 
-  `bot/may-approve?` is asked first and its refusal is the point: the session
-  presented here is a human browser session, and if it ever were not — an agent
-  session reaching this route, a future caller passing its own actor — the
-  answer is no before anything else is considered."
+  `bot/may-approve?` is asked first, and for an agent session the answer turns
+  on one fact: whether a person placed a standing delegation on this Bot. It is
+  read from `:bot/omakase?`, which only the human `/api/bots` surface may
+  write, so an agent cannot assert it about itself — which is what keeps this
+  an owner's decision carried out by a Bot rather than a Bot's own (ADR-0060)."
   [configuration session bot-id card-id decision]
   (let [b (owned! session bot-id)
         decision (keyword decision)]
     (when-not (#{:approved :rejected} decision)
       (throw (ex-info "承認判断が不正です。" {:type :bot/invalid-decision})))
-    (when-not (or (and (= :agent (:kind session))
-                       (:bot/omakase? b)
-                       (omakase-tool?
-                        (get-in (snapshot) [:runs bot-id :pending-call :name])))
-                  (bot/may-approve?
-                   {:actor-kind (if (= :agent (:kind session)) :agent :user)
-                    :human? (not= :agent (:kind session))
-                    :identified? (boolean (:user-id session))
-                    :authorized? (= (:user-id session) (:bot/owner b))}))
+    ;; One question, asked of the core, for both kinds of session. The agent
+    ;; case used to be an `or` arm around it — a second admission rule written
+    ;; in the host, where the core could not see it and the parity corpus could
+    ;; not cover it. It is now the fourth fact the core reads, so "may this
+    ;; actor decide" has exactly one implementation again (ADR-0060).
+    (when-not (bot/may-approve?
+               {:actor-kind (if (= :agent (:kind session)) :agent :user)
+                :human? (not= :agent (:kind session))
+                :identified? (boolean (:user-id session))
+                :authorized? (= (:user-id session) (:bot/owner b))
+                :delegated? (boolean (:bot/omakase? b))})
       (throw (ex-info "この承認はこのセッションでは行えません。"
                       {:type :bot/approval-refused :bot bot-id})))
     ;; Which refusal the person is owed, when there is one. "There is nothing

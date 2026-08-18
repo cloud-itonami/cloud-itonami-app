@@ -21,6 +21,7 @@
             [cloud.itonami.app.cli-test]
             [cloud.itonami.app.commands-test]
             [cloud.itonami.app.connectors-test]
+            [cloud.itonami.app.desktop-test]
             [cloud.itonami.app.bot-test]
             [cloud.itonami.app.bots-test]
             [cloud.itonami.app.virtual-shell-test]
@@ -177,6 +178,7 @@
     cloud.itonami.app.cli-test
     cloud.itonami.app.commands-test
     cloud.itonami.app.connectors-test
+    cloud.itonami.app.desktop-test
     cloud.itonami.app.bot-test
     cloud.itonami.app.bots-test
     cloud.itonami.app.virtual-shell-test

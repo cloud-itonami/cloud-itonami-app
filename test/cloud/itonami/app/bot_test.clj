@@ -165,21 +165,35 @@
   (let [b (a-bot {:bot/tools #{"gmail_search_messages"} :bot/writes? true})]
     (is (empty? (bot/admitted-tools b catalog #{})))))
 
-;; ── 3. a Bot may not approve ────────────────────────────────────────────
+;; ── 3. who may decide a held card (ADR-0060) ────────────────────────────
 
-(deftest an-agent-can-never-approve-whatever-else-is-true
+(deftest an-agent-decides-only-on-a-delegation-nobody-can-self-assert
   (doseq [[human identified authorized] (booleans* 3)]
     (is (false? (bot/may-approve? {:actor-kind :agent :human? human
                                    :identified? identified
-                                   :authorized? authorized}))
-        (str "an agent approved with human=" human " identified=" identified
-             " authorized=" authorized))))
+                                   :authorized? authorized
+                                   :delegated? false}))
+        (str "an undelegated agent decided with human=" human
+             " identified=" identified " authorized=" authorized))
+    ;; The lift, and its exact size: the agent branch reads `delegated` and
+    ;; nothing else, so the same eight combinations all pass once a person has
+    ;; delegated and all fail until then.
+    (is (true? (bot/may-approve? {:actor-kind :agent :human? human
+                                  :identified? identified
+                                  :authorized? authorized
+                                  :delegated? true}))
+        "a delegated agent was refused")))
 
-(deftest a-person-approves-only-with-all-three-facts
-  (doseq [[human identified authorized] (booleans* 3)]
+(deftest a-person-approves-only-with-all-three-facts-and-delegation-is-not-one
+  (doseq [[human identified authorized delegated] (booleans* 4)]
     (is (= (and human identified authorized)
            (bot/may-approve? {:actor-kind :user :human? human
-                              :identified? identified :authorized? authorized})))))
+                              :identified? identified :authorized? authorized
+                              :delegated? delegated}))
+        ;; A delegation is an instruction to a Bot. It must not stand in for a
+        ;; person's own authority on the human side of the branch, or the two
+        ;; meanings would have merged into one boolean.
+        (str "delegated=" delegated " changed the human answer"))))
 
 ;; ── status ordering ─────────────────────────────────────────────────────
 

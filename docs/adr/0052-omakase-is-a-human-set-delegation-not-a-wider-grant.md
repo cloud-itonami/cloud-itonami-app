@@ -1,5 +1,12 @@
 # ADR-0052: Omakase is a human-set delegation, not a wider grant
 
+**Amended by ADR-0060 (2026-08-18): the effect allowlist below is gone.**
+Omakase now covers every write the Bot is admitted to call, and it is also what
+lets an agent session record a decision. The half of this ADR that still holds
+is the one it rests on — `:bot/omakase?` is writable only from the human
+`/api/bots` surface, and the delegation adds no tool, account, workspace,
+network path, credential or domain.
+
 **Status:** accepted — 2026-08-15
 
 ## Context

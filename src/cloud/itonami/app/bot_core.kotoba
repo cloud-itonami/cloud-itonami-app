@@ -20,10 +20,11 @@
 ;;
 ;;   - `tool-admitted?` — a Bot reaching a tool nobody enabled, or writing when
 ;;     it was only ever granted reads.
-;;   - `may-approve?` — a Bot approving its own held run. It is the one thing
-;;     that must be impossible rather than merely unimplemented, so the actor
-;;     kind is tested FIRST and alone: no combination of the other three facts
-;;     can reach the human branch.
+;;   - `may-approve?` — an agent deciding a held run it was never delegated.
+;;     Since ADR-0060 an agent CAN decide, but only on the one fact a person
+;;     writes; the actor kind is still tested FIRST and alone, so no
+;;     combination of the human-side facts can be asserted to reach the human
+;;     branch.
 ;;   - `status` — a Bot that is waiting for a human reporting itself as
 ;;     working. The ordering is the rule; see the comment there.
 ;;
@@ -67,7 +68,13 @@
              [:record :bot/decision
               [[:human :bool]
                [:identified :bool]
-               [:authorized :bool]]]
+               [:authorized :bool]
+               ;; Whether a PERSON has placed a standing delegation on this
+               ;; Bot. Fourth and last, and the only fact the agent branch
+               ;; reads. It is not something an agent can assert about itself:
+               ;; the host derives it from `:bot/omakase?`, which only the
+               ;; human `/api/bots` surface may write (ADR-0052).
+               [:delegated :bool]]]
              ;; How many of this person's accounts at one provider are in
              ;; play. A person may hold two Google accounts; the Keychain has
              ;; kept them in separate slots since subjects qualified it, and
@@ -152,12 +159,23 @@
     false))
 
 (defn may-approve? [d [:ref :bot/decision] actor-kind :string] :bool
-  ;; A Bot may carry out what was approved. It may not approve. The actor kind
-  ;; is tested alone and first, so that this refusal cannot be traded against
-  ;; anything: there is no value of `human`, `user-verified` or `authorized`
-  ;; that reaches the second branch for an agent.
+  ;; An agent decides when, and only when, a person delegated (ADR-0060). This
+  ;; used to return a flat `false`, and the comment here said the refusal was
+  ;; "the one thing that must be impossible rather than merely unimplemented".
+  ;; The owner lifted it on 2026-08-18: a Bot that has been given a standing
+  ;; delegation decides its own cards.
+  ;;
+  ;; What did NOT change is where authority comes from. The agent branch reads
+  ;; exactly one fact, and that fact is the record of a human act — it cannot
+  ;; be traded for `human`, `identified` or `authorized`, which stay on the
+  ;; other side of the branch and still mean what they meant. An agent with no
+  ;; delegation is refused as flatly as before.
+  ;;
+  ;; The ordering survives for the same reason it was written: actor kind is
+  ;; tested alone and first, so a caller cannot reach the human branch by
+  ;; asserting three booleans about itself.
   (if (string=? actor-kind "agent")
-    false
+    (record-get d :delegated)
     (and (record-get d :human)
          (record-get d :identified)
          (record-get d :authorized))))

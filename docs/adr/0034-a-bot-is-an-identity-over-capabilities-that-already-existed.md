@@ -64,7 +64,14 @@ rather than pruned: "an operator turned this off" and "a tool name was written
 into a Bot that was never offered" need different answers, and both need a
 person to see them.
 
-### A Bot may never approve
+### A Bot may never approve — superseded by ADR-0060 (2026-08-18)
+
+**This section no longer describes the build.** `may-approve?` takes a fourth
+fact, `delegated`, read from `:bot/omakase?`, and an agent session decides when
+a person has set it. What survives is where the delegation comes from: only the
+human `/api/bots` surface may write that field, so an agent cannot assert it
+about itself. The original text follows.
+
 
 `bot/may-approve?` tests the actor kind first and alone. No combination of the
 other facts reaches the human branch for an agent. `/api/bots` is additionally

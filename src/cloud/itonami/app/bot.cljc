@@ -33,10 +33,13 @@
 
   ## Approval and omakase
 
-  Normal Bots may not approve. `may-approve?` remains the human approval gate.
-  A separately stored `:bot/omakase?` is a standing owner delegation: the host
-  records an approval receipt and executes admitted writes without parking the
-  run. It does not widen tools, workspace, accounts, network or credentials.
+  `:bot/omakase?` is a standing owner delegation, and since ADR-0060 it is
+  also what lets an agent record a decision: `may-approve?` takes a fourth
+  fact, `delegated?`, and it is the only one its agent branch reads. A Bot
+  without that delegation is refused exactly as before. The delegation does
+  not widen tools, workspace, accounts, network or credentials — admission is
+  computed from the grant either way, so a Bot deciding its own card can still
+  only decide a card for something it was already admitted to call.
 
   ## Where the effects are
 
@@ -265,7 +268,8 @@
 
 (def ^:private decision-record
   [:record :bot/decision
-   [[:human :bool] [:identified :bool] [:authorized :bool]]])
+   [[:human :bool] [:identified :bool] [:authorized :bool]
+    [:delegated :bool]]])
 
 (def ^:private accounts-record
   [:record :bot/accounts
@@ -329,12 +333,12 @@
   there: a Bot write that has to carry assertion-level authority is a governed
   WorkItem, not a card in a chat window. Naming the weaker fact honestly is
   what keeps somebody from later reading this as the stronger one."
-  [{:keys [actor-kind human? identified? authorized?]}]
+  [{:keys [actor-kind human? identified? authorized? delegated?]}]
   (oracle/call
    :bot 'may-approve?
    [(oracle/record decision-record
                    [(boolean human?) (boolean identified?)
-                    (boolean authorized?)])
+                    (boolean authorized?) (boolean delegated?)])
     (name (or actor-kind :unknown))]))
 
 (defn status
