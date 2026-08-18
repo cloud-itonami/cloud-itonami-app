@@ -166,5 +166,8 @@ replacement is literal in both.
   created, and that flow is WebAuthn — the same boundary as above, met at the
   beginning rather than at a payment. The CLI cannot bootstrap an install from
   nothing and should not be described as if it could.
-- The CLI still cannot approve anything. It may ask, record, and carry out what a
-  human already approved.
+- The CLI still cannot approve a PAYMENT. It may ask, record, and carry out what
+  a human already approved. (It is not a general refusal any more: ADR-0060
+  lets an agent session decide a delegated Bot's card. Payment consent is a
+  WebAuthn assertion an agent cannot produce, so that boundary is structural
+  and did not move.)

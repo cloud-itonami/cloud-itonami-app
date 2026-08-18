@@ -60,6 +60,13 @@ Dispatch:
 The Bot cannot approve. An agent session cannot approve. That refusal is
 unchanged.
 
+**No longer true, as of ADR-0060 (2026-08-18).** A Bot the owner delegated to
+with `:bot/omakase?` decides its own cards, and an agent session may record
+that decision. What the browser dispatch above rests on is unaffected: the
+delegation replaces the wait, not the grant, so a Bot still reaches only the
+isolated-browser tools this ADR admitted it to, and only on a machine that
+enabled them.
+
 ## Consequences
 
 - A Grok-Bot-shaped teammate that needs a site with no connector can now reach
