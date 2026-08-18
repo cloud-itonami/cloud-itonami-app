@@ -5,7 +5,7 @@
             [clojure.string :as str]
             [cloud.itonami.app.cli-runner :as cli-runner]
             [cloud.itonami.app.chronicle :as chronicle]
-            [cloud.itonami.app.config :as config]
+            [cloud.itonami.app.desktop :as desktop]
             [cloud.itonami.app.local-query :as local-query]
             [cloud.itonami.app.policy :as policy]
             [cloud.itonami.app.provider :as provider]
@@ -81,35 +81,77 @@
                  :required ["direction"]}}])
 
 (def ^:private computer-tools
-  [{:name "computer_screenshot"
-    :description "Capture the current macOS screen for visual inspection."
-    :parameters {:type "object" :properties {}}}
-   {:name "computer_key"
-   :description "Press one macOS key or chord such as cmd+l or Return."
+  "The desktop tools, after ADR-0059 replaced the ones that took the cursor.
+
+  Three names are gone and none of them was renamed: `computer_click`,
+  `computer_key` and `computer_type` drove whatever application happened to be
+  in front, using `cliclick` and `osascript` keystrokes. They are not here as
+  focus-free versions of themselves, because two of them cannot exist in that
+  form -- synthesised key events are measured not to reach a background
+  application at all -- and the third was only ever a screen coordinate, which
+  addresses whatever moved into that spot rather than the thing the model saw.
+
+  What replaces them addresses elements and menu commands by name. That is why
+  every write here takes `expect`: the tree the person approved is hashed, and
+  the call refuses if the application changed underneath it."
+  [{:name "computer_tree"
+    :description (str "Read a macOS application's accessibility tree WITHOUT bringing it "
+                      "to the front. Returns elements with refs like @a12 and a digest; "
+                      "quote that digest back as `expect` on any write.")
+    :parameters {:type "object"
+                 :properties {:application {:type "string"
+                                            :description "Application name, or bundle id such as com.apple.TextEdit"}
+                              :max {:type "integer"}}
+                 :required ["application"]}}
+   {:name "computer_menu"
+    :description (str "List a macOS application's menu commands and their keyboard "
+                      "shortcuts. Use this instead of pressing a shortcut: a background "
+                      "application does not receive synthesised keys, but it does perform "
+                      "the menu command the shortcut stands for.")
     :parameters {:type "object"
                  :properties {:application {:type "string"}
-                              :key {:type "string"}}
-                 :required ["application" "key"]}}
-   {:name "computer_type"
-    :description "Type non-secret text into the current foreground application."
+                              :contains {:type "string"}}
+                 :required ["application"]}}
+   {:name "computer_screenshot"
+    :description (str "Capture ONE window of a named application. Not the whole screen: "
+                      "everything else on the display belongs to the person, not to this "
+                      "run.")
+    :parameters {:type "object"
+                 :properties {:application {:type "string"}}
+                 :required ["application"]}}
+   {:name "computer_press"
+    :description (str "Perform an element's action (default AXPress) where it stands. "
+                      "No cursor moves and the application is not raised.")
     :parameters {:type "object"
                  :properties {:application {:type "string"}
-                              :text {:type "string"}}
-                 :required ["application" "text"]}}
-   {:name "computer_click"
-    :description "Click screen coordinates after inspecting a screenshot."
+                              :ref {:type "string" :description "Element ref from computer_tree, such as @a12"}
+                              :action {:type "string" :description "Defaults to AXPress"}
+                              :expect {:type "string" :description "Digest from computer_tree"}}
+                 :required ["application" "ref" "expect"]}}
+   {:name "computer_menu_press"
+    :description "Perform a menu command by its path, such as ファイル>保存."
     :parameters {:type "object"
                  :properties {:application {:type "string"}
-                              :x {:type "integer"} :y {:type "integer"}
-                              :button {:type "string"
-                                       :enum ["left" "right" "double"]}}
-                 :required ["application" "x" "y"]}}
+                              :path {:type "string"}}
+                 :required ["application" "path"]}}
+   {:name "computer_set_value"
+    :description (str "Write text into a text element by ref. Reports what it observes "
+                      "afterwards -- some document applications accept the write into the "
+                      "widget without marking the document edited.")
+    :parameters {:type "object"
+                 :properties {:application {:type "string"}
+                              :ref {:type "string"}
+                              :text {:type "string"}
+                              :expect {:type "string"}}
+                 :required ["application" "ref" "text" "expect"]}}
    {:name "computer_scroll"
-    :description "Scroll the foreground application up or down."
+    :description "Scroll a scroll area by one page, through its accessibility action."
     :parameters {:type "object"
                  :properties {:application {:type "string"}
-                              :direction {:type "string" :enum ["up" "down"]}}
-                 :required ["application" "direction"]}}])
+                              :ref {:type "string"}
+                              :direction {:type "string" :enum ["up" "down"]}
+                              :expect {:type "string"}}
+                 :required ["application" "ref" "direction" "expect"]}}])
 
 (def ^:private done-tool
   {:name "done"
@@ -129,7 +171,8 @@
                 :required ["query"]}})
 
 (def ^:private read-only-tools
-  #{"browser_snapshot" "computer_screenshot" "local_datalog_query"})
+  #{"browser_snapshot" "local_datalog_query"
+    "computer_tree" "computer_menu" "computer_screenshot"})
 
 (defn- now-ms [] (System/currentTimeMillis))
 
@@ -214,12 +257,18 @@
                :host "kotoba-lang/browser-use compatible agent-browser"
                :available? (executable? "agent-browser")
                :allowed-domains (get-in s [:browser :allowed-domains])}
-     :computer {:enabled? (get-in s [:computer :enabled?])
-                :host "kotoba-lang/computer-use compatible macOS host"
-                :available? (and (executable? "cliclick")
-                                 (.isFile (io/file "/usr/sbin/screencapture"))
-                                 (.isFile (io/file "/usr/bin/osascript")))
-                :permissions ["Screen Recording" "Accessibility"]}
+     :computer (let [state (desktop/available?)]
+                 (merge {:enabled? (get-in s [:computer :enabled?])
+                         :host "cloud-itonami focus-free desktop helper (ADR-0059)"
+                         ;; Three facts, not one. A missing binary, a missing
+                         ;; Accessibility grant and a missing Screen Recording
+                         ;; grant need three different answers from a person,
+                         ;; and folding them into one `available?` was how the
+                         ;; settings screen used to say "unavailable" to
+                         ;; somebody whose only problem was one checkbox.
+                         :available? (and (:helper? state) (:accessibility? state))
+                         :permissions ["Accessibility" "Screen Recording"]}
+                        state))
      :cli {:enabled? (get-in s [:cli :enabled?])
            :workspace (get-in s [:cli :workspace])
            :access (get-in s [:cli :access])
@@ -286,67 +335,37 @@
                       {:type :agent/invalid-input :field label})))
     value))
 
-(defn- apple-escape [value]
-  (-> (str value) (str/replace "\\" "\\\\") (str/replace "\"" "\\\"")))
+(defn- application!
+  "The target application, as a name or a bundle id.
 
-(def ^:private key-codes
-  {"return" 36 "enter" 36 "tab" 48 "space" 49 "delete" 51
-   "backspace" 51 "escape" 53 "left" 123 "right" 124 "down" 125 "up" 126
-   "home" 115 "end" 119 "pageup" 116 "pagedown" 121})
+  Bundle ids are the reliable form and the tool description says so: this
+  machine is Japanese-localized, where TextEdit answers to テキストエディット
+  and not to `TextEdit`. The helper reports what IS running when the name does
+  not resolve, so a model can correct itself in one turn."
+  [value]
+  (short-text! value 120 "application"))
 
-(def ^:private key-modifiers
-  {"cmd" "command down" "command" "command down"
-   "ctrl" "control down" "control" "control down"
-   "alt" "option down" "option" "option down"
-   "shift" "shift down"})
-
-(defn- key-script [value]
-  (let [parts (str/split (str/lower-case (short-text! value 80 "key")) #"\+")
-        key-name (last parts)
-        modifiers (keep key-modifiers (butlast parts))
-        using (when (seq modifiers)
-                (str " using {" (str/join ", " modifiers) "}"))]
-    (str "tell application \"System Events\" to "
-         (if-let [code (key-codes key-name)]
-           (str "key code " code using)
-           (str "keystroke \"" (apple-escape key-name) "\"" using)))))
-
-(defn- coordinate! [value]
-  (let [value (long value)]
-    (when-not (<= 0 value 10000)
-      (throw (ex-info "画面座標が範囲外です。" {:type :agent/invalid-coordinate})))
+(defn- desktop-ref!
+  "An element reference from `computer_tree`, in the shape the walk produces."
+  [value]
+  (let [value (str value)]
+    (when-not (re-matches #"@a[0-9]+" value)
+      (throw (ex-info "element は computer_tree の @a番号で指定してください。"
+                      {:type :agent/invalid-element})))
     value))
 
-(defn- frontmost-application []
-  (str/trim
-   (run-command!
-    ["/usr/bin/osascript" "-e"
-     (str "tell application \"System Events\" to get name of first "
-          "application process whose frontmost is true")]
-    20 {})))
+(defn- digest!
+  "The tree digest a write is bound to.
 
-(defn- require-frontmost! [expected]
-  (let [expected (short-text! expected 120 "application")
-        actual (frontmost-application)]
-    (when-not (= expected actual)
-      (throw (ex-info "承認後に前面アプリが変わったため、操作を中止しました。"
-                      {:type :agent/frontmost-changed
-                       :expected expected :actual actual})))
-    actual))
-
-(defn- screenshot! []
-  (let [directory (io/file (config/data-dir) "agent-screenshots")
-        file (io/file directory (str "screen-" (UUID/randomUUID) ".png"))
-        application (frontmost-application)]
-    (.mkdirs directory)
-    (run-command! ["/usr/sbin/screencapture" "-x" "-t" "png"
-                   (.getCanonicalPath file)] 20 {})
-    (run-command! ["/usr/bin/sips" "-Z" "1280" (.getCanonicalPath file)]
-                  20 {})
-    {:text (str "Current macOS screenshot. Frontmost application: " application)
-     :image-path (.getCanonicalPath file)
-     :media-type "image/png"
-     :application application}))
+  Required, not optional. This is what took over from `require-frontmost!`, and
+  an optional guard is not a guard -- the model would omit it exactly when the
+  screen was busiest."
+  [value]
+  (let [value (str value)]
+    (when-not (re-matches #"sha256:[0-9a-f]{64}" value)
+      (throw (ex-info "expect には computer_tree が返した digest を渡してください。"
+                      {:type :agent/invalid-digest})))
+    value))
 
 (defn- execute-tool! [configuration name input]
   (let [s (settings configuration)]
@@ -372,38 +391,40 @@
                         (if (= "up" (:direction input)) "up" "down")
                         (str (min 4000 (max 100 (long (or (:pixels input) 700))))))
 
-      "computer_screenshot" (screenshot!)
+      "computer_tree"
+      (pr-str (desktop/tree (application! (:application input))
+                            {:max (:max input)}))
 
-      "computer_key"
-      (do
-        (require-frontmost! (:application input))
-        (run-command! ["/usr/bin/osascript" "-e"
-                       (key-script (:key input))]
-                      20 {}))
+      "computer_menu"
+      (pr-str (desktop/menu (application! (:application input))
+                            {:contains (:contains input)}))
 
-      "computer_type"
-      (do
-        (require-frontmost! (:application input))
-        (run-command! ["/usr/bin/osascript" "-e"
-                       (str "tell application \"System Events\" to keystroke \""
-                            (apple-escape (short-text! (:text input) 4000 "text"))
-                            "\"")]
-                      20 {}))
+      "computer_screenshot"
+      (desktop/screenshot! (application! (:application input)))
 
-      "computer_click"
-      (let [_ (require-frontmost! (:application input))
-            x (coordinate! (:x input))
-            y (coordinate! (:y input))
-            command (case (:button input) "right" "rc" "double" "dc" "c")]
-        (run-command! ["cliclick" (str command ":" x "," y)] 20 {}))
+      "computer_press"
+      (pr-str (desktop/press! (application! (:application input))
+                              (desktop-ref! (:ref input))
+                              (digest! (:expect input))
+                              {:action (some-> (:action input) str not-empty)}))
+
+      "computer_menu_press"
+      (pr-str (desktop/menu-press! (application! (:application input))
+                                   (short-text! (:path input) 300 "path")))
+
+      "computer_set_value"
+      (pr-str (desktop/set-value! (application! (:application input))
+                                  (desktop-ref! (:ref input))
+                                  (short-text! (:text input) 4000 "text")
+                                  (digest! (:expect input))
+                                  {}))
 
       "computer_scroll"
-      (do
-        (require-frontmost! (:application input))
-        (run-command! ["/usr/bin/osascript" "-e"
-                       (str "tell application \"System Events\" to key code "
-                            (if (= "up" (:direction input)) "116" "121"))]
-                      20 {}))
+      (pr-str (desktop/scroll! (application! (:application input))
+                               (desktop-ref! (:ref input))
+                               (if (= "up" (:direction input)) "up" "down")
+                               (digest! (:expect input))
+                               {}))
 
       "cli_agent"
       (let [selected (policy/select-provider configuration (:provider input))
@@ -451,11 +472,17 @@
       "browser_type" (str (:ref input) " に「" (preview (:text input)) "」と入力します。")
       "browser_press" (str "分離ブラウザーで " (:key input) " キーを押します。")
       "browser_scroll" (str "分離ブラウザーを " (:direction input) " にスクロールします。")
-      "computer_key" (str (:application input) " で " (:key input) " キーを押します。")
-      "computer_type" (str (:application input) " に「" (preview (:text input)) "」と入力します。")
-      "computer_click" (str (:application input) " の画面座標 " (:x input) ", " (:y input)
-                            " を " (or (:button input) "left") " clickします。")
-      "computer_scroll" (str (:application input) " を " (:direction input) " にスクロールします。")
+      "computer_tree" (str (:application input) " のアクセシビリティツリーを読みます。")
+      "computer_menu" (str (:application input) " のメニュー項目を読みます。")
+      "computer_screenshot" (str (:application input) " のウインドウを1枚キャプチャします。")
+      "computer_press" (str (:application input) " の " (:ref input) " に "
+                            (or (:action input) "AXPress") " を実行します（前面化しません）。")
+      "computer_menu_press" (str (:application input) " のメニュー "
+                                 (preview (:path input)) " を実行します（前面化しません）。")
+      "computer_set_value" (str (:application input) " の " (:ref input)
+                                " に「" (preview (:text input)) "」を書き込みます。")
+      "computer_scroll" (str (:application input) " の " (:ref input)
+                             " を " (:direction input) " にスクロールします。")
       "cli_agent" (str (:provider input) " を " (:access input)
                        " で " (preview (:workspace input)) " に実行します。")
       (str tool-name " を実行します。"))))
@@ -532,7 +559,8 @@
                 "指定workspace内のファイルを読み書きできます。shell bypassは許可しません。"
                 "指定workspaceを読み取れますが、ファイル変更は許可しません。")
               (str/starts-with? tool-name "computer_")
-              "現在前面にあるアプリへ入力・操作する可能性があります。"
+              (str "指定したアプリの状態が変わる可能性があります。カーソル・キーボードフォーカス・"
+                   "Spaceは動きません（ADR-0059）。承認時のツリーから変化していれば実行は拒否されます。")
               :else
               "分離されたブラウザー上のページ状態が変わる可能性があります。")}))
 

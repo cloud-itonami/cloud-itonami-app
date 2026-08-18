@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Builds the focus-free desktop helper (ADR-0059). Same shape as
+# kotoba-lang/shell's bin/kotoba-shell-build-macos-calendar: one swiftc
+# invocation into target/, no package manager, no build system.
+
+repo_dir="$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
+output="${CLOUD_ITONAMI_DESKTOP_HELPER_OUTPUT:-$repo_dir/target/cloud-itonami-desktop-macos}"
+source="$repo_dir/bin/cloud-itonami-desktop-macos.swift"
+
+mkdir -p "$(dirname "$output")"
+/usr/bin/swiftc -O \
+  -framework Cocoa -framework ApplicationServices -framework CoreGraphics \
+  "$source" -o "$output"
+
+printf '%s\n' "$output"

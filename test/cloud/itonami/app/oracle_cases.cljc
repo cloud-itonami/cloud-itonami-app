@@ -64,7 +64,8 @@
 
 (def decision-record
   [:record :bot/decision
-   [[:human :bool] [:identified :bool] [:authorized :bool]]])
+   [[:human :bool] [:identified :bool] [:authorized :bool]
+    [:delegated :bool]]])
 
 (def accounts-record
   [:record :bot/accounts
@@ -325,9 +326,17 @@
     {:oracle :bot :export 'tool-admitted?
      :args [(oracle/record admission-record [true true true false]) "write"] :expect false}
     {:oracle :bot :export 'may-approve?
-     :args [(oracle/record decision-record [true true true]) "person"] :expect true}
+     :args [(oracle/record decision-record [true true true false]) "person"] :expect true}
     {:oracle :bot :export 'may-approve?
-     :args [(oracle/record decision-record [false true true]) "person"] :expect false}
+     :args [(oracle/record decision-record [false true true false]) "person"] :expect false}
+    ;; The two halves of ADR-0060, as the shipped artifact answers them. The
+    ;; first is the whole lift; the second is what the lift did NOT do, and it
+    ;; is the one worth keeping — an agent asserting every human fact about
+    ;; itself is still refused when nobody delegated.
+    {:oracle :bot :export 'may-approve?
+     :args [(oracle/record decision-record [false false false true]) "agent"] :expect true}
+    {:oracle :bot :export 'may-approve?
+     :args [(oracle/record decision-record [true true true false]) "agent"] :expect false}
     {:oracle :bot :export 'grant-widens?
      :args [(oracle/i64 3) (oracle/i64 2)] :expect true}
     {:oracle :bot :export 'grant-widens?

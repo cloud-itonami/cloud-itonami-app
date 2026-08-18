@@ -1089,11 +1089,36 @@
           (is (= "omakase" (:decision-mode (held-card b))))
           (is (= "agent-session" (:decided-by (held-card b)))))))))
 
-(deftest omakase-does-not-delegate-other-connector-or-browser-writes
+(deftest a-delegation-covers-every-write-not-a-list-of-three
+  ;; Before ADR-0060 this test asserted the opposite, and it was named
+  ;; `omakase-does-not-delegate-other-connector-or-browser-writes`: a delegated
+  ;; Bot was refused on `calendar_create_event` and `browser_click` because a
+  ;; predicate in the host named three effects and not those. The owner lifted
+  ;; the refusal on 2026-08-18. What the delegation covers is now the Bot's
+  ;; admitted set, so these two reach the same decision path as a Gmail send
+  ;; and stop where every held call stops -- on whether anything is held.
   (with-store
     (fn []
       (let [b (make-bot alice {:writes? true :omakase? true})]
         (doseq [tool ["calendar_create_event" "browser_click"]]
+          (swap! store/state assoc-in [:runs (:bot/id b)]
+                 {:pending-card "card-1"
+                  :pending-call {:id "call-1" :name tool :input {}}})
+          (is (thrown-with-msg?
+               clojure.lang.ExceptionInfo #"承認待ちの操作がありません"
+               (bots/decide! nil (assoc alice :kind :agent)
+                             (:bot/id b) "card-1" "approved"))
+              (str tool " was refused by the session gate rather than reaching it")))))))
+
+(deftest an-agent-without-a-delegation-is-still-refused
+  ;; The half ADR-0060 did NOT lift, and the one worth a test: authority comes
+  ;; from `:bot/omakase?`, which only the human `/api/bots` surface may write.
+  ;; An agent session on a Bot nobody delegated is refused before anything else
+  ;; is considered -- including the three effects the old allowlist did cover.
+  (with-store
+    (fn []
+      (let [b (make-bot alice {:writes? true})]
+        (doseq [tool ["gmail_send_message" "calendar_create_event" "browser_click"]]
           (swap! store/state assoc-in [:runs (:bot/id b)]
                  {:pending-card "card-1"
                   :pending-call {:id "call-1" :name tool :input {}}})

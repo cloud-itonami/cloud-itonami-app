@@ -478,10 +478,50 @@ empty, which is the same fail-closed default the agent capabilities have:
 ```
 
 Browser, computer, mail, calendar, drive and chat are deliberately **not**
-exposed. The device tools verify the frontmost application between approval and
-action, which does not survive translation to a protocol whose consent model
-belongs to the client; the workspace reads sit behind an authenticated session on
-`/api/*`, and a surface with no session must not reach around it.
+exposed. The device tools bind an approval to the exact accessibility tree it
+was given (ADR-0059), and that binding does not survive translation to a
+protocol whose consent model belongs to the client; the workspace reads sit
+behind an authenticated session on `/api/*`, and a surface with no session must
+not reach around it.
+
+## Driving the desktop
+
+The agent capability that reaches other macOS applications does so **without
+taking the cursor, the keyboard focus, or the front window**. It reads an
+application's accessibility tree and acts on named elements and menu commands;
+it never activates a window, never moves the pointer, and posts no synthesised
+events.
+
+That last absence was measured rather than chosen. `CGEvent.postToPid` delivers
+a keystroke to a background application and the application does nothing with
+it — AppKit routes key events to the key window and a background application
+has none. So there is no "press cmd+s" tool. `computer_menu` lists every menu
+command **with its shortcut**, and `computer_menu_press` performs the command
+that shortcut stands for, which does work from the background.
+
+| tool | |
+|---|---|
+| `computer_tree` | the accessibility tree, plus a digest of it |
+| `computer_menu` | menu commands and their shortcuts |
+| `computer_screenshot` | one window of one application, not the screen |
+| `computer_press` | perform an element's action where it stands |
+| `computer_menu_press` | perform a menu command by path |
+| `computer_set_value` | write a text element's value |
+| `computer_scroll` | scroll a scroll area by page |
+
+Every write quotes back the digest the approval was given, and is refused if the
+application changed underneath it. This replaced a check that the same
+application was still frontmost — which was both weaker and only answerable by
+depending on focus. See
+[ADR-0059](docs/adr/0059-the-desktop-is-driven-without-taking-the-cursor.md).
+
+Build the helper once; it needs Accessibility, and Screen Recording for
+screenshots. Both are reported in Settings and never prompted for by the
+server.
+
+```bash
+bin/cloud-itonami-build-desktop-macos
+```
 
 ## Mail
 
@@ -656,10 +696,18 @@ of the connectors you picked and nothing else.
   VM, so a Bot does not run while this machine is asleep. When you opt a Bot
   into the browser (and Settings has enabled it), that Bot gets its own
   profile — cookies are not shared with other Bots — and opening, clicking and
-  typing wait for approval the same way a send does. See
+  typing are writes. See
   [ADR-0036](docs/adr/0036-a-bots-computer-is-this-machines-isolated-browser.md).
   Long-running work that should outlive sleep belongs to the governed WorkItem
   path instead.
+- **A write waits for you, unless you delegated.** Every write stops on an
+  approval card in the conversation. Turning on omakase for a Bot hands it the
+  decision: it then decides every write it is admitted to call, immediately,
+  and each one still writes the same card into the transcript already answered
+  with `decided-by=bot`. The grant stays the ceiling — a Bot cannot decide its
+  way to a tool it was never given, and only this application's human Settings
+  surface can turn omakase on. See
+  [ADR-0060](docs/adr/0060-a-bot-decides-its-own-approval-cards.md).
 
 Turns are synchronous and bounded — 8 model turns and 12 tool calls per
 message. A Bot also answers on a schedule when a routine has been made from an

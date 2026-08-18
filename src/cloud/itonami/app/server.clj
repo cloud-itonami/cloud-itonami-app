@@ -5053,10 +5053,11 @@
 
   `require-human-session!` rather than `require-app-session!`, and that is the
   decision this handler makes: a Bot is an agent, and an agent session reaching
-  these routes could create one, widen its grant, and approve its own held
-  write. `bot/may-approve?` refuses the last of those on its own, but a
-  boundary that only holds at the innermost check is one refactor from not
-  holding — so the outer gate refuses the whole family."
+  these routes could create one and widen its grant. This gate is what stops
+  that, and since ADR-0060 it carries more weight than it used to: an agent CAN
+  now decide a held card, so what keeps a delegation an owner's act is exactly
+  that `:bot/omakase?` is writable only from here, behind a human session.
+  Deciding has its own narrower surface at `/api/agent-bots`."
   [config exchange method path]
   (let [session (require-human-session! exchange)]
     (cond
