@@ -51,6 +51,17 @@
     (is (nil? (:max-output-tokens
                (request ordinary-config b run "murakumo-main")))
         "human-created goals keep the provider's ordinary quality envelope")
+    ;; The cap and the reasoning switch are one decision, not two. Capping the
+    ;; budget while leaving reasoning on is how 11 consecutive resident ticks
+    ;; of one Bot produced "Provider returned no final answer" between
+    ;; 2026-08-15 and 2026-08-18: the model spent the 1024 on thinking (4656
+    ;; chars of it, measured) and never reached a text block.
+    (is (true? (:disable-thinking?
+                (request resident-config b run "murakumo-main")))
+        "a capped resident turn must also turn reasoning off, or it returns nothing")
+    (is (nil? (:disable-thinking?
+               (request ordinary-config b run "murakumo-main")))
+        "uncapped turns keep reasoning -- the fix is scoped to the cap that causes it")
     (testing "an operator can tune the resident ceiling without code"
       (is (= 1536
              (get-in (configure {:bots {:workforce {:max-output-tokens 1536}}}

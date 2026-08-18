@@ -1,7 +1,8 @@
 (ns cloud.itonami.app.cli-test
-  (:require [clojure.test :refer [deftest is]]
+  (:require [clojure.test :refer [deftest is testing]]
             [cloud.itonami.app.agent-session :as agent-session]
             [cloud.itonami.app.app-client :as client]
+            [cloud.itonami.app.bot-tools :as bot-tools]
             [cloud.itonami.app.cli :as cli]))
 
 (deftest tenant-cli-is-an-http-client-of-the-versioned-api
@@ -57,6 +58,29 @@
       (is (= [:post "/api/agent-bots/bot-1/messages" 660
               {:text "repo を確認して"}]
              @seen)))))
+
+(deftest the-agent-surface-can-make-a-registry-edit-live
+  ;; Owner directive 2026-08-18. Before it, an objective edited in
+  ;; loop-yakuwari could not reach a running Bot without a person opening the
+  ;; browser, and this installation had been running a three-day-old projection
+  ;; for exactly that reason -- the registry said one thing and 70 Bots carried
+  ;; another, with nothing reporting the gap.
+  (testing "workforce_provision posts to the agent surface, not the browser one"
+    (let [seen (atom nil)]
+      (with-redefs [client/request-with-timeout!
+                    (fn [_ method path seconds body]
+                      (reset! seen [method path seconds body])
+                      {:businesses 8 :bots 70})]
+        (bot-tools/call-tool {} "workforce_provision" {})
+        (is (= [:post "/api/agent-bots/workforce/provision" 120 {}] @seen)
+            "/api/bots/... is the browser surface and keeps its CSRF check"))))
+  (testing "the tool is advertised, or nothing can call it"
+    (is (bot-tools/tool? "workforce_provision")))
+  (testing "creating a Bot and widening a grant did NOT move"
+    ;; The whole argument for letting provisioning cross is that the caller
+    ;; names nothing. These do name things, so they stay where they were.
+    (is (not (bot-tools/tool? "bot_create")))
+    (is (not (bot-tools/tool? "bot_update")))))
 
 (deftest bots-cli-reads-the-resident-workforce-without-configuring-it
   (let [seen (atom nil)]

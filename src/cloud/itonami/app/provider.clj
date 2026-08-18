@@ -181,7 +181,7 @@
 
 (defn- agent-request-body
   [provider {:keys [model messages tools temperature reasoning-effort
-                    max-output-tokens]}]
+                    max-output-tokens disable-thinking?]}]
   (cond-> {:model model
            :messages (mapv provider-message messages)
            :tools (mapv tool-definition tools)
@@ -190,6 +190,25 @@
            :max_tokens (or max-output-tokens
                            (:max-output-tokens provider)
                            default-agent-max-tokens)}
+    ;; llama.cpp vendor extension, passed through by the murakumo bridge. A
+    ;; reasoning model spends output tokens on `thinking` BEFORE it emits any
+    ;; text, so a tight :max-output-tokens does not produce a short answer --
+    ;; it produces no answer at all, and the caller sees :provider/empty-response.
+    ;;
+    ;; Measured 2026-08-18 against murakumo-main (Qwen3.8-27B), one realistic
+    ;; resident payload (goal + two tool outputs), same cap both times:
+    ;;
+    ;;   thinking on,  max_tokens 1024 -> stop=max_tokens, 4656 thinking chars, 0 TEXT
+    ;;   thinking off, max_tokens 1024 -> stop=end_turn,      0 thinking chars, 2150 TEXT
+    ;;
+    ;; club-shinshi's companion.cljs hit this exact failure on 2026-07-15 and
+    ;; fixed it the same way; the comment there is the older half of this note.
+    ;;
+    ;; The caller decides, not a threshold here: only the caller knows it capped
+    ;; the budget, and inventing a cutoff would make this a constant nobody
+    ;; re-measures.
+    disable-thinking?
+    (assoc :chat_template_kwargs {:enable_thinking false})
     (openai-shaped? provider)
     ;; Cloud Itonami admits, runs and audits one capability at a time. This is
     ;; also a compatibility boundary: some OpenAI-shaped inference servers can
