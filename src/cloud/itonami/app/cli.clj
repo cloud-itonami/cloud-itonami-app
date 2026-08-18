@@ -460,6 +460,17 @@
 (defn bot-workforce [configuration]
   (client/request! configuration :get "/api/agent-bots/workforce"))
 
+(defn bot-workforce-provision
+  "Make a registry edit live. Reconciles the installed Bots to what
+  `network-awai/loop-yakuwari` declares.
+
+  `bots workforce` reports `provisioned-at`; when that is older than the
+  registry, running Bots are carrying objectives nobody wrote any more. This is
+  how that gets fixed without opening the browser."
+  [configuration]
+  (client/request-with-timeout! configuration :post
+                                "/api/agent-bots/workforce/provision" 120 {}))
+
 (defn bot-messages [configuration flags]
   (client/request! configuration :get
                    (str "/api/agent-bots/" (required-flag flags :id) "/messages")))
@@ -518,6 +529,7 @@
        "                [--model path] [--leverage path] [--adoptions a,b] [--lei L]\n\n"
        "  bots list\n"
        "  bots workforce\n"
+       "  bots provision\n"
        "  bots messages --id <bot-id>\n"
        "  bots task --id <bot-id> --text <依頼>\n"
        "  bots handoff --from <bot-id> --to <bot-id> --task <依頼> [--depth N]\n"
@@ -551,6 +563,7 @@
       ["business" "bind"] (business-bind configuration flags)
       ["bots" "list"] (bot-list configuration)
       ["bots" "workforce"] (bot-workforce configuration)
+      ["bots" "provision"] (bot-workforce-provision configuration)
       ["bots" "messages"] (bot-messages configuration flags)
       ["bots" "task"] (bot-task configuration flags)
       ["bots" "handoff"] (bot-handoff configuration flags)
