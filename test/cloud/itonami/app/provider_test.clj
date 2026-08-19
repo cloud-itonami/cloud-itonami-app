@@ -1,5 +1,6 @@
 (ns cloud.itonami.app.provider-test
   (:require [clojure.test :refer [deftest is testing]]
+            [clojure.string :as str]
             [clojure.data.json :as json]
             [cloud.itonami.app.provider :as provider])
   (:import [com.sun.net.httpserver HttpServer HttpHandler]
@@ -274,6 +275,32 @@
       (let [e (thrown (java.net.http.HttpConnectTimeoutException. "connect timed out"))]
         (is (= :provider/unreachable (:type (ex-data e))))))
     (testing "anything else passes through untouched"
-      (let [original (java.io.IOException. "broken pipe")
+      ;; NOT an IOException: a broken pipe used to be the example here, and it
+      ;; stopped being "anything else" when the transport branch landed. A
+      ;; failure that is not the transport at all is the case this asserts.
+      (let [original (IllegalStateException. "a bug here")
+            e (thrown original)]
+        (is (identical? original e))))))
+
+(deftest a-dropped-connection-is-not-a-fault-in-this-application
+  ;; Measured 2026-08-19: a `Connection reset` two tool calls into a resident
+  ;; tick was recorded as `:internal-error`, which is where a reader looks for
+  ;; OUR bugs. It is a transport failure and belongs with the provider.
+  (let [classify (private-fn 'timeout->typed)
+        thrown (fn [error]
+                 (try (classify error "http://example.invalid/chat")
+                      (catch Exception caught caught)))]
+    (testing "a reset is the provider's transport, not our code"
+      (let [e (thrown (java.net.SocketException. "Connection reset"))]
+        (is (= :provider/network-error (:type (ex-data e))))
+        (testing "and which transport failure it was is kept"
+          (is (= "java.net.SocketException" (:cause-class (ex-data e))))
+          (is (str/includes? (.getMessage e) "Connection reset")))))
+    (testing "a timeout is still a timeout, not swallowed by the IOException branch"
+      ;; HttpTimeoutException IS an IOException, so the order matters here too.
+      (let [e (thrown (java.net.http.HttpTimeoutException. "request timed out"))]
+        (is (= :provider/timeout (:type (ex-data e))))))
+    (testing "something that is not transport at all still passes through"
+      (let [original (IllegalStateException. "a bug here")
             e (thrown original)]
         (is (identical? original e))))))

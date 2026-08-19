@@ -66,6 +66,22 @@
                      :timeout-seconds request-timeout-seconds}
                     error))
 
+    ;; The transport failed some other way -- a reset, a broken pipe, an EOF
+    ;; part-way through. Still not a fault in this application, and it was
+    ;; being recorded as one: measured 2026-08-19, a `Connection reset` two
+    ;; tool calls into a resident tick was filed as `:internal-error`, which is
+    ;; where a reader looks for OUR bugs.
+    ;;
+    ;; One name for the whole family rather than one per errno. What a reader
+    ;; does about it is the same -- look at the network and the provider -- and
+    ;; the message that says which it was travels with it.
+    (instance? java.io.IOException error)
+    (throw (ex-info (str "model provider transport failed: " (.getMessage error))
+                    {:type :provider/network-error
+                     :url url
+                     :cause-class (.getName (class error))}
+                    error))
+
     :else (throw error)))
 
 (defn- request-json

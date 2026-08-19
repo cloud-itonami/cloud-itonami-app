@@ -2211,3 +2211,55 @@
                                :turn/finished-at "2026-08-19T07:03:20.000Z"
                                :turn/error-type :internal-error
                                :turn/error-message "request timed out"})))))))
+
+;; ── an unclassified failure has to be identifiable ──────────────────────
+
+(deftest a-failure-records-what-threw-even-when-it-says-nothing
+  ;; Driven through `run-goal-job!` rather than by building the event here.
+  ;; The first version of this test constructed the event data itself and
+  ;; asserted on what it had just written -- it passed with the production
+  ;; change reverted, which is the whole failure this file keeps documenting.
+  (with-store
+    (fn []
+      (let [run! (ns-resolve 'cloud.itonami.app.bots 'run-goal-job!)
+            bot-id (:bot/id (make-bot alice {}))
+            run-id "silent-failure"]
+        (swap! store/state assoc-in [:bots :goal-jobs run-id]
+               (assoc (resident-run-with bot-id run-id [])
+                      :job/run (agent-run/agent-run
+                                {:id run-id :goal "bounded tick"} 1)))
+        ;; An exception with NO message, which is exactly what four resident
+        ;; runs recorded on 2026-08-16 and why nothing can identify them now.
+        (with-redefs [bots/send-stream!
+                      (fn [& _] (throw (InterruptedException.)))]
+          (run! {} run-id))
+        (let [failed (->> (:job/events (#'bots/goal-job run-id))
+                          (filter #(= :run/failed (:event/kind %)))
+                          last)]
+          (is (some? failed) "the run must have recorded a failure")
+          (testing "the message really is absent -- this is the hard case"
+            (is (nil? (get-in failed [:event/data :message]))))
+          (testing "so the class is the only thing that identifies it"
+            (is (= "java.lang.InterruptedException"
+                   (get-in failed [:event/data :cause-class])))))))))
+
+(deftest a-dropped-connection-is-not-laundered-into-a-safe-no-op
+  (with-store
+    (fn []
+      (let [bot-id (:bot/id (make-bot alice {}))
+            run-id "resident-network-1"
+            complete! (ns-resolve 'cloud.itonami.app.bots 'complete-resident-no-op!)]
+        (swap! store/state assoc-in [:bots :goal-jobs run-id]
+               (resident-run-with bot-id run-id ["workspace_list"]))
+        (testing "the tick never found out, same as a timeout"
+          (is (nil? (complete! {} run-id {:reason :provider/network-error}))))))))
+
+(deftest a-dropped-connection-says-so
+  (let [message (ns-resolve 'cloud.itonami.app.bots 'visible-failure-message)
+        generic (message (ex-info "boom" {:type :some/unclassified-bug}))
+        dropped (message (ex-info "reset" {:type :provider/network-error}))
+        slow (message (ex-info "slow" {:type :provider/timeout :timeout-seconds 120}))]
+    (testing "not the line every unknown failure gets"
+      (is (not= generic dropped)))
+    (testing "and not the same as a model that thought for too long"
+      (is (not= slow dropped)))))

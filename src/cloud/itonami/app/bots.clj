@@ -2016,6 +2016,11 @@
       (str "モデルが時間内に応答しませんでした"
            (when timeout-seconds (str "（" timeout-seconds "秒）"))
            "。依頼は記録されています。もう一度送ると再試行できます。")
+      ;; Separate from the timeout above it and from the catch-all below. A
+      ;; connection that dropped part-way and a model that thought for too
+      ;; long look the same to somebody told only that execution failed.
+      (:provider/network-error :provider/unreachable)
+      "モデルへの通信が途切れました。依頼は記録されています。もう一度送ると再試行できます。"
       "実行に失敗しました。依頼は記録されています。もう一度送ると再試行できます。")))
 
 (defn- goal-event! [kind data]
@@ -3063,7 +3068,16 @@
           (append-goal-event! run-id :run/failed
                               {:error-type (or (:type (ex-data error)) :internal-error)
                                :error-status (:status (ex-data error))
-                               :message (.getMessage error)})))
+                               :message (.getMessage error)
+                               ;; The class, because the message can be nil and
+                               ;; then nothing identifies what failed. Measured
+                               ;; 2026-08-19: four resident runs recorded
+                               ;; `:internal-error` with a nil message and no
+                               ;; other trace, and there is no way to find out
+                               ;; now what threw. An unclassified failure is
+                               ;; the one case where the type is all a reader
+                               ;; has, so it is the one case it must be kept.
+                               :cause-class (.getName (class error))})))
       (finally
         (swap! goal-workers dissoc run-id)))))
 
