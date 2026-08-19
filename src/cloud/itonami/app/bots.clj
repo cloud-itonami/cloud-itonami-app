@@ -2248,6 +2248,178 @@
      :tools (cond-> (tool-definitions configuration b)
               goal? (into goal-tool-definitions))})))
 
+
+;; ── group rooms (ADR-0063) ──────────────────────────────────────────────
+
+(def max-group-rounds
+  "How many times round the room one person's message goes.
+
+  Three, following the shape Hermes describes, and finite for the reason every
+  budget here is finite: the alternative is model prose deciding when an agent
+  loop stops. A round that every member passes ends it early, so three is a
+  ceiling rather than a schedule."
+  3)
+
+(defn- group-by-id [group-id] (get-in (snapshot) [:groups group-id]))
+
+(defn- owned-group!
+  [session group-id]
+  (let [g (group-by-id group-id)]
+    (when-not g
+      (throw (ex-info "グループが見つかりません。"
+                      {:type :group/not-found :group group-id})))
+    (when-not (and (= (:user-id session) (:group/owner g))
+                   (= (:organization-id session) (:group/organization g)))
+      (throw (ex-info "このグループはこのセッションのものではありません。"
+                      {:type :group/forbidden :group group-id})))
+    g))
+
+(defn create-group!
+  "A room over Bots this session already owns.
+
+  Membership is resolved through `owned!`, one at a time, so a group cannot
+  become a way to name a Bot the session could not otherwise reach."
+  [session {:keys [name members]}]
+  (let [members (mapv #(:bot/id (owned! session %)) (or members []))
+        g (bot/group {:id (new-id "group")
+                      :organization (:organization-id session)
+                      :owner (:user-id session)
+                      :name name
+                      :members members
+                      :created-at (store/now)})]
+    (transact! assoc-in [:groups (:group/id g)] g)
+    g))
+
+(defn groups
+  "This session's rooms."
+  [session]
+  (->> (vals (:groups (snapshot)))
+       (filter #(and (= (:user-id session) (:group/owner %))
+                     (= (:organization-id session) (:group/organization %))))
+       (sort-by :group/created-at)
+       (mapv (fn [g]
+               {:id (:group/id g)
+                :name (:group/name g)
+                :members (mapv (fn [id]
+                                 (let [b (bot-by-id id)]
+                                   {:id id :name (:bot/name b)
+                                    :enabled? (boolean (:bot/enabled? b))}))
+                               (:group/members g))}))))
+
+(defn- group-conversation [group-id]
+  (get-in (snapshot) [:group-conversations group-id] []))
+
+(defn group-messages
+  [session group-id]
+  (let [g (owned-group! session group-id)]
+    (mapv (fn [m] {:id (:message/id m)
+                   :role (name (:message/role m))
+                   :from (:message/from m)
+                   :text (:message/text m)
+                   :at (:message/at m)})
+          (group-conversation (:group/id g)))))
+
+(defn- append-group! [group-id message]
+  (transact! update-in [:group-conversations group-id]
+             (fn [ms] (vec (take-last max-conversation (conj (vec ms) message))))))
+
+(defn- group-prompt [b g others]
+  (str "You are " (:bot/name b) ", in a room called \"" (:group/name g)
+       "\" with " (if (seq others) (str/join ", " others) "nobody else")
+       ", all working for the same person.\n\n"
+       "This is a conversation, not a task. You have NO TOOLS here: nothing you "
+       "say in the room reads mail, opens a browser, writes a file or sends "
+       "anything. If something needs doing, say who should do it and the person "
+       "will ask them directly.\n\n"
+       "Every line is attributed. Answer only when you have something the room "
+       "does not already have. If you have nothing to add, reply with exactly "
+       "PASS and nothing else — repeating agreement is worse than silence.\n\n"
+       "Answer in the language the person used, in at most a short paragraph."
+       (when (seq (str (:bot/brief b)))
+         (str "\n\nStanding brief from the person you work for:\n"
+              (:bot/brief b)))))
+
+(defn- passed? [text]
+  (let [t (str/trim (str text))]
+    (or (str/blank? t)
+        (= "pass" (str/lower-case t)))))
+
+(defn group-send!
+  "One message to a room, and the rounds it causes.
+
+  Each member gets at most one turn per round and may pass; a round nobody
+  answers ends it. There are NO TOOLS in a group turn, and that is the design
+  rather than a stage that is missing: admission is per Bot and decided at the
+  call, and a room where eight Bots each reach for a connector would be eight
+  approval cards from one sentence. A Bot that must DO something is asked
+  directly, or handed off — both of which are bounded in ways a room is not.
+
+  The cost is stated because it is a person's: one model call per answering
+  member per round, so a full room at the ceiling is members x 3."
+  [configuration session group-id text]
+  (let [g (owned-group! session group-id)
+        text (str/trim (str text))]
+    (when (str/blank? text)
+      (throw (ex-info "メッセージが空です。" {:type :bot/empty-message})))
+    (when (> (count text) max-message-chars)
+      (throw (ex-info "メッセージが長すぎます。" {:type :bot/message-too-long})))
+    (append-group! (:group/id g)
+                   (bot/message {:id (new-id "msg") :bot (:group/id g)
+                                 :role :person :text text :at (store/now)}))
+    (let [members (keep bot-by-id (:group/members g))
+          ;; `may-address?` is the landed judgement (ADR-0062) and it is asked
+          ;; per member per round rather than once: a Bot disabled while the
+          ;; room is mid-conversation stops answering at the next question, not
+          ;; at the next message the person sends.
+          reachable (fn [b] (peer/may-address?
+                             b {:source-owner (:group/owner g)
+                                :target-owner (:bot/owner b)
+                                :local-device nil :device nil
+                                :known-devices [] :remote-enabled? false}))]
+      (loop [round 1 spoke 0]
+        (let [answered
+              (reduce
+               (fn [answered b]
+                 (if-not (reachable b)
+                   answered
+                   (let [others (->> members
+                                     (remove #(= (:bot/id %) (:bot/id b)))
+                                     (mapv :bot/name))
+                         {:keys [provider model]} (provider-choice! configuration b)
+                         messages (into [{:role "system"
+                                          :content (group-prompt b g others)}]
+                                        (for [m (group-conversation (:group/id g))
+                                              :when (seq (str (:message/text m)))]
+                                          {:role (if (= (:message/from m)
+                                                        (peer/address (:bot/id b)))
+                                                   "assistant" "user")
+                                           :content (if-let [from (:message/from m)]
+                                                      (str from ": " (:message/text m))
+                                                      (:message/text m))}))
+                         result (provider/agent-turn
+                                 provider {:model model
+                                           :conversation-id (:group/id g)
+                                           :messages messages
+                                           :tools []
+                                           :temperature 0.2})
+                         answer (str (:content result))]
+                     (if (passed? answer)
+                       answered
+                       (do (append-group!
+                            (:group/id g)
+                            (bot/message {:id (new-id "msg") :bot (:group/id g)
+                                          :role :bot :text (str/trim answer)
+                                          :at (store/now)
+                                          :from (peer/address (:bot/id b))}))
+                           (inc answered))))))
+               0 members)]
+          (if (and (pos? answered) (< round max-group-rounds))
+            (recur (inc round) (+ spoke answered))
+            {:group (:group/id g)
+             :rounds round
+             :answers (+ spoke answered)
+             :messages (group-messages session group-id)}))))))
+
 (defn send!
   "One message to a Bot, and its answer.
 

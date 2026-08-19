@@ -5081,6 +5081,40 @@
                  (bots/provision-workforce! config session
                                             (workforce/load-catalog))))
 
+      ;; Before the `([^/]+)` patterns, so `groups` is a route rather than a
+      ;; Bot whose id happens to be "groups".
+      (and (= method "GET") (= path "/api/bots/groups"))
+      (do (require-human-session! exchange)
+          (send! exchange 200 {:groups (bots/groups session)}))
+
+      (and (= method "POST") (= path "/api/bots/groups"))
+      (let [body (read-json exchange)]
+        ;; Explicit, as on `/api/bots`, and for the same reason: `route-scan`
+        ;; reads the route body, so a gate that lives only at the handler
+        ;; boundary makes the registry report this as unauthenticated. It is
+        ;; protected either way; the registry is what an audit reads.
+        (require-human-session! exchange)
+        (require-origin! exchange config)
+        (require-csrf! exchange session)
+        (bots/create-group! session body)
+        (send! exchange 200 {:groups (bots/groups session)}))
+
+      (and (= method "GET") (bot-id-from path #"/api/bots/groups/([^/]+)/messages"))
+      (do (require-human-session! exchange)
+          (send! exchange 200
+                 {:messages (bots/group-messages
+                             session (bot-id-from path #"/api/bots/groups/([^/]+)/messages"))}))
+
+      (and (= method "POST") (bot-id-from path #"/api/bots/groups/([^/]+)/send"))
+      (let [body (read-json exchange)]
+        (require-human-session! exchange)
+        (require-origin! exchange config)
+        (require-csrf! exchange session)
+        (send! exchange 200
+               (bots/group-send! config session
+                                 (bot-id-from path #"/api/bots/groups/([^/]+)/send")
+                                 (:text body))))
+
       (and (= method "POST") (= path "/api/bots/suggestions"))
       (let [body (read-json exchange)]
         (require-origin! exchange config)
@@ -5306,6 +5340,10 @@
                      :routine/no-demonstration 409
                      :routine/too-many 409
                      :handoff/refused 409
+                     :group/not-found 404
+                     :group/forbidden 403
+                     :group/empty 400
+                     :group/too-many 400
                      :workforce/unavailable 503
                      :workforce/timeout 504
                      :workforce/command-failed 502

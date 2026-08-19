@@ -607,6 +607,39 @@
      :card/options options
      :card/answer answer}))
 
+(def max-group-members
+  "How many Bots one room may hold.
+
+  A ceiling rather than a preference: a person's message costs one model call
+  per member per round, so an unbounded room is an unbounded bill arriving from
+  a chat window. Eight is the largest number where three rounds still reads as
+  a conversation rather than a transcript."
+  8)
+
+(defn group
+  "A room of this owner's Bots.
+
+  Members are ids in the order they were added, deduplicated. Order is kept
+  because a room where the same question is answered in a different sequence
+  every time is a different room; dedup is here rather than at the caller
+  because a member listed twice would take two turns per round and nothing
+  downstream would notice."
+  [{:keys [id organization owner name members created-at]}]
+  (let [members (into [] (distinct) (map str (or members [])))]
+    (when (empty? members)
+      (throw (ex-info "グループには最低1体のBotが必要です。"
+                      {:type :group/empty})))
+    (when (> (count members) max-group-members)
+      (throw (ex-info (str "グループのメンバーは" max-group-members "体までです。")
+                      {:type :group/too-many :count (count members)})))
+    {:group/id (required! id :group/id)
+     :group/organization (required! organization :group/organization)
+     :group/owner (required! owner :group/owner)
+     :group/name (let [n (str/trim (str name))]
+                   (if (str/blank? n) "グループ" (subs n 0 (min 60 (count n)))))
+     :group/members members
+     :group/created-at created-at}))
+
 (defn approval-card
   "A held AgentRun, surfaced where the person is already looking.
 
