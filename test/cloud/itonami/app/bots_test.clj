@@ -177,7 +177,7 @@
             leased (agent-run/transition queued :leased 2 {})
             running (agent-run/transition leased :running 3 {})
             complete! (ns-resolve 'cloud.itonami.app.bots
-                                  'complete-resident-provider-no-op!)]
+                                  'complete-resident-no-op!)]
         (store/transact!
          (fn [state]
            (-> state
@@ -196,8 +196,7 @@
                            :turn/goal? true :turn/objective "bounded tick"
                            :turn/error-type :provider/empty-response
                            :turn/started-at "2026-08-16T00:00:00Z"}]))))
-        (is (true? (complete! run-id
-                              (ex-info "empty" {:type :provider/empty-response}))))
+        (is (true? (complete! {} run-id {:reason :provider/empty-response})))
         (let [turn (bots/latest-turn alice bot-id)]
           (is (= "completed" (:state turn)))
           (is (= "succeeded" (get-in turn [:job :state])))
@@ -218,7 +217,7 @@
             leased (agent-run/transition queued :leased 2 {})
             running (agent-run/transition leased :running 3 {})
             complete! (ns-resolve 'cloud.itonami.app.bots
-                                  'complete-resident-provider-no-op!)]
+                                  'complete-resident-no-op!)]
         (store/transact!
          (fn [state]
            (-> state
@@ -236,9 +235,8 @@
                            :turn/state :running :turn/phase :model
                            :turn/goal? true :turn/objective "bounded tick"
                            :turn/started-at "2026-08-16T00:00:00Z"}]))))
-        (is (true? (complete! run-id
-                              (ex-info "gateway" {:type :provider/http-error
-                                                   :status 502}))))
+        (is (true? (complete! {} run-id {:reason :provider/http-error
+                                         :status 502})))
         (let [turn (bots/latest-turn alice bot-id)
               no-op (last (get-in turn [:job :events]))]
           (is (= "completed" (:state turn)))
@@ -256,15 +254,14 @@
       (let [b (make-bot alice {})
             run-id "interactive-empty-response-1"
             complete! (ns-resolve 'cloud.itonami.app.bots
-                                  'complete-resident-provider-no-op!)]
+                                  'complete-resident-no-op!)]
         (swap! store/state assoc-in [:bots :goal-jobs run-id]
                {:job/id run-id :job/bot (:bot/id b)
                 :job/resident-workforce? false
                 :job/events [{:event/kind :action/finished
                               :event/data {:tool "workspace_list"
                                            :output-sha256 "abc123"}}]})
-        (is (nil? (complete! run-id
-                             (ex-info "empty" {:type :provider/empty-response}))))))))
+        (is (nil? (complete! {} run-id {:reason :provider/empty-response})))))))
 
 (deftest resident-workforce-does-not-overlap-an-active-job-across-bots
   (with-store
@@ -1883,3 +1880,151 @@
                                          :job/run :agent.run/error-type]))))
           (testing "an interactive hold is left for the person to decide"
             (is (= :held (status "interactive-hold")))))))))
+
+;; ── the tick that had nothing to do ─────────────────────────────────────
+;;
+;; A resident tick that finds no actionable work has to say so through the
+;; plan, and the plan requires a host execution receipt per step -- which the
+;; step that records a no-op can never have, because concluding is not a tool
+;; call. Measured 2026-08-19: 326 of 461 stored resident runs had failed this
+;; way, and the three that ran after ADR-2608190100 unwedged the fleet all
+;; blocked on the same thing.
+;;
+;; Completing them is only safe because the host reads its own receipts rather
+;; than the provider's prose, so the tests that matter most are the two where
+;; it refuses.
+
+(defn- seed-resident-turn! [bot-id run-id]
+  (swap! store/state assoc-in [:bots :turn-history bot-id]
+         [{:turn/id run-id :turn/bot bot-id
+           :turn/state :blocked :turn/phase :blocked
+           :turn/goal? true :turn/objective "bounded tick"
+           :turn/started-at "2026-08-19T00:00:00Z"}]))
+
+(defn- resident-run-with [bot-id run-id receipts]
+  (let [queued (agent-run/agent-run {:id run-id :goal "bounded tick"} 1)]
+    {:job/id run-id :job/bot bot-id :job/session alice
+     :job/objective "bounded tick" :job/plan []
+     :job/resident-workforce? true
+     :job/events (vec (map-indexed
+                       (fn [i tool]
+                         {:event/id (str "receipt-" i)
+                          :event/kind :action/finished
+                          :event/at "2026-08-19T00:00:01Z"
+                          :event/data {:tool tool :output-sha256 (str "sha" i)}})
+                       receipts))
+     :job/run (-> queued
+                  (agent-run/transition :leased 2 {})
+                  (agent-run/transition :running 3 {}))}))
+
+(deftest a-resident-tick-that-only-read-completes-as-a-safe-no-op
+  (with-store
+    (fn []
+      (let [bot-id (:bot/id (make-bot alice {}))
+            run-id "resident-blocked-1"
+            complete! (ns-resolve 'cloud.itonami.app.bots 'complete-resident-no-op!)]
+        (swap! store/state assoc-in [:bots :goal-jobs run-id]
+               (resident-run-with bot-id run-id ["workspace_list" "git_status"]))
+        (seed-resident-turn! bot-id run-id)
+        (is (true? (complete! {} run-id {:reason :blocked
+                                         :detail "a named seller to onboard"})))
+        (let [turn (bots/latest-turn alice bot-id)
+              no-op (last (get-in turn [:job :events]))]
+          (is (= "completed" (:state turn)))
+          (is (= "succeeded" (get-in turn [:job :state])))
+          (testing "the receipts are the evidence, not the provider's prose"
+            (is (= ["workspace_list output sha256:sha0"
+                    "git_status output sha256:sha1"]
+                   (:evidence turn))))
+          (testing "a no-op stays distinguishable from work"
+            (is (= "run/no-op-completed" (:kind no-op)))
+            (is (= :blocked (get-in no-op [:data :reason]))))
+          (testing "what it said it needed is kept"
+            (is (str/includes? (:text (last (bots/messages alice bot-id)))
+                               "a named seller to onboard"))))))))
+
+(deftest a-resident-tick-that-wrote-is-not-called-a-no-op
+  (with-store
+    (fn []
+      (let [bot-id (:bot/id (make-bot alice {}))
+            run-id "resident-blocked-write"
+            complete! (ns-resolve 'cloud.itonami.app.bots 'complete-resident-no-op!)]
+        (swap! store/state assoc-in [:bots :goal-jobs run-id]
+               (resident-run-with bot-id run-id
+                                  ["workspace_list" "workspace_write_file"]))
+        (testing "'no write was attempted' is measured, not asserted"
+          (is (nil? (complete! {} run-id {:reason :blocked}))))))))
+
+(deftest a-resident-tick-waiting-on-an-approval-is-not-called-a-no-op
+  (with-store
+    (fn []
+      (let [bot-id (:bot/id (make-bot alice {}))
+            run-id "resident-blocked-approval"
+            complete! (ns-resolve 'cloud.itonami.app.bots 'complete-resident-no-op!)]
+        (swap! store/state assoc-in [:bots :goal-jobs run-id]
+               (resident-run-with bot-id run-id ["workspace_list"]))
+        ;; An outstanding card is the host's own record that a write was asked
+        ;; for. Completing over it would answer a question put to a person.
+        (swap! store/state assoc-in [:bots :conversations bot-id]
+               [{:message/id "m-1" :message/role :bot
+                 :message/text "may I write?"
+                 :message/direction 0
+                 :message/cards
+                 [{:card/id "card-1" :card/kind :approval
+                   :card/state :offered :card/direction 0
+                   :card/decision nil
+                   :card/subject {:subject/kind :write}}]}])
+        (testing "an answerable request is left for the person"
+          (is (nil? (complete! {} run-id {:reason :blocked}))))))))
+
+(deftest an-interactive-block-is-never-reclassified-as-a-no-op
+  (with-store
+    (fn []
+      (let [bot-id (:bot/id (make-bot alice {}))
+            run-id "interactive-blocked-1"
+            complete! (ns-resolve 'cloud.itonami.app.bots 'complete-resident-no-op!)]
+        (swap! store/state assoc-in [:bots :goal-jobs run-id]
+               (assoc (resident-run-with bot-id run-id ["workspace_list"])
+                      :job/resident-workforce? false))
+        (testing "somebody is watching, and it is theirs to interpret"
+          (is (nil? (complete! {} run-id {:reason :blocked}))))))))
+
+(deftest the-plan-contract-says-finishing-is-not-a-step
+  (let [plan (first (filter #(= "goal_plan" (:name %)) bots/goal-tool-definitions))]
+    (testing "the step that cannot carry a receipt is refused by name"
+      (is (str/includes? (:description plan) "Finishing is not a step"))
+      (is (str/includes? (:description plan) "goal_complete")))))
+
+;; The two tests above exercise the decision. This one exercises the WIRING,
+;; because a decision nothing calls is not reachable, and the tests that call a
+;; private function directly cannot tell the difference. `run-goal-job!` is
+;; driven with its provider turn stubbed out, so what is measured here is only
+;; which branch it takes after that turn ends.
+
+(deftest run-goal-job-routes-a-resident-block-through-the-no-op-check
+  (with-store
+    (fn []
+      (let [run! (ns-resolve 'cloud.itonami.app.bots 'run-goal-job!)
+            outcome
+            (fn [resident? receipts]
+              (let [bot-id (:bot/id (make-bot alice {}))
+                    run-id (str "wired-" (boolean resident?) "-" (count receipts))]
+                (swap! store/state assoc-in [:bots :goal-jobs run-id]
+                       (assoc (resident-run-with bot-id run-id receipts)
+                              :job/resident-workforce? (boolean resident?)
+                              :job/run (agent-run/agent-run
+                                        {:id run-id :goal "bounded tick"} 1)))
+                (seed-resident-turn! bot-id run-id)
+                (with-redefs [bots/send-stream! (fn [& _] nil)
+                              bots/latest-turn (fn [& _]
+                                                 {:state "blocked"
+                                                  :evidence ["a named seller"]})]
+                  (run! {} run-id))
+                (get-in @store/state
+                        [:bots :goal-jobs run-id :job/run :agent.run/status])))]
+        (testing "a resident block that only read is completed, not failed"
+          (is (= :succeeded (outcome true ["workspace_list"]))))
+        (testing "a resident block that wrote is failed"
+          (is (= :failed (outcome true ["workspace_write_file"]))))
+        (testing "an interactive block is held, as it always was"
+          (is (= :held (outcome false ["workspace_list"]))))))))
