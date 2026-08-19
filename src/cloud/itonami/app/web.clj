@@ -1510,12 +1510,23 @@
               [:span {:class "bots-permission__copy"}
                [:span "おまかせモード（Bot自身が承認して実行する）"]
                [:span {:class "bots-permission__help"}
-                "shell・メール送信・Git変更を待たずに実行し、承認receiptを会話へ残します。"]]]
+                (str "この Bot が使えるツールすべてを、待たずに実行します"
+                     "（承認receiptは会話に残ります）。"
+                     "できることの上限は変わりません — 渡していないツールは、"
+                     "自分で承認しても使えません。")]]]
              [:label {:class "bots-permission"}
               [:input {:id "bots-browser" :type "checkbox"}]
               [:span {:class "bots-permission__copy"}
                [:span "API の無いサイトは、このマシンの分離ブラウザーで（実行前に承認する）"]
                [:span {:class "bots-permission__help" :id "bots-browser-help"}]]]
+             [:label {:class "bots-permission"}
+              [:input {:id "bots-peers" :type "checkbox"}]
+              [:span {:class "bots-permission__copy"}
+               [:span "ほかの Bot に書き置きできる／される"]
+               [:span {:class "bots-permission__help"}
+                (str "相手の会話に、名前つきで note が残ります（起こしません）。"
+                     "送る側と受け取る側の両方で有効にする必要があります。"
+                     "ツールやアカウントは渡りません。")]]]
              [:label {:class "bots-permission"}
               [:input {:id "bots-coding" :type "checkbox"}]
               [:span {:class "bots-permission__copy"}
