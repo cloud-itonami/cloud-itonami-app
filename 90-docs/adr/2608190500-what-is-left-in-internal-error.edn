@@ -69,17 +69,44 @@ run: **7 of the 14 ended with zero tool receipts and 6 never reached
 at its smallest. And it is not the prompt, which ADR-2608190400 already
 measured at ~1.5k static tokens carrying policy rather than padding.
 
-What is left is the queue. Measured 2026-08-19 with three trivial requests to
-`murakumo-main`: wall 12.4s / 5.9s / 1.7s against server-side 1.19s / 0.80s /
-0.68s -- **queue wait of 11.2s, 5.1s and 1.1s on requests that took under a
-second to serve**. One production slot (`parallel: 1`) is shared by 90 resident
-Bots, the Hermes bot profiles on the same host, and interactive use.
+What is left is not the queue, and the first answer written here said it was.
 
-That is a capacity decision across consumers and it is not this application's
-to make. It is recorded here because the two changes that looked obvious --
-raise the timeout, shrink the prompt -- are both wrong given it. Raising the
-timeout makes a queued request hold the only slot longer, which is worse for
-everyone waiting behind it.
+**Corrected the same day, by measuring instead of reasoning.** The paragraph
+this replaces argued that one slot shared by 90 resident Bots and the Hermes
+profiles beside them was being oversubscribed. Three measurements say no:
+
+| measured | |
+|---|---|
+| slot occupancy, 60 samples over 298s | **45% busy** -- idle more than half the time |
+| Hermes demand, 6h across all 23 profiles | **17 API calls**, 8 of them to murakumo (0.05/min) |
+| cloud-itonami-app demand, 258 min | 62 resident runs, ~266 requests (**1.03/min**) |
+
+Every busy sample carried `temperature 0.2`, which is this application's
+signature and nobody else's. The Hermes fleet is not a competitor for this
+slot; it was assumed to be one because it exists and is running, which is not
+evidence.
+
+**What the timings actually show.** The same resident first request, sent
+twice minutes apart: **122.4s** and **26.6s**. On the successful one, server
+side was 25.0s of the 26.6 -- prompt 2,091 tokens at 166/s for **0.9s**, output
+274 tokens at 11.4/s for **24.1s**, queue 1.6s.
+
+So output generation is 96% of the time and the prompt is 3%. That is the
+third measurement to retire \"shrink the prompt\", and this one settles it.
+What remains unexplained is the variance: an identical request taking 26s and
+122s within minutes, against a slot that is idle 55% of the time. Intermittent
+multi-minute stalls, origin not established.
+
+⚠ The reproduction was not faithful in one respect and it is recorded rather
+than buried: the request built here did not carry `disable-thinking?`, which
+production sets for every resident Goal, so 643 characters of the 274 output
+tokens were reasoning that production would not have generated. A faithful
+first request is therefore FASTER than the 26.6s measured, which makes the
+122.4s harder to explain, not easier.
+
+**Nothing in this application is known to cause the timeouts**, and the two
+changes that look obvious remain wrong: raising the limit makes a stalled
+request hold the only slot longer, and the prompt is 3% of the time.
 
 ## Verification
 
