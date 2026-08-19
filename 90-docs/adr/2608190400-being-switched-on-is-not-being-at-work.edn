@@ -30,10 +30,18 @@ colour to `:agent.run/status`, and telling them apart is the entire reason the
 `:safe-no-op` result exists. One number for both would have made the fleet
 look fine on a day it did nothing.
 
-**Failures keep the provider's own name.** `:provider/timeout` is a slow model,
-`:provider/unreachable` is a network, `:internal-error` is a fault in this
-application. They have different fixes, and merging them is precisely what
-made an afternoon of timeouts look like a bug here (ADR-2608190300).
+**Failures keep the provider's own name**, and keep it through the wire.
+`:provider/timeout` is a slow model, `:provider/unreachable` is a network,
+`:internal-error` is a fault in this application. They have different fixes,
+and merging them is precisely what made an afternoon of timeouts look like a
+bug here (ADR-2608190300).
+
+The counts are keyed by the FULL name as a string, because the first version
+was not. `json/write-str` renders a namespaced keyword as its name alone, so
+`:provider/timeout` reached every JSON reader of this surface as `timeout` --
+indistinguishable from another namespace's timeout, or from a bare one. It was
+noticed by reading the live tool output an hour after this landed: the ADR
+above said failures keep their name, over a surface that dropped it.
 
 **No runs is reported in words, not as an empty tally.** `:outcomes` is `nil`
 with a note when this owner has no resident run recorded. `{}` reads as
