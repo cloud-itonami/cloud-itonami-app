@@ -2313,3 +2313,103 @@
     (testing "nothing to collapse changes nothing"
       (let [ms [(msg :person "a") (msg :bot "b") (msg :person "c")]]
         (is (= ms (drop-repeats ms)))))))
+
+;; ── the plan deadlock, structurally ─────────────────────────────────────
+;;
+;; goal_complete needs every step verified; a step is verified only against a
+;; host execution receipt; a step that records a conclusion executes no tool.
+;; A plan containing one can therefore never complete, and ADR-2608190200 met
+;; that 326 times in 461 stored runs.
+;;
+;; The safety net there completes such a tick as a safe no-op AFTER it blocks.
+;; These two close the deadlock itself: the provider is told what is blocking,
+;; and revising the plan to drop it no longer costs the work already verified.
+
+(defn- planned-run [bot-id run-id plan events]
+  {:job/id run-id :job/bot bot-id :job/session alice
+   :job/objective "bounded tick" :job/resident-workforce? true
+   :job/plan plan :job/events events
+   :job/run (agent-run/agent-run {:id run-id :goal "bounded tick"} 1)})
+
+(deftest revising-a-plan-keeps-what-was-already-verified
+  (with-store
+    (fn []
+      (let [clean (ns-resolve 'cloud.itonami.app.bots 'clean-plan)
+            previous [{:step/id "s1" :step/title "Inspect the repository root"
+                       :step/depends-on #{} :step/state :verified
+                       :step/summary "listed the root" :step/evidence ["sha:abc"]}
+                      {:step/id "s2" :step/title "Record a no-op and complete"
+                       :step/depends-on #{} :step/state :pending}]
+            ;; the only legal escape: plan again without the impossible step
+            revised (clean [{:id "s1" :title "Inspect the repository root"}]
+                           previous)]
+        (testing "the verified step survives, with its evidence"
+          (is (= :verified (:step/state (first revised))))
+          (is (= ["sha:abc"] (:step/evidence (first revised)))))
+        (testing "so the run can now finish instead of blocking"
+          (is (every? #(= :verified (:step/state %)) revised)))))))
+
+(deftest revising-a-plan-cannot-grant-verification-it-did-not-earn
+  (with-store
+    (fn []
+      (let [clean (ns-resolve 'cloud.itonami.app.bots 'clean-plan)
+            previous [{:step/id "s1" :step/title "Inspect the repository root"
+                       :step/depends-on #{} :step/state :verified}
+                      {:step/id "s2" :step/title "Write the file"
+                       :step/depends-on #{} :step/state :pending}]]
+        (testing "a step that was pending stays pending"
+          (is (= :pending (:step/state (first (clean [{:id "s2" :title "Write the file"}]
+                                                     previous))))))
+        (testing "reusing a verified id under a new title earns nothing"
+          (is (= :pending (:step/state (first (clean [{:id "s1" :title "Write the file"}]
+                                                     previous))))))
+        (testing "nor does keeping the title and changing what it depends on"
+          (is (= :pending (:step/state (second (clean [{:id "s0" :title "first"}
+                                                       {:id "s1"
+                                                        :title "Inspect the repository root"
+                                                        :depends_on ["s0"]}]
+                                                      previous))))))
+        (testing "and an unrelated step is pending like any other"
+          (is (= :pending (:step/state (first (clean [{:id "s9" :title "Something else"}]
+                                                     previous))))))))))
+
+(deftest a-refused-goal-says-which-step-blocks-it-and-what-to-do
+  (with-store
+    (fn []
+      (let [refusal (ns-resolve 'cloud.itonami.app.bots 'goal-refusal)
+            bot-id (:bot/id (make-bot alice {}))
+            run-id "blocked-plan"]
+        (swap! store/state assoc-in [:bots :goal-jobs run-id]
+               (planned-run bot-id run-id
+                            [{:step/id "s1" :step/title "Inspect" :step/depends-on #{}
+                              :step/state :verified}
+                             {:step/id "s2" :step/title "Record a no-op"
+                              :step/depends-on #{} :step/state :pending}]
+                            [{:event/id "r1" :event/kind :action/finished
+                              :event/data {:tool "workspace_list" :step-id "s1"
+                                           :output-sha256 "abc"}}]))
+        (let [text (refusal run-id "a summary" ["evidence"] 1)]
+          (testing "the blocking step is named"
+            (is (str/includes? text "s2")))
+          (testing "the verified one is not blamed"
+            (is (not (str/includes? text "s1"))))
+          (testing "and the way out is stated"
+            (is (str/includes? text "goal_plan"))
+            (is (str/includes? text "verified stay verified"))))))))
+
+(deftest a-refusal-with-nothing-executed-says-so
+  (with-store
+    (fn []
+      (let [refusal (ns-resolve 'cloud.itonami.app.bots 'goal-refusal)
+            bot-id (:bot/id (make-bot alice {}))
+            run-id "nothing-ran"]
+        (swap! store/state assoc-in [:bots :goal-jobs run-id]
+               (planned-run bot-id run-id
+                            [{:step/id "s1" :step/title "Inspect" :step/depends-on #{}
+                              :step/state :pending}]
+                            []))
+        (let [text (refusal run-id "" [] 0)]
+          (testing "each missing thing is named rather than restated as a rule"
+            (is (str/includes? text "No tool has executed in this run"))
+            (is (str/includes? text "Summary is empty"))
+            (is (str/includes? text "Evidence is empty"))))))))
