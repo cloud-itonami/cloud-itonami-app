@@ -17,6 +17,57 @@
 (def ^:private max-transient-retries 1)
 (def ^:private transient-retry-delay-ms 250)
 
+(def request-timeout-seconds
+  "How long one model request may take before it is abandoned.
+
+  Public because the number is a claim about the provider, and the arithmetic
+  behind it should be checkable from outside. Measured against `murakumo-main`
+  on 2026-08-19 under live load: 11.4 output tokens/second, 75.8 prompt
+  tokens/second, one production slot. A resident tick is given 768 output
+  tokens -- 68 seconds -- and carries roughly 3.3k prompt tokens per turn, or
+  another 44. That is 112 seconds of a 120 second wall, so a tick which waits
+  even briefly for the slot exceeds it. 7 of 24 resident runs did on the day
+  this was written.
+
+  Raising it is not obviously the fix: with one slot, a request allowed to run
+  longer holds the whole workforce longer. The cheaper direction is a smaller
+  prompt."
+  120)
+
+(defn- timeout->typed
+  "Rethrow a request timeout as something the ledger can tell apart.
+
+  `java.net.http` throws `HttpTimeoutException` with the message \"request
+  timed out\" and no ex-data, so `(:type (ex-data error))` was nil and every
+  one of these was recorded as `:internal-error` -- the same value a genuine
+  bug in this application produces. Measured 2026-08-19: 7 of 24 resident runs
+  that day were timeouts filed under that name, and finding out cost a walk
+  through the event log of each one.
+
+  A slow provider and a broken host are different problems with different
+  fixes. They must not arrive under one name."
+  [^Exception error url]
+  (cond
+    ;; Checked FIRST, because `HttpConnectTimeoutException` extends
+    ;; `HttpTimeoutException` and the general branch would swallow it. They are
+    ;; not one problem: a model too slow to answer is a capacity question, and
+    ;; a provider that cannot be reached at all is a configuration or network
+    ;; one. Collapsing them here would repeat, one layer down, exactly the
+    ;; conflation this function exists to undo.
+    (instance? java.net.http.HttpConnectTimeoutException error)
+    (throw (ex-info "model provider could not be reached"
+                    {:type :provider/unreachable :url url}
+                    error))
+
+    (instance? java.net.http.HttpTimeoutException error)
+    (throw (ex-info "model provider request timed out"
+                    {:type :provider/timeout
+                     :url url
+                     :timeout-seconds request-timeout-seconds}
+                    error))
+
+    :else (throw error)))
+
 (defn- request-json
   ([method url body] (request-json method url body nil))
   ([method url body api-key]
@@ -24,7 +75,7 @@
   ([method url body api-key headers]
    (loop [attempt 0]
      (let [builder (-> (HttpRequest/newBuilder (URI/create url))
-                       (.timeout (Duration/ofSeconds 120))
+                       (.timeout (Duration/ofSeconds request-timeout-seconds))
                        (.header "Accept" "application/json")
                        (.header "Content-Type" "application/json"))
            _ (when api-key (.header builder "Authorization" (str "Bearer " api-key)))
@@ -35,8 +86,9 @@
                      :post (.POST builder
                                   (HttpRequest$BodyPublishers/ofString
                                    (json/write-str body))))
-           response (.send client (.build request)
-                           (HttpResponse$BodyHandlers/ofString))
+           response (try (.send client (.build request)
+                                (HttpResponse$BodyHandlers/ofString))
+                         (catch Exception error (timeout->typed error url)))
            status (.statusCode response)
            parsed (try (json/read-str (.body response) :key-fn keyword)
                        (catch Exception _ {:raw (.body response)}))]
@@ -273,7 +325,7 @@
   ([url body api-key] (streaming-response url body api-key nil))
   ([url body api-key headers]
    (let [builder (-> (HttpRequest/newBuilder (URI/create url))
-                     (.timeout (Duration/ofSeconds 120))
+                     (.timeout (Duration/ofSeconds request-timeout-seconds))
                      (.header "Accept" "*/*")
                      (.header "Content-Type" "application/json"))
          _ (when api-key
@@ -284,7 +336,9 @@
                      (.POST (HttpRequest$BodyPublishers/ofString
                              (json/write-str body)))
                      .build)
-         response (.send client request (HttpResponse$BodyHandlers/ofInputStream))]
+         response (try (.send client request
+                              (HttpResponse$BodyHandlers/ofInputStream))
+                       (catch Exception error (timeout->typed error url)))]
      (when-not (<= 200 (.statusCode response) 299)
        (throw (ex-info "model provider streaming request failed"
                        {:type :provider/http-error

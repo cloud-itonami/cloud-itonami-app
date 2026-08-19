@@ -1,0 +1,87 @@
+[{:db/id -1
+  :adr/id "ADR-2608190300"
+  :adr/title "A slow model, an unreachable provider and a bug in this application are three problems"
+  :adr/status "accepted"
+  :adr/date "2026-08-19"
+  :adr/body
+  "## Context
+
+With the plan-contract deadlock closed (ADR-2608190200), the largest remaining
+resident failure was a timeout: 7 of 24 runs on 2026-08-19. Every one was
+recorded as `:internal-error`, which is also what a genuine bug in this
+application produces. Finding out that they were timeouts meant reading the
+event log of each run by hand and noticing that the message happened to say
+`request timed out`.
+
+`java.net.http` throws `HttpTimeoutException` with no ex-data, so
+`(:type (ex-data error))` was nil and the catch-all applied. Nothing was
+broken; nothing distinguished either.
+
+## Decision
+
+**Three failures, three names.** `timeout->typed` classifies at the two
+request sites:
+
+| | |
+|---|---|
+| `HttpConnectTimeoutException` | `:provider/unreachable` — configuration or network |
+| `HttpTimeoutException` | `:provider/timeout` — capacity |
+| anything else | rethrown untouched |
+
+Order is load-bearing: `HttpConnectTimeoutException` **extends**
+`HttpTimeoutException`, so the obvious `instance?` check in the wrong order
+reports an unreachable provider as a slow model — the same conflation this
+change exists to undo, one layer down.
+
+**A timeout is not a no-op.** `complete-resident-no-op!` admits
+`#{:provider/empty-response :provider/http-error :blocked}`: all three mean the
+provider ANSWERED and had nothing to add, so the host's own receipts settle
+what happened. A timeout means the tick never found out, and recording it as a
+completed no-op would claim the Bot looked and saw nothing.
+
+The admitted set lives **in** that function rather than at its call sites. The
+first version of this change put the check in one caller and left the function
+willing to complete anything; the test for `:provider/timeout` is what found
+it. A call site that forgets is a call site that completes a run it should
+have failed.
+
+**A person is told it ran out of time**, with the limit. `実行に失敗しました`
+is what every unclassified failure says, and it gives someone nothing to act
+on.
+
+## What the numbers say, and what they do not settle
+
+Measured against `murakumo-main` under live load, 2026-08-19: **11.4 output
+tokens/second, 75.8 prompt tokens/second, one production slot**
+(`parallel: 1`). A resident tick is given 768 output tokens — 68 seconds — and
+carries roughly 3.3k prompt tokens per turn, another 44. **That is 112 seconds
+of a 120 second wall**, so a tick that waits even briefly for the slot exceeds
+it. Median time from `run/started` to first model output was 35s across 24
+runs; the timeouts are the tail — 126s, 137s, 208s, 261s.
+
+`request-timeout-seconds` is now a named var carrying that arithmetic, rather
+than a literal `120` written twice.
+
+**The number is not changed here.** Raising it is not obviously right: with one
+slot, a request allowed to run longer holds the whole workforce longer.
+Lowering it frees the slot sooner but fails work that would have finished. The
+cheaper direction is a smaller prompt, which is a change to what a resident
+tick is asked, not to how long it may take. That decision needs an operator,
+and now it has numbers.
+
+## Verification
+
+Four changes, each reverted alone, each reddening only its own tests:
+
+  not typing the timeout          -> a-request-that-runs-out-of-time-is-a-provider-timeout,
+                                     the-classifier-keeps-three-failures-apart
+  the subclass order              -> the-classifier-keeps-three-failures-apart
+  the admitted-reason set         -> a-resident-timeout-is-not-laundered-into-a-safe-no-op
+  the timeout's own message       -> a-timeout-tells-the-person-it-ran-out-of-time
+
+The classifier is tested directly rather than through a socket, because the
+condition cannot be produced reliably from here: a `com.sun.net.httpserver`
+that has been stopped does not refuse the connection on this platform, it
+hangs, and the JDK reports a plain `HttpTimeoutException`. That was measured
+while trying to write the socket version, and it is why the first draft of
+that test asserted something the environment could not deliver."}]
