@@ -1320,6 +1320,7 @@
         [:div {:class "nav-primary authenticated-only" :hidden true}
          (nav-item "chat" "Chat" "✦" nil)
          (nav-item "bots" "Bots" "◕" "bots-count")
+         (nav-item "rooms" "Rooms" "◎" "rooms-count")
          (nav-item "capture" "Capture" "＋" "capture-count")
          (nav-item "messenger" "Messenger" "◇" "messenger-count")]
         [:div {:class "nav-overflow-panel" :id "mobile-overflow-panel"}
@@ -1569,6 +1570,50 @@
                        :hidden true} "中止"]]
             [:p {:class "drive-create__status" :id "bots-thread-status-line"
                  :aria-live "polite"}]]]]]
+        [:section {:class "view" :data-view-panel "rooms" :hidden true}
+         (view-header "Rooms"
+                      (str "複数の Bot にまとめて聞きます。1回の発言につき各メンバーが"
+                           "1ターン、最大3周。付け足すことが無いメンバーは黙ります。"))
+         [:div {:class "site-layout"}
+          [:div {:class "settings-stack"}
+           [:div {:class "local-card"}
+            (dds/heading 2 "新しいルーム" {:size "24"})
+            [:form {:class "settings-form" :id "room-create-form"}
+             [:div {:class "field"}
+              [:label {:for "room-name"} "ルーム名"]
+              [:input {:id "room-name" :name "name" :required true :maxlength "60"
+                       :placeholder "経営"}]]
+             [:div {:class "field"}
+              [:label {:for "room-members"} "メンバー"]
+              [:ul {:class "record-list__items" :id "room-members"}
+               [:li {:class "empty-state"} "Bot を読み込んでいます。"]]]
+             [:button {:class "primary-action" :type "submit"} "ルームを作成"]]
+            [:p {:class "form-help" :id "room-create-status" :aria-live "polite"}]
+            ;; The two limits are on screen because both are a person's: eight
+            ;; members is a ceiling, and three rounds is what one sentence
+            ;; costs at worst.
+            [:p {:class "form-help"}
+             "メンバーは8体まで。ルームにツールはありません — やってもらうのは、"
+             "その Bot に直接頼むか引き継ぎです。"]]
+           [:div {:class "local-card"}
+            (dds/heading 2 "ルーム" {:size "24"})
+            [:ul {:class "record-list__items" :id "room-list"}
+             [:li {:class "empty-state"} "まだルームはありません。"]]]]
+          [:div {:class "settings-stack" :id "room-panel" :hidden true}
+           [:div {:class "local-card"}
+            [:div {:class "view-header" :style "margin-bottom:1rem"}
+             [:div
+              (dds/heading 2 "" {:size "24" :id "room-title"})
+              [:p {:class "source-note" :id "room-members-summary"}]]]
+            [:ul {:class "record-list__items" :id "room-thread"}
+             [:li {:class "empty-state"} "まだ発言はありません。"]]
+            [:form {:class "settings-form" :id "room-send-form"}
+             [:div {:class "field"}
+              [:label {:for "room-text"} "ルームに聞く"]
+              [:textarea {:id "room-text" :name "text" :rows "3"
+                          :placeholder "今日どうする"}]]
+             [:button {:class "primary-action" :type "submit" :id "room-send"} "聞く"]]
+            [:p {:class "form-help" :id "room-status" :aria-live "polite"}]]]]]
         [:section {:class "view" :data-view-panel "capture" :hidden true}
          (view-header "Capture"
                       "考えを評価・分類せず、そのまま手元に残します。AIには送られません。整理は後から行います。")

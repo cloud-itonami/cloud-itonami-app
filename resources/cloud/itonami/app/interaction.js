@@ -10237,6 +10237,161 @@
       if (event.key === 'Escape' && botsState.busy) botsCancel.click();
     });
 
+    // ── rooms (ADR-0063) ────────────────────────────────────────────────
+    //
+    // A room has no tools, so there is nothing here that proposes, holds or
+    // approves anything — no card, no runnable set, no busy state to cancel.
+    // That absence is the feature; if a control for one appears here later,
+    // the room grew a capability the ADR says it does not have.
+    const roomsState = {rooms:[], selected:null, bots:[], sending:false};
+    const roomStatus = (text) => { $('#room-status').textContent = text || ''; };
+    const renderRoomMembers = () => {
+      const list = $('#room-members');
+      list.replaceChildren();
+      if (!roomsState.bots.length) {
+        list.append(make('li', 'empty-state', 'まず Bot を作成してください。'));
+        return;
+      }
+      roomsState.bots.forEach((bot) => {
+        const row = make('li');
+        const label = make('label', 'bots-permission');
+        const box = make('input');
+        box.type = 'checkbox';
+        box.value = bot.id;
+        box.dataset.roomMember = bot.id;
+        label.append(box, make('span', null, bot.name));
+        row.append(label);
+        list.append(row);
+      });
+    };
+    const renderRoomList = () => {
+      const list = $('#room-list');
+      list.replaceChildren();
+      $('#rooms-count').textContent = String(roomsState.rooms.length);
+      if (!roomsState.rooms.length) {
+        list.append(make('li', 'empty-state', 'まだルームはありません。'));
+        return;
+      }
+      roomsState.rooms.forEach((room) => {
+        const row = make('li');
+        const button = make('button', 'record-button',
+          `${room.name} · ${room.members.length}体`);
+        button.type = 'button';
+        button.setAttribute('aria-pressed',
+          roomsState.selected === room.id ? 'true' : 'false');
+        button.addEventListener('click', () => selectRoom(room.id));
+        row.append(button);
+        list.append(row);
+      });
+    };
+    const renderRoomThread = (messages) => {
+      const thread = $('#room-thread');
+      thread.replaceChildren();
+      if (!messages.length) {
+        thread.append(make('li', 'empty-state', 'まだ発言はありません。'));
+        return;
+      }
+      const names = new Map(roomsState.bots.map((bot) => [`bot:${bot.id}`, bot.name]));
+      messages.forEach((message) => {
+        // Attributed, as in the transcript the members themselves read. A room
+        // where the lines are anonymous is a room where nobody can tell which
+        // Bot to ask next, which is the only thing a room is for.
+        const who = message.from ? (names.get(message.from) || message.from) : 'あなた';
+        const row = make('li', 'record-list__row');
+        row.append(make('div', 'record-list__title', who));
+        row.append(make('div', 'record-list__meta', message.text));
+        thread.append(row);
+      });
+    };
+    const selectRoom = async (roomId) => {
+      roomsState.selected = roomId;
+      const room = roomsState.rooms.find((entry) => entry.id === roomId);
+      $('#room-panel').hidden = false;
+      $('#room-title').textContent = room ? room.name : 'ルーム';
+      $('#room-members-summary').textContent = room
+        ? room.members.map((member) =>
+            member.enabled ? member.name : `${member.name}（停止中）`).join(' · ')
+        : '';
+      renderRoomList();
+      roomStatus('読み込み中…');
+      try {
+        const request = await fetch(`/api/bots/groups/${encodeURIComponent(roomId)}/messages`);
+        const data = await request.json();
+        if (!request.ok) throw new Error(data?.error?.message || 'ルームを読めませんでした。');
+        renderRoomThread(data.messages || []);
+        roomStatus('');
+      } catch (error) {
+        roomStatus(error.message);
+      }
+    };
+    const loadRooms = async () => {
+      try {
+        const [roomsRequest, botsRequest] =
+          await Promise.all([fetch('/api/bots/groups'), fetch('/api/bots')]);
+        const roomsData = await roomsRequest.json();
+        const botsData = await botsRequest.json();
+        if (!roomsRequest.ok) {
+          throw new Error(roomsData?.error?.message || 'ルームを読めませんでした。');
+        }
+        roomsState.rooms = roomsData.groups || [];
+        roomsState.bots = botsRequest.ok ? (botsData.bots || []) : [];
+        renderRoomMembers();
+        renderRoomList();
+        if (roomsState.selected
+            && !roomsState.rooms.some((room) => room.id === roomsState.selected)) {
+          roomsState.selected = null;
+          $('#room-panel').hidden = true;
+        }
+      } catch (error) {
+        $('#room-list').replaceChildren(make('li', 'empty-state', error.message));
+      }
+    };
+    $('#room-create-form').addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const name = $('#room-name').value.trim();
+      const members = $$('[data-room-member]', $('#room-members'))
+        .filter((box) => box.checked).map((box) => box.value);
+      if (!name || !members.length) {
+        $('#room-create-status').textContent = 'ルーム名とメンバーを選んでください。';
+        return;
+      }
+      $('#room-create-status').textContent = '作成中…';
+      try {
+        const data = await postJSON('/api/bots/groups', {name, members}, true);
+        roomsState.rooms = data.groups || [];
+        renderRoomList();
+        $('#room-name').value = '';
+        $$('[data-room-member]', $('#room-members')).forEach((box) => { box.checked = false; });
+        $('#room-create-status').textContent = '';
+      } catch (error) {
+        $('#room-create-status').textContent = error.message;
+      }
+    });
+    $('#room-send-form').addEventListener('submit', async (event) => {
+      event.preventDefault();
+      if (!roomsState.selected || roomsState.sending) return;
+      const text = $('#room-text').value.trim();
+      if (!text) return;
+      roomsState.sending = true;
+      $('#room-send').disabled = true;
+      // One message costs a model call per answering member per round, so the
+      // wait is real and saying so is not decoration.
+      roomStatus('メンバーが順に答えています…');
+      try {
+        const data = await postJSON(
+          `/api/bots/groups/${encodeURIComponent(roomsState.selected)}/send`,
+          {text}, true);
+        $('#room-text').value = '';
+        renderRoomThread(data.messages || []);
+        roomStatus(`${data.rounds}周 · ${data.answers}件の発言`);
+      } catch (error) {
+        roomStatus(error.message);
+      } finally {
+        roomsState.sending = false;
+        $('#room-send').disabled = false;
+      }
+    });
+
     onViewChange = () => {
       scheduleWorkerPoll();
       if (currentView === 'bots') {
@@ -10262,6 +10417,7 @@
         $('#capture-status').textContent = error.message;
       });
       if (currentView === 'sites') loadSites();
+      if (currentView === 'rooms') loadRooms();
       if (currentView === 'memory') loadChronicle().catch((error) => {
         $('#memory-status').textContent = error.message;
       });
