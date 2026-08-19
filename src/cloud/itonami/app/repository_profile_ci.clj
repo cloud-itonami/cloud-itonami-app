@@ -4,6 +4,7 @@
   repository's `main` through GitHub's contents API."
   (:require [clojure.data.json :as json]
             [clojure.java.io :as io]
+            [clojure.string :as str]
             [cloud.itonami.app.repository-qualification :as qualification])
   (:import [java.net URI]
            [java.net.http HttpClient HttpRequest HttpResponse$BodyHandlers]
@@ -59,9 +60,15 @@
                  (slurp (io/file parent path "storage-profile.edn"))
                  (*fetch-profile* client token repository))}
               (catch Exception error
+                ;; The type alone cannot tell a missing file from a 403 from a
+                ;; DNS failure, and this audit's whole output is which repos
+                ;; could not be read. Found by verify-error-provenance.
                 {:repository repository
                  :error (or (:type (ex-data error))
-                            :repository-storage/profile-unavailable)})))
+                            :repository-storage/profile-unavailable)
+                 :error-message (some-> (.getMessage ^Exception error)
+                                        str/split-lines first str/trim not-empty
+                                        (as-> m (subs m 0 (min 300 (count m)))))})))
           entries)]
      (assoc (qualification/audit-profile-documents documents)
             :inventory-count (count entries)))))
