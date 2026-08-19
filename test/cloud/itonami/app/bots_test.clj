@@ -2028,3 +2028,32 @@
           (is (= :failed (outcome true ["workspace_write_file"]))))
         (testing "an interactive block is held, as it always was"
           (is (= :held (outcome false ["workspace_list"]))))))))
+
+;; ── a timeout is not a no-op ────────────────────────────────────────────
+
+(deftest a-resident-timeout-is-not-laundered-into-a-safe-no-op
+  (with-store
+    (fn []
+      (let [bot-id (:bot/id (make-bot alice {}))
+            run-id "resident-timeout-1"
+            complete! (ns-resolve 'cloud.itonami.app.bots 'complete-resident-no-op!)]
+        (swap! store/state assoc-in [:bots :goal-jobs run-id]
+               (resident-run-with bot-id run-id ["workspace_list"]))
+        ;; The two reasons that DO complete mean the provider answered and had
+        ;; nothing to add, so the host's receipts settle it. A timeout means
+        ;; the tick never found out; calling it a completed no-op would claim
+        ;; the Bot looked and saw nothing.
+        (testing "the reason is not admitted"
+          (is (nil? (complete! {} run-id {:reason :provider/timeout}))))
+        (testing "while its neighbours still are"
+          (is (true? (complete! {} run-id {:reason :provider/empty-response}))))))))
+
+(deftest a-timeout-tells-the-person-it-ran-out-of-time
+  (let [message (ns-resolve 'cloud.itonami.app.bots 'visible-failure-message)
+        generic (message (ex-info "boom" {:type :some/unclassified-bug}))
+        timed-out (message (ex-info "slow" {:type :provider/timeout
+                                            :timeout-seconds 120}))]
+    (testing "it does not arrive as the line every unknown failure gets"
+      (is (not= generic timed-out)))
+    (testing "and it says how long it waited"
+      (is (str/includes? timed-out "120")))))
