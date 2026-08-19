@@ -1,0 +1,80 @@
+[{:db/id -1
+  :adr/id "ADR-2608190400"
+  :adr/title "Being switched on is not being at work"
+  :adr/status "accepted"
+  :adr/date "2026-08-19"
+  :adr/body
+  "## Context
+
+`workforce-status` answered `enabled 70`, and that number was true and useless
+twice on the same day.
+
+It stayed 70 through the eighteen hours in which one held run occupied the
+single slot and the fleet ran nothing at all (ADR-2608190100). It stayed 70
+through the day on which most ticks that did run failed on a plan step no tool
+could satisfy (ADR-2608190200) -- 326 of 461 stored runs. Whatever was wrong,
+the surface that exists to report on the workforce reported the same number.
+
+ADR-2608190200 made a no-op recordable as `:safe-no-op` and then said, in its
+own last paragraph, that nothing counted it. This is that.
+
+## Decision
+
+`workforce-status` carries `:outcomes` -- what the last
+`resident-outcome-window` (50) resident runs came to, with the window's own
+bounds beside it.
+
+**`:completed` and `:no-op` are both successes and are counted apart.** A Bot
+that finds nothing to do on every tick and a Bot that does work are the same
+colour to `:agent.run/status`, and telling them apart is the entire reason the
+`:safe-no-op` result exists. One number for both would have made the fleet
+look fine on a day it did nothing.
+
+**Failures keep the provider's own name.** `:provider/timeout` is a slow model,
+`:provider/unreachable` is a network, `:internal-error` is a fault in this
+application. They have different fixes, and merging them is precisely what
+made an afternoon of timeouts look like a bug here (ADR-2608190300).
+
+**No runs is reported in words, not as an empty tally.** `:outcomes` is `nil`
+with a note when this owner has no resident run recorded. `{}` reads as
+\\"nothing wrong\\" and means \\"nothing measured\\"; that substitution is the
+failure this workspace keeps finding, and an instrument built to catch it must
+not commit it.
+
+**A window, not all of history**, because the question is what the workforce is
+doing now, and a store running for weeks would drown a change in its own past.
+
+**Interactive Goals are not counted.** A person's own Goal succeeding is not
+the workforce being productive.
+
+## What was NOT done, and why
+
+The plan was to shrink the resident prompt, on the reasoning that 3.3k prompt
+tokens per request at 75.8 tokens/second was 44 seconds of a 120 second wall.
+Measuring it first retired the idea: the system prompt is **707 tokens** and
+the tool definitions **782**, about 1.5k static, and it carries policy rather
+than padding. Observed completions ran 990 tokens across 8 turns -- roughly
+124 each, about 11 seconds, nowhere near the 768 ceiling. A typical request is
+therefore around 55 seconds against a 120 second wall, which is what the
+measured median of 35 seconds says too.
+
+The timeouts are the tail, not the norm. Changing a live system's prompt on an
+argument that its own numbers do not support would have been a change made for
+the feeling of having done something.
+
+## Verification
+
+Four tests. Two were reverted to confirm they discriminate:
+
+  letting an empty tally print as a healthy one
+    -> an-owner-with-no-resident-run-is-told-so-in-words,
+       an-interactive-goal-is-not-counted-as-workforce-activity
+  folding `:no-op` back into ordinary success
+    -> the-status-counts-doing-nothing-apart-from-doing-work
+
+## Still not settled
+
+The instrument says what happened; it does not say whether a Bot reporting a
+safe no-op on every tick has nothing to do or is being asked the wrong
+question. That is about the objectives in `network-awai/loop-yakuwari`, and it
+is now answerable with a number instead of an argument."}]

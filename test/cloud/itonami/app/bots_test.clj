@@ -2085,3 +2085,96 @@
       (is (not= generic timed-out)))
     (testing "and it says how long it waited"
       (is (str/includes? timed-out "120")))))
+
+;; ── what the workforce has actually been doing ──────────────────────────
+;;
+;; `enabled 70` was the whole answer `workforce-status` gave, and it stayed 70
+;; through the eighteen hours in which the fleet ran nothing (ADR-2608190100)
+;; and through the day on which most of its ticks failed on a plan step no tool
+;; could satisfy (ADR-2608190200). Being switched on is not being at work.
+
+(defn- finished-resident-run [bot-id run-id created-at attrs]
+  (let [queued (agent-run/agent-run {:id run-id :goal "bounded tick"} 1)]
+    {:job/id run-id :job/bot bot-id :job/session alice
+     :job/objective "bounded tick" :job/plan [] :job/events []
+     :job/resident-workforce? true
+     :job/created-at created-at
+     :job/run (merge (-> queued
+                         (agent-run/transition :leased 2 {})
+                         (agent-run/transition :running 3 {}))
+                     attrs)}))
+
+(deftest an-owner-with-no-resident-run-is-told-so-in-words
+  (with-store
+    (fn []
+      (let [status (bots/workforce-status alice)]
+        (testing "nothing measured must not print as nothing wrong"
+          (is (nil? (:outcomes status)))
+          (is (string? (:outcomes-note status))))))))
+
+(deftest the-status-counts-doing-nothing-apart-from-doing-work
+  (with-store
+    (fn []
+      (let [bot-id (:bot/id (make-bot alice {}))]
+        (store/transact!
+         (fn [state]
+           (-> state
+               (assoc-in [:bots :goal-jobs "r1"]
+                         (finished-resident-run bot-id "r1" "2026-08-19T01:00:00Z"
+                                                {:agent.run/status :succeeded
+                                                 :agent.run/result "completed"}))
+               (assoc-in [:bots :goal-jobs "r2"]
+                         (finished-resident-run bot-id "r2" "2026-08-19T02:00:00Z"
+                                                {:agent.run/status :succeeded
+                                                 :agent.run/result :safe-no-op}))
+               (assoc-in [:bots :goal-jobs "r3"]
+                         (finished-resident-run bot-id "r3" "2026-08-19T03:00:00Z"
+                                                {:agent.run/status :failed
+                                                 :agent.run/error-type :provider/timeout}))
+               (assoc-in [:bots :goal-jobs "r4"]
+                         (finished-resident-run bot-id "r4" "2026-08-19T04:00:00Z"
+                                                {:agent.run/status :failed
+                                                 :agent.run/error-type :internal-error})))))
+        (let [{:keys [counts window since until]} (:outcomes (bots/workforce-status alice))]
+          (testing "a tick that worked and a tick that found nothing are not one number"
+            (is (= 1 (:completed counts)))
+            (is (= 1 (:no-op counts))))
+          (testing "a slow model and a fault here keep their own names"
+            (is (= 1 (:provider/timeout counts)))
+            (is (= 1 (:internal-error counts))))
+          (testing "and the window it covers is stated"
+            (is (= 4 window))
+            (is (= "2026-08-19T01:00:00Z" since))
+            (is (= "2026-08-19T04:00:00Z" until))))))))
+
+(deftest an-interactive-goal-is-not-counted-as-workforce-activity
+  (with-store
+    (fn []
+      (let [bot-id (:bot/id (make-bot alice {}))]
+        (swap! store/state assoc-in [:bots :goal-jobs "interactive"]
+               (assoc (finished-resident-run bot-id "interactive" "2026-08-19T05:00:00Z"
+                                             {:agent.run/status :succeeded
+                                              :agent.run/result "completed"})
+                      :job/resident-workforce? false))
+        (testing "a person's own Goal is not the workforce being productive"
+          (is (nil? (:outcomes (bots/workforce-status alice)))))))))
+
+(deftest the-window-is-the-recent-past-not-all-of-history
+  (with-store
+    (fn []
+      (let [bot-id (:bot/id (make-bot alice {}))
+            n (+ bots/resident-outcome-window 5)]
+        (store/transact!
+         (fn [state]
+           (reduce (fn [st i]
+                     (assoc-in st [:bots :goal-jobs (str "r" i)]
+                               (finished-resident-run
+                                bot-id (str "r" i)
+                                (format "2026-08-19T%02d:00:00Z" (mod i 24))
+                                {:agent.run/status (if (< i 5) :succeeded :failed)
+                                 :agent.run/error-type (when (>= i 5) :provider/timeout)
+                                 :agent.run/result (when (< i 5) "completed")})))
+                   state (range n))))
+        (let [{:keys [window]} (:outcomes (bots/workforce-status alice))]
+          (testing "a long-running store cannot drown a change in its own past"
+            (is (= bots/resident-outcome-window window))))))))
