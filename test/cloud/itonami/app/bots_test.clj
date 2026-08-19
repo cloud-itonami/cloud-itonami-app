@@ -286,9 +286,19 @@
           (let [active-bot (-> @store/state :bots :workforce-jobs vals first
                                :workforce.job/bot)
                 active-var (ns-resolve 'cloud.itonami.app.bots
-                                       'workforce-bot-active?)]
+                                       'workforce-bot-active?)
+                ;; The capacity count reads `workforce-bot-inferring?` since
+                ;; a `:held` run stopped counting against it. The invariant
+                ;; this test is about -- a job actually ON the model keeps
+                ;; every other Bot off it -- is unchanged, so it is asserted
+                ;; through the var that now decides it. The held case is
+                ;; `one-held-bot-does-not-stop-the-others`, which uses a real
+                ;; stored run rather than a redef.
+                inferring-var (ns-resolve 'cloud.itonami.app.bots
+                                          'workforce-bot-inferring?)]
             (with-redefs-fn
               {active-var #(= active-bot %)
+               inferring-var #(= active-bot %)
                #'bots/submit-goal!
                (fn [_ _ bot-id objective run-id _options]
                  (swap! submitted conj [bot-id objective run-id])
@@ -1777,3 +1787,99 @@
                                           (:group/id (bots/create-group!
                                                       alice {:name "y"
                                                              :members [(:bot/id mine)]})))))))))
+
+;; ── a hold that nobody can answer ───────────────────────────────────────
+;;
+;; Measured on the resident deployment 2026-08-18/19: one blocked resident
+;; tick sat at `:held` for 18h34m and stopped all 70 Bots, while every Bot
+;; reported `idle` and nothing reported a fault. Three separate things had to
+;; be true at once for that, so there are three tests.
+
+(defn- held-resident-job [bot-id run-id]
+  (let [queued (agent-run/agent-run {:id run-id :goal "bounded tick"} 1)
+        running (-> queued
+                    (agent-run/transition :leased 2 {})
+                    (agent-run/transition :running 3 {}))]
+    {:job/id run-id :job/bot bot-id :job/session alice
+     :job/objective "bounded tick" :job/plan [] :job/events []
+     :job/resident-workforce? true
+     :job/run (agent-run/transition running :held 4 {})}))
+
+(deftest a-blocked-resident-tick-is-failed-and-a-held-one-is-still-held
+  (let [status (private-fn 'goal-run-status)]
+    (testing "an unattended tick has nobody to answer a block"
+      (is (= :failed (status "blocked" true))))
+    (testing "someone is watching an interactive Goal, so it may wait"
+      (is (= :held (status "blocked" false))))
+    (testing "an approval card is answerable either way"
+      (is (= :held (status "waiting-approval" true)))
+      (is (= :held (status "waiting-approval" false))))
+    (testing "the other outcomes are untouched"
+      (is (= :succeeded (status "completed" true)))
+      (is (= :cancelled (status "cancelled" true)))
+      (is (= :failed (status "anything-else" true))))))
+
+(deftest one-held-bot-does-not-stop-the-others
+  (with-store
+    (fn []
+      (with-redefs [workspace-tools/admit-root (fn [path] path)]
+        (let [second-role (-> (engineer-entry)
+                              (assoc :key "cloud-itonami/qa")
+                              (assoc :role {:id :qa :name "QA" :job :qa}))
+              submitted (atom [])
+              now "2026-08-19T00:00:00Z"]
+          (bots/provision-workforce!
+           {} alice (workforce-catalog [(engineer-entry) second-role]))
+          (swap! store/state update-in [:bots :workforce-jobs]
+                 (fn [jobs]
+                   (into {} (map (fn [[id job]]
+                                   [id (assoc job :workforce.job/next-run-at
+                                              "2026-08-18T00:00:00Z")]))
+                         jobs)))
+          (let [ids (sort (keys (:workforce-jobs (:bots @store/state))))
+                held-bot (first ids)
+                free-bot (second ids)]
+            (swap! store/state assoc-in [:bots :goal-jobs "stuck-1"]
+                   (held-resident-job held-bot "stuck-1"))
+            (with-redefs [bots/submit-goal!
+                          (fn [_ _ bot-id objective run-id options]
+                            (swap! submitted conj bot-id)
+                            {:id run-id})]
+              (let [result (bots/fire-due-workforce!
+                            {:bots {:workforce {:max-active 1
+                                                :max-starts-per-tick 1}}}
+                            alice now)]
+                (testing "the held Bot does not consume the inference slot"
+                  (is (= 1 (count (:started result))))
+                  (is (= [free-bot] @submitted)))
+                (testing "but it is still refused a second run of its own"
+                  (is (some #(and (= :bot-active (:reason %))) (:skipped result))
+                      (pr-str (:skipped result))))
+                (testing "and capacity is never the reason given"
+                  (is (not-any? #(= :workforce-capacity (:reason %))
+                                (:skipped result))))))))))))
+
+(deftest startup-closes-a-resident-hold-that-nobody-can-answer
+  (with-store
+    (fn []
+      (let [resident (:bot/id (make-bot alice {:name "resident"}))
+            interactive (:bot/id (make-bot alice {:name "interactive"}))]
+        (store/transact!
+         (fn [state]
+           (-> state
+               (assoc-in [:bots :goal-jobs "resident-hold"]
+                         (held-resident-job resident "resident-hold"))
+               (assoc-in [:bots :goal-jobs "interactive-hold"]
+                         (assoc (held-resident-job interactive "interactive-hold")
+                                :job/resident-workforce? false)))))
+        (bots/recover-interrupted!)
+        (let [status (fn [id] (get-in @store/state
+                                      [:bots :goal-jobs id
+                                       :job/run :agent.run/status]))]
+          (testing "the unanswerable resident hold is closed"
+            (is (= :cancelled (status "resident-hold")))
+            (is (= :hold-unanswerable
+                   (get-in @store/state [:bots :goal-jobs "resident-hold"
+                                         :job/run :agent.run/error-type]))))
+          (testing "an interactive hold is left for the person to decide"
+            (is (= :held (status "interactive-hold")))))))))

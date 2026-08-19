@@ -1,0 +1,104 @@
+[{:db/id -1
+  :adr/id "ADR-2608190100"
+  :adr/title "A held resident run is not on the model, cannot be answered, and must not stop the other Bots"
+  :adr/status "accepted"
+  :adr/date "2026-08-19"
+  :adr/body
+  "## What happened
+
+Measured on the resident deployment, 2026-08-19T05:01Z. The startup workforce
+was installed and healthy by every surface that reports on it: 8 businesses,
+70 Bots, 70 enabled, provider `murakumo` reviewed and authenticated, 72 of 74
+Bots reading `idle`. It had submitted nothing for 18 hours 34 minutes, and 66
+of its 70 jobs were past due.
+
+Nothing reported a fault, because from each surface's own point of view there
+was none. `bots_list` showed idle Bots, which was true. The tick thread was
+alive and had used 34ms of CPU in 145 seconds, which was correct behaviour for
+a pass that starts nothing. `live-sessions` returned a live `:passkey` session
+whose user owned all 70 jobs. `workforce-job-due?` said 66 were due.
+
+The count that mattered was `active 1` against `max-active 1`, and the one run
+holding it was `workforce-run-e2ec934c` on `nexus x402 / Sales`, status
+`:held` since 2026-08-18T10:32:08Z — five minutes after the last tick anyone
+saw.
+
+## Why that run was held
+
+The Goal provider must record a plan of one to eight steps, and ADR-2608151900
+admits `goal_complete` only once every step carries a host action receipt. The
+resident objective also says, correctly, that a tick which finds nothing safe
+to do should record the evidence for a no-op and complete.
+
+The provider planned two steps: inspect the repository root, then record the
+no-op and complete. Step one executed `workspace_list`, produced a receipt and
+passed its verifier. Step two was a conclusion — it ran no tool, because
+concluding is not a tool — so it could never carry a receipt, so the goal could
+never complete. The run reported, accurately:
+
+  The host verifier requires a host execution receipt for step s2, but no tool
+  was executed for that step (it is a no-op conclusion step).
+
+Both rules are right. Their conjunction has no exit.
+
+## Three defects, and only the third one is why it spread
+
+1. **`blocked` and `waiting-approval` were recorded as one status.** They are
+   not one outcome. `waiting-approval` leaves a card a person can decide;
+   `blocked` means the provider stopped and asked, and for an unattended tick
+   there is nobody being asked.
+
+2. **A `:held` goal job could not be reached by anything.** `cancel!` requires
+   an in-memory turn, which no longer exists after a restart, so the MCP and
+   HTTP cancel paths answered `run-not-found`. `recover-interrupted!` requeues
+   `#{:queued :leased :running :checkpointed}` and does not include `:held`. A
+   hold therefore survived every restart with nothing able to end it.
+
+3. **The capacity count treated a hold as if it were on the model.**
+   `max-active` exists to stop resident ticks overlapping on a capacity-one
+   provider — `murakumo-main` reports `parallel: 1` — so what it must count is
+   runs consuming that provider. A held run consumes none. This is the defect
+   that turned one stuck Bot into a stopped company.
+
+## Decision
+
+`goal-run-status` maps a visible state onto a run status and takes the
+resident flag as its second fact. A resident `blocked` becomes `:failed`,
+which is honest — the tick did not reach its goal — and `:failed -> :queued`
+is the one legal way back out of a terminal state, so the job simply runs
+again at its cadence. `waiting-approval` stays `:held` for both, and an
+interactive `blocked` stays `:held` because somebody is watching it.
+
+`workforce-bot-inferring?` is separated from `workforce-bot-active?`.
+`max-active` counts the first; the per-Bot refusal keeps using the second, so
+a Bot whose run is held still gets no second run while every other Bot
+proceeds.
+
+`recover-interrupted!` closes a resident `:held` run that has no outstanding
+approval card, as `:cancelled` with `:agent.run/error-type :hold-unanswerable`.
+`:cancelled` rather than `:rejected` because no person refused this work.
+A hold with a card outstanding is left alone: it is answerable, and closing it
+would discard a decision somebody was asked for.
+
+## Not done here
+
+The plan contract still permits a step that no tool can satisfy. Forbidding a
+conclusion step — completion is not a step — belongs with the Goal plan
+contract in ADR-2608151900 and is a separate change. Until it lands, such a
+tick now fails and retries instead of wedging the fleet, which is a smaller
+fault and a visible one.
+
+`max-active` was NOT raised. The provider serves one slot; raising the app's
+cap would queue at the provider instead, and the stall was never throughput.
+
+## Verification
+
+Three tests, each shown to fail on the unfixed code:
+
+  a-blocked-resident-tick-is-failed-and-a-held-one-is-still-held
+  one-held-bot-does-not-stop-the-others
+  startup-closes-a-resident-hold-that-nobody-can-answer
+
+`resident-workforce-does-not-overlap-an-active-job-across-bots` keeps
+asserting that a job actually on the model stops every other Bot; it now
+redefines the var that decides capacity. That invariant is unchanged."}]

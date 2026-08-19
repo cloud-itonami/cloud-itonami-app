@@ -331,6 +331,35 @@
                       (agent-run/transition run status (now-ms) attrs))]
        (assoc job :job/run next-run :job/updated-at (store/now))))))
 
+(defn- goal-run-status
+  "Map a visible turn state onto an AgentRun status.
+
+  `blocked` and `waiting-approval` arrive here as one case and are not one
+  outcome. `waiting-approval` leaves an approval card a person can still
+  decide, so `:held` is exactly right. `blocked` means the provider stopped
+  and asked for something -- and for a RESIDENT tick there is nobody being
+  asked, so the answer never comes.
+
+  Recording that as `:held` produces a run that is permanently active with
+  nothing driving it: `cancel!` cannot reach it (it needs an in-memory turn
+  that no longer exists), `recover-interrupted!` does not requeue `:held`, and
+  `fire-due-workforce!` counts it against `max-active`. Measured 2026-08-18/19
+  on this deployment: one blocked resident tick -- nexus x402 / Sales, whose
+  plan held a no-op conclusion step that by construction can never carry a
+  host receipt -- occupied the single workforce slot for 18h34m and stopped
+  all 70 Bots. Nothing reported a fault; every Bot read `idle`.
+
+  `:failed` is the honest status for it. The tick did not reach its goal, and
+  `:failed -> :queued` is the only legal way back out of a terminal state, so
+  the job simply runs again at its next cadence."
+  [state resident?]
+  (case state
+    "completed" :succeeded
+    "waiting-approval" :held
+    "blocked" (if resident? :failed :held)
+    "cancelled" :cancelled
+    :failed))
+
 (defn- clean-plan [steps]
   (let [steps (vec (take 8 steps))
         clean (mapv (fn [index step]
@@ -1617,6 +1646,34 @@
                     {:turn/state :running :turn/phase :resuming
                      :turn/goal? true :turn/objective (:job/objective job)})
       (when configuration (enqueue-goal! configuration run-id)))
+    ;; A RESIDENT `:held` run with no outstanding approval card is a hold
+    ;; nobody can answer. `:held` is not in the requeue set above, `cancel!`
+    ;; needs an in-memory turn that this process does not have, and
+    ;; `fire-due-workforce!` used to count it against `max-active` -- so
+    ;; before this it survived every restart and no surface could reach it.
+    ;; `goal-run-status` stops new ones being written; this closes the ones
+    ;; already in the store. `:cancelled` because the legal moves out of
+    ;; `:held` are `:leased :running :rejected :cancelled`, and `:rejected`
+    ;; would claim a person refused the work.
+    ;;
+    ;; An approval that IS outstanding stays held: the person can still decide
+    ;; it, and closing it here would throw away a decision they were asked for.
+    (doseq [[run-id job] (:goal-jobs (snapshot))
+            :when (and (:job/resident-workforce? job)
+                       (= :held (get-in job [:job/run :agent.run/status]))
+                       (not (seq (filter #(bot/outstanding?
+                                           (request-of (:job/bot job) %))
+                                         (open-approval-cards (:job/bot job))))))]
+      (transition-goal-run! run-id :cancelled
+                            {:agent.run/error-type :hold-unanswerable
+                             :agent.run/finished-at (now-ms)})
+      (record-turn! (:job/bot job) run-id
+                    {:turn/state :cancelled :turn/phase :cancelled
+                     :turn/goal? true :turn/objective (:job/objective job)
+                     :turn/finished-at at
+                     :turn/error-type :hold-unanswerable})
+      (append-goal-event! run-id :run/cancelled
+                          {:reason :hold-unanswerable}))
     ;; A handoff has two provider turns but no replayable external lease. If
     ;; the process dies between them, keep the transcript and close the run
     ;; truthfully; replaying could duplicate tools executed by either Bot.
@@ -2679,11 +2736,8 @@
           (send-stream! configuration session bot objective run-id true nil)
           (resume-goal-turn! configuration session bot run-id)))
       (let [state (:state (latest-turn session bot))
-            status (case state
-                     "completed" :succeeded
-                     ("blocked" "waiting-approval") :held
-                     "cancelled" :cancelled
-                     :failed)]
+            status (goal-run-status
+                    state (:job/resident-workforce? (goal-job run-id)))]
         (transition-goal-run! run-id status
                               {:agent.run/result state
                                :agent.run/finished-at (now-ms)}))
@@ -2713,11 +2767,8 @@
         (swap! goal-workers dissoc run-id)))))
 
 (defn- finish-goal-run-from-visible! [run-id state]
-  (let [status (case state
-                 "completed" :succeeded
-                 ("blocked" "waiting-approval") :held
-                 "cancelled" :cancelled
-                 :failed)]
+  (let [status (goal-run-status
+                state (:job/resident-workforce? (goal-job run-id)))]
     (transition-goal-run! run-id status
                           {:agent.run/result state
                            :agent.run/finished-at (now-ms)})))
@@ -2785,10 +2836,37 @@
                         (java.time.Instant/parse now)))
          (catch Exception _ false))))
 
-(defn- workforce-bot-active? [bot-id]
+(defn- workforce-bot-active?
+  "Does this Bot already have a run that a second one would duplicate?
+
+  Every non-terminal status counts, `:held` included: starting another tick
+  for a Bot whose last one is still waiting on a person would be two copies
+  of one job."
+  [bot-id]
   (or (contains? @active-turns bot-id)
       (some #(and (= bot-id (:job/bot %))
                   (agent-run/active? (:job/run %)))
+            (vals (:goal-jobs (snapshot))))))
+
+(defn- workforce-bot-inferring?
+  "Is this Bot holding the INFERENCE plane right now?
+
+  `max-active` exists to keep resident ticks from overlapping on a
+  capacity-one provider -- `murakumo-main` reports `parallel: 1` -- so what it
+  has to count is runs consuming that provider. A `:held` run is waiting for a
+  person, not for a model. It occupies a run slot, which is why
+  `agent-run/active?` includes it and why `workforce-bot-active?` still does;
+  it occupies no model slot, and counting it here let a single unanswered hold
+  stop every OTHER Bot as well as its own.
+
+  The distinction is the whole difference between one stuck Bot and a stopped
+  company: measured 2026-08-19, `active` was 1 of `max-active` 1 with 66 jobs
+  due, 461 goal jobs in the store, and not one model call in flight."
+  [bot-id]
+  (or (contains? @active-turns bot-id)
+      (some #(and (= bot-id (:job/bot %))
+                  (agent-run/active? (:job/run %))
+                  (not= :held (get-in % [:job/run :agent.run/status])))
             (vals (:goal-jobs (snapshot))))))
 
 (defn- workforce-goal [b job]
@@ -2813,7 +2891,7 @@
                                          (:workforce.job/owner %))
                                       (= (:organization-id session)
                                          (:workforce.job/organization %)))))
-        active (count (filter #(workforce-bot-active?
+        active (count (filter #(workforce-bot-inferring?
                                 (:workforce.job/bot %))
                               owned-jobs))
         max-active (max 0 (long (or (get-in configuration
