@@ -1,0 +1,99 @@
+;; PEER Bots' DECISION CORE — named durable teammates, not subagents.
+;;
+;; Grok Bots' public semantics (not an internal protocol): each Bot is a
+;; named persistent peer with its own conversation and memory, and they
+;; coordinate by message. The computer is shared; cognition is not.
+;; `handoff_core.kotoba` is the other door — a bounded work-transfer with a
+;; depth ceiling. This file is the peer door. A message is not a chain hop.
+;;
+;; ## The mechanism is an absence
+;;
+;; `:peer/pair` has no tool, no grant, no scope, no account, no task text,
+;; and no depth. Handing a colleague a note must not hand them your reach,
+;; and it must not be budgeted as if it were delegation: two Bots talking
+;; is the point of having two, and a depth ceiling on talk would make
+;; persistent peers into a finite subroutine. Grants stay out of the record
+;; for the same reason they stay out of a handoff — there is nothing here
+;; to copy.
+;;
+;; ## The four judgements
+;;
+;;   - `may-message?` — a note crossing between two people's Bots, or to a
+;;     Bot that is not actually another Bot. `same-owner` is first because
+;;     it is the boundary that is not recoverable.
+;;   - `computer-shared?` — the work environment. Same person, same
+;;     computer (files, cookies, logins). Different people stay apart.
+;;     Enabled-ness is not an input: a paused Bot's sign-in is still that
+;;     person's sign-in.
+;;   - `foreign-memory?` — cognition. Distinct Bots do not read each
+;;     other's memory. The computer being shared is exactly why this
+;;     refusal has to exist; without it, shared files would be the honest
+;;     path and memory the silent one.
+;;   - `may-approve?` — restated on this path so a Bot cannot approve by
+;;     DMing a held run to a second Bot and having that one say yes.
+;;
+;; Same native word-typed slice as `handoff_core.kotoba`.
+;;
+;; Parity: test/cloud/itonami/app/peer_kotoba_parity_test.clj
+
+(ns peer-core
+  (:schemas {;; What the host has established about two Bots.
+             ;;
+             ;; Deliberately absent: tools, grants, accounts, task text,
+             ;; depth. `distinct-bots` is a host fact, not derived from
+             ;; ids, because no id crosses this boundary either.
+             :peer/pair
+             [:record :peer/pair
+              [[:same-owner :bool]
+               [:source-enabled :bool]
+               [:target-enabled :bool]
+               [:distinct-bots :bool]]]
+             :peer/decision
+             [:record :peer/decision
+              [[:human :bool]
+               [:identified :bool]
+               [:authorized :bool]]]})
+  (:export [may-message? computer-shared? foreign-memory? may-approve? main]))
+
+(defn may-message? [r [:ref :peer/pair]] :bool
+  ;; Ownership first and alone, then both live, then the two are actually
+  ;; two. Nested `if` rather than one conjunction so each refusal is a
+  ;; separate line.
+  (if (record-get r :same-owner)
+    (if (record-get r :source-enabled)
+      (if (record-get r :target-enabled)
+        (record-get r :distinct-bots)
+        false)
+      false)
+    false))
+
+(defn computer-shared? [r [:ref :peer/pair]] :bool
+  ;; Same person, same computer. A disabled Bot does not get a private
+  ;; cookie jar; the computer belongs to the owner.
+  (record-get r :same-owner))
+
+(defn foreign-memory? [r [:ref :peer/pair]] :bool
+  ;; Distinct Bots. The host refuses to let one read the other's durable
+  ;; notes. Same Bot asking about itself is not foreign.
+  (record-get r :distinct-bots))
+
+(defn may-approve? [d [:ref :peer/decision] actor-kind :string] :bool
+  ;; Identical construction to `handoff_core/may-approve?`. The actor kind
+  ;; is tested FIRST and ALONE.
+  ;;
+  ;; This is NOT the judgement ADR-0060 lifted, and the flat `false` here is
+  ;; deliberate rather than left behind. `bot_core/may-approve?` answers "may
+  ;; this actor decide a card on the Bot it is acting as", and since ADR-0060 a
+  ;; delegated agent may. This one answers a different question: may a message
+  ;; that ARRIVED FROM ANOTHER BOT stand in for approval of this Bot's held run.
+  ;; No delegation makes that true. A person delegates to one Bot, not to
+  ;; whatever that Bot is willing to relay -- and a peer path that accepted it
+  ;; would turn one delegation into a way to approve every Bot the owner has.
+  (if (string=? actor-kind "agent")
+    false
+    (and (record-get d :human)
+         (record-get d :identified)
+         (record-get d :authorized))))
+
+(defn main [] :i64
+  0)

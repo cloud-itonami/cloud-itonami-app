@@ -67,6 +67,15 @@
    [[:human :bool] [:identified :bool] [:authorized :bool]
     [:delegated :bool]]])
 
+(def peer-pair-record
+  [:record :peer/pair
+   [[:same-owner :bool] [:source-enabled :bool] [:target-enabled :bool]
+    [:distinct-bots :bool]]])
+
+(def peer-decision-record
+  [:record :peer/decision
+   [[:human :bool] [:identified :bool] [:authorized :bool]]])
+
 (def accounts-record
   [:record :bot/accounts
    [[:connected :i64] [:bound :i64] [:declared :bool] [:selected :bool]]])
@@ -510,6 +519,40 @@
      :args [(oracle/record handoff-request-record
                            [true true true true (oracle/i64 2) (oracle/i64 4)])]
      :expect 3 :read oracle/i64-value}]
+
+   ;; ── peer (persistent Bot messaging; no depth) ───────────────────
+   [{:oracle :peer :export 'main :args [] :expect 0 :read oracle/i64-value}
+    {:oracle :peer :export 'may-message?
+     :args [(oracle/record peer-pair-record [true true true true])]
+     :expect true}
+    {:oracle :peer :export 'may-message?
+     :args [(oracle/record peer-pair-record [false true true true])]
+     :expect false}
+    {:oracle :peer :export 'may-message?
+     :args [(oracle/record peer-pair-record [true true true false])]
+     :expect false}
+    {:oracle :peer :export 'computer-shared?
+     :args [(oracle/record peer-pair-record [true false false true])]
+     :expect true}
+    {:oracle :peer :export 'computer-shared?
+     :args [(oracle/record peer-pair-record [false true true true])]
+     :expect false}
+    {:oracle :peer :export 'foreign-memory?
+     :args [(oracle/record peer-pair-record [true true true true])]
+     :expect true}
+    {:oracle :peer :export 'foreign-memory?
+     :args [(oracle/record peer-pair-record [true true true false])]
+     :expect false}
+    ;; The refusal ADR-0060 did NOT lift. `bot_core/may-approve?` asks whether
+    ;; this actor may decide a card on the Bot it is acting as, and a delegated
+    ;; agent may; this asks whether a message that arrived FROM ANOTHER BOT may
+    ;; stand in for one, and nothing makes that true.
+    {:oracle :peer :export 'may-approve?
+     :args [(oracle/record peer-decision-record [true true true]) "agent"]
+     :expect false}
+    {:oracle :peer :export 'may-approve?
+     :args [(oracle/record peer-decision-record [true true true]) "person"]
+     :expect true}]
 
    ;; ── session-handoff ─────────────────────────────────────────────
    ;; Unrelated to :handoff above — this one moves an authentication that
