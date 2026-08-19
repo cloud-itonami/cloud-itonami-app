@@ -213,3 +213,17 @@
                      (catch clojure.lang.ExceptionInfo e e))]
       (is (= :cli/usage (:type (ex-data error))))
       (is (str/includes? (ex-message error) "itonami commands wrokspace")))))
+
+(deftest a-group-room-is-a-human-route-in-the-registry-too
+  ;; Measured while adding them: with the session gate left at the handler
+  ;; boundary, `route-scan` read four protected routes as UNAUTHENTICATED and
+  ;; the registry — which is what an audit reads — said so. They were never
+  ;; reachable without a passkey session; the record of them was wrong, which
+  ;; on this surface is its own defect.
+  (let [gates (->> (scan/routes (source))
+                   (filter #(str/includes? (str (:template %)) "/api/bots/groups"))
+                   (map :gate)
+                   set)]
+    (is (seq gates) "no group routes were found at all")
+    (is (= #{:human} gates)
+        (str "a group route is not human-gated: " (pr-str gates)))))

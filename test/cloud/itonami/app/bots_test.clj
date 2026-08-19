@@ -1653,3 +1653,127 @@
         ;; The handle is what disambiguates, and it has to work.
         (is (str/includes? ((send-peer!) a (str "bot:" (:bot/id one)) "hi")
                            "twin"))))))
+
+;; ── group rooms (ADR-0063) ──────────────────────────────────────────────
+
+(defn- room-model
+  "A model whose answer depends on which Bot is speaking.
+
+  `answers` maps a Bot name to a sequence of replies, consumed one per turn.
+  Keyed on the system prompt, which is the only place the speaker's name
+  appears — driving it that way means a room that sent every member the same
+  prompt would fail here rather than pass by looking plausible."
+  [answers]
+  (let [state (atom answers)]
+    (fn [_ request]
+      (let [system (:content (first (:messages request)))
+            who (some (fn [n] (when (str/includes? system (str "You are " n)) n))
+                      (keys @state))
+            [head & tail] (get @state who)]
+        (swap! state assoc who (vec tail))
+        {:content (or head "PASS") :tool-calls []}))))
+
+(defn- in-room [f]
+  (with-redefs [policy/select-provider (fn [_ _] {:id :local :default-model "m"})]
+    (f)))
+
+(deftest a-room-gives-every-member-a-turn-and-attributes-each-line
+  (with-store
+    (fn []
+      (in-room
+       (fn []
+         (let [a (make-bot alice {:name "alpha"})
+               b (make-bot alice {:name "beta"})
+               g (bots/create-group! alice {:name "経営" :members [(:bot/id a) (:bot/id b)]})]
+           (with-redefs [provider/agent-turn
+                         (room-model {"alpha" ["在庫が薄いです"] "beta" ["価格を見ます"]})]
+             (let [result (bots/group-send! nil alice (:group/id g) "今日どうする")]
+               (is (= 2 (:answers result)))
+               (let [texts (mapv (juxt :from :text) (:messages result))]
+                 (is (= [nil "今日どうする"] (first texts)))
+                 (is (= #{(str "bot:" (:bot/id a)) (str "bot:" (:bot/id b))}
+                        (set (keep first (rest texts))))
+                     "a line arrived without saying who said it"))))))))))
+
+(deftest a-round-nobody-answers-ends-the-room
+  ;; The ceiling is three rounds; the early exit is what makes three a ceiling
+  ;; rather than a schedule, and it is what stops a person's one sentence
+  ;; costing members x 3 model calls every time.
+  (with-store
+    (fn []
+      (in-room
+       (fn []
+         (let [a (make-bot alice {:name "alpha"})
+               g (bots/create-group! alice {:name "静" :members [(:bot/id a)]})]
+           (with-redefs [provider/agent-turn (room-model {"alpha" ["PASS"]})]
+             (let [result (bots/group-send! nil alice (:group/id g) "ある?")]
+               (is (= 1 (:rounds result)))
+               (is (= 0 (:answers result)))
+               (is (= 1 (count (:messages result)))
+                   "a pass was recorded as if it were said")))))))))
+
+(deftest a-room-stops-at-three-rounds-however-talkative
+  (with-store
+    (fn []
+      (in-room
+       (fn []
+         (let [a (make-bot alice {:name "alpha"})
+               calls (atom 0)
+               g (bots/create-group! alice {:name "延々" :members [(:bot/id a)]})]
+           (with-redefs [provider/agent-turn
+                         (fn [_ _] (swap! calls inc) {:content "まだあります" :tool-calls []})]
+             (let [result (bots/group-send! nil alice (:group/id g) "話して")]
+               (is (= bots/max-group-rounds (:rounds result)))
+               (is (= bots/max-group-rounds @calls)
+                   "the ceiling did not bound the model calls")))))))))
+
+(deftest a-room-has-no-tools
+  ;; Admission is per Bot and decided at the call. A room where every member
+  ;; reached for a connector would be one sentence turning into N approval
+  ;; cards, so the group turn is offered nothing at all.
+  (with-store
+    (fn []
+      (in-room
+       (fn []
+         (let [a (make-bot alice {:name "alpha" :browser? true})
+               seen (atom nil)
+               g (bots/create-group! alice {:name "無" :members [(:bot/id a)]})]
+           (with-redefs [provider/agent-turn
+                         (fn [_ request] (reset! seen request)
+                           {:content "PASS" :tool-calls []})]
+             (bots/group-send! nil alice (:group/id g) "hi")
+             (is (empty? (:tools @seen))))))))))
+
+(deftest a-disabled-member-stops-answering-mid-conversation
+  (with-store
+    (fn []
+      (in-room
+       (fn []
+         (let [a (make-bot alice {:name "alpha"})
+               b (make-bot alice {:name "beta"})
+               g (bots/create-group! alice {:name "混" :members [(:bot/id a) (:bot/id b)]})]
+           (bots/archive! alice (:bot/id b))
+           (with-redefs [provider/agent-turn
+                         (room-model {"alpha" ["一人で答えます"] "beta" ["答えてはいけない"]})]
+             (let [result (bots/group-send! nil alice (:group/id g) "だれかいる")]
+               (is (= 1 (:answers result)))
+               (is (not-any? #(= (str "bot:" (:bot/id b)) (:from %))
+                             (:messages result))
+                   "a disabled Bot spoke")))))))))
+
+(deftest a-room-cannot-name-a-bot-the-session-does-not-own
+  (with-store
+    (fn []
+      (let [mine (make-bot alice {:name "mine"})
+            theirs (make-bot bob {:name "theirs"})]
+        (is (thrown? clojure.lang.ExceptionInfo
+                     (bots/create-group! alice {:name "x"
+                                                :members [(:bot/id mine)
+                                                          (:bot/id theirs)]})))
+        (is (empty? (bots/groups alice))
+            "a refused group was stored anyway")
+        (is (thrown? clojure.lang.ExceptionInfo
+                     (bots/group-messages bob
+                                          (:group/id (bots/create-group!
+                                                      alice {:name "y"
+                                                             :members [(:bot/id mine)]})))))))))

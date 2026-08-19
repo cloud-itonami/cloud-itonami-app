@@ -709,6 +709,13 @@ of the connectors you picked and nothing else.
   [ADR-0061](docs/adr/0061-bots-are-persistent-peers-memory-isolated-computer-shared.md)
   and, for the `bot:<id>@<device>` form that names another of your machines,
   [ADR-0062](docs/adr/0062-a-cross-machine-handle-names-a-device-and-authority-stays-put.md).
+- **Ask a room instead of a Bot.** A group is a set of your Bots; your message
+  gives each member a turn, up to three rounds, and a member that has nothing
+  to add passes. Every line is attributed. **A room has no tools** — a Bot in
+  one can say who should do something, not do it, because a room where eight
+  Bots each reached for a connector would be one sentence turning into eight
+  approval cards. Getting it done is asking that Bot directly, or a handoff.
+  See [ADR-0063](docs/adr/0063-a-room-is-a-conversation-with-no-tools-in-it.md).
 - **A write waits for you, unless you delegated.** Every write stops on an
   approval card in the conversation. Turning on omakase for a Bot hands it the
   decision: it then decides every write it is admitted to call, immediately,
