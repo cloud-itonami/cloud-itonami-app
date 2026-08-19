@@ -2268,34 +2268,47 @@
   ;; A resident tick sends its objective through the path a person's message
   ;; takes, so each tick appends it to the conversation and the transcript
   ;; replays all of them. Measured 2026-08-19 across the live fleet: 444
-  ;; duplicate person messages, every workforce Bot holding 12 of which 11
-  ;; were duplicates. One run's prompt was 6,748 tokens with ~3,400 of it one
-  ;; repeated string -- 45 seconds of a 120 second budget at the measured
-  ;; prompt rate, and timeout was the most common way a resident run ended.
+  ;; duplicate person messages, ~3,400 of one run's 6,748 prompt tokens being
+  ;; one repeated string.
   (let [drop-repeats (deref (ns-resolve 'cloud.itonami.app.bots
                                         'drop-superseded-person-repeats))
-        goal "Resident startup job tick for net babiniku / QA."
+        placeholder (deref (ns-resolve 'cloud.itonami.app.bots
+                                       'superseded-person-placeholder))
+        goal (apply str (repeat 40 "Resident tick objective. "))
         msg (fn [role text] {:message/role role :message/text text})]
 
-    (testing "only the most recent copy survives, and it survives in place"
-      (let [kept (drop-repeats [(msg :person goal)
-                                (msg :bot "read the repo")
-                                (msg :person goal)
-                                (msg :bot "read it again")
-                                (msg :person goal)])]
-        (is (= 3 (count kept)))
-        (is (= [:bot :bot :person] (mapv :message/role kept))
-            "the surviving copy is the LAST one, so it stays nearest the answer")))
+    (testing "the SHAPE is preserved -- this is why it replaces, not removes"
+      ;; Removing them was a live defect for ~40 minutes on 2026-08-19: the
+      ;; transcript began with `assistant` right after `system` and the first
+      ;; answer replied to nothing. The provider answered HTTP 400 twice.
+      (let [ms [(msg :person goal) (msg :bot "a1")
+                (msg :person goal) (msg :bot "a2")]
+            kept (drop-repeats ms)]
+        (is (= (mapv :message/role ms) (mapv :message/role kept))
+            "every message keeps its role and position")
+        (is (= :person (:message/role (first kept)))
+            "the transcript still opens with a person, not an assistant")))
 
-    (testing "a person's distinct words are never collapsed"
+    (testing "the superseded copy is thin and the surviving one is whole"
+      (let [kept (drop-repeats [(msg :person goal) (msg :bot "a1")
+                                (msg :person goal)])]
+        (is (= placeholder (:message/text (first kept))))
+        (is (= goal (:message/text (last kept)))
+            "the LAST copy keeps the instruction, nearest the answer")
+        (is (< (count placeholder) (/ (count goal) 10))
+            "and the placeholder is an order of magnitude smaller")))
+
+    (testing "a person's distinct words are never touched"
       (let [ms [(msg :person "do X") (msg :person "actually do Y")
-                (msg :person "do X")]]
-        ;; "do X" appears twice: the first is superseded, the second kept.
-        (is (= ["actually do Y" "do X"] (mapv :message/text (drop-repeats ms))))))
+                (msg :person "do X")]
+            kept (drop-repeats ms)]
+        (is (= "actually do Y" (:message/text (second kept))))
+        (is (= "do X" (:message/text (last kept))))
+        (is (= placeholder (:message/text (first kept))))))
 
     (testing "bot messages are untouched even when identical"
       (let [ms [(msg :bot "same") (msg :bot "same")]]
-        (is (= 2 (count (drop-repeats ms))))))
+        (is (= ms (drop-repeats ms)))))
 
     (testing "nothing to collapse changes nothing"
       (let [ms [(msg :person "a") (msg :bot "b") (msg :person "c")]]
