@@ -21,7 +21,7 @@
    {:name "bot_messages" :description "Read one owned Bot's durable conversation."
     :parameters {:type "object" :required ["bot_id"]
                  :properties {:bot_id {:type "string"}}}}
-   {:name "workforce_status" :description "Read the installed startup workforce and resident-job status, including when it was last provisioned. A projection older than the registry means running Bots carry stale objectives."
+   {:name "workforce_status" :description "Read the installed startup workforce and resident-job status, including when it was last provisioned and what its recent resident runs came to. A projection older than the registry means running Bots carry stale objectives. `outcomes` counts the last runs by what happened -- `completed` and `no-op` are both successes and are separate on purpose, and failures keep the provider's own name. Absent `outcomes` with a note means nothing has been measured, which is not the same as nothing being wrong."
     :parameters {:type "object" :properties {}}}
    {:name "workforce_provision" :description "Re-provision the workforce from the declared registry, so registry edits reach running Bots. Reconciles to what loop-yakuwari declares; it cannot create a Bot or widen a grant."
     :parameters {:type "object" :properties {}}}

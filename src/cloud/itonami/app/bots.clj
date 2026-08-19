@@ -833,6 +833,56 @@
                     :provisioned-at now}))))
     (workforce-status session)))
 
+(def resident-outcome-window
+  "How many recent resident runs the outcome tally covers.
+
+  A window rather than all of history, because the question it answers is
+  \"what is this workforce doing now\" and a store that has been running for
+  weeks would drown a change in its own past."
+  50)
+
+(defn- resident-outcome
+  "One resident run, as the thing that happened to it.
+
+  `:completed` and `:no-op` are BOTH successes and are counted apart on
+  purpose. A Bot that finds nothing to do every tick and a Bot that does work
+  are the same colour to `:agent.run/status`, and ADR-2608190200 made the
+  distinction recordable without giving anyone a way to see it. This is that
+  way.
+
+  Failures keep the provider's own name -- `:provider/timeout` is a slow
+  model, `:provider/unreachable` is a network, `:internal-error` is a fault in
+  this application -- because they have different fixes and merging them is
+  what made a whole afternoon's timeouts look like a bug here."
+  [job]
+  (let [{:agent.run/keys [status result error-type]} (:job/run job)]
+    (cond
+      (= :safe-no-op result) :no-op
+      (= :succeeded status) :completed
+      (contains? #{:queued :leased :running :checkpointed} status) :running
+      (= :held status) :held
+      error-type error-type
+      :else (or status :unknown))))
+
+(defn resident-outcomes
+  "What the last `resident-outcome-window` resident runs came to.
+
+  Returns `nil` when this owner has no resident run recorded at all, and the
+  caller says so in words. An empty tally and a healthy one must not print the
+  same: `{}` reads as \"nothing wrong\" when it means \"nothing measured\"."
+  [session]
+  (let [runs (->> (vals (:goal-jobs (snapshot)))
+                  (filter #(and (:job/resident-workforce? %)
+                                (= (:user-id session)
+                                   (get-in % [:job/session :user-id]))))
+                  (sort-by :job/created-at)
+                  (take-last resident-outcome-window))]
+    (when (seq runs)
+      {:window (count runs)
+       :since (:job/created-at (first runs))
+       :until (:job/created-at (last runs))
+       :counts (frequencies (map resident-outcome runs))})))
+
 (defn workforce-status [session]
   (let [partition (snapshot)
         workforce (get-in partition [:workforces
@@ -840,13 +890,21 @@
         jobs (->> (vals (:workforce-jobs partition))
                   (filter #(and (= (:user-id session) (:workforce.job/owner %))
                                 (= (:organization-id session)
-                                   (:workforce.job/organization %)))))]
+                                   (:workforce.job/organization %)))))
+        outcomes (resident-outcomes session)]
     {:schema "cloud.itonami.app.workforce-status.v1"
      :installed? (boolean workforce)
      :businesses (or (:businesses workforce) 0)
      :bots (or (:roles workforce) 0)
      :enabled (count (filter :workforce.job/enabled? jobs))
      :next-run-at (some->> jobs (keep :workforce.job/next-run-at) sort first)
+     ;; What the workforce has actually been doing, next to how much of it is
+     ;; switched on. Before this, `enabled 70` was the whole answer, and it
+     ;; stayed 70 through the eighteen hours in which the fleet ran nothing at
+     ;; all (ADR-2608190100).
+     :outcomes outcomes
+     :outcomes-note (when-not outcomes
+                      "no resident run has been recorded for this owner")
      :source (:source workforce)
      :provisioned-at (:provisioned-at workforce)}))
 
