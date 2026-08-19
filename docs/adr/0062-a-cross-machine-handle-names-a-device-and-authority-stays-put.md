@@ -101,6 +101,27 @@ answers a question nothing asks yet.
 things to tell a person, and a host that only had the yes/no could tell them
 only the second.
 
+## Verification
+
+- The full 32-row truth table of `:peer/reach` is compared between the guest
+  and the host, with the host driven through `->reach` rather than fed the same
+  booleans — a parity test that handed both sides the record would agree even
+  if the derivation were wrong.
+- That is not hypothetical: it is how the first branch ordering was caught.
+- `a-handle-for-another-persons-bot-is-refused-however-it-is-configured` sweeps
+  the sixteen configurations where the owner differs.
+- `the-remote-switch-cannot-turn-off-the-machine-you-are-sitting-at` sweeps
+  every local-handle row, because that failure would have looked like the Bots
+  being broken rather than like a switch.
+- `an-unregistered-device-is-not-addressable` sweeps the remote rows with no
+  registration.
+- The grammar round-trips and returns nil for nine malformed forms.
+
+Not verified, and unverifiable today: that a note actually reaches another
+machine. There is no transport. `send_message` refuses a `@device` handle with
+`no-remote-transport` rather than delivering locally, and that refusal is
+tested — which is the honest end of what exists.
+
 ## Consequences
 
 - The `@name-device` shape becomes available without a cloud VM, without a
