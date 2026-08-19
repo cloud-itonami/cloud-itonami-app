@@ -1,0 +1,93 @@
+[{:db/id -1
+  :adr/id "ADR-2608190200"
+  :adr/title "A resident tick that read, attempted nothing and stopped has completed"
+  :adr/status "accepted"
+  :adr/date "2026-08-19"
+  :adr/body
+  "## Context
+
+ADR-2608190100 stopped one blocked resident tick from holding the single
+workforce slot and freezing all 70 Bots. It said plainly that it had not
+touched the reason the tick blocked, and named that as the next change. This
+is it.
+
+The reason is a conjunction of two rules that are each correct.
+ADR-2608151900 admits `goal_complete` only once every plan step carries a host
+execution receipt, so provider prose cannot manufacture evidence of work. The
+resident objective tells a tick that finds nothing safe to do to record the
+evidence for a no-op and complete. A no-op is not a tool call, so the step that
+records one can never carry a receipt, and `goal_complete` is unreachable for
+exactly the ticks that had nothing to do.
+
+Measured 2026-08-19: 326 of 461 stored resident runs had failed, and all three
+that ran in the first ten minutes after the fleet was unwedged blocked on this.
+One of them said so itself:
+
+  Host to accept the no-op evidence from s1 (workspace_list + git_status) as
+  sufficient for goal completion, or to relax the \"fully host-verified plan\"
+  requirement for no-op ticks where the second step is evidence-recording only.
+
+## Decision
+
+**A resident run that produced read receipts and attempted no write has
+completed, and the host says so from its own records.**
+
+`complete-resident-no-op!` already existed for a neighbouring case — a resident
+tick whose provider returned nothing or died on an HTTP error, after reads. It
+is generalised rather than duplicated, and now takes a reason: `:blocked` joins
+`:provider/empty-response` and `:provider/http-error`. There is one no-op
+decision, not two.
+
+This is not the host agreeing with the provider's prose. Prose is still unable
+to manufacture a receipt, and `goal_complete` is unchanged. What the host reads
+is its own event log: reads happened, no write was attempted, therefore nothing
+needed doing and nothing was done. The provider's stated prerequisite is
+carried into the summary as a report, not as evidence.
+
+**\"No write was attempted\" is now measured.** The existing path asserted it in
+the sentence it wrote, and nothing checked — true for the one caller it had,
+since a provider that never answered cannot have called a write, and false the
+moment a second caller arrived. `attempted-nothing?` requires that no receipt
+names a write tool and that no approval card is outstanding. An answerable card
+is the host's own record that a write was asked for; completing over it would
+answer a question that was put to a person.
+
+**Resident only.** An interactive Goal that blocks is for the person watching
+it to interpret.
+
+**`:agent.run/result :safe-no-op`, never a plain success.** The reason travels
+in the `run/no-op-completed` event. A workforce that does nothing and a
+workforce that does something have to stay countable apart; recording a no-op
+as ordinary success is how an idle fleet reads as a working one.
+
+**The plan contract now says finishing is not a step.** `goal_plan` refuses by
+name a step that records a conclusion, reports a no-op, or calls
+`goal_complete` — no tool can produce a receipt for it, so a plan containing
+one can never complete. That is prevention; the paragraphs above are the
+safety net, and the net is what holds when a provider plans one anyway.
+
+## Verification
+
+Six tests. Each of the four changes was reverted on its own and only its own
+tests went red:
+
+  removing the wiring in `run-goal-job!`
+    -> run-goal-job-routes-a-resident-block-through-the-no-op-check
+  dropping the write / approval check
+    -> a-resident-tick-that-wrote-is-not-called-a-no-op,
+       a-resident-tick-waiting-on-an-approval-is-not-called-a-no-op
+  dropping the resident guard
+    -> an-interactive-block-is-never-reclassified-as-a-no-op
+  reverting the plan wording
+    -> the-plan-contract-says-finishing-is-not-a-step
+
+The wiring test exists because the other five call a private function
+directly, and a decision nothing calls is not reachable — the tests that reach
+past the seam cannot tell the difference.
+
+## Not settled
+
+Whether a Bot that reports a safe no-op on every tick is working correctly or
+has nothing to do is a question about the objectives in
+`network-awai/loop-yakuwari`, not about this code. The `:safe-no-op` result and
+its reason are what make that countable; nothing yet counts it."}]

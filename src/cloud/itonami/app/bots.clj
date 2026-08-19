@@ -123,7 +123,13 @@
 
 (def goal-tool-definitions
   [{:name "goal_plan"
-    :description "Create or revise the bounded execution plan before acting. Use 1-8 concrete steps."
+    :description (str "Create or revise the bounded execution plan before acting. "
+                      "Use 1-8 concrete steps. Every step must be work a TOOL "
+                      "performs, because the host verifies each one against an "
+                      "execution receipt. Finishing is not a step: do not plan "
+                      "a step that records a conclusion, reports a no-op or "
+                      "calls goal_complete -- no tool can produce a receipt for "
+                      "it, so a plan containing one can never complete.")
     :parameters {:type "object"
                  :properties {:steps {:type "array"
                                       :items {:type "object"
@@ -1532,7 +1538,8 @@
          (str "Standing brief from the person you work for:\n" (:bot/brief b)))
        (when goal
          (str "\n\nAn active goal is attached to this turn. Treat the objective as work, not as a request to describe your capabilities. "
-              "First call goal_plan with a small dependency-aware plan. "
+              "First call goal_plan with a small dependency-aware plan, in which "
+              "every step is work a tool performs -- finishing is not a step. "
               "Inspect the available evidence and take the next safe tool action immediately. "
               "After executing tools for a step, call goal_step_complete so the host can verify its execution receipt. "
               "Independent read-only tool calls may be requested together and the host will run at most three concurrently. "
@@ -2660,26 +2667,73 @@
         (Thread/interrupted)
         (locking active-turns (swap! active-turns dissoc bot-id))))))
 
-(defn- complete-resident-provider-no-op! [run-id error]
+(defn- attempted-nothing?
+  "Did this run read, and only read?
+
+  `complete-resident-no-op!` used to ASSERT that no write or external effect
+  was attempted, in the summary it wrote, without anything checking. That was
+  true for the path it had — a provider that never answered cannot have called
+  a write — and it stops being true the moment a second caller arrives. So the
+  claim is measured: every receipt names a read tool, and no approval card is
+  outstanding, which is the host's own record of a write having been asked
+  for."
+  [configuration bot-id receipts]
+  (and (not-any? #(write-tool? configuration (get-in % [:event/data :tool]))
+                 receipts)
+       (not (seq (filter #(bot/outstanding? (request-of bot-id %))
+                         (open-approval-cards bot-id))))))
+
+(defn- complete-resident-no-op!
+  "Finish a resident tick that read, attempted nothing, and stopped.
+
+  Two callers reach this, and they look different only in what the provider
+  did last:
+
+    * it never answered      -- an empty response or an HTTP failure
+    * it answered `blocked`  -- it found nothing safe to do and said so
+
+  The second was not handled, and the cost was measured. A resident tick that
+  finds no actionable work has to say so through the plan, and the plan
+  requires a host execution receipt for every step — but the step that records
+  a no-op executes no tool, because concluding is not a tool call. `goal_complete`
+  was therefore unreachable for exactly the ticks that had nothing to do, which
+  is most of them: 326 of 461 stored resident runs had failed this way, and one
+  of them held the single workforce slot for 18h34m (ADR-2608190100).
+
+  Completing here is not the host agreeing with the provider's prose. It is the
+  host reading its OWN receipts: reads happened, no write was attempted, so
+  nothing needed doing and nothing was done. `:agent.run/result :safe-no-op`
+  rather than a plain success, and the reason travels with it, so a reader can
+  still count the ticks that did nothing against the ticks that did something.
+  A no-op that reported itself as ordinary success would make an idle workforce
+  and a working one look the same."
+  [configuration run-id {:keys [reason status detail]}]
   (let [{:job/keys [bot resident-workforce?]} (goal-job run-id)
-        receipts (vec (action-receipts run-id))
-        {:keys [type status]} (ex-data error)]
+        receipts (vec (action-receipts run-id))]
     (when (and resident-workforce?
-               (contains? #{:provider/empty-response :provider/http-error} type)
-               (seq receipts))
-      (let [summary (str (if (= :provider/http-error type)
+               (seq receipts)
+               (attempted-nothing? configuration bot receipts))
+      (let [summary (str (case reason
+                           :provider/http-error
                            (str "Provider became unavailable"
                                 (when status (str " (HTTP " status ")")))
-                           "Provider returned no final answer")
+                           :provider/empty-response
+                           "Provider returned no final answer"
+                           :blocked
+                           "No actionable step was found"
+                           "This resident tick stopped")
                          " after "
                          (count receipts)
                          " bounded repository read receipt(s). "
-                         "No write or external effect was attempted; this resident tick completed as a safe no-op.")
+                         "No write or external effect was attempted; this resident tick completed as a safe no-op."
+                         (when (seq detail)
+                           (str "\nReported prerequisite: " detail)))
             evidence (mapv (fn [event]
                              (let [data (:event/data event)]
                                (str (:tool data) " output sha256:"
                                     (:output-sha256 data))))
-                           receipts)]
+                           receipts)
+            type reason]
         ;; The provider cannot be allowed to turn a read-only resident tick into
         ;; an endless retry loop. Receipts prove what was observed without
         ;; pretending that the model interpreted it or that business work was
@@ -2736,13 +2790,29 @@
           (send-stream! configuration session bot objective run-id true nil)
           (resume-goal-turn! configuration session bot run-id)))
       (let [state (:state (latest-turn session bot))
-            status (goal-run-status
-                    state (:job/resident-workforce? (goal-job run-id)))]
-        (transition-goal-run! run-id status
-                              {:agent.run/result state
-                               :agent.run/finished-at (now-ms)}))
+            resident? (:job/resident-workforce? (goal-job run-id))]
+        ;; A resident tick that blocked having only read is the case the plan
+        ;; contract cannot express: it must record a no-op as a step, and a
+        ;; step needs a receipt no conclusion can produce. Ask the receipts
+        ;; before recording a failure -- and only ever for a resident run,
+        ;; because a person watching an interactive Goal is the one who
+        ;; decides what its block meant.
+        (when-not (and (= "blocked" state)
+                       resident?
+                       (complete-resident-no-op!
+                        configuration run-id
+                        {:reason :blocked
+                         :detail (first (:evidence (latest-turn session bot)))}))
+          (transition-goal-run! run-id (goal-run-status state resident?)
+                                {:agent.run/result state
+                                 :agent.run/finished-at (now-ms)})))
       (catch Exception error
-        (when-not (complete-resident-provider-no-op! run-id error)
+        (when-not (and (contains? #{:provider/empty-response :provider/http-error}
+                                  (:type (ex-data error)))
+                       (complete-resident-no-op!
+                        configuration run-id
+                        {:reason (:type (ex-data error))
+                         :status (:status (ex-data error))}))
           (let [error-type (or (:type (ex-data error)) :internal-error)
                 error-status (:status (ex-data error))
                 status (get-in (goal-job run-id) [:job/run :agent.run/status])]

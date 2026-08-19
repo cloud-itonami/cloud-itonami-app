@@ -80,13 +80,16 @@ approval card, as `:cancelled` with `:agent.run/error-type :hold-unanswerable`.
 A hold with a card outstanding is left alone: it is answerable, and closing it
 would discard a decision somebody was asked for.
 
-## Not done here
+## Not done here — done in ADR-2608190200
 
-The plan contract still permits a step that no tool can satisfy. Forbidding a
-conclusion step — completion is not a step — belongs with the Goal plan
-contract in ADR-2608151900 and is a separate change. Until it lands, such a
-tick now fails and retries instead of wedging the fleet, which is a smaller
-fault and a visible one.
+The plan contract still permitted a step that no tool can satisfy, so every
+resident tick that found nothing to do still failed; it simply failed alone
+instead of wedging the fleet. **ADR-2608190200 (same day) closed that**: a
+resident run that produced read receipts and attempted no write completes as a
+safe no-op, and `goal_plan` now refuses a conclusion step by name.
+
+The first ten minutes after this change landed measured the size of what it
+left: three resident ticks ran, and all three blocked on that same step.
 
 `max-active` was NOT raised. The provider serves one slot; raising the app's
 cap would queue at the provider instead, and the stall was never throughput.
