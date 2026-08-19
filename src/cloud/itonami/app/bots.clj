@@ -2070,10 +2070,12 @@
             (update-goal-job! (:id run) update-in [:job/children child-id]
                               agent-run/transition :failed (now-ms)
                               {:agent.run/error-type (or (:type (ex-data error))
-                                                         :internal-error)})
+                                                         :internal-error)
+                               :agent.run/error-message (error-message error)})
             (goal-event! :subagent/failed {:child-run-id child-id
                                            :error-type (or (:type (ex-data error))
-                                                           :internal-error)})
+                                                           :internal-error)
+                                           :message (error-message error)})
             (throw error)))))))
 
 (defn- execute-parallel-read-calls! [configuration b run calls on-event]
