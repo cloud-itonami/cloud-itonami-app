@@ -10,7 +10,15 @@
 
 (def schema "network.awai.workforce-bots.v1")
 (def command-timeout-seconds 30)
-(def expected-businesses
+(def founding-businesses
+  "The eight businesses this app was built around. Required to be PRESENT, not
+  required to be all there is.
+
+  Pinning the exact set froze the org chart in a repo that does not own it:
+  loop-yakuwari is the source of truth, and adding a business there made this
+  gate reject the WHOLE catalog — including the eight that had not changed.
+  That is the opposite of what the gate is for. Kept as a floor because these
+  eight silently vanishing is a real failure a count alone would not catch."
   #{:cloud-itonami :nexus-x402 :club-shinshi :app-aozora
     :network-isekai :net-babiniku :cloud-murakumo :net-kotobase})
 
@@ -76,11 +84,17 @@
       (let [roles (:roles value)
             keys* (map :key roles)
             businesses (into #{} (map #(get-in % [:business :id])) roles)]
+        ;; Completeness is checked as INTERNAL AGREEMENT rather than against a
+        ;; fixed number: the projection's own declared business count must
+        ;; equal the number of businesses its roles actually cover. That is
+        ;; what catches the failure this gate exists for — a truncated or
+        ;; half-generated catalog — and it keeps catching it as the registry
+        ;; grows. A literal 8 only ever caught "the registry changed".
         (when-not (and (= schema (:schema value))
-                       (= 8 (:businesses value))
+                       (= (count businesses) (:businesses value))
                        (vector? roles)
                        (= (count keys*) (count (set keys*)))
-                       (= expected-businesses businesses)
+                       (every? businesses founding-businesses)
                        (every? #(and (string? (:key %))
                                      (map? (:business %))
                                      (map? (:role %))
@@ -92,5 +106,7 @@
                          :schema (:schema value)
                          :businesses (:businesses value)
                          :business-ids businesses
+                         :missing-founding (into (sorted-set)
+                                                 (remove businesses founding-businesses))
                          :roles (count roles)}))))
       (assoc value :source {:path (.getPath root)}))))
