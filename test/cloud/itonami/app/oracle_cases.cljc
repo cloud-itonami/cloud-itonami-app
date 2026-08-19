@@ -76,6 +76,11 @@
   [:record :peer/decision
    [[:human :bool] [:identified :bool] [:authorized :bool]]])
 
+(def peer-reach-record
+  [:record :peer/reach
+   [[:same-owner :bool] [:target-enabled :bool] [:device-known :bool]
+    [:device-is-local :bool] [:remote-enabled :bool]]])
+
 (def accounts-record
   [:record :bot/accounts
    [[:connected :i64] [:bound :i64] [:declared :bool] [:selected :bool]]])
@@ -552,7 +557,32 @@
      :expect false}
     {:oracle :peer :export 'may-approve?
      :args [(oracle/record peer-decision-record [true true true]) "person"]
-     :expect true}]
+     :expect true}
+    ;; ADR-0062. The four that matter: a local handle ignores the remote
+    ;; switch, a registered remote device needs it, an unregistered one is not
+    ;; addressable at all, and another person's Bot is refused whatever else
+    ;; is true.
+    {:oracle :peer :export 'may-address?
+     :args [(oracle/record peer-reach-record [true true false true false])]
+     :expect true}
+    {:oracle :peer :export 'may-address?
+     :args [(oracle/record peer-reach-record [true true true false true])]
+     :expect true}
+    {:oracle :peer :export 'may-address?
+     :args [(oracle/record peer-reach-record [true true true false false])]
+     :expect false}
+    {:oracle :peer :export 'may-address?
+     :args [(oracle/record peer-reach-record [true true false false true])]
+     :expect false}
+    {:oracle :peer :export 'may-address?
+     :args [(oracle/record peer-reach-record [false true true false true])]
+     :expect false}
+    {:oracle :peer :export 'reaches-another-machine?
+     :args [(oracle/record peer-reach-record [true true true false true])]
+     :expect true}
+    {:oracle :peer :export 'reaches-another-machine?
+     :args [(oracle/record peer-reach-record [true true false true true])]
+     :expect false}]
 
    ;; ── session-handoff ─────────────────────────────────────────────
    ;; Unrelated to :handoff above — this one moves an authentication that
