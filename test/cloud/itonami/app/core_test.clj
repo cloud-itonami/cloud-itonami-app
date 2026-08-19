@@ -1338,3 +1338,30 @@
     (is (str/includes? html "この Bot が使えるツールすべてを、待たずに実行します"))
     (is (str/includes? html "渡していないツールは、自分で承認しても使えません")
         "the ceiling is the part a person most needs told")))
+
+(deftest a-room-is-reachable-and-says-what-it-cannot-do
+  (let [html (web/page-html {})]
+    (is (re-find #"data-view=\"rooms\"" html) "no way to reach the rooms view")
+    (is (re-find #"data-view-panel=\"rooms\"" html))
+    (doseq [id ["room-create-form" "room-name" "room-members" "room-list"
+                "room-panel" "room-thread" "room-send-form" "room-text"
+                "room-send" "room-status" "rooms-count"]]
+      (is (re-find (re-pattern (str "id=\"" id "\"")) html)
+          (str id " is missing from the rooms panel")))
+    ;; Both limits are a person's, so both are on the screen rather than only
+    ;; in the ADR: eight members is a ceiling, and three rounds is what one
+    ;; sentence costs at worst.
+    (is (str/includes? html "メンバーは8体まで"))
+    (is (str/includes? html "最大3周"))
+    (is (str/includes? html "ルームにツールはありません")
+        "the screen does not say the one thing a room cannot do")))
+
+(deftest the-rooms-view-is-loaded-when-it-is-opened
+  ;; A view wired into the nav and the panel table but never loaded renders an
+  ;; empty pane and looks like a feature that does not work. Nothing else here
+  ;; catches it: removing the dispatch changes the document, so the published
+  ;; lock fails — but the lock fails for any byte change at all, which makes it
+  ;; a notification that something moved, not a check that this still happens.
+  (is (str/includes? web/interaction-js "currentView === 'rooms'")
+      "the rooms view is reachable and never fetches anything")
+  (is (str/includes? web/interaction-js "loadRooms()")))

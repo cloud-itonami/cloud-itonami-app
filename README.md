@@ -716,6 +716,9 @@ of the connectors you picked and nothing else.
   Bots each reached for a connector would be one sentence turning into eight
   approval cards. Getting it done is asking that Bot directly, or a handoff.
   See [ADR-0063](docs/adr/0063-a-room-is-a-conversation-with-no-tools-in-it.md).
+- **Rooms have a screen.** `Rooms` in the nav: name a room, tick the Bots that
+  belong in it, and ask. Each member takes a turn, up to three rounds, and the
+  ones with nothing to add stay quiet. Every line says who said it.
 - **A write waits for you, unless you delegated.** Every write stops on an
   approval card in the conversation. Turning on omakase for a Bot hands it the
   decision: it then decides every write it is admitted to call, immediately,
