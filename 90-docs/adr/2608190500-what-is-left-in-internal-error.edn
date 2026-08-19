@@ -1,0 +1,92 @@
+[{:db/id -1
+  :adr/id "ADR-2608190500"
+  :adr/title "What was left in :internal-error once the timeouts had their own name"
+  :adr/status "accepted"
+  :adr/date "2026-08-19"
+  :adr/body
+  "## What the split showed
+
+ADR-2608190300 gave a provider timeout its own name. Counting what stayed
+behind, measured 2026-08-19:
+
+| | |
+|---|---|
+| resident runs still `:internal-error` | 197 |
+| of those, message `request timed out` | **192** |
+| message `Connection reset` | 1 |
+| message nil | 4 |
+| recorded since that fix deployed | **0** |
+
+So `:internal-error` was 97.5% one thing, and after the fix it is empty. The
+five that were not timeouts are the subject here, and each turned out to be a
+different way of losing the same information.
+
+## Decision
+
+**A transport failure that is not a timeout is the provider's, not ours.** A
+`Connection reset` two tool calls into a resident tick was recorded as
+`:internal-error` — the drawer a reader opens looking for OUR bugs. It is now
+`:provider/network-error`, one name for the whole family (reset, broken pipe,
+EOF part-way), because what a reader does about them is the same and the
+message saying which it was travels alongside.
+
+Order matters again: `HttpTimeoutException` **is** an `IOException`, so the
+transport branch has to come after the timeout branches or it swallows them.
+That is the third time in this series that a subclass check in the wrong order
+would have merged two answers.
+
+**An unclassified failure records what threw.** The four runs with a nil
+message have nothing that identifies them — the class was never written down,
+and there is no way to find out now. `:cause-class` is on `run/failed` from
+here. The message is the first thing a reader wants and the first thing an
+exception is allowed to omit; the class is neither.
+
+`:provider/network-error` is not admitted to `complete-resident-no-op!`, for
+the reason a timeout is not: the tick never found out.
+
+## The test that proved nothing
+
+The first version of the `:cause-class` test built the event map itself and
+asserted on what it had just written. Reverting the production change left it
+green. It is now driven through `run-goal-job!` with the provider stubbed to
+throw, and reverting the change reddens it.
+
+That is the same defect this whole series is about, committed inside a test
+written to catch it, and it was found only because every change here is
+reverted once to see which test notices. A test that is never broken on
+purpose is a test whose colour means nothing.
+
+## Where the timeouts actually are
+
+With every failure named, the post-fix mix over 28 resident runs was
+`:provider/timeout` 14, `:safe-no-op` 9, `failed` 4, `completed` 1. So the
+classification did its job -- `:internal-error` is gone and the real problem is
+in view -- and the real problem is that half the ticks time out.
+
+Two hypotheses died against the data. It is not transcript growth late in a
+run: **7 of the 14 ended with zero tool receipts and 6 never reached
+`plan/recorded`**, so they timed out on the FIRST request, where the prompt is
+at its smallest. And it is not the prompt, which ADR-2608190400 already
+measured at ~1.5k static tokens carrying policy rather than padding.
+
+What is left is the queue. Measured 2026-08-19 with three trivial requests to
+`murakumo-main`: wall 12.4s / 5.9s / 1.7s against server-side 1.19s / 0.80s /
+0.68s -- **queue wait of 11.2s, 5.1s and 1.1s on requests that took under a
+second to serve**. One production slot (`parallel: 1`) is shared by 90 resident
+Bots, the Hermes bot profiles on the same host, and interactive use.
+
+That is a capacity decision across consumers and it is not this application's
+to make. It is recorded here because the two changes that looked obvious --
+raise the timeout, shrink the prompt -- are both wrong given it. Raising the
+timeout makes a queued request hold the only slot longer, which is worse for
+everyone waiting behind it.
+
+## Verification
+
+  dropping the transport branch -> a-dropped-connection-is-not-a-fault-in-this-application
+  dropping `:cause-class`       -> a-failure-records-what-threw-even-when-it-says-nothing
+
+`the-classifier-keeps-three-failures-apart` used a broken pipe as its example
+of \"anything else\" and had to change: an `IOException` stopped being anything
+else when the transport branch landed. It now uses a failure that is not
+transport at all."}]
