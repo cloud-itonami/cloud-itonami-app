@@ -52,8 +52,26 @@
              [:record :peer/decision
               [[:human :bool]
                [:identified :bool]
-               [:authorized :bool]]]})
-  (:export [may-message? computer-shared? foreign-memory? may-approve? main]))
+               [:authorized :bool]]]
+             ;; Where a Bot is, when the owner has more than one machine
+             ;; (ADR-0062). Same five absences as `:peer/pair` -- no tool, no
+             ;; grant, no account, no task text -- plus one more that is the
+             ;; whole point: there is no field for the REMOTE machine's policy,
+             ;; because nothing here decides what may happen there.
+             ;;
+             ;; `device-known` is registration on the messenger plane, which
+             ;; means the device already published Signal material under this
+             ;; principal. A device nobody registered is not addressable: there
+             ;; is no discovery step, and a handle is not a guess.
+             :peer/reach
+             [:record :peer/reach
+              [[:same-owner :bool]
+               [:target-enabled :bool]
+               [:device-known :bool]
+               [:device-is-local :bool]
+               [:remote-enabled :bool]]]})
+  (:export [may-message? computer-shared? foreign-memory? may-approve?
+            may-address? reaches-another-machine? main]))
 
 (defn may-message? [r [:ref :peer/pair]] :bool
   ;; Ownership first and alone, then both live, then the two are actually
@@ -94,6 +112,39 @@
     (and (record-get d :human)
          (record-get d :identified)
          (record-get d :authorized))))
+
+(defn reaches-another-machine? [r [:ref :peer/reach]] :bool
+  ;; A handle that names a device other than this one. Separate from
+  ;; `may-address?` because the host needs the fact even when the answer to
+  ;; addressing is no -- "that Bot is on your other machine" and "there is no
+  ;; such Bot" are different things to tell a person.
+  (not (record-get r :device-is-local)))
+
+(defn may-address? [r [:ref :peer/reach]] :bool
+  ;; Ownership first and alone, as everywhere on this path. Then the target is
+  ;; live. Then, and only then, where it is.
+  ;;
+  ;; `device-is-local` is asked BEFORE `device-known`, and the first order did
+  ;; it the other way. The parity corpus caught it: the host never produces
+  ;; `device-known false` with `device-is-local true`, because the machine you
+  ;; are on is known by being the machine you are on -- so the core was
+  ;; refusing a combination the host could not hand it, which is a trap for the
+  ;; next host rather than a rule. Registration is a question about somewhere
+  ;; else.
+  ;;
+  ;; The deployment switch is read LAST and only on the remote branch, so
+  ;; turning remote addressing on cannot rescue a handle that failed anything
+  ;; before it, and turning it off cannot stop a person addressing the Bots on
+  ;; the machine they are sitting at.
+  (if (record-get r :same-owner)
+    (if (record-get r :target-enabled)
+      (if (record-get r :device-is-local)
+        true
+        (if (record-get r :device-known)
+          (record-get r :remote-enabled)
+          false))
+      false)
+    false))
 
 (defn main [] :i64
   0)

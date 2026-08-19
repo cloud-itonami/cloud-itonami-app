@@ -27,7 +27,8 @@
   (slurp "src/cloud/itonami/app/peer_core.kotoba"))
 
 (def ^:private export-prefix
-  "may-message? computer-shared? foreign-memory? may-approve? main")
+  (str "may-message? computer-shared? foreign-memory? may-approve? "
+       "may-address? reaches-another-machine? main"))
 
 (def ^:private pair-ty
   (str "[:record :peer/pair [[:same-owner :bool] [:source-enabled :bool] "
@@ -36,6 +37,10 @@
 (def ^:private decision-ty
   (str "[:record :peer/decision [[:human :bool] [:identified :bool] "
        "[:authorized :bool]]]"))
+
+(def ^:private reach-ty
+  (str "[:record :peer/reach [[:same-owner :bool] [:target-enabled :bool] "
+       "[:device-known :bool] [:device-is-local :bool] [:remote-enabled :bool]]]"))
 
 (defn- run-probes [probes result-type]
   (let [defs (for [[name body] probes]
@@ -134,3 +139,92 @@
   (is (true? (apply peer/may-message?
                     (host-args {:same-owner true :source-enabled true
                                 :target-enabled true :distinct-bots true})))))
+
+;; ── reaching another machine (ADR-0062) ─────────────────────────────────
+
+(def ^:private reach-rows
+  (for [same-owner [true false]
+        target-enabled [true false]
+        device-known [true false]
+        device-is-local [true false]
+        remote-enabled [true false]]
+    {:same-owner same-owner :target-enabled target-enabled
+     :device-known device-known :device-is-local device-is-local
+     :remote-enabled remote-enabled}))
+
+(defn- reach-literal [{:keys [same-owner target-enabled device-known
+                              device-is-local remote-enabled]}]
+  (str "(record-new " reach-ty " " same-owner " " target-enabled " "
+       device-known " " device-is-local " " remote-enabled ")"))
+
+(defn- reach-host-args
+  "The host takes a Bot and a context, and derives the five facts. Driving it
+  through that derivation rather than handing it the record is the point: a
+  parity test that fed both sides the same booleans would agree even if
+  `->reach` computed the wrong ones."
+  [{:keys [same-owner target-enabled device-known device-is-local
+           remote-enabled]}]
+  [{:bot/id "bot-b" :bot/enabled? target-enabled}
+   {:source-owner "person-1"
+    :target-owner (if same-owner "person-1" "person-2")
+    :local-device "air"
+    :device (if device-is-local "air" "studio")
+    :known-devices (if device-known ["studio"] [])
+    :remote-enabled? remote-enabled}])
+
+(deftest kotoba-and-host-agree-on-where-a-bot-can-be-reached
+  (doseq [[fn-name export host-fn]
+          [["adr" "may-address?" peer/may-address?]
+           ["rem" "reaches-another-machine?" peer/reaches-another-machine?]]]
+    (testing export
+      (let [probes (map-indexed
+                    (fn [i row] [(str fn-name "_" i)
+                                 (str "(" export " " (reach-literal row) ")")])
+                    reach-rows)
+            guest (run-probes probes ":bool")]
+        (doseq [[i row] (map-indexed vector reach-rows)]
+          (is (= (get guest (str fn-name "_" i))
+                 (apply host-fn (reach-host-args row)))
+              (str export " disagreed on " (pr-str row))))))))
+
+(deftest a-handle-for-another-persons-bot-is-refused-however-it-is-configured
+  ;; Ownership is tested first and alone here as everywhere else on this path.
+  ;; Sixteen configurations, none of which reaches a yes.
+  (doseq [row reach-rows :when (not (:same-owner row))]
+    (is (false? (apply peer/may-address? (reach-host-args row)))
+        (str "addressed another person's Bot with " (pr-str row)))))
+
+(deftest the-remote-switch-cannot-turn-off-the-machine-you-are-sitting-at
+  ;; The deployment switch is read LAST, and only on the remote branch. If it
+  ;; were read earlier -- or unconditionally -- turning remote addressing off
+  ;; would have silently stopped local Bots from being addressable, which is
+  ;; the kind of outage that looks like the Bots being broken.
+  (doseq [row reach-rows
+          :when (and (:same-owner row) (:target-enabled row)
+                     (:device-is-local row))]
+    (is (true? (apply peer/may-address? (reach-host-args row)))
+        (str "a local handle was refused with " (pr-str row)))))
+
+(deftest an-unregistered-device-is-not-addressable
+  ;; A handle is not a guess. `device-known` is registration on the messenger
+  ;; plane -- the device published Signal material under this principal -- and
+  ;; without it there is nothing to send to and no way to be sure whose machine
+  ;; answered.
+  (doseq [row reach-rows
+          :when (and (not (:device-known row)) (not (:device-is-local row)))]
+    (is (false? (apply peer/may-address? (reach-host-args row)))
+        (str "addressed an unregistered device with " (pr-str row)))))
+
+(deftest an-address-round-trips-and-a-malformed-one-is-nil
+  (is (= "bot:b1" (peer/address "b1")))
+  (is (= "bot:b1" (peer/address "b1" "   ")) "a blank device is the local form")
+  (is (= "bot:b1@studio" (peer/address "b1" "studio")))
+  (doseq [[bot-id device] [["b1" nil] ["b1" "studio"] ["b-1" "mac-mini.local"]]]
+    (is (= {:bot-id bot-id :device device}
+           (peer/parse-address (peer/address bot-id device)))))
+  ;; nil rather than a partial parse: an address that does not match is not a
+  ;; Bot's, and guessing which half was meant is how a message reaches the
+  ;; wrong principal.
+  (doseq [bad ["b1" "bot:" "bot:b1@" "bot:@studio" "bot:b1@a@b" "user:x"
+               "bot:-b1" "" "bot:b1 @studio"]]
+    (is (nil? (peer/parse-address bad)) (str "parsed " (pr-str bad)))))

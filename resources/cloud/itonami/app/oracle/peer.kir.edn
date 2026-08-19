@@ -116,6 +116,89 @@
         __kotoba_and_2))
       __kotoba_and_3))),
    :param-types [[:ref :peer/decision] :string]}
+  {:name reaches-another-machine?,
+   :params [r],
+   :result :bool,
+   :effects #{},
+   :body
+   (if
+    (record-get
+     [:record
+      :peer/reach
+      [[:same-owner :bool]
+       [:target-enabled :bool]
+       [:device-known :bool]
+       [:device-is-local :bool]
+       [:remote-enabled :bool]]]
+     r
+     :device-is-local)
+    false
+    true),
+   :param-types [[:ref :peer/reach]]}
+  {:name may-address?,
+   :params [r],
+   :result :bool,
+   :effects #{},
+   :body
+   (if
+    (record-get
+     [:record
+      :peer/reach
+      [[:same-owner :bool]
+       [:target-enabled :bool]
+       [:device-known :bool]
+       [:device-is-local :bool]
+       [:remote-enabled :bool]]]
+     r
+     :same-owner)
+    (if
+     (record-get
+      [:record
+       :peer/reach
+       [[:same-owner :bool]
+        [:target-enabled :bool]
+        [:device-known :bool]
+        [:device-is-local :bool]
+        [:remote-enabled :bool]]]
+      r
+      :target-enabled)
+     (if
+      (record-get
+       [:record
+        :peer/reach
+        [[:same-owner :bool]
+         [:target-enabled :bool]
+         [:device-known :bool]
+         [:device-is-local :bool]
+         [:remote-enabled :bool]]]
+       r
+       :device-is-local)
+      true
+      (if
+       (record-get
+        [:record
+         :peer/reach
+         [[:same-owner :bool]
+          [:target-enabled :bool]
+          [:device-known :bool]
+          [:device-is-local :bool]
+          [:remote-enabled :bool]]]
+        r
+        :device-known)
+       (record-get
+        [:record
+         :peer/reach
+         [[:same-owner :bool]
+          [:target-enabled :bool]
+          [:device-known :bool]
+          [:device-is-local :bool]
+          [:remote-enabled :bool]]]
+        r
+        :remote-enabled)
+       false))
+     false)
+    false),
+   :param-types [[:ref :peer/reach]]}
   {:name main,
    :params [],
    :result :i64,
@@ -125,11 +208,19 @@
  :oracle-value 0,
  :schema-identities
  #:peer{:decision
-        "ab82bcbe87278860fb8c3904bdde44b8df3f8e561c2b0356c994f8bc4f65b43d",
+        "374341183238f79828c3ae15eab95c5e59cbe408a96926b234c1b4eecbe39516",
         :pair
-        "60f35f379831e76363a686f77e8ec2e9e7a844cc63a3a0752859f6705a4dceac"},
+        "156c5c8bbac84c88d0c52dd90f894ec6d292550de5f2b2ccb073003cfaf97f6c",
+        :reach
+        "12f896f6f289c351578bb0b9258cf1ffc87fc34723ebfebd9b028438ba37edfe"},
  :exports
- [may-message? computer-shared? foreign-memory? may-approve? main],
+ [may-message?
+  computer-shared?
+  foreign-memory?
+  may-approve?
+  may-address?
+  reaches-another-machine?
+  main],
  :schemas
  #:peer{:pair
         [:record
@@ -141,7 +232,15 @@
         :decision
         [:record
          :peer/decision
-         [[:human :bool] [:identified :bool] [:authorized :bool]]]},
+         [[:human :bool] [:identified :bool] [:authorized :bool]]],
+        :reach
+        [:record
+         :peer/reach
+         [[:same-owner :bool]
+          [:target-enabled :bool]
+          [:device-known :bool]
+          [:device-is-local :bool]
+          [:remote-enabled :bool]]]},
  :effects #{},
  :blocks [{:id 0, :instructions [[:const.i64 0] [:return]]}],
  :entry main}
