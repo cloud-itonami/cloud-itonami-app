@@ -286,6 +286,16 @@
   {:git/url "https://github.com/kotoba-lang/kekkai.git"
    :git/sha "7c344b1ab9c5a5879b8b3970f2dd939927ab7539"}
 
+  ;; `kekkai.node.netmap` is the NODE's half of the same deny-by-default
+  ;; reading — pure `.cljc`, `clojure.set` and `clojure.string` only. Reused
+  ;; rather than re-derived: an admission rule written twice is two rules, and
+  ;; the second one is the one nobody checks against a real netmap.
+  ;; `kekkai.envelope` (in `kekkai` above) verifies what this consumes; the two
+  ;; verifiers already have a byte-level parity fixture between them.
+  io.github.kotoba-lang/kekkai-node
+  {:git/url "https://github.com/kotoba-lang/kekkai-node.git"
+   :git/sha "467b02cc3b6d029f4f43a5817dc015f6109438fb"}
+
   ;; The practice record this app can host. `cloud-itonami/lawfirm` owns every
   ;; rule about what a practice may do; `cloud.itonami.app.lawfirm` owns only
   ;; the effects — the archive inbox as arrivals, the Drive as folders, and
