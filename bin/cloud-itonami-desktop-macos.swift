@@ -331,15 +331,28 @@ func node(_ nodes: [Node], ref: String) -> Node {
 // A whole-screen capture is focus-free already, but it hands the model every
 // other window on the display — bank tabs, someone's messages, another agent's
 // terminal. The window id lets the caller capture exactly the target.
+//
+// This enumerates ALL windows and reports `onscreen` per window rather than
+// asking CoreGraphics for on-screen ones only. The filter version could not
+// tell "this application has no window" from "this application's window is not
+// being composited right now", and answered the first for both. Measured
+// 2026-08-19: with the display asleep, EVERY application on this machine —
+// Terminal in front included — reported zero on-screen windows, so the earlier
+// filter made `screenshot` fail with "no window" for a machine full of them. A
+// window on another Space reads the same way, and so does a minimized one.
 func windowIds(_ target: Target) -> [[String: Any]] {
-  let options: CGWindowListOption = [.optionOnScreenOnly, .excludeDesktopElements]
-  let info = (CGWindowListCopyWindowInfo(options, kCGNullWindowID) as? [[String: Any]]) ?? []
+  let info = (CGWindowListCopyWindowInfo([.optionAll, .excludeDesktopElements],
+                                         kCGNullWindowID) as? [[String: Any]]) ?? []
   return info.compactMap { entry in
     guard let owner = entry[kCGWindowOwnerPID as String] as? pid_t, owner == target.pid,
           let number = entry[kCGWindowNumber as String] as? Int else { return nil }
     let layer = entry[kCGWindowLayer as String] as? Int ?? 0
     guard layer == 0 else { return nil }
-    var body: [String: Any] = ["window-id": number, "layer": layer]
+    var body: [String: Any] = [
+      "window-id": number,
+      "layer": layer,
+      "onscreen": (entry[kCGWindowIsOnscreen as String] as? Bool) ?? false,
+    ]
     if let name = entry[kCGWindowName as String] as? String, !name.isEmpty {
       body["title"] = name
     }
@@ -406,6 +419,193 @@ func menuEntries(_ target: Target, limit: Int) -> [MenuEntry] {
   return entries
 }
 
+// ── the overlay marker ──────────────────────────────────────────────────
+
+// What the person sees when the agent acts.
+//
+// The reason this is worth having is the same reason the rest of this helper
+// exists: acting without taking the cursor means acting INVISIBLY. The old
+// tools were at least honest by accident — the pointer jumped, so you knew.
+// Now nothing moves, and a person watching their own screen has no way to tell
+// which of their windows an agent just pressed a button in. Hermes solves this
+// with a tinted overlay pointer; this is that, on public API.
+//
+// It is a marker, not a cursor: it appears over the element being acted on and
+// stays for the requested milliseconds. There is no animation path from a
+// previous position, because there is no previous position — nothing is
+// travelling anywhere.
+//
+// Three properties are load-bearing and each has a line below enforcing it:
+// the panel is `.nonactivatingPanel` so ordering it in cannot make this process
+// key; it is ordered with `orderFrontRegardless` and never made key, so no
+// window loses focus; and it `ignoresMouseEvents`, so a click that lands while
+// it is up goes to the window underneath rather than to a decoration.
+final class OverlayView: NSView {
+  var label: String = ""
+  override func draw(_ dirtyRect: NSRect) {
+    guard let context = NSGraphicsContext.current?.cgContext else { return }
+    let inset = bounds.insetBy(dx: 2, dy: 2)
+    let path = NSBezierPath(roundedRect: inset, xRadius: 6, yRadius: 6)
+    context.setFillColor(NSColor.systemBlue.withAlphaComponent(0.18).cgColor)
+    path.fill()
+    context.setStrokeColor(NSColor.systemBlue.withAlphaComponent(0.95).cgColor)
+    path.lineWidth = 3
+    path.stroke()
+
+    // A pointer glyph at the centre, so a screen recording shows WHERE as well
+    // as WHICH. Drawn rather than composed from a system cursor image: the
+    // system cursor is the person's, and borrowing its appearance would make a
+    // still frame ambiguous about whose pointer moved.
+    let centre = NSPoint(x: bounds.midX, y: bounds.midY)
+    let arrow = NSBezierPath()
+    arrow.move(to: centre)
+    arrow.line(to: NSPoint(x: centre.x, y: centre.y - 22))
+    arrow.line(to: NSPoint(x: centre.x + 6, y: centre.y - 16))
+    arrow.line(to: NSPoint(x: centre.x + 13, y: centre.y - 25))
+    arrow.line(to: NSPoint(x: centre.x + 17, y: centre.y - 22))
+    arrow.line(to: NSPoint(x: centre.x + 10, y: centre.y - 13))
+    arrow.line(to: NSPoint(x: centre.x + 18, y: centre.y - 11))
+    arrow.close()
+    NSColor.white.setFill()
+    arrow.fill()
+    NSColor.systemBlue.setStroke()
+    arrow.lineWidth = 1.5
+    arrow.stroke()
+
+    guard !label.isEmpty else { return }
+    let attributes: [NSAttributedString.Key: Any] = [
+      .font: NSFont.systemFont(ofSize: 11, weight: .semibold),
+      .foregroundColor: NSColor.white,
+    ]
+    let text = label as NSString
+    let size = text.size(withAttributes: attributes)
+    let box = NSRect(x: inset.minX, y: inset.maxY - size.height - 6,
+                     width: min(size.width + 10, inset.width), height: size.height + 4)
+    NSColor.systemBlue.withAlphaComponent(0.92).setFill()
+    NSBezierPath(roundedRect: box, xRadius: 3, yRadius: 3).fill()
+    text.draw(at: NSPoint(x: box.minX + 5, y: box.minY + 2), withAttributes: attributes)
+  }
+}
+
+// Accessibility reports a frame whose origin is the top-left of the primary
+// display with y growing DOWN; AppKit windows are placed from the bottom-left
+// with y growing UP. Getting this backwards puts the marker on the wrong half
+// of the screen, and on a single-display machine it is wrong by exactly the
+// amount that looks plausible.
+func screenFrame(fromAccessibility frame: CGRect) -> NSRect {
+  guard let primary = NSScreen.screens.first else { return frame }
+  return NSRect(x: frame.origin.x,
+                y: primary.frame.maxY - frame.origin.y - frame.size.height,
+                width: frame.size.width, height: frame.size.height)
+}
+
+var overlayPanel: NSPanel?
+
+func showOverlay(_ frame: CGRect, label: String) {
+  guard frame.size.width > 0, frame.size.height > 0 else { return }
+  let app = NSApplication.shared
+  // Accessory, so this helper never gets a Dock tile or a menu bar of its own.
+  app.setActivationPolicy(.accessory)
+  let panel = NSPanel(contentRect: screenFrame(fromAccessibility: frame),
+                      styleMask: [.borderless, .nonactivatingPanel],
+                      backing: .buffered, defer: false)
+  panel.isOpaque = false
+  panel.backgroundColor = .clear
+  panel.hasShadow = false
+  panel.ignoresMouseEvents = true
+  panel.level = .statusBar
+  panel.collectionBehavior = [.canJoinAllSpaces, .ignoresCycle, .fullScreenAuxiliary,
+                              .stationary]
+  let view = OverlayView(frame: NSRect(origin: .zero, size: frame.size))
+  view.label = label
+  panel.contentView = view
+  // orderFrontRegardless, never makeKeyAndOrderFront: the second would take the
+  // key window from whoever has it, which is the entire thing this helper does
+  // not do.
+  panel.orderFrontRegardless()
+  overlayPanel = panel
+}
+
+func holdOverlay(_ milliseconds: Int) {
+  guard overlayPanel != nil else { return }
+  let deadline = Date().addingTimeInterval(Double(max(0, milliseconds)) / 1000.0)
+  // A run loop rather than sleep: the panel has to draw, and a sleeping process
+  // never services the display.
+  RunLoop.current.run(until: deadline)
+  overlayPanel?.orderOut(nil)
+  overlayPanel = nil
+}
+
+func overlayMilliseconds() -> Int? {
+  guard let raw = option("overlay") else { return nil }
+  return Int(raw) ?? 900
+}
+
+// ── what to capture ─────────────────────────────────────────────────────
+
+// Finding the target window turned out to need BOTH APIs, because neither one
+// answers on its own.
+//
+// CGWindowList knows window ids, which is what `screencapture -l` takes, but
+// measured 2026-08-19 the only layer-0 entries this application owns are eight
+// menu-bar strips (1470x33 and 1280x30) — its actual 430x860 window is not
+// among them, while accessibility reports it without difficulty.
+//
+// Accessibility knows the window and its frame but has no window id; the call
+// that would give one, _AXUIElementGetWindow, is undocumented SPI, and this
+// helper exists precisely because the documented path was worth the work.
+//
+// So: take the frame from accessibility, and look for a CGWindowList entry that
+// matches it. A match gives `screencapture -l`, which captures the window even
+// when something overlaps it. No match still gives `screencapture -R` on the
+// frame, which captures the rectangle — including anything on top of it. The
+// caller is told which one it got, because those are different pictures.
+func captureTarget(_ target: Target) -> [String: Any] {
+  let app = AXUIElementCreateApplication(target.pid)
+  var window: AXUIElement?
+  for attribute in [kAXMainWindowAttribute as String, kAXFocusedWindowAttribute as String] {
+    if let value = copyAttribute(app, attribute) { window = (value as! AXUIElement); break }
+  }
+  if window == nil {
+    window = (copyAttribute(app, kAXWindowsAttribute as String) as? [AXUIElement])?.first
+  }
+  guard let window = window,
+        let origin = pointAttribute(window, kAXPositionAttribute as String),
+        let size = sizeAttribute(window, kAXSizeAttribute as String) else {
+    fail("no-window", "\(target.name) publishes no window to capture.")
+  }
+  let frame = CGRect(origin: origin, size: size)
+  var body: [String: Any] = [
+    "ok": true,
+    "application": target.name,
+    "frame": [Int(frame.origin.x), Int(frame.origin.y),
+              Int(frame.size.width), Int(frame.size.height)],
+    "match": "region",
+    "onscreen": false,
+  ]
+  if let title = stringAttribute(window, kAXTitleAttribute as String), !title.isEmpty {
+    body["title"] = title
+  }
+  for entry in windowIds(target) {
+    guard let bounds = entry["bounds"] as? [String: Any],
+          let x = (bounds["X"] as? NSNumber)?.doubleValue,
+          let y = (bounds["Y"] as? NSNumber)?.doubleValue,
+          let w = (bounds["Width"] as? NSNumber)?.doubleValue,
+          let h = (bounds["Height"] as? NSNumber)?.doubleValue else { continue }
+    // Two points of slack: window shadows and the AX frame disagree by a pixel
+    // on some hosts, and an exact comparison would silently fall back to the
+    // weaker capture for a window that matched perfectly well.
+    if abs(x - frame.origin.x) <= 2, abs(y - frame.origin.y) <= 2,
+       abs(w - frame.size.width) <= 2, abs(h - frame.size.height) <= 2 {
+      body["window-id"] = entry["window-id"]
+      body["match"] = "window-id"
+      body["onscreen"] = entry["onscreen"] ?? false
+      break
+    }
+  }
+  return body
+}
+
 // ── commands ────────────────────────────────────────────────────────────
 
 switch command {
@@ -456,6 +656,19 @@ case "press":
     fail("action-unavailable",
          "\(chosen.ref) (\(chosen.role)) does not offer \(wanted).",
          ["actions": chosen.actions])
+  }
+  // Shown BEFORE the action, so a screen recording has a frame with the marker
+  // over the element that is about to change rather than one that already has.
+  if let ms = overlayMilliseconds(), let frame = chosen.frame {
+    showOverlay(frame, label: "\(wanted) \(chosen.ref)")
+    let status = AXUIElementPerformAction(chosen.element, wanted as CFString)
+    holdOverlay(ms)
+    if status != .success {
+      fail("action-failed", "\(wanted) on \(chosen.ref) failed.",
+           ["status": status.rawValue])
+    }
+    emit(["ok": true, "application": target.name, "ref": chosen.ref,
+          "action": wanted, "role": chosen.role, "overlay": ms])
   }
   let status = AXUIElementPerformAction(chosen.element, wanted as CFString)
   if status != .success {
@@ -531,6 +744,30 @@ case "windows":
   emit(["ok": true, "application": target.name, "pid": target.pid,
         "windows": windowIds(target)])
 
+case "capture-target":
+  requireTrust()
+  emit(captureTarget(resolveTarget(required("app"))))
+
+case "overlay":
+  // Marking without acting. Useful on its own: "this is what I am about to
+  // touch" is a thing a person can be shown before an approval, and it is also
+  // how the marker itself is tested without changing anybody's application.
+  requireTrust()
+  let target = resolveTarget(required("app"))
+  let includeMenu = option("include-menu") == "true"
+  let nodes = walk(target, limit: maxNodesDefault, includeMenu: includeMenu)
+  let chosen = node(nodes, ref: required("ref"))
+  guard let frame = chosen.frame else {
+    fail("no-frame", "\(chosen.ref) (\(chosen.role)) reports no frame to mark.")
+  }
+  let ms = Int(option("ms") ?? "") ?? 900
+  showOverlay(frame, label: option("label") ?? chosen.ref)
+  holdOverlay(ms)
+  emit(["ok": true, "application": target.name, "ref": chosen.ref,
+        "frame": [Int(frame.origin.x), Int(frame.origin.y),
+                  Int(frame.size.width), Int(frame.size.height)],
+        "milliseconds": ms])
+
 case "menu":
   requireTrust()
   let target = resolveTarget(required("app"))
@@ -558,6 +795,24 @@ case "menu-press":
   guard entry.enabled else {
     fail("menu-item-disabled", "\(wanted) is disabled right now.")
   }
+  // A closed menu's items report a zero frame, so there is nothing to outline
+  // where the command lives. The window it acts on is the honest thing to mark.
+  var overlayShown = false
+  if let ms = overlayMilliseconds() {
+    let body = captureTarget(target)
+    if let f = body["frame"] as? [Int], f.count == 4 {
+      showOverlay(CGRect(x: f[0], y: f[1], width: f[2], height: f[3]),
+                  label: entry.path)
+      overlayShown = true
+      let status = AXUIElementPerformAction(entry.element, kAXPressAction as CFString)
+      holdOverlay(ms)
+      if status != .success {
+        fail("action-failed", "Pressing \(wanted) failed.", ["status": status.rawValue])
+      }
+      emit(["ok": true, "application": target.name, "path": entry.path, "overlay": ms])
+    }
+  }
+  _ = overlayShown
   let status = AXUIElementPerformAction(entry.element, kAXPressAction as CFString)
   if status != .success {
     fail("action-failed", "Pressing \(wanted) failed.", ["status": status.rawValue])
