@@ -76,6 +76,34 @@ were never reachable without a passkey; the record of them was wrong, which on
 that surface is its own defect. `a-group-room-is-a-human-route-in-the-registry-too`
 fails if it happens again.
 
+## Verification
+
+Six host tests and two surface tests, driven by a model stub keyed on the
+system prompt — so a room that sent every member the same prompt fails here
+rather than passing by looking plausible.
+
+- Every member takes a turn and every line carries its speaker's address.
+- A round nobody answers ends the room, and a pass is not recorded as speech.
+- The ceiling bounds the model calls. `a-room-stops-at-three-rounds-however-talkative`
+  was shown to go RED when the bound is changed to five. **Removing the bound
+  entirely does not fail it, it hangs** — the same fact stated worse, which is
+  why the demonstration used a different bound rather than no bound.
+- The request carries no tools, asserted on the request the provider receives
+  rather than on the code that builds it.
+- A member disabled mid-conversation stops answering at the next question.
+- A room cannot name a Bot the session does not own, and a refused room is not
+  stored.
+- `a-room-is-reachable-and-says-what-it-cannot-do` fails if the pane loses a
+  control or stops saying that a room has no tools.
+- `the-rooms-view-is-loaded-when-it-is-opened` fails if the dispatch is
+  removed. It exists because nothing else caught that: removing it fails only
+  the published-lock tests, and those fail for any byte change at all, which
+  makes them a notification that something moved rather than a check that this
+  still happens.
+
+Not verified: no browser test drives the pane. The assertions are over the
+rendered document and the interaction source, not over a running page.
+
 ## Consequences
 
 - The coordination shape exists without the shared computer, the per-Bot screen

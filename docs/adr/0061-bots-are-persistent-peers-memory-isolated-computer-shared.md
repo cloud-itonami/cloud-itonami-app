@@ -1,7 +1,8 @@
 # ADR-0061: Bots are persistent peers — memory isolated, computer shared
 
-**Status:** decision core and peer notes landed; the shared computer, the
-group room and the ADR-0036 reversal not taken — 2026-08-19. Written 2026-08-14 as ADR-0042; renumbered because
+**Status:** decision core, peer notes and the group room landed, each with a
+screen; the shared computer and the ADR-0036 reversal **not taken** —
+2026-08-19. Written 2026-08-14 as ADR-0042; renumbered because
 0042 was taken on `main` by hosted-signin before this landed.
 
 ## What is on `main`, and what is not
@@ -26,9 +27,17 @@ already owns, and a Bot that wants something DONE should hand off — a handoff
 is bounded at two rounds with a depth ceiling, while a note that woke a peer
 that answered with a note would be an agent loop with neither.
 
-**Not landed:** the rest of the host integration. No shared computer directory,
-no per-Bot screen, no group room, no mailbox trust on the messenger plane. The
-remainder was written against a `bots.clj` that `main` has since rewritten — durable turns, directions, handoff runs, goals and workforce all
+**The group room landed separately** as ADR-0063, and deliberately without the
+rest of this: a room needs no shared computer, no per-Bot screen and no cookie
+sharing, so it did not wait on the decision below.
+
+**Not landed:** the shared computer. No shared browser profile, no per-Bot
+screen, no mailbox trust on the messenger plane. `computer-shared?` answers the
+question and nothing asks it; a Bot still gets its own profile, as ADR-0036
+decided. **This is the one thing here that is a person's call rather than an
+engineering one**, because it means one Bot's sign-in becomes another's.
+
+The remainder was written against a `bots.clj` that `main` has since rewritten — durable turns, directions, handoff runs, goals and workforce all
 landed in the same functions — and reconciling ~600 lines of one design against
 ~700 of another, in the file that decides tool admission, is a re-integration by
 whoever holds the intent rather than a merge. Its branch is
@@ -120,6 +129,32 @@ The record `:peer/pair` has no tool, grant, task text, or depth. Judgements:
 
 Internal protocol is not claimed. The user-visible semantics are DM, group
 chat, shared computer, isolated memory.
+
+## Verification
+
+Suite at landing: 1674 tests, 10047 assertions, 0 failures; no new lint
+findings.
+
+- The four judgements run through `kotoba-oracle` over their whole truth
+  tables, compared guest-against-host, and the host is driven through its own
+  derivation rather than handed the same booleans on both sides.
+- `a-note-tool-appears-only-for-a-bot-opted-into-peers` was shown to go RED
+  when the `:bot/peers?` gate is removed, and so was the repository's own
+  goal-parallelism test — which is the check that the gate really controls what
+  the model sees rather than only what a settings screen draws.
+- Every refusal has its own test and its own message: self, unknown name,
+  ambiguous name, a target that never opted in, an empty note, another
+  person's Bot (`not-found`, never `forbidden`, because `forbidden` confirms
+  it exists), and a `@device` handle (`no-remote-transport`, never a silent
+  local delivery).
+- `every-permission-a-bot-has-can-be-switched-on-from-the-screen` fails if the
+  checkbox loses its id. It exists because this capability landed WITHOUT a
+  control and was, for one commit, ungrantable by the only party allowed to
+  grant it.
+
+Not verified: no end-to-end run of two live Bots exchanging a note through a
+real provider. What is proven is admission, delivery, attribution and every
+refusal — not what a model does with a note once it reads one.
 
 ## Consequences
 
