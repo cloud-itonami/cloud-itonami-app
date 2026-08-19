@@ -100,6 +100,38 @@ write the decision, not whether it is written down.
   delegation is something an owner places on one Bot, not something that
   travels down a handoff chain.
 
+## Verification
+
+Suite: 1641 tests, 9730 assertions, 0 failures.
+
+The recompiled KIR artifact was exercised directly across the truth table, and
+it discriminates in both directions:
+
+| actor | delegated | human facts | result |
+|---|---|---|---|
+| agent | no | all three true | **false** |
+| agent | yes | all three false | **true** |
+| user | no | authorized | true |
+| user | yes | not authorized | **false** |
+
+The last row is the one worth keeping: a delegation must not leak into the
+human branch, or the two meanings would have merged into one boolean.
+
+- `oracle_cases.cljc` carries both agent rows, so the SHIPPED artifact is what
+  answers them, not a host reimplementation.
+- `an-agent-decides-only-on-a-delegation-nobody-can-self-assert` sweeps all
+  eight combinations of the human facts on both sides of `delegated`.
+- `a-delegation-covers-every-write-not-a-list-of-three` proves
+  `calendar_create_event` and `browser_click` now reach the same decision path
+  as a Gmail send. It is a rewrite of a test that asserted the opposite; the
+  old name is quoted in it so the reversal is legible.
+- `an-agent-without-a-delegation-is-still-refused` covers the half that did not
+  move, including the three effects the deleted allowlist did cover.
+
+Not verified: no end-to-end run of a delegated Bot carrying out a browser or
+connector write against a live service. What is proven is who may decide, not
+what happens afterwards.
+
 ## Consequences
 
 - A delegated Bot completes end-to-end work — including the browser and the

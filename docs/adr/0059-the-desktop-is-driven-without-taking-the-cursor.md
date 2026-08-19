@@ -130,6 +130,59 @@ because they need three different answers from a person.
   the agent touched; this ships the tree digest in the approval card instead,
   and the overlay is open work.
 
+## Verification
+
+Suite: 1641 tests, 9730 assertions, 0 failures (`clojure -M:test`); `clojure
+-M:lint` reports nothing new for the files this touched.
+
+Measured on macOS 26.3.1, 2026-08-18/19, with the frontmost application and the
+cursor position recorded before and after every call. Both were identical
+across all of it.
+
+- `AXUIElementPerformAction` on a background TextEdit's close button took its
+  window count 1 -> 0. `menu-press ファイル>新規` took it 0 -> 1.
+- `AXValue` write landed and read back byte-identical.
+- `CGEvent.postToPid` did nothing, twice: `cmd+s` left the file at 0 bytes with
+  Save still disabled, and eighteen characters left the text area unchanged.
+  This is why there is no `key` and no `type`.
+- The tree digest was identical across five consecutive reads, and a stale
+  digest was refused with `tree-changed`. A guard that always fires would be
+  the same defect as one that never does, so both directions were checked.
+- Bundle ids resolve case-insensitively (`com.apple.Finder`,
+  `com.apple.finder`, `COM.APPLE.FINDER`, `Finder`, `finder`) while
+  `com.example.nope` is still refused.
+- The deployed installation was exercised from `~/.cloud-itonami/app` after its
+  own build, not only from a source tree.
+- `the-helper-cannot-take-the-cursor-focus-or-the-front-window` was shown to go
+  RED when a real `CGWarpMouseCursorPosition` call is added to the helper, and
+  green when it is removed. `the-absence-check-can-fail` guards the substring
+  search itself against passing on an unreadable or over-stripped file.
+
+Two things are NOT verified, and saying which is the point:
+
+- **No test forces a real activation** to prove the live focus assertion would
+  catch a regression. Doing so means taking a person's focus on a machine
+  somebody is using. The assertion is known to be evaluated against two real
+  readings; it is not known to be sufficient.
+- **The live focus test skips when System Events cannot name a frontmost
+  application** (-1719, which it answers whenever nothing is frontmost). It
+  skipped on 2026-08-18 and ran on 2026-08-19. Before this landed it did not
+  skip in that state -- it compared `""` to `""` and reported a pass, which is
+  the defect this ADR's own thesis is about, found in its own test.
+
+## Open
+
+- **No overlay cursor.** Hermes draws a tinted pointer so a person can watch
+  where a click landed. This ships the tree digest on the approval card
+  instead; the overlay is not built.
+- **This application's own window is not drivable by this capability.**
+  `kotoba-shell-host-macos-window` publishes zero AX windows, measured
+  2026-08-18. That is a gap in `kotoba-lang/shell`, not here.
+- **No focus-free path for an element that does not accept a value** -- a
+  contenteditable, a canvas, a terminal. `set-value` fails closed. The isolated
+  browser of ADR-0036 is the answer for web surfaces; there is none for a
+  native text view that only takes keystrokes.
+
 ## Consequences
 
 - The capability can run while somebody is using the machine, which is the
