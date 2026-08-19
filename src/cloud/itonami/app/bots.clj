@@ -1905,7 +1905,7 @@
             attrs))))
 
 (defn- visible-failure-message [error]
-  (let [{:keys [type status]} (ex-data error)]
+  (let [{:keys [type status timeout-seconds]} (ex-data error)]
     (case type
       :bot/cancelled nil
       :provider/empty-response
@@ -1913,6 +1913,14 @@
       :provider/http-error
       (str "モデルへの接続に失敗しました"
            (when status (str "（HTTP " status "）"))
+           "。依頼は記録されています。もう一度送ると再試行できます。")
+      ;; Named separately from the line below it, which is the one every
+      ;; unclassified failure gets. A person told "実行に失敗しました" about a
+      ;; slow model learns nothing they can act on; told that it ran out of
+      ;; time, they can send a smaller request.
+      :provider/timeout
+      (str "モデルが時間内に応答しませんでした"
+           (when timeout-seconds (str "（" timeout-seconds "秒）"))
            "。依頼は記録されています。もう一度送ると再試行できます。")
       "実行に失敗しました。依頼は記録されています。もう一度送ると再試行できます。")))
 
@@ -2773,6 +2781,19 @@
         (Thread/interrupted)
         (locking active-turns (swap! active-turns dissoc bot-id))))))
 
+(def ^:private completable-reasons
+  "The ways a resident tick may stop and still be complete.
+
+  In the function rather than at its call sites, because a call site that
+  forgets is a call site that completes a run it should have failed -- and the
+  first version of this put the check in one caller and left the function
+  willing to complete anything. `:provider/timeout` is the case that showed
+  it: the other three mean the provider ANSWERED and had nothing to add, so
+  the host's own receipts settle what happened, while a timeout means the tick
+  never found out. Recording that as a completed no-op would claim the Bot
+  looked and saw nothing, which it did not."
+  #{:provider/empty-response :provider/http-error :blocked})
+
 (defn- attempted-nothing?
   "Did this run read, and only read?
 
@@ -2817,6 +2838,7 @@
   (let [{:job/keys [bot resident-workforce?]} (goal-job run-id)
         receipts (vec (action-receipts run-id))]
     (when (and resident-workforce?
+               (contains? completable-reasons reason)
                (seq receipts)
                (attempted-nothing? configuration bot receipts))
       (let [summary (str (case reason
@@ -2913,6 +2935,11 @@
                                 {:agent.run/result state
                                  :agent.run/finished-at (now-ms)})))
       (catch Exception error
+        ;; `:provider/timeout` is deliberately NOT here. The other two mean the
+        ;; provider answered and had nothing to add, so the host's own receipts
+        ;; settle what happened. A timeout means the tick never found out --
+        ;; recording it as a completed no-op would claim the Bot looked and saw
+        ;; nothing, which it did not. It fails and runs again at its cadence.
         (when-not (and (contains? #{:provider/empty-response :provider/http-error}
                                   (:type (ex-data error)))
                        (complete-resident-no-op!

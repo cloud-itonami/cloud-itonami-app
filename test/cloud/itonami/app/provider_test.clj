@@ -212,3 +212,68 @@
       (is (= {:city "Osaka"} (parse "{\"city\":\"Osaka\"}")))
       (is (= {:city "Osaka"} (parse {:city "Osaka"})))
       (is (= {} (parse ""))))))
+;; ── a slow model and a broken host are different problems ───────────────
+;;
+;; `java.net.http` throws `HttpTimeoutException` with no ex-data, so every
+;; timeout used to be filed as `:internal-error` -- the same value a genuine
+;; bug in this application produces. Measured 2026-08-19: 7 of 24 resident
+;; runs that day were timeouts wearing that name, and separating them meant
+;; reading the event log of each run by hand.
+
+(deftest a-request-that-runs-out-of-time-is-a-provider-timeout
+  (let [server (HttpServer/create (InetSocketAddress. "127.0.0.1" 0) 0)]
+    (.createContext
+     server "/chat"
+     (reify HttpHandler
+       (handle [_ exchange]
+         ;; Answer far too late. The point is the class of the failure, not
+         ;; the duration, so the limit is moved rather than the wait.
+         (Thread/sleep 4000)
+         (let [bytes (.getBytes "{\"ok\":true}" "UTF-8")]
+           (.sendResponseHeaders exchange 200 (alength bytes))
+           (with-open [out (.getResponseBody exchange)]
+             (.write out bytes))))))
+    (.start server)
+    (try
+      (let [url (str "http://127.0.0.1:" (.getPort (.getAddress server)) "/chat")]
+        (with-redefs [provider/request-timeout-seconds 1]
+          (try
+            ((private-fn 'request-json) :post url {:x 1})
+            (is false "a request past the limit must fail")
+            (catch clojure.lang.ExceptionInfo error
+              (testing "it is not an unclassified internal error"
+                (is (= :provider/timeout (:type (ex-data error)))))
+              (testing "and it carries the limit it exceeded"
+                (is (= 1 (:timeout-seconds (ex-data error)))))
+              (testing "the original is kept rather than replaced"
+                (is (instance? java.net.http.HttpTimeoutException
+                               (.getCause error))))))))
+      (finally (.stop server 0)))))
+
+(deftest the-classifier-keeps-three-failures-apart
+  ;; Tested on the classifier rather than through a socket, because the
+  ;; condition cannot be produced reliably from here: a `com.sun.net.httpserver`
+  ;; that has been stopped does not REFUSE the connection on this platform, it
+  ;; hangs, and the JDK reports a plain `HttpTimeoutException`. Measured
+  ;; 2026-08-19 while trying to write the socket version of this test.
+  ;;
+  ;; `HttpConnectTimeoutException` extends `HttpTimeoutException`, so an
+  ;; `instance?` check in the wrong order reports an unreachable provider as a
+  ;; slow model -- the same conflation this whole change exists to undo, one
+  ;; layer down. Order is the assertion.
+  (let [classify (private-fn 'timeout->typed)
+        thrown (fn [error]
+                 (try (classify error "http://example.invalid/chat")
+                      (catch Exception caught caught)))]
+    (testing "a model too slow to answer is a capacity problem"
+      (let [e (thrown (java.net.http.HttpTimeoutException. "request timed out"))]
+        (is (= :provider/timeout (:type (ex-data e))))
+        (is (= provider/request-timeout-seconds
+               (:timeout-seconds (ex-data e))))))
+    (testing "a provider that cannot be reached is a different one"
+      (let [e (thrown (java.net.http.HttpConnectTimeoutException. "connect timed out"))]
+        (is (= :provider/unreachable (:type (ex-data e))))))
+    (testing "anything else passes through untouched"
+      (let [original (java.io.IOException. "broken pipe")
+            e (thrown original)]
+        (is (identical? original e))))))
