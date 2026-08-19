@@ -1747,27 +1747,42 @@
               "Never ask the person to run a command or inspect a file that an admitted tool can reach.\n\n"
               "Active objective:\n" goal))))
 
+(def ^:private superseded-person-placeholder
+  "（同じ指示が後でもう一度送られています。最新のものだけを読んでください。）")
+
 (defn- drop-superseded-person-repeats
   "`messages` with every person message that a LATER byte-identical one
-  supersedes removed.
+  supersedes REPLACED by a one-line placeholder -- not removed.
 
   A resident tick sends its objective through the same path a person's message
-  takes, so each tick appends that objective to the Bot's conversation -- and
-  the transcript replays the conversation. By the twelfth tick the model is
-  sent twelve copies of one 926-character string.
+  takes, so each tick appends that 926-character objective to the Bot's
+  conversation, and the transcript replays the conversation. By the twelfth
+  tick the model receives twelve copies of one string.
 
   MEASURED 2026-08-19 across the live fleet: 444 duplicate person messages,
-  every workforce Bot holding 12 person messages of which 11 were duplicates,
-  around 10,000 characters each. One run's prompt was 6,748 tokens, of which
-  ~3,400 was that one string repeated. At the measured 75.8 prompt tokens/sec
-  that is 45 seconds of a 120 second request budget spent re-reading something
-  already said, and a timeout was the most common way a resident run ended.
+  every workforce Bot holding 12 of which 11 were duplicates, ~10,000
+  characters each. One run's prompt was 6,748 tokens with ~3,400 of it that
+  one string.
 
-  An exact duplicate carries no information the later copy does not, which is
-  why this is safe for a human's words too: if someone repeats themselves
-  verbatim, the model still receives what they said, in its most recent
-  position. Only the earlier copies go, and only from what the MODEL is sent
-  -- the stored conversation and everything a person reads are untouched."
+  ## Why replaced and not removed
+
+  The first version REMOVED them, and that was a live defect for about forty
+  minutes. A conversation runs person, bot, person, bot; dropping the first
+  person message leaves the transcript starting with `assistant` directly
+  after `system`, and leaves that first answer replying to nothing. The
+  provider answered HTTP 400 twice, at 10:16 and 10:18 on 2026-08-19, within
+  half an hour of the deploy.
+
+  Alternation is part of the contract, so the message has to stay. What it
+  does not have to be is 926 characters: the placeholder keeps the shape and
+  the position, tells the model why the turn is thin, and the later copy --
+  which is kept in full, nearest the answer -- is where the instruction
+  actually is.
+
+  Safe for a person's words for the same reason as before: an exact duplicate
+  carries no information the later copy does not. Only what the MODEL is sent
+  changes; the stored conversation and every surface a person reads are
+  untouched."
   [messages]
   (let [ms (vec messages)
         last-index (reduce (fn [acc [i m]]
@@ -1776,10 +1791,11 @@
                                acc))
                            {}
                            (map-indexed vector ms))]
-    (vec (keep-indexed
+    (vec (map-indexed
           (fn [i m]
-            (when (or (not= :person (:message/role m))
-                      (= i (get last-index (str (:message/text m)))))
+            (if (and (= :person (:message/role m))
+                     (not= i (get last-index (str (:message/text m)))))
+              (assoc m :message/text superseded-person-placeholder)
               m))
           ms))))
 
