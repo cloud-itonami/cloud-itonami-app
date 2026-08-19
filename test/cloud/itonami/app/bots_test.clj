@@ -2137,11 +2137,15 @@
                                                  :agent.run/error-type :internal-error})))))
         (let [{:keys [counts window since until]} (:outcomes (bots/workforce-status alice))]
           (testing "a tick that worked and a tick that found nothing are not one number"
-            (is (= 1 (:completed counts)))
-            (is (= 1 (:no-op counts))))
+            (is (= 1 (get counts "completed")))
+            (is (= 1 (get counts "no-op"))))
           (testing "a slow model and a fault here keep their own names"
-            (is (= 1 (:provider/timeout counts)))
-            (is (= 1 (:internal-error counts))))
+            ;; The FULL name, because `json/write-str` renders a namespaced
+            ;; keyword as its name alone and every JSON reader of this surface
+            ;; saw `timeout` where the answer was `provider/timeout`.
+            (is (= 1 (get counts "provider/timeout")))
+            (is (= 1 (get counts "internal-error")))
+            (is (nil? (get counts "timeout"))))
           (testing "and the window it covers is stated"
             (is (= 4 window))
             (is (= "2026-08-19T01:00:00Z" since))

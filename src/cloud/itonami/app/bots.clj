@@ -882,7 +882,15 @@
       {:window (count runs)
        :since (:job/created-at (first runs))
        :until (:job/created-at (last runs))
-       :counts (frequencies (map resident-outcome runs))})))
+       ;; Counted under the FULL name. `json/write-str` renders a namespaced
+       ;; keyword as its name alone, so `:provider/timeout` reached every JSON
+       ;; reader as `timeout` -- indistinguishable from any other namespace's
+       ;; timeout, and from a bare `:timeout`. Writing an ADR that says
+       ;; failures keep the provider's own name, over a surface that drops it,
+       ;; is the gap this whole series has been closing.
+       :counts (->> runs
+                    (map (comp #(subs (str %) 1) resident-outcome))
+                    frequencies)})))
 
 (defn workforce-status [session]
   (let [partition (snapshot)
