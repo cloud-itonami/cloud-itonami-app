@@ -385,14 +385,42 @@
     "cancelled" :cancelled
     :failed))
 
-(defn- clean-plan [steps]
-  (let [steps (vec (take 8 steps))
+(defn- clean-plan
+  "Normalise a proposed plan, carrying forward what was already verified.
+
+  Revising a plan used to reset every step to `:pending`, and that is what made
+  the plan deadlock unrecoverable rather than merely awkward. A provider whose
+  plan contains a step no tool can serve -- a step that records a conclusion,
+  which by construction has no execution receipt -- has exactly one legal way
+  out: revise the plan without it. Charging the full cost of everything already
+  verified for that revision means it never does, and the run blocks instead
+  (ADR-2608190200 measured 326 of 461 resident runs ending that way).
+
+  Verification is CARRIED, never GRANTED. A step keeps `:verified` only when
+  its id, title and dependencies all match a step that earned it, so nothing
+  here can turn work that was not done into work the host believes was: the
+  receipt requirement in `goal_step_complete` is untouched, and a renamed or
+  re-pointed step comes back pending."
+  [steps previous]
+  (let [earned (into {} (keep (fn [step]
+                                (when (= :verified (:step/state step))
+                                  [[(:step/id step) (:step/title step)
+                                    (:step/depends-on step)]
+                                   step]))
+                              previous))
+        steps (vec (take 8 steps))
         clean (mapv (fn [index step]
-                      {:step/id (or (some-> (:id step) str str/trim not-empty)
-                                    (str "step-" (inc index)))
-                       :step/title (some-> (:title step) str str/trim)
-                       :step/depends-on (set (map str (or (:depends_on step) [])))
-                       :step/state :pending})
+                      (let [id (or (some-> (:id step) str str/trim not-empty)
+                                   (str "step-" (inc index)))
+                            title (some-> (:title step) str str/trim)
+                            deps (set (map str (or (:depends_on step) [])))
+                            base {:step/id id :step/title title
+                                  :step/depends-on deps :step/state :pending}]
+                        (if-let [was (get earned [id title deps])]
+                          (assoc base :step/state :verified
+                                 :step/summary (:step/summary was)
+                                 :step/evidence (:step/evidence was))
+                          base)))
                     (range) steps)
         ids (set (map :step/id clean))]
     (when-not (and (seq clean)
@@ -413,6 +441,42 @@
 (defn- plan-complete? [run-id]
   (let [plan (:job/plan (goal-job run-id))]
     (and (seq plan) (every? #(= :verified (:step/state %)) plan))))
+
+(defn- goal-refusal
+  "Why `goal_complete` was refused, in terms the provider can act on.
+
+  The refusal used to restate the rule -- a fully host-verified plan, one
+  executed tool, a summary, evidence -- without saying which of them was
+  missing or for which step. A provider that has planned a step no tool can
+  serve is then told only that it may not finish, and the run blocks
+  (ADR-2608190200). Naming the unverified step, and whether any tool ran for
+  it, is what turns a dead end into a revision.
+
+  This admits nothing. The receipt requirement is unchanged; only the
+  explanation is."
+  [run-id summary evidence tool-count]
+  (let [plan (:job/plan (goal-job run-id))
+        receipts (group-by #(get-in % [:event/data :step-id]) (action-receipts run-id))
+        pending (remove #(= :verified (:step/state %)) plan)
+        starved (filter #(empty? (get receipts (:step/id %))) pending)]
+    (str "goal_complete refused. "
+         (when (zero? (long (or tool-count 0)))
+           "No tool has executed in this run. ")
+         (when (str/blank? summary) "Summary is empty. ")
+         (when (empty? evidence) "Evidence is empty. ")
+         (when (seq pending)
+           (str "Unverified plan step(s): "
+                (str/join ", " (map :step/id pending)) ". "))
+         (when (seq starved)
+           (str "No tool has executed for "
+                (str/join ", " (map :step/id starved))
+                ", so " (if (= 1 (count starved)) "it" "they")
+                " cannot be verified. A step that records a conclusion, "
+                "reports a no-op or finishes the goal is not work a tool "
+                "performs and can never carry a receipt -- call goal_plan "
+                "again without "
+                (if (= 1 (count starved)) "it" "them")
+                ". Steps already verified stay verified across a revision.")))))
 
 (defn- public-goal-job [job]
   (when job
@@ -2327,7 +2391,8 @@
               (if (:goal? run)
                 (let [content
                       (try
-                        (let [plan (clean-plan (:steps input))]
+                        (let [plan (clean-plan (:steps input)
+                                               (:job/plan (goal-job (:id run))))]
                           (update-goal-job! (:id run) assoc :job/plan plan)
                           (append-goal-event! (:id run) :plan/recorded
                                               {:steps (mapv #(select-keys % [:step/id :step/title
@@ -2391,7 +2456,8 @@
                   (recur (update run :messages conj
                                  {:role "tool" :tool-call-id (:id call)
                                   :name name
-                                  :content "goal_complete requires a fully host-verified plan, at least one executed tool, a non-empty summary, and concrete evidence."}))))
+                                  :content (goal-refusal (:id run) summary evidence
+                                                         (:tool-count run 0))}))))
 
               (= "goal_blocked" name)
               (let [reason (some-> (:reason input) str str/trim)

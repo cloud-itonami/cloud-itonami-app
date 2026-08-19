@@ -1,0 +1,85 @@
+[{:db/id -1
+  :adr/id "ADR-2608190600"
+  :adr/title "The plan deadlock has a way out, and the provider is told where it is"
+  :adr/status "accepted"
+  :adr/date "2026-08-19"
+  :adr/body
+  "## What was still wrong
+
+ADR-2608190200 closed the *consequence* of the plan deadlock: a resident tick
+that blocked having only read now completes as a safe no-op instead of holding
+the fleet's single slot. It said in its own text that the plan contract still
+permitted a step no tool can satisfy, and that forbidding one was a separate
+change. This is that change, and the earlier prevention turns out to have been
+the weaker half of it.
+
+The deadlock: `goal_complete` needs every plan step verified; a step is
+verified only against a host execution receipt; a step that records a
+conclusion executes no tool. A plan containing one can never complete.
+
+What #116 added against it was a sentence in the `goal_plan` description --
+finishing is not a step. That is advice. A provider that plans one anyway is
+still stuck, and 326 of 461 stored resident runs were.
+
+## Why it was unrecoverable rather than merely awkward
+
+There IS a legal escape. `goal_plan` says \"create or revise\", so a provider
+can plan again without the impossible step.
+
+`clean-plan` reset every step to `:pending`. So the escape cost everything
+already earned: a run that had verified step one by actually executing a tool
+would have to execute it again. **The only way out of the trap was the most
+expensive move available**, and the provider took the cheap one instead and
+blocked. That is not the provider being unhelpful; it is the incentive the host
+put in front of it.
+
+## Decision
+
+**Verification is carried across a revision.** A step keeps `:verified` when
+its id, title and dependencies all match a step that earned it.
+
+Carried, never granted. The receipt requirement in `goal_step_complete` is
+untouched, and everything about the match is chosen so nothing can be inherited
+that was not earned for that exact step: a renamed step comes back pending, a
+re-pointed step comes back pending, and a step that was pending stays pending
+however it is relabelled. Reverting the match to id alone -- the obvious
+shortcut -- reddens
+`revising-a-plan-cannot-grant-verification-it-did-not-earn`.
+
+**The refusal names the blocker.** `goal_complete` used to restate its own rule:
+a fully host-verified plan, one executed tool, a summary, evidence. It did not
+say which was missing or for which step, so a provider that had planned an
+impossible step learned only that it may not finish. The refusal now names the
+unverified steps, says which of them no tool has executed for, says that such a
+step can never carry a receipt, and says to call `goal_plan` again without it --
+adding that verified steps survive the revision, because otherwise the advice
+is one the provider has reason to ignore.
+
+This admits nothing new. Only the explanation changed.
+
+## The shape of the fix
+
+Detection and recovery, not permission. The host still refuses; it now refuses
+in a way that can be acted on, and the action it recommends is no longer
+punitive. The safety net from ADR-2608190200 stays underneath for the case
+where a provider blocks anyway.
+
+## Verification
+
+Three changes, each reverted alone, each reddening only its own tests:
+
+  resetting every step on revision
+    -> revising-a-plan-keeps-what-was-already-verified
+  matching on id alone instead of id + title + dependencies
+    -> revising-a-plan-cannot-grant-verification-it-did-not-earn
+  restating the rule instead of naming the blocker
+    -> a-refused-goal-says-which-step-blocks-it-and-what-to-do,
+       a-refusal-with-nothing-executed-says-so
+
+## Not measured yet
+
+Whether providers actually take the way out. The store will say: a resident run
+that revises its plan and completes leaves `plan/recorded` twice and a
+`verifier/goal-passed`, where the same run today leaves a block. The outcome
+tally from ADR-2608190400 is where that shows up, as `no-op` giving way to
+`completed`."}]

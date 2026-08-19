@@ -45,7 +45,7 @@ above said failures keep their name, over a surface that dropped it.
 
 **No runs is reported in words, not as an empty tally.** `:outcomes` is `nil`
 with a note when this owner has no resident run recorded. `{}` reads as
-\\"nothing wrong\\" and means \\"nothing measured\\"; that substitution is the
+\"nothing wrong\" and means \"nothing measured\"; that substitution is the
 failure this workspace keeps finding, and an instrument built to catch it must
 not commit it.
 
