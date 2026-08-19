@@ -1,7 +1,7 @@
 # ADR-0061: Bots are persistent peers — memory isolated, computer shared
 
-**Status:** decision core landed, host integration and the ADR-0036 reversal
-not taken — 2026-08-19. Written 2026-08-14 as ADR-0042; renumbered because
+**Status:** decision core and peer notes landed; the shared computer, the
+group room and the ADR-0036 reversal not taken — 2026-08-19. Written 2026-08-14 as ADR-0042; renumbered because
 0042 was taken on `main` by hosted-signin before this landed.
 
 ## What is on `main`, and what is not
@@ -11,10 +11,24 @@ rows and the compiled artifact. The four judgements — `may-message?`,
 `computer-shared?`, `foreign-memory?`, `may-approve?` — run through
 `kotoba-oracle` and are exercised over their whole truth tables.
 
-**Not landed:** every host caller. There is no `send_message` tool, no shared
-computer directory, no per-Bot screen and no mailbox trust between same-owner
-Bots. The integration was written against a `bots.clj` that `main` has since
-rewritten — durable turns, directions, handoff runs, goals and workforce all
+**Landed 2026-08-19:** `send_message`, behind a new `:bot/peers?` permission
+that is off by default and settable only from the human surface. A note lands
+in another of the owner's Bots' conversations, attributed with the sender's
+`bot:<id>` address, and is read on that Bot's next turn. `transcript` renders
+the attribution rather than merging a peer into the person's voice — a model
+that read another Bot's note as its owner speaking is the shape in which a
+permission system is defeated without looking like delegation. Both Bots must
+be opted in: a Bot nobody opted in is not a mailbox.
+
+**It does not wake the target, and that is a decision rather than a missing
+stage.** Waking one needs the isolated envelope and run lifecycle `hand-off!`
+already owns, and a Bot that wants something DONE should hand off — a handoff
+is bounded at two rounds with a depth ceiling, while a note that woke a peer
+that answered with a note would be an agent loop with neither.
+
+**Not landed:** the rest of the host integration. No shared computer directory,
+no per-Bot screen, no group room, no mailbox trust on the messenger plane. The
+remainder was written against a `bots.clj` that `main` has since rewritten — durable turns, directions, handoff runs, goals and workforce all
 landed in the same functions — and reconciling ~600 lines of one design against
 ~700 of another, in the file that decides tool admission, is a re-integration by
 whoever holds the intent rather than a merge. Its branch is

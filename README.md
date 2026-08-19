@@ -700,6 +700,15 @@ of the connectors you picked and nothing else.
   [ADR-0036](docs/adr/0036-a-bots-computer-is-this-machines-isolated-browser.md).
   Long-running work that should outlive sleep belongs to the governed WorkItem
   path instead.
+- **Bots can leave each other notes.** Opt a Bot into peers and it gets
+  `send_message`: a note lands in another of your Bots' conversations,
+  attributed, and is read on that Bot's next turn. It does not wake anything
+  and there is no reply — a Bot that needs something *done* hands off, which is
+  bounded at two rounds. No tool, account or grant crosses; the record the
+  decision is made from has no field for one. Both Bots must be opted in. See
+  [ADR-0061](docs/adr/0061-bots-are-persistent-peers-memory-isolated-computer-shared.md)
+  and, for the `bot:<id>@<device>` form that names another of your machines,
+  [ADR-0062](docs/adr/0062-a-cross-machine-handle-names-a-device-and-authority-stays-put.md).
 - **A write waits for you, unless you delegated.** Every write stops on an
   approval card in the conversation. Turning on omakase for a Bot hands it the
   decision: it then decides every write it is admitted to call, immediately,

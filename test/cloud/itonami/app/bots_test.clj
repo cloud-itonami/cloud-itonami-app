@@ -16,6 +16,8 @@
             [cloud.itonami.app.policy :as policy]
             [cloud.itonami.app.provider :as provider]
             [cloud.itonami.app.relay :as relay]
+            [cloud.itonami.app.bot :as bot]
+            [cloud.itonami.app.peer :as peer]
             [cloud.itonami.app.store :as store]
             [cloud.itonami.app.workspace-tools :as workspace-tools]
             [connector.ports :as cports]))
@@ -1557,3 +1559,97 @@
         (is false "a disabled browser must not execute")
         (catch clojure.lang.ExceptionInfo e
           (is (= :agent/browser-disabled (:type (ex-data e)))))))))
+
+;; ── peer notes (ADR-0061 / ADR-0062) ────────────────────────────────────
+
+(defn- send-peer! [] (private-fn 'send-peer-message!))
+(defn- tools-of [b] (set (map :name ((private-fn 'tool-definitions) nil b))))
+
+(deftest a-note-tool-appears-only-for-a-bot-opted-into-peers
+  ;; Off by default, like every other capability here. `:bot/tools` is connector
+  ;; names; this one is a permission, so it must not be reachable by writing a
+  ;; name into the grant.
+  (with-store
+    (fn []
+      (let [plain (make-bot alice {})
+            peered (make-bot alice {:name "peered" :peers? true})]
+        (is (not (contains? (tools-of plain) "send_message")))
+        (is (contains? (tools-of peered) "send_message"))
+        (is (not (contains? (:bot/tools peered) "send_message"))
+            "the permission leaked into the connector grant")))))
+
+(deftest a-note-is-a-write
+  ;; It changes another Bot's conversation, which is a person's screen. It holds
+  ;; like a send does, and a delegated Bot decides it like one (ADR-0060).
+  (with-store
+    (fn []
+      (is (true? ((private-fn 'write-tool?) nil "send_message"))))))
+
+(deftest a-note-arrives-attributed-and-carries-no-grant
+  (with-store
+    (fn []
+      (let [a (make-bot alice {:name "alpha" :peers? true})
+            b (make-bot alice {:name "beta" :peers? true})
+            result ((send-peer!) a "beta" "台帳を見ておいて")]
+        (is (str/includes? result "beta"))
+        (let [last-message (last (bots/messages alice (:bot/id b)))]
+          (is (= "台帳を見ておいて" (:text last-message)))
+          ;; The transcript must not merge a peer into the person's voice: a
+          ;; model that reads another Bot's note as its owner speaking is the
+          ;; shape in which a permission system is defeated without looking
+          ;; like delegation.
+          (let [rendered ((private-fn 'transcript)
+                          nil b [(assoc (bot/message
+                                         {:id "m" :bot (:bot/id b) :role :person
+                                          :text "台帳を見ておいて"})
+                                        :message/from (peer/address (:bot/id a)))])]
+            (is (str/includes? (:content (last rendered))
+                               (str "bot:" (:bot/id a) ": 台帳を見ておいて")))))))))
+
+(deftest a-note-is-refused-for-every-reason-separately
+  (with-store
+    (fn []
+      (let [a (make-bot alice {:name "alpha" :peers? true})
+            b (make-bot alice {:name "beta" :peers? true})
+            closed (make-bot alice {:name "closed"})
+            strangers (make-bot bob {:name "beta"})]
+        (testing "a Bot cannot write to itself"
+          (is (thrown-with-msg? clojure.lang.ExceptionInfo #"自分自身"
+                                ((send-peer!) a "alpha" "hi"))))
+        (testing "a name nobody has"
+          (is (thrown-with-msg? clojure.lang.ExceptionInfo #"ありません"
+                                ((send-peer!) a "nobody" "hi"))))
+        (testing "another person's Bot is not found, not forbidden"
+          ;; `forbidden` would confirm it exists, which is the answer the
+          ;; refusal is trying not to give.
+          (is (= :peer/not-found
+                 (:type (try ((send-peer!) a (:bot/id strangers) "hi")
+                             (catch clojure.lang.ExceptionInfo e (ex-data e)))))))
+        (testing "a Bot that never opted in is not a mailbox"
+          (is (thrown-with-msg? clojure.lang.ExceptionInfo #"ピアの受け取り"
+                                ((send-peer!) a "closed" "hi"))))
+        (testing "an empty note"
+          (is (thrown-with-msg? clojure.lang.ExceptionInfo #"空の"
+                                ((send-peer!) a "beta" "   "))))
+        (testing "a handle naming another machine says so, rather than delivering here"
+          ;; ADR-0062 landed the judgement, not the transport. Delivering
+          ;; locally would put the note on the wrong computer and report
+          ;; success.
+          (is (= :peer/no-remote-transport
+                 (:type (try ((send-peer!) a (str "bot:" (:bot/id b) "@studio") "hi")
+                             (catch clojure.lang.ExceptionInfo e (ex-data e)))))))
+        (is (= 0 (count (filter #(= "hi" (:text %))
+                                (bots/messages alice (:bot/id b)))))
+            "a refused note was delivered anyway")))))
+
+(deftest two-bots-sharing-a-name-refuse-rather-than-guess
+  (with-store
+    (fn []
+      (let [a (make-bot alice {:name "alpha" :peers? true})
+            one (make-bot alice {:name "twin" :peers? true})
+            _two (make-bot alice {:name "twin" :peers? true})]
+        (is (thrown-with-msg? clojure.lang.ExceptionInfo #"複数"
+                              ((send-peer!) a "twin" "hi")))
+        ;; The handle is what disambiguates, and it has to work.
+        (is (str/includes? ((send-peer!) a (str "bot:" (:bot/id one)) "hi")
+                           "twin"))))))
