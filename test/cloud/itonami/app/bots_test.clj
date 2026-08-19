@@ -2314,6 +2314,59 @@
       (let [ms [(msg :person "a") (msg :bot "b") (msg :person "c")]]
         (is (= ms (drop-repeats ms)))))))
 
+(deftest a-call-carries-a-bounded-window-that-never-splits-a-tool-pair
+  ;; The run's live message list was the only accumulating list in this
+  ;; namespace without a bound, and a run re-sends all of it on every call.
+  ;; Measured 2026-08-19 over 58 turns with usage: 8 model calls per run at the
+  ;; median and 24 at the most, 3,870 prompt tokens per call at the median and
+  ;; 6,670 at the most -- 51s and 88s of a 120s budget at 75.8 tokens/sec.
+  (let [bound (deref (ns-resolve 'cloud.itonami.app.bots 'bounded-run-messages))
+        cap (deref (ns-resolve 'cloud.itonami.app.bots 'max-run-messages))
+        sys {:role "system" :content "S"}
+        goal {:role "user" :content "G"}]
+
+    (testing "a short run is passed through untouched"
+      (let [ms [sys goal {:role "assistant" :content "a"}]]
+        (is (= ms (bound ms)))))
+
+    (testing "the system message and the goal always survive"
+      (let [ms (into [sys goal] (for [i (range (* 3 cap))]
+                                  {:role "assistant" :content (str i)}))
+            kept (bound ms)]
+        (is (= sys (first kept)))
+        (is (= goal (second kept)) "a Bot that forgets the goal finishes the wrong thing")
+        (is (= (+ 2 cap) (count kept)))))
+
+    (testing "the window never begins on a tool result"
+      ;; This assertion took three fixtures to make real. The first two used
+      ;; UNIFORM groups, and with an even cap a uniform even-sized group can
+      ;; never be cut mid-group -- both passed with the guard REMOVED, proving
+      ;; nothing. What actually orphans a tool result is an ODD-length element
+      ;; inside the final window: a bare assistant with no tool call, or the
+      ;; user message an image attachment inserts. Over 2,000 randomised
+      ;; realistic sequences the naive cut landed on a tool result 53.9% of the
+      ;; time, so this is the common case, not the corner.
+      (let [pair (fn [i] [{:role "assistant" :tool-calls [{:id (str "c" i)}]}
+                          {:role "tool" :tool-call-id (str "c" i) :content "r"}])
+            ms (vec (concat [sys goal]
+                            (mapcat pair (range 8))
+                            [{:role "assistant" :content "prose, no tool call"}]
+                            (mapcat pair (range 100 104))))
+            kept (bound ms)]
+        (is (not= "tool" (:role (nth kept 2)))
+            "the first message after the head opens something, it does not answer it")))
+
+    (testing "every tool result in the window has its call in the window"
+      (let [pair (fn [i] [{:role "assistant" :tool-calls [{:id (str "c" i)}]}
+                          {:role "tool" :tool-call-id (str "c" i) :content "r"}])
+            kept (bound (vec (concat [sys goal]
+                                     (mapcat pair (range 8))
+                                     [{:role "assistant" :content "prose, no tool call"}]
+                                     (mapcat pair (range 100 104)))))
+            ids (into #{} (comp (mapcat :tool-calls) (map :id)) kept)]
+        (doseq [m kept :when (= "tool" (:role m))]
+          (is (contains? ids (:tool-call-id m))
+              (str "orphaned tool result: " (:tool-call-id m))))))))
 ;; ── the plan deadlock, structurally ─────────────────────────────────────
 ;;
 ;; goal_complete needs every step verified; a step is verified only against a

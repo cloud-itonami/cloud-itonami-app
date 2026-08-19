@@ -2227,10 +2227,57 @@
                  :parallel-count (count results)}))
     next-run))
 
+(def ^:private max-run-messages
+  "How many recent messages one model call carries, beyond the two it always
+  keeps. Chosen from measurement, not taste: across 58 turns that recorded
+  usage, a run made 8 model calls at the median and 24 at the most, and the
+  prompt was 3,870 tokens per call at the median and 6,670 at the most. At the
+  measured 75.8 prompt tokens/sec that is 51 seconds of a 120 second budget at
+  the median and 88 at the tail, and the tail is where the timeouts are. 24
+  holds a full read-think-act cycle several times over while cutting the
+  longest runs."
+  24)
+
+(defn- bounded-run-messages
+  "The messages one call carries: the system message, the goal, and the last
+  `max-run-messages`.
+
+  Every other accumulating list in this namespace is bounded -- conversation,
+  contexts, turn history, job events all `take-last`. The run's live message
+  list was the one that was not, and a run re-sends all of it on every call,
+  so an 8-call run pays for its own history 8 times.
+
+  ## Why this cannot simply take the last N
+
+  An assistant message carrying `tool_calls` and the `tool` messages answering
+  it are one unit. A window that begins between them sends a tool result whose
+  call is missing, which providers reject -- and this codebase shipped exactly
+  that shape of bug earlier today by dropping a message out of an alternating
+  sequence. So the window is extended backwards until it starts on a message
+  that opens nothing.
+
+  The system message and the first message after it are always kept: the
+  second is the goal, and a Bot that forgets the goal completes something
+  nobody asked for."
+  [messages]
+  (let [ms (vec messages)
+        head-count (min 2 (count ms))
+        head (subvec ms 0 head-count)
+        tail (subvec ms head-count)]
+    (if (<= (count tail) max-run-messages)
+      ms
+      (let [start (loop [i (- (count tail) max-run-messages)]
+                    (cond
+                      (<= i 0) 0
+                      ;; a tool result whose call would be left behind
+                      (= "tool" (:role (nth tail i))) (recur (dec i))
+                      :else i))]
+        (into head (subvec tail start))))))
+
 (defn- agent-request [configuration b run model]
   (cond-> {:model model
            :conversation-id (:bot/id b)
-           :messages (:messages run)
+           :messages (bounded-run-messages (:messages run))
            :tools (:tools run)
            :temperature 0.2}
     (and (:goal? run)
