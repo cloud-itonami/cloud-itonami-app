@@ -125,10 +125,19 @@ func resolveTarget(_ wanted: String) -> Target {
   }
   let exact = running.first { $0.localizedName == wanted }
   let byBundle = running.first { $0.bundleIdentifier == wanted }
-  let insensitive = running.first {
+  // Both fallbacks are case-insensitive, and the bundle one is not decoration:
+  // the documentation tells callers to prefer a bundle id because a localized
+  // machine answers to テキストエディット rather than TextEdit, and then
+  // `com.apple.Finder` was reported as not running while `com.apple.finder`
+  // worked. Reverse-DNS identifiers are conventionally lowercase but are
+  // written both ways, and a capitalisation is not a different application.
+  let insensitiveName = running.first {
     $0.localizedName?.compare(wanted, options: .caseInsensitive) == .orderedSame
   }
-  guard let app = exact ?? byBundle ?? insensitive else {
+  let insensitiveBundle = running.first {
+    $0.bundleIdentifier?.compare(wanted, options: .caseInsensitive) == .orderedSame
+  }
+  guard let app = exact ?? byBundle ?? insensitiveName ?? insensitiveBundle else {
     let names = running.compactMap { $0.localizedName }.sorted()
     fail("application-not-running", "No running application named \(wanted).",
          ["available": names])
