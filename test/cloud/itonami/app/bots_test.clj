@@ -2263,3 +2263,40 @@
       (is (not= generic dropped)))
     (testing "and not the same as a model that thought for too long"
       (is (not= slow dropped)))))
+
+(deftest the-transcript-stops-resending-one-string-twelve-times
+  ;; A resident tick sends its objective through the path a person's message
+  ;; takes, so each tick appends it to the conversation and the transcript
+  ;; replays all of them. Measured 2026-08-19 across the live fleet: 444
+  ;; duplicate person messages, every workforce Bot holding 12 of which 11
+  ;; were duplicates. One run's prompt was 6,748 tokens with ~3,400 of it one
+  ;; repeated string -- 45 seconds of a 120 second budget at the measured
+  ;; prompt rate, and timeout was the most common way a resident run ended.
+  (let [drop-repeats (deref (ns-resolve 'cloud.itonami.app.bots
+                                        'drop-superseded-person-repeats))
+        goal "Resident startup job tick for net babiniku / QA."
+        msg (fn [role text] {:message/role role :message/text text})]
+
+    (testing "only the most recent copy survives, and it survives in place"
+      (let [kept (drop-repeats [(msg :person goal)
+                                (msg :bot "read the repo")
+                                (msg :person goal)
+                                (msg :bot "read it again")
+                                (msg :person goal)])]
+        (is (= 3 (count kept)))
+        (is (= [:bot :bot :person] (mapv :message/role kept))
+            "the surviving copy is the LAST one, so it stays nearest the answer")))
+
+    (testing "a person's distinct words are never collapsed"
+      (let [ms [(msg :person "do X") (msg :person "actually do Y")
+                (msg :person "do X")]]
+        ;; "do X" appears twice: the first is superseded, the second kept.
+        (is (= ["actually do Y" "do X"] (mapv :message/text (drop-repeats ms))))))
+
+    (testing "bot messages are untouched even when identical"
+      (let [ms [(msg :bot "same") (msg :bot "same")]]
+        (is (= 2 (count (drop-repeats ms))))))
+
+    (testing "nothing to collapse changes nothing"
+      (let [ms [(msg :person "a") (msg :bot "b") (msg :person "c")]]
+        (is (= ms (drop-repeats ms)))))))
