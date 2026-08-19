@@ -1724,6 +1724,42 @@
               "Never ask the person to run a command or inspect a file that an admitted tool can reach.\n\n"
               "Active objective:\n" goal))))
 
+(defn- drop-superseded-person-repeats
+  "`messages` with every person message that a LATER byte-identical one
+  supersedes removed.
+
+  A resident tick sends its objective through the same path a person's message
+  takes, so each tick appends that objective to the Bot's conversation -- and
+  the transcript replays the conversation. By the twelfth tick the model is
+  sent twelve copies of one 926-character string.
+
+  MEASURED 2026-08-19 across the live fleet: 444 duplicate person messages,
+  every workforce Bot holding 12 person messages of which 11 were duplicates,
+  around 10,000 characters each. One run's prompt was 6,748 tokens, of which
+  ~3,400 was that one string repeated. At the measured 75.8 prompt tokens/sec
+  that is 45 seconds of a 120 second request budget spent re-reading something
+  already said, and a timeout was the most common way a resident run ended.
+
+  An exact duplicate carries no information the later copy does not, which is
+  why this is safe for a human's words too: if someone repeats themselves
+  verbatim, the model still receives what they said, in its most recent
+  position. Only the earlier copies go, and only from what the MODEL is sent
+  -- the stored conversation and everything a person reads are untouched."
+  [messages]
+  (let [ms (vec messages)
+        last-index (reduce (fn [acc [i m]]
+                             (if (= :person (:message/role m))
+                               (assoc acc (str (:message/text m)) i)
+                               acc))
+                           {}
+                           (map-indexed vector ms))]
+    (vec (keep-indexed
+          (fn [i m]
+            (when (or (not= :person (:message/role m))
+                      (= i (get last-index (str (:message/text m)))))
+              m))
+          ms))))
+
 (defn- transcript
   "The durable conversation, as a model transcript. Built here rather than
   stored in provider shape: `:person`/`:bot` is what this application records,
@@ -1732,7 +1768,7 @@
   ([configuration b messages] (transcript configuration b messages nil))
   ([configuration b messages goal]
   (into [{:role "system" :content (system-prompt b configuration goal)}]
-        (for [m messages
+        (for [m (drop-superseded-person-repeats messages)
               :when (seq (str (:message/text m)))]
           {:role (if (= :person (:message/role m)) "user" "assistant")
            ;; A peer's note is attributed in the transcript, not merged into the
