@@ -1896,7 +1896,18 @@
      :finished-at (:turn/finished-at turn)
      :elapsed-seconds elapsed
      :error-type (some-> (:turn/error-type turn) str (subs 1))
-     :error-status (:turn/error-status turn)})))
+     :error-status (:turn/error-status turn)
+     ;; The message, not only the classification. `:internal-error` is the
+     ;; fallback for an exception carrying no :type, so it is exactly the
+     ;; case where the type says nothing and the message says everything --
+     ;; and it was the one field this projection dropped.
+     ;;
+     ;; Measured 2026-08-19: 205 runs were filed as :internal-error and 196
+     ;; of them said "request timed out". Reading that required walking 3,926
+     ;; goal events by hand, because the surface every reader actually opens
+     ;; showed an anonymous :internal-error. The messages were being recorded
+     ;; the whole time, one projection away from anyone who needed them.
+     :error-message (:turn/error-message turn)})))
 
 (defn latest-turn [session bot-id]
   (owned! session bot-id)
@@ -1905,6 +1916,23 @@
       (:turn/goal? turn) (assoc :job (public-goal-job (goal-job (:turn/id turn)))))))
 
 ;; ── the demonstration ───────────────────────────────────────────────────
+
+(def ^:private max-error-message 300)
+
+(defn- error-message
+  "One line of why, short enough to store on every failed turn.
+
+  Bounded and single-line on purpose: this rides in a record the UI reads, a
+  stack trace would drown it, and an exception message is not a place to put
+  unbounded text. `nil` when there is nothing to say, so a reader can tell
+  'no message' from an empty one."
+  [error]
+  (some-> (.getMessage ^Exception error)
+          str/split-lines
+          first
+          str/trim
+          not-empty
+          (as-> m (subs m 0 (min max-error-message (count m))))))
 
 (defn- trace!
   "Record that a tool actually RAN.
@@ -2798,7 +2826,8 @@
                                   :turn/finished-at (store/now)
                                   :turn/error-status (:status (ex-data error))
                                   :turn/error-type (or (:type (ex-data error))
-                                                       :internal-error)}))
+                                                       :internal-error)
+                                  :turn/error-message (error-message error)}))
             (throw error))))
       (finally
         ;; Clear the interrupted flag before this pooled HTTP thread is reused.
@@ -3019,7 +3048,8 @@
                           {:turn/state :failed :turn/phase :failed
                            :turn/finished-at (store/now)
                            :turn/error-type error-type
-                           :turn/error-status error-status}))
+                           :turn/error-status error-status
+                           :turn/error-message (error-message error)}))
           (append-goal-event! run-id :run/failed
                               {:error-type (or (:type (ex-data error)) :internal-error)
                                :error-status (:status (ex-data error))

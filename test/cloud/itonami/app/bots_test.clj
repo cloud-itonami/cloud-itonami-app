@@ -2178,3 +2178,32 @@
         (let [{:keys [window]} (:outcomes (bots/workforce-status alice))]
           (testing "a long-running store cannot drown a change in its own past"
             (is (= bots/resident-outcome-window window))))))))
+
+(deftest a-failed-turn-carries-why-not-only-what
+  ;; Measured 2026-08-19: 205 resident runs were filed :internal-error and 196
+  ;; of them said "request timed out". Reading that took walking 3,926 goal
+  ;; events by hand, because the projection every reader opens carried the
+  ;; classification and dropped the message. :internal-error is the fallback
+  ;; for an exception with no :type -- exactly the case where the type says
+  ;; nothing and the message says everything.
+  (let [extract (ns-resolve 'cloud.itonami.app.bots 'error-message)
+        public (ns-resolve 'cloud.itonami.app.bots 'public-turn)]
+    (testing "the message is bounded to one trimmed line"
+      (is (= "request timed out"
+             ((deref extract) (Exception. "request timed out"))))
+      (is (= "boom" ((deref extract) (Exception. "  boom  \nat some.Frame\nat more"))))
+      (is (= 300 (count ((deref extract) (Exception. (apply str (repeat 500 "x"))))))))
+
+    (testing "nothing to say reads as nothing, not as an empty string"
+      (is (nil? ((deref extract) (Exception. ""))))
+      (is (nil? ((deref extract) (Exception.)))))
+
+    (testing "the projection surfaces it"
+      (is (= "request timed out"
+             (:error-message ((deref public)
+                              {:turn/id "t1" :turn/state :failed
+                               :turn/phase :failed
+                               :turn/started-at "2026-08-19T07:00:00.000Z"
+                               :turn/finished-at "2026-08-19T07:03:20.000Z"
+                               :turn/error-type :internal-error
+                               :turn/error-message "request timed out"})))))))
