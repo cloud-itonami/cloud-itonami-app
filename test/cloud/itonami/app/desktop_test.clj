@@ -117,6 +117,30 @@
     (is (not (contains? @#'agent-control/read-only-tools name))
         (str name " is classified read-only"))))
 
+;; ── 3b. the marker ──────────────────────────────────────────────────────
+
+(deftest the-marker-cannot-take-focus-either
+  (let [code (code-lines)]
+    ;; The overlay is the one thing here that puts a window on screen, so it is
+    ;; the one thing that could undo the property everything else preserves.
+    (doseq [[needed why]
+            [["nonactivatingPanel" "ordering the panel in would otherwise make this process key"]
+             ["ignoresMouseEvents" "a click landing while the marker is up must reach the window underneath"]
+             ["orderFrontRegardless" "the panel is shown without being made key"]]]
+      (is (str/includes? code needed)
+          (str "the overlay dropped " needed ": " why)))
+    (is (not (str/includes? code "makeKeyAndOrderFront"))
+        "the overlay takes the key window from whoever has it")))
+
+(deftest the-marker-is-not-something-a-model-can-switch-off
+  ;; Acting without taking the cursor means acting invisibly. A tool parameter
+  ;; would eventually be passed, and the one call where it mattered would be the
+  ;; silent one — so the duration is a constant here and appears in no schema.
+  (is (pos? desktop/overlay-milliseconds))
+  (doseq [[name tool] (desktop-tools)]
+    (is (not (contains? (set (keys (:properties (:parameters tool)))) :overlay))
+        (str name " lets the caller control the marker"))))
+
 ;; ── 4. the live half ────────────────────────────────────────────────────
 
 (defn- frontmost
@@ -184,3 +208,38 @@
               b (:digest (desktop/tree target {:max 60}))]
           (is (re-matches #"sha256:[0-9a-f]{64}" (str a)))
           (is (= a b) (str "two consecutive reads of " target " disagreed")))))))
+
+(deftest a-capture-says-which-picture-it-is
+  (let [state (desktop/available?)]
+    (if-not (and (:helper? state) (:accessibility? state))
+      (println "SKIPPED a-capture-says-which-picture-it-is:" (pr-str state))
+      (let [target (some-> (desktop/applications) first :name)]
+        (is (some? target) "no application was running to capture")
+        (let [shot (desktop/screenshot! target)]
+          ;; `window-id` captures the window through anything overlapping it;
+          ;; `region` captures the rectangle and therefore whatever is on top.
+          ;; A caller that cannot tell them apart cannot know what it is
+          ;; looking at, so the mode is part of the result rather than an
+          ;; implementation detail.
+          (is (contains? #{"window-id" "region"} (:capture shot))
+              (str "capture mode was " (pr-str (:capture shot))))
+          (is (= 4 (count (:frame shot))))
+          (is (pos? (.length (io/file (:image-path shot)))))
+          (io/delete-file (io/file (:image-path shot)) true))))))
+
+(deftest window-enumeration-does-not-hide-a-window-that-is-not-composited
+  (let [state (desktop/available?)]
+    (if-not (and (:helper? state) (:accessibility? state))
+      (println "SKIPPED window-enumeration-does-not-hide-a-window-that-is-not-composited:"
+               (pr-str state))
+      (let [target (some-> (desktop/applications) first :name)
+            windows (desktop/windows target)]
+        ;; Asking CoreGraphics for on-screen windows only could not tell "this
+        ;; application has no window" from "this application's window is not
+        ;; being composited right now" — a window on another Space, a minimized
+        ;; one, or every window on the machine while the display sleeps. Each
+        ;; window now carries the fact instead of being filtered out by it.
+        (doseq [w windows]
+          (is (contains? w :onscreen)
+              (str "a window was reported without saying whether it is on screen: "
+                   (pr-str w))))))))

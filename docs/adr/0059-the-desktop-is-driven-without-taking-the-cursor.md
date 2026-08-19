@@ -110,6 +110,24 @@ argv.
 focus-free already — that was never the problem with it — but it hands the
 model every other window on the display.
 
+Finding the window needs both APIs, because neither answers alone.
+CoreGraphics knows window ids, which is what `screencapture -l` takes;
+accessibility knows the window and its frame but has no id, and the call that
+would give one is undocumented SPI. So the frame comes from accessibility and
+is matched against CoreGraphics. A match captures the window through anything
+overlapping it; no match still captures the rectangle, including whatever is on
+top of it. **Which one ran is part of the result**, because they are different
+pictures. Measured 2026-08-19: this application's own window has no matching
+CoreGraphics entry at all — the only layer-0 entries it owns are eight menu-bar
+strips — so it is captured as a region.
+
+Window enumeration stopped filtering for on-screen windows for the same reason.
+The filter could not tell "this application has no window" from "this window is
+not being composited right now", and answered the first for both; with the
+display asleep, every application on this machine reported zero windows,
+Terminal in front included. Each window now carries `onscreen` rather than
+being removed by it.
+
 Trust is **reported, never prompted for**: a helper invoked from a background
 server has no business raising a system dialog. `diagnostics` returns three
 separate facts (helper built, Accessibility granted, Screen Recording granted)
@@ -126,9 +144,19 @@ because they need three different answers from a person.
   `:bot/browser?` opts into the isolated browser, and `computer_*` stays on
   agent-control's own loop. That the tools no longer steal focus does not
   decide who may call them.
-- No overlay cursor. Hermes draws a tinted pointer so a person can watch what
-  the agent touched; this ships the tree digest in the approval card instead,
-  and the overlay is open work.
+- **A marker, added 2026-08-19.** Acting without taking the cursor means acting
+  INVISIBLY, and that is a cost the first version did not pay for. The tools
+  this replaced were at least honest by accident: the pointer jumped, so a
+  person knew. Now a translucent marker appears over the element for 900ms
+  while the action runs, labelled with what is being done to it. It is a
+  `.nonactivatingPanel`, ordered in with `orderFrontRegardless` and never made
+  key, and it ignores mouse events, so it cannot take from anybody the focus
+  the rest of this helper exists to preserve.
+
+  **No tool can switch it off.** The duration is a constant in
+  `cloud.itonami.app.desktop` and appears in no schema: a parameter would
+  eventually be passed, and the one call where it mattered would be the silent
+  one.
 
 ## Verification
 
@@ -153,6 +181,14 @@ across all of it.
   `com.example.nope` is still refused.
 - The deployed installation was exercised from `~/.cloud-itonami/app` after its
   own build, not only from a source tree.
+- The marker was shown over a background Terminal window and observed from
+  another process: exactly one window owned by the helper, at exactly the
+  target's frame, composited, with the frontmost application and the cursor
+  unchanged. `the-marker-cannot-take-focus-either` was shown to go RED when
+  `orderFrontRegardless` is swapped for `makeKeyAndOrderFront`.
+- Both capture modes produce an image whose pixels match the reported frame at
+  this display's scale: `window-id` gave 788x1794 for a 394x897 window, and
+  `region` gave 860x1784 for a 430x892 one.
 - `the-helper-cannot-take-the-cursor-focus-or-the-front-window` was shown to go
   RED when a real `CGWarpMouseCursorPosition` call is added to the helper, and
   green when it is removed. `the-absence-check-can-fail` guards the substring
@@ -172,12 +208,6 @@ Two things are NOT verified, and saying which is the point:
 
 ## Open
 
-- **No overlay cursor.** Hermes draws a tinted pointer so a person can watch
-  where a click landed. This ships the tree digest on the approval card
-  instead; the overlay is not built.
-- **This application's own window is not drivable by this capability.**
-  `kotoba-shell-host-macos-window` publishes zero AX windows, measured
-  2026-08-18. That is a gap in `kotoba-lang/shell`, not here.
 - **No focus-free path for an element that does not accept a value** -- a
   contenteditable, a canvas, a terminal. `set-value` fails closed. The isolated
   browser of ADR-0036 is the answer for web surfaces; there is none for a
@@ -191,10 +221,22 @@ Two things are NOT verified, and saying which is the point:
   instead of a screen coordinate, and the thing it names is the thing that
   executes.
 - Applications that publish no accessibility tree cannot be driven at all.
-  Measured the same day: this application's own window, hosted by
-  `kotoba-shell-host-macos-window`, publishes zero AX windows, so it is not
-  drivable by its own capability. That is a gap in the host, recorded here
-  because it will be surprising.
+
+  **A claim that used to stand here was wrong and is worth keeping visible.**
+  It said this application's own window publishes zero AX windows and was
+  therefore not drivable by its own capability. It does publish them. What was
+  actually measured was a DIFFERENT window: opening `Cloud Itonami.app` from
+  the Dock started `kotoba-shell-host-macos-window` with no arguments, and it
+  came up with its defaults -- 720x512, titled `Kotoba`, reading `No kotoba:dom
+  root`. That window was read, and its emptiness was written down as a fact
+  about the application. Launched through `bin/cloud-itonami-app` the real
+  430x892 surface appears and reports one AX window, a main window and a
+  focused window. Fixed upstream in `kotoba-lang/shell` a8da7ad, where the
+  bundle now records the arguments it should open with.
+
+  The lesson is the one this ADR keeps arriving at from different directions:
+  the reading was taken, it was internally consistent, and it was about
+  something else.
 - Bundle ids are the reliable way to name a target. This machine is
   Japanese-localized, where TextEdit answers to `テキストエディット` and not to
   `TextEdit`; the helper reports what IS running when a name does not resolve.

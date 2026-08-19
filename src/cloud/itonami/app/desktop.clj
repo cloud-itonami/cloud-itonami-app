@@ -40,6 +40,19 @@
 
 (def ^:private max-output 200000)
 
+(def overlay-milliseconds
+  "How long the marker stays over an element the agent is acting on.
+
+  Not a parameter of any tool, and that is the design. Acting without taking
+  the cursor means acting INVISIBLY: the tools this replaced were at least
+  honest by accident, because the pointer jumped and a person could see it. A
+  model that could pass `overlay: false` would eventually pass it, and the one
+  call where it mattered would be the silent one.
+
+  900ms is long enough to notice and to catch in a screen recording, and it is
+  paid once per write -- reads draw nothing."
+  900)
+
 (defn- repo-file [& parts]
   (io/file (str/join "/" (cons (or (System/getProperty "user.dir") ".") parts))))
 
@@ -155,40 +168,52 @@
   (:windows (helper! ["windows" "--app" application] 20)))
 
 (defn screenshot!
-  "Capture ONE window of the target application.
+  "Capture the target application's window.
 
   A whole-screen capture is focus-free too, and that is exactly why the old
   tool used it -- but it hands the model every other window on the display.
-  `screencapture -l` takes a window id and never activates anything."
+
+  Which of the two capture modes ran is reported, because they are different
+  pictures. `window-id` captures the window even when something overlaps it.
+  `region` captures the rectangle the window occupies, INCLUDING whatever is on
+  top of it, and it is what happens when no CoreGraphics entry matches the
+  accessibility frame -- measured 2026-08-19, that is the case for this
+  application's own window, whose only layer-0 entries are menu-bar strips."
   [application]
-  (let [candidates (windows application)
-        window (first candidates)]
-    (when-not window
-      (throw (ex-info "対象アプリのウインドウが画面上にありません。"
-                      {:type :desktop/no-window :application application})))
-    (let [directory (io/file (config/data-dir) "agent-screenshots")
-          file (io/file directory (str "window-" (random-uuid) ".png"))]
-      (.mkdirs directory)
-      (let [{:keys [exit]} (exec! ["/usr/sbin/screencapture" "-x" "-o"
-                                  (str "-l" (:window-id window))
-                                  (.getCanonicalPath file)]
-                                 30)]
-        (when-not (and (zero? exit) (.isFile file))
-          (throw (ex-info "ウインドウのキャプチャに失敗しました。"
-                          {:type :desktop/capture-failed})))
-        {:image-path (.getCanonicalPath file)
-         :media-type "image/png"
-         :application application
-         :window (:title window)
-         :window-id (:window-id window)}))))
+  (let [target (helper! ["capture-target" "--app" application] 20)
+        [x y w h] (:frame target)
+        directory (io/file (config/data-dir) "agent-screenshots")
+        file (io/file directory (str "window-" (random-uuid) ".png"))
+        _ (.mkdirs directory)
+        region? (not= "window-id" (:match target))
+        args (if region?
+               ["/usr/sbin/screencapture" "-x" "-o"
+                (str "-R" x "," y "," w "," h) (.getCanonicalPath file)]
+               ["/usr/sbin/screencapture" "-x" "-o"
+                (str "-l" (:window-id target)) (.getCanonicalPath file)])
+        {:keys [exit]} (exec! args 30)]
+    (when-not (and (zero? exit) (.isFile file) (pos? (.length file)))
+      (throw (ex-info "ウインドウのキャプチャに失敗しました。"
+                      {:type :desktop/capture-failed
+                       :match (:match target)
+                       :onscreen (:onscreen target)})))
+    {:image-path (.getCanonicalPath file)
+     :media-type "image/png"
+     :application application
+     :window (:title target)
+     :capture (:match target)
+     :occlusion (if region?
+                  "この画像は矩形のキャプチャです。手前にある他のウインドウが写り込みます。"
+                  "対象ウインドウのみのキャプチャです。")
+     :frame (:frame target)}))
 
 ;; ── writes ──────────────────────────────────────────────────────────────
 
 (defn press!
-  "Perform an element's action where it stands."
+  "Perform an element's action where it stands, under the marker."
   [application element-ref expect {:keys [action include-menu?]}]
   (helper! (cond-> ["press" "--app" application "--ref" element-ref
-                    "--expect" expect]
+                    "--expect" expect "--overlay" overlay-milliseconds]
              action (into ["--action" action])
              include-menu? (into ["--include-menu" "true"]))
            30))
@@ -201,13 +226,16 @@
   is the check that matters here -- a disabled Save means the document had
   nothing to save, and pressing it anyway would have reported success."
   [application path]
-  (helper! ["menu-press" "--app" application "--path" path] 30))
+  (helper! ["menu-press" "--app" application "--path" path
+            "--overlay" overlay-milliseconds]
+           30))
 
 (defn set-value!
   "Write a text element's value, and report what is observed afterwards."
   [application element-ref text expect {:keys [include-menu?]}]
   (helper! (cond-> ["set-value" "--app" application "--ref" element-ref
-                    "--text" text "--expect" expect]
+                    "--text" text "--expect" expect
+                    "--overlay" overlay-milliseconds]
              include-menu? (into ["--include-menu" "true"]))
            30))
 
@@ -215,6 +243,7 @@
   "Scroll a scroll area by a page, through its accessibility action."
   [application element-ref direction expect {:keys [include-menu?]}]
   (helper! (cond-> ["scroll" "--app" application "--ref" element-ref
-                    "--direction" direction "--expect" expect]
+                    "--direction" direction "--expect" expect
+                    "--overlay" overlay-milliseconds]
              include-menu? (into ["--include-menu" "true"]))
            30))
