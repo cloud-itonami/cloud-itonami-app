@@ -211,6 +211,10 @@
      ;; site with no API at all.
      :bot/writes? (boolean (:bot/writes? value))
      :bot/browser? (boolean (:bot/browser? value))
+     ;; ADR-0061/0062. Off by default like every other capability
+     ;; here: a Bot that was never opted in cannot be reached by a
+     ;; peer and cannot reach one.
+     :bot/peers? (boolean (:bot/peers? value))
      :bot/coding? (boolean (:bot/coding? value))
      :bot/virtual-shell? (boolean (:bot/virtual-shell? value))
      ;; Standing delegation, intentionally independent of writes/tool reach.
@@ -632,7 +636,7 @@
   which are the model transcript's words for the same two speakers and would
   invite this durable record to be passed to a provider as-is."
   [{:keys [id bot role text cards at direction context-id source handoff-id
-           from-bot]}]
+           from-bot from]}]
   (when-not (#{:person :bot} role)
     (throw (ex-info "a message is from a person or a bot"
                     {:type :bot/invalid-message :role role})))
@@ -646,7 +650,12 @@
     context-id (assoc :message/context-id (str context-id))
     source (assoc :message/source (keyword source))
     handoff-id (assoc :message/handoff-id (str handoff-id))
-    from-bot (assoc :message/from-bot (str from-bot))))
+    from-bot (assoc :message/from-bot (str from-bot))
+    ;; A peer's mailbox address (ADR-0061). `:message/from-bot` is the
+    ;; handoff SOURCE; who sent this and whose work this continues are
+    ;; two questions, so they stay two fields rather than one that means
+    ;; whichever arrived last.
+    from (assoc :message/from (str from))))
 
 (defn answer-choice
   "Record an answer onto a choice card inside a conversation, returning the

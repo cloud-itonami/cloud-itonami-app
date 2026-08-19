@@ -60,6 +60,7 @@
             [cloud.itonami.app.connectors :as connectors]
             [cloud.itonami.app.handoff :as handoff]
             [cloud.itonami.app.identity :as identity]
+            [cloud.itonami.app.peer :as peer]
             [cloud.itonami.app.mail-account :as mail-account]
             [cloud.itonami.app.mail-sync :as mail-sync]
             [cloud.itonami.app.policy :as policy]
@@ -549,8 +550,8 @@
   "Create a Bot. `:tools` may be given directly, or derived from `:connectors`
   when the caller is the onboarding screen and has only picked services."
   [configuration session {:keys [name avatar brief connectors tools accounts
-                                 writes? browser? coding? virtual-shell? omakase? workspace
-                                 provider-id model]}]
+                                 writes? browser? peers? coding? virtual-shell?
+                                 omakase? workspace provider-id model]}]
   (validate-provider-choice! configuration provider-id model)
   (let [workspace (cond
                     virtual-shell? (virtual-shell/admit-workspace workspace)
@@ -573,6 +574,7 @@
                     :bot/accounts accounts
                     :bot/writes? writes?
                     :bot/browser? browser?
+                    :bot/peers? peers?
                     :bot/coding? coding?
                     :bot/virtual-shell? virtual-shell?
                     :bot/omakase? omakase?
@@ -646,6 +648,7 @@
                                                     (set (map str (:accounts attrs))))
                  (contains? attrs :writes?) (assoc :bot/writes? (:writes? attrs))
                  (contains? attrs :browser?) (assoc :bot/browser? (:browser? attrs))
+                 (contains? attrs :peers?) (assoc :bot/peers? (:peers? attrs))
                  (contains? attrs :omakase?) (assoc :bot/omakase? (:omakase? attrs))
                  (or (contains? attrs :coding?)
                      (contains? attrs :virtual-shell?)
@@ -934,7 +937,14 @@
         local-tools (concat
                      (when (:bot/browser? b)
                        (agent-control/browser-tool-definitions configuration))
-                     (when (and (:bot/coding? b) (:bot/workspace b))
+                     (when (:bot/peers? b)
+         (str "You can leave a note for another of this owner's Bots with "
+              "send_message. The note appears in that Bot's conversation "
+              "attributed to you and is read on its next turn: it does not wake "
+              "it and there is no reply. It carries none of your tools, and "
+              "none of theirs come back — if something needs DOING by another "
+              "Bot, hand off instead of asking.\n\n"))
+       (when (and (:bot/coding? b) (:bot/workspace b))
                        workspace-tools/tool-definitions)
                      (when (and (:bot/virtual-shell? b) (:bot/workspace b))
                        virtual-shell/tool-definitions))
@@ -959,6 +969,7 @@
      :grant-widens? (bot/grant-widens? b rows)
      :writes? (:bot/writes? b)
      :browser? (:bot/browser? b)
+     :peers? (boolean (:bot/peers? b))
      :browser-ready? (boolean (and (:bot/browser? b)
                                    (agent-control/browser-enabled? configuration)))
      :coding? (:bot/coding? b)
@@ -1216,6 +1227,28 @@
     (vec (agent-control/browser-tool-definitions configuration))
     []))
 
+(def ^:private peer-tool
+  {:name "send_message"
+   :description
+   (str "Leave a note for another of this owner's Bots. `to` is its name, or a "
+        "handle like bot:<id>. The note appears in that Bot's conversation "
+        "attributed to you and is read on its next turn. It does NOT wake it, "
+        "and it carries none of your tools: a Bot that needs something done "
+        "must hand off, not ask.")
+   :parameters {:type "object"
+                :properties {:to {:type "string"}
+                             :text {:type "string"}}
+                :required ["to" "text"]}})
+
+(defn- peer-tools
+  "The peer note tool, when the Bot asked for it. Not written into
+  `:bot/tools`: that set is connector names, for the same reason
+  `browser-tools` stays out of it."
+  [b]
+  (if (:bot/peers? b) [peer-tool] []))
+
+(defn- peer-tool? [tool-name] (= "send_message" (str tool-name)))
+
 (defn- coding-tools [b]
   (into (if (and (:bot/coding? b) (:bot/workspace b))
           workspace-tools/tool-definitions
@@ -1255,11 +1288,13 @@
                                    (or (:connector/description t) (:connector/name t))
                                    (when (= :write (:connector/effect t)) " (write)"))
                  :parameters (:connector/input-schema t)}))]
-    (into (into (browser-tools configuration b) (coding-tools b))
+    (into (into (into (browser-tools configuration b) (peer-tools b))
+                (coding-tools b))
           connector-tools)))
 
 (defn- write-tool? [configuration tool-name]
-  (or (agent-control/browser-write? tool-name)
+  (or (peer-tool? tool-name)
+      (agent-control/browser-write? tool-name)
       (workspace-tools/write-tool? tool-name)
       (virtual-shell/write-tool? tool-name)
       (let [registry (connectors/enabled configuration)]
@@ -1269,7 +1304,12 @@
                (creg/descriptors registry))))))
 
 (defn- describe-tool [configuration tool-name args]
-  (if (or (agent-control/browser-tool? tool-name)
+  (if (peer-tool? tool-name)
+    (str (:to args) " に「"
+         (let [t (str (:text args))]
+           (if (> (count t) 60) (str (subs t 0 60) "…") t))
+         "」と書き置きします。")
+    (if (or (agent-control/browser-tool? tool-name)
           (workspace-tools/tool? tool-name)
           (virtual-shell/tool? tool-name))
     (cond
@@ -1285,16 +1325,107 @@
       (str (str/upper-case (name (or (:connector.http/method request) :get)))
            " " (:connector.http/url request)
            (when-let [q (seq (:connector.http/query request))]
-             (str " " (pr-str (into (sorted-map) q))))))))
+             (str " " (pr-str (into (sorted-map) q)))))))))
+
+(defn- peer-target!
+  "Which of the owner's Bots `to` names, or a refusal that says which question
+  failed.
+
+  A name, an id, or a `bot:<id>` handle. Resolution is scoped to the SENDER's
+  owner and organization before anything is compared, so a name that also
+  exists in somebody else's account is not even a candidate -- the refusal for
+  a stranger's Bot has to be `not-found`, because `forbidden` would confirm it
+  exists."
+  [source to]
+  (let [to (str/trim (str to))
+        parsed (peer/parse-address to)
+        _ (when (and parsed (:device parsed))
+            ;; ADR-0062 landed the judgement, not the transport. Saying so is
+            ;; the whole point: a silent local delivery for a handle that named
+            ;; another machine would put the note on the wrong computer.
+            (throw (ex-info (str "別のマシンの Bot にはまだ送れません（"
+                                 (:device parsed) "）。ADR-0062 の transport は未実装です。")
+                            {:type :peer/no-remote-transport
+                             :device (:device parsed)})))
+        wanted (or (:bot-id parsed) to)
+        mine (->> (vals (:bots (snapshot)))
+                  (filter #(and (= (:bot/owner %) (:bot/owner source))
+                                (= (:bot/organization %) (:bot/organization source)))))
+        matches (filter #(or (= (:bot/id %) wanted)
+                             (= (str/lower-case (str (:bot/name %)))
+                                (str/lower-case wanted)))
+                        mine)]
+    (when (empty? matches)
+      (throw (ex-info (str "「" to "」という Bot はありません。")
+                      {:type :peer/not-found :to to})))
+    ;; Two Bots may share a display name; an id or a handle disambiguates. This
+    ;; refuses rather than picking the first, because picking one silently
+    ;; delivers to whichever the map iterated first.
+    (when (> (count matches) 1)
+      (throw (ex-info (str "「" to "」という名前の Bot が複数あります。bot:<id> で指定してください。")
+                      {:type :peer/ambiguous :to to
+                       :candidates (mapv :bot/id matches)})))
+    (first matches)))
+
+(defn- send-peer-message!
+  "Leave an attributed note in another of the owner's Bots' conversations.
+
+  It does NOT wake the target, and that is a decision rather than a stage that
+  is missing. Waking one needs the isolated envelope and run lifecycle that
+  `hand-off!` already owns, and a Bot that wants something DONE should hand
+  off -- a handoff is bounded at two rounds and carries a depth ceiling, while
+  a note that woke a peer that answered with a note would be an agent loop with
+  neither. The target reads it on its next turn.
+
+  What crosses is the note and who wrote it. `peer/->pair` has no field for a
+  grant, so nothing else can."
+  [source to text]
+  (let [target (peer-target! source to)
+        context {:source-owner (:bot/owner source)
+                 :target-owner (:bot/owner target)
+                 :local-device nil :device nil
+                 :known-devices [] :remote-enabled? false}
+        text (str/trim (str text))]
+    (when (str/blank? text)
+      (throw (ex-info "空のメッセージは送れません。" {:type :peer/empty-message})))
+    (when (> (count text) max-message-chars)
+      (throw (ex-info "メッセージが長すぎます。" {:type :bot/message-too-long})))
+    (when-not (peer/may-address? target context)
+      (throw (ex-info (if (:bot/enabled? target)
+                        "この Bot には送れません。"
+                        "その Bot は停止しています。")
+                      {:type :peer/refused :to (:bot/id target)})))
+    (when-not (peer/may-message? source target context)
+      (throw (ex-info (if (= (:bot/id source) (:bot/id target))
+                        "Bot は自分自身に送れません。"
+                        "この Bot には送れません。")
+                      {:type :peer/refused :to (:bot/id target)})))
+    (when-not (:bot/peers? target)
+      ;; Opt-in on BOTH sides. A Bot nobody opted in is not a mailbox, and a
+      ;; note it never asked for would appear in its owner's conversation
+      ;; window looking like something it said.
+      (throw (ex-info (str (:bot/name target) " はピアの受け取りが有効ではありません。")
+                      {:type :peer/refused :to (:bot/id target)})))
+    (append! (:bot/id target)
+             (bot/message {:id (new-id "msg") :bot (:bot/id target) :role :person
+                           :text text :at (store/now)
+                           :direction (direction (:bot/id target))
+                           :source :peer
+                           :from (peer/address (:bot/id source))}))
+    (str "delivered to " (:bot/name target) " (" (peer/address (:bot/id target)) ")")))
 
 (defn- run-tool! [configuration b selection tool-name args]
   (let [limit (max 1 (long (or (get-in configuration
                                       [:bots :goal :max-tool-output-chars])
                                 max-tool-output-chars)))
-        text (if (or (agent-control/browser-tool? tool-name)
+        text (if (or (peer-tool? tool-name)
+                     (agent-control/browser-tool? tool-name)
                      (workspace-tools/tool? tool-name)
                      (virtual-shell/tool? tool-name))
                (str (cond
+                      (peer-tool? tool-name)
+                      (send-peer-message! b (:to args) (:text args))
+
                       (workspace-tools/tool? tool-name)
                       (workspace-tools/call! (:bot/workspace b) tool-name args)
 
@@ -1393,7 +1524,13 @@
         (for [m messages
               :when (seq (str (:message/text m)))]
           {:role (if (= :person (:message/role m)) "user" "assistant")
-           :content (:message/text m)}))))
+           ;; A peer's note is attributed in the transcript, not merged into the
+           ;; person's voice. Without this the model reads another Bot's message
+           ;; as an instruction from its owner, which is the shape in which a
+           ;; permission system is defeated without looking like delegation.
+           :content (if-let [from (:message/from m)]
+                      (str from ": " (:message/text m))
+                      (:message/text m))}))))
 
 (defn- usage-value [usage key]
   (long (or (get usage key) (get usage (name key)) 0)))
@@ -2097,12 +2234,14 @@
   (let [rows (connectors/catalog-rows configuration)
         connected (connected-connectors configuration did)
         browser (browser-tools configuration b)
+        peers (peer-tools b)
         coding (coding-tools b)
         {:keys [selection blocked]} (resolve-accounts configuration b did)]
     {:selection selection
      :blocked blocked
      :tool-provider (tool->provider configuration)
-     :runnable (cond-> (into (into (into #{} (map :name) browser)
+     :runnable (cond-> (into (into (into (into #{} (map :name) browser)
+                                         (map :name) peers)
                                    (map :name) coding)
                              (bot/admitted-tools b rows connected))
                  goal? (into goal-tool-names))
