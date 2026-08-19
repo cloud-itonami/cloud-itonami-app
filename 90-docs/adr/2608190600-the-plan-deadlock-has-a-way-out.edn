@@ -23,7 +23,7 @@ still stuck, and 326 of 461 stored resident runs were.
 
 ## Why it was unrecoverable rather than merely awkward
 
-There IS a legal escape. `goal_plan` says \\"create or revise\\", so a provider
+There IS a legal escape. `goal_plan` says \"create or revise\", so a provider
 can plan again without the impossible step.
 
 `clean-plan` reset every step to `:pending`. So the escape cost everything
