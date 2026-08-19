@@ -122,6 +122,24 @@
 (def max-contexts 120)
 (def max-context-messages 40)
 
+(def ^:private max-error-message 300)
+
+(defn- error-message
+  "One line of why, short enough to store on every failed turn.
+
+  Bounded and single-line on purpose: this rides in a record the UI reads, a
+  stack trace would drown it, and an exception message is not a place to put
+  unbounded text. `nil` when there is nothing to say, so a reader can tell
+  'no message' from an empty one."
+  [error]
+  (some-> (.getMessage ^Exception error)
+          str/split-lines
+          first
+          str/trim
+          not-empty
+          (as-> m (subs m 0 (min max-error-message (count m))))))
+
+
 (def goal-tool-definitions
   [{:name "goal_plan"
     :description (str "Create or revise the bounded execution plan before acting. "
@@ -640,10 +658,15 @@
                       :provisioned-at (store/now)})
           result)
         (catch Exception error
+          ;; `:type` alone is worse here than elsewhere: a mailbox failure
+          ;; usually comes from the mail host, whose exceptions carry no
+          ;; ex-data at all, so this stored nil and a pending mailbox had no
+          ;; recorded reason whatsoever. Found by verify-error-provenance.
           (transact! assoc-in [:mailboxes id]
                      {:status :pending :address (:bot/email b)
                       :last-error-at (store/now)
-                      :last-error-type (:type (ex-data error))}))))
+                      :last-error-type (:type (ex-data error))
+                      :last-error-message (error-message error)}))))
     b))
 
 (defn update!
@@ -1960,23 +1983,6 @@
       (:turn/goal? turn) (assoc :job (public-goal-job (goal-job (:turn/id turn)))))))
 
 ;; ── the demonstration ───────────────────────────────────────────────────
-
-(def ^:private max-error-message 300)
-
-(defn- error-message
-  "One line of why, short enough to store on every failed turn.
-
-  Bounded and single-line on purpose: this rides in a record the UI reads, a
-  stack trace would drown it, and an exception message is not a place to put
-  unbounded text. `nil` when there is nothing to say, so a reader can tell
-  'no message' from an empty one."
-  [error]
-  (some-> (.getMessage ^Exception error)
-          str/split-lines
-          first
-          str/trim
-          not-empty
-          (as-> m (subs m 0 (min max-error-message (count m))))))
 
 (defn- trace!
   "Record that a tool actually RAN.
