@@ -6,6 +6,7 @@
             [cloud.itonami.app.drive-fs :as drive-fs]
             [cloud.itonami.app.nfs :as nfs-service]
             [cloud.itonami.app.store :as store]
+            [kekkai.envelope]
             [drive.store.memory :as memory-store]
             [drive.workspace :as ws]
             [nfs.v3 :as nfs]
@@ -193,3 +194,106 @@
   (is (nil? (nfs-service/config {})))
   (is (nil? (nfs-service/config {:nfs {}})))
   (is (= 12049 (:port (nfs-service/config {:nfs {:enabled? true}})))))
+
+;; ── a netmap this host did not write ──────────────────────────────────────
+
+(defn- signing-identity
+  "A throwaway Ed25519 pair in the shape `kekkai.envelope/seal` wants."
+  []
+  (let [kp (.generateKeyPair (java.security.KeyPairGenerator/getInstance "Ed25519"))]
+    {:private-key (.getPrivate kp) :public-key (.getPublic kp)}))
+
+(def ^:private drive-netmap
+  {:netmap/version 7
+   :netmap/tailnet "kekkai.test"
+   :netmap/self {:node/id "mac" :node/overlay-ip "100.64.0.1"}
+   :netmap/peers [{:node/id "phone" :node/overlay-ip "100.64.0.9"
+                   :node/status "authorized"}
+                  {:node/id "expired" :node/overlay-ip "100.64.0.10"
+                   :node/status "authorized" :node/expires-at 1}
+                  {:node/id "guest" :node/overlay-ip "100.64.0.77"
+                   :node/status "authorized"}]
+   :netmap/edges [{:edge/from "phone" :edge/to "mac"
+                   :edge/capabilities [:overlay :private-http]
+                   :edge/ports [12049]}
+                  {:edge/from "expired" :edge/to "mac"
+                   :edge/capabilities [:overlay :private-http]
+                   :edge/ports [12049]}]})
+
+(deftest a-signed-netmap-decides-and-an-unsigned-one-is-refused
+  (let [me (signing-identity)
+        spki (kekkai.envelope/authority-spki-b64 me)
+        envelope (kekkai.envelope/seal drive-netmap me)]
+
+    (testing "the envelope this host was handed is verified before it is read"
+      (let [nm (nfs-service/verified-netmap {:envelope envelope
+                                             :authority-spki-b64 spki})]
+        (is (= 7 (:netmap/version nm)))))
+
+    (testing "a signature from a key this export does not accept is refused"
+      (let [other (signing-identity)]
+        (is (thrown? clojure.lang.ExceptionInfo
+                     (nfs-service/verified-netmap
+                      {:envelope envelope
+                       :authority-spki-b64 (kekkai.envelope/authority-spki-b64 other)})))))
+
+    (testing "a payload edited after signing is refused"
+      ;; The digest and the signature both cover the payload bytes, so this
+      ;; must fail on the first of them rather than parse and admit.
+      (let [tampered (assoc envelope :netmap/payload-b64
+                            (.encodeToString (java.util.Base64/getEncoder)
+                                             (.getBytes (pr-str (assoc drive-netmap
+                                                                       :netmap/version 8))
+                                                        "UTF-8")))]
+        (is (thrown? clojure.lang.ExceptionInfo
+                     (nfs-service/verified-netmap {:envelope tampered
+                                                   :authority-spki-b64 spki})))))
+
+    (testing "the authority is required — an envelope that authenticated itself
+              would not be authentication"
+      (is (thrown? clojure.lang.ExceptionInfo
+                   (nfs-service/verified-netmap {:envelope envelope}))))
+
+    (let [nm (nfs-service/verified-netmap {:envelope envelope :authority-spki-b64 spki})
+          authorize (nfs-service/authorize-fn
+                     {:actor actor :netmap nm :capability :private-http
+                      :actors {"phone" "usr-phone"} :port 12049})]
+
+      (testing "a granted peer is admitted as the node the netmap names"
+        (let [p (authorize {:remote-address "100.64.0.9"})]
+          (is (= "usr-phone" (:actor p)))
+          (is (= :kekkai (:via p)))
+          (is (= "phone" (:node p)))))
+
+      (testing "an expired node key is a refusal, not a peer"
+        (is (nil? (authorize {:remote-address "100.64.0.10"}))))
+
+      (testing "a peer with no edge is refused"
+        (is (nil? (authorize {:remote-address "100.64.0.77"}))))
+
+      (testing "the port is part of the grant"
+        (is (nil? ((nfs-service/authorize-fn
+                    {:actor actor :netmap nm :capability :private-http :port 2049})
+                   {:remote-address "100.64.0.9"}))))
+
+      (testing "so is the capability — kekkai has no :nfs, so naming the wrong
+                one must refuse rather than fall through to :overlay"
+        (is (nil? ((nfs-service/authorize-fn
+                    {:actor actor :netmap nm :capability :ssh :port 12049})
+                   {:remote-address "100.64.0.9"}))))))
+
+  (testing "a hand-written policy is refused unless the operator says so"
+    (is (thrown? clojure.lang.ExceptionInfo
+                 (nfs-service/config {:nfs {:enabled? true :actor actor
+                                            :policy {:nodes [] :grants []}}})))
+    (is (some? (nfs-service/config {:nfs {:enabled? true :actor actor
+                                          :allow-unsigned-policy? true
+                                          :policy {:nodes [] :grants []}}}))))
+
+  (testing "a netmap without a capability is refused rather than given a default"
+    (let [me (signing-identity)]
+      (is (thrown? clojure.lang.ExceptionInfo
+                   (nfs-service/config
+                    {:nfs {:enabled? true :actor actor
+                           :netmap {:envelope (kekkai.envelope/seal drive-netmap me)
+                                    :authority-spki-b64 (kekkai.envelope/authority-spki-b64 me)}}}))))))
