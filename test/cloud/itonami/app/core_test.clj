@@ -1316,3 +1316,25 @@
                 session transaction-id {:id "invalid"})))))
       (finally
         (reset! store/state previous)))))
+
+(deftest every-permission-a-bot-has-can-be-switched-on-from-the-screen
+  ;; A capability with no control is a capability nobody can use. `:bot/peers?`
+  ;; landed with `send_message` and without this checkbox, which made the tool
+  ;; unreachable by the only person allowed to grant it.
+  (let [html (web/page-html {})]
+    (doseq [id ["bots-writes" "bots-omakase" "bots-browser" "bots-peers"
+                "bots-coding" "bots-virtual-shell"]]
+      (is (re-find (re-pattern (str "id=\"" id "\"")) html)
+          (str id " has no control on the Bot screen")))))
+
+(deftest the-omakase-copy-describes-what-omakase-now-does
+  ;; It read "shell・メール送信・Git変更" until 2026-08-19 — the three-effect
+  ;; allowlist ADR-0060 deleted. The screen was telling the owner something
+  ;; false about the switch they were being asked to turn on, which is worse
+  ;; than saying nothing.
+  (let [html (web/page-html {})]
+    (is (not (str/includes? html "shell・メール送信・Git変更を待たずに実行"))
+        "the screen still describes the allowlist that no longer exists")
+    (is (str/includes? html "この Bot が使えるツールすべてを、待たずに実行します"))
+    (is (str/includes? html "渡していないツールは、自分で承認しても使えません")
+        "the ceiling is the part a person most needs told")))

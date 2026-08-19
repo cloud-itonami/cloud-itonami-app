@@ -9827,6 +9827,10 @@
         panel.append(make('div', null,
           'この Bot には、この配備で有効になっていないツールが指定されています。Settings で有効にするか、この Bot の権限を見直してください。'));
       }
+      if (bot['peers?']) {
+        panel.append(make('div', null,
+          'ピア: ほかの Bot への書き置きができます（相手も有効にしている場合）。'));
+      }
       if (bot['browser-ready?']) {
         panel.append(make('div', null,
           '分離ブラウザー: この Bot 専用のプロファイル（実行前に承認する）'));
@@ -10031,6 +10035,7 @@
           'writes?':$('#bots-writes').checked,
           'omakase?':$('#bots-omakase').checked,
           'browser?':$('#bots-browser').checked,
+          'peers?':$('#bots-peers').checked,
           'coding?':$('#bots-coding').checked,
           'virtual-shell?':$('#bots-virtual-shell').checked,
           workspace:$('#bots-workspace').value.trim()
