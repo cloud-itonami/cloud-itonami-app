@@ -1042,9 +1042,37 @@
   (with-redefs [workspace-tools/call! (fn [& _] "abcdefghijklmnop")]
     (let [output ((deref (run-tool-var))
                   {:bots {:goal {:max-tool-output-chars 5}}}
-                  {:bot/workspace "/tmp"} nil "workspace_read" {})]
-      (is (str/starts-with? output "abcde\n"))
-      (is (str/includes? output "full output is represented by the host receipt hash")))))
+                  {:bot/workspace "/tmp"} nil "workspace_read" {})
+          text (:text output)]
+      ;; run-tool! answers {:text .. :images ..}: a tool that captures a
+      ;; picture has to hand the model the picture, and the string return had
+      ;; no room to carry one. A text-only tool reports no images.
+      (is (map? output))
+      (is (str/starts-with? text "abcde\n"))
+      (is (str/includes? text "full output is represented by the host receipt hash"))
+      (is (empty? (:images output))))))
+
+(deftest run-tool-carries-an-image-a-capture-produced
+  ;; The reason the contract changed. `desktop/screenshot!` writes a PNG and
+  ;; answers {:image-path ..}; before this, `str` turned that into a FILENAME
+  ;; and the model reasoned about a window it had never seen.
+  (let [png (java.io.File/createTempFile "shot-" ".png")]
+    (io/copy (byte-array (map unchecked-byte
+                              [0x89 0x50 0x4E 0x47 0x0D 0x0A 0x1A 0x0A]))
+             png)
+    (with-redefs [agent-control/browser-tool? (fn [n] (= n "computer_screenshot"))
+                  agent-control/call-browser-tool!
+                  (fn [& _] {:image-path (.getCanonicalPath png)
+                             :media-type "image/png"
+                             :window "Test"})]
+      (let [output ((deref (run-tool-var))
+                    {} {:bot/id "b1"} nil "computer_screenshot" {})
+            image (first (:images output))]
+        (is (str/includes? (:text output) "image-path")
+            "the metadata still reaches the model as text")
+        (is (str/starts-with? (:data-url image) "data:image/png;base64,")
+            "and the pixels reach it as an image")))
+    (.delete png)))
 
 (deftest omakase-runs-an-admitted-gmail-send-and-leaves-a-receipt
   (with-store
@@ -1057,7 +1085,7 @@
         (with-redefs-fn
           {(run-tool-var) (fn [_ _ _ name _]
                             (swap! ran conj name)
-                            "sent")}
+                            {:text "sent" :images []})}
           (fn []
             (with-redefs [policy/select-provider (fn [_ _] {:id :local})
                           provider/agent-turn (proposes-write)]
@@ -1087,7 +1115,7 @@
           (with-redefs-fn
             {(run-tool-var) (fn [_ _ _ name _]
                               (swap! ran conj name)
-                              "sent")}
+                              {:text "sent" :images []})}
             (fn []
               (with-redefs [policy/select-provider (fn [_ _] {:id :local})
                             provider/agent-turn
@@ -1183,7 +1211,7 @@
       (connect! "conn-1" :google "sub-1" "jun@example.com")
       (let [b (make-bot alice {:writes? true})
             ran (atom [])]
-        (with-redefs-fn {(run-tool-var) (fn [_ _ _ n _] (swap! ran conj n) "sent")}
+        (with-redefs-fn {(run-tool-var) (fn [_ _ _ n _] (swap! ran conj n) {:text "sent" :images []})}
           (fn []
             (with-redefs [policy/select-provider (fn [_ _] {:id :local})
                           provider/agent-turn (proposes-write)]
@@ -1206,7 +1234,7 @@
       (connect! "conn-1" :google "sub-1" "jun@example.com")
       (let [b (make-bot alice {:writes? true})
             ran (atom [])]
-        (with-redefs-fn {(run-tool-var) (fn [_ _ _ n _] (swap! ran conj n) "sent")}
+        (with-redefs-fn {(run-tool-var) (fn [_ _ _ n _] (swap! ran conj n) {:text "sent" :images []})}
           (fn []
             (with-redefs [policy/select-provider (fn [_ _] {:id :local})
                           provider/agent-turn (proposes-write)]

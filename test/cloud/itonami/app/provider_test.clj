@@ -180,3 +180,35 @@
            (first (:tool-calls
                    (normalize {:content "" :tool_calls [complete]}
                               "tool_calls")))))))
+
+(deftest invalid-tool-arguments-report-what-they-were
+  ;; 19 resident turns failed as :provider/invalid-tool-arguments (root
+  ;; ADR-2608197700) and not one recorded the arguments, so a probe with the
+  ;; real tool schemas afterwards could not reproduce it -- 15 attempts, 0
+  ;; failures. The reason was in the value the error dropped.
+  (let [parse (private-fn 'parse-arguments)]
+    (testing "the offending string survives into ex-data"
+      (let [error (try (parse "{\"path\":\"REA")
+                       (catch clojure.lang.ExceptionInfo e e))]
+        (is (= :provider/invalid-tool-arguments (:type (ex-data error))))
+        (is (= "{\"path\":\"REA" (:arguments-sample (ex-data error))))
+        (is (= 12 (:arguments-length (ex-data error))))))
+
+    (testing "valid JSON of the wrong shape is refused, not silently emptied"
+      ;; A bare array parsed fine before and became the tool's arguments, so
+      ;; every (:key args) lookup answered nil and the tool ran with none.
+      (doseq [value ["[\"Osaka\"]" "\"Osaka\"" "42"]]
+        (let [error (try (parse value)
+                         (catch clojure.lang.ExceptionInfo e e))]
+          (is (= :provider/invalid-tool-arguments (:type (ex-data error)))
+              (str value " must be refused"))
+          (is (= value (:arguments-sample (ex-data error)))))))
+
+    (testing "a markdown fence is decoration, not malformation"
+      (is (= {:city "Kyoto"} (parse "```json\n{\"city\":\"Kyoto\"}\n```")))
+      (is (= {:city "Nara"} (parse "```\n{\"city\":\"Nara\"}\n```"))))
+
+    (testing "what already worked keeps working"
+      (is (= {:city "Osaka"} (parse "{\"city\":\"Osaka\"}")))
+      (is (= {:city "Osaka"} (parse {:city "Osaka"})))
+      (is (= {} (parse ""))))))

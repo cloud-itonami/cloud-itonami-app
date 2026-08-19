@@ -134,16 +134,65 @@
       (:tool-call-id message)
       (assoc :tool_call_id (:tool-call-id message)))))
 
-(defn- parse-arguments [value]
+(def ^:private max-reported-arguments 400)
+
+(defn- unfenced
+  "`value` with a markdown code fence stripped, when it is wrapped in one.
+
+  The one malformation worth recovering from: it is unambiguous (the JSON is
+  intact, a decoration was added around it) so nothing is guessed. Every other
+  malformation is left to fail -- these arguments can write a file or make a
+  commit, and repairing a call the model got wrong is how a tool runs with
+  something nobody asked for."
+  [value]
+  (let [t (str/trim (str value))]
+    (if-let [m (re-matches #"(?s)```(?:json)?\s*(.*?)\s*```" t)]
+      (str/trim (second m))
+      t)))
+
+(defn- parse-arguments
+  "The model's tool arguments as a map.
+
+  KEEPS THE OFFENDING STRING when it cannot. The first version threw
+  `{:type :provider/invalid-tool-arguments}` and nothing else, so 19 failed
+  resident turns (root ADR-2608197700) recorded that arguments were invalid
+  and not ONE recorded what they were -- and a probe with the real tool
+  schemas could not reproduce it afterwards (15 attempts, 0 failures). The
+  reason was in the value we dropped. Same defect this codebase keeps finding
+  elsewhere: status kept, body discarded."
+  [value]
   (cond
     (map? value) value
     (str/blank? (str value)) {}
-    :else (try
-            (json/read-str value :key-fn keyword)
-            (catch Exception error
-              (throw (ex-info "model returned invalid tool arguments"
-                              {:type :provider/invalid-tool-arguments}
-                              error))))))
+    :else
+    (let [candidate (unfenced value)]
+      (try
+        (let [parsed (json/read-str candidate :key-fn keyword)]
+          (if (map? parsed)
+            parsed
+            ;; Valid JSON of the wrong shape is its own failure: a bare array
+            ;; or string would silently become an empty argument map further
+            ;; down and the tool would run with no arguments at all.
+            (throw (ex-info "model returned tool arguments that are not an object"
+                            {:type :provider/invalid-tool-arguments
+                             :arguments-kind (cond (sequential? parsed) "array"
+                                                   (string? parsed) "string"
+                                                   :else (str (type parsed)))
+                             :arguments-sample (subs (str value) 0
+                                                     (min max-reported-arguments
+                                                          (count (str value))))}))))
+        (catch clojure.lang.ExceptionInfo error (throw error))
+        (catch Exception error
+          (throw (ex-info "model returned invalid tool arguments"
+                          {:type :provider/invalid-tool-arguments
+                           :arguments-length (count (str value))
+                           ;; Truncated: these are model-authored and can be
+                           ;; long. Enough to see the malformation, not the
+                           ;; whole payload.
+                           :arguments-sample (subs (str value) 0
+                                                   (min max-reported-arguments
+                                                        (count (str value))))}
+                          error)))))))
 
 (defn- normalize-tool-calls [calls]
   (mapv (fn [index call]

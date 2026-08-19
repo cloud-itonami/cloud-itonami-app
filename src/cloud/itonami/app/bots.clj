@@ -54,6 +54,7 @@
   (:require [agent.run :as agent-run]
             [clojure.data.json :as json]
             [clojure.java.io :as io]
+            [clojure.java.shell :as shell]
             [clojure.string :as str]
             [cloud.itonami.app.agent-control :as agent-control]
             [cloud.itonami.app.bot :as bot]
@@ -1449,38 +1450,146 @@
                            :from (peer/address (:bot/id source))}))
     (str "delivered to " (:bot/name target) " (" (peer/address (:bot/id target)) ")")))
 
-(defn- run-tool! [configuration b selection tool-name args]
+;; ── images a tool produced ───────────────────────────────────────────────
+;;
+;; A tool that captures a picture has to hand the model the PICTURE. Before
+;; this, `computer_screenshot` handed it `{:image-path "/…/window-<uuid>.png"}`
+;; and the model reasoned about a window it had never seen.
+;;
+;; Two things this must not do:
+;;
+;;   * send a retina capture whole. A 2880x1800 PNG is megabytes, base64 adds
+;;     a third, and it is one message inside a loop that already carries tool
+;;     output. It is downscaled first, and the cap is on the ENCODED bytes,
+;;     because that is what actually travels.
+;;   * fail silently. If the file is gone, or `sips` is missing, or it is
+;;     still too big after downscaling, the model is TOLD in the tool text
+;;     rather than left to assume it saw something.
+
+(def ^:private max-image-edge 1200)
+(def ^:private max-image-encoded-bytes (* 3 1024 1024))
+
+(def ^:private downscale-above-bytes (* 256 1024))
+
+(defn- downscaled-png
+  "A copy of `path` no wider or taller than `max-image-edge`, or the original
+  when `sips` cannot produce one. macOS ships sips; a host without it still
+  gets an image, just a larger one, and the byte cap below is the real bound.
+
+  Files already under `downscale-above-bytes` are returned untouched: sips
+  re-encodes rather than copies, and measured on a 185-byte PNG it produced a
+  21 KB one. Shrinking something already small is how a size guard makes the
+  payload bigger."
+  [path]
+  (if (<= (.length (io/file path)) downscale-above-bytes)
+    path
+    (try
+      (let [out (java.io.File/createTempFile "bot-image-" ".png")
+            {:keys [exit]} (shell/sh "/usr/bin/sips" "-Z" (str max-image-edge)
+                                     path "--out" (.getCanonicalPath out))]
+        (if (and (zero? exit) (.isFile out) (pos? (.length out))
+                 ;; only if it actually got smaller -- see the docstring
+                 (< (.length out) (.length (io/file path))))
+          (.getCanonicalPath out)
+          path))
+      (catch Exception _ path))))
+
+(defn image-attachment
+  "`{:media-type .. :data-url .. }` for a tool result that produced an image,
+  or nil when it did not. Never throws: a capture that cannot be attached must
+  degrade to text, not take down the turn."
+  [result]
+  (when-let [path (some-> (:image-path result) str not-empty)]
+    (try
+      (let [source (io/file path)]
+        (if-not (.isFile source)
+          {:error (str "画像ファイルが見つかりませんでした: " path)}
+          (let [scaled (downscaled-png (.getCanonicalPath source))
+                bytes (java.nio.file.Files/readAllBytes (.toPath (io/file scaled)))
+                encoded (.encodeToString (java.util.Base64/getEncoder) bytes)
+                media (or (some-> (:media-type result) str not-empty) "image/png")]
+            (if (> (count encoded) max-image-encoded-bytes)
+              {:error (str "画像が大きすぎて添付できませんでした（"
+                           (quot (count encoded) 1024) "KB > "
+                           (quot max-image-encoded-bytes 1024) "KB）。")}
+              {:media-type media
+               :data-url (str "data:" media ";base64," encoded)
+               :bytes (count encoded)}))))
+      (catch Exception error
+        {:error (str "画像を添付できませんでした: " (.getMessage error))}))))
+
+(defn- run-tool!
+  "Run one admitted tool. Returns `{:text .. :images [..]}`.
+
+  It used to return the string alone, and that is why `computer_screenshot`
+  was a tool nobody could use: `desktop/screenshot!` writes a PNG and answers
+  `{:image-path .. :media-type ..}`, which `str` turned into a FILENAME. The
+  model was handed the name of a picture it had no way to open, on every
+  capture, and would then reason about a window it had never seen.
+
+  The image is carried out of here as data rather than re-derived from the
+  printed map: parsing our own `pr-str` back would couple the caller to a
+  print format nobody promised to keep."
+  [configuration b selection tool-name args]
   (let [limit (max 1 (long (or (get-in configuration
                                       [:bots :goal :max-tool-output-chars])
                                 max-tool-output-chars)))
-        text (if (or (peer-tool? tool-name)
-                     (agent-control/browser-tool? tool-name)
-                     (workspace-tools/tool? tool-name)
-                     (virtual-shell/tool? tool-name))
-               (str (cond
-                      (peer-tool? tool-name)
-                      (send-peer-message! b (:to args) (:text args))
+        structured (if (or (peer-tool? tool-name)
+                           (agent-control/browser-tool? tool-name)
+                           (workspace-tools/tool? tool-name)
+                           (virtual-shell/tool? tool-name))
+                     (cond
+                       (peer-tool? tool-name)
+                       (send-peer-message! b (:to args) (:text args))
 
-                      (workspace-tools/tool? tool-name)
-                      (workspace-tools/call! (:bot/workspace b) tool-name args)
+                       (workspace-tools/tool? tool-name)
+                       (workspace-tools/call! (:bot/workspace b) tool-name args)
 
-                      (virtual-shell/tool? tool-name)
-                      (virtual-shell/call! {:bot-id (:bot/id b)
-                                            :workspace (:bot/workspace b)}
-                                           tool-name args)
+                       (virtual-shell/tool? tool-name)
+                       (virtual-shell/call! {:bot-id (:bot/id b)
+                                             :workspace (:bot/workspace b)}
+                                            tool-name args)
 
-                      :else
-                      (agent-control/call-browser-tool!
-                       configuration (:bot/id b) tool-name args)))
-               (let [registry (connectors/enabled configuration)
-                     result (invoke/call registry tool-name args
-                                         {:http (http-port)
-                                          :tokens (tokens-port configuration selection)})]
-                 (if (string? result) result (pr-str result))))]
-    (if (> (count text) limit)
-      (str (subs text 0 limit)
-           "\n[tool output truncated for model context; full output is represented by the host receipt hash]")
-      text)))
+                       :else
+                       (agent-control/call-browser-tool!
+                        configuration (:bot/id b) tool-name args))
+                     (let [registry (connectors/enabled configuration)]
+                       (invoke/call registry tool-name args
+                                    {:http (http-port)
+                                     :tokens (tokens-port configuration selection)})))
+        text (if (string? structured) structured (pr-str structured))]
+    {:text (if (> (count text) limit)
+             (str (subs text 0 limit)
+                  "\n[tool output truncated for model context; full output is represented by the host receipt hash]")
+             text)
+     :images (when (map? structured)
+               (vec (keep identity [(image-attachment structured)])))}))
+
+(defn- tool-messages
+  "The messages one tool result owes the model.
+
+  Always the `tool` message. Then, when the tool produced an image, a `user`
+  message carrying it -- images cannot ride in a tool message (the OpenAI
+  shape gives `role: \"tool\"` a string body), so the picture arrives as the
+  next turn's input. An image that could not be attached is reported IN the
+  tool text; a model told the capture failed says so, a model told nothing
+  describes a window it never saw."
+  [call name result]
+  (let [failures (keep :error (:images result))
+        usable (filter :data-url (:images result))
+        text (str (:text result)
+                  (when (seq failures)
+                    (str "\n[" (str/join " / " failures) "]")))]
+    (cond-> [{:role "tool" :tool-call-id (:id call) :name name :content text}]
+      (seq usable)
+      (conj {:role "user"
+             :content (into [{:type "text"
+                              :text (str "これは " name " が取得した画像です。"
+                                         "見えたものだけを述べ、見えないものを推測しないでください。")}]
+                            (map (fn [img]
+                                   {:type "image_url"
+                                    :image_url {:url (:data-url img)}})
+                                 usable))}))))
 
 (defn- system-prompt [b configuration goal]
   (str "You are " (:bot/name b) ", a bounded worker inside Cloud Itonami. "
@@ -1847,7 +1956,7 @@
                 receipt {:action/id (:id call) :child-run-id child-id :tool name
                          :step-id (current-plan-step-id run)
                          :duration-ms (- (now-ms) started)
-                         :output-sha256 (receipt-sha256 output)}]
+                         :output-sha256 (receipt-sha256 (:text output))}]
             (trace! configuration (:bot/id b) name)
             (update-goal-job! (:id run) update-in [:job/children child-id]
                               agent-run/transition :succeeded (now-ms)
@@ -1878,9 +1987,8 @@
         next-run (reduce (fn [r {:keys [call output]}]
                            (-> r
                                (update :tool-count (fnil inc 0))
-                               (update :messages conj
-                                       {:role "tool" :tool-call-id (:id call)
-                                        :name (:name call) :content output})))
+                               (update :messages into
+                                       (tool-messages call (:name call) output))))
                          run results)]
     (when on-event
       (on-event {:type "phase" :phase "tools-executed"
@@ -2143,12 +2251,11 @@
                                        {:action/id (:id call) :tool name
                                         :step-id (current-plan-step-id run)
                                         :duration-ms (- (now-ms) started)
-                                        :output-sha256 (receipt-sha256 output)})
+                                        :output-sha256 (receipt-sha256 (:text output))})
                         run (-> run
                                 (update :tool-count (fnil inc 0))
-                                (update :messages conj
-                                        {:role "tool" :tool-call-id (:id call)
-                                         :name name :content output}))]
+                                (update :messages into
+                                        (tool-messages call name output)))]
                     (trace! configuration (:bot/id b) name)
                     (when on-event
                       (on-event {:type "phase" :phase "tool-executed"
@@ -2175,12 +2282,11 @@
                                    {:action/id (:id call) :tool name
                                     :step-id (current-plan-step-id run)
                                     :duration-ms (- (now-ms) started)
-                                    :output-sha256 (receipt-sha256 output)})
+                                    :output-sha256 (receipt-sha256 (:text output))})
                     run (-> run
                             (update :tool-count (fnil inc 0))
-                            (update :messages conj
-                                    {:role "tool" :tool-call-id (:id call)
-                                     :name name :content output}))]
+                            (update :messages into
+                                    (tool-messages call name output)))]
                 (trace! configuration (:bot/id b) name)
                 (when on-event
                   (on-event {:type "phase" :phase "tool-executed"
@@ -3179,7 +3285,7 @@
                                         {:action/id (:id call) :tool (:name call)
                                          :step-id (current-plan-step-id run)
                                          :duration-ms (- (now-ms) started)
-                                         :output-sha256 (receipt-sha256 output)})
+                                         :output-sha256 (receipt-sha256 (:text output))})
                            output))
               output (if goal?
                        (binding [*goal-event!*
@@ -3188,10 +3294,8 @@
                        (execute!))
               run (-> run
                       (update :tool-count (fnil inc 0))
-                      (update :messages conj {:role "tool"
-                                              :tool-call-id (:id call)
-                                              :name (:name call)
-                                              :content output})
+                      (update :messages into
+                              (tool-messages call (:name call) output))
                       (dissoc :pending-call :pending-card))]
           ;; Traced here as well as in `advance!`: an approved write is the
           ;; step a routine most needs to have recorded, and it is the one
