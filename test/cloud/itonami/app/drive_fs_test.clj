@@ -297,3 +297,48 @@
                     {:nfs {:enabled? true :actor actor
                            :netmap {:envelope (kekkai.envelope/seal drive-netmap me)
                                     :authority-spki-b64 (kekkai.envelope/authority-spki-b64 me)}}}))))))
+
+(deftest behind-a-forwarder-the-agent-is-asked-who-reached-us
+  ;; `kekkai.node.stream-edge` connects to the service from loopback, so
+  ;; `remote-address` names nothing and admission by address refuses every
+  ;; connection — fail-closed, and also unusable. The agent on this host still
+  ;; knows which peer it proved, keyed by the source port it opened with.
+  (let [me (signing-identity)
+        nm (nfs-service/verified-netmap
+            {:envelope (kekkai.envelope/seal drive-netmap me)
+             :authority-spki-b64 (kekkai.envelope/authority-spki-b64 me)})
+        asked (atom [])
+        lookup (fn [port] (swap! asked conj port) (when (= 55555 port) "phone"))
+        authorize (nfs-service/authorize-fn
+                   {:actor actor :netmap nm :capability :private-http
+                    :actors {"phone" "usr-phone"} :port 12049 :lookup lookup})]
+
+    (testing "a loopback connection the agent names is admitted as that peer"
+      (let [p (authorize {:remote-address "127.0.0.1" :remote-port 55555})]
+        (is (= "usr-phone" (:actor p)))
+        (is (= "phone" (:node p)))))
+
+    (testing "a loopback connection the agent does not name is refused —
+              configuring a lookup means loopback stops self-authorising"
+      (is (nil? (authorize {:remote-address "127.0.0.1" :remote-port 44444}))))
+
+    (testing "the peer still has to be granted the port; being named is not
+              being allowed"
+      (is (nil? ((nfs-service/authorize-fn
+                  {:actor actor :netmap nm :capability :private-http
+                   :actors {"phone" "usr-phone"} :port 2049 :lookup lookup})
+                 {:remote-address "127.0.0.1" :remote-port 55555}))))
+
+    (testing "an address the netmap already claims is answered without asking"
+      (let [before (count @asked)
+            p (authorize {:remote-address "100.64.0.9" :remote-port 55555})]
+        (is (= "phone" (:node p)))
+        (is (= before (count @asked))
+            "no round trip in front of a peer that is already named")))))
+
+(deftest a-lookup-without-a-netmap-is-refused
+  (testing "the lookup names a peer; only a netmap says what that peer may
+            reach. One without the other admits whoever was named, on any port"
+    (is (thrown? clojure.lang.ExceptionInfo
+                 (nfs-service/config {:nfs {:enabled? true :actor actor
+                                            :principal-endpoint "http://127.0.0.1:1"}})))))

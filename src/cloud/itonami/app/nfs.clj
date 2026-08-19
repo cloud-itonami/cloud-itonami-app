@@ -43,6 +43,26 @@
   default chosen here would silently grant whatever that default was to every
   edge that already carried it.
 
+  ## Behind a forwarder
+
+  `kekkai.node.stream-edge` connects to this service from loopback, so
+  `remote-address` names nothing and admission by address refuses every
+  connection. `:nfs {:principal-endpoint \"http://127.0.0.1:PORT\"}` asks the
+  agent on this host which peer it proved on that source port. It is consulted
+  **second** — a peer that reached the export directly on the overlay is
+  already named, and asking anyway would put a round trip in front of every
+  mount.
+
+  Being named is not being allowed: the peer still goes through the netmap's
+  `authorized?` and `permitted?`. `:principal-endpoint` without a `:netmap` is
+  refused, because a lookup names a peer and only a netmap says what that peer
+  may reach.
+
+  **Configuring a lookup means loopback stops self-authorising.** A local
+  connection the agent cannot name is refused rather than admitted as the
+  configured actor — otherwise anything on this machine could mount a Drive
+  that was deliberately put behind an overlay.
+
   `:actors` maps a node id to the Drive owner it is admitted as. That mapping
   lives here because kekkai has no notion of an actor and must not be asked to
   carry one — the previous code read `:node/actor` off a netmap node, a field
@@ -64,6 +84,7 @@
             [kekkai.node.netmap :as wire]
             [clojure.java.io :as io]
             [clojure.edn :as edn]
+            [clojure.data.json :as json]
             [nfs.tcp :as tcp]))
 
 (defonce ^:private server (atom nil))
@@ -121,10 +142,10 @@
   which capability it rides rather than have this code pick one — a default
   here would grant whatever that default happened to be, to every edge that
   already had it."
-  [{:keys [netmap actors actor capability port]} address]
+  [{:keys [netmap actors actor capability port]} peer]
   (let [self (:node/id (:netmap/self netmap))
         now (quot (System/currentTimeMillis) 1000)]
-    (when-let [peer (peer-by-address netmap address)]
+    (when peer
       (when (and (wire/authorized? peer now)
                  (wire/permitted? netmap (:node/id peer) self capability port))
         ;; The uid the client claimed is not consulted, for the same reason as
@@ -135,6 +156,38 @@
         {:actor (or (get actors (:node/id peer)) actor)
          :via :kekkai
          :node (:node/id peer)}))))
+
+(defn- peer-by-id [netmap id]
+  (first (filter #(= id (:node/id %)) (:netmap/peers netmap))))
+
+(defn principal-lookup
+  "`(fn [source-port] -> node-id | nil)` against a kekkai node's
+  `principal-endpoint`.
+
+  Behind `kekkai.node.stream-edge`'s forwarder the service is connected to
+  from loopback, so `remote-address` names nothing and admission by address
+  refuses everything. The agent on this host still knows which peer it proved,
+  keyed by the source port it opened with; this asks.
+
+  Any failure — unreachable, slow, malformed, 404 — is `nil`, which the caller
+  turns into a refusal. A lookup that cannot answer must not be distinguishable
+  from one that answered `nobody`: both mean this connection is not a peer."
+  [{:keys [url timeout-ms] :or {timeout-ms 2000}}]
+  (let [client (-> (java.net.http.HttpClient/newBuilder)
+                   (.connectTimeout (java.time.Duration/ofMillis timeout-ms))
+                   (.build))]
+    (fn [source-port]
+      (try
+        (let [req (-> (java.net.http.HttpRequest/newBuilder
+                       (java.net.URI/create (str url "/principal?port=" source-port)))
+                      (.timeout (java.time.Duration/ofMillis timeout-ms))
+                      (.GET)
+                      (.build))
+              res (.send client req (java.net.http.HttpResponse$BodyHandlers/ofString))]
+          (when (= 200 (.statusCode res))
+            (let [peer (get (json/read-str (.body res)) "peer")]
+              (not-empty (str peer)))))
+        (catch Exception _ nil)))))
 
 (defn- node-for
   "The kekkai node a peer address belongs to, from the configured netmap.
@@ -154,16 +207,26 @@
   With a policy, the answer comes from `kekkai.acl`: the peer's node must
   reach this node's export port under some grant. `edge-allowed?` returns
   the allowed ports or nil, and `\"*\"` is the wildcard it publishes."
-  [{:keys [actor policy netmap actors capability self-node port]}]
-  (fn [{:keys [remote-address]}]
+  [{:keys [actor policy netmap actors capability self-node port lookup]}]
+  (fn [{:keys [remote-address remote-port]}]
     (cond
       ;; A verified netmap answers first when there is one. Ordered rather than
       ;; merged: a deployment that has both should not have the unsigned half
       ;; able to widen what the signed half granted.
       (some? netmap)
-      (admit-by-netmap {:netmap netmap :actors actors :actor actor
-                        :capability capability :port port}
-                       remote-address)
+      (let [peer (or (peer-by-address netmap remote-address)
+                     ;; Nothing claims this address. Behind a forwarder that is
+                     ;; every connection, because the address is 127.0.0.1 —
+                     ;; so ask the agent which peer it proved on this source
+                     ;; port. Second, not first: a peer that reached the export
+                     ;; directly on the overlay is already named, and asking
+                     ;; anyway would put a network round trip in front of every
+                     ;; mount.
+                     (when lookup
+                       (some->> (lookup remote-port) (peer-by-id netmap))))]
+        (admit-by-netmap {:netmap netmap :actors actors :actor actor
+                          :capability capability :port port}
+                         peer))
 
       (nil? policy)
       (when (contains? #{"127.0.0.1" "::1" "0:0:0:0:0:0:0:1"} remote-address)
@@ -204,8 +267,17 @@
           (throw (ex-info (str "nfs: :netmap needs :capability — kekkai has no "
                                ":nfs capability, so the export must name the one it rides")
                           {:type :nfs/capability-required})))
+        (when (and (:principal-endpoint c) (nil? netmap))
+          ;; The lookup names a peer; only a netmap says what that peer may
+          ;; reach. Accepting one without the other would admit whoever the
+          ;; agent happened to name, on any port, which is the opposite of
+          ;; what asking was for.
+          (throw (ex-info "nfs: :principal-endpoint needs a :netmap to authorise against"
+                          {:type :nfs/lookup-without-netmap})))
         {:enabled? true
          :port port
+         :lookup (when-let [pe (:principal-endpoint c)]
+                   (principal-lookup (if (map? pe) pe {:url pe})))
          :bind (or (:bind c) "127.0.0.1")
          :export (or (:export c) default-export)
          :actor (:actor c)
@@ -218,7 +290,7 @@
 (defn start!
   "Start the export if this deployment configured one. Idempotent."
   [configuration]
-  (when-let [{:keys [port bind export actor policy netmap actors capability self-node]}
+  (when-let [{:keys [port bind export actor policy netmap actors capability self-node lookup]}
              (config configuration)]
     (when-not @server
       (when (and (not= "127.0.0.1" bind) (nil? policy) (nil? netmap))
@@ -235,7 +307,7 @@
                {:dir export :port port :bind bind
                 :authorize (authorize-fn {:actor actor :policy policy
                                           :netmap netmap :actors actors
-                                          :capability capability
+                                          :capability capability :lookup lookup
                                           :self-node self-node :port port})
                 :filesystem-for (fn [principal]
                                   (drive-fs/filesystem (:actor principal)))}))
