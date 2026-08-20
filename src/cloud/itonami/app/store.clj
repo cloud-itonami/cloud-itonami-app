@@ -59,7 +59,8 @@
     (when work (work-partitions/persist-ledger! work))
     ;; Confined write under the state file's parent (kotoba-lang/fs), then
     ;; same-directory atomic rename. No ambient spit of the durable bytes.
-    (host/write-atomic! file (pr-str (dissoc value :work-governance))))
+    (host/write-atomic! file (pr-str (dissoc value :work-governance))
+                        host/store-max-bytes))
   value)
 
 (defn transact! [f & args]
