@@ -141,8 +141,15 @@
   decide to revoke, because there is nothing to tell it from the others."
   [{:keys [enrollment-key label user-id ttl-days]}]
   (when-not (key-matches? enrollment-key)
+    ;; The store fingerprint, not the path: this route takes no session, and a
+    ;; caller that reached it over loopback still has no claim on the operator's
+    ;; home directory. It is enough to correlate with `/health` — a key from
+    ;; another install is the usual cause, and that is the comparison that shows
+    ;; it (2026-08-20).
     (refuse :agent-session/invalid-key
-            "enrollment key が一致しません。data dir の agent-enrollment.key を読んでください"))
+            (str "enrollment key が一致しません。data dir の"
+                 " agent-enrollment.key を読んでください（この server の store: "
+                 (config/store-fingerprint) "）")))
   (let [label (some-> label str str/trim not-empty)]
     (when-not label
       (refuse :agent-session/label-missing

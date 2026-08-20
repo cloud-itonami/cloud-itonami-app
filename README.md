@@ -232,6 +232,15 @@ resident store at `~/.cloud-itonami/data`; an explicit
 `CLOUD_ITONAMI_DATA_DIR` still wins. One `itonami auth login` therefore binds
 both CLI and MCP to the same Keychain session and enrollment root.
 
+One machine can hold more than one store — a checkout beside the resident
+install is the usual way — and only one of them belongs to the server that
+answers the port. `/health` publishes a fingerprint of the data directory the
+serving process opened, `itonami status` prints it next to this terminal's own
+as `store` / `server-store` / `serves-this-store?`, and a command aimed at a
+server serving a different store is refused before it is sent rather than
+acted on. `~/.cloud-itonami/app` resolves `~/.cloud-itonami/data` whether it is
+entered through `bin/itonami` or with a bare `clojure -M:cli`.
+
 The commands are generated from the routes `server.clj` serves, not written by
 hand — `commands-test` re-derives them and fails if the checked-in registry has
 fallen behind, so `itonami commands` reports real coverage rather than a claim.

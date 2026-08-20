@@ -75,8 +75,15 @@
 
   The CLI resolves the server's address and the data directory from the same
   config the server does, so it must run with the same `CLOUD_ITONAMI_DATA_DIR`
-  as the server it is talking to. Mismatched, `auth login` reads the wrong key
-  file and is refused by the server rather than acting on the wrong store.
+  as the server it is talking to. Mismatched, the command is refused before it
+  is sent — `/health` publishes the store the answering process opened, and
+  `server-process/ensure-running!` will not adopt a server serving a different
+  one. A server too old to publish it cannot be checked, and is still used; that
+  is the one case `enrollment-refused` explains after the fact.
+
+  Until 2026-08-20 nothing checked at all. The reads went through on a Keychain
+  token that is not per-store, so only `auth login` failed — with `invalid-key`
+  and no mention of either directory involved.
   `CLOUD_ITONAMI_API_URL=https://itonami.cloud` switches CLI and MCP adapters
   to the hosted control plane; non-loopback plain HTTP is refused."
   (:require [clojure.data.json :as json]
@@ -316,13 +323,39 @@
     (unwrap (call configuration method path
                   {:body body :token (require-token configuration)}))))
 
+(defn- enrollment-refused
+  "`invalid-key` again, with the fact that would have explained it.
+
+  A server built before `/health` published its store cannot be asked whose
+  store it serves, so `ensure-running!` lets the command through and the key
+  goes to whatever is there. When that key is refused, the reading the operator
+  needs is not 'wrong key' — it is 'this may be a different install'. Saying so
+  only when the store is genuinely unknown keeps the message honest: a server
+  that DID publish its store was already refused before the key left this
+  process."
+  [configuration error]
+  (let [{:keys [answering? known?]} (server-process/store-agreement configuration)]
+    (if (and answering? (not known?))
+      (ex-info (str (ex-message error)
+                    "\n  この process の data dir: "
+                    (.getPath (config/data-dir))
+                    "\n  応答した server は自分の store を公開していません"
+                    "（この field より前の build）。別の install の可能性があります —"
+                    " その server を再起動して `itonami status` の"
+                    " serves-this-store? を確認してください")
+               (assoc (ex-data error) :data-dir (.getPath (config/data-dir))))
+      error)))
+
 (defn auth-login [configuration flags]
-  (let [issued (unwrap
-                (call configuration :post "/api/agent-session"
-                      {:body {:enrollment-key (read-enrollment-key)
-                              :label (or (:label flags) "cli")
-                              :user-id (:user-id flags)
-                              :ttl-days (some-> (:ttl-days flags) str parse-long)}}))
+  (let [issued (try
+                 (unwrap
+                  (call configuration :post "/api/agent-session"
+                        {:body {:enrollment-key (read-enrollment-key)
+                                :label (or (:label flags) "cli")
+                                :user-id (:user-id flags)
+                                :ttl-days (some-> (:ttl-days flags) str parse-long)}}))
+                 (catch clojure.lang.ExceptionInfo error
+                   (throw (enrollment-refused configuration error))))
         stored (keychain-put! (:token issued))]
     {:session-id (:session-id issued)
      :label (:label issued)
