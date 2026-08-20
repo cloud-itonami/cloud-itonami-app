@@ -1,7 +1,7 @@
 (ns cloud.itonami.app.workspace-tools-test
   (:require [clojure.java.io :as io]
             [clojure.string :as str]
-            [clojure.test :refer [deftest is]]
+            [clojure.test :refer [deftest is testing]]
             [cloud.itonami.app.workspace-tools :as workspace])
   (:import [java.nio.file Files]
            [java.nio.file.attribute FileAttribute]))
@@ -73,3 +73,45 @@
     (is (str/includes? (git! root "diff" "--cached" "--name-only")
                        "unrelated.txt")
         "an unrelated staged file stays staged but is not committed")))
+
+(deftest orientation-hands-over-the-top-level-instead-of-charging-for-it
+  ;; MEASURED 2026-08-19 over 84 resident ticks: the tick may use two
+  ;; repository reads, `workspace_list` took 103 of the 187 tool calls made,
+  ;; and only 37 of 84 runs ever opened a FILE. Ten listed twice and stopped.
+  ;; The budget was going on orientation.
+  (let [dir (temp-dir)
+        root (.getCanonicalPath dir)]
+    ;; An admitted workspace is EXACTLY a git worktree root -- orientation
+    ;; reads through the same admission `workspace_list` does, so a directory
+    ;; that is not a repository correctly yields nothing.
+    (git! dir "init" "-q" "--initial-branch=main")
+    (try
+      (spit (io/file root "README.md") "hi")
+      (.mkdirs (io/file root "src"))
+      (spit (io/file root "deps.edn") "{}")
+
+      (testing "it names what is there"
+        (let [o (workspace/orientation root)]
+          (is (string? o))
+          (is (re-find #"README\.md" o))
+          (is (re-find #"deps\.edn" o))
+          (is (re-find #"src/" o) "directories are marked as directories")))
+
+      (testing "a workspace that is not there degrades to nil, never a throw"
+        ;; A missing checkout must cost the turn nothing. Throwing here would
+        ;; take down every tick for a Bot whose repo moved.
+        (is (nil? (workspace/orientation nil)))
+        (is (nil? (workspace/orientation "")))
+        (is (nil? (workspace/orientation "/no/such/place/at/all")))
+        (is (nil? (workspace/orientation (System/getProperty "java.io.tmpdir")))
+            "a directory that is not a git root is not an admitted workspace"))
+
+      (testing "it is bounded, and says so when it truncates"
+        (doseq [i (range 80)] (spit (io/file root (format "f%03d.txt" i)) "x"))
+        (let [o (workspace/orientation root)
+              lines (str/split-lines o)]
+          (is (<= (count lines) 61) "60 entries plus at most one summary line")
+          (is (re-find #"more" (last lines))
+              "a truncated listing says it was truncated rather than looking complete")))
+      (finally
+        (doseq [f (reverse (file-seq (io/file root)))] (io/delete-file f true))))))

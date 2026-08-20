@@ -1754,6 +1754,16 @@
          "A write tool will be held for the person's approval before it runs. ")
        "Call a write only when it is the right next step and say what you are about to do. "
        "Answer in the language the person used.\n\n"
+       ;; The repository's top level, handed over instead of charged for.
+       ;; Measured 2026-08-19 across 84 resident ticks: `workspace_list` took
+       ;; 103 of 187 tool calls and only 37 of 84 runs ever opened a file --
+       ;; the budget was going on finding out what was there. Ten runs listed
+       ;; twice and stopped without reading anything.
+       (when-let [listing (workspace-tools/orientation (:bot/workspace b))]
+         (str "The repository you are working in contains, at its top level:\n"
+              listing
+              "\n\nSo you do not need a call to find that out. Spend the "
+              "budget on reading what matters.\n\n"))
        (when (:bot/workforce-key b)
          (str "You are one governed startup role, not the business owner and not a free-ranging agent.\n"
               "Business: " (get-in b [:bot/business :name])

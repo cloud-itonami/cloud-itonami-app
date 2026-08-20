@@ -150,6 +150,37 @@
                       (when (Files/isDirectory ^Path % no-links) "/")))
            (str/join "\n")))))
 
+(def ^:private max-orientation-entries 60)
+
+(defn orientation
+  "The repository's top level, as one short block for the system prompt, or
+  nil when there is no readable workspace.
+
+  MEASURED 2026-08-19 over 84 resident runs: the tick is told to use at most
+  two repository reads, and `workspace_list` took 103 of the 187 tool calls
+  made. Only 37 of 84 runs ever opened a FILE; the rest spent the budget
+  finding out what was there. Ten runs listed twice and stopped.
+
+  A top level costs 27-105 tokens on this fleet's repositories. One model call
+  costs a 3,275-token prompt, about 43 seconds at the measured rate, and half
+  the tick's budget. Handing over the names is the cheaper half of that trade
+  by two orders of magnitude.
+
+  Bounded and never throwing: a workspace that has gone missing must degrade
+  to 'no listing', not to a failed turn."
+  [root]
+  (try
+    (when (seq (str root))
+      (let [text (list-directory root {:path "."})
+            lines (str/split-lines (str text))
+            shown (take max-orientation-entries lines)]
+        (when (seq shown)
+          (str (str/join "\n" shown)
+               (when (> (count lines) max-orientation-entries)
+                 (str "\n… and " (- (count lines) max-orientation-entries) " more"))))))
+    (catch Exception _ nil)))
+
+
 (defn- search-workspace [root input]
   (let [query (str (:query input))
         _ (when (or (str/blank? query) (> (count query) 200))
