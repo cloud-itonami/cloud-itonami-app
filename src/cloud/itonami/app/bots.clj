@@ -58,6 +58,7 @@
             [clojure.string :as str]
             [cloud.itonami.app.agent-control :as agent-control]
             [cloud.itonami.app.bot :as bot]
+            [cloud.itonami.app.bot-authority :as bot-authority]
             [cloud.itonami.app.bot-identity :as bot-identity]
             [cloud.itonami.app.connectors :as connectors]
             [cloud.itonami.app.handoff :as handoff]
@@ -2708,11 +2709,20 @@
     {:selection selection
      :blocked blocked
      :tool-provider (tool->provider configuration)
-     :runnable (cond-> (into (into (into (into #{} (map :name) browser)
-                                         (map :name) peers)
-                                   (map :name) coding)
-                             (bot/admitted-tools b rows connected))
-                 goal? (into goal-tool-names))
+     ;; The capability policy decides here, not only in the prompt. It used to
+     ;; reach exactly one place -- the system prompt, which tells the Bot
+     ;; "Blocked capabilities stay blocked" and had nothing behind it.
+     ;; `bot-authority/admit` only ever NARROWS, and only tools whose
+     ;; capability is unambiguous; see `tool->capability`, which is small on
+     ;; purpose.
+     :runnable (bot-authority/admit
+                (cond-> (into (into (into (into #{} (map :name) browser)
+                                          (map :name) peers)
+                                    (map :name) coding)
+                              (bot/admitted-tools b rows connected))
+                  goal? (into goal-tool-names))
+                b (:bot/capability-policy b)
+                {:now (store/now)})
      :tools (cond-> (tool-definitions configuration b)
               goal? (into goal-tool-definitions))})))
 
