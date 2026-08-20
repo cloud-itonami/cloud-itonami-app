@@ -22,13 +22,15 @@
   anyone afterwards — not alice proving she chose to.
 
   The reason it is not alice's key is concrete rather than an omission. Her
-  identity here is a `did:key` derived from a WebAuthn P-256 credential
-  (`cloud.itonami.app.did`), and WebAuthn signs its own
-  `authenticatorData || clientDataHash` with ES256. `cacao.core/mint` signs a
-  SIWE string with EdDSA from a raw seed. There is no way to make the one
-  produce the other; making a user-issued CACAO possible means teaching
-  `org-chainagnostic-cacao` a WebAuthn signature type, which is a change to
-  that library and not something to fake here.
+  Passkey is a WebAuthn P-256 credential (`cloud.itonami.app.did`); WebAuthn
+  signs its own `authenticatorData || clientDataHash` with ES256.
+  `cacao.core/mint` signs a SIWE string with EdDSA from a raw seed. There is
+  no way to make the one produce the other. The User DID may itself be
+  Ed25519 (minted at creation, not from the Passkey), but this layer is still
+  the Drive attesting — not alice proving she chose to. Teaching cacao a
+  WebAuthn signature type, or minting user-issued CACAOs from the person's
+  seed, is a change to that library / a later slice, not something to fake
+  here.
 
   ## The key
 
@@ -100,9 +102,9 @@
   "A CACAO attesting that `audience` may act on `document-id` as `role`.
 
   `audience` is the grantee's DID when they have one and their principal id
-  when they do not — a user who has not enrolled a passkey has no `did:key`,
-  and refusing to share with them until they do would be this layer deciding
-  a product question."
+  when they do not — a legacy User without a DID is still shareable. Refusing
+  to share until a Passkey exists would be this layer deciding a product
+  question (and the person DID is no longer derived from that Passkey)."
   [{:keys [document-id role audience expires-in-days now]
     :or {expires-in-days 365}}]
   (let [now (or now (Instant/now))

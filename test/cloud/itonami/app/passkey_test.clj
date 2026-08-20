@@ -8,8 +8,9 @@
   What is testable here without an authenticator is exactly what matters, because
   `active-transaction!` runs BEFORE any WebAuthn verification: the transaction's kind,
   its expiry, its single use, and the fact that the operation context comes from this
-  server's own record rather than from the client. Signature checking is Yubico's and is
-  not re-implemented or re-tested here.
+  server's own record rather than from the client. Signature checking is ClojureScript
+  WebCrypto (`passkey-verify` / `webauthn.adapters.edge`, ADR-0065) and is not
+  re-implemented on the JVM.
 
   Four properties, each with a named failure mode from the source's own comments:
 
@@ -51,9 +52,9 @@
   (try (f) nil (catch clojure.lang.ExceptionInfo e (:type (ex-data e)))))
 
 (defn- threw?
-  "Whether f raised anything at all. Needed where the raiser is Yubico's parser rather
-  than this code -- a bogus credential response comes back as a Jackson
-  ValueInstantiationException, which ex-type above would (correctly) let through."
+  "Whether f raised anything at all. Needed where finish fails closed on the JVM
+  (`:passkey/cljs-verify-required`) or rejects a malformed transaction — ex-type
+  alone would miss non-ExceptionInfo throwables."
   [f]
   (try (f) false (catch Throwable _ true)))
 
@@ -217,3 +218,31 @@
     (let [before (count (:webauthn-transactions (:identity (store/snapshot))))]
       (threw? #(passkey/start-signing! (:id user) (byte-array 31) {} rp-id origin))
       (is (= before (count (:webauthn-transactions (:identity (store/snapshot)))))))))
+
+
+(deftest bind-verified-registration-requires-explicit-user-verification
+  (testing "missing :user-verified? must not fail open"
+    (is (= :passkey/user-verification-required
+           (ex-type #(passkey/bind-verified-registration!
+                      (:id user)
+                      {:credential-id "cred-1"
+                       :public-key-b64 "AAAA"
+                       :sign-count 0})))))
+  (testing "false is refused"
+    (is (= :passkey/user-verification-required
+           (ex-type #(passkey/bind-verified-registration!
+                      (:id user)
+                      {:credential-id "cred-2"
+                       :public-key-b64 "AAAA"
+                       :sign-count 0
+                       :user-verified? false})))))
+  (testing "true with a key binds"
+    (let [r (passkey/bind-verified-registration!
+             (:id user)
+             {:credential-id "cred-3"
+              :public-key-b64 "BBBB"
+              :sign-count 1
+              :user-verified? true})]
+      (is (= "cred-3" (:credential-id r)))
+      (is (true? (get-in (store/snapshot)
+                         [:identity :passkeys "cred-3" :user-verified?]))))))

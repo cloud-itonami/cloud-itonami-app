@@ -47,7 +47,6 @@
   datascript/datascript {:mvn/version "1.7.8"}
   com.fasterxml.jackson.dataformat/jackson-dataformat-cbor
   {:mvn/version "2.22.1"}
-  com.yubico/webauthn-server-core {:mvn/version "2.9.0"}
 
   ;; Shared authentication vocabulary and default-deny authorization decision
   ;; engine. Email uses the focused module so unrelated factor adapters do not
@@ -105,6 +104,14 @@
   {:git/url "https://github.com/kotoba-lang/com-google-chat.git"
    :git/sha "8b5b0154a630d2f0d54fa451b5bc89ddfa0a6486"}
 
+  ;; Foundational host planes (ADR-0066): confined fs + process spawn.
+  ;; Twin of ambient java.nio / ProcessBuilder. Absolute binaries only.
+  io.github.kotoba-lang/fs
+  {:git/url "https://github.com/kotoba-lang/fs.git"
+   :git/sha "607caf1f54f3f922eac899f67511468e501ba970"}
+  io.github.kotoba-lang/process
+  {:git/url "https://github.com/kotoba-lang/process.git"
+   :git/sha "f261f1e7853d26c2bf53b2236e3b7d454598ac28"}
   io.github.kotoba-lang/shell
   {:git/url "https://github.com/kotoba-lang/shell.git"
    :git/sha "ad5b2dfd85bca83901bd440992628d674189bcb4"}
@@ -379,7 +386,7 @@
 
   io.github.kotoba-lang/identity
   {:git/url "https://github.com/kotoba-lang/identity.git"
-   :git/sha "5cf94e38c816ced6857ef62de344f6adea9fc050"}
+   :git/sha "8eeb1a046c0b8c81ebbbc938e8b6c40383a5d6a9"}
 
   ;; Delegation, and the ONE thing that decides it.
   ;;
