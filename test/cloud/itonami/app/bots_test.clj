@@ -2466,3 +2466,19 @@
             (is (str/includes? text "No tool has executed in this run"))
             (is (str/includes? text "Summary is empty"))
             (is (str/includes? text "Evidence is empty"))))))))
+
+(deftest a-capped-budget-turns-reasoning-off-on-the-handoff-path-too
+  ;; The pairing rule is stated in agent-request's own comment: capping the
+  ;; budget and leaving reasoning on is the same as asking for no answer, and
+  ;; the two go together. The goal path had it. The handoff path did not, and
+  ;; a handoff is capped by the provider default all the same -- measured
+  ;; 2026-08-20 by running one, which came back
+  ;; "モデルが回答本文を返しませんでした".
+  (let [request (ns-resolve 'cloud.itonami.app.bots 'agent-request)
+        body (fn [run] ((deref request) {} {:bot/id "b"} run "m"))]
+    (testing "a handoff run turns reasoning off"
+      (is (true? (:disable-thinking? (body {:handoff? true :messages [] :tools []})))))
+    (testing "an ordinary interactive run is unchanged"
+      ;; Not touched on purpose: reasoning on an interactive answer is a
+      ;; product judgement, not this defect.
+      (is (nil? (:disable-thinking? (body {:messages [] :tools []})))))))

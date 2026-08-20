@@ -2299,6 +2299,14 @@
            :messages (bounded-run-messages (:messages run))
            :tools (:tools run)
            :temperature 0.2}
+    ;; A handoff is capped by the provider default (2048) and had reasoning
+    ;; left ON, which is the pairing this very comment forbids -- measured
+    ;; 2026-08-20 by running one: the model spent the budget thinking and the
+    ;; caller got "モデルが回答本文を返しませんでした". The goal path had the
+    ;; fix; the handoff path did not, and nothing connected the two.
+    (:handoff? run)
+    (assoc :disable-thinking? true)
+
     (and (:goal? run)
          (get-in configuration [:bots :goal :max-output-tokens]))
     (assoc :max-output-tokens
@@ -4027,7 +4035,7 @@
                     *from-bot* from-bot-id]
             (advance! configuration target
                       (merge (turn-admission configuration target did)
-                             {:id (new-id "run") :context-id target-context-id
+                             {:id (new-id "run") :handoff? true :context-id target-context-id
                               :messages (transcript configuration target
                                                     (:context/messages target-context))
                               :turn-count 0 :tool-count 0})))
@@ -4060,7 +4068,7 @@
                       *from-bot* to-bot-id]
               (advance! configuration source
                         (merge (turn-admission configuration source did)
-                               {:id (new-id "run") :context-id source-context-id
+                               {:id (new-id "run") :handoff? true :context-id source-context-id
                                 :messages (transcript configuration source
                                                       (:context/messages source-context))
                                 :turn-count 0 :tool-count 0})))
