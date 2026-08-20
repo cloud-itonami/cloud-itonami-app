@@ -66,6 +66,41 @@
       {:root (.getCanonicalPath dir)
        :max-bytes max-bytes}))))
 
+(def ^:const approaching-bound-fraction
+  "Warn once a write is this far into its bound.
+
+  0.75 is not a tuned number; it is a number that leaves room to act. What
+  matters is that the warning exists at all."
+  0.75)
+
+(def ^:private warned (atom #{}))
+
+(defn- warn-approaching-bound!
+  "Say it BEFORE the write that cannot happen.
+
+  On 2026-08-20 the resident died on startup because the store had grown past
+  its bound. There was no prior signal: writes succeeded at 99% of the bound
+  and the process failed to start at 101%. The first thing anyone learned was
+  that the fleet was down, and the log said `content exceeds :max-bytes` --
+  true, and useless, because by then the only way out was a code change.
+
+  Warns once per (file, decile) so a busy writer does not fill the log while
+  still reporting real movement toward the wall."
+  [^java.io.File file size max-bytes]
+  (when (> size (* approaching-bound-fraction max-bytes))
+    (let [pct (int (* 100 (/ (double size) max-bytes)))
+          k [(.getPath file) (quot pct 10)]]
+      (when-not (contains? @warned k)
+        (swap! warned conj k)
+        (binding [*out* *err*]
+          (println (format (str "WARNING %s is %d%% of its %.0f MiB write bound "
+                                "(%.1f MiB). At the bound the write is REFUSED and "
+                                "a process that must write this file will not start. "
+                                "This is the only notice before that.")
+                           (.getName file) pct
+                           (/ (double max-bytes) 1048576)
+                           (/ (double size) 1048576))))))))
+
 (defn write-atomic!
   "Write `content` to `file` via a confined sibling tmp + atomic rename.
 
@@ -80,8 +115,10 @@
         root (.getCanonicalPath (or parent (io/file ".")))
         handle (filesystem-at root max-bytes)
         name (.getName file)
-        tmp (str name ".tmp")]
-    (fs/write handle tmp (str content))
+        tmp (str name ".tmp")
+        body (str content)]
+    (warn-approaching-bound! file (count body) max-bytes)
+    (fs/write handle tmp body)
     (Files/move (.toPath (io/file parent tmp))
                 (.toPath file)
                 (into-array StandardCopyOption
