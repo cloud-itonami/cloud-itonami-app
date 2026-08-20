@@ -134,6 +134,19 @@ Measured live as well, against real processes rather than the stub:
        enrollment failure comes back with this process's data directory and
        the reason the check could not be made
 
+## Where this stands on this machine
+
+Landed on `main` and pinned in west, and **not yet running**. The resident
+server on 1338 was started before this and still answers `/health` without
+`:store`, so on this machine every command still takes the 'cannot say' branch
+— not refused, and explained only after an enrollment fails. It becomes the
+'known' branch at the next restart of that process, which is the owner's call
+while a native window and a workforce are attached to it.
+
+The reading that follows from this: `curl localhost:1338/health` showing no
+`:store` is evidence about the running build, not about whether the change
+landed. Check `git log` or the west pin for that.
+
 ## Left alone
 
 `~/.cloud-itonami/app/data` and `<checkout>/data` still exist on this machine.
