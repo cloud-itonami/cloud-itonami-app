@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<xmile version="1.0">
+  <header><name>Settings IA remediation</name></header>
+  <sim_specs method="euler"><start>0</start><stop>4</stop><dt>1</dt></sim_specs>
+  <model>
+    <variables>
+      <stock name="Decision_Friction">
+        <eqn>71.31</eqn>
+        <outflow>Friction_Removed</outflow>
+        <units>score_points</units>
+      </stock>
+      <flow name="Friction_Removed">
+        <eqn>(Target_Quality - Baseline_Quality) / 4</eqn>
+        <units>score_points/iteration</units>
+      </flow>
+      <aux name="Baseline_Quality"><eqn>28.69</eqn><units>score_points</units></aux>
+      <aux name="Target_Quality"><eqn>91.58</eqn><units>score_points</units></aux>
+      <aux name="Information_Architecture_Quality">
+        <eqn>100 - Decision_Friction</eqn><units>score_points</units>
+      </aux>
+    </variables>
+  </model>
+</xmile>
