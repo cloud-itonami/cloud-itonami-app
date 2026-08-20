@@ -58,6 +58,7 @@
             [clojure.string :as str]
             [cloud.itonami.app.agent-control :as agent-control]
             [cloud.itonami.app.bot :as bot]
+            [cloud.itonami.app.bot-identity :as bot-identity]
             [cloud.itonami.app.connectors :as connectors]
             [cloud.itonami.app.handoff :as handoff]
             [cloud.itonami.app.identity :as identity]
@@ -1140,6 +1141,13 @@
         admitted (into (bot/admitted-tools b rows connected)
                        (map :name) local-tools)]
     {:id (:bot/id b)
+     ;; The Bot's own name outside this process. `:id` is a row identifier and
+     ;; means nothing to anyone else; the did is self-certifying and is what a
+     ;; mailbox, a delegated grant or a wallet allowance will name.
+     ;; Derived from `:id`, which is itself derived from
+     ;; organization:user:workforce-key -- so re-provisioning a role reproduces
+     ;; the same did rather than renaming the Bot.
+     :did (bot-identity/bot-did (:bot/id b))
      :name (:bot/name b)
      :avatar {:color (name (get-in b [:bot/avatar :avatar/color]))
               :glyph (name (get-in b [:bot/avatar :avatar/glyph]))}
