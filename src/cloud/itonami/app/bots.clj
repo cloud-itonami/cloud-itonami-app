@@ -843,7 +843,8 @@
                  id (stable-workforce-id session key)
                  existing (get-in previous [:bots id])
                  job-role (get-in entry [:role :job])
-                 cadence (long (:cadence-minutes entry))
+                 cadence (long (or (:cadence-minutes entry)
+                                   (get-in entry [:profile :profile/cadence-minutes])))
                  b (bot/bot
                     {:bot/id id
                      :bot/organization (:organization-id session)
@@ -852,8 +853,20 @@
                                     (get-in entry [:role :name]))
                      :bot/avatar (get workforce-avatar job-role bot/default-avatar)
                      :bot/brief (:objective entry)
-                     :bot/provider-id "murakumo"
-                     :bot/model "murakumo-main"
+                     ;; From the registry's profile, not a literal. These
+                     ;; two were hardcoded here, which is the only reason all
+                     ;; 90 Bots ran the same model -- the per-Bot fields
+                     ;; already existed and nothing varied them. A projection
+                     ;; without a profile falls back to what was hardcoded, so
+                     ;; an older loop-yakuwari provisions exactly as before.
+                     ;;
+                     ;; A profile says how a role RUNS. It cannot say what it
+                     ;; may do: only these keys are read, and the registry
+                     ;; refuses an authority-shaped one at the source.
+                     :bot/provider-id (or (get-in entry [:profile :profile/provider])
+                                          "murakumo")
+                     :bot/model (or (get-in entry [:profile :profile/model])
+                                    "murakumo-main")
                      :bot/email (mailbox-address configuration id)
                      :bot/tools #{} :bot/accounts #{}
                      :bot/writes? false :bot/browser? false

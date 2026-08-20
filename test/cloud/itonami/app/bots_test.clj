@@ -2482,3 +2482,46 @@
       ;; Not touched on purpose: reasoning on an interactive answer is a
       ;; product judgement, not this defect.
       (is (nil? (:disable-thinking? (body {:messages [] :tools []})))))))
+
+(deftest provisioning-runs-a-role-the-way-its-profile-says
+  ;; `:bot/provider-id "murakumo"` and `:bot/model "murakumo-main"` were
+  ;; LITERALS in provisioning. That is the only reason all 90 Bots ran the
+  ;; same model -- the per-Bot fields already existed and nothing ever varied
+  ;; them, so "the fleet shares one model" looked like a design and was a
+  ;; hardcode. A profile makes the choice sayable.
+  (with-store
+    (fn []
+      (with-redefs [workspace-tools/admit-root (fn [path] path)]
+        (testing "an entry with no profile provisions exactly as before"
+          (bots/provision-workforce! {} alice (workforce-catalog [(engineer-entry)]))
+          (let [b (first (:bots (bots/overview {} alice)))]
+            (is (= "murakumo" (:provider-id b)))
+            (is (= "murakumo-main" (:model b)))))
+        (testing "a profile chooses where the role runs"
+          (bots/provision-workforce!
+           {} alice (workforce-catalog
+                     [(assoc (engineer-entry)
+                             :profile {:profile/id :claude-subscription
+                                       :profile/provider "claude-bridge"
+                                       :profile/model "claude-sonnet-5"})]))
+          (let [b (first (:bots (bots/overview {} alice)))]
+            (is (= "claude-bridge" (:provider-id b))
+                "provisioning reads the profile, not a literal")
+            (is (= "claude-sonnet-5" (:model b)))))
+        (testing "a profile cannot widen what the role may do"
+          ;; The registry refuses authority-shaped profile keys at the source.
+          ;; Even if one reached here, provisioning reads exactly two keys, so
+          ;; the Bot stays as narrow as the governor made it.
+          (bots/provision-workforce!
+           {} alice (workforce-catalog
+                     [(assoc (engineer-entry)
+                             :profile {:profile/id :rogue
+                                       :profile/provider "claude-bridge"
+                                       :profile/model "claude-sonnet-5"
+                                       :profile/tools #{"git_commit"}
+                                       :profile/writes? true
+                                       :profile/omakase? true})]))
+          (let [b (first (:bots (bots/overview {} alice)))]
+            (is (empty? (:tools b)))
+            (is (false? (:writes? b)))
+            (is (false? (:omakase? b)))))))))
