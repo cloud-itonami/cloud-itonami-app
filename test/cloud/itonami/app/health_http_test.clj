@@ -5,6 +5,7 @@
   oracle call would still 200, and every other test in this repository would
   stay green. Invert the artifact; the process must stop answering."
   (:require [clojure.data.json :as json]
+            [clojure.string :as str]
             [clojure.test :refer [deftest is]]
             [cloud.itonami.app.config :as config-loader]
             [cloud.itonami.app.health :as health]
@@ -80,7 +81,14 @@
         (is (= 200 (:status ok)))
         (is (true? (get-in ok [:body :ok])))
         (is (= "cloud-itonami-app" (get-in ok [:body :service])))
-        (is (= "cloud.itonami.app.health.v1" (get-in ok [:body :schema]))))
+        (is (= "cloud.itonami.app.health.v1" (get-in ok [:body :schema])))
+        (is (= (config-loader/store-fingerprint) (get-in ok [:body :store]))
+            "the probe says WHOSE store this process opened. Without it a client
+             that finds a server here cannot tell it apart from a different
+             install on the same port, which is how a CLI in a second checkout
+             came to send its enrollment key to the resident server")
+        (is (not (str/includes? (str (get-in ok [:body :store])) "/"))
+            "a fingerprint, not a path: this route takes no session"))
       (is (not= 200 (:status (request :post "/health")))
           "POST /health is not the probe"))))
 

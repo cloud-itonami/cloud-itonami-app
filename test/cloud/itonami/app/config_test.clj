@@ -80,6 +80,103 @@
 ;; first, which is the half that protects a real store from a test run.
 
 ;; ---------------------------------------------------------------------------
+;; the resident install resolves to the resident store
+;; ---------------------------------------------------------------------------
+
+(defn- with-properties
+  "Run f with `user.home` and `user.dir` pointing at a scratch layout.
+
+  Both are ordinary system properties, and `java.io.File` resolves a relative
+  path against `user.dir`, so this exercises the real resolution rather than a
+  parallel copy of it. Restored afterwards -- a leaked `user.dir` would send
+  every later relative path in the suite somewhere else."
+  [home dir f]
+  (let [previous-home (System/getProperty "user.home")
+        previous-dir (System/getProperty "user.dir")]
+    (try
+      (System/setProperty "user.home" home)
+      (System/setProperty "user.dir" dir)
+      (f)
+      (finally
+        (System/setProperty "user.home" previous-home)
+        (System/setProperty "user.dir" previous-dir)))))
+
+(defn- scratch-home []
+  (let [home (.toFile (java.nio.file.Files/createTempDirectory
+                       "cloud-itonami-app-resident"
+                       (make-array java.nio.file.attribute.FileAttribute 0)))]
+    (.mkdirs (io/file home ".cloud-itonami" "app"))
+    (.getCanonicalPath home)))
+
+(deftest the-resident-app-directory-resolves-the-resident-store
+  (testing "`~/.cloud-itonami/app` and `~/.cloud-itonami/data` are one install.
+            bin/itonami said so by exporting the variable; a bare `clojure -M:cli`
+            in the same directory used to fall back to a relative `data` and make
+            a third store holding an enrollment key no server had written"
+    (let [home (scratch-home)]
+      (with-property nil
+        (fn []
+          (with-properties home (str home "/.cloud-itonami/app")
+            (fn []
+              (is (= (.getCanonicalPath (io/file home ".cloud-itonami" "data"))
+                     (.getPath (config/data-dir)))))))))))
+
+(deftest any-other-directory-still-gets-the-relative-store
+  (testing "the resident leg is a rule about ONE layout, not a new default -- a
+            checkout keeps its own ./data.
+
+            Asserted as 'not the resident store, and still a relative ./data'
+            rather than as an exact path: `File/getCanonicalPath` resolves a
+            relative name against the process's real working directory, not
+            against the `user.dir` property this test sets. Writing the
+            expected path out would have been asserting the JVM's cwd, which
+            is not what this rule is about."
+    (let [home (scratch-home)
+          elsewhere (io/file home "checkout")]
+      (.mkdirs elsewhere)
+      (with-property nil
+        (fn []
+          (with-properties home (.getCanonicalPath elsewhere)
+            (fn []
+              (let [resolved (.getPath (config/data-dir))]
+                (is (not= (.getCanonicalPath (io/file home ".cloud-itonami" "data"))
+                          resolved)
+                    "the resident store is NOT adopted from another directory")
+                (is (str/ends-with? resolved "/data")
+                    "the relative fallback is what answered")))))))))
+
+(deftest an-explicit-answer-still-wins-over-the-resident-layout
+  (testing "the resident leg sits BELOW both explicit answers: an operator who
+            names a directory from the resident app dir gets the one they named"
+    (let [home (scratch-home)]
+      (with-property "target/config-test-resident-override"
+        (fn []
+          (with-properties home (str home "/.cloud-itonami/app")
+            (fn []
+              (is (str/ends-with? (.getPath (config/data-dir))
+                                  "/target/config-test-resident-override")))))))))
+
+;; ---------------------------------------------------------------------------
+;; naming a store without publishing its path
+;; ---------------------------------------------------------------------------
+
+(deftest the-store-fingerprint-names-the-directory-and-not-its-path
+  (let [a (io/file "target/config-test-fp-a")
+        b (io/file "target/config-test-fp-b")]
+    (is (= (config/store-fingerprint a) (config/store-fingerprint a))
+        "stable across calls -- two processes compare it")
+    (is (not= (config/store-fingerprint a) (config/store-fingerprint b))
+        "two stores are two names")
+    (is (= (config/store-fingerprint a)
+           (config/store-fingerprint (io/file "target/x/../config-test-fp-a")))
+        "of the canonical path, so the same directory reached by another route
+         fingerprints the same")
+    (is (re-matches #"[0-9a-f]{12}" (config/store-fingerprint a)))
+    (is (not (str/includes? (config/store-fingerprint a) "config-test-fp-a"))
+        "the path is not recoverable from it -- /health publishes this to
+         callers that have no session")))
+
+;; ---------------------------------------------------------------------------
 ;; whether this process will bind at all
 ;; ---------------------------------------------------------------------------
 

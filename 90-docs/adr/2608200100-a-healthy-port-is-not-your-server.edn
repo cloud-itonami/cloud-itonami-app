@@ -1,0 +1,144 @@
+[{:db/id -1
+  :adr/id "adr-2608200100-a-healthy-port-is-not-your-server"
+  :adr/title "A healthy port is not your server, and a store is named without its path"
+  :adr/status "accepted"
+  :adr/date "2026-08-20"
+  :adr/body
+  "## The report
+
+`cloud-itonami-app` を起動したあとの認証の手順が通らない。
+
+## What was measured, 2026-08-20
+
+Three data directories existed on this machine. One server.
+
+| store | who resolves it |
+|---|---|
+| `~/.cloud-itonami/data` | the resident server, PID 3550, `CLOUD_ITONAMI_DATA_DIR` in its environment |
+| `<checkout>/data` | `bin/itonami` run from the repository checkout |
+| `~/.cloud-itonami/app/data` | a bare `clojure -M:cli` or `-M:server` in the resident app directory |
+
+Each holds its own `agent-enrollment.key`. Presented to the running server
+(label omitted, so nothing is minted and the key check is the only thing that
+answers):
+
+    ~/.cloud-itonami/data/agent-enrollment.key      -> label-missing   (the key was accepted)
+    <checkout>/data/agent-enrollment.key            -> invalid-key
+    ~/.cloud-itonami/app/data/agent-enrollment.key  -> invalid-key
+
+`bin/itonami auth login` from the checkout therefore failed with
+`enrollment key が一致しません`, and the same command from
+`~/.cloud-itonami/app/bin/itonami` succeeded.
+
+## Why it read as an authentication defect
+
+Three things hid the real shape.
+
+**Reads kept working.** The session token lives in ONE Keychain item
+(`cloud-itonami-app.mcp` / `session-token`), not one per store. So
+`itonami status` from the checkout listed the resident server's sessions while
+printing `data-dir: <checkout>/data`. That output is a lie of exactly the kind
+this repository refuses elsewhere: it names a store it is not reading.
+
+**`clojure -M:server` in the checkout did not start anything.** It exits with
+`BindException: Address already in use` — recorded four times in
+`~/.cloud-itonami/data/server.log` and once in `target-server.log`. The
+operator has started a server; the process answering 1338 is a different one.
+
+**The probe could not tell them apart and answered as though it had.**
+`server-process/ensure-running!` is documented as 'A server for this data
+directory'. `healthy?` asked `/health`, and `/health` said `{ok, service,
+schema}` — nothing about whose store. Something answering the port was taken
+as the server for this store. This is root ADR-2608136000's shape: a check
+that could not be made returning the value of a check that was made and passed.
+
+The hosted half was not involved and was measured working:
+`GET /api/auth/itonami/start` → 303 → `auth.itonami.cloud/authorize` → sign-in
+page 200, and the token endpoint answers `invalid_grant` (not
+`invalid_client`) for a bogus code, so the client and the localhost callback
+are registered.
+
+## Decision
+
+1. **`/health` publishes `:store`** — `config/store-fingerprint`, twelve hex
+   characters of SHA-256 over the canonical data-directory path. A fingerprint
+   and not the path: the route takes no session, and the path names the
+   operator's home directory to every caller that can reach the port. It is
+   enough for the only question a client has, which is 'is this mine'.
+
+2. **`server-process/store-agreement` has three outcomes, not two.** Nothing
+   answering; answering but unable to say (a build older than the field);
+   answering and either matching or not. 'Could not tell' is kept apart from
+   'yes' — folding those together is what produced this — and also from 'no',
+   which would strand every command against a server that is still running and
+   still correct.
+
+3. **`ensure-running!` refuses a known mismatch instead of adopting it.** It
+   cannot start around one anyway: the port is taken. The refusal carries this
+   process's data directory and store, the other store, and — when the resident
+   layout accounts for it, confirmed by fingerprint equality rather than
+   assumed — the directory to point `CLOUD_ITONAMI_DATA_DIR` at.
+
+4. **`config/data-dir` resolves the resident install itself.** When the app
+   directory is `~/.cloud-itonami/app`, the store is `~/.cloud-itonami/data`.
+   `bin/itonami` already applied this rule by exporting the variable, which
+   covered commands run through the launcher and nothing else — a bare
+   `clojure -M:cli` in the same directory created the third store above. The
+   rule belongs where 'which store is mine' is answered. It sits below both
+   explicit answers, so an operator who names a directory still gets it.
+
+5. **`itonami status` reports `:store`, `:server-store` and
+   `:serves-this-store?`.** The two facts it used to print side by side as one.
+
+## What this does not change
+
+`CLOUD_ITONAMI_API_URL` still bypasses all of this. Pointing the CLI at a
+control plane is an instruction, not an inference, and `remote?` already draws
+that line for `stop!` — the local lifecycle is about the process that owns THIS
+data directory, and a named remote has none.
+
+Nothing about the authentication mechanisms. Passkey, hosted
+`auth.itonami.cloud`, Email and SSO are untouched; so is the rule that an
+agent session is rooted in reading a 0600 file (`agent-session`, ADR-0006).
+The enrollment key was doing its job. The question 'whose store is this' was
+never being asked.
+
+## Verification
+
+Each of the three changes was reverted alone and reddened only its own test:
+
+    the refusal in ensure-running!    -> a-healthy-server-serving-another-store-is-refused
+    :store on /health                 -> get-health-answers-the-liveness-contract
+    the resident leg in data-dir      -> the-resident-app-directory-resolves-the-resident-store
+
+The discriminating case in `store-agreement-test` is a server that is healthy
+AND foreign: the test asserts `healthy?` returns true in the same breath as
+`ensure-running!` refusing, so a revert cannot pass by claiming there was
+nothing there. The 'cannot say' case asserts BOTH that it is not refused and
+that it is not adopted as agreement — the two ways of collapsing three answers
+into two. `config-test` covers the resident leg, the checkout that keeps its
+own `./data`, an explicit answer overriding both, and that the fingerprint is
+canonical, stable, and does not contain the path.
+
+Whole suite: 1716 tests, 10241 assertions, 0 failures.
+
+Measured live as well, against real processes rather than the stub:
+
+  a second server on 1348 with its own store, asked from a third store
+    -> the CLI printed both fingerprints, refused, and named what to set;
+       `status` reported store f7a7622ada04 / server-store d1a153f3ce27 /
+       serves-this-store? false, where before it printed one data-dir and the
+       other store's sessions with nothing to tell them apart
+  the resident server on 1338, which predates the field
+    -> `/health` carries no :store, the command is NOT refused, and the
+       enrollment failure comes back with this process's data directory and
+       the reason the check could not be made
+
+## Left alone
+
+`~/.cloud-itonami/app/data` and `<checkout>/data` still exist on this machine.
+They are the operator's, this ADR does not delete them, and after item 4 the
+first can no longer be created. The virgin `<checkout>/data` still holds a
+`user-1` with `:status :pending-passkey` and no membership — a server started
+against it would ask for a Passkey and an organization from scratch, which is
+the second face of the same confusion."}]

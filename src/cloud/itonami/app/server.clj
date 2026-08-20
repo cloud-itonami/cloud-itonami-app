@@ -2315,8 +2315,17 @@
             (send-html! exchange (web/page-html config))
 
             (process-liveness? method path)
+            ;; `:store` is the fingerprint of THIS process's data directory, not
+            ;; its path (`config/store-fingerprint`). A client that finds a
+            ;; server on the port still has to learn whether it is the server
+            ;; for its own store: `server-process/ensure-running!` claimed "a
+            ;; server for this data directory" while checking only that
+            ;; something answered here, so a CLI in a second checkout adopted
+            ;; the resident server and then presented the wrong enrollment key.
+            ;; Measured 2026-08-20.
             (send! exchange 200 {:ok true :service "cloud-itonami-app"
-                                 :schema "cloud.itonami.app.health.v1"})
+                                 :schema "cloud.itonami.app.health.v1"
+                                 :store (config/store-fingerprint)})
 
             (oauth-protected-resource-mcp? method path)
             (send! exchange 200 (oauth-resource/metadata config))
