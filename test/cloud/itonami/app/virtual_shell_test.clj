@@ -22,12 +22,13 @@
       (is (some #{required} argv) required))
     (is (some #{"type=bind,src=/tmp/example repo,dst=/workspace"} argv))
     (is (not (.contains joined "docker.sock")))
-    (is (= "sleep" (nth argv (- (count argv) 2))))))
+    (is (= "sleep" (nth argv (- (count argv) 2))))
+    (is (= "docker" (first argv)))))
 
 (deftest a-command-is-one-argument-to-the-guest-not-a-host-shell
   (let [argv (shell/exec-argv "cloud-itonami-bot-0123456789abcdef01234567"
                               "printf ok; touch /tmp/inside" 17)]
-    (is (= [(shell/docker-bin) "exec" "-i"
+    (is (= ["docker" "exec" "-i"
             "cloud-itonami-bot-0123456789abcdef01234567"
             "/usr/bin/timeout" "-s" "TERM" "17s"
             "/bin/bash" "-lc" "printf ok; touch /tmp/inside"]

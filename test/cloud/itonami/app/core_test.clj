@@ -1102,36 +1102,42 @@
           (is (:authenticated? public))
           (is (true? (:passkey-required? public)))
           (is (nil? (get-in public [:user :account-id])))
-          (is (nil? (get-in public [:user :did])))
-          (is (false? (get-in public [:organization :profile-complete?])))
-          (is (str/starts-with? even-did "did:key:z"))
-          (is (= even-did (did/did-key-from-p256 x y-even)))
-          (is (not= even-did (did/did-key-from-p256 x y-odd)))
-          (is (thrown-with-msg?
-               clojure.lang.ExceptionInfo #"Passkey"
-               (local-identity/configure-organization!
-                session {:organization-id "example"})))
-          (store/transact!
-           (fn [state]
-             (-> state
-                 (assoc-in [:identity :users (:user-id session)
-                            :passkey-enrolled?] true)
-                 (assoc-in [:identity :users (:user-id session) :did]
-                           even-did)
-                 (update-in [:identity :sessions (:id session)]
-                            merge passkey-session-options))))
-          (local-identity/configure-organization!
-           (local-identity/session token) {:organization-id "example"})
-          (let [configured (local-identity/public-state token)]
-            (is (= "example@cloud-itonami.app"
-                   (get-in configured [:user :email])))
-            (is (= even-did (get-in configured [:user :did])))
-            (is (= "example.cloud-itonami.app"
-                   (get-in configured [:organization :domain])))
-            (is (nil? (get-in configured [:organization :did])))
-            (is (true?
-                 (get-in configured
-                         [:organization :profile-complete?]))))))
+          (let [person-did (get-in public [:user :did])]
+            (is (string? person-did))
+            (is (str/starts-with? person-did "did:key:z"))
+            (is (false? (get-in public [:organization :profile-complete?])))
+            (is (str/starts-with? even-did "did:key:z"))
+            (is (= even-did (did/did-key-from-p256 x y-even)))
+            (is (not= even-did (did/did-key-from-p256 x y-odd)))
+            (is (not= person-did even-did)
+                "the person's DID is not the Passkey's P-256 did:key")
+            (is (thrown-with-msg?
+                 clojure.lang.ExceptionInfo #"Passkey"
+                 (local-identity/configure-organization!
+                  session {:organization-id "example"})))
+            (store/transact!
+             (fn [state]
+               (-> state
+                   (assoc-in [:identity :users (:user-id session)
+                              :passkey-enrolled?] true)
+                   (assoc-in [:identity :passkeys "cred-test"]
+                             {:id "cred-test" :credential-id "cred-test"
+                              :user-id (:user-id session) :did even-did})
+                   (update-in [:identity :sessions (:id session)]
+                              merge passkey-session-options))))
+            (local-identity/configure-organization!
+             (local-identity/session token) {:organization-id "example"})
+            (let [configured (local-identity/public-state token)]
+              (is (= "example@cloud-itonami.app"
+                     (get-in configured [:user :email])))
+              (is (= person-did (get-in configured [:user :did]))
+                  "enrolling a Passkey must not move the User DID")
+              (is (= "example.cloud-itonami.app"
+                     (get-in configured [:organization :domain])))
+              (is (nil? (get-in configured [:organization :did])))
+              (is (true?
+                   (get-in configured
+                           [:organization :profile-complete?])))))))
       (finally
         (reset! store/state previous)))))
 
@@ -1186,17 +1192,21 @@
                                 :display-name "Owner"
                                 :email "owner@example.jp"})
               session (local-identity/session token)
-              ;; `register!` creates the owner provisionally; the DID arrives
-              ;; with Passkey enrollment. Connecting an external account is now
-              ;; bound to that DID and refuses without one, so this test — which
-              ;; is about PKCE/state binding and secret leakage, not about the
-              ;; DID rule — enrolls the owner the way a real one would before
-              ;; reaching the Connect button.
+              ;; `register!` now mints a DID immediately. Connecting an external
+              ;; account still requires `may-act?` (a Passkey ceremony), so this
+              ;; test — which is about PKCE/state binding and secret leakage —
+              ;; enrols the owner the way a real one would before reaching
+              ;; Connect.
               _ (store/transact!
-                 assoc-in [:identity :users (:user-id session) :did]
-                 "did:key:zOwnerTestOnly")
+                 (fn [state]
+                   (-> state
+                       (assoc-in [:identity :users (:user-id session)
+                                  :passkey-enrolled?] true)
+                       (update-in [:identity :sessions (:id session)]
+                                  merge passkey-session-options))))
               result (local-identity/start-oauth!
-                      session :github "http://127.0.0.1:1338")
+                      (local-identity/session token)
+                      :github "http://127.0.0.1:1338")
               persisted (pr-str (store/snapshot))
               public (pr-str (local-identity/public-state token))]
           (is (str/starts-with? (:url result)

@@ -1,0 +1,37 @@
+{:format :kotoba.kir/v4,
+ :signature nil,
+ :functions
+ [{:name may-adopt-user-did?,
+   :params [held-blank candidate-is-did],
+   :result :bool,
+   :effects #{},
+   :body
+   (let
+    [__kotoba_and_2 held-blank]
+    (if __kotoba_and_2 candidate-is-did __kotoba_and_2)),
+   :param-types [:bool :bool]}
+  {:name may-fill-user-did-on-passkey?,
+   :params [held-blank],
+   :result :bool,
+   :effects #{},
+   :body held-blank,
+   :param-types [:bool]}
+  {:name may-backfill-legacy-user-did?,
+   :params [passkey-enrolled held-blank],
+   :result :bool,
+   :effects #{},
+   :body
+   (let
+    [__kotoba_and_2 passkey-enrolled]
+    (if __kotoba_and_2 held-blank __kotoba_and_2)),
+   :param-types [:bool :bool]}],
+ :oracle-value nil,
+ :schema-identities nil,
+ :exports
+ [may-adopt-user-did?
+  may-fill-user-did-on-passkey?
+  may-backfill-legacy-user-did?],
+ :schemas nil,
+ :effects #{},
+ :blocks [],
+ :entry nil}

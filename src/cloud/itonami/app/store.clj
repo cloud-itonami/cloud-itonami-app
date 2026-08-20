@@ -4,9 +4,9 @@
             [cloud.itonami.app.config :as config]
             [cloud.itonami.app.work-partition-store :as work-partitions]
             [kotoba.kgraph :as kgraph]
-            [langchain.edn-persist :as edn-persist])
-  (:import [java.nio.file Files StandardCopyOption]
-           [java.time Instant]
+            [langchain.edn-persist :as edn-persist]
+            [cloud.itonami.app.host :as host])
+  (:import [java.time Instant]
            [java.util UUID]))
 
 (def schema "cloud.itonami.app.state.v1")
@@ -51,18 +51,15 @@
 
 (defn- persist! [value]
   (let [file (state-file)
-        temporary (io/file (.getParentFile file) "state.edn.tmp")
         work (:work-governance value)]
     (.mkdirs (.getParentFile file))
     ;; Governed work has an independent physical tenant boundary. Persist it
     ;; before the main store: a crash may leave an unreferenced AgentRun, but
     ;; can never leave an AgentRun dispatch without its durable intent.
     (when work (work-partitions/persist-ledger! work))
-    (spit temporary (pr-str (dissoc value :work-governance)))
-    (Files/move (.toPath temporary) (.toPath file)
-                (into-array StandardCopyOption
-                            [StandardCopyOption/REPLACE_EXISTING
-                             StandardCopyOption/ATOMIC_MOVE])))
+    ;; Confined write under the state file's parent (kotoba-lang/fs), then
+    ;; same-directory atomic rename. No ambient spit of the durable bytes.
+    (host/write-atomic! file (pr-str (dissoc value :work-governance))))
   value)
 
 (defn transact! [f & args]

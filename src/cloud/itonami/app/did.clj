@@ -1,5 +1,9 @@
 (ns cloud.itonami.app.did
-  "DID helpers for identities rooted in WebAuthn credentials."
+  "DID helpers for WebAuthn credential public keys.
+
+  A Passkey's COSE P-256 key has a `did:key`. That string names the
+  credential, not the person. The User DID is minted at account creation
+  (`cloud.itonami.app.identity`) and a Passkey binds to it."
   (:import [com.fasterxml.jackson.databind ObjectMapper]
            [com.fasterxml.jackson.dataformat.cbor CBORFactory]
            [java.math BigInteger]
