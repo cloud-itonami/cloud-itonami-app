@@ -16,7 +16,19 @@
             :organization-domain-suffix "cloud-itonami.app"
             ;; Enable only when the deployment publishes a DID document for
             ;; every generated organization domain.
-            :publish-did-web? false}
+            :publish-did-web? false
+            ;; Which method an organization ROOT is minted with once the line
+            ;; above is true (ADR-0068). `:webvh` gives the tenant a
+            ;; hash-chained log with pre-rotation and a 3-of-5 witness
+            ;; threshold, and keeps its identity across a later proven domain
+            ;; because the SCID does not move. `:web` is the previous
+            ;; behaviour, for a deployment that cannot serve `did.jsonl`.
+            ;;
+            ;; The five witness keys are this deployment's own, so the
+            ;; threshold is enforced by resolvers and is NOT independence from
+            ;; this machine. Moving one role to its own HSM is a change to
+            ;; `org-root-did/witness-signers` and nothing else.
+            :root-did-method :webvh}
  ;; Re-measuring proven custom domains. On by default and free when there are
  ;; none: the sweep visits `:claimed`, `:live` and `:lapsed` bindings only, so a
  ;; deployment that has never proven a domain makes no outbound request.

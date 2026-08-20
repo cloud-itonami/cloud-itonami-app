@@ -50,7 +50,9 @@
   Keys cache for an hour, status lists for five minutes or the list's own `ttl`,
   whichever is shorter: a key rotates rarely, a revocation is the thing being
   asked about."
-  (:require [clojure.data.json :as json]
+  (:require [cloud.itonami.app.org-root-did :as org-root-did]
+            [clojure.data.json :as json]
+            [didwebvh.did :as webvh-did]
             [clojure.string :as str]
             ;; for the pinned @context bytes. One definition shared rather than a
             ;; second read of the same file: an issuer and a verifier that pin
@@ -136,13 +138,16 @@
       ;; error.
       true)))
 
-(defn fetch-json
-  "GET `url` and parse it as JSON, under every limit this namespace imposes.
+(defn- fetch-string
+  "GET `url` as text, under every limit this namespace imposes.
 
-  Shared by the DID document fetch and the status list fetch rather than written
-  twice: these are the only two URLs this app is ever told to fetch by content it
-  did not author, and a guard that exists on one of them and not the other is the
-  same as no guard."
+  Extracted so that the JSON fetch and the `did.jsonl` fetch below cannot
+  drift: these are the only URLs this app is ever told to fetch by content it
+  did not author, and a guard that exists on one of them and not the other is
+  the same as no guard.
+
+  Returns `{:status :body}`. A non-200 is DATA here, not an exception — the
+  witness file of a DID that has none is a 404, and that is an answer."
   [configuration url {:keys [accept what]
                       :or {accept "application/json" what "document"}}]
   (let [uri (URI/create url)]
@@ -162,21 +167,37 @@
                       (.header "accept" accept)
                       .GET
                       .build)
-          response (.send @http-client request (HttpResponse$BodyHandlers/ofString))]
-      (when-not (= 200 (.statusCode response))
-        (fail! :credential-trust/document-unavailable
-               (str what " returned HTTP " (.statusCode response))
-               {:status (.statusCode response) :url url}))
-      (let [body (.body response)]
-        (when (> (count body) max-bytes)
-          (fail! :credential-trust/document-too-large
-                 (str what " exceeds " max-bytes " bytes")
-                 {:url url :bytes (count body)}))
-        (try
-          (json/read-str body)
-          (catch Exception _
-            (fail! :credential-trust/document-unparseable
-                   (str what " is not JSON") {:url url})))))))
+          response (.send @http-client request (HttpResponse$BodyHandlers/ofString))
+          body (.body response)]
+      (when (> (count body) max-bytes)
+        (fail! :credential-trust/document-too-large
+               (str what " exceeds " max-bytes " bytes")
+               {:url url :bytes (count body)}))
+      {:status (.statusCode response) :body body})))
+
+(defn fetch-json
+  "GET `url` and parse it as JSON."
+  [configuration url {:keys [what] :or {what "document"} :as opts}]
+  (let [{:keys [status body]} (fetch-string configuration url opts)]
+    (when-not (= 200 status)
+      (fail! :credential-trust/document-unavailable
+             (str what " returned HTTP " status)
+             {:status status :url url}))
+    (try
+      (json/read-str body)
+      (catch Exception _
+        (fail! :credential-trust/document-unparseable
+               (str what " is not JSON") {:url url})))))
+
+(defn didwebvh-fetch
+  "A `:fetch` for `org-root-did/resolve-external`, carrying this namespace's
+  transport policy: HTTPS only, no internal addresses, one timeout, one size
+  cap. The resolver itself makes no request — it is handed this."
+  [configuration]
+  (fn [url]
+    (fetch-string configuration url
+                  {:accept "application/jsonl, application/json"
+                   :what "did:webvh log"})))
 
 (defn fetch-did-document
   "GET `https://<domain>/.well-known/did.json` and parse it.
@@ -353,9 +374,37 @@
                           (assertion-key document verification-method
                                          expected-curve))))
 
+        (str/starts-with? controller "did:webvh:")
+        (or (cached-key configuration verification-method)
+            (let [domain (:domain (webvh-did/parse controller))]
+              ;; Same trust gate as did:web, for the same reason: an untrusted
+              ;; domain should not learn this deployment exists. That the log
+              ;; is self-verifying does not change who we are willing to ask.
+              (when-not (trusted-issuer? configuration domain)
+                (fail! :credential-trust/untrusted-issuer
+                       (str controller " is not in :credentials :trusted-issuers")
+                       {:domain domain}))
+              (let [resolved (org-root-did/resolve-external
+                              controller
+                              {:fetch (didwebvh-fetch configuration)
+                               :now (quot (System/currentTimeMillis) 1000)})]
+                ;; A did:webvh that does not resolve is not a key we can fall
+                ;; back from. Below its witness threshold, or with one broken
+                ;; link in the chain, the document it serves is exactly the
+                ;; thing the method exists to refuse.
+                (when-not (:ok? resolved)
+                  (fail! :credential-trust/didwebvh-unresolvable
+                         (str controller " did not resolve: " (name (or (:error resolved)
+                                                                        :unknown)))
+                         {:did controller :error (:error resolved)
+                          :message (:message resolved)}))
+                (cache-key! configuration verification-method
+                            (assertion-key (:state resolved) verification-method
+                                           expected-curve)))))
+
         :else
         (fail! :credential-trust/unsupported-did-method
-               "only did:key and did:web issuers can be resolved"
+               "only did:key, did:web and did:webvh issuers can be resolved"
                {:verification-method verification-method}))))))
 
 ;; ── revocation ───────────────────────────────────────────────────────────────
