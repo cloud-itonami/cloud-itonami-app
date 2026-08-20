@@ -5,8 +5,10 @@
   and refresh tokens are written to macOS Keychain and never enter state.edn."
   (:require [cloud.itonami.app.config :as config]
             [cloud.itonami.app.connectors :as connectors]
+            [cloud.itonami.app.credential :as credential]
             [cloud.itonami.app.did :as did]
             [cloud.itonami.app.identity-axis :as axis]
+            [cloud.itonami.app.org-root-did :as org-root-did]
             [cloud.itonami.app.email-login :as email-login]
             [cloud.itonami.app.store :as store]
             [cloud.itonami.app.passkey :as passkey]
@@ -51,7 +53,16 @@
   ;; two steps rather than asserting the result in a file.
   {:account-domain "cloud-itonami.app"
    :organization-domain-suffix "cloud-itonami.app"
-   :publish-did-web? false})
+   :publish-did-web? false
+   ;; Which method an organization's ROOT identity is minted with once this
+   ;; deployment publishes at all. `:webvh` is the default because the choice
+   ;; is not really between two names -- `did:web` makes whoever holds the DNS
+   ;; zone the controller, keeps no history, and CHANGES the identity when a
+   ;; tenant later proves a custom domain (`bind-verified-domain!`). did:webvh
+   ;; keeps the SCID across that move and puts an m-of-n witness threshold in
+   ;; the method, where resolvers enforce it. `:web` remains for a deployment
+   ;; that cannot serve `did.jsonl`.
+   :root-did-method :webvh})
 (def default-auth-profile
   {:allow-signup? false
    :sso-providers [:google :microsoft :github]
@@ -110,6 +121,17 @@
   [organization-id]
   (str organization-id "." (:organization-domain-suffix @runtime-identity-profile)))
 
+(defn- warn!
+  "Report a failure this function chose to survive.
+
+  `(catch Exception _ nil)` keeps the fact that something broke and throws
+  away the only thing that says what: an exception whose message names the
+  missing file is indistinguishable, after that catch, from one that names a
+  bad signature. Everything here that survives an error says why on stderr."
+  [message ^Exception e]
+  (binding [*out* *err*]
+    (println "cloud-itonami:" message (ex-message e))))
+
 (defn did-for-domain
   "`did:web:<domain>`, or nil while this deployment does not publish.
 
@@ -123,6 +145,74 @@
 
 (defn- organization-did [organization-id]
   (did-for-domain (managed-domain organization-id)))
+
+(defn- root-identity
+  "The root identity to mint for a new organization.
+
+  Three outcomes, and the first is what every shipped profile still gets:
+
+  - this deployment publishes nothing (`:publish-did-web? false`) -- no DID,
+    exactly as before. A DID that names a document nobody serves is worse
+    than none, because a verifier cannot tell the two apart;
+  - `:root-did-method :webvh` (the default once publishing is on) -- a
+    did:webvh genesis entry with `portable true`, a pre-rotation commitment
+    and a 3-of-5 witness threshold, keeping the old `did:web` name as
+    `alsoKnownAs` so nothing that already resolved it goes dark;
+  - `:root-did-method :web` -- the previous behaviour, for a deployment that
+    cannot serve `did.jsonl`.
+
+  The witness keys are this deployment's (owner decision, ADR-0068): the
+  threshold is real to a resolver and is NOT independence from this machine.
+  `:did-custody` records that rather than leaving a reader to assume."
+  [organization-slug]
+  (let [profile @runtime-identity-profile
+        domain (managed-domain organization-slug)]
+    (cond
+      (not (:publish-did-web? profile))
+      {:method :none}
+
+      (= :web (:root-did-method profile :webvh))
+      {:method :web :did (did-for-domain domain)}
+
+      :else
+      (let [minted (org-root-did/issue!
+                    {:domain domain
+                     :assertion-multikey (credential/issuer-public-key-multibase)
+                     :also-known-as [(str "did:web:" domain)]})]
+        (assoc minted :method :webvh)))))
+
+(defn- persist-root-did!
+  "Write a freshly minted log to its own file beside `state.edn`.
+
+  Best effort, and loud when it fails. The log is not derived state: a second
+  `mint` hashes to a different SCID, so losing it is not a slow rebuild but
+  the end of that identity's ability to publish another version. Refusing to
+  create the tenant because a second copy could not be written would be worse
+  — the tenant exists either way — so this reports and continues."
+  [organization-record-id root]
+  (when (= :webvh (:method root))
+    (try
+      (org-root-did/persist! organization-record-id
+                             {:log (:log root) :witness-file (:witness-file root)})
+      (catch Exception e
+        (warn! "did:webvh のログを書き出せませんでした。" e)))))
+
+(defn- root-did-fields
+  "The organization-record fields a minted root identity contributes.
+
+  `:did` alone for did:web, because there is nothing else to keep. For
+  did:webvh the log and the witness proofs are the identity -- losing them
+  loses the ability to publish the next version at all -- so they are stored
+  with the tenant rather than regenerated, which could not work anyway: a
+  second `mint` would hash to a different SCID."
+  [root]
+  (cond-> {:did (:did root)}
+    (= :webvh (:method root))
+    (assoc :did-method :webvh
+           :did-log (:log root)
+           :did-witness (:witness-file root)
+           :did-witness-threshold (:witness-threshold root)
+           :did-custody (if (:co-located-custody? root) :co-located :distributed))))
 
 (def provider-catalog
   "Derived from `connector.registry` — see `cloud.itonami.app.connectors`.
@@ -821,6 +911,28 @@
           (when (= 1 (count named))
             (:domain (first named)))))))
 
+
+(defn root-did-for-host
+  "The did:webvh log and witness proofs to serve at this request's Host, or nil.
+
+  Reuses `did-web-domain-for-host` for the Host->tenant question, so the log
+  and the `did:web` document can never disagree about which tenant a name
+  belongs to -- two answers to that question is how a key gets published under
+  somebody else's name (ADR-0025), and it would be no better with two files.
+
+  nil for a tenant minted before ADR-0068, or by a deployment configured
+  `:root-did-method :web`. Those have a `did:web` document and no log, and 404
+  is the honest answer: a log that does not exist must not be confused with
+  one that failed to load."
+  [host]
+  (when-let [domain (did-web-domain-for-host host)]
+    (let [state (identity-state (store/snapshot))
+          tenant (first (filter #(= domain (:domain %)) (vals (:organizations state))))]
+      (when (and (= :webvh (:did-method tenant)) (seq (:did-log tenant)))
+        (assoc (select-keys tenant [:did :did-log :did-witness
+                                    :did-witness-threshold :did-custody])
+               :organization-record-id (:id tenant))))))
+
 (defn membership-credential-context
   "Everything `cloud.itonami.app.credential` needs to issue a membership
   credential for this session's ACTIVE membership.
@@ -1020,32 +1132,39 @@
     (let [organization-record-id (str "org-" (UUID/randomUUID))
           membership-id (str "membership-" (UUID/randomUUID))
           domain (managed-domain organization-slug)
-          organization-did (organization-did organization-slug)
+          ;; Minted BEFORE the transaction, not inside it: `issue!` reads (and
+          ;; on first use writes) key material, and a retried transaction body
+          ;; must not mint a second genesis entry -- a second one would have a
+          ;; different SCID and the tenant would end up named by whichever
+          ;; attempt happened to be written.
+          root (root-identity organization-slug)
+          organization-did (:did root)
           now (store/now)]
       (store/transact!
        (fn [current]
          (-> current
              (assoc-in
               [:identity :organizations organization-record-id]
-              {:id organization-record-id
-               :tenant/kind :organization
-               :organization-id organization-slug
-               :did organization-did
-               :name (or (some-> organization-name str str/trim not-empty)
-                         organization-slug)
-               :domain domain
-               ;; Always managed at creation, whatever domain the caller named.
-               ;; A name arrives with its proofs or it does not arrive
-               ;; (ADR-0043); the route turns a `:domain` in the request into a
-               ;; challenge to publish, not into this field.
-               :domain-source :managed
-               :status :active
-               :subject
-               (identity/subject
-                (or organization-did organization-record-id)
-                :organization
-                {:did organization-did :labels #{:local :organization}})
-               :created-at now})
+              (merge
+               (root-did-fields root)
+               {:id organization-record-id
+                :tenant/kind :organization
+                :organization-id organization-slug
+                :name (or (some-> organization-name str str/trim not-empty)
+                          organization-slug)
+                :domain domain
+                ;; Always managed at creation, whatever domain the caller named.
+                ;; A name arrives with its proofs or it does not arrive
+                ;; (ADR-0043); the route turns a `:domain` in the request into a
+                ;; challenge to publish, not into this field.
+                :domain-source :managed
+                :status :active
+                :subject
+                (identity/subject
+                 (or organization-did organization-record-id)
+                 :organization
+                 {:did organization-did :labels #{:local :organization}})
+                :created-at now}))
              (assoc-in
               [:identity :memberships membership-id]
               {:id membership-id
@@ -1058,6 +1177,7 @@
                       :at now
                       :organization-id organization-record-id
                       :user-id user-id}))))
+      (persist-root-did! organization-record-id root)
       {:organization-id organization-record-id
        :membership-id membership-id
        :slug organization-slug
@@ -1074,23 +1194,47 @@
                                #{:local :organization})}))
 
 (defn bind-verified-domain!
-  "Give this tenant the domain it PROVED, and the DID that follows from it.
+  "Give this tenant the domain it PROVED.
 
-  Called by `domain_verification` once a binding reaches `:live` — both gates
-  passed: a TXT record under the zone, and this process answering at the name
-  with that binding's own nonce (ADR-0043). Authorization was established
-  there; this function is the write.
-
-  Lives here rather than there because the organization record's shape, its
-  `did:web` and its subject are this namespace's, and a second namespace
-  building a subject is how two spellings of the same tenant appear.
-
-  The DID moves with the name, which is the point of proving one. A credential
+  For a `did:web` tenant the DID moves with the name: `did:web:<old>` becomes
+  `did:web:<proved>`, and the old identifier stops existing. A credential
   already issued keeps naming the domain that was live when it was issued —
-  nothing here rewrites an assertion that was true when it was made."
+  nothing here rewrites an assertion that was true when it was made.
+
+  For a `did:webvh` tenant the DID moves WITHOUT the identity moving, which is
+  the whole reason ADR-0068 minted the root this way. `portable true` was set
+  at genesis (it can only be set there), so the move is a signed log entry:
+  the SCID is unchanged, the previous DID goes into `alsoKnownAs`, the entry
+  is signed by the update key the PREVIOUS entry pre-committed to, and it
+  carries its own witness approval. A verifier holding the old string can
+  follow it; the history is one chain, not two identities.
+
+  If the move cannot be appended — no log stored, key ladder unreadable — the
+  DID is left ALONE and `:did-location-pending` records that the tenant has
+  proved a name its log has not moved to. That is the honest state and it is
+  recoverable; overwriting the DID with `did:web:<proved>` would throw away
+  the log, the history and the threshold in the name of honouring a proof."
   [organization-record-id domain]
   (let [now (store/now)
-        did (did-for-domain domain)]
+        current-state (identity-state (store/snapshot))
+        tenant (get-in current-state [:organizations organization-record-id])
+        webvh? (= :webvh (:did-method tenant))
+        moved (when (and webvh? (seq (:did-log tenant)))
+                (try
+                  (org-root-did/move!
+                   {:log (:did-log tenant)
+                    :domain domain
+                    :assertion-multikey (credential/issuer-public-key-multibase)})
+                  (catch Exception e
+                    (warn! "did:webvh の移転エントリを作成できませんでした。" e)
+                    nil)))
+        pending? (and webvh? (nil? moved))
+        did (cond moved (:did moved)
+                  webvh? (:did tenant)
+                  :else (did-for-domain domain))
+        witness-file (when moved
+                       (org-root-did/merge-proofs (:did-witness tenant)
+                                                  (:new-proofs moved)))]
     (store/transact!
      (fn [current]
        (let [organization (get-in current [:identity :organizations
@@ -1098,18 +1242,143 @@
          (-> current
              (update-in [:identity :organizations organization-record-id]
                         merge
-                        {:domain domain
-                         :domain-source :verified
-                         :did did
-                         :subject (organization-subject organization did)
-                         :updated-at now})
+                        (cond-> {:domain domain
+                                 :domain-source :verified
+                                 :did did
+                                 :subject (organization-subject organization did)
+                                 :updated-at now}
+                          moved (assoc :did-log (:log moved)
+                                       :did-witness witness-file
+                                       :did-location-pending false)
+                          pending? (assoc :did-location-pending true)))
              (update :events conj
-                     {:type :identity/organization-domain-bound
-                      :at now
-                      :organization-id organization-record-id
-                      :domain domain
-                      :organization-did did})))))
-    {:domain domain :domain-source :verified :did did}))
+                     (cond-> {:type :identity/organization-domain-bound
+                              :at now
+                              :organization-id organization-record-id
+                              :domain domain
+                              :organization-did did}
+                       moved (assoc :did-version (:version-id moved))
+                       pending? (assoc :did-location-pending true)))))))
+    (when moved
+      (try (org-root-did/persist! organization-record-id
+                                  {:log (:log moved) :witness-file witness-file})
+           (catch Exception e
+             (warn! "did:webvh のログを書き出せませんでした。" e))))
+    (cond-> {:domain domain :domain-source :verified :did did}
+      moved (assoc :did-version (:version-id moved))
+      pending? (assoc :did-location-pending true))))
+
+(defn submit-root-did-witness-proof!
+  "Accept one externally-produced witness proof for a version of a tenant's
+  DID log.
+
+  Verified before it is stored (`org-root-did/accept-witness-proof`), so a
+  proof that is not by a declared witness of that DID, or not over that exact
+  version, never reaches the file. That is what makes this safe to reach
+  without a session: forging an approval requires a witness key, and filling
+  the store requires one per witness.
+
+  This is the intake a witness held OUTSIDE this deployment uses. Today all
+  five are inside it, so nothing calls this in normal operation — which is
+  exactly why it exists now rather than later: moving a role to its own HSM
+  should not also require building the path its proof arrives by."
+  [organization-record-id version-id proof]
+  (let [state (identity-state (store/snapshot))
+        tenant (get-in state [:organizations organization-record-id])
+        witness (get-in (first (:did-log tenant)) ["parameters" "witness"])]
+    (if-not (seq (:did-log tenant))
+      {:ok? false :error :identity/no-did-log}
+      (let [result (org-root-did/accept-witness-proof
+                    {:witness witness
+                     :version-id version-id
+                     :witness-file (:did-witness tenant)
+                     :proof proof})]
+        (if-not (:ok? result)
+          result
+          (do
+            (store/transact!
+             (fn [current]
+               (-> current
+                   (assoc-in [:identity :organizations organization-record-id
+                              :did-witness]
+                             (:witness-file result))
+                   (update :events conj
+                           {:type :identity/organization-did-witnessed
+                            :at (store/now)
+                            :organization-id organization-record-id
+                            :version-id version-id
+                            :witness (:witness result)}))))
+            (try (org-root-did/persist! organization-record-id
+                                        {:log (:did-log tenant)
+                                         :witness-file (:witness-file result)})
+                 (catch Exception e
+                   (warn! "did:webvh の witness ファイルを書き出せませんでした。" e)))
+            result))))))
+
+(defn upgrade-organizations-to-webvh!
+  "Give every organization that still has a `did:web` root a `did:webvh` one.
+
+  Idempotent, and a no-op unless this deployment both publishes
+  (`:publish-did-web? true`) and asks for `:root-did-method :webvh`. A tenant
+  that already has a log is left alone: minting a second genesis would produce
+  a different SCID and the organization would have two identities, which is
+  the failure this whole method exists to prevent.
+
+  The old `did:web` is carried into `alsoKnownAs`, so the string the tenant was
+  known by before is still reachable from the document the new DID resolves to.
+
+  Why an upgrade rather than a rename: `did:web:<domain>` and
+  `did:webvh:<scid>:<domain>` are different identifiers, and there is no
+  operation that turns one into the other — the SCID is the hash of a log entry
+  that did not exist. Credentials already issued keep naming the did:web that
+  was true when they were issued, and this does not rewrite them.
+
+  Returns the tenants it changed, so a caller can report rather than guess."
+  []
+  (let [profile @runtime-identity-profile]
+    (if-not (and (:publish-did-web? profile)
+                 (= :webvh (:root-did-method profile :webvh)))
+      []
+      (let [state (identity-state (store/snapshot))
+            candidates (->> (vals (:organizations state))
+                            (filter #(= :organization (:tenant/kind %)))
+                            (filter :domain)
+                            (remove #(= :webvh (:did-method %))))]
+        (vec
+         (keep
+          (fn [tenant]
+            (try
+              (let [minted (org-root-did/issue!
+                            {:domain (:domain tenant)
+                             :assertion-multikey (credential/issuer-public-key-multibase)
+                             :also-known-as (when (:did tenant) [(:did tenant)])})
+                    now (store/now)]
+                (store/transact!
+                 (fn [current]
+                   (let [organization (get-in current [:identity :organizations
+                                                       (:id tenant)])]
+                     (-> current
+                         (update-in [:identity :organizations (:id tenant)]
+                                    merge
+                                    (assoc (root-did-fields minted)
+                                           :subject (organization-subject
+                                                     organization (:did minted))
+                                           :did-upgraded-from (:did tenant)
+                                           :updated-at now))
+                         (update :events conj
+                                 {:type :identity/organization-did-upgraded
+                                  :at now
+                                  :organization-id (:id tenant)
+                                  :from (:did tenant)
+                                  :organization-did (:did minted)})))))
+                (persist-root-did! (:id tenant) minted)
+                {:organization-id (:id tenant)
+                 :from (:did tenant)
+                 :did (:did minted)})
+              (catch Exception e
+                (warn! (str "組織 " (:id tenant) " を did:webvh に更新できませんでした。") e)
+                nil)))
+          candidates))))))
 
 (defn revert-to-managed-domain!
   "Take back a name that stopped answering, leaving the managed one.
@@ -1243,8 +1512,9 @@
           personal-membership-id (str "membership-" (UUID/randomUUID))
           organization-domain (when organization-slug
                                 (managed-domain organization-slug))
-          organization-did (when organization-slug
-                             (organization-did organization-slug))
+          organization-root (when organization-slug
+                              (root-identity organization-slug))
+          organization-did (:did organization-root)
           ;; `domain` is read for the slug above and NOT stored. It used to land
           ;; in `:contact-domain`, a field written here, handed to the client,
           ;; and read by nothing — one of the four names for a tenant's domain
@@ -1268,15 +1538,16 @@
                              :labels #{:local :organization}})
           organization-record
           (when organization?
-            {:id organization-record-id
-             :tenant/kind :organization
-             :organization-id organization-slug
-             :did organization-did
-             :name (or organization-name organization-slug)
-             :domain organization-domain
-             :domain-source :managed
-             :status (if organization-slug :active :pending-profile)
-             :subject organization-subject :created-at now})
+            (merge
+             (root-did-fields organization-root)
+             {:id organization-record-id
+              :tenant/kind :organization
+              :organization-id organization-slug
+              :name (or organization-name organization-slug)
+              :domain organization-domain
+              :domain-source :managed
+              :status (if organization-slug :active :pending-profile)
+              :subject organization-subject :created-at now}))
           person-did (mint-local-did! user-id)
           user-subject (identity/subject person-did :person
                                         {:did person-did
@@ -1324,6 +1595,8 @@
                (update :events conj {:type :identity/registered :at now
                                      :organization-id primary-tenant-id
                                      :user-id user-id})))))
+      (when organization?
+        (persist-root-did! organization-record-id organization-root))
       (assoc (issue-session! user-id)
              :user-id user-id :email canonical-address))))
 

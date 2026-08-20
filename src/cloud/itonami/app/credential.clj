@@ -179,22 +179,29 @@
   credentials) and `authentication`. It is NOT listed under
   `keyAgreement` — this key signs, it does not do key exchange, and listing it
   for a purpose it is not used for invites a verifier to accept it for one."
-  [organization-domain]
-  (when (str/blank? (str organization-domain))
-    (throw (ex-info "did:web document needs an organization domain."
-                    {:type :credential/no-domain})))
-  (let [id (str "did:web:" organization-domain)
-        key-id (str id "#" (issuer-public-key-multibase))]
-    {"@context" ["https://www.w3.org/ns/did/v1"
-                 "https://w3id.org/security/multikey/v1"]
-     "id" id
-     "verificationMethod"
-     [{"id" key-id
-       "type" "Multikey"
-       "controller" id
-       "publicKeyMultibase" (issuer-public-key-multibase)}]
-     "assertionMethod" [key-id]
-     "authentication" [key-id]}))
+  ([organization-domain] (did-web-document organization-domain nil))
+  ([organization-domain also-known-as]
+   (when (str/blank? (str organization-domain))
+     (throw (ex-info "did:web document needs an organization domain."
+                     {:type :credential/no-domain})))
+   (let [id (str "did:web:" organization-domain)
+         key-id (str id "#" (issuer-public-key-multibase))]
+     (cond-> {"@context" ["https://www.w3.org/ns/did/v1"
+                          "https://w3id.org/security/multikey/v1"]
+              "id" id
+              "verificationMethod"
+              [{"id" key-id
+                "type" "Multikey"
+                "controller" id
+                "publicKeyMultibase" (issuer-public-key-multibase)}]
+              "assertionMethod" [key-id]
+              "authentication" [key-id]}
+       ;; The tenant's `did:webvh`, when it has one (ADR-0068). Without this a
+       ;; verifier who arrives holding the did:web name has no way to learn
+       ;; that the identity it is asking about keeps a log -- it would read a
+       ;; key and stop, never seeing the history, the rotation or the witness
+       ;; threshold that are the reason the other identifier exists.
+       (seq also-known-as) (assoc "alsoKnownAs" (vec also-known-as))))))
 
 (defn- local-resolver
   "Resolve the issuer's own `verificationMethod` without a network call.

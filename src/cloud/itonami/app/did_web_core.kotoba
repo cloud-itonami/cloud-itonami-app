@@ -10,8 +10,16 @@
 ;; arguments and a `:bool` result.
 
 (ns cloud.itonami.app.did-web
-  (:export [did-web-route?]))
+  (:export [did-web-route? did-log-route? did-witness-route?]))
 
 (defn did-web-route? [method :string path :string] :bool
   (and (string=? method "GET")
        (string=? path "/.well-known/did.json")))
+
+(defn did-log-route? [method :string path :string] :bool
+  (and (string=? method "GET")
+       (string=? path "/.well-known/did.jsonl")))
+
+(defn did-witness-route? [method :string path :string] :bool
+  (and (string=? method "GET")
+       (string=? path "/.well-known/did-witness.json")))

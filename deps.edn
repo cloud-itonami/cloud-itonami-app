@@ -247,6 +247,15 @@
   io.github.kotoba-lang/org-w3-did
   {:git/url "https://github.com/kotoba-lang/org-w3-did.git"
    :git/sha "c61e6c95515cd6b66ef19550876d40b7356fc6a7"}
+  ;; did:webvh 1.0 — the organization root DID (ADR-0068). `org-w3-did` above
+  ;; still answers for did:key and did:web; this one owns the log, the
+  ;; pre-rotation commitment and the witness threshold, none of which did:web
+  ;; has. Pure .cljc: no HTTP, no clock, no key material — every signer that
+  ;; crosses into it is {:multikey :sign-fn}, which is how a witness moves to
+  ;; its own HSM later without touching this app.
+  io.github.kotoba-lang/foundation-identity-didwebvh
+  {:git/url "https://github.com/kotoba-lang/foundation-identity-didwebvh.git"
+   :git/sha "8293f228b7b4569662f383ab886d91fdea6804b2"}
   ;; Showing an uploaded PDF. `hanmen` walks the content stream into placed
   ;; marks and emits SVG from a closed vocabulary; `org-iso-pdf` comes with
   ;; it as the object model underneath. Neither serves the file — see

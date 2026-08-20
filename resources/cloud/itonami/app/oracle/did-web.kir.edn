@@ -12,10 +12,34 @@
      __kotoba_and_2
      (string=? path "/.well-known/did.json")
      __kotoba_and_2)),
+   :param-types [:string :string]}
+  {:name did-log-route?,
+   :params [method path],
+   :result :bool,
+   :effects #{},
+   :body
+   (let
+    [__kotoba_and_2 (string=? method "GET")]
+    (if
+     __kotoba_and_2
+     (string=? path "/.well-known/did.jsonl")
+     __kotoba_and_2)),
+   :param-types [:string :string]}
+  {:name did-witness-route?,
+   :params [method path],
+   :result :bool,
+   :effects #{},
+   :body
+   (let
+    [__kotoba_and_2 (string=? method "GET")]
+    (if
+     __kotoba_and_2
+     (string=? path "/.well-known/did-witness.json")
+     __kotoba_and_2)),
    :param-types [:string :string]}],
  :oracle-value nil,
  :schema-identities nil,
- :exports [did-web-route?],
+ :exports [did-web-route? did-log-route? did-witness-route?],
  :schemas nil,
  :effects #{},
  :blocks [],

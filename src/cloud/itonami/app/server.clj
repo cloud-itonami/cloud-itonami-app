@@ -35,6 +35,7 @@
             [cloud.itonami.app.pageview :as pageview]
             [cloud.itonami.app.funding :as funding]
             [cloud.itonami.app.did-web :as did-web]
+            [cloud.itonami.app.org-root-did :as org-root-did]
             [cloud.itonami.app.health :as health]
             [cloud.itonami.app.identity :as identity]
             [cloud.itonami.app.fax :as fax]
@@ -295,14 +296,16 @@
   the key authorization exactly, so this sends the string and nothing else — no
   JSON envelope, no trailing newline, no charset parameter the spec does not
   ask for."
-  [^HttpExchange exchange status ^String body]
+  ([^HttpExchange exchange status ^String body]
+   (send-text! exchange status body "text/plain"))
+  ([^HttpExchange exchange status ^String body ^String content-type]
   (let [bytes (.getBytes body StandardCharsets/UTF_8)]
     (doto (.getResponseHeaders exchange)
-      (.set "Content-Type" "text/plain")
+      (.set "Content-Type" content-type)
       (.set "Cache-Control" "no-store"))
     (.sendResponseHeaders exchange status (alength bytes))
     (with-open [out (.getResponseBody exchange)]
-      (.write out bytes))))
+      (.write out bytes)))))
 
 (defn- send-html! [^HttpExchange exchange html]
   ;; 回遊 (local only): every HTML surface this app serves passes through here,
@@ -2303,6 +2306,102 @@
        (= path "/.well-known/did.json")
        (did-web/did-web-route? method path)))
 
+(defn- did-log-route?
+  "did:webvh log discovery (ADR-0068). Literals stay in this file for the route
+  scanner. `did.json` and `did.jsonl` differ by one character, so both this and
+  the predicate above compare for equality rather than testing a prefix."
+  [method path]
+  (and (= method "GET")
+       (= path "/.well-known/did.jsonl")
+       (did-web/did-log-route? method path)))
+
+(defn- did-witness-route?
+  "did:webvh witness proofs (ADR-0068). GET reads them; POST is how a witness
+  that signs somewhere else files one."
+  [method path]
+  (and (contains? #{"GET" "POST"} method)
+       (= path "/.well-known/did-witness.json")
+       (did-web/did-witness-route? (if (= "POST" method) "GET" method) path)))
+
+(defn- send-did-web-document!
+  "The did:web document for this request's Host.
+
+  A function rather than four more forms in `handler`'s `cond`: that method is
+  at the JVM's 64 KB ceiling and inlining this crossed it — measured, not
+  feared. `send-html!` records the same wall from the other side.
+
+  Carries the tenant's `did:webvh` as `alsoKnownAs` when it has one, so a
+  verifier arriving at the old name learns the identity keeps a log instead of
+  reading one key and stopping."
+  [^HttpExchange exchange]
+  (let [host (.getFirst (.getRequestHeaders exchange) "Host")
+        domain (identity/did-web-domain-for-host host)]
+    (if (str/blank? (str domain))
+      (send! exchange 404
+             {:error "この deployment は did:web を発行していません。"
+              :schema credential/schema})
+      (send! exchange 200
+             (credential/did-web-document
+              domain
+              (some-> (identity/root-did-for-host host) :did vector))))))
+
+(defn- send-root-did!
+  "Serve the organization root DID log, or its witness proofs.
+
+  One function for both files, reached from ONE branch of the dispatch `cond`.
+  That is not tidiness: `send-html!`'s own comment records that adding two
+  branches to `handler` failed to compile against the JVM's 64 KB method
+  ceiling, and this route pair would have been the two.
+
+  404 when this Host has no log. A tenant minted before ADR-0068, or under
+  `:root-did-method :web`, has a `did:web` document and no log at all -- and a
+  resolver must be able to tell that from a log it failed to fetch.
+
+  No cache header beyond `send-text!`'s `no-store`: a DID log is append-only,
+  but a cached witness file is how a threshold that has since been revoked
+  keeps resolving."
+  [^HttpExchange exchange method path]
+  (let [found (identity/root-did-for-host
+               (.getFirst (.getRequestHeaders exchange) "Host"))]
+    (cond
+      (nil? found)
+      (send! exchange 404
+             {:error "この Host には did:webvh の DID ログがありません。"
+              :schema credential/schema})
+
+      (= method "POST")
+      ;; A witness that lives outside this deployment files its approval here.
+      ;; Unauthenticated on purpose: `submit-root-did-witness-proof!` verifies
+      ;; the proof against the witnesses this DID declares BEFORE storing it,
+      ;; so forging one needs a witness key and filling the file needs one per
+      ;; witness. A session gate would instead mean that moving a role to its
+      ;; own HSM also requires giving that HSM an account here.
+      (let [body (slurp (.getRequestBody exchange))
+            payload (try (json/read-str body) (catch Exception _ nil))
+            version-id (get payload "versionId")
+            proof (get payload "proof")]
+        (if-not (and (string? version-id) (map? proof))
+          (send! exchange 400
+                 {:error "versionId と proof が要ります。" :schema credential/schema})
+          (let [result (identity/submit-root-did-witness-proof!
+                        (:organization-record-id found) version-id proof)]
+            (send! exchange (if (:ok? result) 200 422)
+                   (cond-> {:ok (boolean (:ok? result))}
+                     (:witness result) (assoc :witness (:witness result))
+                     ;; The QUALIFIED name. `name` drops the namespace, and
+                     ;; `not-a-declared-witness` alone does not say which layer
+                     ;; refused -- the caller needs to tell a witness-set
+                     ;; problem from a signature problem to know what to fix.
+                     (:error result) (assoc :error (subs (str (:error result)) 1)))))))
+
+      (= path "/.well-known/did.jsonl")
+      (send-text! exchange 200 (org-root-did/log-jsonl (:did-log found))
+                  "application/jsonl")
+
+      :else
+      (send-text! exchange 200 (org-root-did/witness-json (:did-witness found))
+                  "application/json"))))
+
 
 (defn handler [config]
   (reify HttpHandler
@@ -2362,13 +2461,14 @@
             ;; came first would publish a key under a name nobody asked about.
             ;; ADR-0025.
             (did-web-document-route? method path)
-            (let [domain (identity/did-web-domain-for-host
-                          (.getFirst (.getRequestHeaders exchange) "Host"))]
-              (if (str/blank? (str domain))
-                (send! exchange 404
-                       {:error "この deployment は did:web を発行していません。"
-                        :schema credential/schema})
-                (send! exchange 200 (credential/did-web-document domain))))
+            (send-did-web-document! exchange)
+
+            ;; The did:webvh log and its witness proofs (ADR-0068). Public for
+            ;; the same reason the document above is: a verifier who has to
+            ;; authenticate to fetch a log cannot verify anything. One branch,
+            ;; two files -- see `send-root-did!`.
+            (or (did-log-route? method path) (did-witness-route? method path))
+            (send-root-did! exchange method path)
 
             ;; Issue a membership credential for the session's ACTIVE membership.
             ;; Session + origin + CSRF gated like every other mutating route: it
@@ -5546,6 +5646,14 @@
      (throw (ex-info "server already running" {})))
    (reset! active-config configuration)
    (identity/configure! configuration)
+   ;; Bring existing organizations onto did:webvh (ADR-0068). Idempotent, and
+   ;; a no-op for every shipped profile, which does not publish at all. Here
+   ;; rather than lazily on next write because a tenant that keeps its old
+   ;; did:web until someone edits it is a deployment with two answers to
+   ;; \"what is this organization called\", indefinitely.
+   (doseq [upgraded (identity/upgrade-organizations-to-webvh!)]
+     (println "cloud-itonami: did:webvh に更新しました"
+              (:organization-id upgraded) (:from upgraded) "->" (:did upgraded)))
    ;; Which hostnames this deployment already answers for under its own name, so
    ;; the guard that refuses them is derived rather than a literal (ADR-0043).
    (domain-verification/configure! configuration)

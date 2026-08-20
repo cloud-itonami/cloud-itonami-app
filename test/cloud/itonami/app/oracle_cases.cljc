@@ -221,6 +221,29 @@
     {:oracle :did-web :export 'did-web-route?
      :args ["GET" "/.well-known/did"] :expect false}
 
+    ;; The two DID names differ by one character, so each predicate is asked
+    ;; about the OTHER file as well: a prefix test would answer a request for
+    ;; the log with the document, and both would pass a test that only ever
+    ;; showed each predicate its own path.
+    {:oracle :did-web :export 'did-log-route?
+     :args ["GET" "/.well-known/did.jsonl"] :expect true}
+    {:oracle :did-web :export 'did-log-route?
+     :args ["GET" "/.well-known/did.json"] :expect false}
+    {:oracle :did-web :export 'did-log-route?
+     :args ["POST" "/.well-known/did.jsonl"] :expect false}
+    {:oracle :did-web :export 'did-log-route?
+     :args ["GET" "/.well-known/did-witness.json"] :expect false}
+    {:oracle :did-web :export 'did-web-route?
+     :args ["GET" "/.well-known/did.jsonl"] :expect false}
+    {:oracle :did-web :export 'did-witness-route?
+     :args ["GET" "/.well-known/did-witness.json"] :expect true}
+    {:oracle :did-web :export 'did-witness-route?
+     :args ["GET" "/.well-known/did.jsonl"] :expect false}
+    {:oracle :did-web :export 'did-witness-route?
+     :args ["POST" "/.well-known/did-witness.json"] :expect false}
+    {:oracle :did-web :export 'did-witness-route?
+     :args ["GET" "/health"] :expect false}
+
     ;; ── fleet-core ──────────────────────────────────────────────────
     {:oracle :fleet-core :export 'catalog-schema-ok?
      :args ["cloud.itonami.fleet-catalog.v1"] :expect true}
@@ -764,7 +787,7 @@
     {:oracle :domain-binding :export 'mail-state
      :args [(mail-facts (assoc mail-proven :previously-authorized true))]
      :expect 1 :read oracle/i64-value}
-    ;; Identity DID-axis (ADR-0064 / ADR-0065). Bool facts only.
+    ;; Identity DID-axis (ADR-0068 / ADR-0065). Bool facts only.
     {:oracle :identity :export 'may-adopt-user-did?
      :args [true true] :expect true}
     {:oracle :identity :export 'may-adopt-user-did?
