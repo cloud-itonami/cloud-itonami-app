@@ -17,7 +17,27 @@
             [kotoba.lang.process-host :as proc-host])
   (:import [java.nio.file Files StandardCopyOption]))
 
-(def ^:private default-max-bytes (* 16 1024 1024))
+(def ^:private default-max-bytes
+  "Bound for a confined write of a DOCUMENT -- content whose size is not ours
+  to predict."
+  (* 16 1024 1024))
+
+(def store-max-bytes
+  "Bound for the durable store writing its OWN state.
+
+  These are different bounds and conflating them took the resident down. The
+  document bound is a defence against content we did not author; the store
+  file is content we author, and its size is a function of how much history
+  the fleet has accumulated -- 28 MB and climbing on 2026-08-20, past a 16 MiB
+  document bound, so every write was refused and the process could not start.
+  Nothing untrusted has ever gone through this path: `write-atomic!` has
+  exactly one caller, and it is the store.
+
+  Still bounded, because unbounded is not the alternative to wrong. But this
+  number does not fix the growth -- 670 runs are retained with full goals and
+  never pruned, so the file will reach any ceiling eventually. Retention is
+  the actual gap; this only stops the ceiling from being the wrong one."
+  (* 256 1024 1024))
 
 (def ^:dynamic *granted-capabilities*
   "When non-nil, a set of aiueos catalog capability keywords the caller holds.
@@ -49,12 +69,16 @@
 (defn write-atomic!
   "Write `content` to `file` via a confined sibling tmp + atomic rename.
 
+  `max-bytes` defaults to the DOCUMENT bound. A caller writing its own state
+  passes its own bound -- see `store-max-bytes`.
+
   The parent directory is the jail root, so the relative name cannot escape."
-  [^java.io.File file content]
+  ([^java.io.File file content] (write-atomic! file content default-max-bytes))
+  ([^java.io.File file content max-bytes]
   (let [parent (.getParentFile file)
         _ (when parent (.mkdirs parent))
         root (.getCanonicalPath (or parent (io/file ".")))
-        handle (filesystem-at root)
+        handle (filesystem-at root max-bytes)
         name (.getName file)
         tmp (str name ".tmp")]
     (fs/write handle tmp (str content))
@@ -63,7 +87,7 @@
                 (into-array StandardCopyOption
                             [StandardCopyOption/REPLACE_EXISTING
                              StandardCopyOption/ATOMIC_MOVE]))
-    nil))
+    nil)))
 
 (defn process
   "IProcess with an explicit basename→absolute-path binary map. No PATH."

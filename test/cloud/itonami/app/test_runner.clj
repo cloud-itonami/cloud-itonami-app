@@ -28,6 +28,7 @@
             [cloud.itonami.app.bots-test]
             [cloud.itonami.app.virtual-shell-test]
             [cloud.itonami.app.host-grant-test]
+            [cloud.itonami.app.host-store-bound-test]
             [cloud.itonami.app.loops-test]
             [cloud.itonami.app.lawfirm-test]
             [cloud.itonami.app.kotobase-federation-test]
@@ -190,6 +191,7 @@
     cloud.itonami.app.bots-test
     cloud.itonami.app.virtual-shell-test
     cloud.itonami.app.host-grant-test
+    cloud.itonami.app.host-store-bound-test
     cloud.itonami.app.loops-test
     cloud.itonami.app.lawfirm-test
     cloud.itonami.app.kotobase-federation-test
