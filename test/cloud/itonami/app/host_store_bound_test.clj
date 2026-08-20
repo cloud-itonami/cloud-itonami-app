@@ -42,3 +42,35 @@
                    (host/write-atomic! file over host/store-max-bytes)))))
   (testing "and it is larger than the document bound, which is the whole point"
     (is (> host/store-max-bytes (* 16 1024 1024)))))
+
+(deftest it-says-so-before-the-write-that-cannot-happen
+  ;; The store crossed its bound on 2026-08-20 with no prior signal: writes
+  ;; succeeded at 99% and the process failed to START at 101%. The first thing
+  ;; anyone learned was that the fleet was down. A bound with no approach
+  ;; warning is a cliff.
+  ;;
+  ;; Sizes are exact byte counts, not fractions of the bound: the first version
+  ;; used (int (* 0.8 bound)) and asserted "80%", which the truncation made 79
+  ;; and put in a different decile. That tested my arithmetic, not the warning.
+  (let [dir (tmp-dir)
+        file (io/file dir "state.edn")
+        bound (* 4 1024 1024)                 ;; 4194304
+        say (fn [n] (let [out (java.io.StringWriter.)]
+                      (binding [*err* out]
+                        (host/write-atomic! file (apply str (repeat n "x")) bound))
+                      (str out)))]
+    (testing "well under the bound, nothing is said"
+      (is (= "" (say 1024))))
+    (testing "past the fraction it warns, with a number and the consequence"
+      (let [msg (say 3500000)]                ;; 83% -> decile 8
+        (is (re-find #"WARNING" msg))
+        (is (re-find #"\d+% of its" msg))
+        (is (re-find #"will not start" msg)
+            "the warning must say what happens at the bound, not just report a number")))
+    (testing "and does not repeat within the same decile"
+      (is (= "" (say 3540000))))              ;; 84% -> still decile 8
+    (testing "but speaks again when it moves closer"
+      (is (re-find #"WARNING" (say 3900000)))) ;; 92% -> decile 9
+    (testing "the bound itself still refuses -- the warning does not replace it"
+      (is (thrown? clojure.lang.ExceptionInfo
+                   (host/write-atomic! file (apply str (repeat (+ bound 8) "x")) bound))))))
