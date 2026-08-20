@@ -472,7 +472,13 @@
   io.github.kotoba-lang/agent
   {:git/url "https://github.com/kotoba-lang/agent.git"
    :git/sha "12d100bed062f4461b55266b79b7dc9310a41ea1"}
-  kotoba-lang/hil
+  ;; io.github.<org>/<name> is the coordinate tools.deps derives from the
+  ;; repository, and the spelling all three declarers of kotoba-lang/hil
+  ;; (this repo, etzhayyim/tamaki, kotoba-lang/computer-use) now agree on --
+  ;; computer-use had it as io.github.com-junkawasaki/hil. Three names for one
+  ;; repository are three libraries, and any closure reaching two of them
+  ;; carries hil.* twice.
+  io.github.kotoba-lang/hil
   {:git/url "https://github.com/kotoba-lang/hil.git"
    :git/sha "75f5b9ed3ed00161f331f868a224d3a71e5db00e"}
   io.github.kotoba-lang/jp-go-digital-design-system
@@ -644,6 +650,6 @@
     io.github.kotoba-lang/com-github {:local/root "../../kotoba-lang/com-github"}
     io.github.kotoba-lang/yakuwari {:local/root "../../kotoba-lang/yakuwari"}
     io.github.kotoba-lang/agent {:local/root "../../kotoba-lang/agent"}
-    kotoba-lang/hil {:local/root "../../kotoba-lang/hil"}
+    io.github.kotoba-lang/hil {:local/root "../../kotoba-lang/hil"}
     io.github.kotoba-lang/jp-go-digital-design-system
     {:local/root "../../kotoba-lang/jp-go-digital-design-system"}}}}}
