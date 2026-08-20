@@ -218,3 +218,31 @@
     (let [before (count (:webauthn-transactions (:identity (store/snapshot))))]
       (threw? #(passkey/start-signing! (:id user) (byte-array 31) {} rp-id origin))
       (is (= before (count (:webauthn-transactions (:identity (store/snapshot)))))))))
+
+
+(deftest bind-verified-registration-requires-explicit-user-verification
+  (testing "missing :user-verified? must not fail open"
+    (is (= :passkey/user-verification-required
+           (ex-type #(passkey/bind-verified-registration!
+                      (:id user)
+                      {:credential-id "cred-1"
+                       :public-key-b64 "AAAA"
+                       :sign-count 0})))))
+  (testing "false is refused"
+    (is (= :passkey/user-verification-required
+           (ex-type #(passkey/bind-verified-registration!
+                      (:id user)
+                      {:credential-id "cred-2"
+                       :public-key-b64 "AAAA"
+                       :sign-count 0
+                       :user-verified? false})))))
+  (testing "true with a key binds"
+    (let [r (passkey/bind-verified-registration!
+             (:id user)
+             {:credential-id "cred-3"
+              :public-key-b64 "BBBB"
+              :sign-count 1
+              :user-verified? true})]
+      (is (= "cred-3" (:credential-id r)))
+      (is (true? (get-in (store/snapshot)
+                         [:identity :passkeys "cred-3" :user-verified?]))))))

@@ -159,9 +159,13 @@
                          (try (did/did-key-from-cose public-key-cose)
                               (catch Exception _ nil)))
         now (store/now)]
-    (when-not (:user-verified? result true)
+    ;; Fail closed: missing :user-verified? must not count as verified.
+    (when-not (= true (:user-verified? result))
       (throw (ex-info "Authenticator がユーザー確認を完了していません。"
                       {:type :passkey/user-verification-required})))
+    (when-not (or public-key-cose (:public-key-b64 result))
+      (throw (ex-info "Verified registration is missing a public key."
+                      {:type :passkey/missing-public-key})))
     (store/transact!
      (fn [state]
        (let [held (get-in state [:identity :users user-id :did])
@@ -175,7 +179,7 @@
                                 :public-key-b64 (:public-key-b64 result)
                                 :did credential-did
                                 :signature-count (long (:sign-count result 0))
-                                :user-verified? (boolean (:user-verified? result true))
+                                :user-verified? true
                                 :aaguid (:aaguid result)
                                 :created-at now :last-used-at nil})
                      (assoc-in [:identity :authenticators credential-id]

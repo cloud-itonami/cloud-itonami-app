@@ -386,7 +386,7 @@
 
   io.github.kotoba-lang/identity
   {:git/url "https://github.com/kotoba-lang/identity.git"
-   :git/sha "5cf94e38c816ced6857ef62de344f6adea9fc050"}
+   :git/sha "8eeb1a046c0b8c81ebbbc938e8b6c40383a5d6a9"}
 
   ;; Delegation, and the ONE thing that decides it.
   ;;
