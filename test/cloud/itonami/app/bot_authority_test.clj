@@ -93,3 +93,76 @@
     (is (nil? (bot-authority/issue {:bot/id "b1" :bot/workforce-key "k"} policy)))
     (is (= :no-root-key (:reason (bot-authority/verify {:biscuit/version "biscuit/edn-v1"
                                                         :biscuit/blocks []}))))))
+
+(def ^:private runnable
+  #{"workspace_read" "workspace_list" "workspace_search"
+    "git_status" "git_log" "workspace_write_file" "git_commit"})
+
+(deftest the-capability-policy-decides-and-not-only-in-the-prompt
+  ;; Before this, a Bot's capability policy reached exactly one place: its
+  ;; system prompt, which tells it "Blocked capabilities stay blocked" and had
+  ;; nothing behind it.
+  (let [dir (temp-dir)
+        bot {:bot/id "b1" :bot/workforce-key "mangaka/work-yamainu"}
+        admit (fn [policy] (bot-authority/admit runnable bot policy {:now now}))]
+    (with-keys dir
+      (testing "an autonomous capability keeps the tools that exercise it"
+        (is (contains? (admit [{:capability :patch.create :decision :autonomous}])
+                       "workspace_write_file")))
+
+      (testing "a capability a human still decides does NOT authorise the tool"
+        (is (not (contains? (admit [{:capability :patch.create :decision :approval-required}])
+                            "workspace_write_file")))
+        (is (not (contains? (admit [{:capability :patch.create :decision :blocked}])
+                            "git_commit"))))
+
+      (testing "reading is never taken away by this gate"
+        ;; The fleet vocabulary has no capability meaning "may read the
+        ;; repository it was given", so mapping reads would be a guess that
+        ;; can blind a Bot to the repo it was pointed at.
+        (doseq [policy [[{:capability :patch.create :decision :blocked}]
+                        [{:capability :patch.create :decision :autonomous}]
+                        []]]
+          (is (every? (admit policy)
+                      ["workspace_read" "workspace_list" "git_status" "git_log"]))))
+
+      (testing "it only ever narrows"
+        (doseq [policy [[] [{:capability :patch.create :decision :autonomous}]
+                        [{:capability :patch.create :decision :blocked}]]]
+          (is (every? runnable (admit policy))
+              "no arrangement of policy may ADD a tool"))))
+
+    (testing "an unissuable token is no second floor, not no floor"
+      ;; A key problem must not become a fleet outage: the existing ceiling is
+      ;; the tool grant and it still applies.
+      (with-redefs [bot-authority/root-seed-file (fn [] (io/file "/proc/none/a"))
+                    bot-identity/seed-file (fn [] (io/file "/proc/none/i"))]
+        (is (= runnable (bot-authority/admit runnable bot
+                                             [{:capability :patch.create :decision :blocked}]
+                                             {:now now})))))
+
+    (testing "a Bot with no fleet policy is untouched"
+      (with-keys dir
+        (is (= runnable (bot-authority/admit runnable {:bot/id "b1"}
+                                             [{:capability :patch.create :decision :blocked}]
+                                             {:now now})))))))
+
+(deftest the-fold-fails-in-both-directions-and-both-are-pinned
+  ;; These two bugs are opposites and each hides the other. An empty BASE
+  ;; makes every token reach nothing; an empty TOKEN folding onto a wide base
+  ;; makes every restriction a promotion. Asserting only one would have looked
+  ;; fine while the other shipped -- and the second one did, until the probe
+  ;; for this namespace caught a Bot with every capability :blocked being
+  ;; granted everything.
+  (let [dir (temp-dir)]
+    (with-keys dir
+      (let [bot {:bot/id "b1" :bot/workforce-key "mangaka/work-yamainu"}]
+        (testing "a token declaring no scope reaches nothing"
+          (let [t (bot-authority/issue bot [{:capability :patch.create :decision :blocked}])]
+            (is (:ok? (bot-authority/verify t)) "it is still a valid token")
+            (is (empty? (:grant/scopes (bot-authority/->grant t)))
+                "a Bot whose every capability was withheld must not be granted the base")))
+
+        (testing "a token declaring scopes reaches exactly those"
+          (let [t (bot-authority/issue bot [{:capability :patch.create :decision :autonomous}])]
+            (is (= 1 (count (:grant/scopes (bot-authority/->grant t)))))))))))

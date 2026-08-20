@@ -141,12 +141,30 @@
   broken fold."
   "kotoba://cap/*")
 
+(defn- declares-scope? [t]
+  (boolean (some (fn [b] (some (fn [[p _]] (= 'scope p)) (:block/facts b)))
+                 (:biscuit/blocks t))))
+
 (defn ->grant
   "A VERIFIED token as an inert `authority` grant. Refuses an unverified one:
-  folding first and checking later is how a forged token becomes a decision."
+  folding first and checking later is how a forged token becomes a decision.
+
+  A token that declares NO scope at all reaches nothing, and that has to be
+  said here. `biscuit.authority/->grant` folds blocks onto the base by MEET,
+  so a token with no scope facts folds to the base unchanged -- and the base
+  is the widest authority the fleet issues. A Bot whose every capability was
+  `:blocked` would therefore have been granted everything, which the probe
+  for this namespace caught before it shipped.
+
+  Both directions of that fold are now pinned: an empty base makes every
+  token reach nothing (the earlier bug), and an empty token reaching the base
+  makes every restriction a promotion. Neither is safe, and they fail in
+  opposite directions, so only asserting one of them would have looked fine."
   [t]
   (when (:ok? (verify t))
-    (biscuit-authority/->grant t {:scopes [fleet-scope]})))
+    (if (declares-scope? t)
+      (biscuit-authority/->grant t {:scopes [fleet-scope]})
+      (biscuit-authority/->grant t {:scopes []}))))
 
 (defn authorized?
   "Does this token authorise `capability` for `workforce-key`, right now, in
@@ -166,3 +184,72 @@
    (when-let [g (->grant t)]
      (grant/authorized? g (capability->scope workforce-key capability)
                         {:now now :holder holder}))))
+
+;; ── making the capability policy decide ──────────────────────────────────
+;;
+;; Until now a Bot's capability policy reached exactly one place: its system
+;; prompt, labelled "descriptive; concrete tools remain the execution
+;; ceiling", ending with "Blocked capabilities stay blocked". Nothing checked
+;; that. It was an invariant told to a model and hoped for -- the shape this
+;; workspace keeps finding and the one ADR-2608200200 cost the most.
+;;
+;; This makes it decide, for the tools where the mapping is not a judgement
+;; call. It is deliberately SMALL. A tool whose capability is arguable is
+;; left out, because inventing the mapping would be inventing authority, and
+;; a wrong entry here either takes reach the fleet granted or grants reach it
+;; withheld.
+
+(def tool->capability
+  "Tools whose capability is unambiguous. NOT a complete map, and read
+  `covered-tools` before assuming it is.
+
+  `workspace_write_file` writes a file into the business repository, which is
+  what `:patch.create` names. `git_commit` records that change; the fleet
+  vocabulary separates creating a patch from integrating one, and a local
+  commit that never pushes is the first, not the second.
+
+  Everything else a workforce Bot holds -- workspace_read, workspace_list,
+  workspace_search, git_status, git_log, git_diff -- is reading, and the
+  vocabulary has no capability that means `may read the repository it was
+  given`. Mapping them to `:metrics.read` would be a guess, and a guess that
+  can remove a Bot's ability to look at the repository it was pointed at."
+  {"workspace_write_file" :patch.create
+   "git_commit" :patch.create})
+
+(defn covered-tools
+  "The tools this gate actually decides. Everything else is unchanged by it."
+  []
+  (set (keys tool->capability)))
+
+(defn admit
+  "`runnable` narrowed to what the Bot's own token authorises.
+
+  Only ever narrows, and only for tools in `tool->capability`. Three things
+  leave it untouched, and each is a deliberate choice rather than an
+  oversight:
+
+    no workforce key   an interactive Bot has no fleet-issued policy to check
+                       against; its ceiling is its tool grant, as before
+    no token           an unissuable token must not silently become a denial
+                       of everything -- that is indistinguishable from a Bot
+                       with no capabilities, and it is how a key problem
+                       becomes a fleet outage
+    unmapped tool      see `tool->capability`
+
+  The middle case is the uncomfortable one and it is stated rather than
+  hidden: if the root key is unreadable this gate stops gating. It does not
+  stop the EXISTING ceiling, which is the tool grant, so the failure is
+  'no second floor' rather than 'no floor'."
+  [runnable {:bot/keys [workforce-key] :as bot} capability-policy {:keys [now]}]
+  (let [gated (filter (covered-tools) runnable)]
+    (if (or (str/blank? (str workforce-key)) (empty? gated))
+      runnable
+      (if-let [t (issue bot capability-policy)]
+        (let [holder (bot-identity/bot-did (:bot/id bot))
+              permitted? (fn [tool]
+                           (authorized? t workforce-key (get tool->capability tool)
+                                        {:now now :holder holder}))]
+          (into (set (remove (covered-tools) runnable))
+                (filter permitted?)
+                gated))
+        runnable))))
