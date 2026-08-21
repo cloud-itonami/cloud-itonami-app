@@ -1181,6 +1181,12 @@
     .topbar{position:sticky;z-index:30;top:0;min-height:calc(4rem + env(safe-area-inset-top));
       box-sizing:border-box;padding:calc(.75rem + env(safe-area-inset-top)) 8.75rem .75rem 1rem;
       background:var(--color-neutral-white)}
+    /* `:titlebar :overlay` keeps AppKit's close/minimise/zoom controls but
+       extends WKWebView behind their otherwise empty title band. The app
+       topbar becomes that band; this inset is the traffic-light hit area, not
+       a second toolbar. Browser windows never receive the data attribute. */
+    body[data-native-titlebar='overlay'] .topbar{
+      padding-left:5rem}
     .topbar__title{font-size:1rem;line-height:1.4;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
     .bots-titlebar__copy{display:none}
     #bots-titlebar-context{gap:.375rem}

@@ -9,6 +9,13 @@
       return node;
     };
     const initialParams = new URLSearchParams(location.search);
+    // The native host still owns the traffic lights and window behaviour. This
+    // marker only tells the web chrome to reserve their inset after the host
+    // extends the content view into the titlebar. An ordinary browser never
+    // receives it and keeps the normal page spacing.
+    if (initialParams.get('chrome') === 'titlebar-overlay') {
+      document.body.dataset.nativeTitlebar = 'overlay';
+    }
     const initialFragment = location.hash.slice(1);
     // Capture the one-time proof before showView() replaces the fragment.
     // Reading location.hash again near the end of this file loses the token
