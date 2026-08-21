@@ -61,8 +61,13 @@ if ! healthy; then
   exit 1
 fi
 
+# `?surface=native` matches app.kotoba.edn: it is how the page learns it is
+# inside the native webview. Without it the page treats this window as a
+# browser, follows sign-in hrefs into the webview, and the person is stranded
+# on a WebAuthn ceremony the webview cannot finish (RFC 8252; the packaged
+# launcher shipped without the flag and that is exactly what happened).
 "$contents_dir/MacOS/kotoba-shell-host" \
   --title "Cloud Itonami" \
   --icon "$resources_dir/icon.png" \
-  --web-url http://localhost:1338/ \
+  --web-url 'http://localhost:1338/?surface=native' \
   --width 430 --height 860 --min-width 360 --min-height 640

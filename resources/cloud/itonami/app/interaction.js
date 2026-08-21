@@ -7992,6 +7992,15 @@
           : others.length
             ? ` この端末で使える入口は Passkey、${others.join('、')} です。重要操作では Passkey を追加確認します。`
             : ' この端末で使える入口は Passkey だけです。重要操作では Passkey を追加確認します。';
+      // The native window is a webview and the ceremony happens in the
+      // system browser (RFC 8252) — say so, or the round-trip reads as the
+      // window silently losing the person. This overrides the unsupported
+      // copy too: whether or not the webview claims WebAuthn, the path from
+      // here is the system browser, not this window.
+      if (nativeSurface() && hosted && !resuming) {
+        $('#signin-gate-note').textContent =
+          ' サインインはブラウザ（auth.itonami.cloud）で行います。完了するとこの画面に自動で戻ります。';
+      }
       // A control that cannot work is disabled with its reason on the screen,
       // not left live to fail on click.
       [$('#passkey-signin'), $('#registration-submit')].forEach((button) => {
@@ -8703,6 +8712,26 @@
       if (nativeSurface()) {
         event.preventDefault();
         startCentralAuth(event.currentTarget);
+      }
+    });
+    $('#itonami-enrolment-link').addEventListener('click', async (event) => {
+      // Same RFC 8252 boundary as sign-in: a first passkey cannot be minted
+      // inside the native webview, so the page must not navigate itself to
+      // itonami.cloud there. The server opens its CONFIGURED enrolment page
+      // in the system browser; this handler names no url.
+      if (!nativeSurface()) return;
+      event.preventDefault();
+      try {
+        const request = await fetch('/api/auth/itonami/enrolment/open', {
+          method:'POST', headers:{'Content-Type':'application/json'}, body:'{}'
+        });
+        const result = await request.json().catch(() => ({}));
+        $('#identity-status').textContent = result['opened-externally?']
+          ? 'ブラウザで itonami.cloud を開きました。パスキーを作ったら、この画面に戻って「パスキーでサインイン」を押してください。'
+          : 'ブラウザを開けませんでした。' + (result.url || 'https://itonami.cloud/signin/') +
+            ' を手動で開いてください。';
+      } catch (error) {
+        $('#identity-status').textContent = error.message;
       }
     });
     $('#itonami-cloud-link').addEventListener('click', (event) => {

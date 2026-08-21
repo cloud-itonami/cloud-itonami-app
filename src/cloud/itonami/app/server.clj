@@ -853,6 +853,21 @@
                  handoff? (assoc :opened-externally?
                                  (open-in-system-browser! (:url started)))))))
 
+    ["POST" "/api/auth/itonami/enrolment/open"]
+    ;; The native webview cannot mint a first passkey any more than it can
+    ;; assert one, and following the enrolment href inside it strands the
+    ;; person on a ceremony that cannot finish there — the same evidence
+    ;; that gives /start its handoff. The url opened is the CONFIGURED
+    ;; enrolment page; the caller names nothing, so this stays short of the
+    ;; open-a-url primitive `open-in-system-browser!`'s docstring refuses
+    ;; to become.
+    (do
+      (require-origin! exchange config)
+      (let [url (identity/enrolment-url)]
+        (send! exchange 200 {:url url
+                             :opened-externally?
+                             (open-in-system-browser! url)})))
+
     ["POST" "/api/auth/itonami/handoff"]
     ;; No session is required and none can be: the whole point is that this
     ;; caller has no cookie. The claim token is the entire authority, which is

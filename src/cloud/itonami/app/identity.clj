@@ -2654,6 +2654,14 @@
            :token-endpoint (str issuer "/oauth/token")
            :profile-endpoint (str issuer "/userinfo"))))
 
+(defn enrolment-url
+  "Where a first passkey is minted — app-auth's hosted page, read from the
+  same central profile the start flow uses so the two cannot disagree. The
+  native surface asks the server to open THIS url in the system browser;
+  it never names a url of its own."
+  []
+  (:enrolment-url (central-auth-config)))
+
 (defn- prune-central-auth-transactions! []
   (let [now (Instant/now)]
     (store/transact!
