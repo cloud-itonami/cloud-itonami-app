@@ -741,7 +741,7 @@
   (contains? #{"/api/auth/sessions" "/api/auth/sessions/revoke"
                "/api/auth/signout" "/api/auth/identities/unlink"
                "/api/auth/itonami/start" "/api/auth/itonami/callback"
-               "/api/auth/itonami/handoff"}
+               "/api/auth/itonami/handoff" "/api/auth/itonami/enrolment/open"}
              path))
 
 (defn- open-in-system-browser!
