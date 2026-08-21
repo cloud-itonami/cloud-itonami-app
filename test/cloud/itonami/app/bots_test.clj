@@ -2525,3 +2525,32 @@
             (is (empty? (:tools b)))
             (is (false? (:writes? b)))
             (is (false? (:omakase? b)))))))))
+
+(deftest a-failed-turn-records-what-the-provider-actually-said
+  ;; The provider layer throws with :status, :url and :response. `error-message`
+  ;; kept only (.getMessage), so every HTTP failure was stored as the same nine
+  ;; words while the answer sat in ex-data one frame below. Measured 2026-08-21:
+  ;; a live bot task failed and the record could not say whether it was a 4xx or
+  ;; a 5xx, let alone why.
+  (let [err (ns-resolve 'cloud.itonami.app.bots 'error-message)]
+    (testing "the status reaches the record"
+      (let [m (err (ex-info "model provider request failed"
+                            {:type :provider/http-error :status 503
+                             :url "http://x/v1/chat/completions"
+                             :response {:error "upstream connect error"}}))]
+        (is (re-find #"HTTP 503" m))
+        (is (re-find #"upstream connect error" m))
+        (is (re-find #"model provider request failed" m)
+            "the original message is kept, not replaced")))
+    (testing "it stays one line and bounded"
+      (let [m (err (ex-info "model provider request failed"
+                            {:type :provider/http-error :status 500
+                             :response {:error (apply str (repeat 4000 "x"))}}))]
+        (is (not (re-find #"\n" m)))
+        (is (<= (count m) 400) (str "length " (count m)))))
+    (testing "an error with no ex-data is unchanged"
+      (is (= "plain failure" (err (Exception. "plain failure")))))
+    (testing "a timeout is untouched -- it has no body to report"
+      (let [m (err (ex-info "model provider timed out"
+                            {:type :provider/timeout :timeout-seconds 120}))]
+        (is (= "model provider timed out" m))))))
