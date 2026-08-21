@@ -118,7 +118,8 @@
 
 (defn- finish-central!
   ([subject] (finish-central! subject {:acr "phishing-resistant" :amr ["webauthn"]}))
-  ([subject assurance]
+  ([subject assurance] (finish-central! subject assurance nil))
+  ([subject assurance callback-session]
   (let [state (central-state)]
     (with-redefs-fn
       {#'cloud.itonami.app.identity/central-exchange-code!
@@ -134,7 +135,7 @@
           :scope "identity:read"}
                 assurance))}
       #(identity/complete-central-authentication!
-        {:state state :code "one-time-code"})))))
+        {:state state :code "one-time-code"} callback-session)))))
 
 (deftest central-auth-pkce-bootstraps-once-and-never-persists-its-token
   (let [previous @store/state]
@@ -191,6 +192,48 @@
           (is false "existing installs require an authenticated link")
           (catch clojure.lang.ExceptionInfo error
             (is (= :central-auth/link-required (:type (ex-data error)))))))
+      (finally
+        (reset! store/state previous)))))
+
+(deftest an-authenticated-callback-browser-links-the-native-handoff
+  ;; The native window has no local cookie. The system browser does: it is
+  ;; already signed in to the existing User visible on the Settings page.
+  ;; The callback must use that browser session as link authority and then
+  ;; make the separately-held native claim ready.
+  (let [previous @store/state]
+    (try
+      (reset! store/state (seeded-state))
+      (identity/configure! {})
+      (let [browser-issued
+            (identity/issue-session!
+             "user-1" {:kind :passkey
+                       :issued-via :passkey
+                       :authn-level :phishing-resistant
+                       :authn-decision :authenticated
+                       :authn-factors [:passkey]})
+            browser-session (identity/session (:token browser-issued))
+            started (identity/start-central-authentication!
+                     nil "http://localhost:1338" {:handoff? true})
+            finished (finish-central!
+                      "did:web:kotobase.net:person:native"
+                      {:acr "phishing-resistant" :amr ["webauthn"]}
+                      browser-session)
+            claimed (identity/claim-session-handoff!
+                     (:handoff started) {:origin-trusted? true})
+            native-session (identity/session (:token claimed))]
+        (is (true? (:linked? finished)))
+        (is (= "user-1" (:user-id finished)))
+        (is (= "user-1"
+               (get-in (store/snapshot)
+                       [:identity :login-identities
+                        [:itonami-cloud "did:web:kotobase.net:person:native"]
+                        :user-id])))
+        (is (= 2 (count (get-in (store/snapshot) [:identity :users])))
+            "linking through the browser must not create a third local User")
+        (is (true? (:ready? claimed)))
+        (is (true? (:linked? claimed)))
+        (is (= "user-1" (:user-id native-session)))
+        (is (true? (identity/may-act? native-session))))
       (finally
         (reset! store/state previous)))))
 

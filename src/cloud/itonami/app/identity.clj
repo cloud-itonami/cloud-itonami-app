@@ -2810,8 +2810,16 @@
 
 (defn complete-central-authentication!
   "Consume one local state, exchange its code, validate the central identity,
-  and mint a local session. The central access token is never persisted."
-  [{:keys [state code error]}]
+  and mint a local session. The central access token is never persisted.
+
+  The optional `callback-session` is the local session carried by the system
+  browser that receives the callback. A native WebView starts the transaction
+  without a cookie and polls a handoff token, while the browser may already be
+  signed in to the existing local User. That authenticated browser session is
+  the authority to link an otherwise-unbound central identity; ignoring it
+  leaves the native flow unable to cross the two cookie jars."
+  ([params] (complete-central-authentication! params nil))
+  ([{:keys [state code error]} callback-session]
   (let [snapshot (identity-state (store/snapshot))
         transaction (get-in snapshot [:central-auth-transactions state])]
     (when-not (and transaction
@@ -2860,7 +2868,12 @@
                               {:type :central-auth/invalid-claims})))
           current (identity-state (store/snapshot))
           bound-user-id (login-user current :itonami-cloud subject)
-          link-user-id (:user-id transaction)
+          callback-user-id (when (and callback-session
+                                      (human-session? callback-session)
+                                      (may-act? callback-session))
+                             (:user-id callback-session))
+          link-user-id (or (:user-id transaction) callback-user-id)
+          link? (boolean link-user-id)
           _ (when (and bound-user-id link-user-id
                        (not= bound-user-id link-user-id))
               (throw (ex-info "この中央IDは別のUserに接続されています。"
@@ -2905,7 +2918,7 @@
                         {:session-handoff/ready? true
                          :session-handoff/user-id user-id
                          :session-handoff/session-opts session-opts
-                         :session-handoff/linked? (= :link (:mode transaction))
+                         :session-handoff/linked? link?
                          :session-handoff/ready-at (store/now)
                          :session-handoff/expires-at
                          (str (.plusSeconds
@@ -2913,7 +2926,7 @@
                                session-handoff/claim-window-seconds))})
              current))))
       (assoc issued :provider :itonami-cloud :user-id user-id
-             :linked? (= :link (:mode transaction))))))
+             :linked? link?)))))
 
 (defn claim-session-handoff!
   "Exchange a claim token for a session of this agent's own.
