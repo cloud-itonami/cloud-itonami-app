@@ -3291,8 +3291,18 @@
                 error-status (:status (ex-data error))
                 status (get-in (goal-job run-id) [:job/run :agent.run/status])]
             (when (contains? #{:leased :running :checkpointed} status)
+              ;; The message goes on the RUN as well as the turn. These are two
+              ;; projections of one execution -- the comment below says so --
+              ;; and only one of them was carrying the why. Measured 2026-08-21:
+              ;; :turn/error-message was populated 141 times and
+              ;; :agent.run/error-message ZERO, so anything reading the ledger
+              ;; (every measurement I made today, and `workforce_status`) could
+              ;; see that a run failed and never what it said. A type alone
+              ;; cannot distinguish a misconfigured provider from an overloaded
+              ;; one.
               (transition-goal-run! run-id :failed
                                     {:agent.run/error-type error-type
+                                     :agent.run/error-message (error-message error)
                                      :agent.run/finished-at (now-ms)}))
             ;; The AgentRun and the human-facing turn are two projections of
             ;; one execution. A resumed Goal used to fail only the AgentRun,
