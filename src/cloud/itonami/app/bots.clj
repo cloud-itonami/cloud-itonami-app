@@ -134,12 +134,31 @@
   unbounded text. `nil` when there is nothing to say, so a reader can tell
   'no message' from an empty one."
   [error]
-  (some-> (.getMessage ^Exception error)
-          str/split-lines
-          first
-          str/trim
-          not-empty
-          (as-> m (subs m 0 (min max-error-message (count m))))))
+  (let [{:keys [status response]} (ex-data error)
+        ;; The provider layer throws with :status, :url and :response, and this
+        ;; kept only (.getMessage), so every HTTP failure was stored as the same
+        ;; nine words -- "model provider request failed" -- while the answer sat
+        ;; in ex-data and was dropped one frame up. Measured 2026-08-21: a live
+        ;; bot task failed exactly that way and the record could not say whether
+        ;; it was a 4xx, a 5xx, or which. The same defect as the bridge's
+        ;; discarded body earlier in the same session, one layer higher.
+        ;;
+        ;; Still bounded and still one line, as the docstring requires: this
+        ;; rides in a record the UI reads.
+        body (when response
+               (let [t (-> (str (or (:error response) (:message response) response))
+                           (str/replace #"\s+" " ")
+                           str/trim)]
+                 (not-empty (subs t 0 (min 120 (count t))))))
+        parts (remove nil? [(when status (str "HTTP " status)) body])
+        detail (when (seq parts) (str/join " " parts))]
+    (some-> (.getMessage ^Exception error)
+            str/split-lines
+            first
+            str/trim
+            not-empty
+            (as-> m (if detail (str m " — " detail) m))
+            (as-> m (subs m 0 (min max-error-message (count m)))))))
 
 
 (def goal-tool-definitions
