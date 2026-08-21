@@ -220,6 +220,12 @@
      action leads the line instead of the global flex-end. */
   .signin-view .security-callout{max-width:60rem;box-sizing:border-box}
   .signin-layout .local-actions{justify-content:flex-start}
+  /* Pre-auth there is no rail, so the fixed toast's left:18rem aims at a
+     sidebar that does not exist and lands on the content — measured
+     2026-08-21 covering the brand mark. While the sign-in view is the one
+     showing, the status reads in flow, under the gate it talks about. */
+  body:has(.signin-view:not([hidden])) .global-status{position:static;
+    max-width:60rem;box-shadow:none;margin:1rem clamp(1rem,4vw,3rem) 0}
   .signin-brand{display:flex;align-items:center;gap:.75rem;margin-bottom:1.25rem}
   .signin-brand img{width:3rem;height:3rem;border-radius:.75rem;display:block}
   .signin-brand span{font-size:1.0625rem;font-weight:700;

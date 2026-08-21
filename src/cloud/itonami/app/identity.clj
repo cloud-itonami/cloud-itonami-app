@@ -70,9 +70,13 @@
              :issuer "https://auth.itonami.cloud"
              :client-id "cloud-itonami-app-native"
              ;; Must stay in lockstep with app-auth `config/enrolment-url`.
-             ;; That Worker does not enrol; first-time passkeys are minted at
-             ;; itonami.cloud/signin/, not as a local did:key on this device.
-             :enrolment-url "https://itonami.cloud/signin/"
+             ;; That Worker does not enrol; first-time passkeys are minted on
+             ;; the itonami.cloud site, not as a local did:key on this device.
+             ;; The /ja/ route: itonami.cloud went English-default multilingual
+             ;; (/ = en, /ja/ = ja) and this app's UI is Japanese — sending a
+             ;; Japanese journey to the English default read as a different
+             ;; product mid-ceremony (owner report, 2026-08-21).
+             :enrolment-url "https://itonami.cloud/ja/signin/"
              ;; Derived from the request origin at call time, not fixed here.
              ;; A literal `127.0.0.1` was the bug: this app serves on
              ;; `localhost`, so the callback landed on a DIFFERENT origin —

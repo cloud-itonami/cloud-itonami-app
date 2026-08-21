@@ -8728,7 +8728,7 @@
         const result = await request.json().catch(() => ({}));
         $('#identity-status').textContent = result['opened-externally?']
           ? 'ブラウザで itonami.cloud を開きました。パスキーを作ったら、この画面に戻って「パスキーでサインイン」を押してください。'
-          : 'ブラウザを開けませんでした。' + (result.url || 'https://itonami.cloud/signin/') +
+          : 'ブラウザを開けませんでした。' + (result.url || 'https://itonami.cloud/ja/signin/') +
             ' を手動で開いてください。';
       } catch (error) {
         $('#identity-status').textContent = error.message;
