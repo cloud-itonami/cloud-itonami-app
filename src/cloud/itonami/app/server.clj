@@ -891,7 +891,18 @@
     ["GET" "/api/auth/itonami/callback"]
     (let [params (query-params exchange)]
       (try
-        (let [result (identity/complete-central-authentication! params)]
+        ;; The native WebView and the system browser deliberately have
+        ;; different cookie jars. The transaction starts in the WebView, but
+        ;; the callback browser may already hold the authenticated local User
+        ;; that is allowed to link this central identity. Pass that session to
+        ;; the completion policy; dropping it turns a valid link into
+        ;; :central-auth/link-required and leaves the native handoff polling
+        ;; forever.
+        (let [browser-session
+              (identity/session
+               (cookie-value exchange identity/cookie-name))
+              result (identity/complete-central-authentication!
+                      params browser-session)]
           (redirect! exchange
                      (if (:linked? result)
                        "/?auth=itonami-cloud#/settings"

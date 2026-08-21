@@ -86,3 +86,28 @@
                                     "Content-Type" "application/json"})]
         (is (= 403 (:status response)))
         (is (= "invalid-origin" (get-in response [:body :error :type])))))))
+
+(deftest callback-passes-its-browser-session-to-central-completion
+  (with-server
+    (fn []
+      (let [browser-session {:user-id "user-1" :kind :passkey}
+            seen (atom nil)]
+        (with-redefs [local-identity/session
+                      (fn [token]
+                        (when (= "browser-session-token" token)
+                          browser-session))
+                      local-identity/complete-central-authentication!
+                      (fn [params session]
+                        (reset! seen {:params params :session session})
+                        {:token "native-session-token" :linked? true})]
+          (let [response
+                (send-request
+                 :get
+                 "/api/auth/itonami/callback?state=state-1&code=code-1"
+                 {"Cookie" (str local-identity/cookie-name
+                                "=browser-session-token")})]
+            (is (= 303 (:status response)))
+            (is (= "/?auth=itonami-cloud#/settings" (location response)))
+            (is (= {:state "state-1" :code "code-1"}
+                   (:params @seen)))
+            (is (= browser-session (:session @seen)))))))))
