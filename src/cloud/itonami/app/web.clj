@@ -211,15 +211,14 @@
   .local-card{background:var(--color-neutral-white);border:1px solid var(--color-neutral-solid-gray-200);
     border-radius:.75rem;padding:1.5rem}
   .local-card+.local-card{margin-top:1rem}
-  .signin-layout{display:grid;grid-template-columns:minmax(0,1.35fr) minmax(18rem,.65fr);
-    gap:1rem;align-items:start;max-width:60rem}
-  .signin-layout .local-card+.local-card{margin-top:0}
-  /* Pre-auth screen: the gate callout sits above .signin-layout, so the two
-     must share one band width — a 78rem callout over a 60rem grid reads as
-     two unrelated columns. And the card copy is left-aligned, so the primary
-     action leads the line instead of the global flex-end. */
-  .signin-view .security-callout{max-width:60rem;box-sizing:border-box}
-  .signin-layout .local-actions{justify-content:flex-start}
+  /* Pre-auth is one decision, so the screen is one column: heading, gate,
+     primary action, and everything else folded under one accordion. The old
+     two-card grid gave 招待された User equal weight with the owner's own
+     path and said サインイン three times (owner: 「複雑なのでシンプルに」,
+     2026-08-21). Everything shares the 40rem band. */
+  .signin-column{display:flex;flex-direction:column;gap:1.5rem;max-width:40rem}
+  .signin-view .security-callout{max-width:40rem;box-sizing:border-box}
+  .signin-column .local-actions{justify-content:flex-start}
   /* Pre-auth there is no rail, so the fixed toast's left:18rem aims at a
      sidebar that does not exist and lands on the content — measured
      2026-08-21 covering the brand mark. While the sign-in view is the one
@@ -1105,7 +1104,6 @@
     .view{padding:1rem}.view-header{display:block}.view-header .dads-button{margin-top:1rem}
     .bots-view{height:calc(100dvh - 3.75rem);padding:0}
     .global-status{top:4.5rem;left:14rem}
-    .signin-layout{grid-template-columns:1fr}
     .chat-view{padding:0}.chat-shell{height:calc(100dvh - 3.75rem)}
     .chat-header{padding:.5rem .75rem}.chat-header .model-pill{display:none}
     .chat-thread{padding:1.25rem 1rem 10.5rem}
@@ -2796,80 +2794,88 @@
          [:div {:class "signin-brand"}
           [:img {:src "/icon.png" :alt "" :width "48" :height "48"}]
           [:span "Cloud Itonami"]]
-         (view-header "サインイン"
-                      "パスキーでサインインします。Email や SSO を連携済みなら、それでも入れます。")
+         ;; One heading for the one decision. The JS-managed pair
+         ;; (#registration-title / #registration-lead) IS the header now —
+         ;; the old layout said サインイン three times (topbar, view header,
+         ;; card heading) and gave 招待された User a column of its own.
+         ;; Everything that is not the primary action folds under one
+         ;; accordion (owner: 「複雑なのでシンプルに」, 2026-08-21).
+         [:header {:class "view-header"}
+          [:div {:class "view-header__copy"}
+           (dds/heading 1 "サインイン" {:size "36" :id "registration-title"})
+           [:p {:class "view-lead" :id "registration-lead"}
+            "パスキーでサインインします。Email や SSO を連携済みなら、それでも入れます。"]]]
          [:div {:class "security-callout" :id "passkey-gate-notice"
                 :role "status" :aria-live "polite"}
           [:strong {:id "signin-gate-headline"} "パスキーでサインインしてください。"]
           [:span {:id "signin-gate-note"}
            " 入口は auth.itonami.cloud です。この端末の Passkey は追加確認に使います。"]]
-         [:div {:class "signin-layout" :id "identity-onboarding"}
-          [:div {:class "local-card"}
-           (dds/heading 2 "サインイン" {:size "24" :id "registration-title"})
-           [:p {:class "view-lead" :id "registration-lead"}
-            "パスキーでサインインします。初めてなら itonami.cloud でパスキーを作ってから戻ります。"]
-           [:div {:class "settings-form" :id "itonami-cloud-signin-card"}
-            [:div {:class "local-actions"}
-             ;; Hosted assertion. Same verb as app-auth; the href is the
-             ;; GET navigation from ADR-0042, not a second ceremony.
-             (dds/button "パスキーでサインイン"
-                         {:type :solid-fill :size "lg"
-                          :id "itonami-cloud-signin"
-                          :href "/api/auth/itonami/start"})
-             (dds/button "パスキーを作る"
-                         {:type :text
-                          :id "itonami-enrolment-link"
-                          :href "https://itonami.cloud/signin/"})]
-            [:p {:class "form-help"}
-             "鍵は 1Password / Bitwarden / iCloud キーチェーン / Google パスワードマネージャー のいずれかに保存してください。登録は itonami.cloud で行います。"]]
-           ;; Device-local Passkey / Email / SSO are recovery, not the
-           ;; first-time entrance. Closed until the person opens it, or
-           ;; until an interrupted owner ceremony needs to resume.
-           (accordion-with-id
-            "local-recovery"
-            "この端末の復旧"
-            [:div {:class "settings-stack" :id "registered-auth"}
-             [:div {:class "settings-form"}
-              (dds/heading 3 "この端末の Passkey" {:size "20"})
-              [:p {:class "form-help"}
-               "この端末に既にある Passkey で本人確認します。認証情報は端末から出ません。"]
-              [:button {:class "tool-button" :id "passkey-signin" :type "button"}
-               "この端末の Passkey で続ける"]]
-             [:form {:class "settings-form" :id "registration-form"}
-              [:p {:class "form-help"}
-               "この端末だけに User を作る経路です。通常の登録は itonami.cloud のパスキーです。"]
-              [:button {:class "tool-button" :id "registration-submit"
-                        :type "submit"} "この端末だけで登録"]]
-             [:form {:class "settings-form" :id "email-login-form" :hidden true}
-              (dds/heading 3 "Emailで続ける" {:size "20"})
-              [:p {:class "form-help"}
-               "10分間・一回限りのリンクを送ります。新規登録が有効な環境では、そのままUserを作成できます。"]
-              [:div {:class "field"}
-               [:label {:for "email-login-address"} "メールアドレス"]
-               [:input {:id "email-login-address" :name "email" :type "email"
-                        :required true :autocomplete "email"}]]
-              [:button {:class "tool-button" :id "email-login-submit"
-                        :type "submit"} "ログインリンクを送る"]]
-             [:div {:class "settings-form" :id "sso-signin-card" :hidden true}
-              (dds/heading 3 "SSOで続ける" {:size "20"})
-              [:p {:class "form-help"}
-               "Google、Microsoft、GitHubの認証だけを使います。メールやリポジトリへのアクセス権は要求しません。"]
-              [:div {:class "button-row" :id "sso-signin-list"}]]])]
-          [:div {:class "local-card"}
-           (dds/heading 2 "招待された User" {:size "24"})
+         [:div {:class "signin-column" :id "identity-onboarding"}
+          [:div {:class "settings-form" :id "itonami-cloud-signin-card"}
+           [:div {:class "local-actions"}
+            ;; Hosted assertion. Same verb as app-auth; the href is the
+            ;; GET navigation from ADR-0042, not a second ceremony.
+            (dds/button "パスキーでサインイン"
+                        {:type :solid-fill :size "lg"
+                         :id "itonami-cloud-signin"
+                         :href "/api/auth/itonami/start"})
+            (dds/button "パスキーを作る"
+                        {:type :text
+                         :id "itonami-enrolment-link"
+                         :href "https://itonami.cloud/ja/signin/"})]
            [:p {:class "form-help"}
-            "Organization から受け取ったアカウントIDと Enrollment code を使い、Passkeyを登録して参加します。"]
-           [:form {:class "settings-form" :id "enrollment-form"}
-            [:div {:class "field"}
-             [:label {:for "enrollment-account"} "アカウントID"]
-             [:input {:id "enrollment-account" :name "account-id"
-                      :required true :autocomplete "username"}]]
-            [:div {:class "field"}
-             [:label {:for "enrollment-code"} "Enrollment code"]
-             [:input {:id "enrollment-code" :name "enrollment-code"
-                      :required true :autocomplete "one-time-code"}]]
-            [:button {:class "tool-button" :id "enrollment-submit" :type "submit"}
-             "Passkey を登録して参加"]]]]]
+            "鍵は 1Password / Bitwarden / iCloud キーチェーン / Google パスワードマネージャー のいずれかに保存してください。登録は itonami.cloud で行います。"]]
+          ;; Everything below is the exception, not the entrance: device-local
+          ;; recovery, email, SSO, and joining by invitation. One fold, so
+          ;; the screen shows one decision until someone asks for more. The
+          ;; invited-user form lives inside #registered-auth on purpose — it
+          ;; is pre-auth-only exactly like the rest, and one container means
+          ;; one visibility rule in the script.
+          (accordion-with-id
+           "local-recovery"
+           "その他のサインイン方法"
+           [:div {:class "settings-stack" :id "registered-auth"}
+            [:div {:class "settings-form"}
+             (dds/heading 3 "この端末の Passkey" {:size "20"})
+             [:p {:class "form-help"}
+              "この端末に既にある Passkey で本人確認します。認証情報は端末から出ません。"]
+             [:button {:class "tool-button" :id "passkey-signin" :type "button"}
+              "この端末の Passkey で続ける"]]
+            [:form {:class "settings-form" :id "registration-form"}
+             [:p {:class "form-help"}
+              "この端末だけに User を作る経路です。通常の登録は itonami.cloud のパスキーです。"]
+             [:button {:class "tool-button" :id "registration-submit"
+                       :type "submit"} "この端末だけで登録"]]
+            [:form {:class "settings-form" :id "email-login-form" :hidden true}
+             (dds/heading 3 "Emailで続ける" {:size "20"})
+             [:p {:class "form-help"}
+              "10分間・一回限りのリンクを送ります。新規登録が有効な環境では、そのままUserを作成できます。"]
+             [:div {:class "field"}
+              [:label {:for "email-login-address"} "メールアドレス"]
+              [:input {:id "email-login-address" :name "email" :type "email"
+                       :required true :autocomplete "email"}]]
+             [:button {:class "tool-button" :id "email-login-submit"
+                       :type "submit"} "ログインリンクを送る"]]
+            [:div {:class "settings-form" :id "sso-signin-card" :hidden true}
+             (dds/heading 3 "SSOで続ける" {:size "20"})
+             [:p {:class "form-help"}
+              "Google、Microsoft、GitHubの認証だけを使います。メールやリポジトリへのアクセス権は要求しません。"]
+             [:div {:class "button-row" :id "sso-signin-list"}]]
+            [:div {:class "settings-form"}
+             (dds/heading 3 "招待された User" {:size "20"})
+             [:p {:class "form-help"}
+              "Organization から受け取ったアカウントIDと Enrollment code を使い、Passkeyを登録して参加します。"]
+             [:form {:id "enrollment-form"}
+              [:div {:class "field"}
+               [:label {:for "enrollment-account"} "アカウントID"]
+               [:input {:id "enrollment-account" :name "account-id"
+                        :required true :autocomplete "username"}]]
+              [:div {:class "field"}
+               [:label {:for "enrollment-code"} "Enrollment code"]
+               [:input {:id "enrollment-code" :name "enrollment-code"
+                        :required true :autocomplete "one-time-code"}]]
+              [:button {:class "tool-button" :id "enrollment-submit" :type "submit"}
+               "Passkey を登録して参加"]]]])]]
         [:section {:class "view" :data-view-panel "settings" :hidden true}
          (view-header "Settings" "サインイン済みのUser、Organization、外部サービス接続を管理します。")
          [:div {:class "local-card" :id "desktop-update-card"}
