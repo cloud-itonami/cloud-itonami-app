@@ -85,6 +85,8 @@
         windows (slurp "packaging/windows/launcher/main.go")]
     (is (str/includes? local "--window-size=430,860"))
     (is (str/includes? macos "--width 430 --height 860 --min-width 360 --min-height 640"))
+    (is (str/includes? macos "--titlebar-overlay"))
+    (is (str/includes? macos "chrome=titlebar-overlay"))
     (is (str/includes? windows "--window-size=430,860"))))
 
 (deftest stable-desktop-release-is-fail-closed

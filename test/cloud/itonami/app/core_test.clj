@@ -229,6 +229,8 @@
            (select-keys (get-in manifest [:runtime :window])
                         [:width :height :min-width :min-height]))
         "the installed app opens as the phone-shaped surface it is designed for")
+    (is (= :overlay (get-in manifest [:runtime :window :titlebar]))
+        "the app topbar occupies the native title band without removing its window controls")
     ;; The window must point at the surface this server actually serves; the
     ;; ORIGIN is load-bearing for WebAuthn and for `require-origin!` and cannot
     ;; drift. The query may carry surface facts and does — `?surface=native` is
@@ -239,9 +241,21 @@
     (let [web-url (get-in manifest [:runtime :window :web-url])]
       (is (str/starts-with? web-url "http://localhost:1338/")
           "the window must load the origin this server serves")
-      (is (= "native" (-> ^String web-url java.net.URI. .getQuery
-                          (str/split #"=") second))
+      (is (= "native" (get (into {} (map #(str/split % #"=" 2)
+                                               (str/split (-> ^String web-url
+                                                              java.net.URI. .getQuery)
+                                                          #"&")))
+                            "surface"))
           "the native surface must announce itself; sign-in depends on it"))))
+
+(deftest native-titlebar-overlay-reuses-the-web-topbar-instead-of-adding-a-band
+  (let [js (slurp (io/file "resources/cloud/itonami/app/interaction.js"))]
+    (is (str/includes? js "initialParams.get('chrome') === 'titlebar-overlay'"))
+    (is (str/includes? js "document.body.dataset.nativeTitlebar = 'overlay'"))
+    (is (str/includes? web/app-css
+                       "body[data-native-titlebar='overlay'] .topbar"))
+    (is (str/includes? web/app-css
+                       "padding-left:5rem"))))
 
 (deftest web-surface-serves-the-same-icon-the-manifest-gives-the-window
   (let [manifest (edn/read-string (slurp (io/file "app.kotoba.edn")))]

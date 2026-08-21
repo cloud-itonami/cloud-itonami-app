@@ -69,5 +69,6 @@ fi
 "$contents_dir/MacOS/kotoba-shell-host" \
   --title "Cloud Itonami" \
   --icon "$resources_dir/icon.png" \
-  --web-url 'http://localhost:1338/?surface=native' \
+  --web-url 'http://localhost:1338/?surface=native&chrome=titlebar-overlay' \
+  --titlebar-overlay \
   --width 430 --height 860 --min-width 360 --min-height 640

@@ -28,7 +28,11 @@
            ;; Cloud Itonami is a phone-shaped application. Keep the native
            ;; host inside the same touch layout the web surface serves instead
            ;; of opening a desktop canvas that happens to contain mobile CSS.
-           :window {:web-url "http://localhost:1338/?surface=native"
+           :window {:web-url "http://localhost:1338/?surface=native&chrome=titlebar-overlay"
+                    ;; Keep AppKit's traffic lights and window behaviours, but
+                    ;; let the app's own topbar occupy the otherwise empty
+                    ;; title band. Browser rendering remains an ordinary page.
+                    :titlebar :overlay
                     :width 430 :height 860
                     :min-width 360 :min-height 640}}
  :local/contracts
