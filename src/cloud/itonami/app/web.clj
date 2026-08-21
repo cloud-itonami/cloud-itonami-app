@@ -214,6 +214,16 @@
   .signin-layout{display:grid;grid-template-columns:minmax(0,1.35fr) minmax(18rem,.65fr);
     gap:1rem;align-items:start;max-width:60rem}
   .signin-layout .local-card+.local-card{margin-top:0}
+  /* Pre-auth screen: the gate callout sits above .signin-layout, so the two
+     must share one band width — a 78rem callout over a 60rem grid reads as
+     two unrelated columns. And the card copy is left-aligned, so the primary
+     action leads the line instead of the global flex-end. */
+  .signin-view .security-callout{max-width:60rem;box-sizing:border-box}
+  .signin-layout .local-actions{justify-content:flex-start}
+  .signin-brand{display:flex;align-items:center;gap:.75rem;margin-bottom:1.25rem}
+  .signin-brand img{width:3rem;height:3rem;border-radius:.75rem;display:block}
+  .signin-brand span{font-size:1.0625rem;font-weight:700;
+    color:var(--color-neutral-solid-gray-900)}
   .capture-composer{display:grid;gap:1rem}.capture-composer textarea{width:100%;box-sizing:border-box;
     min-height:14rem;resize:vertical;border:1px solid var(--color-neutral-solid-gray-300);
     border-radius:.625rem;padding:1rem;font:inherit;line-height:1.8;background:var(--color-neutral-white)}
@@ -2772,6 +2782,14 @@
         [:section {:class "view signin-view" :data-view-panel "signin" :hidden true}
          ;; Copy and IA match app-auth `sign_in_page.cljc` (ADR-0045). This
          ;; panel is a client of that ceremony, not a second one.
+         ;;
+         ;; The brand mark anchors the one screen that shows no app chrome:
+         ;; pre-auth there is no rail and no tab bar, so without it nothing on
+         ;; the page says whose sign-in this is. Decorative alt — the name is
+         ;; the adjacent text.
+         [:div {:class "signin-brand"}
+          [:img {:src "/icon.png" :alt "" :width "48" :height "48"}]
+          [:span "Cloud Itonami"]]
          (view-header "サインイン"
                       "パスキーでサインインします。Email や SSO を連携済みなら、それでも入れます。")
          [:div {:class "security-callout" :id "passkey-gate-notice"
