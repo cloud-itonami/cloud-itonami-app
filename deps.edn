@@ -59,6 +59,13 @@
   {:git/url "https://github.com/kotoba-lang/authorization.git"
    :git/sha "97fb24206b6a2018213d5a5cc5d11f681258f9fb"}
 
+  ;; Non-custodial EVM account linking. Cloud Itonami never receives a private
+  ;; key: the injected wallet signs an EIP-4361 statement and this library
+  ;; recovers the signer address server-side.
+  io.github.kotoba-lang/wallet
+  {:git/url "https://github.com/kotoba-lang/wallet.git"
+   :git/sha "36bf13275706c1355c61690f41e1bd9d6540033f"}
+
   ;; System dynamics. Both are consumed, never reimplemented: xmile owns the
   ;; OASIS XMILE 1.0 model + the Euler/RK4 simulator (ADR-2607072350 makes it the
   ;; authoritative engine for this workspace), and dynamics owns the Meadows

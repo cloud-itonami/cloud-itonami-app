@@ -73,6 +73,7 @@
             [cloud.itonami.app.tenant-repository :as tenant-repository]
             [cloud.itonami.app.tenant-tools :as tenant-tools]
             [cloud.itonami.app.updater :as updater]
+            [cloud.itonami.app.wallet :as wallet]
             [cloud.itonami.app.web :as web]
             [cloud.itonami.app.worker :as worker]
             [cloud.itonami.app.workforce :as workforce]
@@ -82,7 +83,7 @@
             [cloud.itonami.app.workspace :as workspace])
   (:import [com.sun.net.httpserver HttpExchange HttpHandler HttpServer]
            [java.io ByteArrayOutputStream OutputStreamWriter]
-           [java.net InetSocketAddress URLDecoder]
+           [java.net InetSocketAddress URI URLDecoder]
            [java.nio.charset StandardCharsets]
            [java.security MessageDigest]
            [javax.crypto Mac]
@@ -771,6 +772,29 @@
               .start)
           true))
     (catch Exception _ false)))
+
+(defn- open-wallet-in-system-browser!
+  "Open this server's fixed Wallet view in the default browser.
+
+  A native WKWebView has no browser-extension runtime, so an injected EIP-1193
+  provider cannot exist there. The caller cannot supply a URL: we derive it
+  from the configured app origin and permit either HTTPS or loopback HTTP."
+  [config]
+  (let [url (str (str/replace (origin config) #"/+$" "") "/#/wallet")
+        uri (URI/create url)
+        loopback? (contains? #{"localhost" "127.0.0.1" "::1"} (.getHost uri))
+        allowed? (or (= "https" (.getScheme uri))
+                     (and (= "http" (.getScheme uri)) loopback?))]
+    {:url url
+     :opened-externally?
+     (boolean
+      (and allowed?
+           (try
+             (-> (ProcessBuilder. ^java.util.List ["/usr/bin/open" url])
+                 (.redirectErrorStream true)
+                 .start)
+             true
+             (catch Exception _ false))))}))
 
 (defn- same-origin?
   "`require-origin!`'s test, as an answer instead of an exception.
@@ -5609,6 +5633,132 @@
             (send! exchange 500 {:error {:type "internal_error"
                                          :message (.getMessage error)}})))))))
 
+(defn- handle-wallet!
+  "The human-controlled Wallet surface. Bots can propose through their local
+  tools, but connecting an account, assigning it, and recording the external
+  Wallet's transaction hash remain on a Passkey browser session."
+  [config exchange method path]
+  (let [session (require-human-session! exchange)
+        overview #(wallet/snapshot config session
+                                   (:bots (bots/overview config session)))]
+    (cond
+      (and (= method "GET") (= path "/api/wallet"))
+      (do (require-human-session! exchange)
+          (send! exchange 200 (overview)))
+
+      (and (= method "POST") (= path "/api/wallet/open"))
+      (do (require-human-session! exchange)
+          (require-origin! exchange config)
+          (require-csrf! exchange session)
+          (send! exchange 200 (open-wallet-in-system-browser! config)))
+
+      (and (= method "POST") (= path "/api/wallet/connect/start"))
+      (do (require-human-session! exchange)
+          (require-origin! exchange config)
+          (require-csrf! exchange session)
+          (send! exchange 200
+                 (wallet/start-connection! session (read-json exchange)
+                                           (rp-id config) (origin config))))
+
+      (and (= method "POST") (= path "/api/wallet/connect/finish"))
+      (do (require-human-session! exchange)
+          (require-origin! exchange config)
+          (require-csrf! exchange session)
+          (send! exchange 200
+                 (wallet/finish-connection! session (read-json exchange)
+                                            (rp-id config))))
+
+      (and (= method "POST")
+           (bot-id-from path #"/api/wallet/bots/([^/]+)/assign"))
+      (let [bot-id (bot-id-from path #"/api/wallet/bots/([^/]+)/assign")
+            body (read-json exchange)]
+        (require-human-session! exchange)
+        (require-origin! exchange config)
+        (require-csrf! exchange session)
+        (send! exchange 200
+               (wallet/assign! session (bots/wallet-principal session bot-id)
+                               (:link-id body))))
+
+      (and (= method "POST")
+           (bot-id-from path #"/api/wallet/bots/([^/]+)/unassign"))
+      (let [bot-id (bot-id-from path #"/api/wallet/bots/([^/]+)/unassign")]
+        (require-human-session! exchange)
+        (require-origin! exchange config)
+        (require-csrf! exchange session)
+        ;; Perform the same ownership check even though the assignment also
+        ;; carries owner/tenant. A stale assignment cannot name an archived or
+        ;; foreign Bot into this session.
+        (bots/wallet-principal session bot-id)
+        (send! exchange 200 (wallet/unassign! session bot-id)))
+
+      (and (= method "POST") (= path "/api/wallet/transfers"))
+      (let [body (read-json exchange)
+            bot-id (:bot-id body)]
+        (require-human-session! exchange)
+        (require-origin! exchange config)
+        (require-csrf! exchange session)
+        (bots/wallet-principal session bot-id)
+        (send! exchange 201
+               (wallet/create-transfer! bot-id body (:user-id session))))
+
+      (and (= method "POST")
+           (bot-id-from path #"/api/wallet/transfers/([^/]+)/submitted"))
+      (let [transfer-id
+            (bot-id-from path #"/api/wallet/transfers/([^/]+)/submitted")
+            body (read-json exchange)]
+        (require-human-session! exchange)
+        (require-origin! exchange config)
+        (require-csrf! exchange session)
+        (send! exchange 200
+               (wallet/submit-transfer! session transfer-id (:tx-hash body))))
+
+      (and (= method "POST")
+           (bot-id-from path #"/api/wallet/accounts/([^/]+)/revoke"))
+      (let [link-id (bot-id-from path #"/api/wallet/accounts/([^/]+)/revoke")]
+        (require-human-session! exchange)
+        (require-origin! exchange config)
+        (require-csrf! exchange session)
+        (send! exchange 200 (wallet/revoke! session link-id)))
+
+      :else (send! exchange 405 {:error {:type "method_not_allowed"}}))))
+
+(defn- wallet-handler [config]
+  (reify HttpHandler
+    (handle [_ exchange]
+      (let [method (.getRequestMethod exchange)
+            path (.getPath (.getRequestURI exchange))]
+        (try
+          (handle-wallet! config exchange method path)
+          (catch clojure.lang.ExceptionInfo error
+            (send! exchange
+                   (case (:type (ex-data error))
+                     :identity/unauthenticated 401
+                     :identity/invalid-origin 403
+                     :identity/invalid-csrf 403
+                     :identity/agent-session-forbidden 403
+                     :identity/passkey-required 403
+                     :bot/forbidden 403
+                     :bot/not-found 404
+                     :wallet/not-found 404
+                     :wallet/assignment-not-found 404
+                     :wallet/transfer-not-found 404
+                     :wallet/verification-failed 403
+                     :wallet/bot-forbidden 403
+                     :wallet/subject-required 409
+                     :wallet/invalid-transaction 409
+                     :wallet/already-bound 409
+                     :wallet/already-assigned 409
+                     :wallet/assigned 409
+                     :wallet/inactive 409
+                     :wallet/transfer-state 409
+                     400)
+                   {:error {:type (name (or (:type (ex-data error))
+                                            :wallet/error))
+                            :message (.getMessage error)}}))
+          (catch Exception error
+            (send! exchange 500 {:error {:type "internal_error"
+                                         :message (.getMessage error)}})))))))
+
 (defn- handle-agent-bots!
   "The narrow CLI/MCP Bot surface. Agent sessions may submit and observe work,
   cancel their owner's run, re-provision the workforce from the declared
@@ -5859,6 +6009,8 @@
                      (chronicle-handler configuration))
      (.createContext instance "/api/bots"
                      (bots-handler configuration))
+     (.createContext instance "/api/wallet"
+                     (wallet-handler configuration))
      (.createContext instance "/api/agent-bots"
                      (agent-bots-handler configuration))
      (.createContext instance "/api/update"
