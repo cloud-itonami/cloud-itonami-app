@@ -734,8 +734,14 @@ of the connectors you picked and nothing else.
   and each one still writes the same card into the transcript already answered
   with `decided-by=bot`. The grant stays the ceiling — a Bot cannot decide its
   way to a tool it was never given, and only this application's human Settings
-  surface can turn omakase on. See
+  surface can turn omakase on for one Bot. See
   [ADR-0060](docs/adr/0060-a-bot-decides-its-own-approval-cards.md).
+  A *standing* delegation is the operator's: `[:bots :workforce :omakase]` in
+  the operator's own `config.edn` (`:all` or a set of workforce keys) is
+  applied at provisioning, and provisioning never takes a delegation away —
+  it used to reset every workforce Bot to undelegated on each registry
+  refresh. See
+  [ADR-0070](docs/adr/0070-a-standing-delegation-is-the-operators-and-provisioning-keeps-it.md).
 
 Turns are synchronous and bounded — 8 model turns and 12 tool calls per
 message. A Bot also answers on a schedule when a routine has been made from an

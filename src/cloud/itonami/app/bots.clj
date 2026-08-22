@@ -855,13 +855,36 @@
         spread (mod (bit-and Long/MAX_VALUE (.getLeastSignificantBits uuid)) cadence)]
     (str (.plusSeconds (java.time.Instant/parse now) (* 60 spread)))))
 
+(defn standing-omakase?
+  "Whether the operator's configuration delegates this workforce key up front.
+
+  `[:bots :workforce :omakase]` is either `:all` or a set of workforce keys
+  (\"business/kind\"). Absent means nobody is delegated by provisioning, which
+  is what every deployment had before 2026-08-22.
+
+  This is the deployment owner's standing decision, read from the same file
+  that says which providers are reviewed and enabled. It is NOT a second door
+  for an agent session: the config file is not reachable from any route, and
+  the human `/api/bots` surface stays the only place that flips a single Bot.
+  See ADR-0070."
+  [configuration key]
+  (let [setting (get-in configuration [:bots :workforce :omakase])]
+    (boolean (or (= :all setting)
+                 (and (set? setting) (contains? setting key))))))
+
 (defn provision-workforce!
   "Idempotently project a complete governed role catalog into Bots and
   durable resident jobs. Existing conversations and run history stay put.
 
   Capability policy is explanatory data. Concrete execution is intentionally
   narrower: one admitted Git root, no connector grants, and every workspace
-  write held by the existing approval governor."
+  write held by the existing approval governor — unless the owner delegated
+  (`:bot/omakase?`), which provisioning never takes away: a delegation a
+  person set in Settings survives a registry refresh, and one the operator
+  wrote into configuration is applied here. Measured 2026-08-22: this
+  function reset every workforce Bot to `:bot/omakase? false` on each
+  `bots provision`, so a delegation lasted exactly until the next registry
+  edit and nothing said so."
   [configuration session catalog]
   (let [now (store/now)
         entries (:roles catalog)
@@ -902,7 +925,8 @@
                      :bot/tools #{} :bot/accounts #{}
                      :bot/writes? false :bot/browser? false
                      :bot/coding? true :bot/virtual-shell? false
-                     :bot/omakase? false
+                     :bot/omakase? (boolean (or (:bot/omakase? existing)
+                                                (standing-omakase? configuration key)))
                      :bot/workspace (workforce-workspace entry)
                      :bot/workforce-key key
                      :bot/business (:business entry)

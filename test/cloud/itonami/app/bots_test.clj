@@ -134,6 +134,44 @@
           (is (= 1 (:enabled (bots/workforce-status bob)))
               "reconciling alice cannot stop bob's resident job"))))))
 
+(deftest provisioning-never-takes-a-delegation-away-and-applies-the-standing-one
+  (with-store
+    (fn []
+      (with-redefs [workspace-tools/admit-root (fn [path] path)]
+        (let [qa (-> (engineer-entry)
+                     (assoc :key "cloud-itonami/qa")
+                     (assoc :role {:id :qa :name "QA" :job :qa}))
+              catalog (workforce-catalog [(engineer-entry) qa])
+              by-key (fn [] (into {} (map (juxt :workforce-key identity))
+                                  (:bots (bots/overview {} alice))))]
+          (bots/provision-workforce! {} alice catalog)
+          (is (every? #(false? (:omakase? %)) (vals (by-key)))
+              "no configuration → nobody is delegated by provisioning")
+          (testing "a human-set delegation survives a registry refresh"
+            (let [engineer-id (:id (get (by-key) "cloud-itonami/engineer"))]
+              (bots/update! {} alice engineer-id {:omakase? true})
+              (is (true? (:omakase? (get (by-key) "cloud-itonami/engineer"))))
+              (bots/provision-workforce! {} alice catalog)
+              (is (true? (:omakase? (get (by-key) "cloud-itonami/engineer")))
+                  "was reset to false by every provision until 2026-08-22")
+              (is (false? (:omakase? (get (by-key) "cloud-itonami/qa")))
+                  "and does not leak onto a sibling")))
+          (testing "the operator's standing delegation is applied by key"
+            (bots/provision-workforce!
+             {:bots {:workforce {:omakase #{"cloud-itonami/qa"}}}} alice catalog)
+            (is (true? (:omakase? (get (by-key) "cloud-itonami/qa"))))
+            (is (true? (:omakase? (get (by-key) "cloud-itonami/engineer")))
+                "the earlier human delegation is still not taken away"))
+          (testing ":all delegates every workforce Bot"
+            (bots/update! {} alice (:id (get (by-key) "cloud-itonami/qa")) {:omakase? false})
+            (is (false? (:omakase? (get (by-key) "cloud-itonami/qa"))))
+            (bots/provision-workforce! {:bots {:workforce {:omakase :all}}} alice catalog)
+            (is (every? #(true? (:omakase? %)) (vals (by-key)))))
+          (testing "an unrelated or malformed setting delegates nobody new"
+            (is (false? (bots/standing-omakase? {:bots {:workforce {:omakase "all"}}} "x/y")))
+            (is (false? (bots/standing-omakase? {:bots {:workforce {:omakase true}}} "x/y")))
+            (is (false? (bots/standing-omakase? {} "x/y")))))))))
+
 (deftest resident-workforce-starts-at-most-the-configured-number-per-tick
   (with-store
     (fn []
