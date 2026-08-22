@@ -14,6 +14,7 @@
            [java.util UUID]))
 
 (def schema "cloud.itonami.app.wallet.v1")
+(def bot-wallet-schema "cloud.itonami.app.bot-wallet.v1")
 (def transaction-seconds 600)
 
 (def ^:private address-pattern #"(?i)^0x[0-9a-f]{40}$")
@@ -39,6 +40,45 @@
 (defn- wallet-state [] (get (store/snapshot) :wallet {}))
 (defn- links-path [user-id] [:wallet :links user-id])
 (defn- link-path [user-id link-id] [:wallet :links user-id link-id])
+(defn- bot-wallet-path [bot-id] [:wallet :bot-wallets bot-id])
+
+(defn- bot-field [bot public-key internal-key]
+  (or (get bot public-key) (get bot internal-key)))
+
+(defn provision-bot!
+  "Create the durable Wallet container that every Bot owns from birth.
+
+  This creates identity and policy state, never a private key. An external
+  signer is attached later with SIWE, so Bot creation cannot silently obtain
+  authority to move funds. The operation is idempotent for retries."
+  [session bot]
+  (let [bot-id (bot-field bot :id :bot/id)
+        owner-id (bot-field bot :owner-id :bot/owner)
+        organization-id (bot-field bot :organization-id :bot/organization)]
+    (when-not (and bot-id
+                   (= (:user-id session) owner-id)
+                   (= (:organization-id session) organization-id))
+      (refuse :wallet/bot-forbidden "このBotのWalletを作成する権限がありません。"))
+    (or (get-in (store/snapshot) (bot-wallet-path bot-id))
+        (let [record {:schema bot-wallet-schema
+                      :id (str "wallet-" (UUID/randomUUID))
+                      :bot-id bot-id
+                      :bot-did (or (bot-field bot :did :bot/did)
+                                   (str "urn:cloud-itonami:bot:" bot-id))
+                      :bot-name (bot-field bot :name :bot/name)
+                      :user-id owner-id
+                      :organization-id organization-id
+                      :status :awaiting-signer
+                      :custody :external-wallet
+                      :capabilities ["receive" "propose-send"]
+                      :created-at (store/now)}]
+          (store/transact! assoc-in (bot-wallet-path bot-id) record)
+          record))))
+
+(defn bot-wallet
+  "Return a Bot's durable Wallet container, without signer secrets."
+  [bot-id]
+  (get-in (wallet-state) [:bot-wallets bot-id]))
 
 (defn links [session]
   (->> (vals (get-in (store/snapshot) (links-path (:user-id session)) {}))
@@ -152,7 +192,8 @@
                            (get-in (wallet-state) [:assignments] {}))]
       (refuse :wallet/already-assigned
               (str "このWalletは既に別のBotへ割り当て済みです: " other)))
-    (let [assignment {:schema "cloud.itonami.app.wallet.assignment.v1"
+    (let [container (provision-bot! session bot)
+          assignment {:schema "cloud.itonami.app.wallet.assignment.v1"
                       :bot-id bot-id :bot-did (:did bot) :bot-name (:name bot)
                       :user-id (:user-id session)
                       :organization-id (:organization-id session)
@@ -160,8 +201,14 @@
                       :chain-id (:chain-id link)
                       :capabilities ["receive" "propose-send"]
                       :assigned-at (store/now)}]
-      (store/transact! assoc-in [:wallet :assignments bot-id] assignment)
-      assignment)))
+      (store/transact!
+       (fn [state]
+         (-> state
+             (assoc-in [:wallet :assignments bot-id] assignment)
+             (assoc-in (conj (bot-wallet-path bot-id) :status) :active)
+             (assoc-in (conj (bot-wallet-path bot-id) :activated-at) (store/now))
+             (assoc-in (conj (bot-wallet-path bot-id) :signer-link-id) link-id))))
+      (assoc assignment :wallet-id (:id container)))))
 
 (defn unassign! [session bot-id]
   (let [assignment (get-in (wallet-state) [:assignments bot-id])]
@@ -169,7 +216,12 @@
                    (= (:user-id session) (:user-id assignment))
                    (= (:organization-id session) (:organization-id assignment)))
       (refuse :wallet/assignment-not-found "BotのWallet割り当てが見つかりません。"))
-    (store/transact! update-in [:wallet :assignments] dissoc bot-id)
+    (store/transact!
+     (fn [state]
+       (-> state
+           (update-in [:wallet :assignments] dissoc bot-id)
+           (assoc-in (conj (bot-wallet-path bot-id) :status) :awaiting-signer)
+           (update-in (bot-wallet-path bot-id) dissoc :signer-link-id :activated-at))))
     {:bot-id bot-id :unassigned? true}))
 
 (defn revoke! [session link-id]
@@ -259,7 +311,22 @@
       submitted)))
 
 (defn snapshot [configuration session bots]
-  (let [mine (links session)
+  (let [containers (into {}
+                         (map (fn [bot]
+                                [(:id bot) (or (bot-wallet (:id bot))
+                                               {:schema bot-wallet-schema
+                                                :id (str "wallet-for-" (:id bot))
+                                                :bot-id (:id bot)
+                                                :bot-did (:did bot)
+                                                :bot-name (:name bot)
+                                                :user-id (:user-id session)
+                                                :organization-id (:organization-id session)
+                                                :status :awaiting-signer
+                                                :custody :external-wallet
+                                                :capabilities ["receive" "propose-send"]
+                                                :created-at (:created-at bot)})]))
+                         bots)
+        mine (links session)
         assignments (get-in (wallet-state) [:assignments] {})
         bot-ids (set (map :id bots))
         transfers (->> (vals (get-in (wallet-state) [:transfers] {}))
@@ -276,8 +343,11 @@
      :wallet-provider "EIP-1193"
      :accounts mine
      :bots (mapv (fn [bot]
-                   (assoc (select-keys bot [:id :did :name :avatar])
-                          :wallet (get assignments (:id bot))))
+                   (let [assignment (get assignments (:id bot))]
+                     (assoc (select-keys bot [:id :did :name :avatar])
+                            :wallet (cond-> (get containers (:id bot))
+                                      assignment (merge assignment)
+                                      true (assoc :signer-connected? (boolean assignment))))))
                  bots)
      :transfers transfers
      :capabilities {:receive true :propose-send true

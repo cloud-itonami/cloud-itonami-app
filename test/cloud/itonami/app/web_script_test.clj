@@ -396,3 +396,14 @@
     (is (str/includes? js "'omakase?':$('#bots-omakase').checked"))
     (is (str/includes? js "{'omakase?':omakaseBox.checked}"))
     (is (str/includes? js "'おまかせ承認済み'"))))
+
+(deftest wallet-is-bot-native-rather-than-an-assignment-grid
+  (let [html (with-redefs [store/snapshot (constantly (store/initial-state))]
+               (web/page-html config))
+        js (slurp (io/file "resources/cloud/itonami/app/interaction.js"))]
+    (is (str/includes? html "Botを作ると専用Walletも自動で生まれます"))
+    (is (str/includes? html "id=\"wallet-bot-select\""))
+    (is (str/includes? html "id=\"wallet-assets-tab\""))
+    (is (str/includes? html "id=\"wallet-activity-tab\""))
+    (is (not (str/includes? html "Walletを選択")))
+    (is (str/includes? js "このBot Walletへ署名権限を接続しました"))))
