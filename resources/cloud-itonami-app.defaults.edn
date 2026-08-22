@@ -221,8 +221,9 @@
                     :max-tool-calls 4
                     :max-tool-output-chars 1600}}
  :chronicle {:interval-seconds 60
-             ;; Every switch is still opt-in per user. This is only the cadence
-             ;; used after screen context has explicitly been enabled.
+             ;; Capture starts on for a new local profile. Settings remains the
+             ;; authority for all three switches; this is only the cadence used
+             ;; while screen context is enabled.
              :frame-retention-hours 6}
  ;; Background worker runs. Concurrency is deliberately small: these share the
  ;; local model with interactive chat.

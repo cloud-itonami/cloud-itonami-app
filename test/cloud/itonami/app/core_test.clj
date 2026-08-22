@@ -1365,29 +1365,32 @@
     (is (str/includes? html "渡していないツールは、自分で承認しても使えません")
         "the ceiling is the part a person most needs told")))
 
-(deftest a-room-is-reachable-and-says-what-it-cannot-do
+(deftest bot-conversations-are-a-read-only-part-of-bots
   (let [html (web/page-html {})]
-    (is (re-find #"data-view=\"rooms\"" html) "no way to reach the rooms view")
-    (is (re-find #"data-view-panel=\"rooms\"" html))
-    (doseq [id ["room-create-form" "room-name" "room-members" "room-list"
-                "room-panel" "room-thread" "room-send-form" "room-text"
-                "room-send" "room-status" "rooms-count"]]
+    (is (not (re-find #"data-view=\"rooms\"" html)))
+    (is (not (re-find #"data-view-panel=\"rooms\"" html)))
+    (doseq [id ["bots-conversations" "bots-conversations-panel"
+                "bots-conversations-close" "room-list" "room-panel"
+                "room-thread" "room-status" "rooms-count"]]
       (is (re-find (re-pattern (str "id=\"" id "\"")) html)
-          (str id " is missing from the rooms panel")))
-    ;; Both limits are a person's, so both are on the screen rather than only
-    ;; in the ADR: eight members is a ceiling, and three rounds is what one
-    ;; sentence costs at worst.
-    (is (str/includes? html "メンバーは8体まで"))
-    (is (str/includes? html "最大3周"))
-    (is (str/includes? html "ルームにツールはありません")
-        "the screen does not say the one thing a room cannot do")))
+          (str id " is missing from the Bots conversation viewer")))
+    (doseq [removed ["room-create-form" "room-send-form" "room-send"]]
+      (is (not (re-find (re-pattern (str "id=\"" removed "\"")) html))
+          (str removed " makes the read-only viewer writable")))
+    (is (str/includes? html "表示専用です"))))
 
-(deftest the-rooms-view-is-loaded-when-it-is-opened
-  ;; A view wired into the nav and the panel table but never loaded renders an
-  ;; empty pane and looks like a feature that does not work. Nothing else here
-  ;; catches it: removing the dispatch changes the document, so the published
-  ;; lock fails — but the lock fails for any byte change at all, which makes it
-  ;; a notification that something moved, not a check that this still happens.
-  (is (str/includes? web/interaction-js "currentView === 'rooms'")
-      "the rooms view is reachable and never fetches anything")
+(deftest the-bots-view-loads-its-read-only-conversations
+  (is (not (str/includes? web/interaction-js "currentView === 'rooms'")))
+  (is (str/includes? web/interaction-js "if (currentView === 'bots')"))
+  (is (str/includes? web/interaction-js "setBotConversationsOpen"))
   (is (str/includes? web/interaction-js "loadRooms()")))
+
+(deftest bots-is-the-only-conversation-destination-and-capture-lives-in-settings
+  (let [html (web/page-html {})]
+    (is (re-find #"data-view=\"bots\"[^>]*aria-current=\"page\"" html))
+    (doseq [old ["chat" "rooms" "capture" "memory"]]
+      (is (not (re-find (re-pattern (str "data-view=\"" old "\"")) html))))
+    (is (re-find #"data-view-panel=\"settings\"" html))
+    (is (re-find #"id=\"context-capture-settings\"" html))
+    (is (str/includes? html "新しいUserでは既定でON"))
+    (is (str/includes? web/interaction-js "chat:'bots', rooms:'bots', capture:'bots', memory:'settings'"))))

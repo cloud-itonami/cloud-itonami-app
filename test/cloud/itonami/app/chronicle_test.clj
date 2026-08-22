@@ -12,22 +12,29 @@
     (reset! store/state (store/initial-state))
     (try (run) (finally (reset! store/state @previous)))))
 
-(deftest memory-is-opt-in-and-user-scoped
+(deftest capture-is-on-by-default-and-user-scoped
   (is (= chronicle/default-settings (chronicle/settings "alice")))
-  (is (nil? (chronicle/remember! "alice" {:content "private alpha"})))
-  (chronicle/configure! "alice" {:local-memory-enabled? true})
   (chronicle/remember! "alice" {:source "chat" :content "private alpha"
                                  :summary "Alpha"})
   (is (= ["Alpha"] (mapv :summary (:memories (chronicle/search "alice" "alpha")))))
-  (is (empty? (:memories (chronicle/search "bob" "alpha")))))
+  (is (empty? (:memories (chronicle/search "bob" "alpha"))))
+  (chronicle/configure! "alice" {})
+  (is (nil? (chronicle/remember! "alice" {:content "disabled"}))))
 
 (deftest tool-memory-has-an-independent-opt-in
-  (chronicle/configure! "alice" {:local-memory-enabled? true})
+  (chronicle/configure! "alice" {:local-memory-enabled? true
+                                  :tool-memory-enabled? false})
   (is (nil? (chronicle/remember-tool! "alice" "inspect" "done")))
   (chronicle/configure! "alice" {:local-memory-enabled? true
                                   :tool-memory-enabled? true})
   (chronicle/remember-tool! "alice" "inspect" "done")
   (is (= ["tool"] (mapv :source (:memories (chronicle/search "alice" "inspect"))))))
+
+(deftest overview-materializes-defaults-for-the-background-scheduler
+  (with-redefs [chronicle/permission-status (constantly "required")]
+    (is (= chronicle/default-settings (:settings (chronicle/overview "alice"))))
+    (is (= chronicle/default-settings
+           (get-in (store/snapshot) [:chronicle :users "alice" :settings])))))
 
 (deftest screen-text-is-labelled-untrusted
   (chronicle/configure! "alice" {:screen-context-enabled? true})

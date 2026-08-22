@@ -1,8 +1,10 @@
 (ns cloud.itonami.app.chronicle
   "Device-local memory and rolling screen context.
 
-  Screen capture is explicit opt-in and never leaves the configured data
-  directory. OCR text is untrusted context: callers must not treat it as an
+  Screen and operation capture start enabled for a new local profile and never
+  leave the configured data directory by themselves. Every switch remains in
+  Settings, so the owner can stop capture without deleting the retained rolling
+  window. OCR text is untrusted context: callers must not treat it as an
   instruction channel. Chat history and derived memory are separate stores so
   deleting memory does not silently delete a user's conversations."
   (:require [clojure.java.io :as io]
@@ -19,9 +21,9 @@
 
 (def schema "cloud.itonami.app.chronicle.v1")
 (def default-settings
-  {:local-memory-enabled? false
-   :screen-context-enabled? false
-   :tool-memory-enabled? false})
+  {:local-memory-enabled? true
+   :screen-context-enabled? true
+   :tool-memory-enabled? true})
 
 (def ^:private max-memories 500)
 (def ^:private max-frames 360)
@@ -48,6 +50,16 @@
 (defn settings [user-id]
   (merge default-settings
          (get-in (store/snapshot) (user-path user-id :settings) {})))
+
+(defn- ensure-profile! [user-id]
+  ;; Defaults alone are not enough for background capture: the scheduler walks
+  ;; persisted user profiles. The first authenticated overview therefore
+  ;; materializes the defaults once, while an existing profile keeps every
+  ;; explicit Settings choice.
+  (let [path (user-path user-id :settings)]
+    (when-not (map? (get-in (store/snapshot) path))
+      (store/transact! assoc-in path default-settings))
+    (settings user-id)))
 
 (defn configure! [user-id request]
   (let [next-settings
@@ -237,6 +249,7 @@
     (assoc (capture-frame frame) :type :chronicle-frame :frame-id (:id frame))))
 
 (defn overview [user-id]
+  (ensure-profile! user-id)
   (let [profile (get-in (store/snapshot) (user-path user-id) {})
         frames (sort-by :captured-at-ms > (vals (:frames profile)))
         memories (sort-by :at > (vals (:memories profile)))]
