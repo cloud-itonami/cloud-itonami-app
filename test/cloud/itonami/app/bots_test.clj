@@ -92,6 +92,35 @@
                                     :connectors ["com.google.gmail"]}
                                    attrs)))
 
+(deftest uncustomised-bots-get-stable-distinct-public-faces
+  (with-store
+    (fn []
+      (dotimes [index 8]
+        (bots/create! nil alice {:name (str "default-face-" index)
+                                 :connectors []}))
+      (let [faces (mapv :avatar (:bots (bots/overview nil alice)))]
+        (is (< 1 (count (distinct faces))))
+        (is (every? #(contains? % :variant) faces))))))
+
+(deftest overview-offers-only-an-admitted-local-git-root
+  (with-store
+    (fn []
+      (with-redefs [workspace-tools/admit-root
+                    (fn [path]
+                      (if (= path "/chosen/repo") path
+                          (throw (ex-info "not a root" {}))))]
+        (is (= "/chosen/repo"
+               (:default-workspace
+                (bots/overview {:bots {:default-workspace "/chosen/repo"}} alice))))))))
+
+(deftest coding-bots-are-instructed-to-use-local-evidence-first
+  (with-redefs [workspace-tools/orientation (constantly nil)]
+    (let [prompt ((private-fn 'system-prompt)
+                  {:bot/name "Local" :bot/coding? true :bot/workspace "/repo"}
+                  nil nil)]
+      (is (str/includes? prompt "Work local-first"))
+      (is (str/includes? prompt "external connector only when")))))
+
 (defn- workforce-catalog [roles]
   {:schema "network.awai.workforce-bots.v1"
    :businesses (if (seq roles) 1 0)

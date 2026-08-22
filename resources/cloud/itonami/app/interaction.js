@@ -8,6 +8,105 @@
       if (text !== undefined && text !== null) node.textContent = text;
       return node;
     };
+    // A safe Markdown preview for model messages. Model text is never assigned
+    // to innerHTML: every character becomes a text node, and links are admitted
+    // by protocol. This preserves the old XSS boundary while making ordinary
+    // headings, lists, emphasis and code readable.
+    const appendMarkdownInline = (node, source) => {
+      source = String(source || '');
+      const pattern = /(\*\*[^*\n]+\*\*|`[^`\n]+`|\[[^\]\n]+\]\([^\s)]+\))/g;
+      let cursor = 0;
+      for (const match of source.matchAll(pattern)) {
+        if (match.index > cursor) {
+          node.append(document.createTextNode(source.slice(cursor, match.index)));
+        }
+        const token = match[0];
+        if (token.startsWith('**')) {
+          const strong = make('strong');
+          strong.textContent = token.slice(2, -2);
+          node.append(strong);
+        } else if (token.startsWith('`')) {
+          const code = make('code');
+          code.textContent = token.slice(1, -1);
+          node.append(code);
+        } else {
+          const parts = /^\[([^\]]+)\]\(([^)]+)\)$/.exec(token);
+          let safe = null;
+          try {
+            const url = new URL(parts[2], location.href);
+            if (['http:', 'https:', 'mailto:'].includes(url.protocol)) safe = url.href;
+          } catch (_) { /* malformed links remain ordinary text */ }
+          if (safe) {
+            const link = make('a');
+            link.href = safe;
+            link.textContent = parts[1];
+            link.rel = 'noopener noreferrer';
+            node.append(link);
+          } else node.append(document.createTextNode(token));
+        }
+        cursor = match.index + token.length;
+      }
+      if (cursor < source.length) {
+        node.append(document.createTextNode(source.slice(cursor)));
+      }
+    };
+    const renderMarkdown = (node, source) => {
+      node.replaceChildren();
+      const lines = String(source || '').replace(/\r\n?/g, '\n').split('\n');
+      let index = 0;
+      while (index < lines.length) {
+        const line = lines[index];
+        if (!line.trim()) { index += 1; continue; }
+        if (line.trim().startsWith('```')) {
+          const language = line.trim().slice(3).trim();
+          const body = [];
+          index += 1;
+          while (index < lines.length && !lines[index].trim().startsWith('```')) {
+            body.push(lines[index]); index += 1;
+          }
+          if (index < lines.length) index += 1;
+          const pre = make('pre');
+          const code = make('code');
+          if (language) code.dataset.language = language;
+          code.textContent = body.join('\n');
+          pre.append(code); node.append(pre); continue;
+        }
+        const heading = /^(#{1,4})\s+(.+)$/.exec(line);
+        if (heading) {
+          const title = make(`h${Math.min(4, heading[1].length + 2)}`);
+          appendMarkdownInline(title, heading[2]);
+          node.append(title); index += 1; continue;
+        }
+        const quote = /^>\s?(.*)$/.exec(line);
+        if (quote) {
+          const block = make('blockquote');
+          appendMarkdownInline(block, quote[1]);
+          node.append(block); index += 1; continue;
+        }
+        const item = /^\s*(?:(\d+)\.|[-*])\s+(.+)$/.exec(line);
+        if (item) {
+          const ordered = Boolean(item[1]);
+          const list = make(ordered ? 'ol' : 'ul');
+          while (index < lines.length) {
+            const next = /^\s*(?:(\d+)\.|[-*])\s+(.+)$/.exec(lines[index]);
+            if (!next || Boolean(next[1]) !== ordered) break;
+            const li = make('li');
+            appendMarkdownInline(li, next[2]);
+            list.append(li); index += 1;
+          }
+          node.append(list); continue;
+        }
+        const paragraph = [];
+        while (index < lines.length && lines[index].trim() &&
+               !/^(#{1,4})\s+|^\s*(?:(\d+)\.|[-*])\s+|^>\s?|^```/.test(lines[index])) {
+          paragraph.push(lines[index].trim()); index += 1;
+        }
+        const p = make('p');
+        appendMarkdownInline(p, paragraph.join('\n'));
+        node.append(p);
+      }
+      return node;
+    };
     const initialParams = new URLSearchParams(location.search);
     // The native host still owns the traffic lights and window behaviour. This
     // marker only tells the web chrome to reserve their inset after the host
@@ -9163,12 +9262,14 @@
       palette:{colors:[], glyphs:[]},
       selected:null, messages:[], picked:new Set(),
       draft:{color:'blue', glyph:'circle'}, loaded:false, busy:false,
+      defaultWorkspace:'',
       browserAvailable:false, controller:null, runId:null, shellBusy:false,
       latestTurn:null, threadVersion:null, syncTimer:null, syncing:false
     };
     const botAvatar = (node, avatar, status = null) => {
       node.dataset.color = avatar?.color || 'blue';
       node.dataset.glyph = avatar?.glyph || 'circle';
+      node.dataset.variant = String(avatar?.variant || 0);
       if (status) node.dataset.status = status;
       else delete node.dataset.status;
       node.setAttribute('aria-hidden', 'true');
@@ -9339,7 +9440,7 @@
           ? `${noClient} 件は OAuth クライアントが未設定なので選べません（Settings の接続に同じ表示が出ます）。`
           : '',
       ].filter(Boolean).join(' ');
-      $('#bots-services-next').disabled = botsState.picked.size === 0;
+      $('#bots-services-next').disabled = false;
     };
     const renderBotsPalette = () => {
       const preview = botAvatar($('#bots-avatar-preview'), botsState.draft);
@@ -9640,7 +9741,12 @@
       botsState.messages.forEach((message) => {
         const entry = make('li', 'bots-msg');
         entry.dataset.role = message.role;
-        if (message.text) entry.append(make('div', 'bots-msg__bubble', message.text));
+        if (message.text) {
+          const bubble = make('div', 'bots-msg__bubble');
+          if (message.role === 'bot') renderMarkdown(bubble, message.text);
+          else bubble.textContent = message.text;
+          entry.append(bubble);
+        }
         (message.cards || []).forEach((card) => {
           if (card.kind === 'connection') entry.append(botsConnectionCard(card, bot.id));
           else if (card.kind === 'choice') entry.append(botsChoiceCard(card, bot.id));
@@ -10024,12 +10130,17 @@
         botsState.modelProviders = data['model-providers'] || [];
         botsState.providerReadiness = data['model-provider-readiness'] || [];
         botsState.palette = data.palette || botsState.palette;
+        botsState.defaultWorkspace = data['default-workspace'] || '';
         botsState.browserAvailable = Boolean(data['browser-available?']);
         botsState.loaded = true;
         syncBotsBrowserPermission();
         // Provider readiness belongs to the overview, not to the selected
         // thread. Render it before the initial selectBot fast path returns.
         renderBotsModelProviders();
+        if (!$('#bots-workspace').value && botsState.defaultWorkspace) {
+          $('#bots-workspace').value = botsState.defaultWorkspace;
+        }
+        $('#bots-coding').checked = true;
         if (!options.keepSelection && !botsState.selected && botsState.bots.length) {
           await selectBot(botsState.bots[0].id);
           return;
@@ -10037,6 +10148,10 @@
         renderBotsRail();
         renderBotsServiceGrid();
         renderBotsPalette();
+        if (!botsState.bots.length) {
+          $('#bots-step-services').hidden = true;
+          $('#bots-step-create').hidden = false;
+        }
         showBotsPane();
         if (botsState.selected) renderBotsThread();
       } catch (error) { botsSetStatus(error.message); }
@@ -10053,11 +10168,26 @@
     $('#bots-new').addEventListener('click', () => {
       botsState.selected = null;
       botsState.messages = [];
-      $('#bots-step-services').hidden = false;
-      $('#bots-step-create').hidden = true;
+      $('#bots-step-services').hidden = true;
+      $('#bots-step-create').hidden = false;
+      $('#bots-coding').checked = true;
+      $('#bots-workspace').value = botsState.defaultWorkspace || '';
+      if (botsState.palette.colors.length && botsState.palette.glyphs.length) {
+        const bytes = new Uint32Array(2); crypto.getRandomValues(bytes);
+        botsState.draft = {
+          color:botsState.palette.colors[bytes[0] % botsState.palette.colors.length],
+          glyph:botsState.palette.glyphs[bytes[1] % botsState.palette.glyphs.length]
+        };
+        renderBotsPalette();
+      }
       renderBotsRail();
       renderBotsServiceGrid();
       showBotsPane();
+    });
+    $('#bots-pick-services').addEventListener('click', () => {
+      $('#bots-step-create').hidden = true;
+      $('#bots-step-services').hidden = false;
+      renderBotsServiceGrid();
     });
     $('#bots-workforce').addEventListener('click', async () => {
       const button = $('#bots-workforce');
@@ -10166,7 +10296,9 @@
           if (!line.trim()) continue;
           const frame = JSON.parse(line);
           if (frame.type === 'delta') {
-            provisional.textContent += frame.content || '';
+            provisional.dataset.markdown =
+              (provisional.dataset.markdown || '') + (frame.content || '');
+            renderMarkdown(provisional, provisional.dataset.markdown);
             botsSetStatus('応答中…');
           } else if (frame.type === 'phase') {
             onPhase(frame);
