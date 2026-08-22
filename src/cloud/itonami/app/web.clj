@@ -1390,7 +1390,7 @@
         [:strong (if cloud? "● 許可済み接続あり" "● ローカルのみ")]
         [:span {:id "workspace-status"} "既存サービスを確認中…"]]]
       [:div {:class "main"}
-       [:header {:class "topbar"}
+       [:header {:class "topbar" :data-kotoba-window-drag "true"}
         [:h2 {:class "topbar__title" :id "current-view"} "Chat"]
         [:div {:class "topbar__context authenticated-only" :id "project-titlebar-context"
                :data-topbar-view "default" :hidden true}
