@@ -1604,8 +1604,7 @@
              [:ul {:class "form-help" :id "bots-provider-readiness"}]
              [:div {:class "field"}
               [:label {:for "bots-model"} "Model"]
-              [:input {:id "bots-model" :type "text" :maxlength "200"
-                       :autocomplete "off" :placeholder "model id"}]]
+              [:select {:id "bots-model"}]]
              [:label {:class "bots-permission"}
               [:input {:id "bots-writes" :type "checkbox"}]
               [:span "書き込みも任せる（実行前に毎回わたしが承認する）"]]

@@ -1416,12 +1416,16 @@
                         :model (or (:default-model candidate)
                                    (when (= (:id candidate)
                                             (get-in configuration [:routing :default-provider]))
-                                     (get-in configuration [:routing :default-model])))}
+                                     (get-in configuration [:routing :default-model])))
+                        :models (vec (distinct
+                                      (remove nil?
+                                              (concat [(:default-model candidate)]
+                                                      (:models candidate)))))}
                        (policy/provider-readiness configuration candidate)))
               (:providers configuration))]
     {:bots (mapv #(public-bot configuration did %) mine)
      :model-providers
-     (mapv #(select-keys % [:id :name :model])
+     (mapv #(select-keys % [:id :name :model :models])
            (filter :allowed? provider-readiness))
      :model-provider-readiness provider-readiness
      :catalog (catalog configuration did)

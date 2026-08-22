@@ -770,7 +770,8 @@
       (let [configuration {:routing {:default-provider "ollama"
                                      :default-model "local-default"}
                            :providers [{:id "xai" :name "Grok (xAI)"
-                                        :default-model "grok-4.6"}]}
+                                        :default-model "grok-4.6"
+                                        :models ["grok-4.6" "grok-code-fast-1"]}]}
             requested (atom [])
             turn (atom nil)]
         (with-redefs [policy/select-provider
@@ -795,7 +796,47 @@
             (is (= "grok-4.6" (get-in @turn [:request :model])))
             (is (= (:bot/id b) (get-in @turn [:request :conversation-id])))
             (is (= "xai" (:provider-id public)))
-            (is (= "grok-4.6" (:model public)))))))))
+            (is (= "grok-4.6" (:model public)))
+            (is (= ["grok-4.6" "grok-code-fast-1"]
+                   (get-in (bots/overview configuration alice)
+                           [:model-providers 0 :models])))))))))
+
+(deftest model-selection-is-stored-and-routed-per-bot
+  (with-store
+    (fn []
+      (let [configuration {:routing {:default-provider "murakumo"
+                                     :default-model "murakumo-main"}
+                           :providers [{:id "murakumo"
+                                        :name "Murakumo fleet"
+                                        :default-model "murakumo-main"
+                                        :models ["murakumo-main"
+                                                 "qwen3.8-27b-fastmtp-aggressive"]}]}
+            routed (atom [])]
+        (with-redefs [policy/select-provider
+                      (fn [_ id]
+                        (when (= "murakumo" (or id "murakumo"))
+                          {:id "murakumo" :kind :openai-compatible
+                           :default-model "murakumo-main"}))
+                      policy/provider-allowed? (fn [_ _] true)
+                      provider/agent-turn
+                      (fn [_ request]
+                        (swap! routed conj (:model request))
+                        {:content "ok" :tool-calls []})]
+          (let [stable (bots/create! configuration alice
+                                     {:name "Stable" :connectors ["com.google.gmail"]
+                                      :provider-id "murakumo"
+                                      :model "murakumo-main"})
+                fast (bots/create! configuration alice
+                                   {:name "Fast" :connectors ["com.google.gmail"]
+                                    :provider-id "murakumo"
+                                    :model "qwen3.8-27b-fastmtp-aggressive"})]
+            (bots/send! configuration alice (:bot/id stable) "stable")
+            (bots/send! configuration alice (:bot/id fast) "fast")
+            (is (= ["murakumo-main" "qwen3.8-27b-fastmtp-aggressive"] @routed))
+            (is (= {"Stable" "murakumo-main"
+                    "Fast" "qwen3.8-27b-fastmtp-aggressive"}
+                   (into {} (map (juxt :name :model))
+                         (:bots (bots/overview configuration alice)))))))))))
 
 (deftest overview-reports-blocked-providers-without-making-them-selectable
   (with-store
