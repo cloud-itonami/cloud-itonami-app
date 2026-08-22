@@ -8,6 +8,7 @@
             [cloud.itonami.app.app-client :as app-client]
             [cloud.itonami.app.authority.api :as authority-api]
             [cloud.itonami.app.business :as business]
+            [cloud.itonami.app.bulky-waste :as bulky-waste]
             [cloud.itonami.app.canvas :as canvas]
             [cloud.itonami.app.capture :as capture]
             [cloud.itonami.app.bots :as bots]
@@ -1493,6 +1494,108 @@
              (work-runtime/complete-work! item-id (System/currentTimeMillis))))
 
     :else (send! exchange 404 {:error "not found"})))
+
+(defn- handle-bulky-waste!
+  "The bounded HTTP surface for the bulky-waste human-computing workflow.
+
+  Keeping it outside the main HttpHandler also keeps every mutation behind the
+  same app-session, same-origin and CSRF boundary as scheduler and Drive."
+  [config exchange method path]
+  (let [session (require-app-session! exchange)
+        actor (:user-id session)
+        write-body (fn []
+                     (require-origin! exchange config)
+                     (require-csrf! exchange session)
+                     (read-json exchange))]
+    (cond
+      (and (= method "GET") (= path "/api/workspace/bulky-waste"))
+      (do (require-app-session! exchange)
+          (send! exchange 200 (bulky-waste/jobs actor)))
+
+      (and (= method "POST") (= path "/api/workspace/bulky-waste/workers"))
+      (do (require-app-session! exchange)
+          (send! exchange 200 (bulky-waste/register-worker! (write-body) actor)))
+
+      (and (= method "POST") (= path "/api/workspace/bulky-waste/jobs"))
+      (do (require-app-session! exchange)
+          (send! exchange 201 (bulky-waste/create-job! (write-body) actor)))
+
+      (and (= method "GET")
+           (id-from-path path #"/api/workspace/bulky-waste/jobs/([^/]+)/matches"))
+      (do (require-app-session! exchange)
+          (send! exchange 200
+                 (bulky-waste/matches
+                  (id-from-path path
+                                #"/api/workspace/bulky-waste/jobs/([^/]+)/matches")
+                  actor)))
+
+      (and (= method "POST")
+           (id-from-path path #"/api/workspace/bulky-waste/jobs/([^/]+)/publish"))
+      (do (require-app-session! exchange)
+          (write-body)
+          (send! exchange 200
+                 (bulky-waste/publish!
+                  (id-from-path path
+                                #"/api/workspace/bulky-waste/jobs/([^/]+)/publish")
+                  actor)))
+
+      (and (= method "POST")
+           (id-from-path path #"/api/workspace/bulky-waste/jobs/([^/]+)/book"))
+      (do (require-app-session! exchange)
+          (write-body)
+          (send! exchange 200
+                 (bulky-waste/book!
+                  (id-from-path path
+                                #"/api/workspace/bulky-waste/jobs/([^/]+)/book")
+                  actor)))
+
+      (and (= method "POST")
+           (id-from-path path #"/api/workspace/bulky-waste/jobs/([^/]+)/check-in"))
+      (do (require-app-session! exchange)
+          (send! exchange 200
+                 (bulky-waste/check-in!
+                  (id-from-path path
+                                #"/api/workspace/bulky-waste/jobs/([^/]+)/check-in")
+                  (write-body) actor)))
+
+      (and (= method "POST")
+           (id-from-path path #"/api/workspace/bulky-waste/jobs/([^/]+)/collect"))
+      (do (require-app-session! exchange)
+          (send! exchange 200
+                 (bulky-waste/collect!
+                  (id-from-path path
+                                #"/api/workspace/bulky-waste/jobs/([^/]+)/collect")
+                  (write-body) actor)))
+
+      (and (= method "POST")
+           (id-from-path path #"/api/workspace/bulky-waste/jobs/([^/]+)/deliver"))
+      (do (require-app-session! exchange)
+          (send! exchange 200
+                 (bulky-waste/deliver!
+                  (id-from-path path
+                                #"/api/workspace/bulky-waste/jobs/([^/]+)/deliver")
+                  (write-body) actor)))
+
+      (and (= method "POST")
+           (id-from-path path #"/api/workspace/bulky-waste/jobs/([^/]+)/recover"))
+      (do (require-app-session! exchange)
+          (send! exchange 200
+                 (bulky-waste/recover!
+                  (id-from-path path
+                                #"/api/workspace/bulky-waste/jobs/([^/]+)/recover")
+                  (write-body) actor)))
+
+      (and (= method "POST")
+           (id-from-path path #"/api/workspace/bulky-waste/jobs/([^/]+)/cancel"))
+      (do (require-app-session! exchange)
+          (write-body)
+          (send! exchange 200
+                 (bulky-waste/cancel!
+                  (id-from-path path
+                                #"/api/workspace/bulky-waste/jobs/([^/]+)/cancel")
+                  actor)))
+
+      :else (send! exchange 404 {:error "not found"}))))
 
 (defn- handle-ao-messenger! [exchange method path]
   (cond
@@ -4612,6 +4715,11 @@
                                     #"/api/workspace/scheduler/events/([^/]+)/cancel")
                       (:user-id session))))
 
+            ;; Bulky-waste human computing has its own bounded router: the
+            ;; main handler is already near the JVM method-size limit.
+            (str/starts-with? path "/api/workspace/bulky-waste")
+            (handle-bulky-waste! config exchange method path)
+
             ;; Worker runs are live queue state, so they bypass the workspace
             ;; read cache.
             (and (= method "GET") (= path "/api/workspace/worker"))
@@ -5027,6 +5135,16 @@
                      :scheduler/invalid-event 422
                      :scheduler/unknown-rsvp 400
                      :scheduler/no-such-person 400
+                     ;; ---- bulky-waste human computing ----
+                     :bulky-waste/not-found 404
+                     :bulky-waste/forbidden 403
+                     :bulky-waste/not-eligible 409
+                     :bulky-waste/invalid-transition 409
+                     :bulky-waste/capacity-exceeded 409
+                     :bulky-waste/unsupported-category 422
+                     :bulky-waste/evidence-required 422
+                     :bulky-waste/invalid-weight 422
+                     :bulky-waste/invalid 400
                      ;; ---- mail ----
                      :mail/not-found 404
                      :mail/invalid-label 400
