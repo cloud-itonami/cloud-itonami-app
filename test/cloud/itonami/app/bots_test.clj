@@ -102,6 +102,17 @@
         (is (< 1 (count (distinct faces))))
         (is (every? #(contains? % :variant) faces))))))
 
+(deftest creating-a-bot-automatically-provisions-its-wallet-container
+  (with-store
+    (fn []
+      (let [created (bots/create! nil alice {:name "wallet-native" :connectors []})
+            bot-id (:bot/id created)
+            bot-wallet (get-in (store/snapshot) [:wallet :bot-wallets bot-id])]
+        (is (= bot-id (:bot-id bot-wallet)))
+        (is (= :awaiting-signer (:status bot-wallet)))
+        (is (= :external-wallet (:custody bot-wallet)))
+        (is (nil? (:private-key bot-wallet)))))))
+
 (deftest overview-offers-only-an-admitted-local-git-root
   (with-store
     (fn []

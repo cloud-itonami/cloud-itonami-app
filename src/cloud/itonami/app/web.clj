@@ -211,11 +211,55 @@
   .local-card{background:var(--color-neutral-white);border:1px solid var(--color-neutral-solid-gray-200);
     border-radius:.75rem;padding:1.5rem}
   .local-card+.local-card{margin-top:1rem}
-  .wallet-summary{display:grid;grid-template-columns:repeat(auto-fit,minmax(12rem,1fr));gap:.75rem;margin-bottom:1rem}
-  .wallet-stat{display:grid;gap:.25rem;padding:.75rem;background:var(--color-neutral-solid-gray-50)}
-  .wallet-stat strong{font-size:1.75rem;line-height:1.4}
+  .wallet-workspace{max-width:46rem;display:grid;gap:1rem}
+  .wallet-accountbar{display:flex;align-items:center;justify-content:space-between;gap:.75rem;
+    padding:.75rem 1rem;border:1px solid var(--color-neutral-solid-gray-200);border-radius:.75rem;
+    background:var(--color-neutral-white)}
+  .wallet-accountbar select{min-width:0;flex:1;border:0;background:transparent;font:inherit;
+    font-weight:700;color:var(--color-neutral-solid-gray-900)}
+  .wallet-accountbar select:focus-visible{outline:4px solid var(--color-primitive-yellow-300);
+    outline-offset:2px;border-radius:.25rem}
+  .wallet-hero{display:grid;justify-items:center;gap:.75rem;padding:2rem 1.25rem;
+    border:1px solid var(--color-neutral-solid-gray-200);border-radius:1rem;
+    background:var(--color-neutral-white);text-align:center}
+  .wallet-hero__identity{display:flex;align-items:center;gap:.75rem}
+  .wallet-hero__identity h2,.wallet-hero__identity p{margin:0;text-align:left}
+  .wallet-balance{margin:.25rem 0 0;font-size:2.25rem;line-height:1.3;font-weight:700;
+    letter-spacing:-.02em}
+  .wallet-network{display:inline-flex;align-items:center;gap:.375rem;color:var(--color-neutral-solid-gray-600)}
+  .wallet-network::before{content:'';width:.5rem;height:.5rem;border-radius:50%;
+    background:var(--color-semantic-success-1)}
+  .wallet-address-button{border:0;background:var(--color-neutral-solid-gray-50);border-radius:999px;
+    padding:.5rem .75rem;color:var(--color-neutral-solid-gray-700);cursor:pointer;font:inherit}
+  .wallet-address-button:focus-visible{outline:4px solid var(--color-primitive-yellow-300);outline-offset:1px}
+  .wallet-actions{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:.75rem;width:100%;margin-top:.5rem}
+  .wallet-action{display:grid;justify-items:center;gap:.375rem;border:0;background:transparent;
+    color:var(--color-key-900);font:inherit;font-weight:700;cursor:pointer;padding:.5rem}
+  .wallet-action__icon{display:grid;place-items:center;width:2.75rem;height:2.75rem;border-radius:50%;
+    background:var(--color-key-900);color:var(--color-neutral-white);font-size:1.25rem}
+  .wallet-action:disabled{color:var(--color-neutral-solid-gray-500);cursor:not-allowed}
+  .wallet-action:disabled .wallet-action__icon{background:var(--color-neutral-solid-gray-200)}
+  .wallet-action:focus-visible{outline:4px solid var(--color-primitive-yellow-300);border-radius:.5rem}
+  .wallet-tabs{display:grid;grid-template-columns:1fr 1fr;border-bottom:1px solid var(--color-neutral-solid-gray-200)}
+  .wallet-tab{border:0;border-bottom:3px solid transparent;background:transparent;padding:.875rem;
+    color:var(--color-neutral-solid-gray-600);font:inherit;font-weight:700;cursor:pointer}
+  .wallet-tab[aria-selected='true']{color:var(--color-key-900);border-bottom-color:var(--color-key-900)}
+  .wallet-tab:focus-visible{outline:4px solid var(--color-primitive-yellow-300);outline-offset:-4px}
+  .wallet-token{display:flex;align-items:center;justify-content:space-between;gap:1rem;padding:1rem 0}
+  .wallet-token__identity{display:flex;align-items:center;gap:.75rem}
+  .wallet-token__mark{display:grid;place-items:center;width:2.75rem;height:2.75rem;border-radius:50%;
+    background:var(--color-neutral-solid-gray-900);color:var(--color-neutral-white);font-weight:700}
+  .wallet-token p{margin:0}.wallet-token__amount{text-align:right}
+  .wallet-panel{background:var(--color-neutral-white);border:1px solid var(--color-neutral-solid-gray-200);
+    border-radius:.75rem;padding:0 1rem}
+  .wallet-drawer{background:var(--color-neutral-white);border:1px solid var(--color-neutral-solid-gray-200);
+    border-radius:.75rem;padding:1.25rem}
+  .wallet-drawer__header{display:flex;align-items:center;justify-content:space-between;gap:1rem}
+  .wallet-drawer__header h2{margin:0}
+  .wallet-safety{display:flex;align-items:flex-start;gap:.75rem;padding:1rem;border-radius:.75rem;
+    background:var(--color-neutral-solid-gray-50);color:var(--color-neutral-solid-gray-700)}
+  .wallet-safety p{margin:0}
   .wallet-address{overflow-wrap:anywhere}
-  .wallet-bot-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(18rem,1fr));gap:.75rem}
   /* Pre-auth is one decision, so the screen is one column: heading, gate,
      primary action, and everything else folded under one accordion. The old
      two-card grid gave 招待された User equal weight with the owner's own
@@ -1782,41 +1826,53 @@
            [:div {:class "empty-state"} "記録を読み込んでいます。"]]]]
         [:section {:class "view" :data-view-panel "wallet" :hidden true}
          (view-header "Wallet"
-                      "検証済みの外部WalletをBotへ割り当て、受取と送金提案を管理します。秘密鍵はCloud Itonamiへ保存しません。")
-         [:div {:class "security-callout"}
-          [:strong "Non-custodial"]
-          " Botは受取アドレスを持ち送金を提案できますが、署名と送信はMetaMaskなどの外部Walletで確認します。"]
-         [:p {:class "source-note"} [:span {:class "source-dot"}]
-          [:span {:id "wallet-source"} "Walletを確認中…"]]
-         [:div {:class "wallet-summary" :id "wallet-summary"}
-          [:div {:class "wallet-stat"} [:span "接続済みWallet"] [:strong "—"]]
-          [:div {:class "wallet-stat"} [:span "Walletを持つBot"] [:strong "—"]]
-          [:div {:class "wallet-stat"} [:span "署名待ち"] [:strong "—"]]]
-         [:div {:class "local-card"}
-          [:div {:class "view-header"}
-           [:div
-            (dds/heading 2 "Walletを接続" {:size "24"})
-            [:p {:class "form-help"}
-             "EIP-4361所有証明だけを保存します。接続しても送金権限や秘密鍵は渡りません。"
-             " デスクトップ版ではWallet拡張のある既定ブラウザへ引き継ぎます。"]]
-           [:button {:class "primary-action" :id "wallet-connect" :type "button"}
-            "MetaMaskを接続"]]
+                      "Botを作ると専用Walletも自動で生まれます。受取・送金提案・履歴をBot単位で管理します。")
+         [:div {:class "wallet-workspace"}
+          [:div {:class "wallet-accountbar"}
+           [:label {:class "visually-hidden" :for "wallet-bot-select"} "表示するBot Wallet"]
+           [:select {:id "wallet-bot-select" :aria-label "表示するBot Wallet"}]
+           [:span {:class "state-chip" :id "wallet-account-state"} "準備中"]]
+          [:article {:class "wallet-hero" :id "wallet-hero" :aria-live "polite"}
+           [:div {:class "wallet-hero__identity"}
+            [:span {:class "bot-avatar" :id "wallet-bot-avatar" :aria-hidden "true"}]
+            [:div [:h2 {:id "wallet-bot-name"} "Bot Wallet"]
+             [:p {:class "wallet-network" :id "wallet-network"} "Ethereum"]]]
+           [:p {:class "wallet-balance" :id "wallet-balance"} "— ETH"]
+           [:button {:class "wallet-address-button wallet-address" :id "wallet-address"
+                     :type "button" :disabled true} "署名Walletを接続してください"]
+           [:div {:class "wallet-actions" :aria-label "Wallet操作"}
+            [:button {:class "wallet-action" :id "wallet-receive" :type "button" :disabled true}
+             [:span {:class "wallet-action__icon" :aria-hidden "true"} "↓"] [:span "受け取る"]]
+            [:button {:class "wallet-action" :id "wallet-send" :type "button" :disabled true}
+             [:span {:class "wallet-action__icon" :aria-hidden "true"} "↗"] [:span "送る"]]
+            [:button {:class "wallet-action" :id "wallet-connect" :type "button"}
+             [:span {:class "wallet-action__icon" :aria-hidden "true"} "✓"] [:span "署名接続"]]]]
           [:p {:class "form-help" :id "wallet-connect-status"
                :role "status" :aria-live "polite"}]
-          [:ul {:class "data-list" :id "wallet-account-list"}
-           [:li {:class "skeleton"}]]]
-         [:div {:class "local-card"}
-          (dds/heading 2 "Bot Wallet" {:size "24"})
-          [:p {:class "form-help"}
-           "Botごとに1つの検証済みアドレスを割り当てます。同じアドレスを複数Botへ共有しません。"]
-          [:div {:class "wallet-bot-grid" :id "wallet-bot-list"}
-           [:div {:class "skeleton"}]]]
-         [:div {:class "local-card"}
-          (dds/heading 2 "送る" {:size "24"})
+          [:div {:class "wallet-tabs" :role "tablist" :aria-label "Wallet内容"}
+           [:button {:class "wallet-tab" :id "wallet-assets-tab" :type "button"
+                     :role "tab" :aria-selected "true" :aria-controls "wallet-assets-panel"} "資産"]
+           [:button {:class "wallet-tab" :id "wallet-activity-tab" :type "button"
+                     :role "tab" :aria-selected "false" :aria-controls "wallet-activity-panel"} "アクティビティ"]]
+          [:section {:class "wallet-panel" :id "wallet-assets-panel" :role "tabpanel"
+                     :aria-labelledby "wallet-assets-tab"}
+           [:div {:class "wallet-token"}
+            [:div {:class "wallet-token__identity"}
+             [:span {:class "wallet-token__mark" :aria-hidden "true"} "Ξ"]
+             [:div [:p [:strong "Ethereum"]] [:p {:class "form-help"} "ETH"]]]
+            [:div {:class "wallet-token__amount"}
+             [:p {:id "wallet-asset-balance"} "— ETH"]
+             [:p {:class "form-help"} "残高は接続中のWalletから取得"]]]]
+          [:section {:class "wallet-panel" :id "wallet-activity-panel" :role "tabpanel"
+                     :aria-labelledby "wallet-activity-tab" :hidden true}
+           [:ul {:class "data-list" :id "wallet-transfer-list"}
+            [:li {:class "skeleton"}]]]
+          [:section {:class "wallet-drawer" :id "wallet-send-drawer" :hidden true}
+           [:div {:class "wallet-drawer__header"}
+            (dds/heading 2 "送る" {:size "24"})
+            [:button {:class "tool-button" :id "wallet-send-close" :type "button"} "閉じる"]]
           [:form {:class "settings-form" :id "wallet-send-form"}
-           [:label {:for "wallet-send-bot"} "送信元Bot"]
-           [:select {:id "wallet-send-bot" :name "bot-id" :required true}
-            [:option {:value ""} "Walletを持つBotを選択"]]
+           [:input {:id "wallet-send-bot" :name "bot-id" :type "hidden"}]
            [:label {:for "wallet-send-to"} "送信先アドレス"]
            [:input {:id "wallet-send-to" :name "to" :required true
                     :autocomplete "off" :placeholder "0x…"}]
@@ -1826,9 +1882,16 @@
            [:button {:class "primary-action" :type "submit"}
             "送金内容を確認"]]
           [:p {:class "form-help" :id "wallet-send-status"
-               :role "status" :aria-live "polite"}]
-          [:ul {:class "data-list" :id "wallet-transfer-list"}
-           [:li {:class "skeleton"}]]]]
+               :role "status" :aria-live "polite"}]]
+          [:div {:class "wallet-safety"}
+           [:span {:aria-hidden "true"} "🔒"]
+           [:p [:strong "秘密鍵はCloud Itonamiに保存しません。"]
+            " Botは送金内容を提案し、最終署名はMetaMaskなどの外部Walletで確認します。"]]
+          [:p {:class "source-note"} [:span {:class "source-dot"}]
+           [:span {:id "wallet-source"} "Walletを確認中…"]]
+          [:ul {:class "visually-hidden" :id "wallet-account-list"}]
+          [:div {:class "visually-hidden" :id "wallet-bot-list"}]
+          [:div {:class "visually-hidden" :id "wallet-summary"}]]]
         [:section {:class "view messenger-view" :data-view-panel "messenger" :hidden true}
          (view-header "Kaisya Messenger"
                       "人間・agent・organismがそれぞれのmailboxで会話します。未許可の送信者は本文を表示せず隔離します。")

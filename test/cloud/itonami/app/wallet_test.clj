@@ -127,3 +127,19 @@
         (let [submitted (wallet/submit-transfer! alice (:id proposal) tx-hash)]
           (is (= :submitted (:status submitted)))
           (is (= "alice" (:submitted-by submitted))))))))
+
+(deftest bot-wallet-container-exists-before-a-signer-is-connected
+  (with-wallet-store
+    (fn []
+      (let [bot {:id "bot-auto" :did "did:key:bot-auto" :name "Treasurer"
+                 :owner-id "alice" :organization-id "org-1"}
+            first-wallet (wallet/provision-bot! alice bot)
+            retry-wallet (wallet/provision-bot! alice bot)
+            public-wallet (-> (wallet/snapshot {} alice [bot]) :bots first :wallet)]
+        (is (= (:id first-wallet) (:id retry-wallet)) "provisioning is retry-safe")
+        (is (= :awaiting-signer (:status first-wallet)))
+        (is (= :external-wallet (:custody first-wallet)))
+        (is (false? (:signer-connected? public-wallet)))
+        (is (nil? (:private-key first-wallet)))
+        (is (= :wallet/bot-forbidden
+               (refuses #(wallet/provision-bot! mallory bot))))))))
