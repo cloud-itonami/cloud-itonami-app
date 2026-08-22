@@ -210,7 +210,22 @@
     (is (= 512 (:max-output-tokens provider)))
     (is (= "murakumo-main" (:default-model provider)))
     (is (= ["murakumo-main" "qwen3.8-27b-fastmtp-aggressive"]
-           (:models provider)))))
+           (:models provider)))
+    (is (= 32768
+           (get-in provider [:context-window-tokens
+                             "qwen3.8-27b-fastmtp-aggressive"])))
+    (is (= 32768 (get-in provider [:context-window-tokens "murakumo-main"]))
+        "the alias metadata must move in the same config change as its target")))
+
+(deftest shipped-models-declare-their-current-maximum-context
+  (let [providers (into {} (map (juxt :id identity))
+                        (:providers (config/load-config)))]
+    (is (= 500000
+           (get-in providers ["xai" :context-window-tokens "grok-4.6"])))
+    (doseq [model (get-in providers ["murakumo" :models])]
+      (is (= 32768
+             (get-in providers ["murakumo" :context-window-tokens model]))
+          (str model " must carry the selected model's window")))))
 
 ;; ---------------------------------------------------------------------------
 ;; secrets are read from the environment, never held in config

@@ -9,6 +9,56 @@
 (defn- private-fn [name]
   (some-> (ns-resolve 'cloud.itonami.app.provider name) deref))
 
+(deftest model-context-is-exact-or-discovered-from-provider-metadata
+  (testing "operator metadata wins without a network lookup"
+    (is (= 32768
+           (provider/model-context-window
+            {:id "fixed" :context-window-tokens {"qwen" 32768}}
+            "qwen"))))
+  (testing "Ollama's family-specific model_info key is understood"
+    (is (= 131072
+           ((private-fn 'context-window-from-model-info)
+            {:model_info {:gemma3.context_length 131072
+                          :gemma3.block_count 34}}))))
+  (testing "an OpenAI-shaped direct field is understood"
+    (is (= 500000
+           ((private-fn 'context-window-from-model-info)
+            {:context_length 500000})))))
+
+(deftest ollama-context-is-discovered-from-show-not-guessed-by-model-name
+  (let [server (HttpServer/create (InetSocketAddress. "127.0.0.1" 0) 0)]
+    (.createContext
+     server "/api/show"
+     (reify HttpHandler
+       (handle [_ exchange]
+         (let [bytes (.getBytes
+                      (json/write-str
+                       {:model_info {:custom-family.context_length 65536}})
+                      "UTF-8")]
+           (.sendResponseHeaders exchange 200 (alength bytes))
+           (with-open [out (.getResponseBody exchange)]
+             (.write out bytes))))))
+    (.start server)
+    (try
+      (is (= 65536
+             (provider/model-context-window
+              {:id (str "ollama-fixture-" (random-uuid))
+               :kind :ollama
+               :base-url (str "http://127.0.0.1:"
+                              (.getPort (.getAddress server)))}
+              "mutable-local-tag")))
+      (finally (.stop server 0)))))
+
+(deftest ollama-is-asked-to-allocate-the-window-the-bot-accounted
+  (let [options (private-fn 'ollama-agent-options)]
+    (is (= {:temperature 0.2 :num_predict 512 :num_ctx 131072}
+           (options {:max-output-tokens 2048}
+                    {:max-output-tokens 512
+                     :context-window-tokens 131072})))
+    (is (= {:temperature 0.2 :num_predict 2048}
+           (options {} {}))
+        "unknown model metadata does not invent a local allocation")))
+
 (deftest a-capped-budget-turns-reasoning-off
   ;; A reasoning model spends output tokens on `thinking` before it emits any
   ;; text, so a tight cap does not shorten the answer -- it removes it.

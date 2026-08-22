@@ -2387,6 +2387,115 @@
   longest runs."
   24)
 
+(def ^:private context-safety-tokens
+  "Room for chat-template framing and provider-side special tokens which are
+  not present in the request's JSON values."
+  512)
+
+(def ^:private context-compaction-threshold 0.75)
+(def ^:private context-tail-share 0.45)
+(def ^:private compacted-exchange-max-chars 1600)
+
+(defn- estimated-tokens
+  "A conservative Qwen-family prompt estimate without shipping a second model
+  tokenizer in the desktop app. UTF-8 bytes / 3 tracks Japanese close to one
+  token per character and leaves more room than the usual English bytes / 4.
+  The fixed context safety reserve covers chat-template framing."
+  [value]
+  (max 1 (long (Math/ceil (/ (alength (.getBytes (json/write-str value) "UTF-8"))
+                             3.0)))))
+
+(defn- next-context-start
+  "Drop one oldest message unit. If that exposes tool results, drop them with
+  the assistant tool call rather than sending results whose call is absent."
+  [tail start]
+  (loop [i (inc start)]
+    (if (and (< i (count tail)) (= "tool" (:role (nth tail i))))
+      (recur (inc i))
+      i)))
+
+(defn- redact-context-excerpt [value]
+  (-> (str value)
+      (str/replace #"(?i)(bearer\s+)[^\s,;]+" "$1[REDACTED]")
+      (str/replace #"(?i)((?:api[_-]?key|password|secret|token)\s*[:=]\s*)[^\s,;]+"
+                   "$1[REDACTED]")))
+
+(defn- clipped [value limit]
+  (let [s (redact-context-excerpt value)]
+    (if (<= (count s) limit) s (str (subs s 0 limit) "…"))))
+
+(defn- summarized-exchange [messages]
+  (let [tool-names (->> messages (mapcat :tool-calls) (keep :name) distinct vec)
+        tool-results (count (filter #(= "tool" (:role %)) messages))
+        conclusions (->> messages
+                         (filter #(= "assistant" (:role %)))
+                         (keep :content)
+                         (remove str/blank?)
+                         (map #(clipped % 320))
+                         (take 3))
+        body (str "[CONTEXT COMPACTION — REFERENCE ONLY. The latest user message is authoritative.]\n"
+                  (when (seq tool-names)
+                    (str "Tools used: " (str/join ", " tool-names) ". "))
+                  (when (pos? tool-results)
+                    (str tool-results " completed tool result(s) remain in the durable run record; raw bodies omitted.\n"))
+                  (when (seq conclusions)
+                    (str "Earlier assistant conclusions:\n- "
+                         (str/join "\n- " conclusions))))]
+    {:role "assistant" :content (clipped body compacted-exchange-max-chars)}))
+
+(defn- compact-middle
+  "Replace old derived exchanges with bounded reference markers while keeping
+  every user message in its original role and order. Raw tool bodies stay in
+  the durable run, not in the compacted prompt."
+  [messages tail-start]
+  (let [middle (subvec messages 2 tail-start)]
+    (loop [remaining middle output []]
+      (if (empty? remaining)
+        output
+        (if (= "user" (:role (first remaining)))
+          (recur (subvec remaining 1) (conj output (first remaining)))
+          (let [n (or (first (keep-indexed
+                              (fn [i m] (when (= "user" (:role m)) i))
+                              remaining))
+                      (count remaining))
+                exchange (subvec remaining 0 n)]
+            (recur (subvec remaining n)
+                   (conj output (summarized-exchange exchange)))))))))
+
+(defn- recent-tail-start [messages token-budget]
+  (loop [start 2]
+    (if (or (>= start (count messages))
+            (<= (estimated-tokens (subvec messages start)) token-budget))
+      start
+      (recur (next-context-start messages start)))))
+
+(defn- compacted-context-messages [messages threshold-budget]
+  (let [ms (vec messages)
+        tail-budget (max 1 (long (* threshold-budget context-tail-share)))
+        tail-start (recent-tail-start ms tail-budget)]
+    (if (<= tail-start 2)
+      ms
+      (vec (concat (subvec ms 0 (min 2 (count ms)))
+                   (compact-middle ms tail-start)
+                   (subvec ms tail-start))))))
+
+(defn- bounded-context-messages
+  "Keep as much recent history as fits the model's prompt-token budget.
+  System and the first instruction always survive; older complete units leave
+  first. A single oversized head is retained so the model never receives a
+  different instruction merely to satisfy an estimate."
+  [messages token-budget]
+  (let [ms (vec messages)
+        head-count (min 2 (count ms))
+        head (subvec ms 0 head-count)
+        tail (subvec ms head-count)]
+    (loop [start 0]
+      (let [candidate (into head (subvec tail start))]
+        (if (or (>= start (count tail))
+                (<= (estimated-tokens candidate) token-budget))
+          candidate
+          (recur (next-context-start tail start)))))))
+
 (defn- bounded-run-messages
   "The messages one call carries: the system message, the goal, and the last
   `max-run-messages`.
@@ -2423,12 +2532,48 @@
                       :else i))]
         (into head (subvec tail start))))))
 
-(defn- agent-request [configuration b run model]
+(defn- agent-request [configuration provider b run model]
+  (let [output-tokens (or (when (:goal? run)
+                            (get-in configuration [:bots :goal :max-output-tokens]))
+                          (:max-output-tokens provider)
+                          2048)
+        context-window (provider/model-context-window provider model)
+        prompt-budget (when context-window
+                        (max 1 (- (long context-window)
+                                  (long output-tokens)
+                                  (estimated-tokens (:tools run))
+                                  context-safety-tokens)))
+        threshold-budget (when context-window
+                           (max 1 (- (long (* context-compaction-threshold
+                                              (long context-window)))
+                                     (long output-tokens)
+                                     (estimated-tokens (:tools run))
+                                     context-safety-tokens)))
+        before-tokens (estimated-tokens (:messages run))
+        compacted? (and threshold-budget (> before-tokens threshold-budget))
+        compacted (if compacted?
+                    (compacted-context-messages (:messages run) threshold-budget)
+                    (:messages run))
+        messages (if prompt-budget
+                   (bounded-context-messages compacted prompt-budget)
+                   (bounded-run-messages compacted))
+        after-tokens (estimated-tokens messages)]
+  (when (and prompt-budget (> after-tokens prompt-budget))
+    (throw (ex-info "Bot の指示だけでモデルの context window を超えています。添付や指示を分割してください。"
+                    {:type :agent/context-overflow
+                     :model model
+                     :context-window-tokens context-window
+                     :estimated-prompt-tokens after-tokens
+                     :prompt-budget-tokens prompt-budget})))
   (cond-> {:model model
            :conversation-id (:bot/id b)
-           :messages (bounded-run-messages (:messages run))
+           :messages messages
            :tools (:tools run)
-           :temperature 0.2}
+           :temperature 0.2
+           :context-window-tokens context-window
+           :context-threshold-tokens threshold-budget
+           :context-estimated-tokens after-tokens
+           :context-compacted? (boolean compacted?)}
     ;; A handoff is capped by the provider default (2048) and had reasoning
     ;; left ON, which is the pairing this very comment forbids -- measured
     ;; 2026-08-20 by running one: the model spent the budget thinking and the
@@ -2445,7 +2590,7 @@
            ;; for no answer: the model spends the cap thinking and never reaches
            ;; a text block. See the measurement in provider/agent-request-body.
            ;; These two go together -- do not set one without the other.
-           :disable-thinking? true)))
+           :disable-thinking? true))))
 
 (defn- advance!
   "Turn until the Bot is done or needs a person.
@@ -2491,8 +2636,14 @@
 
       :else
       (let [{:keys [provider model]} (provider-choice! configuration b)
-            request (agent-request configuration b run model)
-            _ (when on-event (on-event {:type "phase" :phase "model"}))
+            request (agent-request configuration provider b run model)
+            _ (when on-event
+                (on-event (merge {:type "phase" :phase "model"}
+                                 (select-keys request
+                                              [:context-window-tokens
+                                               :context-threshold-tokens
+                                               :context-estimated-tokens
+                                               :context-compacted?]))))
             result (if on-event
                      (provider/agent-turn-stream!
                       provider request
@@ -2502,7 +2653,12 @@
             run (-> run
                     (update :turn-count (fnil inc 0))
                     (assoc :provider (some-> (:id provider) name)
-                           :model model)
+                           :model model
+                           :context (select-keys request
+                                                 [:context-window-tokens
+                                                  :context-threshold-tokens
+                                                  :context-estimated-tokens
+                                                  :context-compacted?]))
                     (update :usage merge-usage (:usage result))
                     (update :messages conj {:role "assistant"
                                             :content (:content result)
