@@ -249,9 +249,11 @@
           "the native surface must announce itself; sign-in depends on it"))))
 
 (deftest native-titlebar-overlay-reuses-the-web-topbar-instead-of-adding-a-band
-  (let [js (slurp (io/file "resources/cloud/itonami/app/interaction.js"))]
+  (let [js (slurp (io/file "resources/cloud/itonami/app/interaction.js"))
+        html (web/page-html {})]
     (is (str/includes? js "initialParams.get('chrome') === 'titlebar-overlay'"))
     (is (str/includes? js "document.body.dataset.nativeTitlebar = 'overlay'"))
+    (is (str/includes? html "data-kotoba-window-drag=\"true\""))
     (is (str/includes? web/app-css
                        "body[data-native-titlebar='overlay'] .topbar"))
     (is (str/includes? web/app-css
