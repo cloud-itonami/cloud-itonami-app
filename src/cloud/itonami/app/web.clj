@@ -1186,7 +1186,8 @@
     .sidebar[data-mobile-menu-open='true'] .mobile-nav-backdrop{display:block}
     .main{min-width:0}
     .topbar{position:sticky;z-index:30;top:0;min-height:calc(4rem + env(safe-area-inset-top));
-      box-sizing:border-box;padding:calc(.75rem + env(safe-area-inset-top)) 8.75rem .75rem 1rem;
+      box-sizing:border-box;padding:calc(.75rem + env(safe-area-inset-top)) 8.25rem .75rem 1rem;
+      gap:.25rem;
       background:var(--color-neutral-white)}
     /* `:titlebar :overlay` keeps AppKit's close/minimise/zoom controls but
        extends WKWebView behind their otherwise empty title band. The app
@@ -1194,15 +1195,16 @@
        a second toolbar. Browser windows never receive the data attribute. */
     body[data-native-titlebar='overlay'] .topbar{
       padding-left:5rem}
-    .topbar__title{font-size:1rem;line-height:1.4;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+    .topbar__title{flex:0 0 auto;font-size:1rem;line-height:1.4;overflow:hidden;
+      text-overflow:ellipsis;white-space:nowrap}
     /* The titlebar has only 210px beside the traffic lights and workspace
        switcher at the 430px installed width. The selected Bot already appears
        in the rail, so keep the promised fixed “Bots” title and make its
        operations a compact, horizontal icon group. */
     .bots-titlebar__identity{display:none!important}
     #bots-titlebar-context{gap:.25rem;flex:0 0 auto}
-    #bots-titlebar-context>.tool-button{width:2.5rem;min-width:2.5rem;
-      min-height:2.5rem;padding:.25rem;white-space:nowrap}
+    #bots-titlebar-context>.tool-button{width:2.25rem;min-width:2.25rem;
+      min-height:2.25rem;padding:.125rem;white-space:nowrap}
     .bots-conversations__count{position:absolute;clip:rect(0,0,0,0);
       clip-path:inset(50%);width:1px;height:1px;overflow:hidden;white-space:nowrap}
     .view{padding:1rem}.view-header h1{font-size:1.75rem;line-height:1.3}.view-lead{line-height:1.7}
