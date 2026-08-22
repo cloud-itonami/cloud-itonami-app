@@ -447,8 +447,23 @@
     gap:.75rem;max-width:44rem}
   .bots-msg{display:grid;gap:.5rem}
   .bots-msg__bubble{padding:.75rem .875rem;border-radius:.75rem;
-    background:var(--color-neutral-solid-gray-50);white-space:pre-wrap;
+    background:var(--color-neutral-solid-gray-50);
     line-height:1.7;overflow-wrap:anywhere}
+  .bots-msg__bubble> :first-child{margin-top:0}
+  .bots-msg__bubble> :last-child{margin-bottom:0}
+  .bots-msg__bubble p{white-space:pre-wrap;margin:.5rem 0}
+  .bots-msg__bubble ul,.bots-msg__bubble ol{margin:.5rem 0;padding-left:1.5rem}
+  .bots-msg__bubble li+li{margin-top:.25rem}
+  .bots-msg__bubble pre{max-width:100%;overflow:auto;margin:.625rem 0;padding:.75rem;
+    border-radius:.5rem;background:var(--color-neutral-solid-gray-900);
+    color:var(--color-neutral-white);white-space:pre}
+  .bots-msg__bubble code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;
+    font-size:.9em;background:var(--color-neutral-solid-gray-100);padding:.1em .3em;
+    border-radius:.25rem}
+  .bots-msg__bubble pre code{background:transparent;padding:0;color:inherit}
+  .bots-msg__bubble blockquote{margin:.5rem 0;padding-left:.75rem;
+    border-left:4px solid var(--color-neutral-solid-gray-300);
+    color:var(--color-neutral-solid-gray-700)}
   .bots-msg[data-role='person']{justify-items:end}
   .bots-msg[data-role='person'] .bots-msg__bubble{background:var(--color-key-50)}
   .bots-card{border:1px solid var(--color-neutral-solid-gray-200);
@@ -1572,9 +1587,9 @@
            ;; make the first Bot. Hidden once one exists.
            [:div {:class "bots-onboard" :id "bots-onboard" :hidden true}
             [:div {:class "bots-onboard__step" :id "bots-step-services"}
-             (dds/heading 2 "毎日なにを使っていますか?" {:size "28"})
+             (dds/heading 2 "必要なら外部サービスを追加" {:size "28"})
              [:p {:class "view-lead"}
-              "この build が実際に持っているサービスだけを出しています。選んだものが、最初の Bot が触れる範囲になります。"]
+              "Bot は local Git workspace を中心に働きます。Gmail・Driveなどは、その Bot の仕事に必要な場合だけ追加してください。何も選ばず進められます。"]
              [:input {:class "bots-search" :id "bots-service-search" :type "search"
                       :placeholder "探す" :autocomplete "off"}]
              [:div {:class "bots-grid" :id "bots-service-grid"}]
@@ -1582,6 +1597,24 @@
              [:button {:class "primary-action" :id "bots-services-next" :type "button"}
               "次へ"]]
             [:div {:class "bots-onboard__step" :id "bots-step-create" :hidden true}
+             (dds/heading 2 "Local workspace で働く Bot" {:size "28"})
+             [:p {:class "view-lead"}
+              "まずフォルダ・ソース・Git履歴を読み、必要な変更を提案します。外部サービスは追加能力です。"]
+             [:div {:class "field"}
+              [:label {:for "bots-workspace"} "作業する Git workspace"]
+              [:input {:id "bots-workspace" :type "text" :maxlength "4096"
+                       :autocomplete "off"
+                       :placeholder "/Users/name/github/project"}]
+              [:span {:class "form-help"}
+               "既存Git repositoryのrootを正確に指定します。この範囲の外は読めません。"]]
+             [:label {:class "bots-permission"}
+              [:input {:id "bots-coding" :type "checkbox" :checked true}]
+              [:span {:class "bots-permission__copy"}
+               [:span "ローカルのファイルとGitを中心に作業する"]
+               [:span {:class "bots-permission__help"}
+                "読み取りは自動、ファイル変更とlocal commitは承認制です。pushはしません。"]]]
+             [:button {:class "tool-button" :id "bots-pick-services" :type "button"}
+              "外部サービスを追加（任意）"]
              [:div {:class "bots-avatar-preview"}
               [:span {:class "bot-avatar bot-avatar--xl" :id "bots-avatar-preview"}]]
              [:div {:class "bots-swatches" :id "bots-color-row" :role "radiogroup"
@@ -1631,24 +1664,11 @@
                      "送る側と受け取る側の両方で有効にする必要があります。"
                      "ツールやアカウントは渡りません。")]]]
              [:label {:class "bots-permission"}
-              [:input {:id "bots-coding" :type "checkbox"}]
-              [:span {:class "bots-permission__copy"}
-               [:span "この PC の Git workspace で coding する"]
-               [:span {:class "bots-permission__help"}
-                "読み取りは自動、ファイル変更と commit は毎回承認します。"]]]
-             [:label {:class "bots-permission"}
               [:input {:id "bots-virtual-shell" :type "checkbox"}]
               [:span {:class "bots-permission__copy"}
                [:span "隔離された仮想環境で汎用shellを使う"]
                [:span {:class "bots-permission__help"}
                 "Bot専用・networkなし・毎回承認。選択したGit rootだけを共有します。"]]]
-             [:div {:class "field"}
-              [:label {:for "bots-workspace"} "Git workspace の絶対パス"]
-              [:input {:id "bots-workspace" :type "text" :maxlength "4096"
-                       :autocomplete "off"
-                       :placeholder "/Users/name/github/project"}]
-              [:span {:class "form-help"}
-               "codingまたは仮想shellに共有する、既存Git repositoryのrootを正確に指定します。"]]
              [:button {:class "primary-action" :id "bots-create" :type "button"}
               "はじめる"]
              [:p {:class "drive-create__status" :id "bots-create-status"

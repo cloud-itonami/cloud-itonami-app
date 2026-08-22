@@ -133,6 +133,22 @@
     (is (str/includes? js "'coding?':$('#bots-coding').checked"))
     (is (str/includes? js "workspace:$('#bots-workspace').value.trim()"))))
 
+(deftest bots-render-markdown-safely-and-start-from-a-local-workspace
+  (let [html (with-redefs [store/snapshot (constantly (store/initial-state))]
+               (web/page-html config))
+        js (slurp (io/file "resources/cloud/itonami/app/interaction.js"))]
+    (is (str/includes? js "const renderMarkdown = (node, source) =>"))
+    (is (str/includes? js "document.createTextNode")
+        "model Markdown is built as DOM text rather than assigned to innerHTML")
+    (is (str/includes? js "renderMarkdown(bubble, message.text)"))
+    (is (str/includes? js "renderMarkdown(provisional, provisional.dataset.markdown)"))
+    (is (not (str/includes? js "provisional.innerHTML")))
+    (is (str/includes? html "Local workspace で働く Bot"))
+    (is (str/includes? html "外部サービスを追加（任意）"))
+    (is (re-find #"id=\"bots-coding\"[^>]*checked" html))
+    (is (str/includes? js "botsState.defaultWorkspace = data['default-workspace'] || ''"))
+    (is (str/includes? js "$('#bots-services-next').disabled = false"))))
+
 (deftest detached-goal-polling-refreshes-the-durable-turn-not-only-messages
   (let [js (slurp (io/file "resources/cloud/itonami/app/interaction.js"))
         refresh (second (re-find

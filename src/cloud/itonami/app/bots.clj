@@ -1208,7 +1208,21 @@
                      (when (and (:bot/virtual-shell? b) (:bot/workspace b))
                        virtual-shell/tool-definitions))
         admitted (into (bot/admitted-tools b rows connected)
-                       (map :name) local-tools)]
+                       (map :name) local-tools)
+        stored-avatar (:bot/avatar b)
+        ;; Earlier wire clients omitted avatar fields, so uncustomised Bots
+        ;; were all persisted as the same blue circle. Give only that default
+        ;; a stable face derived from the immutable Bot id. This remains
+        ;; presentation data and is never consulted by tool admission.
+        face-hash (Math/abs (long (.hashCode (str (:bot/id b)))))
+        display-avatar
+        (if (= stored-avatar bot/default-avatar)
+          {:avatar/color (nth bot/avatar-colors
+                              (mod face-hash (count bot/avatar-colors)))
+           :avatar/glyph (nth bot/avatar-glyphs
+                              (mod (quot face-hash (count bot/avatar-colors))
+                                   (count bot/avatar-glyphs)))}
+          stored-avatar)]
     {:id (:bot/id b)
      ;; The Bot's own name outside this process. `:id` is a row identifier and
      ;; means nothing to anyone else; the did is self-certifying and is what a
@@ -1218,8 +1232,9 @@
      ;; the same did rather than renaming the Bot.
      :did (bot-identity/bot-did (:bot/id b))
      :name (:bot/name b)
-     :avatar {:color (name (get-in b [:bot/avatar :avatar/color]))
-              :glyph (name (get-in b [:bot/avatar :avatar/glyph]))}
+     :avatar {:color (name (:avatar/color display-avatar))
+              :glyph (name (:avatar/glyph display-avatar))
+              :variant (mod face-hash 7)}
      :brief (:bot/brief b)
      :provider-id (or (:bot/provider-id b)
                       (get-in configuration [:routing :default-provider]))
@@ -1424,6 +1439,22 @@
   (let [providers (connected-providers did)]
     (mapv #(public-message % providers bot-id) (conversation bot-id))))
 
+(defn- default-local-workspace
+  "The exact local Git root offered when a person creates a Bot.
+
+  Configuration wins, then the resident's workspace environment, then its own
+  checkout. Every candidate still passes `admit-root`; a parent directory,
+  typo, or non-Git folder yields no default instead of a wider filesystem
+  grant."
+  [configuration]
+  (some (fn [candidate]
+          (when-not (str/blank? (str candidate))
+            (try (workspace-tools/admit-root candidate)
+                 (catch Exception _ nil))))
+        [(get-in configuration [:bots :default-workspace])
+         (System/getenv "CLOUD_ITONAMI_WORKSPACE_ROOT")
+         (System/getProperty "user.dir")]))
+
 (defn overview
   "Everything the Bots screen needs on load: the Bots, and — when there are
   none — what it takes to make the first one."
@@ -1455,6 +1486,7 @@
      :catalog (catalog configuration did)
      :palette {:colors (mapv name bot/avatar-colors)
                :glyphs (mapv name bot/avatar-glyphs)}
+     :default-workspace (default-local-workspace configuration)
      :browser-available? (agent-control/browser-enabled? configuration)}))
 
 (defn suggestions
@@ -1898,7 +1930,11 @@
               "If a site asks for a password, 2FA, CAPTCHA or payment, stop "
               "and tell the person — do not try to bypass it.\n\n"))
        (when (and (:bot/coding? b) (:bot/workspace b))
-         (str "You may inspect and edit exactly one local Git repository: "
+         (str "Work local-first. Repository files, source history, and the "
+              "current Git diff are your primary evidence. Use an external "
+              "connector only when the person's request or repository evidence "
+              "specifically requires that service. You may inspect and edit "
+              "exactly one local Git repository: "
               (:bot/workspace b) ". Use workspace and git tools for bounded "
               "file operations. "
               (when-not (:bot/virtual-shell? b)
