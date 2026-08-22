@@ -68,6 +68,7 @@
             [cloud.itonami.app.mail-account :as mail-account]
             [cloud.itonami.app.mail-sync :as mail-sync]
             [cloud.itonami.app.policy :as policy]
+            [cloud.itonami.app.wallet :as wallet]
             [cloud.itonami.app.provider :as provider]
             [cloud.itonami.app.relay :as relay]
             [cloud.itonami.app.routine :as routine]
@@ -656,6 +657,16 @@
       (throw (ex-info "この Bot はこのセッションのものではありません。"
                       {:type :bot/forbidden :bot bot-id})))
     b))
+
+(defn wallet-principal
+  "The public identity Wallet needs after the ordinary Bot ownership check."
+  [session bot-id]
+  (let [b (owned! session bot-id)]
+    {:id (:bot/id b)
+     :did (bot-identity/bot-did (:bot/id b))
+     :name (:bot/name b)
+     :owner-id (:bot/owner b)
+     :organization-id (:bot/organization b)}))
 
 (defn- provider-choice!
   "Resolve this Bot's inference route through the same deployment admission
@@ -1519,13 +1530,15 @@
                                    (or (:connector/description t) (:connector/name t))
                                    (when (= :write (:connector/effect t)) " (write)"))
                  :parameters (:connector/input-schema t)}))]
-    (into (into (into (browser-tools configuration b) (peer-tools b))
-                (coding-tools b))
+    (into (into (into (into (browser-tools configuration b) (peer-tools b))
+                      (coding-tools b))
+                (wallet/bot-tool-definitions (:bot/id b)))
           connector-tools)))
 
 (defn- write-tool? [configuration tool-name]
   (or (peer-tool? tool-name)
       (agent-control/browser-write? tool-name)
+      (wallet/write-tool? tool-name)
       (workspace-tools/write-tool? tool-name)
       (virtual-shell/write-tool? tool-name)
       (let [registry (connectors/enabled configuration)]
@@ -1535,18 +1548,30 @@
                (creg/descriptors registry))))))
 
 (defn- describe-tool [configuration tool-name args]
-  (if (peer-tool? tool-name)
+  (cond
+    (peer-tool? tool-name)
     (str (:to args) " に「"
          (let [t (str (:text args))]
            (if (> (count t) 60) (str (subs t 0 60) "…") t))
          "」と書き置きします。")
-    (if (or (agent-control/browser-tool? tool-name)
-          (workspace-tools/tool? tool-name)
-          (virtual-shell/tool? tool-name))
-    (cond
-      (workspace-tools/tool? tool-name) (workspace-tools/describe tool-name args)
-      (virtual-shell/tool? tool-name) (virtual-shell/describe tool-name args)
-      :else (agent-control/describe-browser-tool tool-name args))
+
+    (wallet/tool? tool-name)
+    (if (wallet/write-tool? tool-name)
+      (str "Bot Walletから " (:to args) " へ "
+           (or (:value_wei args) (:value-wei args))
+           " weiの送金を提案します。外部Walletの署名が別途必要です。")
+      "Bot Walletの受取アドレスを読みます。")
+
+    (workspace-tools/tool? tool-name)
+    (workspace-tools/describe tool-name args)
+
+    (virtual-shell/tool? tool-name)
+    (virtual-shell/describe tool-name args)
+
+    (agent-control/browser-tool? tool-name)
+    (agent-control/describe-browser-tool tool-name args)
+
+    :else
     (let [registry (connectors/enabled configuration)
           request (invoke/request-for registry tool-name args)]
       ;; The request WITHOUT the credential — `connector.invoke/request-for`
@@ -1556,7 +1581,7 @@
       (str (str/upper-case (name (or (:connector.http/method request) :get)))
            " " (:connector.http/url request)
            (when-let [q (seq (:connector.http/query request))]
-             (str " " (pr-str (into (sorted-map) q)))))))))
+             (str " " (pr-str (into (sorted-map) q))))))))
 
 (defn- peer-target!
   "Which of the owner's Bots `to` names, or a refusal that says which question
@@ -1730,10 +1755,14 @@
                                       [:bots :goal :max-tool-output-chars])
                                 max-tool-output-chars)))
         structured (if (or (peer-tool? tool-name)
+                           (wallet/tool? tool-name)
                            (agent-control/browser-tool? tool-name)
                            (workspace-tools/tool? tool-name)
                            (virtual-shell/tool? tool-name))
                      (cond
+                       (wallet/tool? tool-name)
+                       (wallet/call-tool! (:bot/id b) tool-name args)
+
                        (peer-tool? tool-name)
                        (send-peer-message! b (:to args) (:text args))
 
@@ -2183,6 +2212,8 @@
   (cond
     (agent-control/browser-tool? name)
     "この Bot 専用の分離ブラウザーのページ状態が変わります。"
+    (wallet/tool? name)
+    "送金提案を記録します。秘密鍵はBotへ渡らず、外部Walletでの署名までは実行しません。"
     (workspace-tools/tool? name)
     "選択した local Git workspace のファイルまたは履歴が変わります。remote へは push しません。"
     (virtual-shell/tool? name)

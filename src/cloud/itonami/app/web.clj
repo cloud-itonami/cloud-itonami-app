@@ -211,6 +211,11 @@
   .local-card{background:var(--color-neutral-white);border:1px solid var(--color-neutral-solid-gray-200);
     border-radius:.75rem;padding:1.5rem}
   .local-card+.local-card{margin-top:1rem}
+  .wallet-summary{display:grid;grid-template-columns:repeat(auto-fit,minmax(12rem,1fr));gap:.75rem;margin-bottom:1rem}
+  .wallet-stat{display:grid;gap:.25rem;padding:.75rem;background:var(--color-neutral-solid-gray-50)}
+  .wallet-stat strong{font-size:1.75rem;line-height:1.4}
+  .wallet-address{overflow-wrap:anywhere}
+  .wallet-bot-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(18rem,1fr));gap:.75rem}
   /* Pre-auth is one decision, so the screen is one column: heading, gate,
      primary action, and everything else folded under one accordion. The old
      two-card grid gave 招待された User equal weight with the owner's own
@@ -1154,7 +1159,7 @@
       background:var(--color-neutral-white);font-size:.75rem;text-overflow:ellipsis}
     .local-nav{position:static;display:block;width:auto;overflow:visible;padding:0}
     .nav-primary{position:fixed;z-index:44;left:0;right:20%;bottom:0;
-      height:var(--mobile-nav-height);display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:0;
+      height:var(--mobile-nav-height);display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:0;
       padding-bottom:env(safe-area-inset-bottom);box-sizing:border-box;background:var(--color-neutral-white)}
     .nav-primary .local-nav__item,.mobile-menu-toggle{min-height:4.5rem;height:4.5rem;
       display:flex;flex-direction:column;align-items:center;justify-content:center;gap:.125rem;
@@ -1412,6 +1417,7 @@
        [:nav {:class "local-nav" :aria-label "機能メニュー"}
         [:div {:class "nav-primary authenticated-only" :hidden true}
          (nav-item "bots" "Bots" "◕" "bots-count")
+         (nav-item "wallet" "Wallet" "◈" "wallet-count")
          (nav-item "messenger" "Messenger" "◇" "messenger-count")]
         [:div {:class "nav-overflow-panel" :id "mobile-overflow-panel"}
          [:div {:class "nav-secondary authenticated-only" :hidden true}
@@ -1755,6 +1761,55 @@
             [:li {:class "skeleton"}]]]
           [:article {:class "record-detail" :id "capture-detail" :aria-live "polite"}
            [:div {:class "empty-state"} "記録を読み込んでいます。"]]]]
+        [:section {:class "view" :data-view-panel "wallet" :hidden true}
+         (view-header "Wallet"
+                      "検証済みの外部WalletをBotへ割り当て、受取と送金提案を管理します。秘密鍵はCloud Itonamiへ保存しません。")
+         [:div {:class "security-callout"}
+          [:strong "Non-custodial"]
+          " Botは受取アドレスを持ち送金を提案できますが、署名と送信はMetaMaskなどの外部Walletで確認します。"]
+         [:p {:class "source-note"} [:span {:class "source-dot"}]
+          [:span {:id "wallet-source"} "Walletを確認中…"]]
+         [:div {:class "wallet-summary" :id "wallet-summary"}
+          [:div {:class "wallet-stat"} [:span "接続済みWallet"] [:strong "—"]]
+          [:div {:class "wallet-stat"} [:span "Walletを持つBot"] [:strong "—"]]
+          [:div {:class "wallet-stat"} [:span "署名待ち"] [:strong "—"]]]
+         [:div {:class "local-card"}
+          [:div {:class "view-header"}
+           [:div
+            (dds/heading 2 "Walletを接続" {:size "24"})
+            [:p {:class "form-help"}
+             "EIP-4361所有証明だけを保存します。接続しても送金権限や秘密鍵は渡りません。"
+             " デスクトップ版ではWallet拡張のある既定ブラウザへ引き継ぎます。"]]
+           [:button {:class "primary-action" :id "wallet-connect" :type "button"}
+            "MetaMaskを接続"]]
+          [:p {:class "form-help" :id "wallet-connect-status"
+               :role "status" :aria-live "polite"}]
+          [:ul {:class "data-list" :id "wallet-account-list"}
+           [:li {:class "skeleton"}]]]
+         [:div {:class "local-card"}
+          (dds/heading 2 "Bot Wallet" {:size "24"})
+          [:p {:class "form-help"}
+           "Botごとに1つの検証済みアドレスを割り当てます。同じアドレスを複数Botへ共有しません。"]
+          [:div {:class "wallet-bot-grid" :id "wallet-bot-list"}
+           [:div {:class "skeleton"}]]]
+         [:div {:class "local-card"}
+          (dds/heading 2 "送る" {:size "24"})
+          [:form {:class "settings-form" :id "wallet-send-form"}
+           [:label {:for "wallet-send-bot"} "送信元Bot"]
+           [:select {:id "wallet-send-bot" :name "bot-id" :required true}
+            [:option {:value ""} "Walletを持つBotを選択"]]
+           [:label {:for "wallet-send-to"} "送信先アドレス"]
+           [:input {:id "wallet-send-to" :name "to" :required true
+                    :autocomplete "off" :placeholder "0x…"}]
+           [:label {:for "wallet-send-amount"} "数量（ETH）"]
+           [:input {:id "wallet-send-amount" :name "amount" :required true
+                    :type "text" :inputmode "decimal" :placeholder "0.01"}]
+           [:button {:class "primary-action" :type "submit"}
+            "送金内容を確認"]]
+          [:p {:class "form-help" :id "wallet-send-status"
+               :role "status" :aria-live "polite"}]
+          [:ul {:class "data-list" :id "wallet-transfer-list"}
+           [:li {:class "skeleton"}]]]]
         [:section {:class "view messenger-view" :data-view-panel "messenger" :hidden true}
          (view-header "Kaisya Messenger"
                       "人間・agent・organismがそれぞれのmailboxで会話します。未許可の送信者は本文を表示せず隔離します。")

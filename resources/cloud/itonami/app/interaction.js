@@ -10384,6 +10384,234 @@
     $('#bots-conversations-close').addEventListener('click', () =>
       setBotConversationsOpen(false));
 
+    // ── Wallet: verified external accounts, one assignment per Bot ──────
+    let walletState = null;
+    let walletBalances = new Map();
+    const shortAddress = (address) => address
+      ? `${address.slice(0, 8)}…${address.slice(-6)}` : '未割り当て';
+    const weiToEth = (value) => {
+      const wei = BigInt(value || '0');
+      const whole = wei / (10n ** 18n);
+      const fraction = String(wei % (10n ** 18n)).padStart(18, '0').replace(/0+$/, '');
+      return fraction ? `${whole}.${fraction}` : String(whole);
+    };
+    const ethToWei = (value) => {
+      const match = String(value || '').trim().match(/^(\d+)(?:\.(\d{1,18}))?$/);
+      if (!match) throw new Error('数量は小数点以下18桁までのETHで入力してください。');
+      const result = BigInt(match[1]) * (10n ** 18n)
+        + BigInt((match[2] || '').padEnd(18, '0') || '0');
+      if (result <= 0n) throw new Error('0より大きい数量を入力してください。');
+      return String(result);
+    };
+    const requireInjectedWallet = () => {
+      if (!window.ethereum?.request) {
+        throw new Error('MetaMaskなどのEIP-1193 Walletが見つかりません。');
+      }
+      return window.ethereum;
+    };
+    const walletAccountById = (id) =>
+      walletState?.accounts?.find((account) => account.id === id);
+    const refreshWalletBalances = async () => {
+      if (!window.ethereum?.request || !walletState?.accounts?.length) return;
+      try {
+        const available = (await window.ethereum.request({method:'eth_accounts'}))
+          .map((address) => address.toLowerCase());
+        const chainId = Number(BigInt(await window.ethereum.request({method:'eth_chainId'})));
+        const pairs = await Promise.all(walletState.accounts
+          .filter((account) => account.status === 'active'
+            && account['chain-id'] === chainId
+            && available.includes(account.address.toLowerCase()))
+          .map(async (account) => [account.id, await window.ethereum.request({
+            method:'eth_getBalance', params:[account.address, 'latest']
+          })]));
+        walletBalances = new Map(pairs);
+      } catch (_) { walletBalances = new Map(); }
+    };
+    const renderWallet = (data) => {
+      walletState = data;
+      const accounts = data.accounts || [];
+      const bots = data.bots || [];
+      const transfers = data.transfers || [];
+      const activeAccounts = accounts.filter((account) => account.status === 'active');
+      const assignedIds = new Set(bots.map((bot) => bot.wallet?.['link-id']).filter(Boolean));
+      const assignedBots = bots.filter((bot) => bot.wallet);
+      const waiting = transfers.filter((transfer) => transfer.status === 'awaiting-wallet');
+      $('#wallet-count').textContent = assignedBots.length || '';
+      $('#wallet-source').textContent = data['private-keys-stored?']
+        ? '秘密鍵を保存しています' : '外部Wallet署名・秘密鍵は保存しません';
+      $('#wallet-summary').replaceChildren(
+        ...[
+          ['接続済みWallet', activeAccounts.length],
+          ['Walletを持つBot', assignedBots.length],
+          ['署名待ち', waiting.length]
+        ].map(([label, value]) => {
+          const item = make('div', 'wallet-stat');
+          item.append(make('span', null, label), make('strong', null, String(value)));
+          return item;
+        }));
+
+      const accountList = $('#wallet-account-list'); accountList.replaceChildren();
+      if (!accounts.length) accountList.append(make('li', 'empty-state', '接続済みWalletはありません。'));
+      accounts.forEach((account) => {
+        const row = make('li', 'data-list__item');
+        const body = make('div');
+        body.append(make('p', 'data-list__title wallet-address', account.address));
+        const balanceHex = walletBalances.get(account.id);
+        body.append(make('p', 'data-list__meta',
+          `Chain ${account['chain-id']} · ${account.status === 'active' ? '接続中' : '解除済み'}`
+          + (balanceHex ? ` · ${weiToEth(BigInt(balanceHex))} ETH` : '')));
+        const actions = make('div', 'button-row');
+        const copy = make('button', 'tool-button', 'コピー'); copy.type = 'button';
+        copy.addEventListener('click', async () => navigator.clipboard.writeText(account.address));
+        actions.append(copy);
+        if (account.status === 'active') {
+          const revoke = make('button', 'tool-button', '接続解除'); revoke.type = 'button';
+          revoke.disabled = assignedIds.has(account.id);
+          revoke.title = revoke.disabled ? '先にBotへの割り当てを解除してください' : '';
+          revoke.addEventListener('click', async () => {
+            await postJSON(`/api/wallet/accounts/${encodeURIComponent(account.id)}/revoke`, {}, true);
+            await loadWallet();
+          });
+          actions.append(revoke);
+        }
+        row.append(body, actions); accountList.append(row);
+      });
+
+      const botList = $('#wallet-bot-list'); botList.replaceChildren();
+      if (!bots.length) botList.append(make('div', 'empty-state', '先にBotを作成してください。'));
+      bots.forEach((bot) => {
+        const card = make('article', 'wallet-bot local-card');
+        card.append(make('h3', null, bot.name));
+        if (bot.wallet) {
+          card.append(make('p', 'wallet-address', bot.wallet.address),
+            make('p', 'form-help', `Chain ${bot.wallet['chain-id']} · 受取 / 送金提案`));
+          const copy = make('button', 'tool-button', '受取アドレスをコピー'); copy.type = 'button';
+          copy.addEventListener('click', async () => navigator.clipboard.writeText(bot.wallet.address));
+          const remove = make('button', 'tool-button', '割り当て解除'); remove.type = 'button';
+          remove.addEventListener('click', async () => {
+            await postJSON(`/api/wallet/bots/${encodeURIComponent(bot.id)}/unassign`, {}, true);
+            await loadWallet();
+          });
+          const row = make('div', 'button-row'); row.append(copy, remove); card.append(row);
+        } else {
+          const available = activeAccounts.filter((account) => !assignedIds.has(account.id));
+          const select = make('select');
+          select.setAttribute('aria-label', `${bot.name}へ割り当てるWallet`);
+          const empty = document.createElement('option'); empty.value = ''; empty.textContent = 'Walletを選択';
+          select.append(empty, ...available.map((account) => {
+            const option = document.createElement('option'); option.value = account.id;
+            option.textContent = `${shortAddress(account.address)} · Chain ${account['chain-id']}`;
+            return option;
+          }));
+          const assign = make('button', 'primary-action', '割り当て'); assign.type = 'button';
+          assign.disabled = !available.length;
+          select.addEventListener('change', () => { assign.disabled = !select.value; });
+          assign.addEventListener('click', async () => {
+            await postJSON(`/api/wallet/bots/${encodeURIComponent(bot.id)}/assign`,
+              {'link-id':select.value}, true);
+            await loadWallet();
+          });
+          card.append(select, assign);
+        }
+        botList.append(card);
+      });
+
+      const botSelect = $('#wallet-send-bot');
+      botSelect.replaceChildren();
+      const prompt = document.createElement('option'); prompt.value = '';
+      prompt.textContent = 'Walletを持つBotを選択'; botSelect.append(prompt);
+      assignedBots.forEach((bot) => {
+        const option = document.createElement('option'); option.value = bot.id;
+        option.textContent = `${bot.name} · ${shortAddress(bot.wallet.address)}`;
+        botSelect.append(option);
+      });
+
+      const transferList = $('#wallet-transfer-list'); transferList.replaceChildren();
+      if (!transfers.length) transferList.append(make('li', 'empty-state', '送金提案はありません。'));
+      transfers.forEach((transfer) => {
+        const row = make('li', 'data-list__item');
+        const body = make('div');
+        body.append(make('p', 'data-list__title', `${weiToEth(transfer['value-wei'])} ETH`),
+          make('p', 'data-list__meta wallet-address', `${shortAddress(transfer.from)} → ${shortAddress(transfer.to)}`),
+          make('p', 'data-list__meta', transfer.status === 'submitted'
+            ? `送信済み · ${shortAddress(transfer['tx-hash'])}` : '外部Walletの署名待ち'));
+        row.append(body);
+        if (transfer.status === 'awaiting-wallet') {
+          const submit = make('button', 'primary-action', 'MetaMaskで確認'); submit.type = 'button';
+          submit.addEventListener('click', () => submitWalletTransfer(transfer, submit));
+          row.append(submit);
+        }
+        transferList.append(row);
+      });
+    };
+    const loadWallet = async () => {
+      const request = await fetch('/api/wallet', {cache:'no-store'});
+      const data = await request.json();
+      if (!request.ok) throw new Error(data?.error?.message || 'Walletを読み込めません。');
+      walletState = data;
+      await refreshWalletBalances();
+      renderWallet(data);
+      return data;
+    };
+    const submitWalletTransfer = async (transfer, button) => {
+      const status = $('#wallet-send-status'); button.disabled = true;
+      try {
+        const provider = requireInjectedWallet();
+        const accounts = await provider.request({method:'eth_requestAccounts'});
+        if (!accounts.some((address) => address.toLowerCase() === transfer.from.toLowerCase())) {
+          throw new Error(`MetaMaskで送信元 ${shortAddress(transfer.from)} を選択してください。`);
+        }
+        const chainId = Number(BigInt(await provider.request({method:'eth_chainId'})));
+        if (chainId !== transfer['chain-id']) {
+          throw new Error(`Chain ${transfer['chain-id']} に切り替えてください。`);
+        }
+        const txHash = await provider.request({method:'eth_sendTransaction', params:[{
+          from:transfer.from, to:transfer.to,
+          value:`0x${BigInt(transfer['value-wei']).toString(16)}`
+        }]});
+        await postJSON(`/api/wallet/transfers/${encodeURIComponent(transfer.id)}/submitted`,
+          {'tx-hash':txHash}, true);
+        status.textContent = '外部Walletへ送信し、transaction hashを記録しました。';
+        await loadWallet();
+      } catch (error) { status.textContent = error.message; button.disabled = false; }
+    };
+    $('#wallet-connect').addEventListener('click', async () => {
+      const button = $('#wallet-connect'); const status = $('#wallet-connect-status');
+      button.disabled = true; status.textContent = 'Walletへ接続しています…';
+      try {
+        if (!window.ethereum?.request) {
+          const opened = await postJSON('/api/wallet/open', {}, true);
+          status.textContent = opened['opened-externally?']
+            ? 'Wallet拡張のある既定ブラウザでWallet画面を開きました。'
+            : `既定ブラウザで ${opened.url} を開いてください。`;
+          return;
+        }
+        const provider = requireInjectedWallet();
+        const [address] = await provider.request({method:'eth_requestAccounts'});
+        const chainId = Number(BigInt(await provider.request({method:'eth_chainId'})));
+        const challenge = await postJSON('/api/wallet/connect/start', {address, 'chain-id':chainId}, true);
+        const signature = await provider.request({
+          method:'personal_sign', params:[challenge.message, address]
+        });
+        await postJSON('/api/wallet/connect/finish',
+          {'transaction-id':challenge.id, signature}, true);
+        status.textContent = 'Walletの所有証明を確認して接続しました。';
+        await loadWallet();
+      } catch (error) { status.textContent = error.message; }
+      finally { button.disabled = false; }
+    });
+    $('#wallet-send-form').addEventListener('submit', async (event) => {
+      event.preventDefault(); const status = $('#wallet-send-status');
+      try {
+        const fields = Object.fromEntries(new FormData(event.currentTarget));
+        await postJSON('/api/wallet/transfers', {
+          'bot-id':fields['bot-id'], to:fields.to, 'value-wei':ethToWei(fields.amount)
+        }, true);
+        status.textContent = '送金提案を記録しました。内容を確認して外部Walletで署名してください。';
+        event.currentTarget.reset(); await loadWallet();
+      } catch (error) { status.textContent = error.message; }
+    });
+
     onViewChange = () => {
       scheduleWorkerPoll();
       if (currentView === 'bots') {
@@ -10405,6 +10633,9 @@
           $('#credentials-source').textContent = error.message;
         });
       }
+      if (currentView === 'wallet') loadWallet().catch((error) => {
+        $('#wallet-source').textContent = error.message;
+      });
       if (currentView === 'projects') loadProjectBoard();
       if (currentView === 'capture') loadCaptures().catch((error) => {
         $('#capture-status').textContent = error.message;
