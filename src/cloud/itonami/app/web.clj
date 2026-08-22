@@ -1195,8 +1195,16 @@
     body[data-native-titlebar='overlay'] .topbar{
       padding-left:5rem}
     .topbar__title{font-size:1rem;line-height:1.4;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-    .bots-titlebar__copy{display:none}
-    #bots-titlebar-context{gap:.375rem}
+    /* The titlebar has only 210px beside the traffic lights and workspace
+       switcher at the 430px installed width. The selected Bot already appears
+       in the rail, so keep the promised fixed “Bots” title and make its
+       operations a compact, horizontal icon group. */
+    .bots-titlebar__identity{display:none!important}
+    #bots-titlebar-context{gap:.25rem;flex:0 0 auto}
+    #bots-titlebar-context>.tool-button{width:2.5rem;min-width:2.5rem;
+      min-height:2.5rem;padding:.25rem;white-space:nowrap}
+    .bots-conversations__count{position:absolute;clip:rect(0,0,0,0);
+      clip-path:inset(50%);width:1px;height:1px;overflow:hidden;white-space:nowrap}
     .view{padding:1rem}.view-header h1{font-size:1.75rem;line-height:1.3}.view-lead{line-height:1.7}
     .bots-view{height:calc(100dvh - 4rem - env(safe-area-inset-top) - var(--mobile-nav-height));padding:0}
     /* On a phone the Bot picker is a horizontal touch rail. A vertical rail
@@ -1469,10 +1477,11 @@
                    :title "この Bot が届く範囲" :hidden true} "▤"]
          [:button {:class "tool-button" :id "bots-conversations" :type "button"
                    :aria-expanded "false" :aria-controls "bots-conversations-panel"
-                   :title "Bot同士の会話を読む"}
-          "会話 " [:span {:id "rooms-count"} "—"]]
+                   :aria-label "Bot同士の会話を読む" :title "Bot同士の会話を読む"}
+          "↔" [:span {:class "bots-conversations__count" :id "rooms-count"} "—"]]
          [:button {:class "tool-button" :id "bots-workforce" :type "button"
-                   :title "8事業の職務Botを常駐化"} "会社Bot"]
+                   :aria-label "会社Botを常駐化"
+                   :title "8事業の職務Botを常駐化"} "▦"]
          [:button {:class "tool-button" :id "bots-new" :type "button"
                    :aria-label "新しい Bot を作る"} "＋"]]]
        [:main {:id "main-content"}

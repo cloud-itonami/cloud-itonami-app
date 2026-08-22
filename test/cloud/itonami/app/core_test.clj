@@ -1377,7 +1377,11 @@
     (doseq [removed ["room-create-form" "room-send-form" "room-send"]]
       (is (not (re-find (re-pattern (str "id=\"" removed "\"")) html))
           (str removed " makes the read-only viewer writable")))
-    (is (str/includes? html "表示専用です"))))
+    (is (str/includes? html "表示専用です"))
+    (is (str/includes? html "aria-label=\"Bot同士の会話を読む\""))
+    (is (str/includes? html "aria-label=\"会社Botを常駐化\""))
+    (is (str/includes? web/app-css
+                       ".bots-titlebar__identity{display:none!important}"))))
 
 (deftest the-bots-view-loads-its-read-only-conversations
   (is (not (str/includes? web/interaction-js "currentView === 'rooms'")))
