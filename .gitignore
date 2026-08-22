@@ -12,3 +12,4 @@
 
 # build / cache output (untracked 2026-08-22)
 **/.wrangler/
+**/node_modules/
