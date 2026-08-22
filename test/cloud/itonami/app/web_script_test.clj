@@ -252,7 +252,8 @@
     (is (str/includes? js "if (location.hash !== target) history.replaceState(null, '', target);"))
     (is (str/includes? js "window.addEventListener('hashchange'"))
     (is (str/includes? html "href=\"#/signin\""))
-    (is (str/includes? html "href=\"#/chat\""))
+    (is (str/includes? html "href=\"#/bots\""))
+    (is (not (str/includes? html "href=\"#/chat\"")))
     (is (str/includes? html "href=\"#/settings\""))
     (is (str/includes? js "const token = emailLoginToken;"))
     (is (not (str/includes? js

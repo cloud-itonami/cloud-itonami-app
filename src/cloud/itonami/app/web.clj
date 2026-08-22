@@ -369,7 +369,14 @@
   .bots-dot[data-status='waiting-connection']{background:#e07a26}
   .bots-dot[data-status='idle']{background:var(--color-neutral-solid-gray-300)}
   .bots-dot[data-status='disabled']{background:var(--color-neutral-solid-gray-200)}
-  .bots-main{display:flex;flex-direction:column;min-height:0;min-width:0}
+  .bots-main{position:relative;display:flex;flex-direction:column;min-height:0;min-width:0}
+  .bots-conversations{position:absolute;z-index:4;inset:0 0 0 auto;width:min(100%,42rem);
+    overflow-y:auto;padding:1rem;border-left:1px solid var(--color-neutral-solid-gray-200);
+    background:var(--color-neutral-white);display:grid;
+    align-content:start;gap:1rem}
+  .bots-conversations[hidden]{display:none}
+  .bots-conversations__layout{display:grid;grid-template-columns:minmax(12rem,.7fr) minmax(16rem,1.3fr);
+    gap:1rem;min-height:0}
   .bots-onboard{overflow-y:auto;padding:clamp(1rem,4vw,3rem);max-width:52rem;
     margin:0 auto;width:100%}
   .bots-onboard__step{display:grid;gap:1rem;justify-items:stretch}
@@ -1198,6 +1205,8 @@
        every avatar button carries its full accessible name. */
     .bots-shell{display:flex;flex-direction:column}
     .bots-main{flex:1}
+    .bots-conversations{width:100%;border-left:0}
+    .bots-conversations__layout{grid-template-columns:1fr}
     .bots-rail{display:block;flex:0 0 auto;padding:.375rem .75rem;border-right:0;
       border-bottom:1px solid var(--color-neutral-solid-gray-200);overflow-x:auto}
     .bots-rail__list{display:flex;gap:.375rem;overflow-x:auto;scrollbar-width:none}
@@ -1271,7 +1280,7 @@
   ;; as identity (ADR-2608145100).
   [:a {:class "local-nav__item" :href (str "#/" view)
        :data-view view :data-title title :aria-label title
-       :aria-current (if (= view "chat") "page" "false")}
+       :aria-current (if (= view "bots") "page" "false")}
    [:span {:class "nav-icon" :aria-hidden "true"} icon]
    [:span {:class "nav-label"} title]
    (when badge-id [:span {:class "nav-badge" :id badge-id} "—"])])
@@ -1306,6 +1315,60 @@
   (let [[tag attrs & children] (dds/accordion summary content {})]
     (into [tag (assoc attrs :id id)] children)))
 
+(defn- context-capture-settings []
+  [:div {:class "settings-stack" :id "context-capture-settings"}
+   [:div {:class "local-card"}
+    (dds/heading 2 "Context capture" {:size "24"})
+    [:p {:class "view-lead"}
+     "画面とBotの操作結果を端末内のrolling contextとして保持します。新しいUserでは既定でONです。"]
+    [:p {:class "form-help"}
+     "暗黙のcontextはローカルmodelだけが参照します。cloud providerへ自動送信しません。"]
+    [:p {:class "settings-notice" :id "memory-status"
+         :role "status" :aria-live "polite"} ""]
+    [:div {:class "memory-card"}
+     [:div {:class "memory-row"}
+      [:div
+       (dds/heading 3 "会話と操作のローカルメモリ" {:size "20"})
+       [:p "Botとの会話、実行したツール名、boundedな結果を今後のBot contextに使用します。"]]
+      [:label {:class "memory-switch" :for "memory-local-toggle"}
+       [:input {:id "memory-local-toggle" :type "checkbox"
+                :aria-label "ローカルメモリを有効にする"}]
+       [:span {:aria-hidden "true"}]]]
+     [:div {:class "memory-row"}
+      [:div
+       (dds/heading 3 "画面コンテキスト" {:size "20"})
+       [:p "60秒ごとに画面を端末内へ保存してOCRし、6時間のrolling contextとして検索可能にします。"]
+       [:p {:class "memory-permission" :id "memory-screen-permission"
+            :data-state "unknown"} "画面収録の権限を確認中…"]]
+      [:div {:class "memory-row__actions"}
+       [:button {:class "tool-button" :id "memory-open-settings" :type "button"}
+        "macOS設定を開く"]
+       [:label {:class "memory-switch" :for "memory-screen-toggle"}
+        [:input {:id "memory-screen-toggle" :type "checkbox"
+                 :aria-label "画面コンテキストを有効にする"}]
+        [:span {:aria-hidden "true"}]]]]
+     [:div {:class "memory-row"}
+      [:div
+       (dds/heading 3 "Botの操作記録" {:size "20"})
+       [:p "Botが実行したツールの目標とboundedな結果を記憶します。画像、credential、全文出力は保存しません。"]]
+      [:label {:class "memory-switch" :for "memory-tool-toggle"}
+       [:input {:id "memory-tool-toggle" :type "checkbox"
+                :aria-label "Botの操作記録を有効にする"}]
+       [:span {:aria-hidden "true"}]]]
+     [:div {:class "memory-row"}
+      [:div
+       (dds/heading 3 "端末内contextを削除" {:size "20"})
+       [:p "保存した画面、OCR、派生メモリを削除します。Botの会話履歴は削除されません。"]]
+      [:button {:class "danger-action" :id "memory-delete-button" :type "button"}
+       "削除"]]]
+    [:div {:class "memory-summary" :id "memory-counts"}]
+    [:div {:class "section-heading"}
+     (dds/heading 3 "最近のcontext" {:size "20"})
+     [:button {:class "tool-button" :id "memory-capture-button" :type "button"}
+      "今すぐ画面を取得"]]
+    [:ul {:class "memory-recent" :id "memory-recent-list"}
+     [:li "まだcontextはありません。"]]]])
+
 (defn page-html [configuration]
   (let [cloud? (get-in configuration [:routing :cloud-enabled?])
         provider (get-in configuration [:routing :default-provider])
@@ -1313,7 +1376,7 @@
         brand (get-in configuration [:brand :name] "Cloud Itonami")
         css (slurp (io/resource "jp_go_dds/dds.css"))]
     (page/->page
-     {:title (str "Chat | " brand)
+     {:title (str "Bots | " brand)
       :description "安全第一（緑十字）のAIワークスペース"
       :css css :app-css app-css
       :head [[:link {:rel "icon" :type "image/png" :href "/icon.png"}]
@@ -1338,10 +1401,7 @@
          "作業対象の組織を切り替えます"]]
        [:nav {:class "local-nav" :aria-label "機能メニュー"}
         [:div {:class "nav-primary authenticated-only" :hidden true}
-         (nav-item "chat" "Chat" "✦" nil)
          (nav-item "bots" "Bots" "◕" "bots-count")
-         (nav-item "rooms" "Rooms" "◎" "rooms-count")
-         (nav-item "capture" "Capture" "＋" "capture-count")
          (nav-item "messenger" "Messenger" "◇" "messenger-count")]
         [:div {:class "nav-overflow-panel" :id "mobile-overflow-panel"}
          [:div {:class "nav-secondary authenticated-only" :hidden true}
@@ -1372,8 +1432,7 @@
             (nav-item "storage" "Storage" "◈" "storage-count")])]
          [:div {:class "sidebar__utility"}
           (nav-item "signin" "サインイン" "↪" nil)
-          [:div {:class "authenticated-only" :hidden true}
-           (nav-item "memory" "Memory" "◴" nil)
+         [:div {:class "authenticated-only" :hidden true}
            (nav-item "settings" "Settings" "⚙" nil)]]]
         [:button {:class "mobile-menu-toggle" :type "button"
                   :aria-controls "mobile-overflow-panel" :aria-expanded "false"
@@ -1391,7 +1450,7 @@
         [:span {:id "workspace-status"} "既存サービスを確認中…"]]]
       [:div {:class "main"}
        [:header {:class "topbar" :data-kotoba-window-drag "true"}
-        [:h2 {:class "topbar__title" :id "current-view"} "Chat"]
+        [:h2 {:class "topbar__title" :id "current-view"} "Bots"]
         [:div {:class "topbar__context authenticated-only" :id "project-titlebar-context"
                :data-topbar-view "default" :hidden true}
          [:label {:class "visually-hidden" :for "active-project-select"} "現在のProject"]
@@ -1408,6 +1467,10 @@
          [:button {:class "tool-button" :id "bots-thread-tools" :type "button"
                    :aria-expanded "false" :aria-controls "bots-thread-panel"
                    :title "この Bot が届く範囲" :hidden true} "▤"]
+         [:button {:class "tool-button" :id "bots-conversations" :type "button"
+                   :aria-expanded "false" :aria-controls "bots-conversations-panel"
+                   :title "Bot同士の会話を読む"}
+          "会話 " [:span {:id "rooms-count"} "—"]]
          [:button {:class "tool-button" :id "bots-workforce" :type "button"
                    :title "8事業の職務Botを常駐化"} "会社Bot"]
          [:button {:class "tool-button" :id "bots-new" :type "button"
@@ -1415,7 +1478,10 @@
        [:main {:id "main-content"}
         [:p {:class "settings-notice global-status" :id "identity-status"
              :role "status" :aria-live "polite"} ""]
-        [:section {:class "view chat-view" :data-view-panel "chat"}
+        ;; Legacy local chat stays in the document for compatibility with the
+        ;; API, but it is no longer a destination: direct conversation happens
+        ;; in the selected Bot thread.
+        [:section {:class "legacy-surface chat-view" :hidden true}
          [:div {:class "chat-shell" :id "chat-shell"}
           [:header {:class "chat-header"}
            [:div {:class "chat-agent"}
@@ -1572,7 +1638,27 @@
              [:p {:class "drive-create__status" :id "bots-create-status"
                   :aria-live "polite"}]
              [:div {:class "bots-suggestions" :id "bots-suggestions"}]]]
-           ;; The thread.
+           ;; Bot-to-Bot rooms are an attributed audit trail inside Bots, not
+           ;; another place to issue work. Creation and sending remain API/CLI
+           ;; operations; this surface only lets a person follow what was said.
+           [:aside {:class "bots-conversations" :id "bots-conversations-panel"
+                    :hidden true :aria-label "Bot同士の会話"}
+            [:div {:class "section-heading"}
+             (dds/heading 2 "Bot同士の会話" {:size "24"})
+             [:button {:class "tool-button" :id "bots-conversations-close"
+                       :type "button" :aria-label "会話一覧を閉じる"} "閉じる"]]
+            [:p {:class "form-help"}
+             "表示専用です。誰が何を言ったかを辿れます。ここからBotへ指示やツール実行はできません。"]
+            [:div {:class "bots-conversations__layout"}
+             [:ul {:class "record-list__items" :id "room-list"}
+              [:li {:class "empty-state"} "まだBot同士の会話はありません。"]]
+             [:div {:id "room-panel" :hidden true}
+              (dds/heading 3 "" {:size "20" :id "room-title"})
+              [:p {:class "source-note" :id "room-members-summary"}]
+              [:ul {:class "record-list__items" :id "room-thread"}
+               [:li {:class "empty-state"} "まだ発言はありません。"]]
+              [:p {:class "form-help" :id "room-status" :aria-live "polite"}]]]]
+           ;; The direct Bot thread is the product's chat surface.
            [:div {:class "bots-thread" :id "bots-thread" :hidden true}
             [:div {:class "bots-thread__panel" :id "bots-thread-panel" :hidden true}]
             [:div {:class "bots-thread__scroll" :id "bots-thread-scroll"}
@@ -1590,51 +1676,7 @@
                        :hidden true} "中止"]]
             [:p {:class "drive-create__status" :id "bots-thread-status-line"
                  :aria-live "polite"}]]]]]
-        [:section {:class "view" :data-view-panel "rooms" :hidden true}
-         (view-header "Rooms"
-                      (str "複数の Bot にまとめて聞きます。1回の発言につき各メンバーが"
-                           "1ターン、最大3周。付け足すことが無いメンバーは黙ります。"))
-         [:div {:class "site-layout"}
-          [:div {:class "settings-stack"}
-           [:div {:class "local-card"}
-            (dds/heading 2 "新しいルーム" {:size "24"})
-            [:form {:class "settings-form" :id "room-create-form"}
-             [:div {:class "field"}
-              [:label {:for "room-name"} "ルーム名"]
-              [:input {:id "room-name" :name "name" :required true :maxlength "60"
-                       :placeholder "経営"}]]
-             [:div {:class "field"}
-              [:label {:for "room-members"} "メンバー"]
-              [:ul {:class "record-list__items" :id "room-members"}
-               [:li {:class "empty-state"} "Bot を読み込んでいます。"]]]
-             [:button {:class "primary-action" :type "submit"} "ルームを作成"]]
-            [:p {:class "form-help" :id "room-create-status" :aria-live "polite"}]
-            ;; The two limits are on screen because both are a person's: eight
-            ;; members is a ceiling, and three rounds is what one sentence
-            ;; costs at worst.
-            [:p {:class "form-help"}
-             "メンバーは8体まで。ルームにツールはありません — やってもらうのは、"
-             "その Bot に直接頼むか引き継ぎです。"]]
-           [:div {:class "local-card"}
-            (dds/heading 2 "ルーム" {:size "24"})
-            [:ul {:class "record-list__items" :id "room-list"}
-             [:li {:class "empty-state"} "まだルームはありません。"]]]]
-          [:div {:class "settings-stack" :id "room-panel" :hidden true}
-           [:div {:class "local-card"}
-            [:div {:class "view-header" :style "margin-bottom:1rem"}
-             [:div
-              (dds/heading 2 "" {:size "24" :id "room-title"})
-              [:p {:class "source-note" :id "room-members-summary"}]]]
-            [:ul {:class "record-list__items" :id "room-thread"}
-             [:li {:class "empty-state"} "まだ発言はありません。"]]
-            [:form {:class "settings-form" :id "room-send-form"}
-             [:div {:class "field"}
-              [:label {:for "room-text"} "ルームに聞く"]
-              [:textarea {:id "room-text" :name "text" :rows "3"
-                          :placeholder "今日どうする"}]]
-             [:button {:class "primary-action" :type "submit" :id "room-send"} "聞く"]]
-            [:p {:class "form-help" :id "room-status" :aria-live "polite"}]]]]]
-        [:section {:class "view" :data-view-panel "capture" :hidden true}
+        [:section {:class "legacy-surface" :hidden true}
          (view-header "Capture"
                       "考えを評価・分類せず、そのまま手元に残します。AIには送られません。整理は後から行います。")
          [:div {:class "local-card"}
@@ -2741,54 +2783,6 @@
             [:li {:class "skeleton"}]]]
           [:article {:class "record-detail" :id "contracts-detail" :aria-live "polite"}
            [:div {:class "empty-state"} "契約を選ぶと、解約手順と予告期限を表示します。"]]]]
-        [:section {:class "view" :data-view-panel "memory" :hidden true}
-         (view-header "メモリ" "このコンピューターでローカルメモリを収集、保持、統合する方法を設定します。")
-         [:p {:class "settings-notice" :id "memory-status"
-              :role "status" :aria-live "polite"} ""]
-         [:div {:class "memory-card"}
-          [:div {:class "memory-row"}
-           [:div
-            (dds/heading 2 "ローカルメモリを有効にする" {:size "20"})
-            [:p "この端末上のチャットから記憶を作成し、今後のチャットの補助コンテキストに使用します。"]]
-           [:label {:class "memory-switch" :for "memory-local-toggle"}
-            [:input {:id "memory-local-toggle" :type "checkbox"
-                     :aria-label "ローカルメモリを有効にする"}]
-            [:span {:aria-hidden "true"}]]]
-          [:div {:class "memory-row"}
-           [:div
-            (dds/heading 2 "Chronicle 画面コンテキスト" {:size "20"})
-            [:p "画面を定期的に端末内へ保存して OCR し、作業中の文脈を検索可能にします。画像と文字列はこの端末から送信しません。"]
-            [:p {:class "memory-permission" :id "memory-screen-permission"
-                 :data-state "unknown"} "画面収録の権限を確認中…"]]
-           [:div {:class "memory-row__actions"}
-            [:button {:class "tool-button" :id "memory-open-settings" :type "button"}
-             "設定を開く"]
-            [:label {:class "memory-switch" :for "memory-screen-toggle"}
-             [:input {:id "memory-screen-toggle" :type "checkbox"
-                      :aria-label "Chronicle 画面コンテキストを有効にする"}]
-             [:span {:aria-hidden "true"}]]]]
-          [:div {:class "memory-row"}
-           [:div
-            (dds/heading 2 "ツール支援チャットからのメモリ生成を許可" {:size "20"})
-            [:p "端末操作を伴うタスクの目標と結果を記憶します。ツール出力内の命令は実行しません。"]]
-           [:label {:class "memory-switch" :for "memory-tool-toggle"}
-            [:input {:id "memory-tool-toggle" :type "checkbox"
-                     :aria-label "ツール支援メモリを有効にする"}]
-            [:span {:aria-hidden "true"}]]]
-          [:div {:class "memory-row"}
-           [:div
-            (dds/heading 2 "ローカルメモリを削除" {:size "20"})
-            [:p "保存した画面、OCR、派生メモリを削除します。チャット履歴は削除されません。"]]
-           [:button {:class "danger-action" :id "memory-delete-button" :type "button"}
-            "削除"]]]
-         [:div {:class "memory-summary" :id "memory-counts"}]
-         [:div {:class "local-card"}
-          [:div {:class "section-heading"}
-           (dds/heading 2 "最近のローカル記憶" {:size "20"})
-           [:button {:class "tool-button" :id "memory-capture-button" :type "button"}
-            "今すぐ画面を取得"]]
-          [:ul {:class "memory-recent" :id "memory-recent-list"}
-           [:li "まだ記憶はありません。"]]]]
         [:section {:class "view signin-view" :data-view-panel "signin" :hidden true}
          ;; Copy and IA match app-auth `sign_in_page.cljc` (ADR-0045). This
          ;; panel is a client of that ceremony, not a second one.
@@ -2884,6 +2878,7 @@
                "Passkey を登録して参加"]]]])]]
         [:section {:class "view" :data-view-panel "settings" :hidden true}
          (view-header "Settings" "サインイン済みのUser、Organization、外部サービス接続を管理します。")
+         (context-capture-settings)
          [:div {:class "local-card" :id "desktop-update-card"}
           (dds/heading 2 "Desktop update" {:size "20"})
           [:p {:class "view-lead" :id "desktop-update-status"

@@ -27,14 +27,16 @@
       if (!raw) return '';
       const path = raw.split('?')[0].replace(/^\//, '');
       if (!path || path.includes('=')) return '';
-      return path;
+      // These former destinations are now aspects of Bots or Settings. Keep
+      // old bookmarks useful without preserving four competing top-level tabs.
+      return ({chat:'bots', rooms:'bots', capture:'bots', memory:'settings'})[path] || path;
     };
     const emailLoginToken = new URLSearchParams(
       initialFragment.includes('email-login=')
         ? (initialFragment.includes('?') ? initialFragment.slice(initialFragment.indexOf('?') + 1) : initialFragment)
         : ''
     ).get('email-login');
-    const requestedView = emailLoginToken ? 'settings' : (viewFromHash(initialFragment) || 'chat');
+    const requestedView = emailLoginToken ? 'settings' : (viewFromHash(initialFragment) || 'bots');
     let appUnlocked = false;
     let appBootstrapped = false;
     // Views whose data is public, so the Passkey gate would protect nothing.
@@ -77,7 +79,7 @@
       // A deep-linked or programmatically selected view must reveal its place
       // in the information architecture, even when its section starts closed.
       active?.closest('.nav-section')?.setAttribute('open', '');
-      $('#current-view').textContent = active?.dataset.title || 'Chat';
+      $('#current-view').textContent = active?.dataset.title || 'Bots';
       $$('[data-topbar-view]').forEach((context) => {
         context.hidden = !appUnlocked ||
           (context.dataset.topbarView === 'bots' ? name !== 'bots' : name === 'bots');
@@ -85,7 +87,7 @@
       const target = `#/${name}`;
       if (location.hash !== target) history.replaceState(null, '', target);
       const brand = document.querySelector('.workspace')?.dataset.brand || 'Cloud Itonami';
-      document.title = `${active?.dataset.title || 'Chat'} | ${brand}`;
+      document.title = `${active?.dataset.title || 'Bots'} | ${brand}`;
       document.body.dataset.currentView = name;
       currentView = name;
       onViewChange(name);
@@ -495,7 +497,11 @@
       }
       $$('.capture-filter').forEach((button) => button.setAttribute(
         'aria-pressed', String(button.dataset.outcome === captureFilter)));
-      $('#capture-count').textContent = data.counts?.inbox || 0;
+      // The legacy GTD projection has no navigation badge now that capture is
+      // ambient; keep its loader compatible for API callers without making a
+      // missing, non-interactive counter a bootstrap dependency.
+      const captureCount = document.getElementById('capture-count');
+      if (captureCount) captureCount.textContent = data.counts?.inbox || 0;
       const list = $('#capture-list'); list.replaceChildren();
       items.forEach((item) => list.append(recordButton(item,
         captureValue(item, 'id') === captureValue(selectedCapture || {}, 'id'),
@@ -8037,6 +8043,12 @@
         $('#workspace-status').textContent = 'サインインが必要です';
       } else {
         bootstrapApp();
+        // Context capture is a background capability, not a page the person
+        // must discover first. This GET materializes new-user defaults for the
+        // scheduler and keeps Settings in sync without navigating there.
+        loadChronicle().catch((error) => {
+          $('#memory-status').textContent = error.message;
+        });
         showView(requestedView === 'signin' ? 'settings' : requestedView);
       }
       const onboarding = $('#identity-onboarding');
@@ -10279,33 +10291,14 @@
     // approves anything — no card, no runnable set, no busy state to cancel.
     // That absence is the feature; if a control for one appears here later,
     // the room grew a capability the ADR says it does not have.
-    const roomsState = {rooms:[], selected:null, bots:[], sending:false};
+    const roomsState = {rooms:[], selected:null, bots:[]};
     const roomStatus = (text) => { $('#room-status').textContent = text || ''; };
-    const renderRoomMembers = () => {
-      const list = $('#room-members');
-      list.replaceChildren();
-      if (!roomsState.bots.length) {
-        list.append(make('li', 'empty-state', 'まず Bot を作成してください。'));
-        return;
-      }
-      roomsState.bots.forEach((bot) => {
-        const row = make('li');
-        const label = make('label', 'bots-permission');
-        const box = make('input');
-        box.type = 'checkbox';
-        box.value = bot.id;
-        box.dataset.roomMember = bot.id;
-        label.append(box, make('span', null, bot.name));
-        row.append(label);
-        list.append(row);
-      });
-    };
     const renderRoomList = () => {
       const list = $('#room-list');
       list.replaceChildren();
       $('#rooms-count').textContent = String(roomsState.rooms.length);
       if (!roomsState.rooms.length) {
-        list.append(make('li', 'empty-state', 'まだルームはありません。'));
+        list.append(make('li', 'empty-state', 'まだBot同士の会話はありません。'));
         return;
       }
       roomsState.rooms.forEach((room) => {
@@ -10371,7 +10364,6 @@
         }
         roomsState.rooms = roomsData.groups || [];
         roomsState.bots = botsRequest.ok ? (botsData.bots || []) : [];
-        renderRoomMembers();
         renderRoomList();
         if (roomsState.selected
             && !roomsState.rooms.some((room) => room.id === roomsState.selected)) {
@@ -10382,56 +10374,21 @@
         $('#room-list').replaceChildren(make('li', 'empty-state', error.message));
       }
     };
-    $('#room-create-form').addEventListener('submit', async (event) => {
-      event.preventDefault();
-      const name = $('#room-name').value.trim();
-      const members = $$('[data-room-member]', $('#room-members'))
-        .filter((box) => box.checked).map((box) => box.value);
-      if (!name || !members.length) {
-        $('#room-create-status').textContent = 'ルーム名とメンバーを選んでください。';
-        return;
-      }
-      $('#room-create-status').textContent = '作成中…';
-      try {
-        const data = await postJSON('/api/bots/groups', {name, members}, true);
-        roomsState.rooms = data.groups || [];
-        renderRoomList();
-        $('#room-name').value = '';
-        $$('[data-room-member]', $('#room-members')).forEach((box) => { box.checked = false; });
-        $('#room-create-status').textContent = '';
-      } catch (error) {
-        $('#room-create-status').textContent = error.message;
-      }
-    });
-    $('#room-send-form').addEventListener('submit', async (event) => {
-      event.preventDefault();
-      if (!roomsState.selected || roomsState.sending) return;
-      const text = $('#room-text').value.trim();
-      if (!text) return;
-      roomsState.sending = true;
-      $('#room-send').disabled = true;
-      // One message costs a model call per answering member per round, so the
-      // wait is real and saying so is not decoration.
-      roomStatus('メンバーが順に答えています…');
-      try {
-        const data = await postJSON(
-          `/api/bots/groups/${encodeURIComponent(roomsState.selected)}/send`,
-          {text}, true);
-        $('#room-text').value = '';
-        renderRoomThread(data.messages || []);
-        roomStatus(`${data.rounds}周 · ${data.answers}件の発言`);
-      } catch (error) {
-        roomStatus(error.message);
-      } finally {
-        roomsState.sending = false;
-        $('#room-send').disabled = false;
-      }
-    });
+    const setBotConversationsOpen = (open) => {
+      $('#bots-conversations-panel').hidden = !open;
+      $('#bots-conversations').setAttribute('aria-expanded', String(open));
+      if (open) loadRooms();
+    };
+    $('#bots-conversations').addEventListener('click', () =>
+      setBotConversationsOpen($('#bots-conversations').getAttribute('aria-expanded') !== 'true'));
+    $('#bots-conversations-close').addEventListener('click', () =>
+      setBotConversationsOpen(false));
 
     onViewChange = () => {
       scheduleWorkerPoll();
       if (currentView === 'bots') {
         loadBots({keepSelection:botsState.loaded});
+        loadRooms();
         scheduleBotsRealtime(0);
       } else stopBotsRealtime();
       scheduleOrganismPoll();
@@ -10453,8 +10410,7 @@
         $('#capture-status').textContent = error.message;
       });
       if (currentView === 'sites') loadSites();
-      if (currentView === 'rooms') loadRooms();
-      if (currentView === 'memory') loadChronicle().catch((error) => {
+      if (currentView === 'settings') loadChronicle().catch((error) => {
         $('#memory-status').textContent = error.message;
       });
     };
