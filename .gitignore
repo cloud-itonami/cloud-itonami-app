@@ -9,3 +9,6 @@
 .env.*
 !.env.example
 /config/repository-production-evidence.edn
+
+# build / cache output (untracked 2026-08-22)
+**/.wrangler/
