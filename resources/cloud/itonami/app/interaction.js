@@ -9375,6 +9375,19 @@
         glyphRow.append(swatch);
       });
     };
+    const fillBotModels = (select, provider, currentModel = '') => {
+      const models = [...(provider?.models || [])];
+      if (currentModel && !models.includes(currentModel)) models.unshift(currentModel);
+      select.replaceChildren();
+      models.forEach((modelId) => {
+        const option = make('option', null, modelId);
+        option.value = modelId;
+        option.selected = modelId === currentModel;
+        select.append(option);
+      });
+      if (!select.value && provider?.model) select.value = provider.model;
+      select.disabled = !models.length;
+    };
     const renderBotsModelProviders = () => {
       const select = $('#bots-provider');
       const model = $('#bots-model');
@@ -9391,9 +9404,8 @@
         select.value = previous;
       }
       select.disabled = !botsState.modelProviders.length;
-      model.disabled = !botsState.modelProviders.length;
       const selected = botsState.modelProviders.find((provider) => provider.id === select.value);
-      if (!model.value || !previous) model.value = selected?.model || '';
+      fillBotModels(model, selected, previous ? model.value : selected?.model);
       $('#bots-provider-help').textContent = botsState.modelProviders.length
         ? 'この配備で許可された provider だけを表示します。'
         : '許可された model provider がありません。Settings の routing を確認してください。';
@@ -9412,7 +9424,7 @@
     };
     $('#bots-provider').addEventListener('change', (event) => {
       const selected = botsState.modelProviders.find((provider) => provider.id === event.target.value);
-      $('#bots-model').value = selected?.model || '';
+      fillBotModels($('#bots-model'), selected, selected?.model);
     });
     const renderBotsSuggestions = async () => {
       const holder = $('#bots-suggestions');
@@ -9763,13 +9775,15 @@
         option.selected = provider.id === bot['provider-id'];
         providerSelect.append(option);
       });
-      const modelInput = make('input');
-      modelInput.type = 'text';
-      modelInput.maxLength = 200;
-      modelInput.value = bot.model || '';
+      const modelInput = make('select');
       modelInput.setAttribute('aria-label', 'Model');
+      const selectedProvider = botsState.modelProviders.find(
+        (provider) => provider.id === bot['provider-id']);
+      fillBotModels(modelInput, selectedProvider, bot.model || selectedProvider?.model);
       providerSelect.addEventListener('change', () => {
-        modelInput.value = providerSelect.selectedOptions[0]?.dataset.model || '';
+        const provider = botsState.modelProviders.find(
+          (candidate) => candidate.id === providerSelect.value);
+        fillBotModels(modelInput, provider, provider?.model);
       });
       const saveModel = make('button', 'tool-button', 'Model を変更');
       saveModel.type = 'button';

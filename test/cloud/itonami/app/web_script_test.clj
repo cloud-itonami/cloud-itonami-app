@@ -84,7 +84,10 @@
     (doseq [id ["bots-provider" "bots-provider-help"
                 "bots-provider-readiness" "bots-model"]]
       (is (str/includes? html (str "id=\"" id "\"")) id))
+    (is (str/includes? html "<select id=\"bots-model\">")
+        "Bot model is a choice, not a free-form model id")
     (is (str/includes? js "data['model-providers'] || []"))
+    (is (str/includes? js "provider?.models || []"))
     (is (str/includes? js "data['model-provider-readiness'] || []"))
     (is (str/includes? js "'credential-missing':'credential 未設定'"))
     (is (str/includes? js "'provider-id':$('#bots-provider').value"))
