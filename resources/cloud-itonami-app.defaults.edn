@@ -224,7 +224,14 @@
         :workforce {:max-starts-per-tick 1
                     :max-active 1
                     :max-tool-calls 4
-                    :max-tool-output-chars 1600}}
+                    :max-tool-output-chars 1600
+                    ;; Standing delegation, deliberately ABSENT here: `:all`
+                    ;; or a set of workforce keys ("business/kind") an
+                    ;; operator writes into their own config.edn. A
+                    ;; distribution cannot delegate on a stranger's behalf.
+                    ;; Provisioning never lowers a delegation a person set in
+                    ;; Settings either. ADR-0070.
+                    }}
  :chronicle {:interval-seconds 60
              ;; Capture starts on for a new local profile. Settings remains the
              ;; authority for all three switches; this is only the cadence used
