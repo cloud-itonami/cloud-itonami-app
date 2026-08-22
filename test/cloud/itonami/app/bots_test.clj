@@ -45,14 +45,15 @@
         request (private-fn 'agent-request)
         resident-config (configure {} {:job/resident-workforce? true})
         ordinary-config (configure {} {:job/resident-workforce? false})
+        provider {:max-output-tokens 512}
         b {:bot/id "bot-1"}
         run {:goal? true :messages [] :tools []}]
     (is (= 1024 (get-in resident-config
                         [:bots :goal :max-output-tokens])))
     (is (= 1024 (:max-output-tokens
-                 (request resident-config b run "murakumo-main"))))
+                 (request resident-config provider b run "murakumo-main"))))
     (is (nil? (:max-output-tokens
-               (request ordinary-config b run "murakumo-main")))
+               (request ordinary-config provider b run "murakumo-main")))
         "human-created goals keep the provider's ordinary quality envelope")
     ;; The cap and the reasoning switch are one decision, not two. Capping the
     ;; budget while leaving reasoning on is how 11 consecutive resident ticks
@@ -60,10 +61,10 @@
     ;; 2026-08-15 and 2026-08-18: the model spent the 1024 on thinking (4656
     ;; chars of it, measured) and never reached a text block.
     (is (true? (:disable-thinking?
-                (request resident-config b run "murakumo-main")))
+                (request resident-config provider b run "murakumo-main")))
         "a capped resident turn must also turn reasoning off, or it returns nothing")
     (is (nil? (:disable-thinking?
-               (request ordinary-config b run "murakumo-main")))
+               (request ordinary-config provider b run "murakumo-main")))
         "uncapped turns keep reasoning -- the fix is scoped to the cap that causes it")
     (testing "an operator can tune the resident ceiling without code"
       (is (= 1536
@@ -2484,6 +2485,101 @@
         (doseq [m kept :when (= "tool" (:role m))]
           (is (contains? ids (:tool-call-id m))
               (str "orphaned tool result: " (:tool-call-id m))))))))
+
+(deftest fastmtp-bots-use-the-models-32k-context-window
+  (let [request (private-fn 'agent-request)
+        estimate (private-fn 'estimated-tokens)
+        model "qwen3.8-27b-fastmtp-aggressive"
+        provider {:max-output-tokens 512
+                  :context-window-tokens {model 32768}}
+        system {:role "system" :content "S"}
+        goal {:role "user" :content "G"}
+        history (into [system goal]
+                      (for [i (range 80)]
+                        {:role "assistant"
+                         :content (str "observed context " i " "
+                                       (apply str (repeat 80 "x")))}))
+        run {:messages history :tools []}
+        fast (request {} provider {:bot/id "fast"} run model)
+        ordinary (request {} provider {:bot/id "ordinary"} run "murakumo-main")]
+    (testing "the explicit 32K deployment is not cut at the generic 24-message cap"
+      (is (= history (:messages fast)))
+      (is (= 26 (count (:messages ordinary)))
+          "other models keep the measured generic safety cap"))
+    (testing "output and framing reserves remain inside the advertised window"
+      (let [huge-history
+            (into [system goal]
+                  (for [i (range 80)]
+                    {:role "assistant"
+                     :content (str i " " (apply str (repeat 2500 "文")))}))
+            huge (request {} provider {:bot/id "fast"}
+                          {:messages huge-history :tools []} model)
+            prompt-budget (- 32768 512 (estimate []) 512)]
+        (is (< 2 (count (:messages huge))) "recent history still fits")
+        (is (< (count (:messages huge)) (count huge-history)) "old history is trimmed")
+        (is (<= (estimate (:messages huge)) prompt-budget))))))
+
+(deftest context-compacts-before-the-selected-model-is-full
+  (let [request (private-fn 'agent-request)
+        estimate (private-fn 'estimated-tokens)
+        model "small-fixture"
+        provider {:id "fixture" :max-output-tokens 512
+                  :context-window-tokens {model 8192}}
+        pair (fn [i]
+               [{:role "assistant"
+                 :content (str "conclusion " i)
+                 :tool-calls [{:id (str "call-" i)
+                               :name "read_file" :input {:path (str i)}}]}
+                {:role "tool" :tool-call-id (str "call-" i)
+                 :content (str "token=VERY_SECRET_" i " "
+                               (apply str (repeat 2400 (char (+ 65 (mod i 20))))))}])
+        history (vec (concat [{:role "system" :content "S"}
+                              {:role "user" :content "original goal"}]
+                             (mapcat pair (range 7))
+                             [{:role "user" :content "keep this correction verbatim"}]
+                             (mapcat pair (range 7 14))))
+        result (request {} provider {:bot/id "fixture"}
+                        {:messages history :tools []} model)
+        kept (:messages result)
+        combined (str/join "\n" (keep :content kept))
+        call-ids (into #{} (comp (mapcat :tool-calls) (map :id)) kept)]
+    (is (:context-compacted? result))
+    (is (= 8192 (:context-window-tokens result)))
+    (is (< (:context-estimated-tokens result)
+           (:context-threshold-tokens result))
+        "batch compaction creates headroom before the hard window")
+    (is (str/includes? combined "CONTEXT COMPACTION — REFERENCE ONLY"))
+    (is (str/includes? combined "keep this correction verbatim")
+        "user-authored source remains verbatim and in the user role")
+    (is (= "user" (:role (some #(when (= "keep this correction verbatim"
+                                          (:content %)) %) kept))))
+    (is (not (str/includes? combined "VERY_SECRET_0"))
+        "old raw tool result bodies stay only in the durable record")
+    (is (str/includes? combined "VERY_SECRET_13")
+        "the recent verbatim tail is not falsely described as compacted")
+    (is (str/includes? combined "conclusion 13") "recent tail remains verbatim")
+    (doseq [m kept :when (= "tool" (:role m))]
+      (is (contains? call-ids (:tool-call-id m))
+          "compaction never exposes an orphan tool result"))
+    (is (<= (estimate kept) (- 8192 512 (estimate []) 512)))))
+
+(deftest context-compaction-threshold-is-preflight-not-overflow-recovery
+  (let [request (private-fn 'agent-request)
+        model "threshold-fixture"
+        provider {:id "fixture" :max-output-tokens 512
+                  :context-window-tokens {model 8192}}
+        run (fn [n]
+              (request {} provider {:bot/id "fixture"}
+                       {:messages [{:role "system" :content "S"}
+                                   {:role "user" :content "G"}
+                                   {:role "assistant"
+                                    :content (apply str (repeat n "x"))}]
+                        :tools []}
+                       model))]
+    (is (false? (:context-compacted? (run 12000)))
+        "ordinary context keeps a stable prompt prefix")
+    (is (:context-compacted? (run 16000))
+        "pressure above 75% compacts while the request still fits the hard window")))
 ;; ── the plan deadlock, structurally ─────────────────────────────────────
 ;;
 ;; goal_complete needs every step verified; a step is verified only against a
@@ -2592,7 +2688,7 @@
   ;; 2026-08-20 by running one, which came back
   ;; "モデルが回答本文を返しませんでした".
   (let [request (ns-resolve 'cloud.itonami.app.bots 'agent-request)
-        body (fn [run] ((deref request) {} {:bot/id "b"} run "m"))]
+        body (fn [run] ((deref request) {} {} {:bot/id "b"} run "m"))]
     (testing "a handoff run turns reasoning off"
       (is (true? (:disable-thinking? (body {:handoff? true :messages [] :tools []})))))
     (testing "an ordinary interactive run is unchanged"

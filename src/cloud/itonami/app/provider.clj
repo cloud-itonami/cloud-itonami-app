@@ -140,8 +140,12 @@
   (cond
     (openai-shaped? provider)
     (mapv (fn [model]
-            {:id (:id model) :object "model" :owned_by (:id provider)
-             :provider (:id provider)})
+            (cond-> {:id (:id model) :object "model" :owned_by (:id provider)
+                     :provider (:id provider)}
+              (or (:context_length model) (:context-window-tokens model))
+              (assoc :context-window-tokens
+                     (long (or (:context_length model)
+                               (:context-window-tokens model))))))
           (:data (request-json :get (openai-url provider "/models")
                                nil (config/env-secret provider))))
 
@@ -152,6 +156,64 @@
           (:models (request-json :get (str (:base-url provider) "/api/tags") nil)))
 
     :else []))
+
+(def ^:private model-context-cache-ms (* 5 60 1000))
+(defonce ^:private model-context-cache (atom {}))
+
+(defn- context-window-from-model-info
+  "Read the context limit from provider model metadata without assuming a
+  family-specific key. Ollama returns keys such as
+  `:gemma3.context_length`; OpenAI-shaped providers may return the direct
+  `:context_length` field."
+  [value]
+  (let [direct (or (:context_length value)
+                   (:context-window-tokens value)
+                   (:context_window value))
+        nested (some (fn [[k v]]
+                       (when (and (number? v)
+                                  (str/ends-with? (name k) ".context_length"))
+                         v))
+                     (:model_info value))]
+    (some-> (or direct nested) long)))
+
+(defn- discover-model-context-window [provider model]
+  (try
+    (cond
+      (= :ollama (:kind provider))
+      (context-window-from-model-info
+       (request-json :post (str (:base-url provider) "/api/show")
+                     {:model model :verbose false}))
+
+      (openai-shaped? provider)
+      (some (fn [candidate]
+              (when (= model (:id candidate))
+                (context-window-from-model-info candidate)))
+            (:data (request-json :get (openai-url provider "/models")
+                                 nil (config/env-secret provider))))
+
+      :else nil)
+    ;; Context discovery is an optimisation, not provider admission. Older
+    ;; OpenAI-compatible servers omit the field entirely; generation must keep
+    ;; the measured bounded fallback rather than fail for missing metadata.
+    (catch Exception _ nil)))
+
+(defn model-context-window
+  "The selected model's maximum context window.
+
+  Exact operator configuration wins. Otherwise query provider metadata once
+  per five minutes (Ollama `/api/show`, or an OpenAI-shaped `/models` entry).
+  A nil result is cached too so a compatible-but-minimal server is not probed
+  before every tool iteration."
+  [provider model]
+  (or (get-in provider [:context-window-tokens model])
+      (let [key [(:id provider) (:base-url provider) model]
+            now (System/currentTimeMillis)
+            cached (get @model-context-cache key)]
+        (if (and cached (< (- now (:at cached)) model-context-cache-ms))
+          (:value cached)
+          (let [value (discover-model-context-window provider model)]
+            (swap! model-context-cache assoc key {:at now :value value})
+            value)))))
 
 (defn chat
   [provider {:keys [model messages temperature] :as request}]
@@ -352,6 +414,14 @@
                :finish-reason finish-reason})))
     result)))
 
+(defn- ollama-agent-options [provider request]
+  (cond-> {:temperature (or (:temperature request) 0.2)
+           :num_predict (or (:max-output-tokens request)
+                            (:max-output-tokens provider)
+                            default-agent-max-tokens)}
+    (:context-window-tokens request)
+    (assoc :num_ctx (:context-window-tokens request))))
+
 (defn agent-turn
   "One non-streaming tool-capable model turn, normalized for Agent Control."
   [provider request]
@@ -362,11 +432,8 @@
                                  (-> body
                                      (dissoc :temperature :max_tokens
                                              :parallel_tool_calls :reasoning_effort)
-                                     (assoc :options {:temperature
-                                                      (or (:temperature request) 0.2)
-                                                      :num_predict (or (:max-output-tokens request)
-                                                                       (:max-output-tokens provider)
-                                                                       default-agent-max-tokens)})))
+                                     (assoc :options
+                                            (ollama-agent-options provider request))))
             message (:message result)]
         (agent-result message (:done_reason result)
                       {:prompt_tokens (get result :prompt_eval_count 0)
@@ -501,9 +568,7 @@
                       (-> body
                           (dissoc :temperature :max_tokens :parallel_tool_calls
                                   :reasoning_effort)
-                          (assoc :options {:temperature (or (:temperature request) 0.2)
-                                           :num_predict (or (:max-output-tokens provider)
-                                                            default-agent-max-tokens)}))
+                          (assoc :options (ollama-agent-options provider request)))
                       nil)]
         (with-active-agent-reader
           response
