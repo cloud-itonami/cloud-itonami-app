@@ -1,0 +1,41 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+app_dir="$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
+mode="${1:---once}"
+
+run_audit() {
+  printf '\n[%s] Recalculating Settings UI/UX score\n' "$(date '+%H:%M:%S')"
+  (cd "$app_dir" && clojure -M:ux-score)
+  (cd "$app_dir" && node --check resources/cloud/itonami/app/interaction.js)
+}
+
+fingerprint() {
+  (cd "$app_dir" && find src/cloud/itonami/app resources/cloud/itonami/app \
+    docs/ux test/cloud/itonami/app -type f \
+    \( -name '*.clj' -o -name '*.js' -o -name '*.edn' -o -name '*.xmile' \) \
+    -exec shasum {} + | LC_ALL=C sort | shasum | awk '{print $1}')
+}
+
+case "$mode" in
+  --once)
+    run_audit
+    ;;
+  --watch)
+    run_audit || true
+    previous="$(fingerprint)"
+    printf 'Watching UI sources; press Ctrl-C to stop.\n'
+    while true; do
+      sleep 1
+      current="$(fingerprint)"
+      if [[ "$current" != "$previous" ]]; then
+        previous="$current"
+        run_audit || true
+      fi
+    done
+    ;;
+  *)
+    printf 'usage: %s [--once|--watch]\n' "$0" >&2
+    exit 2
+    ;;
+esac
