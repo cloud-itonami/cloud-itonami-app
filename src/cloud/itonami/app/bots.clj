@@ -2110,7 +2110,7 @@
                                next-turn))))))
     nil))
 
-(declare enqueue-goal!)
+(declare enqueue-goal! drain-goal-queue!)
 
 (defn recover-interrupted!
   "Close turns that were running in the previous process.
@@ -2153,7 +2153,12 @@
       (record-turn! (:job/bot job) run-id
                     {:turn/state :running :turn/phase :resuming
                      :turn/goal? true :turn/objective (:job/objective job)})
-      (when configuration (enqueue-goal! configuration run-id)))
+      ;; Interactive Goals retain their old restart behaviour. Resident jobs
+      ;; are drained below through the same max-active budget used by the live
+      ;; scheduler; enqueuing every recovered resident job here caused a
+      ;; restart stampede that starved ordinary Bot turns.
+      (when (and configuration (not (:job/resident-workforce? job)))
+        (enqueue-goal! configuration run-id)))
     ;; A RESIDENT `:held` run with no outstanding approval card is a hold
     ;; nobody can answer. `:held` is not in the requeue set above, `cancel!`
     ;; needs an in-memory turn that this process does not have, and
@@ -2197,6 +2202,8 @@
                          :handoff.run/updated-at at
                          :handoff.run/finished-at at)
                   run)]))))
+    (when configuration
+      (drain-goal-queue! configuration))
     nil)))
 
 (defn- public-turn [turn]
@@ -3622,7 +3629,11 @@
                                ;; has, so it is the one case it must be kept.
                                :cause-class (.getName (class error))})))
       (finally
-        (swap! goal-workers dissoc run-id)))))
+        (swap! goal-workers dissoc run-id)
+        ;; A resident recovery queue is durable rather than submitted wholesale
+        ;; to the executor. Finishing any job frees the slot for exactly the
+        ;; next persisted resident job.
+        (drain-goal-queue! configuration)))))
 
 (defn- finish-goal-run-from-visible! [run-id state]
   (let [status (goal-run-status
@@ -3639,6 +3650,41 @@
                       ^java.util.concurrent.Callable
                       (fn [] (run-goal-job! configuration run-id))))))
   run-id)
+
+(defn- drain-goal-queue!
+  "Enqueue only the resident Goals that fit the configured inference budget.
+
+  `recover-interrupted!` used to bypass `:max-active` and submit every durable
+  resident Goal to the executor at once. The executor limited host threads but
+  not provider demand: after a restart, interactive Bot turns sat behind the
+  recovered company backlog. Persisted jobs remain queued here and are drained
+  one at a time as their predecessor reaches a terminal or held state. The
+  recovery budget is separate from steady-state `:max-active`: deployments may
+  deliberately allow a broad workforce without turning a restart into a burst."
+  [configuration]
+  (locking goal-workers
+    (let [partition (snapshot)
+          jobs (:goal-jobs partition)
+          max-active (max 0 (long (or (get-in configuration
+                                             [:bots :workforce
+                                              :recovery-max-active])
+                                      1)))
+          resident-worker-count
+          (count (filter (fn [run-id]
+                           (:job/resident-workforce? (get jobs run-id)))
+                         (keys @goal-workers)))
+          available (max 0 (- max-active resident-worker-count))
+          queued (->> (vals jobs)
+                      (filter :job/resident-workforce?)
+                      (filter #(contains? #{:queued :checkpointed}
+                                          (get-in % [:job/run :agent.run/status])))
+                      (remove #(contains? @goal-workers (:job/id %)))
+                      (sort-by (juxt :job/created-at :job/id))
+                      (take available)
+                      (mapv :job/id))]
+      (doseq [run-id queued]
+        (enqueue-goal! configuration run-id))
+      queued)))
 
 (defn submit-goal!
   "Persist and enqueue a Goal. The returned AgentRun is independent of the
