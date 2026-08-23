@@ -245,6 +245,15 @@
                     ;; distribution cannot delegate on a stranger's behalf.
                     ;; Provisioning never lowers a delegation a person set in
                     ;; Settings either. ADR-0070.
+                    ;;
+                    ;; Organization aliases, also ABSENT here: a map of
+                    ;; {tenant-slug registry-organization} an operator writes
+                    ;; into their own config.edn when a tenant was registered
+                    ;; under a spelling the registry does not use (a slug is
+                    ;; immutable once claimed). A business that names an
+                    ;; organization provisions only into the tenant whose slug
+                    ;; -- or alias -- matches; the status reports the alias
+                    ;; it matched through. ADR-0071.
                     }}
  :chronicle {:interval-seconds 60
              ;; Capture starts on for a new local profile. Settings remains the

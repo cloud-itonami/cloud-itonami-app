@@ -150,6 +150,46 @@
             (is (= 200 (:status r)))
             (is (string? (get-in r [:body :id])))))))))
 
+(deftest an-agent-session-may-name-which-held-tenant-it-is-for
+  ;; Local ownership already proves everything the store holds; choosing
+  ;; among the owner's memberships adds no authority. What it gives a CLI is
+  ;; a session in an organization tenant without the Passkey ceremony
+  ;; `switch-organization!` rightly asks of a browser -- the workforce tick
+  ;; fires a tenant's jobs only under a session in that tenant.
+  (with-server
+    (fn []
+      (store/transact!
+       (fn [state]
+         (-> state
+             (assoc-in [:identity :organizations "org-2"]
+                       {:id "org-2" :name "etzhayyim" :organization-id "etzhayyim"
+                        :tenant/kind :organization})
+             (assoc-in [:identity :memberships "m-2"]
+                       {:id "m-2" :user-id "user-1" :organization-id "org-2"
+                        :role :owner})
+             (assoc-in [:identity :organizations "org-3"]
+                       {:id "org-3" :name "elsewhere" :organization-id "elsewhere"
+                        :tenant/kind :organization}))))
+      (testing "unnamed: the default membership, as before"
+        (let [r (bearer :get "/api/business" (get-in (enroll) [:body :token]))]
+          (is (= "org-1" (get-in r [:body :organization-id])))))
+      (testing "named by slug: the session acts in that tenant"
+        (let [issued (enroll {:organization-id "etzhayyim"})]
+          (is (= 200 (:status issued)))
+          (is (= "org-2" (get-in issued [:body :organization-id])))
+          (let [r (bearer :get "/api/business" (get-in issued [:body :token]))]
+            (is (= "org-2" (get-in r [:body :organization-id]))))))
+      (testing "named by record id, and case-insensitively by slug"
+        (is (= "org-2" (get-in (enroll {:organization-id "org-2"}) [:body :organization-id])))
+        (is (= "org-2" (get-in (enroll {:organization-id "ETZHAYYIM "}) [:body :organization-id]))))
+      (testing "a tenant the user holds no membership in is refused, not defaulted"
+        (let [r (enroll {:organization-id "elsewhere"})]
+          (is (= 403 (:status r)))
+          (is (= "forbidden" (get-in r [:body :error :type])))
+          (is (nil? (get-in r [:body :token])))))
+      (testing "a tenant that does not exist is refused the same way"
+        (is (= 403 (:status (enroll {:organization-id "nowhere"}))))))))
+
 (deftest the-browser-gate-is-unchanged
   (with-server
     (fn []

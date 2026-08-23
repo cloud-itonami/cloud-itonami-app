@@ -478,6 +478,20 @@
     (or (some #(when (= preferred (:id %)) %) memberships)
         (first memberships))))
 
+(defn- membership-in
+  "The User's membership in the tenant `organization-id` names -- its record
+  id or its slug -- or nil. The same resolution `switch-organization!` does,
+  without the session it needs."
+  [state user-id organization-id]
+  (some (fn [candidate]
+          (let [organization (get-in state [:organizations
+                                            (:organization-id candidate)])]
+            (when (or (= organization-id (:id organization))
+                      (= (normalize-id organization-id)
+                         (:organization-id organization)))
+              candidate)))
+        (memberships-for-user state user-id)))
+
 (defn registered? []
   (boolean (seq (:users (identity-state (store/snapshot))))))
 
@@ -507,14 +521,33 @@
     :label       free-form           what to call it when revoking
     :issued-via  :local-ownership    what was proved to get it
     :ttl-seconds                     defaults to `session-seconds`
+    :organization-id                 which of the User's tenants the session
+                                     acts in -- a record id or a slug. Absent,
+                                     the default membership (ADR-0023). Named
+                                     but not held: `:identity/forbidden`.
+                                     Naming one adds no authority the caller
+                                     did not have (it must already hold the
+                                     membership); it only chooses WHICH held
+                                     tenant this session is for, which a
+                                     caller with no browser could otherwise
+                                     only change through `switch-organization!`
+                                     and its Passkey.
 
   See `cloud.itonami.app.agent-session` for why `:agent` exists and for what it
   still cannot do."
   ([user-id] (issue-session! user-id nil))
   ([user-id {:keys [kind label issued-via ttl-seconds authn-level
-                    authn-decision authn-factors authn-provider]}]
+                    authn-decision authn-factors authn-provider
+                    organization-id]}]
    (let [state (identity-state (store/snapshot))
-         membership (default-membership state user-id)]
+         membership (if organization-id
+                      (membership-in state user-id organization-id)
+                      (default-membership state user-id))]
+     (when (and organization-id (not membership))
+       (throw (ex-info (str "この Organization への membership がありません: "
+                            organization-id)
+                       {:type :identity/forbidden
+                        :organization-id organization-id})))
      (when-not membership
        (throw (ex-info "組織 membership が見つかりません。"
                        {:type :identity/unauthenticated})))
@@ -539,7 +572,10 @@
           authn-factors (assoc :authn-factors authn-factors)
           authn-provider (assoc :authn-provider authn-provider)))
        {:token token :expires-at expires-at :session-id session-id
-        :csrf csrf}))))
+        :csrf csrf
+        ;; Which tenant the session landed in, so a caller that named one
+        ;; can see it was honoured rather than defaulted.
+        :organization-id (:organization-id membership)}))))
 
 (defn- public-session-record [current-session candidate]
   (assoc (select-keys candidate [:id :kind :label :issued-via :authn-provider

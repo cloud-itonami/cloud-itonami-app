@@ -108,12 +108,23 @@
 (defn- owner-user-id
   "The user an agent session acts as.
 
-  Picked rather than asked for when there is exactly one owner membership, which
-  is every single-operator install. With more than one, the caller has to say
-  which — guessing would silently pick a tenant."
+  Picked rather than asked for when exactly one PERSON holds an owner
+  membership, which is every single-operator install. With more than one
+  person, the caller has to say which — guessing would silently pick a user.
+
+  Persons, not memberships: one operator who owns a personal tenant and two
+  organization tenants holds three owner memberships and is still one person.
+  Counting memberships made that install `ambiguous-user` the moment a second
+  tenant was created (measured 2026-08-23: three owner memberships, one user,
+  `itonami auth login` refused without `--user-id`). WHICH tenant the session
+  acts in is the separate `organization-id` choice, or the default membership."
   [requested]
   (let [state (:identity (store/snapshot))
-        owners (filterv #(= :owner (:role %)) (vals (:memberships state)))]
+        owners (->> (vals (:memberships state))
+                    (filter #(= :owner (:role %)))
+                    (map :user-id)
+                    distinct
+                    vec)]
     (cond
       (some-> requested str/trim not-empty)
       (let [id (str/trim requested)]
@@ -122,7 +133,7 @@
                   (str "membership を持たない user です: " id)))
         id)
 
-      (= 1 (count owners)) (:user-id (first owners))
+      (= 1 (count owners)) (first owners)
 
       (empty? owners)
       (refuse :agent-session/no-owner
@@ -139,7 +150,7 @@
   `enrollment-key` must equal the data directory's 0600 key file. `label` is
   required and free-form: an unlabelled agent session is one nobody can later
   decide to revoke, because there is nothing to tell it from the others."
-  [{:keys [enrollment-key label user-id ttl-days]}]
+  [{:keys [enrollment-key label user-id ttl-days organization-id]}]
   (when-not (key-matches? enrollment-key)
     ;; The store fingerprint, not the path: this route takes no session, and a
     ;; caller that reached it over loopback still has no claim on the operator's
@@ -159,10 +170,18 @@
               (refuse :agent-session/ttl-invalid "ttl-days は 1 以上にしてください"))
           issued (identity/issue-session!
                   (owner-user-id user-id)
-                  {:kind :agent
-                   :label label
-                   :issued-via :local-ownership
-                   :ttl-seconds (* ttl 24 60 60)})]
+                  (cond-> {:kind :agent
+                           :label label
+                           :issued-via :local-ownership
+                           :ttl-seconds (* ttl 24 60 60)}
+                    ;; Which held tenant the session is for. Local
+                    ;; ownership already proves everything the store
+                    ;; holds, so choosing among the owner's memberships
+                    ;; adds nothing; it lets a CLI act in an organization
+                    ;; tenant without the Passkey `switch-organization!`
+                    ;; rightly demands of a browser.
+                    (some-> organization-id str str/trim not-empty)
+                    (assoc :organization-id (str/trim (str organization-id)))))]
       (assoc issued :schema schema :label label))))
 
 (defn- public [session]

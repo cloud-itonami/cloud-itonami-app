@@ -58,7 +58,7 @@
     itonami commands [term …]
     itonami <command words> [--flag value …] [--json '{…}']
 
-    clojure -M:cli auth login --label \"claude-code\" [--ttl-days 30]
+    clojure -M:cli auth login --label \"claude-code\" [--ttl-days 30] [--organization <slug>]
     clojure -M:cli auth status
     clojure -M:cli auth revoke --id session-…
     clojure -M:cli tenant list
@@ -359,6 +359,7 @@
                         {:body {:enrollment-key (read-enrollment-key)
                                 :label (or (:label flags) "cli")
                                 :user-id (:user-id flags)
+                                :organization-id (:organization flags)
                                 :ttl-days (some-> (:ttl-days flags) str parse-long)}}))
                  (catch clojure.lang.ExceptionInfo error
                    (throw (enrollment-refused configuration error))))
@@ -591,7 +592,7 @@
        "  <command> [--flag value …] [--json '{…}']\n"
        "                         `itonami commands` が出す任意のコマンド。\n"
        "                         server が動いていなければ自動で起動します。\n\n"
-       "  auth login    --label <name> [--ttl-days N] [--user-id U]\n"
+       "  auth login    --label <name> [--ttl-days N] [--user-id U] [--organization <slug|org-id>]\n"
        "  auth status\n"
        "  auth revoke   --id <session-id>\n"
        "  tenant list\n"

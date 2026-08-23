@@ -877,6 +877,58 @@
     (boolean (or (= :all setting)
                  (and (set? setting) (contains? setting key))))))
 
+(defn- session-tenant
+  "What kind of tenant this session acts in, and the slug it answers to.
+
+  A session whose organization record is absent -- a test store, or one from
+  before tenants were recorded -- reads as `:personal`. That is the tenant
+  the businesses that name no organization have always landed in, so an
+  older store keeps provisioning exactly as it did."
+  [session]
+  (let [org (get-in (store/snapshot)
+                    [:identity :organizations (:organization-id session)])]
+    {:kind (if org (or (:tenant/kind org) :organization) :personal)
+     :slug (:organization-id org)}))
+
+(defn tenant-workforce
+  "Which catalog entries this session's tenant may provision.
+
+  A business may NAME ITS ORGANIZATION (`:business :organization`, a slug from
+  loop-yakuwari's businesses.edn). Provisioning is then two-sided: an
+  organization tenant takes exactly the businesses that name it, and a
+  personal tenant takes the businesses that name nobody. Before this, a
+  catalog was projected whole into whichever tenant asked, which is how the
+  first business belonging to a named organization would have landed in the
+  operator's personal tenant beside thirteen that belong to no one.
+
+  `[:bots :workforce :organization-aliases]` lets the OPERATOR say that a
+  tenant stands for a registry organization under another spelling
+  ({tenant-slug registry-organization}). It is deployment configuration, not
+  registry data: a tenant slug is immutable once claimed (identity
+  `:organization-id-immutable`), so a tenant registered under a misspelling
+  can only be matched from this side, and the registry is not where a
+  deployment's typo should be recorded. The alias is reported in the status
+  so a match made through it is never silent.
+
+  Returns {:kind :slug :named :entries :catalog-organizations}. Pure over
+  its arguments apart from reading the tenant record."
+  [configuration session catalog]
+  (let [{:keys [kind slug]} (session-tenant session)
+        alias (get-in configuration [:bots :workforce :organization-aliases slug])
+        named (cond-> #{} slug (conj slug) alias (conj alias))
+        organization-of #(get-in % [:business :organization])
+        mine? (if (= :organization kind)
+                #(contains? named (organization-of %))
+                #(nil? (organization-of %)))]
+    {:kind kind
+     :slug slug
+     :alias alias
+     :named named
+     :entries (filterv mine? (:roles catalog))
+     :catalog-organizations (into (sorted-set)
+                                  (keep organization-of)
+                                  (:roles catalog))}))
+
 (defn provision-workforce!
   "Idempotently project a complete governed role catalog into Bots and
   durable resident jobs. Existing conversations and run history stay put.
@@ -892,7 +944,21 @@
   edit and nothing said so."
   [configuration session catalog]
   (let [now (store/now)
-        entries (:roles catalog)
+        {:keys [kind slug alias entries catalog-organizations]}
+        (tenant-workforce configuration session catalog)
+        _ (when (and (= :organization kind) (empty? entries))
+            ;; A named organization with nothing to provision is a mismatch,
+            ;; not an empty company: refuse rather than record a workforce of
+            ;; zero under a name nobody in the catalog used.
+            (throw (ex-info (str "no business in the workforce catalog names the organization "
+                                 (pr-str slug)
+                                 (when alias (str " (alias " (pr-str alias) ")"))
+                                 "; the catalog names: "
+                                 (pr-str (vec catalog-organizations)))
+                            {:type :workforce/no-business-for-tenant
+                             :tenant slug
+                             :alias alias
+                             :catalog-organizations (vec catalog-organizations)})))
         previous (snapshot)
         owner-key [(:organization-id session) (:user-id session)]
         desired
@@ -988,7 +1054,12 @@
                      reconciled stale-ids)]
          (assoc-in retired [:workforces owner-key]
                    {:schema (:schema catalog)
-                    :businesses (:businesses catalog)
+                    ;; The businesses THIS tenant took, not the catalog's
+                    ;; count: a status saying 14 over 6 Bots would be the
+                    ;; catalog's number wearing the tenant's name.
+                    :businesses (count (into #{} (map #(get-in % [:business :id])) entries))
+                    :catalog-businesses (:businesses catalog)
+                    :tenant {:kind kind :slug slug :alias alias}
                     :roles (count entries)
                     :source (:source catalog)
                     :owner (:user-id session)
@@ -1077,6 +1148,11 @@
      :outcomes-note (when-not outcomes
                       "no resident run has been recorded for this owner")
      :source (:source workforce)
+     ;; Which tenant took which slice of the catalog, and through which
+     ;; alias if any -- the status says it so a match made through an
+     ;; operator alias is never a silent one.
+     :tenant (:tenant workforce)
+     :catalog-businesses (:catalog-businesses workforce)
      :provisioned-at (:provisioned-at workforce)}))
 
 ;; ── conversation ────────────────────────────────────────────────────────
@@ -3801,20 +3877,35 @@
        "Any write or external effect remains subject to the concrete tool grant and its governor."))
 
 (defn fire-due-workforce!
-  "Start a bounded number of due startup jobs for one live human session.
+  "Start a bounded number of due startup jobs for one person's live sessions.
   Jobs are staggered when provisioned and fixed-delay after submission, so a
   restart cannot unleash the whole company at once. The active limit is global
   to the owner's workforce: limiting starts per tick alone still permits jobs
-  from successive ticks to overlap on a capacity-one inference provider."
-  [configuration session now]
-  (let [owned-jobs (->> (vals (:workforce-jobs (snapshot)))
-                        (filter #(and (= (:user-id session)
-                                         (:workforce.job/owner %))
-                                      (= (:organization-id session)
-                                         (:workforce.job/organization %)))))
+  from successive ticks to overlap on a capacity-one inference provider.
+
+  `sessions` is one live session per organization the person is present in
+  (or a single session map, the shape every caller had before). A job fires
+  under the session of ITS organization, never under another tenant's. The
+  active count is taken over every job the owner holds in any tenant -- the
+  provider is one slot whatever tenant asks for it, so counting per tenant
+  would let two tenants overlap on it, which is the overlap this limit
+  exists to prevent (ADR-0056)."
+  [configuration sessions now]
+  (let [sessions (if (map? sessions) [sessions] (vec sessions))
+        owner (:user-id (first sessions))
+        by-organization (into {} (map (juxt :organization-id identity)) sessions)
+        _ (when-not (every? #(= owner (:user-id %)) sessions)
+            (throw (ex-info "fire-due-workforce! takes one person's sessions"
+                            {:type :workforce/mixed-owners
+                             :owners (into #{} (map :user-id) sessions)})))
+        all-owned (->> (vals (:workforce-jobs (snapshot)))
+                       (filter #(= owner (:workforce.job/owner %))))
+        owned-jobs (filter #(contains? by-organization
+                                       (:workforce.job/organization %))
+                           all-owned)
         active (count (filter #(workforce-bot-inferring?
                                 (:workforce.job/bot %))
-                              owned-jobs))
+                              all-owned))
         max-active (max 0 (long (or (get-in configuration
                                             [:bots :workforce :max-active])
                                     1)))
@@ -3858,7 +3949,9 @@
                           next-at (str (.plusSeconds (java.time.Instant/parse now)
                                                      (* 60 cadence)))]
                       (submit-goal!
-                       configuration session bot-id
+                       configuration
+                       (get by-organization (:workforce.job/organization job))
+                       bot-id
                        (workforce-goal b job) run-id
                        {:max-tool-calls
                         (max 1 (long (or (get-in configuration
@@ -4520,24 +4613,40 @@
   routine can be."
   60)
 
-(defn- tick-sessions
-  "One live session per person, newest first.
+(defn- tick-people
+  "Per person: the newest live session, and the newest live session in each
+  organization they are present in.
 
   Per PERSON, not per session: somebody signed in on a laptop and a phone has
   two live sessions and one set of routines, and firing once per session would
-  run every schedule twice."
+  run every schedule twice. Per ORGANIZATION for the workforce, because a
+  workforce job belongs to a tenant and fires only under a session in that
+  tenant (ADR-0056: the tick never creates, refreshes or impersonates one).
+  Before this the newest session alone was consulted, so a person present in
+  two tenants had the workforce of only one of them running -- whichever
+  they had signed in to last -- and nothing said so."
   [configuration]
-  (let [enabled? (not (false? (get-in configuration [:bots :tick :enabled?])))]
-    (->> (identity/live-sessions)
-         (filter (fn [s]
-                   (routine/tick-admitted?
-                    {:tick-enabled? enabled?
-                     :session-live? true
-                     :session-kind (or (:kind s) :passkey)})))
+  (let [enabled? (not (false? (get-in configuration [:bots :tick :enabled?])))
+        admitted (->> (identity/live-sessions)
+                      (filter (fn [s]
+                                (routine/tick-admitted?
+                                 {:tick-enabled? enabled?
+                                  :session-live? true
+                                  :session-kind (or (:kind s) :passkey)}))))]
+    (->> admitted
          (reduce (fn [acc s]
-                   (if (contains? acc (:user-id s)) acc (assoc acc (:user-id s) s)))
+                   (let [person (get acc (:user-id s)
+                                     {:session s :per-organization {}})]
+                     (assoc acc (:user-id s)
+                            (update person :per-organization
+                                    (fn [m]
+                                      (if (contains? m (:organization-id s))
+                                        m
+                                        (assoc m (:organization-id s) s)))))))
                  {})
-         vals)))
+         vals
+         (map (fn [person]
+                (update person :per-organization (comp vec vals)))))))
 
 (defn tick!
   "One pass. Returns what it started and skipped, per person.
@@ -4546,11 +4655,12 @@
   OAuth token must not stop everybody else's schedules, and a timer that dies
   on the first failure is a scheduler that silently stops being one."
   [configuration now]
-  (mapv (fn [session]
+  (mapv (fn [{:keys [session per-organization]}]
           (try
             (let [routines (fire-due! configuration session now)
-                  workforce (fire-due-workforce! configuration session now)]
+                  workforce (fire-due-workforce! configuration per-organization now)]
               {:user (:user-id session)
+               :organizations (mapv :organization-id per-organization)
                :started (:started routines) :skipped (:skipped routines)
                :workforce-started (:started workforce)
                :workforce-skipped (:skipped workforce)})
@@ -4558,7 +4668,7 @@
               {:user (:user-id session) :started [] :skipped []
                :workforce-started [] :workforce-skipped []
                :error (.getMessage error)})))
-        (tick-sessions configuration)))
+        (tick-people configuration)))
 
 (defn start-tick!
   "Begin looking. Idempotent, and a no-op when the deployment turned it off."
