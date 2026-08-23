@@ -430,6 +430,30 @@
   .bots-dot[data-status='idle']{background:var(--color-neutral-solid-gray-300)}
   .bots-dot[data-status='disabled']{background:var(--color-neutral-solid-gray-200)}
   .bots-main{position:relative;display:flex;flex-direction:column;min-height:0;min-width:0}
+  .bots-quality-panel{position:absolute;z-index:5;inset:0 0 0 auto;width:min(100%,32rem);
+    overflow-y:auto;padding:1rem;border-left:1px solid var(--color-neutral-solid-gray-200);
+    background:var(--color-neutral-white);display:grid;align-content:start;gap:1rem}
+  .bots-quality-panel[hidden]{display:none}
+  .bots-quality-status{display:flex;align-items:center;gap:.625rem;margin:0}
+  .bots-quality-status__badge{display:inline-flex;align-items:center;min-height:2rem;
+    padding:.25rem .625rem;border-radius:999px;font-weight:700;
+    background:var(--color-neutral-solid-gray-100);color:var(--color-neutral-solid-gray-700)}
+  .bots-quality-status__badge[data-status='pass']{background:var(--color-primitive-green-50);
+    color:var(--color-semantic-success-2)}
+  .bots-quality-status__badge[data-status='fail']{background:var(--color-primitive-red-50);
+    color:var(--color-semantic-error-1)}
+  .bots-quality-scores{display:grid;grid-template-columns:repeat(3,1fr);gap:.625rem}
+  .bots-quality-score{display:grid;gap:.25rem;padding:.75rem;border-radius:.75rem;
+    border:1px solid var(--color-neutral-solid-gray-200);background:var(--color-neutral-white)}
+  .bots-quality-score__label{font-size:.75rem;color:var(--color-neutral-solid-gray-600)}
+  .bots-quality-score__value{font-size:1.5rem;font-weight:700;line-height:1.2}
+  .bots-quality-gates{display:grid;gap:.5rem;margin:0;padding:0;list-style:none}
+  .bots-quality-gate{display:grid;grid-template-columns:auto 1fr;gap:.125rem .625rem;
+    padding:.625rem 0;border-top:1px solid var(--color-neutral-solid-gray-200)}
+  .bots-quality-gate__mark{grid-row:1 / span 2;font-weight:700}
+  .bots-quality-gate__mark[data-state='pass']{color:var(--color-semantic-success-1)}
+  .bots-quality-gate__mark[data-state='fail']{color:var(--color-semantic-error-1)}
+  .bots-quality-gate__target{font-size:.75rem;color:var(--color-neutral-solid-gray-600)}
   .bots-conversations{position:absolute;z-index:4;inset:0 0 0 auto;width:min(100%,42rem);
     overflow-y:auto;padding:1rem;border-left:1px solid var(--color-neutral-solid-gray-200);
     background:var(--color-neutral-white);display:grid;
@@ -1300,6 +1324,7 @@
     .bots-shell{display:flex;flex-direction:column}
     .bots-main{flex:1}
     .bots-conversations{width:100%;border-left:0}
+    .bots-quality-panel{width:100%;border-left:0}
     .bots-conversations__layout{grid-template-columns:1fr}
     .bots-rail{display:block;flex:0 0 auto;padding:.375rem .75rem;border-right:0;
       border-bottom:1px solid var(--color-neutral-solid-gray-200);overflow-x:auto}
@@ -1569,6 +1594,10 @@
                    :aria-expanded "false" :aria-controls "bots-conversations-panel"
                    :aria-label "Bot同士の会話を読む" :title "Bot同士の会話を読む"}
           "↔" [:span {:class "bots-conversations__count" :id "rooms-count"} "—"]]
+         [:button {:class "tool-button" :id "bots-quality" :type "button"
+                   :aria-expanded "false" :aria-controls "bots-quality-panel"
+                   :aria-label "Bots の安定性と出力品質" :title "Bots の安定性と出力品質"}
+          "◎"]
          [:button {:class "tool-button" :id "bots-workforce" :type "button"
                    :aria-label "会社Botを常駐化"
                    :title "8事業の職務Botを常駐化"} "▦"]
@@ -1654,6 +1683,19 @@
            [:ul {:class "bots-rail__list" :id "bots-list"}]
            [:p {:class "bots-rail__empty" :id "bots-rail-empty"} "まだ Bot がいません"]]
           [:div {:class "bots-main"}
+           [:aside {:class "bots-quality-panel" :id "bots-quality-panel" :hidden true
+                    :aria-label "Bots の安定性と出力品質"}
+            [:div {:class "section-heading"}
+             (dds/heading 2 "Bots の品質" {:size "24"})
+             [:button {:class "tool-button" :id "bots-quality-close" :type "button"
+                       :aria-label "品質評価を閉じる"} "閉じる"]]
+            [:p {:class "form-help"}
+             "安定して完了できるか（S）と、成功時の出力品質（Q）を分けて評価します。E は完了率を含む実効品質です。"]
+            [:p {:class "bots-quality-status" :id "bots-quality-status" :role "status"
+                 :aria-live "polite"}]
+            [:div {:class "bots-quality-scores" :id "bots-quality-scores"}]
+            [:p {:class "form-help" :id "bots-quality-note"}]
+            [:ul {:class "bots-quality-gates" :id "bots-quality-gates"}]]
            ;; The onboarding pair from a first run: pick what you use, then
            ;; make the first Bot. Hidden once one exists.
            [:div {:class "bots-onboard" :id "bots-onboard" :hidden true}

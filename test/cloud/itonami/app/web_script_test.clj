@@ -110,6 +110,20 @@
     (is (str/includes? js "Capability policy は職務上の境界です。"))
     (is (str/includes? js "既存の会話と実行履歴は保持されています。"))))
 
+(deftest bots-quality-score-is-visible-and-fail-closed
+  (let [html (with-redefs [store/snapshot (constantly (store/initial-state))]
+               (web/page-html config))
+        js (slurp (io/file "resources/cloud/itonami/app/interaction.js"))]
+    (doseq [id ["bots-quality" "bots-quality-panel" "bots-quality-close"
+                "bots-quality-status" "bots-quality-scores"
+                "bots-quality-note" "bots-quality-gates"]]
+      (is (str/includes? html (str "id=\"" id "\"")) id))
+    (is (str/includes? js "botsState.slo = data.slo || null"))
+    (is (str/includes? js "const renderBotsSlo = () =>"))
+    (is (str/includes? js "const setBotsQualityOpen = (open) =>"))
+    (is (str/includes? js "未計測は合格として扱いません。"))
+    (is (str/includes? js "固定20タスクの出力品質"))))
+
 (deftest bots-expose-bounded-local-coding-and-cancellable-goal-progress
   (let [html (with-redefs [store/snapshot (constantly (store/initial-state))]
                (web/page-html config))

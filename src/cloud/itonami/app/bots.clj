@@ -60,6 +60,7 @@
             [cloud.itonami.app.bot :as bot]
             [cloud.itonami.app.bot-authority :as bot-authority]
             [cloud.itonami.app.bot-identity :as bot-identity]
+            [cloud.itonami.app.bot-slo :as bot-slo]
             [cloud.itonami.app.connectors :as connectors]
             [cloud.itonami.app.chronicle :as chronicle]
             [cloud.itonami.app.handoff :as handoff]
@@ -1478,7 +1479,8 @@
   none — what it takes to make the first one."
   [configuration session]
   (let [did (identity/session-did session)
-        mine (->> (vals (:bots (snapshot)))
+        partition (snapshot)
+        mine (->> (vals (:bots partition))
                   (filter #(and (= (:user-id session) (:bot/owner %))
                                 (= (:organization-id session) (:bot/organization %))))
                   (sort-by :bot/created-at))
@@ -1497,6 +1499,7 @@
                        (policy/provider-readiness configuration candidate)))
               (:providers configuration))]
     {:bots (mapv #(public-bot configuration did %) mine)
+     :slo (bot-slo/evaluate {:bots partition} session)
      :model-providers
      (mapv #(select-keys % [:id :name :model :models])
            (filter :allowed? provider-readiness))
