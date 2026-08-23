@@ -978,6 +978,31 @@
           (is (= "failed" (get-in turn [:job :state]))
               "the durable AgentRun and visible turn close together"))))))
 
+(deftest a-resumed-goal-is-told-to-converge-from-existing-receipts
+  (with-store
+    (fn []
+      (let [b (make-bot alice {})
+            bot-id (:bot/id b)
+            run-id "goal-resume-converge-1"
+            resume! (ns-resolve 'cloud.itonami.app.bots 'resume-goal-turn!)
+            admission! (ns-resolve 'cloud.itonami.app.bots 'turn-admission)
+            advance! (ns-resolve 'cloud.itonami.app.bots 'advance!)
+            captured (atom nil)]
+        (swap! store/state assoc-in [:bots :runs bot-id]
+               {:id run-id :context-id "context-1" :goal? true
+                :messages [{:role "tool" :content "measured evidence"}]
+                :turn-count 10 :tool-count 8})
+        (with-redefs-fn
+          {admission! (fn [& _] {})
+           advance! (fn [_ _ run _] (reset! captured run))}
+          #(resume! {} alice bot-id run-id))
+        (let [instruction (:content (last (:messages @captured)))]
+          (is (str/includes? instruction "after 8 tool call(s)"))
+          (is (str/includes? instruction "Do not repeat discovery"))
+          (is (str/includes? instruction "complete the goal"))
+          (is (= 8 (:slice-tool-start @captured)))
+          (is (= 10 (:slice-turn-start @captured))))))))
+
 (deftest a-provider-failure-ends-the-silent-gap-with-a-visible-bot-message
   (with-store
     (fn []
