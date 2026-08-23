@@ -110,10 +110,12 @@
    ;; which the provider layer refused with `unsupported provider kind` — the
    ;; refusal is why it was found the same day.
    :base-url "https://api.murakumo.cloud/v1"
-   :default-model "murakumo-main"
-   ;; Keep the fleet alias as the default. The FastMTP deployment is an
-   ;; explicit per-Bot choice: selecting it never changes existing Bots or the
-   ;; deployment-wide routing default.
+   :default-model "qwen3.8-27b-fastmtp-aggressive"
+   ;; The FastMTP deployment is the measured Bot default. On 2026-08-23 the
+   ;; alias route returned HTTP 502 after 45.4 s while this route returned a
+   ;; correct completion in 20.9 s. The alias remains selectable for workloads
+   ;; which explicitly need the fleet main, but an unhealthy alias must not be
+   ;; the default path for an unattended workforce.
    :models ["murakumo-main"
             "qwen3.8-27b-fastmtp-aggressive"]
    ;; Both currently resolve to the Qwen3.8 27B 32K deployment. Keep this map
@@ -237,8 +239,13 @@
                     ;; :max-active for scheduled work without submitting its
                     ;; whole durable backlog to a single inference provider.
                     :recovery-max-active 1
-                    :max-tool-calls 4
+                    ;; This is a scheduling slice, not a terminal execution
+                    ;; limit. A durable Goal checkpoints here and resumes in a
+                    ;; fresh slice, so a useful autonomous run no longer turns
+                    ;; into a red "tool budget" failure after four reads.
+                    :max-tool-calls 8
                     :max-tool-output-chars 1600
+                    :model "qwen3.8-27b-fastmtp-aggressive"
                     ;; Standing delegation, deliberately ABSENT here: `:all`
                     ;; or a set of workforce keys ("business/kind") an
                     ;; operator writes into their own config.edn. A

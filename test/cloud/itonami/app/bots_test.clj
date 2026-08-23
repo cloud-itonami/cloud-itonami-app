@@ -378,7 +378,7 @@
               (is (str/includes? (second (first @submitted))
                                  "advance exactly one bounded step"))
               (is (str/includes? (second (first @submitted))
-                                 "at most two repository read calls"))
+                                 "checkpoint and resume long work automatically"))
               (is (= {:max-tool-calls 4 :max-tool-output-chars 1600
                       :resident-workforce? true}
                      (nth (first @submitted) 3))))))))))
@@ -2369,6 +2369,31 @@
         (testing "an interactive block is held, as it always was"
           (is (= :held (outcome false ["workspace_list"]))))))))
 
+(deftest a-goal-execution-slice-checkpoints-and-is-requeued
+  (with-store
+    (fn []
+      (let [bot-id (:bot/id (make-bot alice {}))
+            run-id "goal-slice-checkpoint-1"
+            run! (ns-resolve 'cloud.itonami.app.bots 'run-goal-job!)
+            queued (agent-run/agent-run {:id run-id :goal "continue safely"} 1)
+            requeued (atom [])]
+        (swap! store/state assoc-in [:bots :goal-jobs run-id]
+               {:job/id run-id :job/bot bot-id :job/session alice
+                :job/objective "continue safely" :job/run queued
+                :job/plan [] :job/events [] :job/attempt 0
+                :job/resident-workforce? true})
+        (with-redefs [bots/send-stream! (fn [& _] nil)
+                      bots/latest-turn (fn [& _] {:state "checkpointed"})
+                      bots/enqueue-goal! (fn [_ id]
+                                           (swap! requeued conj id)
+                                           id)]
+          (run! {} run-id))
+        (is (= :checkpointed
+               (get-in @store/state
+                       [:bots :goal-jobs run-id :job/run :agent.run/status])))
+        (is (= [run-id] @requeued)
+            "a slice boundary resumes autonomously instead of becoming a tool-budget failure")))))
+
 ;; ── a timeout is not a no-op ────────────────────────────────────────────
 
 (deftest a-resident-timeout-is-not-laundered-into-a-safe-no-op
@@ -2923,11 +2948,11 @@
   (with-store
     (fn []
       (with-redefs [workspace-tools/admit-root (fn [path] path)]
-        (testing "an entry with no profile provisions exactly as before"
+        (testing "an entry with no profile uses the measured stable default"
           (bots/provision-workforce! {} alice (workforce-catalog [(engineer-entry)]))
           (let [b (first (:bots (bots/overview {} alice)))]
             (is (= "murakumo" (:provider-id b)))
-            (is (= "murakumo-main" (:model b)))))
+            (is (= "qwen3.8-27b-fastmtp-aggressive" (:model b)))))
         (testing "a profile chooses where the role runs"
           (bots/provision-workforce!
            {} alice (workforce-catalog
@@ -2939,6 +2964,17 @@
             (is (= "claude-bridge" (:provider-id b))
                 "provisioning reads the profile, not a literal")
             (is (= "claude-sonnet-5" (:model b)))))
+        (testing "an operator can move every workforce Bot off a degraded model"
+          (bots/provision-workforce!
+           {:bots {:workforce {:model "qwen3.8-27b-fastmtp-aggressive"}}}
+           alice
+           (workforce-catalog
+            [(assoc (engineer-entry)
+                    :profile {:profile/id :legacy
+                              :profile/provider "murakumo"
+                              :profile/model "murakumo-main"})]))
+          (let [b (first (:bots (bots/overview {} alice)))]
+            (is (= "qwen3.8-27b-fastmtp-aggressive" (:model b)))))
         (testing "a profile cannot widen what the role may do"
           ;; The registry refuses authority-shaped profile keys at the source.
           ;; Even if one reached here, provisioning reads exactly two keys, so
