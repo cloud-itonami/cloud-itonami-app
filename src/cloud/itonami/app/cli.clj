@@ -87,6 +87,7 @@
   `CLOUD_ITONAMI_API_URL=https://itonami.cloud` switches CLI and MCP adapters
   to the hosted control plane; non-loopback plain HTTP is refused."
   (:require [clojure.data.json :as json]
+            [clojure.java.io :as io]
             [clojure.string :as str]
             [cloud.itonami.app.agent-session :as agent-session]
             [cloud.itonami.app.app-client :as client]
@@ -94,7 +95,8 @@
             [cloud.itonami.app.config :as config]
             [cloud.itonami.app.kaiyu-local :as kaiyu-local]
             [cloud.itonami.app.store :as store]
-            [cloud.itonami.app.server-process :as server-process])
+            [cloud.itonami.app.server-process :as server-process]
+            [cloud.itonami.app.west-kotoba-refactor :as west-refactor])
   (:import [java.nio.file Files LinkOption]
            [java.util.concurrent TimeUnit]))
 
@@ -216,7 +218,11 @@
 (defn needs-server?
   "Whether these arguments describe a command that will make a request."
   [args]
-  (not (contains? lifecycle-commands (first (words args)))))
+  (let [named (words args)]
+    (not (or (contains? lifecycle-commands (first named))
+             (contains? #{["bots" "refactor" "scan"]
+                          ["bots" "refactor" "inspect"]}
+                        (vec (take 3 named)))))))
 
 (defn up [configuration]
   (let [started (ensure-server! configuration)]
@@ -534,6 +540,48 @@
                    (str "/api/agent-bots/" (required-flag flags :id)
                         "/messages/" (required-flag flags :run) "/cancel") {}))
 
+(defn- refactor-root [configuration flags]
+  (or (:root flags)
+      (get-in configuration [:business :workspace-root])
+      (throw (ex-info "--root または :business :workspace-root が必要です"
+                      {:type :west-refactor/root-required}))))
+
+(defn bot-refactor-scan [configuration flags]
+  (west-refactor/scan (refactor-root configuration flags)
+                      {:limit (or (some-> (:limit flags) parse-long) 25)}))
+
+(defn bot-refactor-inspect [configuration flags]
+  (west-refactor/inspect-project
+   (refactor-root configuration flags)
+   (required-flag flags :repo)
+   {:limit (or (some-> (:limit flags) parse-long) 8)}))
+
+(defn- find-bot [overview id]
+  (some #(when (= id (:id %)) %) (:bots overview)))
+
+(defn bot-refactor-start [configuration flags]
+  (let [id (required-flag flags :id)
+        inspection (bot-refactor-inspect configuration flags)
+        expected (get-in inspection [:project :checkout])
+        b (find-bot (bot-list configuration) id)]
+    (when-not b
+      (throw (ex-info (str "Bot が見つかりません: " id)
+                      {:type :west-refactor/bot-missing :bot id})))
+    (when-not (:coding? b)
+      (throw (ex-info "対象Botにはcoding capabilityがありません"
+                      {:type :west-refactor/coding-required :bot id})))
+    (when-not (= (.getCanonicalPath (io/file expected))
+                 (some-> (:workspace b) io/file .getCanonicalPath))
+      (throw (ex-info (str "Bot workspaceが対象west projectと一致しません。期待: " expected)
+                      {:type :west-refactor/workspace-mismatch
+                       :expected expected :actual (:workspace b)})))
+    (when-not (:virtual-shell-ready? b)
+      (throw (ex-info "移行の適用には、隔離されたvirtual shellが利用可能なcoding Botが必要です"
+                      {:type :west-refactor/verification-required :bot id})))
+    (client/request-with-timeout!
+     configuration :post (str "/api/agent-bots/" id "/messages") 660
+     {:text (west-refactor/task-text inspection)})))
+
 (def usage
   (str "itonami — cloud-itonami-app CLI\n\n"
        "  up                     headless server を起動（動いていれば何もしない）\n"
@@ -568,6 +616,9 @@
        "  bots handoff --from <bot-id> --to <bot-id> --task <依頼> [--depth N]\n"
        "  bots decide --id <bot-id> --card <card-id> --decision approved|rejected\n"
        "  bots cancel --id <bot-id> --run <run-id>\n\n"
+       "  bots refactor scan --root <west-root> [--limit 25]\n"
+       "  bots refactor inspect --root <west-root> --repo <west-name> [--limit 8]\n"
+       "  bots refactor start --root <west-root> --repo <west-name> --id <bot-id>\n\n"
        "Bot設定と通常モードの承認はブラウザ専用です。CLI承認はおまかせBotだけです。\n"))
 
 (defn- run-server-command
@@ -602,6 +653,13 @@
       ["bots" "handoff"] (bot-handoff configuration flags)
       ["bots" "decide"] (bot-decide configuration flags)
       ["bots" "cancel"] (bot-cancel configuration flags)
+      ["bots" "refactor"]
+      (case (nth named 2 nil)
+        "scan" (bot-refactor-scan configuration flags)
+        "inspect" (bot-refactor-inspect configuration flags)
+        "start" (bot-refactor-start configuration flags)
+        (throw (ex-info "bots refactor は scan / inspect / start を指定してください"
+                        {:type :cli/usage})))
       (if-let [resolved (commands/resolve-command named)]
         (run-command configuration resolved flags)
         (throw (ex-info

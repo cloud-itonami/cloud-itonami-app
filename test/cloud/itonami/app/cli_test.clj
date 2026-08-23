@@ -3,7 +3,8 @@
             [cloud.itonami.app.agent-session :as agent-session]
             [cloud.itonami.app.app-client :as client]
             [cloud.itonami.app.bot-tools :as bot-tools]
-            [cloud.itonami.app.cli :as cli]))
+            [cloud.itonami.app.cli :as cli]
+            [cloud.itonami.app.west-kotoba-refactor :as west-refactor]))
 
 (deftest tenant-cli-is-an-http-client-of-the-versioned-api
   (let [calls (atom [])
@@ -58,6 +59,45 @@
       (is (= [:post "/api/agent-bots/bot-1/messages" 660
               {:text "repo を確認して"}]
              @seen)))))
+
+(deftest west-refactor-inspection-does-not-start-the-server
+  (is (false? (cli/needs-server? ["bots" "refactor" "scan" "--root" "/tmp/ws"])))
+  (is (false? (cli/needs-server? ["bots" "refactor" "inspect" "--root" "/tmp/ws"
+                                  "--repo" "example"])))
+  (is (true? (cli/needs-server? ["bots" "refactor" "start" "--root" "/tmp/ws"
+                                 "--repo" "example" "--id" "bot-1"]))))
+
+(deftest west-refactor-start-requires-the-exact-admitted-repository
+  (let [inspection {:project {:name "example" :checkout "/tmp/example"}
+                    :candidates [{:path "src/core.clj" :bytes 20}]
+                    :verification ["clojure -M:test"]}]
+    (with-redefs [west-refactor/inspect-project (fn [& _] inspection)
+                  cli/bot-list (fn [_] {:bots [{:id "bot-1" :coding? true
+                                                :workspace "/tmp/another"
+                                                :virtual-shell-ready? true}]})]
+      (is (= :west-refactor/workspace-mismatch
+             (:type (ex-data (try (cli/bot-refactor-start
+                                   {} {:id "bot-1" :repo "example" :root "/tmp/ws"})
+                                  (catch clojure.lang.ExceptionInfo e e)))))))))
+
+(deftest west-refactor-start-submits-the-fixed-contract
+  (let [seen (atom nil)
+        inspection {:project {:name "example" :checkout "/tmp/example"}
+                    :candidates [{:path "src/core.clj" :bytes 20}]
+                    :verification ["clojure -M:test"]}]
+    (with-redefs [west-refactor/inspect-project (fn [& _] inspection)
+                  cli/bot-list (fn [_] {:bots [{:id "bot-1" :coding? true
+                                                :workspace "/tmp/example"
+                                                :virtual-shell-ready? true}]})
+                  client/request-with-timeout!
+                  (fn [_ method path seconds body]
+                    (reset! seen [method path seconds body])
+                    {:accepted true})]
+      (is (= {:accepted true}
+             (cli/bot-refactor-start {} {:id "bot-1" :repo "example" :root "/tmp/ws"})))
+      (is (= :post (first @seen)))
+      (is (= "/api/agent-bots/bot-1/messages" (second @seen)))
+      (is (re-find #"parity test" (get-in @seen [3 :text]))))))
 
 (deftest the-agent-surface-can-make-a-registry-edit-live
   ;; Owner directive 2026-08-18. Before it, an objective edited in
