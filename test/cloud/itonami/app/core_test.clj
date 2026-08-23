@@ -225,10 +225,10 @@
     (is (.isFile icon) (str "app.kotoba.edn names a missing icon: " (:app/icon manifest)))
     (is (empty? (:macos/permissions manifest)))
     (is (= :kotoba/web (get-in manifest [:runtime :surface])))
-    (is (= {:width 430 :height 860 :min-width 360 :min-height 640}
+    (is (= {:width 1100 :height 760 :min-width 430 :min-height 640}
            (select-keys (get-in manifest [:runtime :window])
                         [:width :height :min-width :min-height]))
-        "the installed app opens as the phone-shaped surface it is designed for")
+        "the installed app opens with the Bot list and thread visible together")
     (is (= :overlay (get-in manifest [:runtime :window :titlebar]))
         "the app topbar occupies the native title band without removing its window controls")
     ;; The window must point at the surface this server actually serves; the
@@ -359,6 +359,8 @@
   (is (str/includes? web/app-css ".bots-main{flex:1}"))
   (is (str/includes? web/app-css
                      ".bots-rail__list{display:flex;gap:.375rem;overflow-x:auto"))
+  (is (str/includes? (web/page-html {}) "id=\"bots-filter\""))
+  (is (str/includes? (web/page-html {}) "id=\"bots-mobile-context\""))
   (is (not (str/includes? web/app-css ".bots-rail{display:none}")))
   (is (str/includes? web/app-css
                      ".bots-thread__scroll{flex:1;min-height:0;overflow-y:auto"))

@@ -97,7 +97,7 @@
     (is (str/includes? js "Model: ${bot['provider-id']} / ${bot.model}"))
     (is load-bots "loadBots remains independently inspectable")
     (is (< (.indexOf load-bots "renderBotsModelProviders();")
-           (.indexOf load-bots "await selectBot(botsState.bots[0].id);"))
+           (.indexOf load-bots "await selectBot(botsRecentFirst(botsState.bots)[0].id);"))
         "provider readiness renders before the initial selection fast path")))
 
 (deftest startup-workforce-is-visible-and-human-provisioned
@@ -106,7 +106,7 @@
         js (slurp (io/file "resources/cloud/itonami/app/interaction.js"))]
     (is (str/includes? html "id=\"bots-workforce\""))
     (is (str/includes? js "'/api/bots/workforce/provision'"))
-    (is (str/includes? js "bot.business?.name || '個人Bot'"))
+    (is (str/includes? js "bot.business?.name, bot.role?.name"))
     (is (str/includes? js "Capability policy は職務上の境界です。"))
     (is (str/includes? js "既存の会話と実行履歴は保持されています。"))))
 
@@ -189,6 +189,15 @@
                        "botAvatar(make('span', 'bot-avatar'), bot.avatar, bot.status)"))
     (is (str/includes? js
                        "botAvatar($('#bots-titlebar-avatar'), bot.avatar, bot.status)"))))
+
+(deftest bots-picker-is-a-recent-searchable-conversation-list
+  (let [js (slurp (io/file "resources/cloud/itonami/app/interaction.js"))]
+    (is (str/includes? js "$('#bots-filter').addEventListener('input', renderBotsRail)"))
+    (is (str/includes? js "botsActivityTime(b) - botsActivityTime(a)"))
+    (is (str/includes? js "bot['last-message']?.text"))
+    (is (str/includes? js "bots-rail__time"))
+    (is (str/includes? js "$('#bots-input').placeholder = `${bot.name} に頼む`"))
+    (is (str/includes? js "botAvatar($('#bots-mobile-avatar'), bot.avatar, bot.status)"))))
 
 (deftest bots-expose-one-approved-virtual-shell-per-bot
   (let [html (with-redefs [store/snapshot (constantly (store/initial-state))]

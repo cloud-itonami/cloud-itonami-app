@@ -25,16 +25,17 @@
            ;; request must not open in an embedded webview (RFC 8252, and
            ;; independently because this webview cannot do WebAuthn), so
            ;; sign-in has to go to the system browser and come back by claim.
-           ;; Cloud Itonami is a phone-shaped application. Keep the native
-           ;; host inside the same touch layout the web surface serves instead
-           ;; of opening a desktop canvas that happens to contain mobile CSS.
+           ;; Bots are selected from a conversation list while their thread
+           ;; remains visible, so the native default is a compact desktop
+           ;; workspace. The same document still collapses to the touch layout
+           ;; when a person narrows the window.
            :window {:web-url "http://localhost:1338/?surface=native&chrome=titlebar-overlay"
                     ;; Keep AppKit's traffic lights and window behaviours, but
                     ;; let the app's own topbar occupy the otherwise empty
                     ;; title band. Browser rendering remains an ordinary page.
                     :titlebar :overlay
-                    :width 430 :height 860
-                    :min-width 360 :min-height 640}}
+                    :width 1100 :height 760
+                    :min-width 430 :min-height 640}}
  :local/contracts
  {:language :kotoba
   :shell :kotoba/web

@@ -64,7 +64,7 @@ open_window() {
   printf 'kotoba-lang/shell not found; opening %s in the browser instead.\n' "$url"
   local chrome="/Applications/Google Chrome.app"
   if [[ -d "$chrome" ]]; then
-    open -na "$chrome" --args --app="$url" --new-window --window-size=430,860
+    open -na "$chrome" --args --app="$url" --new-window --window-size=1100,760
   else
     open "$url"
   fi
