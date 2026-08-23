@@ -15,6 +15,18 @@ work_dir="${pending_dir}.apply-${stamp}"
 backup_bundle="${current_bundle}.previous"
 failed_bundle="${current_bundle}.failed-${stamp}"
 mkdir -p "$work_dir"
+
+cd "$pending_dir"
+if ! /usr/bin/shasum -a 256 -c package.sha256; then
+  echo "staged update digest changed after verification"
+  exit 1
+fi
+expected_version="$(/usr/bin/tr -d '[:space:]' < version.txt)"
+if [[ ! "$expected_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+  echo "staged update version is invalid"
+  exit 1
+fi
+
 /usr/bin/ditto -x -k "$package" "$work_dir"
 new_bundle="$work_dir/Cloud Itonami.app"
 
@@ -23,13 +35,48 @@ if [[ ! -d "$new_bundle" ]]; then
   exit 1
 fi
 /usr/bin/codesign --verify --deep --strict --verbose=2 "$new_bundle"
-signature_details="$(/usr/bin/codesign -dv --verbose=4 "$new_bundle" 2>&1)"
-if [[ "$signature_details" != *"Authority=Developer ID Application:"* ||
-      "$signature_details" != *"TeamIdentifier=3A5CBTEBFP"* ]]; then
-  echo "update is not signed by the Cloud Itonami Developer ID team"
+new_identifier="$(/usr/bin/codesign -dv --verbose=4 "$new_bundle" 2>&1 | /usr/bin/sed -n 's/^Identifier=//p')"
+if [[ "$new_identifier" != "cloud.itonami.app" ]]; then
+  echo "update has the wrong bundle identifier"
   exit 1
 fi
-/usr/sbin/spctl --assess --type execute --verbose=2 "$new_bundle"
+
+current_version="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$current_bundle/Contents/Info.plist")"
+new_version="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$new_bundle/Contents/Info.plist")"
+if [[ "$new_version" != "$expected_version" ]]; then
+  echo "update bundle version does not match the signed staging record"
+  exit 1
+fi
+if ! /usr/bin/awk -v old="$current_version" -v new="$new_version" 'BEGIN {
+  split(old,a,"."); split(new,b,".");
+  for (i=1;i<=3;i++) { if ((b[i]+0)>(a[i]+0)) exit 0; if ((b[i]+0)<(a[i]+0)) exit 1 }
+  exit 1
+}'; then
+  echo "update version does not advance the installed version"
+  exit 1
+fi
+
+current_signature="$(/usr/bin/codesign -dv --verbose=4 "$current_bundle" 2>&1)"
+signature_details="$(/usr/bin/codesign -dv --verbose=4 "$new_bundle" 2>&1)"
+if [[ "$current_signature" == *"TeamIdentifier=3A5CBTEBFP"* ]]; then
+  if [[ "$signature_details" != *"Authority=Developer ID Application:"* ||
+        "$signature_details" != *"TeamIdentifier=3A5CBTEBFP"* ]]; then
+    echo "a Developer ID installation cannot update to another publisher"
+    exit 1
+  fi
+  /usr/sbin/spctl --assess --type execute --verbose=2 "$new_bundle"
+elif [[ "$current_signature" == *"Signature=adhoc"* ]]; then
+  if [[ "$signature_details" == *"TeamIdentifier=3A5CBTEBFP"* ]]; then
+    /usr/sbin/spctl --assess --type execute --verbose=2 "$new_bundle"
+  elif [[ "$signature_details" != *"Signature=adhoc"* ||
+          "$signature_details" != *"TeamIdentifier=not set"* ]]; then
+    echo "preview update changed publisher authority"
+    exit 1
+  fi
+else
+  echo "current installation has no admitted publisher authority"
+  exit 1
+fi
 
 if [[ -e "$backup_bundle" ]]; then
   mv "$backup_bundle" "${backup_bundle}.${stamp}"
@@ -63,6 +110,9 @@ if [[ "$healthy" != true ]]; then
   exit 1
 fi
 
+printf '{:schema "cloud.itonami.applied-update.v1" :from-version "%s" :version "%s" :applied-at "%s"}\n' \
+  "$current_version" "$new_version" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+  > "${pending_dir%/pending}/last-applied.edn"
 mv "$pending_dir" "${pending_dir}.applied-${stamp}"
 rm -rf "$work_dir"
 echo "update applied successfully"

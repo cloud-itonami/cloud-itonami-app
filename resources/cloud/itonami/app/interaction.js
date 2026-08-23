@@ -8509,29 +8509,30 @@
     };
     const renderDesktopUpdate = (data) => {
       const status = $('#desktop-update-status');
-      const download = $('#desktop-update-download');
+      const action = $('#desktop-update-action');
       if (data['restart-required?']) {
-        status.textContent = `${data['staged-version'] || data['available-version']} を検証済みです。アプリを終了してもう一度開くと適用します。`;
-        download.hidden = true;
+        status.textContent = `${data['staged-version'] || data['available-version']} を検証済みです。更新すると現在のウインドウを閉じ、安全に適用して開き直します。`;
+        action.textContent = 'アプリを閉じて更新';
+        action.dataset.updateReady = 'true';
         return;
       }
+      delete action.dataset.updateReady;
+      action.textContent = '更新を確認';
       if (data.status === 'error') {
         status.textContent = `更新を確認できません: ${data.error}`;
-        download.hidden = true;
         return;
       }
       if (data['available?']) {
         status.textContent = `${data['installed-version']} → ${data['available-version']} を利用できます。`;
-        download.hidden = false;
+        action.textContent = '検証して更新を準備';
         return;
       }
       status.textContent = data['installed-version']
         ? `${data['installed-version']} は最新です。`
         : '更新状態をまだ確認していません。';
-      download.hidden = true;
     };
     const loadDesktopUpdate = async (refresh = false) => {
-      const button = $('#desktop-update-check');
+      const button = $('#desktop-update-action');
       button.disabled = true;
       try {
         const request = await fetch(refresh ? '/api/update/check' : '/api/update',
@@ -8545,17 +8546,27 @@
         button.disabled = false;
       }
     };
-    $('#desktop-update-check').addEventListener('click', () => loadDesktopUpdate(true));
-    $('#desktop-update-download').addEventListener('click', async () => {
-      const button = $('#desktop-update-download');
+    $('#desktop-update-action').addEventListener('click', async () => {
+      const button = $('#desktop-update-action');
+      if (button.dataset.updateReady === 'true') {
+        window.close();
+        return;
+      }
       button.disabled = true;
       try {
-        const request = await fetch('/api/update/download', {
-          method:'POST', headers:{'Content-Type':'application/json'}, body:'{}'
-        });
-        const data = await request.json();
-        if (!request.ok) throw new Error(data?.error?.message || '更新を準備できません。');
-        renderDesktopUpdate(data);
+        const checked = await fetch('/api/update/check', {
+          method:'POST', headers:{'Content-Type':'application/json'}, body:'{}'});
+        const checkData = await checked.json();
+        if (!checked.ok) throw new Error(checkData?.error?.message || '更新状態を確認できません。');
+        if (!checkData['available?']) {
+          renderDesktopUpdate(checkData);
+          return;
+        }
+        const downloaded = await fetch('/api/update/download', {
+          method:'POST', headers:{'Content-Type':'application/json'}, body:'{}'});
+        const downloadData = await downloaded.json();
+        if (!downloaded.ok) throw new Error(downloadData?.error?.message || '更新を準備できません。');
+        renderDesktopUpdate(downloadData);
       } catch (error) {
         renderDesktopUpdate({status:'error', error:error.message});
       } finally {

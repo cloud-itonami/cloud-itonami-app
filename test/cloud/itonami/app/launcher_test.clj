@@ -105,11 +105,29 @@
 
 (deftest platform-updaters-pin-native-publisher-authority
   (let [macos (slurp "packaging/macos/ApplyUpdateMacos")
+        launcher (slurp "packaging/macos/CloudItonami")
         windows (slurp "packaging/windows/ApplyUpdateWindows.ps1")
         signer (slurp "scripts/sign-windows-release")]
+    (is (str/includes? macos "shasum -a 256 -c package.sha256"))
+    (is (str/includes? macos "new_identifier"))
+    (is (str/includes? macos "cloud.itonami.app"))
+    (is (str/includes? macos "a Developer ID installation cannot update to another publisher"))
+    (is (str/includes? macos "preview update changed publisher authority"))
     (is (str/includes? macos "TeamIdentifier=3A5CBTEBFP"))
     (is (str/includes? macos "spctl --assess"))
+    (is (= 2 (count (re-seq #"\n  start_pending_update\n" launcher)))
+        "the packaged launcher applies both at startup and after the update window closes")
     (is (str/includes? windows "Get-AuthenticodeSignature"))
     (is (str/includes? windows "windows-publisher-sha256.txt"))
     (is (str/includes? signer "602a51c3545a6dc4fb99bd2ea7152b26d1345916d0c93ddfbd5936cb735af91c"))
     (is (str/includes? signer "--storepass \"file:$password_file\""))))
+
+(deftest desktop-update-is-one-visible-action
+  (let [html (slurp "src/cloud/itonami/app/web.clj")
+        javascript (slurp "resources/cloud/itonami/app/interaction.js")]
+    (is (str/includes? html ":id \"desktop-update-action\""))
+    (is (not (str/includes? html "desktop-update-download")))
+    (is (str/includes? javascript "if (button.dataset.updateReady === 'true')"))
+    (is (str/includes? javascript "window.close()"))
+    (is (str/includes? javascript "fetch('/api/update/check'"))
+    (is (str/includes? javascript "fetch('/api/update/download'"))))

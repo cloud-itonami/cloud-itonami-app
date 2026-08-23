@@ -26,12 +26,20 @@ Either path stages only an asset whose URL remains under this repository's Relea
 whose size is below the fixed limit, and whose signed size and digest match.
 There is no silent replacement while the process owns its store.
 
-After staging, the next platform-launcher start applies the staged
-ZIP before starting the server. It keeps the prior install, starts the new one,
+After staging, the platform launcher applies the staged ZIP when the update
+window closes; an already-staged update is also applied before the next server
+start. It keeps the prior install, starts the new one,
 waits for the loopback `/health` contract, and rolls back if health does not
 arrive. A same-user process can already edit the local store and install, so the
 supply-chain boundary is the signed remote manifest and package digest, not a
 second local secret.
+
+The launcher-time helper rechecks the staged ZIP SHA-256, exact semantic
+version, forward-only version transition, and `cloud.itonami.app` bundle ID.
+Settings exposes one action: check, verify, and stage; once ready the same
+action closes the window so the launcher can replace, health-check, and reopen
+the app. A two-button check/download surface looked like an updater but left
+the final apply step outside the button.
 
 Windows is initially a real portable x64 package rather than a claimed MSIX.
 Its small Go launcher starts the same Java server JAR and opens Edge application

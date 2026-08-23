@@ -10,13 +10,18 @@ server_pid=""
 mkdir -p "$support_dir" "$log_dir"
 
 pending_dir="$support_dir/updates/pending"
-if [[ -f "$pending_dir/pending.edn" && -f "$pending_dir/package.zip" ]]; then
+start_pending_update() {
   current_bundle="$(CDPATH= cd -- "$contents_dir/.." && pwd)"
   helper="$support_dir/apply-update-macos"
   cp "$resources_dir/ApplyUpdateMacos" "$helper"
   chmod 700 "$helper"
   nohup "$helper" "$$" "$current_bundle" "$pending_dir/package.zip" \
     "$pending_dir" "$log_dir/updater.log" >/dev/null 2>&1 &
+}
+
+if [[ -f "$pending_dir/pending.edn" && -f "$pending_dir/package.zip" &&
+      -f "$pending_dir/package.sha256" && -f "$pending_dir/version.txt" ]]; then
+  start_pending_update
   exit 0
 fi
 
@@ -66,9 +71,21 @@ fi
 # browser, follows sign-in hrefs into the webview, and the person is stranded
 # on a WebAuthn ceremony the webview cannot finish (RFC 8252; the packaged
 # launcher shipped without the flag and that is exactly what happened).
+window_status=0
 "$contents_dir/MacOS/kotoba-shell-host" \
   --title "Cloud Itonami" \
   --icon "$resources_dir/icon.png" \
   --web-url 'http://localhost:1338/?surface=native&chrome=titlebar-overlay' \
   --titlebar-overlay \
-  --width 1100 --height 760 --min-width 430 --min-height 640
+  --width 1100 --height 760 --min-width 430 --min-height 640 || window_status=$?
+
+# A Settings update ends by closing the native window.  The old launcher used
+# to notice a staged package only on a later manual open, so the button could
+# prepare an update but could not finish it.  Schedule the helper while this
+# launcher still owns the exact bundle path; the helper waits for our trap to
+# stop the server, replaces the bundle, health-checks it, and reopens it.
+if [[ -f "$pending_dir/pending.edn" && -f "$pending_dir/package.zip" &&
+      -f "$pending_dir/package.sha256" && -f "$pending_dir/version.txt" ]]; then
+  start_pending_update
+fi
+exit "$window_status"

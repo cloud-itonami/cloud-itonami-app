@@ -82,11 +82,15 @@
         (let [checked (updater/check! configuration)
               downloaded (updater/download! configuration)
               marker (io/file directory "updates" "pending" "pending.edn")
+              checksum (io/file directory "updates" "pending" "package.sha256")
+              version-file (io/file directory "updates" "pending" "version.txt")
               staged (io/file directory "updates" "pending" "package.zip")]
           (is (:available? checked))
           (is (= "9.0.0" (:available-version checked)))
           (is (:restart-required? downloaded))
           (is (= (seq package) (seq (Files/readAllBytes (.toPath staged)))))
+          (is (= (str (sha256 package) "  package.zip\n") (slurp checksum)))
+          (is (= "9.0.0\n" (slurp version-file)))
           (is (= "9.0.0" (:version (edn/read-string (slurp marker))))))))))
 
 (deftest automatic-staging-fails-closed-on-changed-package
