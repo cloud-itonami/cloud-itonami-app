@@ -40,6 +40,10 @@ It atomically claims `updates/pending` before opening the replacement bundle,
 so the replacement launcher cannot start a second helper for the same package
 while the first helper is still checking health. A failed claim is archived
 with a timestamp instead of being retried in a launch loop.
+For compatibility with helpers shipped before this claim protocol, a
+replacement launcher also starts normally when the pending version already
+equals its own bundle version; the older helper can then observe health and
+archive its pending package.
 Settings exposes one action: check, verify, and stage; once ready the same
 action closes the window so the launcher can replace, health-check, and reopen
 the app. A two-button check/download surface looked like an updater but left

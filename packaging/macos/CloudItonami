@@ -10,6 +10,7 @@ server_pid=""
 mkdir -p "$support_dir" "$log_dir"
 
 pending_dir="$support_dir/updates/pending"
+bundle_version="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$contents_dir/Info.plist")"
 start_pending_update() {
   current_bundle="$(CDPATH= cd -- "$contents_dir/.." && pwd)"
   helper="$support_dir/apply-update-macos"
@@ -21,8 +22,15 @@ start_pending_update() {
 
 if [[ -f "$pending_dir/pending.edn" && -f "$pending_dir/package.zip" &&
       -f "$pending_dir/package.sha256" && -f "$pending_dir/version.txt" ]]; then
-  start_pending_update
-  exit 0
+  pending_version="$(/usr/bin/tr -d '[:space:]' < "$pending_dir/version.txt")"
+  # An older helper opens the replacement before it archives `pending`.  When
+  # this bundle already is that target version, start normally so the older
+  # helper can observe health and finish instead of recursively applying the
+  # same package.
+  if [[ "$pending_version" != "$bundle_version" ]]; then
+    start_pending_update
+    exit 0
+  fi
 fi
 
 healthy() {
