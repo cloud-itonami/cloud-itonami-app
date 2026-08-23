@@ -208,7 +208,7 @@
   (let [provider (some #(when (= "murakumo" (:id %)) %)
                        (:providers (config/load-config)))]
     (is (= 512 (:max-output-tokens provider)))
-    (is (= "murakumo-main" (:default-model provider)))
+    (is (= "qwen3.8-27b-fastmtp-aggressive" (:default-model provider)))
     (is (= ["murakumo-main" "qwen3.8-27b-fastmtp-aggressive"]
            (:models provider)))
     (is (= 32768

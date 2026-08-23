@@ -117,6 +117,7 @@
 (def max-tool-calls 12)
 (def max-goal-turns 24)
 (def max-goal-tool-calls 32)
+(def max-goal-continuations 24)
 (def ^:private default-resident-max-output-tokens 1024)
 (def max-message-chars 8000)
 (def max-conversation 200)
@@ -990,8 +991,14 @@
                      ;; refuses an authority-shaped one at the source.
                      :bot/provider-id (or (get-in entry [:profile :profile/provider])
                                           "murakumo")
-                     :bot/model (or (get-in entry [:profile :profile/model])
-                                    "murakumo-main")
+                     ;; An operator may move the whole resident workforce away
+                     ;; from a degraded model without rewriting role profiles.
+                     ;; This changes inference only; profiles still carry no
+                     ;; authority and every tool call crosses the same grant.
+                     :bot/model (or (get-in configuration
+                                             [:bots :workforce :model])
+                                    (get-in entry [:profile :profile/model])
+                                    "qwen3.8-27b-fastmtp-aggressive")
                      :bot/email (mailbox-address configuration id)
                      :bot/tools #{} :bot/accounts #{}
                      :bot/writes? false :bot/browser? false
@@ -2754,25 +2761,48 @@
     (when (and cancelled? (cancelled?))
       (throw (ex-info "Bot の実行を中止しました。" {:type :bot/cancelled})))
     (cond
-      (>= (:turn-count run 0) (if (:goal? run) max-goal-turns max-turns))
+      (>= (- (:turn-count run 0) (:slice-turn-start run 0))
+          (if (:goal? run) max-goal-turns max-turns))
+      (if (and (:goal? run)
+               (< (long (or (:job/attempt (goal-job (:id run))) 0))
+                  max-goal-continuations))
+        (do
+          (finish-visible! on-finish run :checkpointed
+                           {:turn/result "作業を保存し、自動的に続きを実行します。"})
+          (goal-event! :run/checkpointed
+                       {:reason :turn-slice
+                        :turn-count (:turn-count run 0)
+                        :tool-count (:tool-count run 0)}))
       (let [text (if (:goal? run)
                    "Goal は未完了です。turn の上限に達したため、安全に停止しました。"
                    "考える回数の上限に達したので、ここで止めます。何を先にやるか教えてください。")]
         (clear-run! (:bot/id b))
         (finish-visible! on-finish run :failed
                          {:turn/error-type :turn-budget-exhausted})
-        (say (:bot/id b) text nil))
+        (say (:bot/id b) text nil)))
 
-      (>= (:tool-count run 0)
+      (>= (- (:tool-count run 0) (:slice-tool-start run 0))
           (if (:goal? run)
             (long (or (get-in configuration [:bots :goal :max-tool-calls])
                       max-goal-tool-calls))
             max-tool-calls))
-      (do
-        (clear-run! (:bot/id b))
-        (finish-visible! on-finish run :failed
-                         {:turn/error-type :tool-budget-exhausted})
-        (say (:bot/id b) "ツールを呼ぶ回数の上限に達したので、ここで止めます。" nil))
+      (if (and (:goal? run)
+               (< (long (or (:job/attempt (goal-job (:id run))) 0))
+                  max-goal-continuations))
+        (do
+          (finish-visible! on-finish run :checkpointed
+                           {:turn/result "作業を保存し、自動的に続きを実行します。"})
+          (goal-event! :run/checkpointed
+                       {:reason :tool-slice
+                        :turn-count (:turn-count run 0)
+                        :tool-count (:tool-count run 0)}))
+        (do
+          (clear-run! (:bot/id b))
+          (finish-visible! on-finish run :failed
+                           {:turn/error-type :continuation-budget-exhausted})
+          (say (:bot/id b)
+               "長時間の自律実行を安全に停止しました。進捗は保存されています。"
+               nil)))
 
       :else
       (let [{:keys [provider model]} (provider-choice! configuration b)
@@ -3501,7 +3531,9 @@
     (try
       (let [did (identity/session-did session)
             admission (turn-admission configuration b did true)
-            run (merge saved admission)
+            run (-> (merge saved admission)
+                    (assoc :slice-turn-start (:turn-count saved 0)
+                           :slice-tool-start (:tool-count saved 0)))
             messages (binding [*context-id* (:context-id run)
                                *message-source* :bot]
                        (advance! configuration b run
@@ -3660,15 +3692,18 @@
         ;; before recording a failure -- and only ever for a resident run,
         ;; because a person watching an interactive Goal is the one who
         ;; decides what its block meant.
-        (when-not (and (= "blocked" state)
+        (if (= "checkpointed" state)
+          (transition-goal-run! run-id :checkpointed
+                                {:agent.run/checkpoint-reason :execution-slice})
+          (when-not (and (= "blocked" state)
                        resident?
                        (complete-resident-no-op!
                         configuration run-id
                         {:reason :blocked
                          :detail (first (:evidence (latest-turn session bot)))}))
-          (transition-goal-run! run-id (goal-run-status state resident?)
-                                {:agent.run/result state
-                                 :agent.run/finished-at (now-ms)})))
+            (transition-goal-run! run-id (goal-run-status state resident?)
+                                  {:agent.run/result state
+                                   :agent.run/finished-at (now-ms)}))))
       (catch Exception error
         ;; `:provider/timeout` is deliberately NOT here. The other two mean the
         ;; provider answered and had nothing to add, so the host's own receipts
@@ -3871,7 +3906,7 @@
        " / " (get-in b [:bot/role :name]) ".\n"
        (:workforce.job/objective job) "\n\n"
        "Inspect current evidence inside the admitted business repository and advance exactly one bounded step. "
-       "Use at most two repository read calls before completing or blocking this resident tick. "
+       "Use the repository reads needed to verify that step; the host may checkpoint and resume long work automatically. "
        "Keep observed facts, forecasts and proposals separate. Do not cross into another business. "
        "If there is no safe actionable change, record the evidence for a no-op and complete the goal; do not invent work. "
        "Any write or external effect remains subject to the concrete tool grant and its governor."))
