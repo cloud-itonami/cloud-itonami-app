@@ -175,6 +175,142 @@
           (is (= 1 (:enabled (bots/workforce-status bob)))
               "reconciling alice cannot stop bob's resident job"))))))
 
+(defn- tamaki-entry []
+  {:key "etzhayyim/loop-gardener"
+   :business {:id :etzhayyim :name "etzhayyim" :organization "etzhayyim"}
+   :role {:id :loop-gardener :name "Loop gardener" :job :evaluator}
+   :objective "Evaluate agent loops from durable outputs."
+   :responsibilities ["Never modify source"]
+   :capabilities [{:capability :patch.create :decision :blocked}]
+   :workspace "orgs/etzhayyim/tamaki"
+   :cadence-minutes 720})
+
+(defn- tenants! []
+  ;; alice's personal tenant, an organization tenant spelled as the registry
+  ;; spells it, and one registered under a misspelling that only an operator
+  ;; alias can reach.
+  (swap! store/state assoc-in [:identity :organizations]
+         {"org-1" {:id "org-1" :tenant/kind :personal :organization-id "alice"}
+          "org-etz" {:id "org-etz" :tenant/kind :organization
+                     :organization-id "etzhayyim"}
+          "org-typo" {:id "org-typo" :tenant/kind :organization
+                      :organization-id "etzhayym"}}))
+
+(def ^:private alice-in-etzhayyim
+  {:user-id "alice" :organization-id "org-etz" :kind :passkey})
+(def ^:private alice-in-typo
+  {:user-id "alice" :organization-id "org-typo" :kind :passkey})
+
+(deftest a-business-that-names-its-organization-lands-only-in-that-tenant
+  (with-store
+    (fn []
+      (with-redefs [workspace-tools/admit-root (fn [path] path)]
+        (tenants!)
+        (let [catalog (-> (workforce-catalog [(engineer-entry) (tamaki-entry)])
+                          (assoc :businesses 2))]
+          (testing "the personal tenant takes the businesses that name nobody"
+            (let [status (bots/provision-workforce! {} alice catalog)
+                  bots (:bots (bots/overview {} alice))]
+              (is (= {:businesses 1 :bots 1 :catalog-businesses 2}
+                     (select-keys status [:businesses :bots :catalog-businesses])))
+              (is (= ["cloud-itonami/engineer"] (mapv :workforce-key bots)))
+              (is (= {:kind :personal :slug "alice" :alias nil} (:tenant status)))))
+          (testing "the organization tenant takes exactly the business that names it"
+            (let [status (bots/provision-workforce! {} alice-in-etzhayyim catalog)
+                  bots (:bots (bots/overview {} alice-in-etzhayyim))]
+              (is (= {:businesses 1 :bots 1} (select-keys status [:businesses :bots])))
+              (is (= ["etzhayyim/loop-gardener"] (mapv :workforce-key bots)))
+              (is (= "org-etz" (get-in @store/state
+                                        [:bots :bots (:id (first bots)) :bot/organization])))
+              (is (= {:kind :organization :slug "etzhayyim" :alias nil}
+                     (:tenant status)))))
+          (testing "a named organization nobody in the catalog names is refused, not emptied"
+            (let [error (try (bots/provision-workforce! {} alice-in-typo catalog)
+                             nil
+                             (catch clojure.lang.ExceptionInfo e e))]
+              (is (= :workforce/no-business-for-tenant (:type (ex-data error))))
+              (is (= "etzhayym" (:tenant (ex-data error))))
+              (is (= ["etzhayyim"] (:catalog-organizations (ex-data error))))
+              (is (false? (:installed? (bots/workforce-status alice-in-typo)))
+                  "nothing was recorded under the unmatched name")))
+          (testing "an operator alias matches the misspelled tenant, and says so"
+            (let [status (bots/provision-workforce!
+                          {:bots {:workforce {:organization-aliases
+                                              {"etzhayym" "etzhayyim"}}}}
+                          alice-in-typo catalog)]
+              (is (= 1 (:bots status)))
+              (is (= {:kind :organization :slug "etzhayym" :alias "etzhayyim"}
+                     (:tenant status)))))
+          (testing "a store with no tenant records provisions as it always did"
+            (swap! store/state assoc-in [:identity :organizations] {})
+            (let [status (bots/provision-workforce! {} bob catalog)]
+              (is (= ["cloud-itonami/engineer"]
+                     (mapv :workforce-key (:bots (bots/overview {} bob)))))
+              (is (= :personal (get-in status [:tenant :kind]))))))))))
+
+(deftest the-tick-fires-each-tenant-the-person-is-present-in-under-its-own-session
+  (with-store
+    (fn []
+      (with-redefs [workspace-tools/admit-root (fn [path] path)]
+        (tenants!)
+        (let [catalog (-> (workforce-catalog [(engineer-entry) (tamaki-entry)])
+                          (assoc :businesses 2))
+              submitted (atom [])
+              due "2026-08-15T00:00:00Z"
+              now "2026-08-16T00:00:00Z"]
+          (bots/provision-workforce! {} alice catalog)
+          (bots/provision-workforce! {} alice-in-etzhayyim catalog)
+          (swap! store/state update-in [:bots :workforce-jobs]
+                 (fn [jobs] (into {} (map (fn [[id job]]
+                                            [id (assoc job :workforce.job/next-run-at due)]))
+                                  jobs)))
+          (with-redefs [bots/submit-goal!
+                        (fn [_ session bot-id _ run-id _]
+                          (swap! submitted conj [(:organization-id session) bot-id])
+                          {:id run-id})]
+            (testing "one session: only that tenant's job fires"
+              (let [result (bots/fire-due-workforce!
+                            {:bots {:workforce {:max-starts-per-tick 2 :max-active 2}}}
+                            alice now)]
+                (is (= ["cloud-itonami/engineer"] (:started result)))
+                (is (= ["org-1"] (mapv first @submitted)))))
+            (reset! submitted [])
+            (swap! store/state update-in [:bots :workforce-jobs]
+                   (fn [jobs] (into {} (map (fn [[id job]]
+                                              [id (assoc job :workforce.job/next-run-at due)]))
+                                    jobs)))
+            (testing "two sessions: each tenant's job fires under its own tenant's session"
+              (let [result (bots/fire-due-workforce!
+                            {:bots {:workforce {:max-starts-per-tick 2 :max-active 2}}}
+                            [alice alice-in-etzhayyim] now)]
+                (is (= #{"cloud-itonami/engineer" "etzhayyim/loop-gardener"}
+                       (set (:started result))))
+                (is (= #{"org-1" "org-etz"} (set (map first @submitted))))
+                (is (every? (fn [[org bot-id]]
+                              (= org (get-in @store/state [:bots :bots bot-id :bot/organization])))
+                            @submitted)
+                    "a job is submitted under the session of ITS organization")))
+            (testing "the active limit counts the owner's jobs in every tenant"
+              (reset! submitted [])
+              (swap! store/state update-in [:bots :workforce-jobs]
+                     (fn [jobs] (into {} (map (fn [[id job]]
+                                                [id (assoc job :workforce.job/next-run-at due)]))
+                                      jobs)))
+              (let [[org-1-job] (filter #(= "org-1" (:workforce.job/organization %))
+                                        (vals (get-in @store/state [:bots :workforce-jobs])))]
+                (with-redefs-fn {(ns-resolve 'cloud.itonami.app.bots 'workforce-bot-inferring?)
+                                 (fn [bot-id] (= bot-id (:workforce.job/bot org-1-job)))}
+                  (fn []
+                    (let [result (bots/fire-due-workforce!
+                                  {:bots {:workforce {:max-starts-per-tick 2 :max-active 1}}}
+                                  [alice-in-etzhayyim] now)]
+                      (is (empty? (:started result))
+                          "a job inferring in the other tenant holds the one slot")
+                      (is (= :workforce-capacity (:reason (first (:skipped result))))))))))
+            (testing "sessions of two people are refused"
+              (is (thrown-with-msg? clojure.lang.ExceptionInfo #"one person"
+                                    (bots/fire-due-workforce! {} [alice bob] now))))))))))
+
 (deftest provisioning-never-takes-a-delegation-away-and-applies-the-standing-one
   (with-store
     (fn []

@@ -5626,6 +5626,10 @@
                      :workforce/command-failed 502
                      :workforce/unreadable 502
                      :workforce/invalid-catalog 502
+                     ;; A named organization the catalog does not name: the
+                     ;; request was understood and the catalog was complete,
+                     ;; the two just do not meet. Not a gateway failure.
+                     :workforce/no-business-for-tenant 409
                      400)
                    {:error {:type (name (or (:type (ex-data error)) :bot/error))
                             :message (.getMessage error)}}))
