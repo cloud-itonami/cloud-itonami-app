@@ -130,4 +130,5 @@
     (is (str/includes? javascript "if (button.dataset.updateReady === 'true')"))
     (is (str/includes? javascript "window.close()"))
     (is (str/includes? javascript "fetch('/api/update/check'"))
-    (is (str/includes? javascript "fetch('/api/update/download'"))))
+    (is (str/includes? javascript "fetch('/api/update/download'"))
+    (is (str/includes? javascript "data['last-applied']?.version"))))

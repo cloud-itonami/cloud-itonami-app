@@ -279,12 +279,25 @@
            (reset! updater-state result)
            (dissoc result :manifest)))))))
 
+(defn- applied-receipt []
+  (let [file (io/file (config/data-dir) "updates" "last-applied.edn")]
+    (when (.isFile file)
+      (try
+        (let [receipt (edn/read-string (slurp file))]
+          (when (= "cloud.itonami.applied-update.v1" (:schema receipt))
+            (select-keys receipt [:schema :from-version :version :applied-at])))
+        ;; A receipt describes an already-finished update.  Corruption here
+        ;; must never make update discovery fail or bless a package; omit it
+        ;; and leave the signed manifest path independent.
+        (catch Exception _ nil)))))
+
 (defn status []
   (let [pending (io/file (config/data-dir) "updates" "pending" "pending.edn")]
     (-> @updater-state
         (dissoc :manifest)
         (assoc :restart-required? (or (:restart-required? @updater-state)
-                                      (.isFile pending))))))
+                                      (.isFile pending))
+               :last-applied (applied-receipt)))))
 
 (defn check-and-stage!
   "Check for a newer signed release and, when configured, stage its verified

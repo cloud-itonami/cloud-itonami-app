@@ -8528,7 +8528,9 @@
         return;
       }
       status.textContent = data['installed-version']
-        ? `${data['installed-version']} は最新です。`
+        ? (data['last-applied']?.version === data['installed-version']
+          ? `${data['installed-version']} に更新しました。更新前: ${data['last-applied']['from-version']}。`
+          : `${data['installed-version']} は最新です。`)
         : '更新状態をまだ確認していません。';
     };
     const loadDesktopUpdate = async (refresh = false) => {
