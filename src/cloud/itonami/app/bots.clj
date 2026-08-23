@@ -2287,6 +2287,39 @@
                      :turn/error-type :hold-unanswerable})
       (append-goal-event! run-id :run/cancelled
                           {:reason :hold-unanswerable}))
+    ;; The AgentRun is the durable execution truth, while turn-history is the
+    ;; UI/SLO projection. A crash can happen after the run reached a terminal
+    ;; state but before its final visible turn was recorded. On the next start
+    ;; the active-run recovery above correctly ignores that terminal job, but
+    ;; the old `:running` projection otherwise survives forever and reports a
+    ;; stale Bot even though no work owns it. Converge only that impossible
+    ;; combination; a non-running projection is already final and is left
+    ;; untouched.
+    (doseq [[run-id job] (:goal-jobs (snapshot))
+            :let [run (:job/run job)
+                  status (:agent.run/status run)
+                  turn (some #(when (= run-id (:turn/id %)) %)
+                             (get-in (snapshot)
+                                     [:turn-history (:job/bot job)]))]
+            :when (and (= :running (:turn/state turn))
+                       (contains? agent-run/terminal-statuses status))]
+      (let [[state phase default-error]
+            (case status
+              :succeeded [:completed :completed nil]
+              :cancelled [:cancelled :cancelled :bot/cancelled]
+              :rejected [:failed :failed :agent-run/rejected]
+              [:failed :failed :agent-run/failed])]
+        (record-turn! (:job/bot job) run-id
+                      (cond-> {:turn/state state
+                               :turn/phase phase
+                               :turn/goal? true
+                               :turn/objective (:job/objective job)
+                               :turn/result (:agent.run/result run)
+                               :turn/finished-at at}
+                        (not= :completed state)
+                        (assoc :turn/error-type
+                               (or (:agent.run/error-type run)
+                                   default-error))))))
     ;; A handoff has two provider turns but no replayable external lease. If
     ;; the process dies between them, keep the transcript and close the run
     ;; truthfully; replaying could duplicate tools executed by either Bot.

@@ -908,6 +908,43 @@
           (is (= "checkpointed" (get-in turn [:job :state]))
               "restart is a resumable checkpoint, not a failed visible turn"))))))
 
+(deftest restart-converges-a-stale-running-turn-to-its-terminal-agent-run
+  (with-store
+    (fn []
+      (doseq [[suffix run-status expected-state expected-error]
+              [["ok" :succeeded "completed" nil]
+               ["failed" :failed "failed" :provider/timeout]
+               ["cancelled" :cancelled "cancelled" :bot/cancelled]
+               ["rejected" :rejected "failed" :agent-run/rejected]]]
+        (let [b (make-bot alice {:name (str "terminal-" suffix)})
+              bot-id (:bot/id b)
+              run-id (str "goal-terminal-" suffix)
+              queued (agent-run/agent-run {:id run-id :goal "finish me"} 1)
+              terminal (assoc queued
+                              :agent.run/status run-status
+                              :agent.run/result "durable result"
+                              :agent.run/error-type
+                              (when (= :failed run-status) :provider/timeout))]
+          (store/transact!
+           (fn [state]
+             (-> state
+                 (assoc-in [:bots :goal-jobs run-id]
+                           {:job/id run-id :job/bot bot-id :job/session alice
+                            :job/objective "finish me" :job/run terminal
+                            :job/plan [] :job/events []})
+                 (assoc-in [:bots :turn-history bot-id]
+                           [{:turn/id run-id :turn/bot bot-id
+                             :turn/state :running :turn/phase :resuming
+                             :turn/goal? true :turn/objective "finish me"
+                             :turn/started-at "2026-08-15T00:00:00Z"}]))))
+          (bots/recover-interrupted!)
+          (let [turn (bots/latest-turn alice bot-id)]
+            (is (= expected-state (:state turn)))
+            (is (= expected-state (:phase turn)))
+            (is (= "durable result" (:result turn)))
+            (is (= expected-error
+                   (some-> (:error-type turn) keyword)))))))))
+
 (deftest restart-drains-resident-goals-through-the-workforce-capacity
   (with-store
     (fn []

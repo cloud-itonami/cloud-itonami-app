@@ -70,9 +70,19 @@ on the new model. Passing this release gate does not retroactively turn the
 
 ## Verification
 
-- Full suite: 1,816 tests, 10,780 assertions, zero failures and zero errors.
+- Full suite after terminal-turn recovery: 1,818 tests, 10,801 assertions,
+  zero failures and zero errors.
 - Mutation: changing the checkpoint-state branch so it cannot match causes
   `a-goal-execution-slice-checkpoints-and-is-requeued` to fail on both durable
   state and automatic requeue; restoring the branch passes.
 - Context remains 32,768 tokens for both Murakumo model ids and compacts before
   the configured threshold.
+- Four non-cancelled post-change resident runs completed on the explicit
+  FastMTP model; one used 17 tools across durable slices and still converged.
+  A separate diagnostic run was deliberately cancelled after exposing the
+  repeated-discovery problem that the resume instruction now prevents.
+- Two historical AgentRuns were terminal `:failed` while their UI/SLO turn
+  projections remained `:running`. Startup now converges a running projection
+  to any terminal AgentRun (`succeeded`, `failed`, `cancelled`, or `rejected`)
+  without changing genuinely active checkpoint recovery. This removes false
+  stale-running failures; it does not rewrite the historical timeout outcome.
