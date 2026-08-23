@@ -526,13 +526,18 @@
                               {:content "完了しました。" :tool-calls []})))]
           (bots/send-stream! nil alice (:bot/id b) "状態を確認して"
                              "run-visible-1" #(swap! events conj %)))
-        (let [turn (:last-turn (first (:bots (bots/overview nil alice))))]
+        (let [public (first (:bots (bots/overview nil alice)))
+              turn (:last-turn public)]
           (is (= "completed" (:state turn)))
           (is (= "completed" (:phase turn)))
           (is (= "git_status" (:tool turn)))
           (is (= ["accepted" "model" "tool-proposed" "tool-executed" "model"]
                  (mapv :phase (filter #(= "phase" (:type %)) @events))))
-          (is (some #(= {:type "delta" :content "完了しました。"} %) @events)))))))
+          (is (some #(= {:type "delta" :content "完了しました。"} %) @events))
+          (is (= {:text "完了しました。" :role "bot"}
+                 (select-keys (:last-message public) [:text :role])))
+          (is (= (get-in public [:last-message :at]) (:activity-at public))
+              "the picker sorts on the conversation it previews"))))))
 
 (deftest server-start-closes-a-running-turn-as-interrupted
   (with-store

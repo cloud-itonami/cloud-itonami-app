@@ -9303,6 +9303,28 @@
         botsSetStatus(botsPhaseText(turn.state, turn.tool));
       }
     };
+    const botsActivityTime = (bot) => {
+      const value = bot?.['activity-at'] || bot?.['last-message']?.at || bot?.['updated-at'];
+      const parsed = value ? Date.parse(value) : 0;
+      return Number.isFinite(parsed) ? parsed : 0;
+    };
+    const botsRecentFirst = (bots) => [...bots].sort((a, b) =>
+      botsActivityTime(b) - botsActivityTime(a) ||
+        a.name.localeCompare(b.name, 'ja'));
+    const botsCompactTime = (value) => {
+      const parsed = value ? new Date(value) : null;
+      if (!parsed || Number.isNaN(parsed.getTime())) return '';
+      const now = new Date();
+      if (parsed.toDateString() === now.toDateString()) {
+        return new Intl.DateTimeFormat('ja-JP', {
+          hour:'2-digit', minute:'2-digit', hour12:false
+        }).format(parsed);
+      }
+      const yesterday = new Date(now);
+      yesterday.setDate(now.getDate() - 1);
+      if (parsed.toDateString() === yesterday.toDateString()) return '昨日';
+      return new Intl.DateTimeFormat('ja-JP', {month:'numeric', day:'numeric'}).format(parsed);
+    };
     const renderBotsRun = (turn) => {
       const node = $('#bots-run');
       node.replaceChildren();
@@ -9347,31 +9369,33 @@
     const renderBotsRail = () => {
       const list = $('#bots-list');
       list.replaceChildren();
-      $('#bots-rail-empty').hidden = botsState.bots.length > 0;
-      let currentGroup = null;
-      [...botsState.bots]
-        .sort((a, b) => {
-          const aGroup = a.business?.name || '個人Bot';
-          const bGroup = b.business?.name || '個人Bot';
-          return aGroup.localeCompare(bGroup, 'ja') ||
-            (a.role?.name || a.name).localeCompare(b.role?.name || b.name, 'ja');
-        })
+      const query = $('#bots-filter').value.trim().toLocaleLowerCase('ja');
+      const visibleBots = botsRecentFirst(botsState.bots)
+        .filter((bot) => {
+          if (!query) return true;
+          return [bot.name, bot.business?.name, bot.role?.name,
+                  bot['last-message']?.text]
+            .filter(Boolean).join(' ').toLocaleLowerCase('ja').includes(query);
+        });
+      const empty = $('#bots-rail-empty');
+      empty.hidden = visibleBots.length > 0;
+      empty.textContent = query ? '一致する Bot がいません' : 'まだ Bot がいません';
+      visibleBots
         .forEach((bot) => {
-        const group = bot.business?.name || '個人Bot';
-        if (group !== currentGroup) {
-          currentGroup = group;
-          list.append(make('li', 'bots-rail__group', group));
-        }
         const item = make('button', 'bots-rail__item');
         item.type = 'button';
         item.setAttribute('aria-current', String(bot.id === botsState.selected));
+        const preview = bot['last-message']?.text ||
+          botsStatusText[bot.status] || bot.status;
         item.setAttribute('aria-label',
-          `${bot.name}、${botsStatusText[bot.status] || bot.status}`);
+          `${bot.name}、${botsStatusText[bot.status] || bot.status}、${preview}`);
         const avatar = botAvatar(make('span', 'bot-avatar'), bot.avatar, bot.status);
         const copy = make('div', 'bots-rail__copy');
-        copy.append(make('span', 'bots-rail__name', bot.name),
-                    make('span', 'bots-rail__last',
-                         botsStatusText[bot.status] || bot.status));
+        const headline = make('span', 'bots-rail__headline');
+        headline.append(make('span', 'bots-rail__name', bot.name));
+        const time = botsCompactTime(bot['activity-at'] || bot['last-message']?.at);
+        if (time) headline.append(make('span', 'bots-rail__time', time));
+        copy.append(headline, make('span', 'bots-rail__last', preview));
         const dot = make('span', 'bots-dot');
         dot.dataset.status = bot.status;
         dot.title = botsStatusText[bot.status] || bot.status;
@@ -9771,6 +9795,11 @@
       botAvatar($('#bots-titlebar-avatar'), bot.avatar, bot.status);
       $('#bots-titlebar-name').textContent = bot.name;
       $('#bots-titlebar-status').textContent = botsStatusText[bot.status] || bot.status;
+      botAvatar($('#bots-mobile-avatar'), bot.avatar, bot.status);
+      $('#bots-mobile-name').textContent = bot.name;
+      $('#bots-mobile-status').textContent = botsStatusText[bot.status] || bot.status;
+      $('#bots-mobile-context').hidden = false;
+      $('#bots-input').placeholder = `${bot.name} に頼む`;
       $('#bots-titlebar-identity').hidden = false;
       $('#bots-thread-tools').hidden = false;
       const panel = $('#bots-thread-panel');
@@ -10029,6 +10058,7 @@
       $('#bots-thread').hidden = !(hasBots && botsState.selected);
       const selected = hasBots && Boolean(botsState.selected);
       $('#bots-titlebar-identity').hidden = !selected;
+      $('#bots-mobile-context').hidden = !selected;
       $('#bots-thread-tools').hidden = !selected;
     };
     const selectBot = async (botId) => {
@@ -10142,7 +10172,7 @@
         }
         $('#bots-coding').checked = true;
         if (!options.keepSelection && !botsState.selected && botsState.bots.length) {
-          await selectBot(botsState.bots[0].id);
+          await selectBot(botsRecentFirst(botsState.bots)[0].id);
           return;
         }
         renderBotsRail();
@@ -10156,6 +10186,7 @@
         if (botsState.selected) renderBotsThread();
       } catch (error) { botsSetStatus(error.message); }
     };
+    $('#bots-filter').addEventListener('input', renderBotsRail);
     $('#bots-service-search').addEventListener('input', renderBotsServiceGrid);
     $('#bots-services-next').addEventListener('click', () => {
       $('#bots-step-services').hidden = true;

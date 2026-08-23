@@ -1194,9 +1194,14 @@
 (declare public-turn)
 
 (defn- public-bot [configuration did b]
-  (let [rows (connectors/catalog-rows configuration)
+  (let [partition (snapshot)
+        rows (connectors/catalog-rows configuration)
         connected (connected-connectors configuration did)
-        last-turn (last (get-in (snapshot) [:turn-history (:bot/id b)]))
+        last-turn (last (get-in partition [:turn-history (:bot/id b)]))
+        last-message (last (get-in partition [:conversations (:bot/id b)]))
+        activity-at (or (:message/at last-message)
+                        (:turn/updated-at last-turn)
+                        (:bot/updated-at b))
         local-tools (concat
                      (when (:bot/browser? b)
                        (agent-control/browser-tool-definitions configuration))
@@ -1270,12 +1275,21 @@
      :capability-policy
      (mapv #(update % :decision name) (:bot/capability-policy b))
      :resident-job
-     (when-let [job (get-in (snapshot) [:workforce-jobs (:bot/id b)])]
+     (when-let [job (get-in partition [:workforce-jobs (:bot/id b)])]
        {:enabled? (:workforce.job/enabled? job)
         :cadence-minutes (:workforce.job/cadence-minutes job)
         :next-run-at (:workforce.job/next-run-at job)
         :last-submitted-at (:workforce.job/last-submitted-at job)
         :last-run-id (:workforce.job/last-run-id job)})
+     ;; The Bot picker is a conversation list, not an identity catalog. Give
+     ;; the owner's UI the same safe projection it can already fetch after a
+     ;; selection, so it can show recency and a one-line preview without 92
+     ;; extra requests. Cards and tool output deliberately stay out.
+     :last-message (when last-message
+                     {:text (:message/text last-message)
+                      :at (:message/at last-message)
+                      :role (some-> (:message/role last-message) name)})
+     :activity-at activity-at
      :last-turn (public-turn last-turn)
      :enabled? (:bot/enabled? b)
      :status (name (bot/status b (presence (:bot/id b)

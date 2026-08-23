@@ -71,4 +71,4 @@ fi
   --icon "$resources_dir/icon.png" \
   --web-url 'http://localhost:1338/?surface=native&chrome=titlebar-overlay' \
   --titlebar-overlay \
-  --width 430 --height 860 --min-width 360 --min-height 640
+  --width 1100 --height 760 --min-width 430 --min-height 640

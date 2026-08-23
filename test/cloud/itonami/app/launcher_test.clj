@@ -79,15 +79,15 @@
     (is (not (str/includes? launcher "--permissions")))
     (is (not (str/includes? launcher "accessibility,screen-recording")))))
 
-(deftest every-window-launcher-opens-the-phone-shaped-surface
+(deftest every-window-launcher-opens-the-bots-workspace
   (let [local (slurp "bin/cloud-itonami-app")
         macos (slurp "packaging/macos/CloudItonami")
         windows (slurp "packaging/windows/launcher/main.go")]
-    (is (str/includes? local "--window-size=430,860"))
-    (is (str/includes? macos "--width 430 --height 860 --min-width 360 --min-height 640"))
+    (is (str/includes? local "--window-size=1100,760"))
+    (is (str/includes? macos "--width 1100 --height 760 --min-width 430 --min-height 640"))
     (is (str/includes? macos "--titlebar-overlay"))
     (is (str/includes? macos "chrome=titlebar-overlay"))
-    (is (str/includes? windows "--window-size=430,860"))))
+    (is (str/includes? windows "--window-size=1100,760"))))
 
 (deftest stable-desktop-release-is-fail-closed
   (let [process (ProcessBuilder.

@@ -333,6 +333,14 @@
   .bots-rail{display:flex;flex-direction:column;min-height:0;gap:.25rem;
     padding:.75rem;border-right:1px solid var(--color-neutral-solid-gray-200);
     background:var(--color-neutral-solid-gray-50)}
+  .bots-rail__search{position:relative;flex:0 0 auto}
+  .bots-rail__search::before{content:'⌕';position:absolute;left:.625rem;top:50%;
+    transform:translateY(-50%);color:var(--color-neutral-solid-gray-500);pointer-events:none}
+  .bots-rail__search input{width:100%;min-height:2.5rem;border:1px solid transparent;
+    border-radius:.625rem;background:var(--color-neutral-solid-gray-100);
+    padding:.5rem .625rem .5rem 2rem;font:inherit;color:inherit}
+  .bots-rail__search input:focus-visible{outline:4px solid var(--color-primitive-yellow-300);
+    outline-offset:1px;border-color:var(--color-key-600);background:var(--color-neutral-white)}
   .bots-rail__list{list-style:none;margin:0;padding:0;display:grid;gap:.125rem;
     overflow-y:auto;min-height:0}
   .bots-rail__empty{margin:.5rem .25rem;color:var(--color-neutral-solid-gray-600);
@@ -348,7 +356,10 @@
   .bots-rail__item:focus-visible{outline:4px solid var(--color-primitive-yellow-300);
     outline-offset:1px}
   .bots-rail__copy{flex:1;min-width:0;display:grid;gap:.125rem}
+  .bots-rail__headline{display:flex;align-items:baseline;gap:.5rem;min-width:0}
   .bots-rail__name{font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .bots-rail__time{margin-left:auto;flex:none;font-size:.75rem;
+    color:var(--color-neutral-solid-gray-600)}
   .bots-rail__last{font-size:.8125rem;color:var(--color-neutral-solid-gray-600);
     overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   /* The avatar. One element, two custom properties, so the same markup is a
@@ -470,6 +481,12 @@
   .bots-suggestion__summary{font-size:.8125rem;
     color:var(--color-neutral-solid-gray-600)}
   .bots-thread{display:flex;flex-direction:column;min-height:0;flex:1}
+  .bots-mobile-context{display:none;align-items:center;gap:.625rem;padding:.625rem .875rem;
+    border-bottom:1px solid var(--color-neutral-solid-gray-200);background:var(--color-neutral-white)}
+  .bots-mobile-context__copy{display:grid;min-width:0;line-height:1.35}
+  .bots-mobile-context__name{font-weight:700;overflow:hidden;text-overflow:ellipsis;
+    white-space:nowrap}
+  .bots-mobile-context__status{font-size:.75rem;color:var(--color-neutral-solid-gray-600)}
   .bots-thread__panel{padding:.75rem 1rem;font-size:.8125rem;
     border-bottom:1px solid var(--color-neutral-solid-gray-200);
     background:var(--color-neutral-solid-gray-50);
@@ -551,6 +568,7 @@
        The compact rail spends width on recognition, not repeated labels. */
     .bots-shell{grid-template-columns:4rem minmax(0,1fr)}
     .bots-rail{display:flex;padding:.5rem .375rem}
+    .bots-rail__search{display:none}
     .bots-rail__item{position:relative;justify-content:center;padding:.5rem .25rem}
     .bots-rail__copy,.bots-rail__empty,.bots-rail__group{display:none}
     .bots-rail__item .bots-dot{position:absolute;right:.3rem;bottom:.3rem}
@@ -1196,8 +1214,10 @@
     .connector-card .tool-button{grid-column:1/-1;width:100%}
     .local-actions{justify-content:stretch}.local-actions .dads-button{width:100%}
   }
-  /* Cloud Itonami deliberately has one touch layout. These are unconditional:
-     the installed window and an ordinary browser use the same phone UI. */
+  /* Keep the phone navigation for genuinely narrow windows. The installed
+     desktop now opens as a workspace, where a recent-conversation rail is
+     materially faster than the former face-only strip. */
+  @media (max-width:56rem){
     :root{--mobile-nav-height:calc(4.5rem + env(safe-area-inset-bottom))}
     body[data-identity-gate='required'] .workspace{padding-bottom:0}
     body[data-identity-gate='required'] .sidebar{display:none}
@@ -1283,16 +1303,19 @@
     .bots-conversations__layout{grid-template-columns:1fr}
     .bots-rail{display:block;flex:0 0 auto;padding:.375rem .75rem;border-right:0;
       border-bottom:1px solid var(--color-neutral-solid-gray-200);overflow-x:auto}
+    .bots-rail__search{display:block;margin-bottom:.25rem}
     .bots-rail__list{display:flex;gap:.375rem;overflow-x:auto;scrollbar-width:none}
     .bots-rail__list::-webkit-scrollbar{display:none}
     .bots-rail__list>li{flex:0 0 auto}
     .bots-rail__item{position:relative;justify-content:center;width:3rem;padding:.5rem .25rem}
     .bots-rail__copy,.bots-rail__empty,.bots-rail__group{display:none}
     .bots-rail__item .bots-dot{position:absolute;right:.3rem;bottom:.3rem}
+    .bots-mobile-context{display:flex}
     .global-status{top:calc(4.5rem + env(safe-area-inset-top));left:1rem;right:1rem}
     .chat-shell{height:calc(100dvh - 4rem - var(--mobile-nav-height))}
     .data-card,.settings-card{padding:1rem}
     input,select,textarea,button{max-width:100%}
+  }
   /* WCAG 2.3.3, and kotoba-uiux rule 7. Both animations in this stylesheet are
      INFINITE and decorative -- a typing indicator and a loading shimmer -- which
      is the exact category `reduce` exists for; an animation that never stops is
@@ -1624,6 +1647,10 @@
         [:section {:class "view bots-view" :data-view-panel "bots" :hidden true}
          [:div {:class "bots-shell" :id "bots-shell"}
           [:aside {:class "bots-rail"}
+           [:label {:class "bots-rail__search" :for "bots-filter"}
+            [:span {:class "visually-hidden"} "Botを検索"]
+            [:input {:id "bots-filter" :type "search" :placeholder "Botを検索"
+                     :autocomplete "off"}]]
            [:ul {:class "bots-rail__list" :id "bots-list"}]
            [:p {:class "bots-rail__empty" :id "bots-rail-empty"} "まだ Bot がいません"]]
           [:div {:class "bots-main"}
@@ -1740,6 +1767,11 @@
               [:p {:class "form-help" :id "room-status" :aria-live "polite"}]]]]
            ;; The direct Bot thread is the product's chat surface.
            [:div {:class "bots-thread" :id "bots-thread" :hidden true}
+            [:div {:class "bots-mobile-context" :id "bots-mobile-context" :hidden true}
+             [:span {:class "bot-avatar" :id "bots-mobile-avatar"}]
+             [:div {:class "bots-mobile-context__copy"}
+              [:span {:class "bots-mobile-context__name" :id "bots-mobile-name"}]
+              [:span {:class "bots-mobile-context__status" :id "bots-mobile-status"}]]]
             [:div {:class "bots-thread__panel" :id "bots-thread-panel" :hidden true}]
             [:div {:class "bots-thread__scroll" :id "bots-thread-scroll"}
              [:div {:class "bots-run" :id "bots-run" :hidden true}]
