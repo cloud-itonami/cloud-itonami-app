@@ -154,6 +154,26 @@
       (check! "new Bot is a titlebar action" new-visible)
       (check! "routine and handoff controls are not exposed to the person" (zero? routine-controls)))
 
+    (println "\n── quality is scored without turning missing evidence green ──")
+    (p/let [quality-visible (.isVisible page "#bots-quality")
+            _ (.click page "#bots-quality")
+            _ (.waitForTimeout page 300)
+            panel-visible (.isVisible page "#bots-quality-panel")
+            score-count (.count (.locator page ".bots-quality-score"))
+            gate-count (.count (.locator page ".bots-quality-gate"))
+            status (.textContent page "#bots-quality-status")
+            note (.textContent page "#bots-quality-note")
+            _ (.click page "#bots-quality-close")]
+      (check! "quality is a compact titlebar action" quality-visible)
+      (check! "the quality panel opens" panel-visible)
+      (check! "stability, successful-output quality and effective quality are separate"
+              (= 3 score-count))
+      (check! "all acceptance gates are visible" (= 9 gate-count))
+      (check! "the current baseline is not presented as PASS"
+              (not (str/includes? (or status "") "PASS")))
+      (check! "the fixed-suite sample count is explained"
+              (str/includes? (or note "") "固定評価")))
+
     (println "\n── the phone layout remains one application viewport ──")
     (p/let [_ (.waitForTimeout page 300)
             rail-visible (.isVisible page ".bots-rail")

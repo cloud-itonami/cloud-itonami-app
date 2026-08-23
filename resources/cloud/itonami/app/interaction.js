@@ -9264,7 +9264,8 @@
       draft:{color:'blue', glyph:'circle'}, loaded:false, busy:false,
       defaultWorkspace:'',
       browserAvailable:false, controller:null, runId:null, shellBusy:false,
-      latestTurn:null, threadVersion:null, syncTimer:null, syncing:false
+      latestTurn:null, threadVersion:null, syncTimer:null, syncing:false,
+      slo:null
     };
     const botAvatar = (node, avatar, status = null) => {
       node.dataset.color = avatar?.color || 'blue';
@@ -9282,6 +9283,74 @@
     };
     const botsSetStatus = (message) => {
       $('#bots-thread-status-line').textContent = message || '';
+    };
+    const botsGateLabels = {
+      'sample-size':'24時間の標本数',
+      'completion-rate':'24時間の完了率',
+      'interactive-p90':'対話の応答時間',
+      'provider-timeout':'モデル接続のタイムアウト',
+      'tool-budget':'ツール上限での停止',
+      'stale-running':'止まったままの実行',
+      'duplicate-no-op':'重複・無変化の再通知',
+      'quality-suite':'固定20タスクの出力品質',
+      'seven-day':'7日間の再現性'
+    };
+    const botsGateState = {
+      pass:['✓', '合格'], fail:['×', '不合格'],
+      unmeasured:['—', '未計測'], 'insufficient-sample':['—', '標本不足']
+    };
+    const renderBotsSlo = () => {
+      const statusNode = $('#bots-quality-status');
+      const scoresNode = $('#bots-quality-scores');
+      const gatesNode = $('#bots-quality-gates');
+      const noteNode = $('#bots-quality-note');
+      const slo = botsState.slo;
+      statusNode.replaceChildren();
+      scoresNode.replaceChildren();
+      gatesNode.replaceChildren();
+      if (!slo) {
+        statusNode.append(make('span', 'bots-quality-status__badge', '未計測'));
+        noteNode.textContent = '評価データを取得できませんでした。未計測は合格として扱いません。';
+        return;
+      }
+      const status = slo.status || 'insufficient-sample';
+      const statusText = status === 'pass' ? 'PASS' : status === 'fail' ? 'FAIL' : '計測不足';
+      const badge = make('span', 'bots-quality-status__badge', statusText);
+      badge.dataset.status = status;
+      statusNode.append(badge, make('span', null, `評価時点 ${slo['as-of'] || '—'}`));
+      [['S', '安定性', 'stability'], ['Q', '成功時品質', 'quality'],
+       ['E', '実効品質', 'effective']].forEach(([symbol, label, key]) => {
+        const card = make('div', 'bots-quality-score');
+        card.append(make('span', 'bots-quality-score__label', `${symbol} · ${label}`),
+                    make('strong', 'bots-quality-score__value',
+                         slo.scores?.[key] == null ? '—' : `${slo.scores[key]} / 100`));
+        scoresNode.append(card);
+      });
+      (slo.gates || []).forEach((gate) => {
+        const state = gate.state || (gate['pass?'] ? 'pass' : 'fail');
+        const [mark, stateText] = botsGateState[state] || botsGateState.fail;
+        const row = make('li', 'bots-quality-gate');
+        const markNode = make('span', 'bots-quality-gate__mark', mark);
+        markNode.dataset.state = state;
+        row.append(markNode,
+                   make('strong', null, `${botsGateLabels[gate.id] || gate.id} · ${stateText}`),
+                   make('span', 'bots-quality-gate__target', `基準: ${gate.target}`));
+        gatesNode.append(row);
+      });
+      const quality = slo.quality;
+      noteNode.textContent = quality
+        ? `出力品質の固定評価: ${quality['sample-size']} / ${quality['required-sample-size']}タスク。` +
+          (quality.state === 'measured' ? '合格判定に使用中です。' : '完了するまでは暫定値です。')
+        : '出力品質は未計測です。未計測は合格として扱いません。';
+    };
+    const setBotsQualityOpen = (open) => {
+      $('#bots-quality-panel').hidden = !open;
+      $('#bots-quality').setAttribute('aria-expanded', String(open));
+      if (open) {
+        $('#bots-conversations-panel').hidden = true;
+        $('#bots-conversations').setAttribute('aria-expanded', 'false');
+        renderBotsSlo();
+      }
     };
     const botsPhaseText = (phase, tool = null) => ({
       accepted:'依頼を受け付けました。',
@@ -10162,7 +10231,9 @@
         botsState.palette = data.palette || botsState.palette;
         botsState.defaultWorkspace = data['default-workspace'] || '';
         botsState.browserAvailable = Boolean(data['browser-available?']);
+        botsState.slo = data.slo || null;
         botsState.loaded = true;
+        renderBotsSlo();
         syncBotsBrowserPermission();
         // Provider readiness belongs to the overview, not to the selected
         // thread. Render it before the initial selectBot fast path returns.
@@ -10236,6 +10307,9 @@
         button.disabled = false;
       }
     });
+    $('#bots-quality').addEventListener('click', () =>
+      setBotsQualityOpen($('#bots-quality').getAttribute('aria-expanded') !== 'true'));
+    $('#bots-quality-close').addEventListener('click', () => setBotsQualityOpen(false));
     $('#bots-create').addEventListener('click', async () => {
       const button = $('#bots-create');
       const name = $('#bots-name').value.trim();
@@ -10554,7 +10628,10 @@
     const setBotConversationsOpen = (open) => {
       $('#bots-conversations-panel').hidden = !open;
       $('#bots-conversations').setAttribute('aria-expanded', String(open));
-      if (open) loadRooms();
+      if (open) {
+        setBotsQualityOpen(false);
+        loadRooms();
+      }
     };
     $('#bots-conversations').addEventListener('click', () =>
       setBotConversationsOpen($('#bots-conversations').getAttribute('aria-expanded') !== 'true'));

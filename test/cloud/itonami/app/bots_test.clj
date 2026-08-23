@@ -719,10 +719,15 @@
                 "the API-facing submit returned while the worker was still running")
             (deliver release true)
             (loop [remaining 100]
-              (when (and (pos? remaining)
-                         (= "running" (:state (bots/latest-turn alice (:bot/id b)))))
-                (Thread/sleep 25)
-                (recur (dec remaining))))
+              (let [turn (bots/latest-turn alice (:bot/id b))]
+                ;; The durable job's final receipt is committed immediately
+                ;; after the turn result. Waiting only on the turn made this
+                ;; assertion race that second write on a loaded machine.
+                (when (and (pos? remaining)
+                           (or (= "running" (:state turn))
+                               (= "running" (get-in turn [:job :state]))))
+                  (Thread/sleep 25)
+                  (recur (dec remaining)))))
             (let [turn (bots/latest-turn alice (:bot/id b))
                   job (:job turn)
                   kinds (mapv :kind (:events job))]

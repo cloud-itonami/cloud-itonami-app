@@ -1,0 +1,17 @@
+{:schema "cloud.itonami.app.bot-quality-receipt.v1"
+ :as-of "2026-08-23T03:30:00Z"
+ :sample-size 3
+ :required-sample-size 20
+ :source "ADR-2608212400 live read-only audit; factual claims checked against files and Git"
+ :components
+ {:factual-grounding {:points 22 :max 25}
+  :instruction-adherence {:points 16 :max 20}
+  :specificity-actionability {:points 11 :max 20}
+  :clarity {:points 11 :max 15}
+  :structure {:points 6 :max 10}
+  :uncertainty-non-hallucination {:points 9 :max 10}}
+ ;; Three checked examples establish a baseline score, not the fixed-suite
+ ;; rates required for PASS. Missing rates remain nil and fail closed.
+ :metrics {:factual-grounding-rate nil
+           :instruction-adherence-rate nil
+           :actionable-answer-rate nil}}
