@@ -1,0 +1,24 @@
+{:before
+ {:label "全設定を同時表示"
+  :metrics {:visible-choices 15
+            :concurrent-primary-actions 6
+            :next-action? false
+            :visible-sections 7
+            :total-sections 7
+            :labeled-control-ratio 1.0
+            :feedback-ratio 0.75
+            :hierarchy-ratio 0.45
+            :target-size-ratio 0.70
+            :responsive-fit 0.65}}
+ :after
+ {:label "次の1操作＋目的別開示"
+  :metrics {:visible-choices 6
+            :concurrent-primary-actions 1
+            :next-action? true
+            :visible-sections 1
+            :total-sections 5
+            :labeled-control-ratio 1.0
+            :feedback-ratio 1.0
+            :hierarchy-ratio 1.0
+            :target-size-ratio 1.0
+            :responsive-fit 1.0}}}
