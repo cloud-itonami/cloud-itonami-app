@@ -22,6 +22,14 @@ stapled, and assessed before packaging; the signed DMG is independently
 submitted and stapled. The updater requires a valid Developer ID authority,
 the same Team ID, and a passing Gatekeeper assessment before replacement.
 
+Preview-to-preview updates retain the deliberately weaker preview contract:
+both current and candidate bundles must be valid ad-hoc signatures, while the
+embedded Ed25519 release authority, signed package size/digest, exact bundle
+ID, and forward-only version are independently checked. An ad-hoc preview may
+promote to the expected Developer ID Team ID, but a Developer ID installation
+can never update back to ad-hoc or to another team. This continuity rule makes
+the public preview updater executable without weakening the stable gate.
+
 On Windows, the portable launcher is SHA-256 Authenticode-signed and RFC 3161
 timestamped before ZIP creation. The build downloads jsign 7.5 only from its
 upstream release and verifies SHA-256

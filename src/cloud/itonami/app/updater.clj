@@ -236,6 +236,8 @@
      (let [pending (.toPath (io/file (config/data-dir) "updates" "pending"))
            temporary (.resolve pending "package.download")
            package (.resolve pending "package.zip")
+           checksum (.resolve pending "package.sha256")
+           version-file (.resolve pending "version.txt")
            marker (.resolve pending "pending.edn")]
        (Files/createDirectories pending (make-array java.nio.file.attribute.FileAttribute 0))
        (*download-to!* (:url asset) temporary)
@@ -254,6 +256,14 @@
                      (into-array StandardCopyOption
                                  [StandardCopyOption/REPLACE_EXISTING
                                   StandardCopyOption/ATOMIC_MOVE]))
+         ;; The manifest signature and digest are checked above while this
+         ;; process still owns the decision.  The launcher-time helper checks
+         ;; these two deliberately boring files again, after the server has
+         ;; stopped, so disk corruption between staging and replacement cannot
+         ;; turn into an installation.  They are not a second authority; the
+         ;; embedded Ed25519 key remains that authority.
+         (spit (.toFile checksum) (str actual-sha "  package.zip\n"))
+         (spit (.toFile version-file) (str (:version manifest) "\n"))
          (spit (.toFile marker)
                (pr-str {:schema "cloud.itonami.pending-update.v1"
                         :version (:version manifest)

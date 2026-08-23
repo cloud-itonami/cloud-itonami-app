@@ -3109,11 +3109,8 @@
           [:p {:class "form-help"}
            "公開Releaseはアプリ内のEd25519公開鍵で署名を検証し、packageのSHA-256とsizeが一致した場合だけ次回起動用に準備します。"]
           [:div {:class "button-row"}
-           [:button {:class "tool-button" :id "desktop-update-check" :type "button"}
-            "更新を確認"]
-           [:button {:class "primary-action" :id "desktop-update-download"
-                     :type "button" :hidden true}
-            "検証してダウンロード"]]]
+           [:button {:class "primary-action" :id "desktop-update-action" :type "button"}
+            "更新を確認"]]]
          [:div {:class "settings-notice" :id "connection-notice" :hidden true}]
          [:div {:class "settings-stack" :id "identity-workspace" :hidden true}
           [:div {:class "identity-summary"}

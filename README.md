@@ -61,7 +61,9 @@ page. All builds currently require Java 21+.
 ### Automatic updates
 
 The app checks the public GitHub release channel and downloads newer signed
-packages automatically; Settings also exposes manual check/download controls.
+packages automatically; Settings exposes one **更新を確認** action that checks,
+verifies, and stages the update, then changes to **アプリを閉じて更新** so the
+launcher can replace, health-check, and reopen the app.
 GitHub is the transport, not the authority: `update-manifest.edn` must verify under the
 Ed25519 public key embedded in the installed app, and the selected package must
 match both the signed byte size and SHA-256. A verified package is staged but
