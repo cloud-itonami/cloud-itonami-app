@@ -41,6 +41,11 @@ action closes the window so the launcher can replace, health-check, and reopen
 the app. A two-button check/download surface looked like an updater but left
 the final apply step outside the button.
 
+After health succeeds the helper writes a bounded `last-applied.edn` receipt
+with the before/after version and application time. Settings may display that
+receipt, but it is never update authority and malformed receipt data is simply
+omitted; discovery still depends only on the signed release manifest.
+
 Windows is initially a real portable x64 package rather than a claimed MSIX.
 Its small Go launcher starts the same Java server JAR and opens Edge application
 mode or the default browser. It is cross-built and structurally checked on

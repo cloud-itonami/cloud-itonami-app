@@ -124,3 +124,24 @@
           (is (= :error (:status result)))
           (is (re-find #"does not match" (:error result)))
           (is (not (.exists (io/file directory "updates" "pending" "pending.edn")))))))))
+
+(deftest applied-receipt-is-visible-but-never-authoritative
+  (let [directory (.toFile (Files/createTempDirectory
+                            "cloud-itonami-updater-receipt-test"
+                            (make-array java.nio.file.attribute.FileAttribute 0)))
+        updates (io/file directory "updates")
+        receipt (io/file updates "last-applied.edn")]
+    (.mkdirs updates)
+    (with-redefs [config/data-dir (constantly directory)]
+      (spit receipt (pr-str {:schema "cloud.itonami.applied-update.v1"
+                             :from-version "0.5.0"
+                             :version "0.5.1"
+                             :applied-at "2026-08-23T00:00:00Z"
+                             :untrusted-extra "not exposed"}))
+      (is (= {:schema "cloud.itonami.applied-update.v1"
+              :from-version "0.5.0"
+              :version "0.5.1"
+              :applied-at "2026-08-23T00:00:00Z"}
+             (:last-applied (updater/status))))
+      (spit receipt "not edn [")
+      (is (nil? (:last-applied (updater/status)))))))
