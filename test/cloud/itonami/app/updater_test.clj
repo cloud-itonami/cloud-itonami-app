@@ -36,6 +36,14 @@
                             :size (alength ^bytes package)}}}]
     (assoc unsigned :signature (sign unsigned (.getPrivate pair)))))
 
+(deftest runtime-and-native-package-versions-stay-equal
+  (let [plist (slurp "packaging/macos/Info.plist")
+        native-version (second
+                        (re-find #"CFBundleShortVersionString</key><string>([^<]+)"
+                                 plist))]
+    (is (= (updater/current-version) native-version)
+        "the updater and both desktop package builders must publish one version")))
+
 (deftest signed-manifests-fail-closed
   (let [pair (key-pair)
         manifest (signed-manifest pair (.getBytes "package" StandardCharsets/UTF_8))]
