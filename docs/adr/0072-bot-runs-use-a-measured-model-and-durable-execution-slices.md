@@ -39,7 +39,12 @@ were then recorded as failed even when every call had made progress.
    It is no longer a terminal `tool-budget-exhausted` outcome.
 3. The prompt no longer tells the model to stop after two repository reads. It
    asks for the reads needed to verify exactly one bounded step.
-4. This does not create unlimited authority. Connector admission, write
+4. Every resumed slice receives an explicit convergence instruction: reuse the
+   evidence and receipts already in the transcript, do not repeat discovery,
+   and complete or name the exact blocker; make another tool call only for one
+   specific missing fact. This is based on a live run which otherwise reached
+   24 read calls across three slices without concluding.
+5. This does not create unlimited authority. Connector admission, write
    approval, one active run per Bot, one active resident inference slot, context
    compaction, and cancellation remain unchanged. A hard safety fence remains
    after 24 continuation slices; crossing it reports a long-running execution
@@ -71,4 +76,3 @@ on the new model. Passing this release gate does not retroactively turn the
   state and automatic requeue; restoring the branch passes.
 - Context remains 32,768 tokens for both Murakumo model ids and compacts before
   the configured threshold.
-

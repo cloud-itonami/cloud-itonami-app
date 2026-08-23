@@ -3533,7 +3533,22 @@
             admission (turn-admission configuration b did true)
             run (-> (merge saved admission)
                     (assoc :slice-turn-start (:turn-count saved 0)
-                           :slice-tool-start (:tool-count saved 0)))
+                           :slice-tool-start (:tool-count saved 0))
+                    ;; A checkpoint is a scheduler boundary, not permission to
+                    ;; forget what the previous slice established. The live
+                    ;; Kaizen tick that motivated this read 24 files across
+                    ;; three slices because every resume looked exactly like
+                    ;; the original open-ended investigation. Make convergence
+                    ;; explicit: use the receipts already present, avoid repeat
+                    ;; discovery, and finish or name the exact blocker.
+                    (update :messages conj
+                            {:role "user"
+                             :content
+                             (str "Execution resumed from a durable checkpoint after "
+                                  (:tool-count saved 0) " tool call(s). "
+                                  "Do not repeat discovery already represented in the transcript and host receipts. "
+                                  "Use existing evidence now and complete the goal, or call goal_blocked with the exact missing prerequisite. "
+                                  "Call another tool only when one specific missing fact prevents that decision.")}))
             messages (binding [*context-id* (:context-id run)
                                *message-source* :bot]
                        (advance! configuration b run
