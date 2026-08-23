@@ -762,6 +762,38 @@
           (is (= "checkpointed" (get-in turn [:job :state]))
               "restart is a resumable checkpoint, not a failed visible turn"))))))
 
+(deftest restart-drains-resident-goals-through-the-workforce-capacity
+  (with-store
+    (fn []
+      (let [bot-ids (mapv (fn [n]
+                            (:bot/id (make-bot alice {:name (str "resident-" n)})))
+                          (range 3))
+            enqueued (atom [])]
+        (doseq [[n bot-id] (map-indexed vector bot-ids)]
+          (let [run-id (str "resident-restart-" n)
+                queued (agent-run/agent-run {:id run-id :goal "resume resident"} n)
+                leased (agent-run/transition queued :leased (+ n 10) {})
+                running (agent-run/transition leased :running (+ n 20) {})]
+            (store/transact!
+             assoc-in [:bots :goal-jobs run-id]
+             {:job/id run-id :job/bot bot-id :job/session alice
+              :job/objective "resume resident" :job/run running
+              :job/plan [] :job/events [] :job/attempt 1
+              :job/resident-workforce? true
+              :job/created-at (str "2026-08-15T00:00:0" n "Z")})))
+        (with-redefs [bots/enqueue-goal!
+                      (fn [_ run-id] (swap! enqueued conj run-id) run-id)]
+          (bots/recover-interrupted!
+           {:bots {:workforce {:max-active 100
+                               :recovery-max-active 1}}}))
+        (is (= ["resident-restart-0"] @enqueued)
+            "restart uses its own cap even when steady-state capacity is broad")
+        (is (= #{:checkpointed}
+               (into #{}
+                     (map #(get-in % [:job/run :agent.run/status]))
+                     (vals (get-in @store/state [:bots :goal-jobs]))))
+            "the remaining jobs stay durable and resumable")))))
+
 (deftest a-resumed-goal-failure-closes-the-visible-turn
   (with-store
     (fn []

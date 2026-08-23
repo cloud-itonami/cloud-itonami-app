@@ -232,6 +232,11 @@
         ;; prevents a slow run from overlapping the next tick.
         :workforce {:max-starts-per-tick 1
                     :max-active 1
+                    ;; Restart recovery is deliberately narrower than the
+                    ;; steady-state workforce budget. A deployment may raise
+                    ;; :max-active for scheduled work without submitting its
+                    ;; whole durable backlog to a single inference provider.
+                    :recovery-max-active 1
                     :max-tool-calls 4
                     :max-tool-output-chars 1600
                     ;; Standing delegation, deliberately ABSENT here: `:all`
