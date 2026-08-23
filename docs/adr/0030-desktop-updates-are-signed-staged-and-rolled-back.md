@@ -36,6 +36,10 @@ second local secret.
 
 The launcher-time helper rechecks the staged ZIP SHA-256, exact semantic
 version, forward-only version transition, and `cloud.itonami.app` bundle ID.
+It atomically claims `updates/pending` before opening the replacement bundle,
+so the replacement launcher cannot start a second helper for the same package
+while the first helper is still checking health. A failed claim is archived
+with a timestamp instead of being retried in a launch loop.
 Settings exposes one action: check, verify, and stage; once ready the same
 action closes the window so the launcher can replace, health-check, and reopen
 the app. A two-button check/download surface looked like an updater but left
