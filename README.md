@@ -167,6 +167,28 @@ The server binds to `127.0.0.1` by default. The browser intentionally uses
 `http://localhost:1338`, which is required for the WebAuthn localhost
 development exception.
 
+### West-managed CLJ to Kotoba refactoring
+
+The CLI can inventory checked-out west projects locally, then submit one
+compatibility-preserving migration slice to a coding Bot. `scan` and `inspect`
+do not start the app server and never edit a checkout.
+
+```bash
+bin/itonami bots refactor scan --root /path/to/com-junkawasaki --limit 25
+bin/itonami bots refactor inspect --root /path/to/com-junkawasaki \
+  --repo itonami --limit 8
+bin/itonami bots refactor start --root /path/to/com-junkawasaki \
+  --repo itonami --id bot-...
+```
+
+`start` fails closed unless the Bot has coding capability, an isolated virtual
+shell for verification, and a workspace exactly equal to the selected west
+project's Git root. It does not allow a Bot admitted to the superproject root
+to rewrite nested projects. The generated task requires a pre-change baseline,
+a Kotoba decision core behind a thin CLJ adapter, old/new parity tests, a denial
+or boundary case, and post-change verification. It expressly forbids push,
+rebase, and west pin changes; those remain release operations outside the Bot.
+
 ## Sign-in and sign-up
 
 The single Settings surface supports Passkey, one-time Email links, and
