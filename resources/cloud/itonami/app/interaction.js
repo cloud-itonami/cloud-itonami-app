@@ -141,7 +141,7 @@
     // Views whose data is public, so the Passkey gate would protect nothing.
     // `storage` reads public Filecoin chain state and computes a PieceCID —
     // there is no workspace content in it. Everything else stays gated.
-    const publicViews = new Set(['signin', 'storage']);
+    const publicViews = new Set(['signin', 'storage', 'storefront']);
     let currentView = 'signin';
     const sidebar = $('.sidebar');
     const mobileMenuToggle = $('.mobile-menu-toggle');
@@ -8201,8 +8201,8 @@
       if (!identityReady) {
         // a public view the user actually asked for stays put
         showView(publicViews.has(requestedView) ? requestedView : 'signin');
-        $('#current-view').textContent =
-          currentView === 'storage' ? 'Storage' : 'サインイン';
+        $('#current-view').textContent = currentView === 'storage' ? 'Storage'
+          : currentView === 'storefront' ? 'Store' : 'サインイン';
         $('#workspace-status').textContent = 'サインインが必要です';
       } else {
         bootstrapApp();
@@ -11208,6 +11208,151 @@
       } catch (error) { status.textContent = error.message; }
     });
 
+    const storefrontState = {
+      data:null, cart:new Map(), loadedFor:null
+    };
+    const storefrontSlugFromAddress = () => initialParams.get('store') || '';
+    const usdcAtomic = (value) => {
+      const [whole, fraction=''] = String(value).split('.');
+      return BigInt(whole || '0') * 1000000n + BigInt(fraction.padEnd(6, '0').slice(0, 6));
+    };
+    const formatUsdc = (atomic) => {
+      const whole = atomic / 1000000n;
+      const fraction = String(atomic % 1000000n).padStart(6, '0').replace(/0+$/, '');
+      return `${whole}${fraction ? `.${fraction}` : ''} USDC`;
+    };
+    const addStorefrontMessage = (text, buyer=false) => {
+      const message = make('div', `storefront-message${buyer ? ' storefront-message--buyer' : ''}`, text);
+      $('#storefront-thread').append(message);
+      message.scrollIntoView({block:'nearest'});
+    };
+    const storefrontProductsFor = (query) => {
+      const products = storefrontState.data?.products || [];
+      const normalized = query.trim().toLocaleLowerCase('ja-JP');
+      const ceiling = /([0-9]+(?:\.[0-9]+)?)\s*(?:usdc|以下)/i.exec(normalized);
+      const words = normalized.split(/\s+/).filter((word) =>
+        word.length > 1 && !['商品','おすすめ','探して','ほしい','usdc','以下'].includes(word));
+      return products.filter((product) => {
+        const copy = `${product.name} ${product.description} ${product.sku}`.toLocaleLowerCase('ja-JP');
+        const textMatch = !words.length || words.some((word) => copy.includes(word));
+        const priceMatch = !ceiling || usdcAtomic(product['price-usdc']) <= usdcAtomic(ceiling[1]);
+        return textMatch && priceMatch;
+      });
+    };
+    const renderStorefrontCart = () => {
+      const list = $('#storefront-cart-items');
+      list.replaceChildren();
+      let total = 0n;
+      storefrontState.cart.forEach((quantity, sku) => {
+        const product = storefrontState.data.products.find((item) => item.sku === sku);
+        if (!product) return;
+        total += usdcAtomic(product['price-usdc']) * BigInt(quantity);
+        const row = make('li', 'storefront-cart__item');
+        const copy = make('div');
+        copy.append(make('strong', null, product.name),
+          make('div', 'form-help', `${quantity}点 · ${formatUsdc(usdcAtomic(product['price-usdc']) * BigInt(quantity))}`));
+        const remove = make('button', 'tool-button', '減らす');
+        remove.type = 'button';
+        remove.addEventListener('click', () => {
+          if (quantity <= 1) storefrontState.cart.delete(sku);
+          else storefrontState.cart.set(sku, quantity - 1);
+          renderStorefrontCart();
+        });
+        row.append(copy, remove); list.append(row);
+      });
+      if (!list.children.length) list.append(make('li', null, '商品はまだありません。'));
+      $('#storefront-cart-total').textContent = formatUsdc(total);
+      $('#storefront-checkout').disabled = storefrontState.cart.size === 0;
+    };
+    const productCard = (product) => {
+      const card = make('article', 'storefront-product');
+      card.append(make('span', 'state-chip', product.sku),
+        make('strong', null, product.name),
+        make('p', 'form-help', product.description),
+        make('p', 'storefront-product__price', `${product['price-usdc']} USDC`),
+        make('p', 'form-help', product.inventory > 0 ? `在庫 ${product.inventory}` : '在庫なし'));
+      const add = make('button', 'primary-action', 'カートに追加');
+      add.type = 'button'; add.disabled = product.inventory < 1;
+      add.addEventListener('click', () => {
+        const next = (storefrontState.cart.get(product.sku) || 0) + 1;
+        if (next <= product.inventory) storefrontState.cart.set(product.sku, next);
+        renderStorefrontCart();
+      });
+      card.append(add); return card;
+    };
+    const renderStorefrontProducts = (products) => {
+      const grid = $('#storefront-products'); grid.replaceChildren();
+      products.forEach((product) => grid.append(productCard(product)));
+      if (!products.length) grid.append(make('p', 'empty-state', '条件に合う公開商品はありません。'));
+    };
+    const renderStorefront = (data) => {
+      storefrontState.data = data;
+      $('#storefront-state').textContent = '公開中';
+      $('#storefront-name').textContent = data.store['display-name'];
+      $('#storefront-lead').textContent = `${data.products.length}商品 · ${data.payment.asset} / ${data.payment.network}`;
+      $('#storefront-merchant-did').textContent = `販売者 DID: ${data.store['merchant-did']}`;
+      renderStorefrontProducts(data.products);
+      renderStorefrontCart();
+    };
+    const loadStorefront = async () => {
+      const requestedSlug = storefrontSlugFromAddress();
+      const key = requestedSlug || (appUnlocked ? 'current' : 'missing');
+      if (storefrontState.loadedFor === key && storefrontState.data) return;
+      if (key === 'missing') {
+        $('#storefront-state').textContent = 'Store未指定';
+        $('#storefront-lead').textContent = '公開URLの store パラメータが必要です。';
+        $('#storefront-products').replaceChildren(make('p', 'empty-state', '販売者から共有されたStore URLを開いてください。'));
+        return;
+      }
+      try {
+        const endpoint = requestedSlug
+          ? `/api/storefront/${encodeURIComponent(requestedSlug)}` : '/api/storefront/current';
+        const response = await fetch(endpoint, {cache:'no-store'});
+        const data = await response.json();
+        if (!response.ok) throw new Error(data?.error?.message || 'Storeを読み込めませんでした。');
+        storefrontState.loadedFor = key; renderStorefront(data);
+      } catch (error) {
+        $('#storefront-state').textContent = '利用できません';
+        $('#storefront-lead').textContent = error.message;
+        $('#storefront-products').replaceChildren(make('p', 'empty-state', error.message));
+      }
+    };
+    $('#storefront-chat-form').addEventListener('submit', (event) => {
+      event.preventDefault();
+      const input = $('#storefront-chat-input'); const query = input.value.trim();
+      if (!query || !storefrontState.data) return;
+      addStorefrontMessage(query, true); input.value = '';
+      const matches = storefrontProductsFor(query);
+      renderStorefrontProducts(matches);
+      addStorefrontMessage(matches.length
+        ? `公開カタログから${matches.length}件見つけました。商品カードで価格と在庫を確認してください。`
+        : '公開カタログには条件に合う商品がありません。条件を変えてください。');
+    });
+    $('#storefront-checkout-form').addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const status = $('#storefront-checkout-status'); const button = $('#storefront-checkout');
+      if (!appUnlocked) {
+        status.textContent = '注文を作成するにはPasskeyでサインインしてください。閲覧とカートはこのまま使えます。';
+        return;
+      }
+      button.disabled = true; status.textContent = '公開価格と在庫を再確認しています…';
+      try {
+        const address = Object.fromEntries(new FormData(event.currentTarget));
+        const lines = [...storefrontState.cart].map(([sku, quantity]) => ({sku, quantity}));
+        const order = await postJSON(
+          `/api/storefront/${encodeURIComponent(storefrontState.data.slug)}/orders`,
+          {lines, 'delivery-address':address}, true);
+        const card = $('#storefront-order'); card.hidden = false; card.replaceChildren();
+        card.append(make('strong', null, 'x402 支払い内容'),
+          make('p', null, `${order['amount-usdc']} USDC · ${order.status}`),
+          make('p', 'form-help', `注文 ${order.id}`),
+          make('p', 'form-help', `受取先 ${order['payment-request']['pay-to']}`),
+          make('p', 'form-help', 'まだ決済・在庫減算・発送依頼は行われていません。外部Wallet署名が次の工程です。'));
+        status.textContent = '注文内容を固定しました。外部Wallet署名待ちです。';
+      } catch (error) { status.textContent = error.message; }
+      finally { button.disabled = storefrontState.cart.size === 0; }
+    });
+
     onViewChange = () => {
       scheduleWorkerPoll();
       if (currentView === 'bots') {
@@ -11232,6 +11377,7 @@
       if (currentView === 'wallet') loadWallet().catch((error) => {
         $('#wallet-source').textContent = error.message;
       });
+      if (currentView === 'storefront') loadStorefront();
       if (currentView === 'projects') loadProjectBoard();
       if (currentView === 'capture') loadCaptures().catch((error) => {
         $('#capture-status').textContent = error.message;

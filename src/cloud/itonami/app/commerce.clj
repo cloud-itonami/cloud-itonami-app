@@ -17,6 +17,8 @@
 (def default-fulfillment-endpoint
   "https://cloud-itonami-marketplace-fulfillment.04-feasts-minded.workers.dev")
 (def base-chain-id 8453)
+(def storefront-schema "cloud.itonami.app.commerce.storefront.v1")
+(def order-schema "cloud.itonami.app.commerce.order.v1")
 
 (defn- refuse [type message]
   (throw (ex-info message {:type type})))
@@ -106,9 +108,10 @@
                   (update :business-kind name)))
      :readiness (update state :checks
                         #(mapv (fn [check] (update check :id name)) %))
-     :publication {:status "not-published"
-                   :public-url nil
-                   :note "開設準備の記録です。公開storefrontのdeployは別の検証済みeffectです。"}}))
+     :publication (or (:publication record)
+                      {:status "not-published"
+                       :public-url nil
+                       :note "開設準備の記録です。公開storefrontはまだ有効ではありません。"})}))
 
 (defn configure-store!
   [session input]
@@ -196,6 +199,197 @@
                      :updated-at (store/now))
     (overview session)))
 
+(defn- sku! [value]
+  (let [value (some-> value str str/trim str/upper-case)]
+    (when-not (and value (re-matches #"[A-Z0-9][A-Z0-9._-]{1,63}" value))
+      (refuse :commerce/invalid-sku
+              "SKUは2〜64文字の英数字、点、ハイフン、アンダースコアで指定してください。"))
+    value))
+
+(defn- price! [value]
+  (try
+    (let [price (bigdec (str value))]
+      (when (or (not (pos? (.signum price))) (> (.scale price) 6))
+        (refuse :commerce/invalid-price
+                "USDC価格は0より大きく、小数6桁以内で指定してください。"))
+      (.toPlainString (.stripTrailingZeros price)))
+    (catch NumberFormatException _
+      (refuse :commerce/invalid-price "USDC価格を数値で指定してください。"))))
+
+(defn- inventory! [value]
+  (let [quantity (if (integer? value) value
+                     (try (Long/parseLong (str value))
+                          (catch NumberFormatException _ -1)))]
+    (when (or (neg? quantity) (> quantity 1000000000))
+      (refuse :commerce/invalid-inventory "在庫数は0以上の整数で指定してください。"))
+    quantity))
+
+(defn upsert-product!
+  [session input]
+  (let [record (or (stored session)
+                   (refuse :commerce/store-required
+                           "先に事業者情報を設定してください。"))
+        sku (sku! (present input :sku))
+        now (store/now)
+        product {:sku sku
+                 :name (text! (present input :name) "商品名" 160)
+                 :description (text! (present input :description) "商品説明" 1000)
+                 :price-usdc (price! (present input :price-usdc :price_usdc))
+                 :inventory (inventory! (present input :inventory))
+                 :status :active
+                 :updated-at now
+                 :created-at (or (get-in record [:products sku :created-at]) now)}]
+    (store/transact! update-in (store-path session)
+                     (fn [current]
+                       (-> current
+                           (assoc-in [:products sku] product)
+                           (assoc :updated-at now))))
+    (overview session)))
+
+(defn- slug! [value]
+  (let [value (some-> value str str/trim str/lower-case)]
+    (when-not (and value (re-matches #"[a-z0-9][a-z0-9-]{2,62}" value))
+      (refuse :commerce/invalid-store-slug
+              "store slugは3〜63文字の小文字英数字とハイフンで指定してください。"))
+    value))
+
+(defn- active-products [record]
+  (->> (:products record)
+       vals
+       (filter #(= :active (:status %)))
+       (sort-by :sku)
+       vec))
+
+(defn publish-storefront!
+  [session input]
+  (let [record (or (stored session)
+                   (refuse :commerce/store-required
+                           "先に事業者情報を設定してください。"))
+        state (readiness record)
+        slug (slug! (present input :slug))
+        duplicate (some (fn [[tenant candidate]]
+                          (when (and (not= tenant (:organization-id session))
+                                     (= slug (get-in candidate [:publication :slug])))
+                            tenant))
+                        (get-in (store/snapshot) [:commerce :stores]))]
+    (when-not (:ready? state)
+      (refuse :commerce/not-ready "開設設定を完了してからstorefrontを公開してください。"))
+    (when (empty? (active-products record))
+      (refuse :commerce/product-required "公開する商品を1件以上登録してください。"))
+    (when duplicate
+      (refuse :commerce/store-slug-taken "このstore slugは既に使われています。"))
+    (let [publication {:status "published"
+                       :slug slug
+                       :public-url (str "/?store=" slug "#/storefront")
+                       :published-at (store/now)
+                       :note "このCloud Itonami deploymentの公開storefrontです。"}]
+      (store/transact! update-in (store-path session)
+                       assoc :publication publication :updated-at (store/now))
+      (overview session))))
+
+(defn- safe-product [product]
+  (select-keys product [:sku :name :description :price-usdc :inventory]))
+
+(defn- public-record [record]
+  (when (= "published" (get-in record [:publication :status]))
+    {:schema storefront-schema
+     :slug (get-in record [:publication :slug])
+     :store {:display-name (:display-name record)
+             :merchant-did (:merchant-did record)}
+     :products (mapv safe-product (active-products record))
+     :payment (select-keys (:payment record)
+                           [:protocol :version :facilitator :network :chain-id :asset :pay-to])
+     :shipping {:carrier (get-in record [:shipping :carrier])
+                :effect-boundary "checkout-plan-only"}
+     :checkout {:status "available"
+                :requires "Passkey session and external Wallet signature"}}))
+
+(defn storefront
+  "Public, deliberately redacted storefront by slug. Legal and delivery addresses stay private."
+  [slug]
+  (some (fn [[_ record]]
+          (when (= (str/lower-case (str slug))
+                   (get-in record [:publication :slug]))
+            (public-record record)))
+        (get-in (store/snapshot) [:commerce :stores])))
+
+(defn current-storefront [session]
+  (some-> (stored session) public-record))
+
+(defn- quantity! [value]
+  (let [quantity (if (integer? value) value
+                     (try (Long/parseLong (str value))
+                          (catch NumberFormatException _ -1)))]
+    (when (or (not (pos? quantity)) (> quantity 1000))
+      (refuse :commerce/invalid-quantity "数量は1〜1000の整数で指定してください。"))
+    quantity))
+
+(defn- money-add [left right]
+  (.toPlainString (.stripTrailingZeros (.add (bigdec (str left)) (bigdec (str right))))))
+
+(defn- line-total [price quantity]
+  (.toPlainString
+   (.stripTrailingZeros (.multiply (bigdec (str price)) (bigdec quantity)))))
+
+(defn- atomic-usdc [amount]
+  (str (.toBigIntegerExact (.movePointRight (bigdec amount) 6))))
+
+(defn create-order!
+  [session slug input]
+  (let [storefront-record (some (fn [[tenant record]]
+                                  (when (= (str/lower-case (str slug))
+                                           (get-in record [:publication :slug]))
+                                    [tenant record]))
+                                (get-in (store/snapshot) [:commerce :stores]))
+        [tenant record] (or storefront-record
+                            (refuse :commerce/storefront-not-found
+                                    "公開storefrontが見つかりません。"))
+        buyer-did (or (identity/session-did session)
+                      (refuse :commerce/buyer-did-required
+                              "注文にはUser DIDが必要です。"))
+        requested (present input :lines)
+        _ (when-not (and (vector? requested) (seq requested) (<= (count requested) 100))
+            (refuse :commerce/order-lines-required "商品を1〜100件指定してください。"))
+        lines (mapv
+               (fn [line]
+                 (let [sku (sku! (:sku line))
+                       quantity (quantity! (:quantity line))
+                       product (or (get-in record [:products sku])
+                                   (refuse :commerce/product-not-found
+                                           (str sku "は販売されていません。")))]
+                   (when (> quantity (:inventory product))
+                     (refuse :commerce/insufficient-inventory
+                             (str sku "の在庫が不足しています。")))
+                   {:sku sku :name (:name product) :quantity quantity
+                    :unit-price-usdc (:price-usdc product)
+                    :line-total-usdc (line-total (:price-usdc product) quantity)}))
+               requested)
+        amount (reduce money-add "0" (map :line-total-usdc lines))
+        order-id (str (java.util.UUID/randomUUID))
+        now (store/now)
+        order {:schema order-schema :id order-id :store-slug slug
+               :merchant-did (:merchant-did record) :buyer-did buyer-did
+               :buyer-user-id (:user-id session) :lines lines
+               :delivery-address (address! (present input :delivery-address :delivery_address)
+                                           "配送先")
+               :amount-usdc amount :status :awaiting-wallet-signature
+               :payment-request {:protocol "x402" :version 1 :scheme "exact"
+                                 :network "base" :chain-id base-chain-id :asset "USDC"
+                                 :amount amount :amount-atomic (atomic-usdc amount)
+                                 :pay-to (get-in record [:payment :pay-to])
+                                 :facilitator (get-in record [:payment :facilitator])
+                                 :signature nil
+                                 :note "外部Walletでの署名とsettlementはまだ行われていません。"}
+               :fulfillment {:status :not-requested
+                             :effect-boundary :plan-only}
+               :created-at now :updated-at now}]
+    (store/transact! assoc-in [:commerce :orders tenant order-id] order)
+    (-> order
+        (dissoc :buyer-user-id)
+        (update :status name)
+        (update-in [:fulfillment :status] name)
+        (update-in [:fulfillment :effect-boundary] name))))
+
 (def tool-definitions
   [{:name "commerce_store_overview"
     :description (str "Read the active tenant's DID-bound shop setup, x402, shipping, "
@@ -224,7 +418,21 @@
    {:name "commerce_store_finalize"
     :description (str "Validate the joined commerce setup and mark it ready for publication. "
                       "This does not deploy or claim a public storefront. (write)")
-    :parameters {:type "object" :properties {}}}])
+    :parameters {:type "object" :properties {}}}
+   {:name "commerce_product_upsert"
+    :description "Create or update one deterministic storefront product. (write)"
+    :parameters {:type "object"
+                 :properties {:sku {:type "string"} :name {:type "string"}
+                              :description {:type "string"}
+                              :price_usdc {:type "string"}
+                              :inventory {:type "integer"}}
+                 :required ["sku" "name" "description" "price_usdc" "inventory"]}}
+   {:name "commerce_store_publish"
+    :description (str "Publish the ready catalog on this Cloud Itonami deployment. "
+                      "This does not claim an external DNS or separate deployment. (write)")
+    :parameters {:type "object"
+                 :properties {:slug {:type "string"}}
+                 :required ["slug"]}}])
 
 (defn tool? [name]
   (str/starts-with? (str name) "commerce_"))
@@ -245,6 +453,10 @@
     "発送元・返品先とfulfillment計画actorを設定します。送り状購入や集荷は実行しません。"
     "commerce_store_finalize"
     "DID・法的表示・x402・発送設定を検査し、公開準備完了として記録します。公開は実行しません。"
+    "commerce_product_upsert"
+    (str (or (:sku input) "商品") "の商品名・USDC価格・在庫を公開カタログ候補へ記録します。")
+    "commerce_store_publish"
+    (str (or (:slug input) "store") "として、このCloud Itonami上のstorefrontを公開します。")
     "Commerce設定を更新します。"))
 
 (defn call-tool!
@@ -256,6 +468,8 @@
       "commerce_payment_configure_x402" (configure-x402! session (:bot/id bot))
       "commerce_shipping_configure" (configure-shipping! session input)
       "commerce_store_finalize" (finalize! session)
+      "commerce_product_upsert" (upsert-product! session input)
+      "commerce_store_publish" (publish-storefront! session input)
       (refuse :commerce/unknown-tool "未知のCommerce toolです。"))))
 
 (defn bot-summary [bot]
