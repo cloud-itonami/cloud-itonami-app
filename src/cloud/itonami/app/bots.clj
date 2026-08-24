@@ -63,6 +63,7 @@
             [cloud.itonami.app.bot-slo :as bot-slo]
             [cloud.itonami.app.connectors :as connectors]
             [cloud.itonami.app.chronicle :as chronicle]
+            [cloud.itonami.app.commerce :as commerce]
             [cloud.itonami.app.gc :as gc]
             [cloud.itonami.app.handoff :as handoff]
             [cloud.itonami.app.identity :as identity]
@@ -1299,7 +1300,7 @@
                                                       (not (met? providers %))))))
    :active-run? (boolean (get-in (snapshot) [:runs bot-id :pending-call]))})
 
-(declare public-turn)
+(declare public-turn peer-tools coding-tools)
 
 (defn- public-bot [configuration did b]
   (let [partition (snapshot)
@@ -1311,21 +1312,13 @@
                         (:turn/updated-at last-turn)
                         (:bot/updated-at b))
         local-tools (concat
+                     commerce/tool-definitions
                      (when (:bot/browser? b)
                        (agent-control/browser-tool-definitions configuration))
                      (when (:bot/computer? b)
                        (agent-control/computer-tool-definitions configuration))
-                     (when (:bot/peers? b)
-         (str "You can leave a note for another of this owner's Bots with "
-              "send_message. The note appears in that Bot's conversation "
-              "attributed to you and is read on its next turn: it does not wake "
-              "it and there is no reply. It carries none of your tools, and "
-              "none of theirs come back — if something needs DOING by another "
-              "Bot, hand off instead of asking.\n\n"))
-       (when (and (:bot/coding? b) (:bot/workspace b))
-                       workspace-tools/tool-definitions)
-                     (when (and (:bot/virtual-shell? b) (:bot/workspace b))
-                       virtual-shell/tool-definitions))
+                     (peer-tools b)
+                     (coding-tools b))
         admitted (into (bot/admitted-tools b rows connected)
                        (map :name) local-tools)
         stored-avatar (:bot/avatar b)
@@ -1383,6 +1376,7 @@
      :workspace (:bot/workspace b)
      :workforce-key (:bot/workforce-key b)
      :business (:bot/business b)
+     :commerce (commerce/bot-summary b)
      :role (:bot/role b)
      :responsibilities (:bot/responsibilities b)
      :capability-policy
@@ -1729,17 +1723,19 @@
                                    (or (:connector/description t) (:connector/name t))
                                    (when (= :write (:connector/effect t)) " (write)"))
                  :parameters (:connector/input-schema t)}))]
-    (into (into (into (into (into (browser-tools configuration b)
-                                  (computer-tools configuration b))
-                            (peer-tools b))
-                      (coding-tools b))
-                (wallet/bot-tool-definitions (:bot/id b)))
-          connector-tools)))
+    (vec (concat (browser-tools configuration b)
+                 (computer-tools configuration b)
+                 (peer-tools b)
+                 commerce/tool-definitions
+                 (coding-tools b)
+                 (wallet/bot-tool-definitions (:bot/id b))
+                 connector-tools))))
 
 (defn- write-tool? [configuration tool-name]
   (or (peer-tool? tool-name)
       (agent-control/browser-write? tool-name)
       (agent-control/computer-write? tool-name)
+      (commerce/write-tool? tool-name)
       (wallet/write-tool? tool-name)
       (workspace-tools/write-tool? tool-name)
       (virtual-shell/write-tool? tool-name)
@@ -1763,6 +1759,9 @@
            (or (:value_wei args) (:value-wei args))
            " weiの送金を提案します。外部Walletの署名が別途必要です。")
       "Bot Walletの受取アドレスを読みます。")
+
+    (commerce/tool? tool-name)
+    (commerce/describe tool-name args)
 
     (workspace-tools/tool? tool-name)
     (workspace-tools/describe tool-name args)
@@ -1960,12 +1959,16 @@
                                       [:bots :goal :max-tool-output-chars])
                                 max-tool-output-chars)))
         structured (if (or (peer-tool? tool-name)
+                           (commerce/tool? tool-name)
                            (wallet/tool? tool-name)
                            (agent-control/browser-tool? tool-name)
                            (agent-control/computer-tool? tool-name)
                            (workspace-tools/tool? tool-name)
                            (virtual-shell/tool? tool-name))
                      (cond
+                       (commerce/tool? tool-name)
+                       (commerce/call-tool! b tool-name args)
+
                        (wallet/tool? tool-name)
                        (wallet/call-tool! (:bot/id b) tool-name args)
 
@@ -2590,6 +2593,8 @@
          "承認時の画面digestから変化していれば実行を拒否します。")
     (wallet/tool? name)
     "送金提案を記録します。秘密鍵はBotへ渡らず、外部Walletでの署名までは実行しません。"
+    (commerce/tool? name)
+    "このTenantのショップ開設記録を更新します。決済署名・公開deploy・送り状購入・集荷は実行しません。"
     (workspace-tools/tool? name)
     "選択した local Git workspace のファイルまたは履歴が変わります。remote へは push しません。"
     (virtual-shell/tool? name)

@@ -12,6 +12,7 @@
             [cloud.itonami.app.agent-control :as agent-control]
             [cloud.itonami.app.bots :as bots]
             [cloud.itonami.app.chronicle :as chronicle]
+            [cloud.itonami.app.commerce :as commerce]
             [cloud.itonami.app.config :as config]
             [cloud.itonami.app.identity :as identity]
             [cloud.itonami.app.policy :as policy]
@@ -1346,9 +1347,13 @@
           (bots/send! nil alice (:bot/id b) "何ができる?"))
         (is (some #(= "gmail_search_messages" (:name %)) (:tools @seen))
             "the model could not have asked for what it cannot see")
-        (testing "while the Bots screen still reports nothing as admitted"
-          (is (empty? (:admitted-tools
-                       (first (:bots (bots/overview nil alice)))))))))))
+        (let [admitted (:admitted-tools
+                        (first (:bots (bots/overview nil alice))))]
+          (is (not-any? #{"gmail_search_messages"} admitted)
+              "an unauthorized connector is still not admitted")
+          (is (= (set (map :name commerce/tool-definitions))
+                 (set admitted))
+              "the built-in tenant commerce tools remain available"))))))
 
 (deftest a-tool-the-model-invented-is-refused-rather-than-invoked
   (with-store
