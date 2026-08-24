@@ -118,6 +118,23 @@
         {:helper? true :accessibility? false :screen-recording? false}))
     {:helper? false :accessibility? false :screen-recording? false}))
 
+(defn request-permissions!
+  "Ask macOS for the two grants after a person explicitly chose Settings.
+
+  This is intentionally separate from `available?`: health checks, Bot runs,
+  and page loads must never raise a system dialog. The server exposes this only
+  from the human-session, same-origin, CSRF-protected preparation route."
+  []
+  (let [helper (or (build!)
+                   (throw (ex-info "Computer Use helperを準備できませんでした。"
+                                   {:type :desktop/build-failed})))
+        {:keys [exit out err]} (exec! [helper "permissions" "--prompt" "true"] 180)]
+    (if (zero? exit)
+      (json/read-str out :key-fn keyword)
+      (throw (ex-info "macOSのComputer Use権限を確認できませんでした。"
+                      {:type :desktop/permission-request-failed
+                       :detail (str/trim err)})))))
+
 (defn- helper! [args timeout-seconds]
   (let [helper (or (helper-path)
                    (throw (ex-info (str "デスクトップヘルパーが未ビルドです。"

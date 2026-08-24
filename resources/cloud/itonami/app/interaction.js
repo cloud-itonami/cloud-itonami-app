@@ -7807,7 +7807,7 @@
       const button = $('#agent-machine-prepare-computer');
       button.disabled = true;
       try {
-        $('#agent-machine-status').textContent = 'Computer Use helperを準備しています…';
+        $('#agent-machine-status').textContent = 'Computer Use helperを準備し、macOS権限を確認しています…';
         renderAgentMachine(await postJSON('/api/bots/machine/prepare-computer', {}, true));
       } catch (error) { $('#agent-machine-status').textContent = error.message; }
       finally { button.disabled = false; }

@@ -49,6 +49,9 @@ prompts remain human work.
 Settings owns diagnosis and preparation. It reports the browser executable,
 helper, Accessibility, and Screen Recording independently, prepares the Swift
 helper on request, and explains that each Bot still needs an individual grant.
+Passive diagnosis never prompts. The signed-in person's explicit preparation
+action is the only path that invokes `permissions --prompt true`; that action
+requests Accessibility and Screen Recording, then reruns diagnosis.
 
 ## Acceptance and score
 
@@ -60,7 +63,7 @@ Hard gates (all required):
 | no coordinate/key/type tools | tool-contract tests | PASS |
 | read immediate, write classified for hold | Bot loop tests | PASS |
 | browser profiles isolated | two live sessions on different origins | PASS |
-| helper and macOS permissions | live `permissions` response | PASS |
+| helper and macOS permissions | live server-side Settings request and subsequent diagnostic | PASS |
 | focus-free desktop behavior | 12 live tests / 78 assertions | PASS |
 | UI and command registry do not drift | core and route-registry tests | PASS |
 

@@ -97,11 +97,11 @@ func required(_ name: String) -> String {
 
 // ── trust ───────────────────────────────────────────────────────────────
 
-// Never with the prompt option: a helper invoked from a background server has
-// no business raising a system dialog on somebody's screen. Reporting untrusted
-// lets the application ask, once, in its own settings surface.
-func accessibilityTrusted() -> Bool {
-  AXIsProcessTrustedWithOptions([kAXTrustedCheckOptionPrompt.takeUnretainedValue(): false] as CFDictionary)
+// Background diagnostics never prompt. The sole exception is the explicit
+// Settings action `permissions --prompt true`, which a signed-in person presses
+// after the page explains exactly which two macOS grants are being requested.
+func accessibilityTrusted(prompt: Bool = false) -> Bool {
+  AXIsProcessTrustedWithOptions([kAXTrustedCheckOptionPrompt.takeUnretainedValue(): prompt] as CFDictionary)
 }
 
 func requireTrust() {
@@ -611,10 +611,16 @@ func captureTarget(_ target: Target) -> [String: Any] {
 switch command {
 
 case "permissions":
-  // Reported, never prompted for. The caller decides whether to ask a person.
+  // A plain probe is read-only. Prompting is available only to the explicit
+  // human Settings route; ordinary Bot and diagnostics calls never pass it.
+  let prompt = option("prompt") == "true"
+  let accessibility = accessibilityTrusted(prompt: prompt)
+  let screenRecording = CGPreflightScreenCaptureAccess()
+    || (prompt && CGRequestScreenCaptureAccess())
   emit(["ok": true,
-        "accessibility": accessibilityTrusted(),
-        "screen-recording": CGPreflightScreenCaptureAccess()])
+        "accessibility": accessibility,
+        "screen-recording": screenRecording,
+        "prompted": prompt])
 
 case "apps":
   let running = NSWorkspace.shared.runningApplications
