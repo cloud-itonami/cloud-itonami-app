@@ -59,9 +59,24 @@ re-execution contradicts:
 In S5, S16 and S18 the *conclusion* each Bot drew happens to survive the
 correction; in S13 the count itself was the content. Either way the
 reported measurement was false, which is the exact class ADR-2608136000
-exists for: an unperformed check printing like a performed one. This is a
-Bot-behavior defect (search tool coverage / result reading), not an
-auditing artifact.
+exists for: an unperformed check printing like a performed one.
+
+**Correction, same day:** the mechanism was measured and it is the TOOL,
+not the Bots' honesty. `workspace_search` scanned the first 300 files in
+filesystem-walk order, skipped files over 256 KiB, capped output at 200
+lines — all silently. Against the audited workspaces that is 300 of
+35,612 files for net-kotobase (0.8%), 300 of 1,465 for cloud-murakumo
+(20%), 300 of 3,685 for cloud-itonami (8%) — so an empty result over a
+sliver of the tree printed exactly like "absent from the repository", and
+a Bot repeating it was repeating its instrument. Fixed by making every
+search result begin with a coverage receipt
+(`SEARCH RECEIPT: matches=… files-searched=n/m`) and an unmissable
+`COVERAGE INCOMPLETE` warning produced by the same code that truncates;
+the scan window is now deterministic (sorted) as well. The grounding rate
+below stands as measured — the fleet's output was factually wrong
+regardless of whose fault — but the remediation lands in the tool, and
+the next audit measures whether the Bots now repeat the receipt instead
+of the false zero.
 
 ### Sample register
 
