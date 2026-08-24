@@ -107,6 +107,36 @@
     (is (= (repository/validate-state! state)
            (repository/rebuild-state chunks)))))
 
+(deftest linear-packer-preserves-reference-chunk-boundaries
+  (let [state {:a (vec (range 200))
+               :b (into {} (map (fn [index]
+                                  [index (str "value-" index)]))
+                        (range 80))
+               :c #{:x :y :z}}
+        records ((deref #'repository/flatten-nodes)
+                 (repository/validate-state! state))
+        reference
+        (fn [maximum]
+          (loop [remaining records current [] chunks []]
+            (if-let [record (first remaining)]
+              (let [candidate (conj current record)
+                    size (alength
+                          (repository/canonical-bytes
+                           {:chunk/version 1 :records candidate}))]
+                (cond
+                  (<= size maximum)
+                  (recur (next remaining) candidate chunks)
+
+                  (empty? current)
+                  (throw (ex-info "reference record is too large"
+                                  {:bytes size :maximum maximum}))
+
+                  :else (recur remaining [] (conj chunks current))))
+              (cond-> chunks (seq current) (conj current)))))]
+    (doseq [maximum [1024 2048 4096 8192]]
+      (is (= (reference maximum)
+             ((deref #'repository/pack-records) records maximum))))))
+
 (deftest private-state-leak-markers-include-domain-keys-and-values
   (let [markers (set (repository/plaintext-markers base-state))]
     (is (contains? markers ":message/content"))

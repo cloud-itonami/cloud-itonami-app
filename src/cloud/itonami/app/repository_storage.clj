@@ -275,19 +275,27 @@
      :else [{:path path :node/type :value :value value}])))
 
 (defn- pack-records [records maximum]
-  (loop [remaining records current [] chunks []]
-    (if-let [record (first remaining)]
-      (let [candidate (conj current record)
-            size (alength (canonical-bytes
-                           {:chunk/version format-version :records candidate}))]
-        (cond
-          (<= size maximum) (recur (next remaining) candidate chunks)
-          (empty? current)
-          (throw (ex-info "one EDN value exceeds the chunk limit"
-                          {:type :repository-storage/chunk-too-large
-                           :path (:path record) :bytes size :maximum maximum}))
-          :else (recur remaining [] (conj chunks current))))
-      (cond-> chunks (seq current) (conj current)))))
+  ;; `pr-str` renders vector members with one separating space. Measure each
+  ;; canonical record once and carry the exact encoded chunk size forward;
+  ;; re-encoding the whole growing candidate here made packing quadratic for
+  ;; large mail repositories (hundreds of thousands of flattened records).
+  (let [empty-size (alength (canonical-bytes
+                            {:chunk/version format-version :records []}))]
+    (loop [remaining records current [] current-size empty-size chunks []]
+      (if-let [record (first remaining)]
+        (let [record-size (alength (canonical-bytes record))
+              size (+ current-size record-size (if (seq current) 1 0))]
+          (cond
+            (<= size maximum)
+            (recur (next remaining) (conj current record) size chunks)
+
+            (empty? current)
+            (throw (ex-info "one EDN value exceeds the chunk limit"
+                            {:type :repository-storage/chunk-too-large
+                             :path (:path record) :bytes size :maximum maximum}))
+
+            :else (recur remaining [] empty-size (conj chunks current))))
+        (cond-> chunks (seq current) (conj current))))))
 
 (defn chunk-state
   ([state] (chunk-state state default-max-chunk-bytes))
@@ -475,9 +483,13 @@
                                         method)))
                             (.header "content-type" "application/json")
                             (.header "accept" "application/json"))
-        request-builder (if (seq token)
-                          (.header request-builder "authorization"
-                                   (str "Bearer " token))
+        authorization (when (seq token)
+                        (if (or (str/starts-with? token "CACAO ")
+                                (str/starts-with? token "Bearer "))
+                          token
+                          (str "Bearer " token)))
+        request-builder (if authorization
+                          (.header request-builder "authorization" authorization)
                           request-builder)
         request (-> request-builder
                     (.POST (HttpRequest$BodyPublishers/ofString
