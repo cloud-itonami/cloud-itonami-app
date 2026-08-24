@@ -1570,14 +1570,14 @@
      [:span {:class "bots-permission__copy"}
       [:span "フォーカスを奪わないComputer Use"]
       [:span {:class "bots-permission__help" :id "agent-machine-computer-help"}
-       "アクセシビリティツリーを読み、承認時の画面にだけ操作します。座標クリックや合成キー入力は使いません。"]]]]
+       "署名済みCuaDriverを優先し、アクセシビリティツリーを読みます。座標クリックや合成キー入力は使いません。Botへ公開するのは要素token操作だけです。"]]]]
    [:div {:class "button-row"}
     [:button {:class "primary-action" :id "agent-machine-save" :type "button"}
      "このMacの設定を保存"]
     [:button {:class "tool-button" :id "agent-machine-prepare-computer" :type "button"}
      "macOS権限を確認して準備"]]
    [:p {:class "form-help"}
-    "パスワード・2FA・CAPTCHA・支払い・セキュリティ確認は自動操作しません。Computer操作は対象アプリ名と画面digestをreceiptに残します。"]])
+    "パスワード・2FA・CAPTCHA・支払い・セキュリティ確認は自動操作しません。Computer操作は対象アプリ名、画面digest、要素tokenをreceiptに残します。"]])
 
 (defn page-html [configuration]
   (let [cloud? (get-in configuration [:routing :cloud-enabled?])

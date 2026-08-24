@@ -273,14 +273,18 @@
                :allowed-domains (get-in s [:browser :allowed-domains])}
      :computer (let [state (desktop/available?)]
                  (merge {:enabled? (get-in s [:computer :enabled?])
-                         :host "cloud-itonami focus-free desktop helper (ADR-0059)"
+                         :host (if (= :cua-driver (:provider state))
+                                 "signed CuaDriver.app daemon"
+                                 "cloud-itonami source helper fallback")
                          ;; Three facts, not one. A missing binary, a missing
                          ;; Accessibility grant and a missing Screen Recording
                          ;; grant need three different answers from a person,
                          ;; and folding them into one `available?` was how the
                          ;; settings screen used to say "unavailable" to
                          ;; somebody whose only problem was one checkbox.
-                         :available? (and (:helper? state) (:accessibility? state))
+                         :available? (and (:helper? state)
+                                          (:accessibility? state)
+                                          (:screen-recording? state))
                          :permissions ["Accessibility" "Screen Recording"]}
                         state))
      :cli {:enabled? (get-in s [:cli :enabled?])
@@ -525,7 +529,9 @@
   [configuration]
   (let [state (desktop/available?)]
     (boolean (and (computer-enabled? configuration)
-                  (:helper? state) (:accessibility? state)))))
+                  (:helper? state)
+                  (:accessibility? state)
+                  (:screen-recording? state)))))
 
 (defn browser-tool?
   "Is this an isolated-browser tool name, and not a computer or connector one?"

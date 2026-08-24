@@ -7753,21 +7753,22 @@
       const diagnostics = data.diagnostics || {};
       const browser = diagnostics.browser || {};
       const computer = diagnostics.computer || {};
+      const computerHost = computer.provider === 'cua-driver' ? 'CuaDriver' : '内蔵helper';
       $('#agent-machine-browser').checked = Boolean(settings.browser?.['enabled?']);
       $('#agent-machine-computer').checked = Boolean(settings.computer?.['enabled?']);
       $('#agent-machine-domains').value = (settings.browser?.['allowed-domains'] || []).join(', ');
       $('#agent-machine-browser').disabled = !browser['available?'];
-      $('#agent-machine-computer').disabled = !computer['helper?'] || !computer['accessibility?'];
+      $('#agent-machine-computer').disabled = !computer['helper?'] || !computer['accessibility?'] || !computer['screen-recording?'];
       $('#agent-machine-browser-help').textContent = browser['available?']
         ? '接続済み。BotごとにCookieと履歴を分離します。'
         : 'agent-browser が見つかりません。公式の agent-browser をインストールしてください。';
       const missing = [];
-      if (!computer['helper?']) missing.push('helper未準備');
+      if (!computer['helper?']) missing.push('CuaDriver / 内蔵helper未準備');
       if (!computer['accessibility?']) missing.push('アクセシビリティ未許可');
       if (!computer['screen-recording?']) missing.push('画面収録未許可');
       $('#agent-machine-computer-help').textContent = missing.length
         ? `未接続: ${missing.join(' / ')}`
-        : '接続済み。フォーカスを奪わず、画面digestで操作対象を固定します。';
+        : `${computerHost}接続済み。フォーカスを奪わず、画面digestと要素tokenで操作対象を固定します。`;
       const enabled = Boolean(settings['enabled?']);
       $('#agent-machine-status').textContent =
         `実行基盤 ${enabled ? 'ON' : 'OFF'} / 分離ブラウザー ${browser['available?'] ? 'ready' : '未接続'} / Computer Use ${computer['available?'] ? 'ready' : '未接続'}`;
@@ -7807,7 +7808,7 @@
       const button = $('#agent-machine-prepare-computer');
       button.disabled = true;
       try {
-        $('#agent-machine-status').textContent = 'Computer Use helperを準備し、macOS権限を確認しています…';
+        $('#agent-machine-status').textContent = '署名済みCuaDriverを優先して、macOS権限を確認しています…';
         renderAgentMachine(await postJSON('/api/bots/machine/prepare-computer', {}, true));
       } catch (error) { $('#agent-machine-status').textContent = error.message; }
       finally { button.disabled = false; }

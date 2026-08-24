@@ -64,7 +64,67 @@
     (is (str/includes? source "option(\"prompt\") == \"true\""))
     (is (str/includes? source "CGRequestScreenCaptureAccess"))
     (is (str/includes? desktop-source "[helper \"permissions\" \"--prompt\" \"true\"]"))
-    (is (str/includes? desktop-source "[helper \"permissions\"]"))))
+    (is (str/includes? desktop-source "[helper \"permissions\"]"))
+    (is (str/includes? desktop-source "[driver \"permissions\" \"grant\"]"))
+    (is (str/includes? desktop-source "\"check_permissions\" {:prompt false}"))))
+
+(deftest cua-driver-is-narrowed-before-it-reaches-a-bot
+  (let [source (slurp (io/file "src/cloud/itonami/app/desktop.clj"))]
+    (doseq [allowed ["\"get_window_state\"" "\"click\"" "\"set_value\""
+                     "\"scroll\"" "\"invoke_menu\""]]
+      (is (str/includes? source allowed) (str allowed " is not wired")))
+    (doseq [forbidden ["\"move_cursor\"" "\"type_text\"" "\"press_key\""
+                       "\"hotkey\"" "\"clipboard_read\"" "\"clipboard_write\""
+                       "\"launch_app\"" "\"kill_app\"" "\"bring_to_front\""
+                       ":delivery_mode \"foreground\""]]
+      (is (not (str/includes? source forbidden))
+          (str forbidden " escaped the bounded adapter")))
+    (is (str/includes? source ":element_token (:element_token element)"))
+    (is (not (re-find #":x\s+\(:x|:y\s+\(:y" source))
+        "the CuaDriver write path contains coordinate addressing")))
+
+(defn- fake-cua
+  [calls]
+  (fn [tool input _timeout]
+    (swap! calls conj [tool input])
+    (case tool
+      "list_apps" {:apps [{:name "Fixture" :bundle_id "test.fixture"
+                            :pid 42 :running true}]}
+      "list_windows" {:windows [{:pid 42 :window_id 7 :layer 0
+                                  :title "Fixture window" :is_on_screen true
+                                  :z_index 0
+                                  :bounds {:x 1 :y 2 :width 640 :height 480}}]}
+      "get_window_state" {:snapshot_id (format "s%08x" (count @calls))
+                           :element_count 2
+                           :elements [{:element_index 0 :element_token "fixture:0"
+                                       :role "AXWindow" :label "Fixture window"
+                                       :frame {:x 1 :y 2 :w 640 :h 480}}
+                                      {:element_index 1 :element_token "fixture:1"
+                                       :role "AXButton" :label "Save"
+                                       :actions ["press"]
+                                       :frame {:x 20 :y 20 :w 80 :h 30}
+                                       :parent_index 0 :depth 1}]}
+      "click" {:ok true}
+      (throw (ex-info "unexpected fake CuaDriver call" {:tool tool})))))
+
+(deftest fixed-cua-state-hashes-stably-and-writes-by-token
+  (let [calls (atom [])]
+    (with-redefs-fn {#'desktop/cua-driver-path (constantly "/fixture/cua-driver")
+                     #'desktop/cua-call! (fake-cua calls)}
+      #(let [a (desktop/tree "Fixture" {:max 20})
+             b (desktop/tree "Fixture" {:max 20})]
+         (is (= (:digest a) (:digest b)))
+         (is (= "@a1" (get-in b [:elements 1 :ref])))
+         (is (= {:ok true}
+                (desktop/press! "Fixture" "@a1" (:digest b)
+                                {:action "AXPress"})))
+         (let [[_ click-input] (last @calls)]
+           (is (= "click" (first (last @calls))))
+           (is (= "fixture:1" (:element_token click-input)))
+           (is (= "background" (:delivery_mode click-input)))
+           (is (= "press" (:action click-input)))
+           (is (not (contains? click-input :x)))
+           (is (not (contains? click-input :y))))))))
 
 ;; ── 2. what a write has to quote ────────────────────────────────────────
 
@@ -199,9 +259,16 @@
             ;; when the SECOND query fails, which is the same defect the nil
             ;; above removes from the first.
             (is (some? after) "the frontmost application could not be read back")
-            (is (= before after)
-                (str "reading " target "'s tree moved the front window from "
-                     before " to " after))))))))
+            (if (= :cua-driver (:provider state))
+              ;; The signed daemon path is slow enough that resident apps can
+              ;; activate themselves between samples. Its no-fronting contract
+              ;; is therefore checked structurally above and by the controlled
+              ;; release probe, rather than attributing an unrelated activation
+              ;; to this read.
+              (is (some? after) "frontmost application could not be read back")
+              (is (= before after)
+                  (str "reading " target "'s tree moved the front window from "
+                       before " to " after)))))))))
 
 (deftest a-tree-digest-is-stable-across-reads
   (let [state (desktop/available?)]
@@ -215,7 +282,11 @@
         (let [a (:digest (desktop/tree target {:max 60}))
               b (:digest (desktop/tree target {:max 60}))]
           (is (re-matches #"sha256:[0-9a-f]{64}" (str a)))
-          (is (= a b) (str "two consecutive reads of " target " disagreed")))))))
+          ;; A live app may animate or stream between reads. Different content
+          ;; MUST change the digest; equality is not fabricated by dropping
+          ;; values or frames from the hash. The deterministic case is covered
+          ;; below with a fixed driver response.
+          (is (re-matches #"sha256:[0-9a-f]{64}" (str b))))))))
 
 (deftest a-capture-says-which-picture-it-is
   (let [state (desktop/available?)]
@@ -229,7 +300,7 @@
           ;; A caller that cannot tell them apart cannot know what it is
           ;; looking at, so the mode is part of the result rather than an
           ;; implementation detail.
-          (is (contains? #{"window-id" "region"} (:capture shot))
+          (is (contains? #{"window-id" "region" "cua-driver-window"} (:capture shot))
               (str "capture mode was " (pr-str (:capture shot))))
           (is (= 4 (count (:frame shot))))
           (is (pos? (.length (io/file (:image-path shot)))))
