@@ -212,8 +212,12 @@
                                             "返品先")
                   :carrier (some-> (present input :carrier) str str/trim not-empty)
                   :fulfillment-endpoint default-fulfillment-endpoint
+                  :fulfillment-integration
+                  {:status :not-connected
+                   :reason :marketplace-order-reference-required}
                   :effect-boundary :plan-only
-                  :note "送り状購入・集荷依頼は別の承認済みeffectです。"
+                  :note (str "荷姿と配送参照はChatで管理できます。送り状購入・集荷依頼は"
+                             "運送会社との接続後にだけ実行できます。")
                   :configured-at (store/now)}]
     (store/transact! update-in (store-path session)
                      assoc :shipping shipping :updated-at (store/now))
@@ -416,7 +420,9 @@
         (cond-> expired? (assoc-in [:reservation :status] :expired))
         (update-in [:reservation :status] name)
         (update-in [:fulfillment :status] name)
-        (update-in [:fulfillment :effect-boundary] name))))
+        (update-in [:fulfillment :effect-boundary] name)
+        (cond-> (get-in order [:fulfillment :shipment :status])
+          (update-in [:fulfillment :shipment :status] name)))))
 
 (defn- storefront-record
   [state slug]
@@ -592,16 +598,143 @@
 
 (def ^:private fulfillment-next
   {:ready-to-pack #{:packed}
-   :packed #{:shipped}
+   :label-ready #{:shipped}
    :shipped #{:delivered}})
+
+(defn- positive-decimal!
+  [value field maximum]
+  (try
+    (let [n (bigdec (str value))]
+      (when (or (not (pos? (.signum n))) (pos? (.compareTo n (bigdec maximum))))
+        (refuse :commerce/invalid-parcel (str field "は0より大きく" maximum "以下で指定してください。")))
+      (.toPlainString (.stripTrailingZeros n)))
+    (catch NumberFormatException _
+      (refuse :commerce/invalid-parcel (str field "を数値で指定してください。")))))
+
+(defn prepare-shipment!
+  "Freeze the parcel and address manifest before a carrier-side effect.
+
+  This is deliberately a durable draft, not a label purchase. A carrier booking
+  may only be recorded against this exact manifest, so Chat cannot silently
+  claim that packing details which were never fixed were sent to a carrier."
+  [session input]
+  (let [tenant (:organization-id session)
+        order-id (text! (present input :order-id :order_id) "注文ID" 100)
+        parcel {:weight-kg (positive-decimal!
+                            (present input :weight-kg :weight_kg)
+                            "重量(kg)" "1000")
+                :length-cm (positive-decimal!
+                            (present input :length-cm :length_cm)
+                            "長さ(cm)" "300")
+                :width-cm (positive-decimal!
+                           (present input :width-cm :width_cm)
+                           "幅(cm)" "300")
+                :height-cm (positive-decimal!
+                            (present input :height-cm :height_cm)
+                            "高さ(cm)" "300")}
+        changed (atom nil)]
+    (store/transact!
+     (fn [state]
+       (let [found (or (get-in state [:commerce :orders tenant order-id])
+                       (refuse :commerce/order-not-found "注文が見つかりません。"))
+             current (get-in found [:fulfillment :status])]
+         (when-not (= :packed current)
+           (refuse :commerce/shipment-requires-packed
+                   "荷姿の確定は梱包済みの注文だけ実行できます。"))
+         (let [now (store/now)
+               merchant (get-in state [:commerce :stores tenant])
+               requested-carrier (or (some-> (present input :carrier)
+                                              str str/trim not-empty)
+                                      (get-in merchant [:shipping :carrier]))
+               existing (get-in found [:fulfillment :shipment])
+               shipment {:status :awaiting-carrier-booking
+                         :parcel parcel
+                         :ship-from (get-in merchant [:shipping :ship-from])
+                         :ship-to (:delivery-address found)
+                         :requested-carrier requested-carrier
+                         :effect-boundary :carrier-booking-not-executed
+                         :prepared-at now}
+               next-order (-> found
+                              (assoc-in [:fulfillment :shipment] shipment)
+                              (assoc-in [:fulfillment :effect-boundary]
+                                        :carrier-booking-required)
+                              (assoc :updated-at now))]
+           (cond
+             (and (= :awaiting-carrier-booking (:status existing))
+                  (= parcel (:parcel existing))
+                  (= requested-carrier (:requested-carrier existing)))
+             (do (reset! changed found) state)
+
+             existing
+             (refuse :commerce/shipment-already-prepared
+                     "この注文の荷姿はすでに確定しています。")
+
+             :else
+             (do (reset! changed next-order)
+                 (assoc-in state [:commerce :orders tenant order-id] next-order)))))))
+    (public-order @changed)))
+
+(defn record-carrier-booking!
+  "Record references supplied from a carrier or shipping aggregator.
+
+  Recording references is not the carrier call and does not verify authenticity.
+  Explicit references are required so a plain fulfillment-status reply cannot
+  silently turn an order into label-ready."
+  [session input]
+  (let [tenant (:organization-id session)
+        order-id (text! (present input :order-id :order_id) "注文ID" 100)
+        carrier (text! (present input :carrier) "配送会社" 120)
+        tracking (text! (present input :tracking-number :tracking_number) "追跡番号" 200)
+        label-reference (text! (present input :label-reference :label_reference)
+                               "送り状参照" 500)
+        pickup-reference (when-let [value (present input :pickup-reference :pickup_reference)]
+                           (text! value "集荷参照" 500))
+        changed (atom nil)]
+    (store/transact!
+     (fn [state]
+       (let [found (or (get-in state [:commerce :orders tenant order-id])
+                       (refuse :commerce/order-not-found "注文が見つかりません。"))
+             shipment (get-in found [:fulfillment :shipment])
+             same? (and (= :label-ready (get-in found [:fulfillment :status]))
+                        (= carrier (:carrier shipment))
+                        (= tracking (:tracking-number shipment))
+                        (= label-reference (:label-reference shipment))
+                        (= pickup-reference (:pickup-reference shipment)))]
+         (cond
+           same? (do (reset! changed found) state)
+
+           (not= :awaiting-carrier-booking (:status shipment))
+           (refuse :commerce/shipment-not-awaiting-booking
+                   "荷姿確定後、未予約の注文にだけ送り状結果を記録できます。")
+
+           :else
+           (let [now (store/now)
+                 next-order (-> found
+                                (assoc-in [:fulfillment :status] :label-ready)
+                                (assoc-in [:fulfillment :carrier] carrier)
+                                (assoc-in [:fulfillment :tracking-number] tracking)
+                                (assoc-in [:fulfillment :shipment]
+                                          (merge shipment
+                                                 {:status :label-ready
+                                                  :carrier carrier
+                                                  :tracking-number tracking
+                                                  :label-reference label-reference
+                                                  :pickup-reference pickup-reference
+                                                  :effect-boundary :external-booking-reference-recorded
+                                                  :booked-at now}))
+                                (assoc-in [:fulfillment :effect-boundary]
+                                          :carrier-booking-reference-recorded)
+                                (assoc-in [:fulfillment :updated-at] now)
+                                (assoc :updated-at now))]
+             (reset! changed next-order)
+             (assoc-in state [:commerce :orders tenant order-id] next-order))))))
+    (public-order @changed)))
 
 (defn advance-fulfillment!
   [session input]
   (let [tenant (:organization-id session)
         order-id (text! (present input :order-id :order_id) "注文ID" 100)
         next-status (some-> (present input :status) name keyword)
-        tracking (some-> (present input :tracking-number :tracking_number) str str/trim not-empty)
-        carrier (some-> (present input :carrier) str str/trim not-empty)
         changed (atom nil)]
     (store/transact!
      (fn [state]
@@ -611,14 +744,13 @@
          (when-not (contains? (get fulfillment-next current #{}) next-status)
            (refuse :commerce/invalid-fulfillment-transition
                    (str (name current) "から" (name next-status) "へは進めません。")))
-         (when (and (= :shipped next-status) (str/blank? tracking))
-           (refuse :commerce/tracking-required "発送済みには追跡番号が必要です。"))
+         (when (and (= :shipped next-status)
+                    (str/blank? (get-in found [:fulfillment :tracking-number])))
+           (refuse :commerce/tracking-required "発送済みには送り状由来の追跡番号が必要です。"))
          (let [now (store/now)
                next-order (-> found
                               (assoc-in [:fulfillment :status] next-status)
                               (assoc-in [:fulfillment :updated-at] now)
-                              (cond-> carrier (assoc-in [:fulfillment :carrier] carrier)
-                                      tracking (assoc-in [:fulfillment :tracking-number] tracking))
                               (assoc :updated-at now))]
            (reset! changed next-order)
            (assoc-in state [:commerce :orders tenant order-id] next-order)))))
@@ -642,7 +774,8 @@
                       "No private key is stored and no payment is signed. (write)")
     :parameters {:type "object" :properties {}}}
    {:name "commerce_shipping_configure"
-    :description (str "Configure ship-from and return addresses and bind the fulfillment planning actor. "
+    :description (str "Configure ship-from and return addresses and record the discovered fulfillment actor. "
+                      "The actor is not connected until marketplace order identity is compatible. "
                       "This does not buy a label or request pickup. (write)")
     :parameters {:type "object"
                  :properties {:ship_from {:type "object"}
@@ -671,14 +804,33 @@
     :description (str "List this tenant's paid and unpaid storefront orders, including "
                       "reservation and fulfillment state.")
     :parameters {:type "object" :properties {}}}
-   {:name "commerce_fulfillment_advance"
-    :description (str "Advance a paid order through ready-to-pack, packed, shipped, and delivered. "
-                      "Shipping requires a tracking number. (write)")
+   {:name "commerce_shipment_prepare"
+    :description (str "Freeze parcel dimensions and the private ship-from/ship-to manifest for a packed order. "
+                      "This prepares a carrier request but does not buy a label or request pickup. (write)")
     :parameters {:type "object"
                  :properties {:order_id {:type "string"}
-                              :status {:type "string" :enum ["packed" "shipped" "delivered"]}
+                              :weight_kg {:type "number"}
+                              :length_cm {:type "number"}
+                              :width_cm {:type "number"}
+                              :height_cm {:type "number"}
+                              :carrier {:type "string"}}
+                 :required ["order_id" "weight_kg" "length_cm" "width_cm" "height_cm"]}}
+   {:name "commerce_shipment_record_booking"
+    :description (str "Record label/tracking references supplied from an external carrier or shipping aggregator. "
+                      "This records merchant-supplied references; it does not perform or verify the booking. (write)")
+    :parameters {:type "object"
+                 :properties {:order_id {:type "string"}
                               :carrier {:type "string"}
-                              :tracking_number {:type "string"}}
+                              :tracking_number {:type "string"}
+                              :label_reference {:type "string"}
+                              :pickup_reference {:type "string"}}
+                 :required ["order_id" "carrier" "tracking_number" "label_reference"]}}
+   {:name "commerce_fulfillment_advance"
+    :description (str "Advance a paid order through packing, physical handoff, and delivery. "
+                      "Shipped is accepted only after carrier booking evidence exists. (write)")
+    :parameters {:type "object"
+                 :properties {:order_id {:type "string"}
+                              :status {:type "string" :enum ["packed" "shipped" "delivered"]}}
                  :required ["order_id" "status"]}}])
 
 (defn tool? [name]
@@ -698,7 +850,7 @@
     "commerce_payment_configure_x402"
     "このBotのBase Walletをx402/USDC受取先として記録します。秘密鍵や署名は扱いません。"
     "commerce_shipping_configure"
-    "発送元・返品先とfulfillment計画actorを設定します。送り状購入や集荷は実行しません。"
+    "発送元・返品先を設定します。fulfillment actor候補は記録しますが、注文ID互換化までは接続済みと扱いません。"
     "commerce_store_finalize"
     "DID・法的表示・x402・発送設定を検査し、公開準備完了として記録します。公開は実行しません。"
     "commerce_product_upsert"
@@ -707,6 +859,12 @@
     (str (or (:slug input) "store") "として、このCloud Itonami上のstorefrontを公開します。")
     "commerce_order_list"
     "このTenantの注文、決済確認、在庫予約、発送状態を読みます。"
+    "commerce_shipment_prepare"
+    (str (or (:order_id input) (:order-id input) "注文")
+         "の梱包寸法と配送先を確定し、送り状予約待ちとして記録します。予約自体は実行しません。")
+    "commerce_shipment_record_booking"
+    (str (or (:order_id input) (:order-id input) "注文")
+         "に外部配送サービスが返した送り状・追跡・集荷参照を記録します。")
     "commerce_fulfillment_advance"
     (str (or (:order_id input) (:order-id input) "注文") "を"
          (or (:status input) "次の発送状態") "へ進めます。")
@@ -724,6 +882,8 @@
       "commerce_product_upsert" (upsert-product! session input)
       "commerce_store_publish" (publish-storefront! session input)
       "commerce_order_list" (merchant-orders session)
+      "commerce_shipment_prepare" (prepare-shipment! session input)
+      "commerce_shipment_record_booking" (record-carrier-booking! session input)
       "commerce_fulfillment_advance" (advance-fulfillment! session input)
       (refuse :commerce/unknown-tool "未知のCommerce toolです。"))))
 
