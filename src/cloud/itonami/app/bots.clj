@@ -63,6 +63,7 @@
             [cloud.itonami.app.bot-slo :as bot-slo]
             [cloud.itonami.app.connectors :as connectors]
             [cloud.itonami.app.chronicle :as chronicle]
+            [cloud.itonami.app.gc :as gc]
             [cloud.itonami.app.handoff :as handoff]
             [cloud.itonami.app.identity :as identity]
             [cloud.itonami.app.peer :as peer]
@@ -3981,6 +3982,13 @@
             (throw (ex-info "fire-due-workforce! takes one person's sessions"
                             {:type :workforce/mixed-owners
                              :owners (into #{} (map :user-id) sessions)})))
+        ;; The disk floor, before anything is due. On 2026-08-23 a full disk
+        ;; met a sixteen-job resident batch here and every job died at its
+        ;; first `state.edn` write — or worse, stuck in `:running`. A batch
+        ;; that cannot durably record its own turns must not start; a skip
+        ;; with the measurement is something the SLO surface can show, a
+        ;; sixteen-way `fs/io` crash is not. See `cloud.itonami.app.gc`.
+        disk-pressure (gc/refuse-admission? configuration)
         all-owned (->> (vals (:workforce-jobs (snapshot)))
                        (filter #(= owner (:workforce.job/owner %))))
         owned-jobs (filter #(contains? by-organization
@@ -4000,14 +4008,23 @@
         limit (min starts-per-tick available)
         jobs (->> owned-jobs
                   (filter #(workforce-job-due? % now))
-                  (sort-by (juxt :workforce.job/next-run-at :workforce.job/key)))]
+                  (sort-by (juxt :workforce.job/next-run-at :workforce.job/key)))
+        jobs (if disk-pressure [] jobs)]
     (loop [remaining jobs
            result {:started []
-                   :skipped (if (and (seq jobs) (zero? available))
+                   :skipped (cond
+                              disk-pressure
+                              [{:reason :disk-pressure
+                                :usable-bytes (:usable-bytes disk-pressure)
+                                :hard-floor-bytes
+                                (:hard-floor-bytes disk-pressure)}]
+
+                              (and (seq jobs) (zero? available))
                               [{:reason :workforce-capacity
                                 :active active
                                 :limit max-active}]
-                              [])}]
+
+                              :else [])}]
       (if (or (empty? remaining) (>= (count (:started result)) limit))
         result
         (let [job (first remaining)
