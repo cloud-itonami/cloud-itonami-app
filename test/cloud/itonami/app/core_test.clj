@@ -301,6 +301,10 @@
       (is (re-find #"id=\"calendar-days\"" html))
       (is (re-find #"id=\"calendar-detail\"" html))
       (is (re-find #"data-view-panel=\"signin\"" html))
+      (is (re-find #"data-view-panel=\"storefront\"" html))
+      (is (re-find #"id=\"storefront-chat-form\"" html))
+      (is (re-find #"id=\"storefront-cart-items\"" html))
+      (is (re-find #"id=\"storefront-checkout-form\"" html))
       (is (re-find #"data-view-panel=\"settings\"" html))
       (is (re-find #"id=\"registration-form\"" html))
       (is (re-find #"id=\"passkey-gate-notice\"" html))
@@ -345,6 +349,18 @@
       (doseq [view ["Worker" "Inbox" "Projects" "Sites" "Drive" "Scheduler"]]
         (is (re-find (re-pattern (str ">" view "<")) html)))
       (is (re-find #"data-view-panel=\"scheduler\"" html)))))
+
+(deftest storefront-is-chat-centered-with-deterministic-commerce-cards
+  (let [html (web/page-html config)
+        js web/interaction-js]
+    (is (str/includes? js "new Set(['signin', 'storage', 'storefront'])")
+        "a published catalog can be browsed before sign-in")
+    (is (str/includes? js "storefrontProductsFor(query)"))
+    (is (str/includes? js "usdcAtomic(product['price-usdc'])"))
+    (is (str/includes? js "公開価格と在庫を再確認しています"))
+    (is (str/includes? js "まだ決済・在庫減算・発送依頼は行われていません"))
+    (is (str/includes? html "回答は公開カタログの内容だけを使います"))
+    (is (str/includes? html "注文額はサーバーが公開価格から再計算します"))))
 
 (deftest every-padded-box-in-the-bots-view-is-border-box
   ;; Measured 2026-08-12 in the running app: `.bots-onboard` (96px),

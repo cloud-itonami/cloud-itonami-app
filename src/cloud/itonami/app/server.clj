@@ -14,6 +14,7 @@
             [cloud.itonami.app.capture :as capture]
             [cloud.itonami.app.bots :as bots]
             [cloud.itonami.app.chronicle :as chronicle]
+            [cloud.itonami.app.commerce :as commerce]
             [cloud.itonami.app.config :as config]
             [cloud.itonami.app.contracts :as contracts]
             [cloud.itonami.app.credential :as credential]
@@ -2566,6 +2567,69 @@
       (send-text! exchange 200 (org-root-did/witness-json (:did-witness found))
                   "application/json"))))
 
+
+(defn- storefront-route? [method path]
+  (or (and (= method "GET") (= path "/api/storefront/current"))
+      (and (= method "GET") (re-matches #"/api/storefront/([^/]+)" path))
+      (and (= method "POST")
+           (re-matches #"/api/storefront/([^/]+)/orders" path))))
+
+(defn- route-storefront! [exchange config method path]
+  (cond
+    (and (= method "GET") (= path "/api/storefront/current"))
+    (if-some [published (commerce/current-storefront
+                         (require-app-session! exchange))]
+      (send! exchange 200 published)
+      (send! exchange 404 {:error {:type "storefront-not-published"
+                                   :message "このTenantのstorefrontは未公開です。"}}))
+
+    (= method "GET")
+    (let [[_ slug] (re-matches #"/api/storefront/([^/]+)" path)]
+      (if-some [published (commerce/storefront slug)]
+        (send! exchange 200 published)
+        (send! exchange 404 {:error {:type "storefront-not-found"
+                                     :message "公開storefrontが見つかりません。"}})))
+
+    :else
+    (let [session (require-human-session! exchange)
+          [_ slug] (re-matches #"/api/storefront/([^/]+)/orders" path)]
+      (require-origin! exchange config)
+      (require-csrf! exchange session)
+      (send! exchange 201
+             (commerce/create-order! session slug (read-json exchange))))))
+
+(defn- storefront-handler [configuration]
+  (reify HttpHandler
+    (handle [_ exchange]
+      (let [method (.getRequestMethod exchange)
+            path (.getPath (.getRequestURI exchange))]
+        (try
+          (if (storefront-route? method path)
+            (route-storefront! exchange configuration method path)
+            (send! exchange 404 {:error {:type "not_found"}}))
+          (catch clojure.lang.ExceptionInfo error
+            (let [type (:type (ex-data error))]
+              (send! exchange
+                     (case type
+                       :identity/unauthenticated 401
+                       :identity/agent-session-forbidden 403
+                       :identity/invalid-origin 403
+                       :identity/invalid-csrf 403
+                       :commerce/storefront-not-found 404
+                       400)
+                     {:error {:type (name (or type :storefront/error))
+                              :message (.getMessage error)}})))
+          (catch Exception error
+            (send! exchange 500 {:error {:type "internal_error"
+                                         :message (.getMessage error)}})))))))
+
+(defn- with-storefront [delegate configuration]
+  (let [dedicated (storefront-handler configuration)]
+    (reify HttpHandler
+      (handle [_ exchange]
+        (if (str/starts-with? (.getPath (.getRequestURI exchange)) "/api/storefront")
+          (.handle dedicated exchange)
+          (.handle ^HttpHandler delegate exchange))))))
 
 (defn handler [config]
   (reify HttpHandler
@@ -6040,7 +6104,8 @@
          instance (HttpServer/create (InetSocketAddress. host (int port)) 0)]
      (.createContext instance "/"
                      (with-canonical-loopback
-                      (with-kotobase-federation (handler configuration)
+                      (with-kotobase-federation
+                       (with-storefront (handler configuration) configuration)
                                                 configuration)
                       configuration))
      ;; The opt-in TLS listener (ADR-0049), serving the certificates this
@@ -6050,7 +6115,8 @@
      (reset! https-server
              (tls/https-server configuration
                                (with-canonical-loopback
-                                (with-kotobase-federation (handler configuration)
+                                (with-kotobase-federation
+                                 (with-storefront (handler configuration) configuration)
                                                           configuration)
                                 configuration)))
      ;; Its own context rather than another branch in `handler`: that method is
