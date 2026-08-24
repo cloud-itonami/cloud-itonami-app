@@ -74,6 +74,15 @@
         (is (zero? exit) (str source " does not parse under node " version ":\n" err))))
     (println "web-script-test: node is not on PATH, so the interaction layer was not parsed.")))
 
+(deftest context-drawer-stays-closed-until-the-person-opens-it
+  (let [html (with-redefs [store/snapshot (constantly (store/initial-state))]
+               (web/page-html config))]
+    (is (re-find #"class=\"conversation-context-panel\"[^>]*hidden"
+                 html))
+    (is (not (re-find #"class=\"conversation-context-panel authenticated-only\""
+                      html))
+        "the generic authentication renderer must not remove the drawer's hidden state")))
+
 (deftest bots-bind-an-admitted-provider-and-model
   (let [html (with-redefs [store/snapshot (constantly (store/initial-state))]
                (web/page-html config))

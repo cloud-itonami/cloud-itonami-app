@@ -1594,7 +1594,7 @@
     "パスワード・2FA・CAPTCHA・支払い・セキュリティ確認は自動操作しません。Computer操作は対象アプリ名、画面digest、要素tokenをreceiptに残します。"]])
 
 (defn- conversation-context-panel []
-  [:aside {:class "conversation-context-panel authenticated-only"
+  [:aside {:class "conversation-context-panel"
            :id "conversation-context-panel" :hidden true
            :aria-labelledby "context-panel-title"}
    [:div {:class "context-panel__header"}

@@ -797,6 +797,12 @@
                       :last-error-message (error-message error)}))))
     b)))
 
+(defn- bot-context-refs [b]
+  (or (:bot/context-refs b)
+      (when-let [project-id (:bot/context-project-id b)]
+        [{:kind "project" :target project-id}])
+      []))
+
 (defn update!
   "Change what a Bot is. Name, colour, glyph and brief are free to change and
   change nothing about authority; `tools`, `writes?` and `browser?` are the
@@ -816,7 +822,7 @@
                          [{:kind "project" :target context-project-id}]
                          [])
 
-                       :else (:bot/context-refs existing))
+                       :else (bot-context-refs existing))
         _ (when (or (contains? attrs :context-refs)
                     (contains? attrs :context-project-id))
             (conversation-context/resolve-refs session context-refs))
@@ -1372,7 +1378,7 @@
               :variant (mod face-hash 7)}
      :brief (:bot/brief b)
      :context-project-id (:bot/context-project-id b)
-     :context-refs (:bot/context-refs b)
+     :context-refs (bot-context-refs b)
      :provider-id (or (:bot/provider-id b)
                       (get-in configuration [:routing :default-provider]))
      :model (or (:bot/model b)
@@ -2238,7 +2244,7 @@
                             (conversation-context/resolve-refs
                              {:organization-id (:bot/organization b)
                               :user-id (:bot/owner b)}
-                             (:bot/context-refs b))))]
+                             (bot-context-refs b))))]
   (into (cond-> [{:role "system" :content (system-prompt b configuration goal)}]
           context-prompt
           (conj {:role "system" :content context-prompt})
@@ -3653,7 +3659,8 @@
     (transact! update-in [:directions bot-id] (fnil inc 0))
     (let [current-direction (direction bot-id)
           resolved-context (conversation-context/resolve-refs
-                            session (:bot/context-refs b))
+                            session
+                            (bot-context-refs b))
           context-id (new-id "context")
           person-message
           (bot/message {:id (new-id "msg") :bot bot-id :role :person

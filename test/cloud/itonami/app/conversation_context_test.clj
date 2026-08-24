@@ -46,6 +46,37 @@
         (is (nil? (:tools resolved)))
         (is (nil? (:accounts resolved)))))))
 
+(deftest prompt-and-each-source-stay-inside-the-provider-envelope
+  (with-store
+    (fn []
+      (doseq [id ["a" "b" "c" "d"]]
+        (store/transact! assoc-in [:chat-projects ["org-context" id]]
+                         {:project-id id :title id
+                          :description (apply str (repeat 20000 id))}))
+      (let [resolved (context/resolve-refs
+                      session (mapv #(hash-map :kind "project" :target %)
+                                    ["a" "b" "c" "d"]))]
+        (is (<= (count (:prompt resolved)) context/max-prompt-chars))
+        (is (every? #(<= (:chars %) context/max-source-chars)
+                    (:receipts resolved)))))))
+
+(deftest sheets-are-datasets-and-must-resolve-as-such
+  (with-store
+    (fn []
+      (with-redefs [documents/documents
+                    (fn [& _] [{:id "sheet-1" :name "Numbers"
+                                :resource-kind ":sheets/workbook"}])
+                    documents/folders (fn [& _] {})
+                    documents/content
+                    (fn [& _] {:item {:id "sheet-1" :name "Numbers"}
+                               :resource-kind ":sheets/workbook"
+                               :resource {:tabs []}})]
+        (is (= "dataset" (:kind (first (:sources (context/catalog session))))))
+        (is (= "dataset"
+               (get-in (context/resolve-refs
+                        session [{:kind "dataset" :target "sheet-1"}])
+                       [:receipts 0 :kind])))))))
+
 (deftest catalog-and-resolution-are-organization-scoped
   (with-store
     (fn []

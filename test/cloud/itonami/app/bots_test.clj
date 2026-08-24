@@ -191,6 +191,15 @@
           (is (= before (select-keys multiple (keys before)))))
         (is (some #(str/includes? (:content %) "Reference only") transcript))
         (is (some #(str/includes? (:content %) "does not grant tools") transcript))
+        (store/transact! update-in [:bots :bots bot-id] dissoc :bot/context-refs)
+        (let [legacy-public (some #(when (= bot-id (:id %)) %)
+                                  (:bots (bots/overview nil alice)))
+              legacy-bot (get-in (store/snapshot) [:bots :bots bot-id])
+              legacy-transcript ((private-fn 'transcript) nil legacy-bot [])]
+          (is (= [{:kind "project" :target "alpha"}]
+                 (:context-refs legacy-public)))
+          (is (some #(str/includes? (:content %) "Reference only")
+                    legacy-transcript)))
         (is (thrown-with-msg? clojure.lang.ExceptionInfo #"見つかりません"
                               (bots/update! nil alice bot-id
                                             {:context-project-id "missing"})))))))
