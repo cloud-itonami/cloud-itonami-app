@@ -71,6 +71,7 @@
             [cloud.itonami.app.mail-account :as mail-account]
             [cloud.itonami.app.mail-sync :as mail-sync]
             [cloud.itonami.app.policy :as policy]
+            [cloud.itonami.app.project-repository :as project-repository]
             [cloud.itonami.app.wallet :as wallet]
             [cloud.itonami.app.provider :as provider]
             [cloud.itonami.app.relay :as relay]
@@ -803,6 +804,16 @@
   ([session bot-id attrs] (update! nil session bot-id attrs))
   ([configuration session bot-id attrs]
    (let [existing (owned! session bot-id)
+        context-project-id (when (contains? attrs :context-project-id)
+                             (some-> (:context-project-id attrs)
+                                     str str/trim not-empty))
+        _ (when (and context-project-id
+                     (nil? (project-repository/project-context
+                            {:organization-id (:organization-id session)
+                             :project-id context-project-id})))
+            (throw (ex-info "選択した Project が見つかりません。"
+                            {:type :project/not-found
+                             :project context-project-id})))
         next-provider (if (contains? attrs :provider-id)
                         (:provider-id attrs) (:bot/provider-id existing))
         next-model (if (contains? attrs :model)
@@ -828,6 +839,8 @@
                  (contains? attrs :brief) (assoc :bot/brief (:brief attrs))
                  (contains? attrs :provider-id) (assoc :bot/provider-id (:provider-id attrs))
                  (contains? attrs :model) (assoc :bot/model (:model attrs))
+                 (contains? attrs :context-project-id)
+                 (assoc :bot/context-project-id context-project-id)
                  (contains? attrs :tools) (assoc :bot/tools
                                                  (set (map str (:tools attrs))))
                  (contains? attrs :accounts) (assoc :bot/accounts
@@ -1348,6 +1361,7 @@
               :glyph (name (:avatar/glyph display-avatar))
               :variant (mod face-hash 7)}
      :brief (:bot/brief b)
+     :context-project-id (:bot/context-project-id b)
      :provider-id (or (:bot/provider-id b)
                       (get-in configuration [:routing :default-provider]))
      :model (or (:bot/model b)
@@ -2206,8 +2220,15 @@
   the conversation whose only purpose is to be sent somewhere."
   ([configuration b messages] (transcript configuration b messages nil))
   ([configuration b messages goal]
-  (let [device-context (bot-device-context configuration b messages goal)]
+  (let [device-context (bot-device-context configuration b messages goal)
+        project-context
+        (when-let [project-id (:bot/context-project-id b)]
+          (project-repository/project-context-prompt
+           {:organization-id (:bot/organization b)
+            :project-id project-id}))]
   (into (cond-> [{:role "system" :content (system-prompt b configuration goal)}]
+          project-context
+          (conj {:role "system" :content project-context})
           device-context
           (conj {:role "system"
                  :content (str "Device context captured on this Mac follows. "

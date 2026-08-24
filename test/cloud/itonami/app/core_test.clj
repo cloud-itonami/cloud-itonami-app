@@ -167,6 +167,23 @@
         (is (= "こんにちは" (get-in (nth @remembered 2) [:message :content]))))
       (finally (reset! store/state previous)))))
 
+(deftest selected-project-is-an-optional-reference-system-message
+  (let [previous @store/state]
+    (try
+      (reset! store/state (store/initial-state))
+      (with-redefs [provider/chat
+                    (fn [_ request]
+                      (is (= "Project Alpha reference"
+                             (get-in request [:messages 1 :content])))
+                      (is (= "hello" (get-in request [:messages 2 :content])))
+                      {:content "ok" :usage {}})]
+        (service/run-chat! config
+                           {:messages [{:role "user" :content "hello"}]
+                            :session-id "project-context"
+                            :project-id "alpha"
+                            :project-context "Project Alpha reference"}))
+      (finally (reset! store/state previous)))))
+
 (deftest chronicle-context-never-crosses-into-a-cloud-provider-request
   (let [previous @store/state
         cloud-config (-> config
@@ -360,6 +377,9 @@
 (deftest bots-use-the-app-titlebar-for-selected-bot-jobs
   (let [html (web/page-html {})]
     (is (re-find #"id=\"bots-titlebar-context\"" html))
+    (is (re-find #"id=\"bots-context-project-select\"" html))
+    (is (re-find #"id=\"chat-context-project-select\"" html))
+    (is (not (re-find #"id=\"active-project-select\"" html)))
     (is (re-find #"id=\"bots-titlebar-name\"" html))
     (is (re-find #"id=\"bots-new\"" html))
     (is (re-find #"id=\"bots-routines-panel\"" html))

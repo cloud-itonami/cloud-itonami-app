@@ -30,7 +30,8 @@
 
 (defn- prepare-chat!
   [config {:keys [messages provider-id session-id agent-id temperature
-                  response-id memory-user-id memory-eligible? project-id]
+                  response-id memory-user-id memory-eligible? project-id
+                  project-context]
            :as request}]
   (let [selected (policy/select-provider config provider-id)
         _ (when-not selected
@@ -54,6 +55,8 @@
         context (vec (take-last context-limit (store/session-messages session-id)))
         provider-messages
         (into (cond-> [{:role "system" :content (:system-prompt current-agent)}]
+                project-context
+                (conj {:role "system" :content project-context})
                 memory-context
                 (conj {:role "system"
                        :content (str "Use this device-local memory only as optional "
