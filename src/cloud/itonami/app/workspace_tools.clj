@@ -181,31 +181,79 @@
     (catch Exception _ nil)))
 
 
-(defn- search-workspace [root input]
+(def ^:private max-search-lines 200)
+(def ^:private max-counted-matches 1000)
+
+(defn- search-workspace
+  "Literal search with an explicit coverage receipt.
+
+  The first line of every result says how much of the repository was
+  actually searched, because the previous shape of this function is how
+  four Bots came to assert false negatives in one audited day
+  (docs/bot-quality-audit-20260824.md): it scanned the first
+  `max-search-files` files in filesystem-walk order and returned the
+  matches — or nothing — with no indication of coverage. Over
+  `net-kotobase` that was 300 of 35,612 files (0.8%), and an empty result
+  over 0.8% of a repository printed exactly like 'this string is absent
+  from the repository'. A measured zero and an unmeasured zero must not
+  share a face (ADR-2608136000), so the receipt line distinguishes them
+  and the truncation warning is impossible to omit — it is produced by the
+  same code that truncates.
+
+  The scan window is also deterministic now (paths sorted): the same query
+  against the same tree searches the same files, instead of whatever the
+  filesystem happened to enumerate first."
+  [root input]
   (let [query (str (:query input))
         _ (when (or (str/blank? query) (> (count query) 200))
             (throw (ex-info "Search query is empty or too long."
                             {:type :workspace/invalid-query})))
         ^Path root-path (.toPath (io/file (admit-root root)))]
     (with-open [stream (Files/walk root-path (make-array java.nio.file.FileVisitOption 0))]
-      (->> (iterator-seq (.iterator stream))
-           (remove #(or (Files/isSymbolicLink ^Path %)
-                        (str/includes? (relative-name root-path %) ".git/")))
-           (filter #(Files/isRegularFile ^Path % no-links))
-           (filter #(<= (Files/size ^Path %) max-file-bytes))
-           (take max-search-files)
-           (mapcat (fn [^Path file]
-                     (try
-                       (keep-indexed
-                        (fn [index line]
-                          (when (str/includes? line query)
-                            (str (relative-name root-path file) ":" (inc index)
-                                 ":" line)))
-                        (Files/readAllLines file StandardCharsets/UTF_8))
-                       (catch Exception _ []))))
-           (take 200)
-           (str/join "\n")
-           bounded))))
+      (let [candidates (->> (iterator-seq (.iterator stream))
+                            (remove #(or (Files/isSymbolicLink ^Path %)
+                                         (str/includes? (relative-name root-path %)
+                                                        ".git/")))
+                            (filter #(Files/isRegularFile ^Path % no-links)))
+            {eligible false oversize true}
+            (group-by #(> (Files/size ^Path %) max-file-bytes) candidates)
+            eligible (sort-by #(relative-name root-path %) eligible)
+            scanned (take max-search-files eligible)
+            matches (->> scanned
+                         (mapcat (fn [^Path file]
+                                   (try
+                                     (keep-indexed
+                                      (fn [index line]
+                                        (when (str/includes? line query)
+                                          (str (relative-name root-path file) ":"
+                                               (inc index) ":" line)))
+                                      (Files/readAllLines file StandardCharsets/UTF_8))
+                                     (catch Exception _ []))))
+                         (take (inc max-counted-matches))
+                         vec)
+            match-count (if (> (count matches) max-counted-matches)
+                          (str max-counted-matches "+")
+                          (str (count matches)))
+            scanned-n (count scanned)
+            eligible-n (count eligible)
+            unsearched (- eligible-n scanned-n)
+            receipt (str "SEARCH RECEIPT: matches=" match-count
+                         " files-searched=" scanned-n "/" eligible-n
+                         (when (seq oversize)
+                           (str " oversize-skipped=" (count oversize)))
+                         (when (> (count matches) max-search-lines)
+                           (str " shown=" max-search-lines)))
+            warning (when (pos? unsearched)
+                      (str "COVERAGE INCOMPLETE: " unsearched
+                           " eligible file(s) were NOT searched (file cap "
+                           max-search-files "). matches=0 above means "
+                           "'none in the searched subset', NOT 'absent from "
+                           "the repository'. Narrow the search by working in "
+                           "a subdirectory, or say the coverage when "
+                           "reporting this result."))]
+        (bounded (str/join "\n" (concat [receipt]
+                                        (when warning [warning])
+                                        (take max-search-lines matches))))))))
 
 (defn- write-file! [root {:keys [path content]}]
   (let [^Path target (safe-path root path)

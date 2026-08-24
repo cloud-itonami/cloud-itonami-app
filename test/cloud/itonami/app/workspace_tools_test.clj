@@ -115,3 +115,53 @@
               "a truncated listing says it was truncated rather than looking complete")))
       (finally
         (doseq [f (reverse (file-seq (io/file root)))] (io/delete-file f true))))))
+
+(deftest search-carries-a-coverage-receipt
+  ;; The 2026-08-24 quality audit (docs/bot-quality-audit-20260824.md) found
+  ;; four Bots asserting false negatives from this tool: it scanned the first
+  ;; `max-search-files` files in walk order and returned nothing, with nothing
+  ;; to say most of the repository was never looked at. A measured zero and an
+  ;; unmeasured zero must not share a face (ADR-2608136000).
+  (let [root (temp-dir)]
+    (git! root "init" "-q" "--initial-branch=main")
+    (spit (io/file root "a.txt") "alpha needle\n")
+    (spit (io/file root "b.txt") "beta\n")
+    (spit (io/file root "c.txt") "gamma needle\n")
+    (try
+      (testing "matches and coverage are both counted, and full coverage says so"
+        (let [out (workspace/call! (.getPath root) "workspace_search"
+                                   {:query "needle"})
+              first-line (first (str/split-lines out))]
+          (is (str/starts-with? first-line
+                                "SEARCH RECEIPT: matches=2 files-searched=3/3"))
+          (is (not (str/includes? out "COVERAGE INCOMPLETE")))))
+      (testing "a measured zero: matches=0 over full coverage, no warning"
+        (let [out (workspace/call! (.getPath root) "workspace_search"
+                                   {:query "absent-string"})]
+          (is (str/includes? out "matches=0 files-searched=3/3"))
+          (is (not (str/includes? out "COVERAGE INCOMPLETE")))))
+      (testing "an UNmeasured zero: the truncation is impossible to omit"
+        ;; Cap the scan window at 1 file. The window is sorted, so a.txt is
+        ;; searched and c.txt — which contains the needle — is not. The old
+        ;; code returned an empty string here: the exact false negative the
+        ;; audit caught in production, pinned.
+        (with-redefs [workspace/max-search-files 1]
+          (let [out (workspace/call! (.getPath root) "workspace_search"
+                                     {:query "gamma"})]
+            (is (str/includes? out "matches=0 files-searched=1/3"))
+            (is (str/includes? out "COVERAGE INCOMPLETE: 2 eligible file(s)"))
+            (is (str/includes? out "NOT 'absent from the repository'")))))
+      (testing "the scan window is deterministic (sorted), not walk order"
+        (with-redefs [workspace/max-search-files 1]
+          (let [out (workspace/call! (.getPath root) "workspace_search"
+                                     {:query "alpha"})]
+            (is (str/includes? out "matches=1"))
+            (is (str/includes? out "a.txt:1:alpha needle")))))
+      (testing "oversize files are reported as skipped, not silently absent"
+        (spit (io/file root "big.txt")
+              (str (apply str (repeat (* 300 1024) "n")) "\n"))
+        (let [out (workspace/call! (.getPath root) "workspace_search"
+                                   {:query "needle"})]
+          (is (str/includes? out "oversize-skipped=1"))))
+      (finally
+        (doseq [f (reverse (file-seq (io/file root)))] (io/delete-file f true))))))
