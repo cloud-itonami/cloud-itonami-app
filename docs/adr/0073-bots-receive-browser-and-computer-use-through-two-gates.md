@@ -46,12 +46,21 @@ widen either grant. `computer_tree` supplies the digest and each write refuses
 when the target tree changed. Passwords, 2FA, CAPTCHAs, payments, and security
 prompts remain human work.
 
-Settings owns diagnosis and preparation. It reports the browser executable,
-helper, Accessibility, and Screen Recording independently, prepares the Swift
-helper on request, and explains that each Bot still needs an individual grant.
-Passive diagnosis never prompts. The signed-in person's explicit preparation
-action is the only path that invokes `permissions --prompt true`; that action
-requests Accessibility and Screen Recording, then reruns diagnosis.
+Settings owns diagnosis and preparation. Production prefers the signed and
+notarized `CuaDriver.app` daemon (`com.trycua.driver`) because macOS TCC grants
+belong to the responsible application identity. Invoking the source-built Swift
+helper from launchd made Java the responsible process, so a grant observed from
+Terminal did not prove the resident could use it. The Swift helper remains a
+reviewable fallback, not the packaged production identity.
+
+Passive diagnosis calls `check_permissions` with `prompt:false`; it never opens
+a system dialog. Only the signed-in person's explicit preparation action may
+run `cua-driver permissions grant` (or the fallback helper's explicit prompt).
+The Cua adapter admits only AX-tree reads, exact menu paths, and element-token
+actions. It does not forward CuaDriver's coordinate, key, typing, clipboard,
+launch, kill, or foreground-escalation tools. Before each element write it
+obtains a new snapshot, recomputes the same tree digest, refuses drift, and then
+uses the fresh opaque element token from that snapshot.
 
 ## Acceptance and score
 
@@ -63,16 +72,16 @@ Hard gates (all required):
 | no coordinate/key/type tools | tool-contract tests | PASS |
 | read immediate, write classified for hold | Bot loop tests | PASS |
 | browser profiles isolated | two live sessions on different origins | PASS |
-| helper and macOS permissions | live server-side Settings request and subsequent diagnostic | PASS |
-| focus-free desktop behavior | 12 live tests / 78 assertions | PASS |
+| signed host and macOS permissions | CuaDriver daemon attributed to `com.trycua.driver`; Accessibility + Screen Recording true | PASS |
+| focus-free, token-only desktop behavior | 15 live tests / 108 assertions, including no-coordinate adapter contract | PASS |
 | UI and command registry do not drift | core and route-registry tests | PASS |
 
-Feature readiness is **92/100**:
+Feature readiness is **93/100**:
 
 - execution wiring 25/25;
 - authority and stale-screen safety 25/25;
 - live browser/helper connection 20/20;
-- settings and per-Bot UX 14/15;
+- settings and per-Bot UX 15/15;
 - model-output evidence 8/15.
 
 The missing seven points are deliberate. The repository-wide Bot output gate is
@@ -90,5 +99,5 @@ ADR-0072's grounding gate passes on resident runs that actually use these tools.
 - Missing installation and missing macOS permissions have distinct remedies.
 - Computer Use remains off on every existing and newly created Bot until the
   person opens that Bot's settings and enables it.
-- Browser installation is an operational dependency, while the desktop helper
-  is built from reviewed source in this repository.
+- Browser installation and the signed CuaDriver daemon are operational
+  dependencies. The source-built desktop helper remains the bounded fallback.
