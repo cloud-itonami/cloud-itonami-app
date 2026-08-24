@@ -126,6 +126,7 @@
 (def max-trace 60)
 (def max-routines 40)
 (def max-turn-history 40)
+(def max-turn-followups 20)
 (def max-contexts 120)
 (def max-context-messages 40)
 
@@ -2211,6 +2212,113 @@
                                next-turn))))))
     nil))
 
+(defn- queued-followups [run-id]
+  (vec (get-in (snapshot) [:turn-followups run-id] [])))
+
+(defn queue-followup!
+  "Queue one owner message for the next safe model/tool boundary of an active turn.
+
+  The provider request already in flight is immutable.  A follow-up therefore
+  never rewrites that request or starts a second turn for the same Bot; it is
+  durably ordered behind it and consumed by `advance!` before the next model
+  call.  The active-turn lock closes the small race between the final boundary
+  check and turn completion, so an accepted message cannot be stranded."
+  [session bot-id run-id text]
+  (owned! session bot-id)
+  (let [run-id (str/trim (str run-id))
+        text (str/trim (str text))]
+    (when (str/blank? text)
+      (throw (ex-info "メッセージが空です。" {:type :bot/empty-message})))
+    (when (> (count text) max-message-chars)
+      (throw (ex-info "メッセージが長すぎます。" {:type :bot/message-too-long})))
+    (locking active-turns
+      (let [entry (get @active-turns bot-id)]
+        (when-not (= run-id (:run-id entry))
+          (throw (ex-info "この回答はすでに完了しています。新しいメッセージとして送ってください。"
+                          {:type :bot/turn-not-active :run-id run-id})))
+        (when (false? (:accepting-followups? entry))
+          (throw (ex-info "回答が完了したため、追加メッセージを新しい依頼として送ってください。"
+                          {:type :bot/turn-closing :run-id run-id})))
+        (let [current (queued-followups run-id)]
+          (when (>= (count current) max-turn-followups)
+            (throw (ex-info "追加メッセージの上限に達しました。反映を待ってから送ってください。"
+                            {:type :bot/followup-limit
+                             :limit max-turn-followups})))
+          (let [followup {:followup/id (new-id "followup")
+                          :followup/bot bot-id
+                          :followup/run run-id
+                          :followup/text text
+                          :followup/at (store/now)}]
+            (transact! update-in [:turn-followups run-id]
+                       (fnil conj []) followup)
+            {:id (:followup/id followup)
+             :run-id run-id
+             :state "queued"
+             :queued (inc (count current))
+             :at (:followup/at followup)}))))))
+
+(defn- take-followups!
+  ([run-id] (take-followups! run-id false))
+  ([run-id seal-when-empty?]
+   (locking active-turns
+     (let [taken (atom [])]
+       (transact!
+        (fn [partition]
+          (let [items (vec (get-in partition [:turn-followups run-id] []))]
+            (reset! taken items)
+            (if (seq items)
+              (update partition :turn-followups dissoc run-id)
+              partition))))
+       (when (and seal-when-empty? (empty? @taken))
+         (when-let [bot-id (some (fn [[bot-id entry]]
+                                   (when (= run-id (:run-id entry)) bot-id))
+                                 @active-turns)]
+           (swap! active-turns update bot-id assoc :accepting-followups? false)))
+       @taken))))
+
+(defn- apply-followups!
+  [bot-id run followups on-event]
+  (if (empty? followups)
+    run
+    (let [run (reduce
+               (fn [current followup]
+                 (let [text (:followup/text followup)
+                       direction (direction bot-id)]
+                   (append! bot-id
+                            (bot/message
+                             {:id (:followup/id followup)
+                              :bot bot-id :role :person :text text
+                              :at (:followup/at followup)
+                              :direction direction
+                              :context-id *context-id* :source :person}))
+                   (update current :messages conj
+                           {:role "user"
+                            :content (str "Additional instruction from the owner: " text)})))
+               run followups)
+          run (update run :followup-count (fnil + 0) (count followups))]
+      (when on-event
+        (on-event {:type "followup-applied"
+                   :phase "followup-applied"
+                   :count (count followups)
+                   :followups (mapv (fn [followup]
+                                      {:id (:followup/id followup)
+                                       :text (:followup/text followup)})
+                                    followups)}))
+      run)))
+
+(defn- release-followups!
+  "Make accepted follow-ups visible when a turn ends before it can apply them.
+
+  They remain unanswered person messages in the conversation instead of
+  disappearing with an exception or cancellation.  A later turn can therefore
+  see them in ordinary durable history."
+  [bot-id run-id on-event]
+  (long
+   (or (:followup-count
+        (apply-followups! bot-id {:messages [] :followup-count 0}
+                          (take-followups! run-id) on-event))
+       0)))
+
 (declare enqueue-goal! drain-goal-queue!)
 
 (defn recover-interrupted!
@@ -2357,6 +2465,7 @@
      :objective (:turn/objective turn)
      :turn-count (:turn/turn-count turn 0)
      :tool-count (:turn/tool-count turn 0)
+     :followup-count (:turn/followup-count turn 0)
      :provider (:turn/provider turn)
      :model (:turn/model turn)
      :usage (:turn/usage turn)
@@ -2387,8 +2496,10 @@
 (defn latest-turn [session bot-id]
   (owned! session bot-id)
   (let [turn (last (get-in (snapshot) [:turn-history bot-id]))]
-    (cond-> (public-turn turn)
-      (:turn/goal? turn) (assoc :job (public-goal-job (goal-job (:turn/id turn)))))))
+    (when turn
+      (cond-> (assoc (public-turn turn)
+                     :pending-followups (count (queued-followups (:turn/id turn))))
+        (:turn/goal? turn) (assoc :job (public-goal-job (goal-job (:turn/id turn))))))))
 
 ;; ── the demonstration ───────────────────────────────────────────────────
 
@@ -2445,6 +2556,7 @@
              :turn/context-id (:context-id run)
              :turn/turn-count (:turn-count run 0)
              :turn/tool-count (:tool-count run 0)
+             :turn/followup-count (:followup-count run 0)
              :turn/provider (:provider run)
              :turn/model (:model run)
              :turn/usage (:usage run)}
@@ -2791,6 +2903,8 @@
   ([configuration b run] (advance! configuration b run nil))
   ([configuration b run {:keys [on-event cancelled? on-finish]}]
   (loop [run run]
+    (let [run (apply-followups! (:bot/id b) run
+                                (take-followups! (:id run)) on-event)]
     (save-run! (:bot/id b) run)
     (when (and cancelled? (cancelled?))
       (throw (ex-info "Bot の実行を中止しました。" {:type :bot/cancelled})))
@@ -2866,8 +2980,23 @@
                     (update :usage merge-usage (:usage result))
                     (update :messages conj {:role "assistant"
                                             :content (:content result)
-                                            :tool-calls calls}))]
+                                            :tool-calls calls}))
+            followups (take-followups! (:id run))]
         (cond
+          (seq followups)
+          (let [run (update run :messages
+                            (fn [messages]
+                              ;; A proposed tool has not run yet.  Once the
+                              ;; owner steers the turn, do not leave an
+                              ;; unanswered tool call in provider history and
+                              ;; do not execute it.
+                              (assoc-in messages
+                                        [(dec (count messages)) :tool-calls]
+                                        [])))]
+            (when (seq (str (:content result)))
+              (say (:bot/id b) (:content result) nil))
+            (recur (apply-followups! (:bot/id b) run followups on-event)))
+
           (empty? calls)
           (if (:goal? run)
             (let [run (update run :messages conj
@@ -2877,11 +3006,17 @@
                                              "or goal_blocked with the exact external prerequisite.")})]
               (when on-event (on-event {:type "phase" :phase "continuing"}))
               (recur run))
-            (do
-              (clear-run! (:bot/id b))
-              (finish-visible! on-finish run :completed
-                               {:turn/result (:content result)})
-              (say (:bot/id b) (:content result) nil)))
+            (let [followups (take-followups! (:id run) true)]
+              (if (seq followups)
+                (do
+                  (when (seq (str (:content result)))
+                    (say (:bot/id b) (:content result) nil))
+                  (recur (apply-followups! (:bot/id b) run followups on-event)))
+                (do
+                  (clear-run! (:bot/id b))
+                  (finish-visible! on-finish run :completed
+                                   {:turn/result (:content result)})
+                  (say (:bot/id b) (:content result) nil)))))
 
           (> (count calls) 1)
           (if (:goal? run)
@@ -3089,7 +3224,7 @@
                   (on-event {:type "phase" :phase "tool-executed"
                              :tool name :tool-count (:tool-count run)}))
                 (save-run! (:bot/id b) run)
-                (recur run))))))))))
+                (recur run)))))))))))
 
 (defn- rows-by-provider
   "The connector rows this Bot's grant actually touches, grouped by the OAuth
@@ -3478,6 +3613,7 @@
         progress (atom {:turn/phase :accepted})
         outcome (atom nil)
         entry {:run-id run-id :cancelled cancelled :progress progress
+               :accepting-followups? true
                :thread (Thread/currentThread)}]
     (when (str/blank? run-id)
       (throw (ex-info "run-id が必要です。" {:type :bot/missing-run-id})))
@@ -3519,28 +3655,31 @@
                              {:turn/finished-at (store/now)}))
         messages)
       (catch Exception error
-        (if (or @cancelled (= :bot/cancelled (:type (ex-data error))))
-          (do
-            (clear-run! bot-id)
-            (say bot-id "中止しました。" nil)
-            (record-turn! bot-id run-id
-                          (merge @progress
-                                 {:turn/state :cancelled
-                                  :turn/phase :cancelled
-                                  :turn/finished-at (store/now)
-                                  :turn/error-type :bot/cancelled}))
-            (public-conversation (identity/session-did session) bot-id))
-          (do
-            (record-turn! bot-id run-id
-                          (merge @progress
-                                 {:turn/state :failed
-                                  :turn/phase :failed
-                                  :turn/finished-at (store/now)
-                                  :turn/error-status (:status (ex-data error))
-                                  :turn/error-type (or (:type (ex-data error))
-                                                       :internal-error)
-                                  :turn/error-message (error-message error)}))
-            (throw error))))
+        (let [released (release-followups! bot-id run-id on-event)]
+          (if (or @cancelled (= :bot/cancelled (:type (ex-data error))))
+            (do
+              (clear-run! bot-id)
+              (say bot-id "中止しました。" nil)
+              (record-turn! bot-id run-id
+                            (merge @progress
+                                   {:turn/state :cancelled
+                                    :turn/phase :cancelled
+                                    :turn/followup-count released
+                                    :turn/finished-at (store/now)
+                                    :turn/error-type :bot/cancelled}))
+              (public-conversation (identity/session-did session) bot-id))
+            (do
+              (record-turn! bot-id run-id
+                            (merge @progress
+                                   {:turn/state :failed
+                                    :turn/phase :failed
+                                    :turn/followup-count released
+                                    :turn/finished-at (store/now)
+                                    :turn/error-status (:status (ex-data error))
+                                    :turn/error-type (or (:type (ex-data error))
+                                                         :internal-error)
+                                    :turn/error-message (error-message error)}))
+              (throw error)))))
       (finally
         ;; Clear the interrupted flag before this pooled HTTP thread is reused.
         (Thread/interrupted)
@@ -3554,6 +3693,7 @@
         outcome (atom nil)
         cancelled (atom false)
         entry {:run-id run-id :cancelled cancelled :progress (atom {})
+               :accepting-followups? true
                :thread (Thread/currentThread)}]
     (when-not (= run-id (:id saved))
       (throw (ex-info "durable Goal checkpoint was not found"
@@ -3593,6 +3733,12 @@
                       (merge {:turn/state :completed :turn/phase :completed
                               :turn/finished-at (store/now)} @outcome))
         messages)
+      (catch Exception error
+        ;; A resident Goal can fail between scheduler boundaries too.  Keep an
+        ;; already accepted owner steering message in the durable transcript;
+        ;; the job supervisor will record the failure state separately.
+        (release-followups! bot-id run-id nil)
+        (throw error))
       (finally
         (Thread/interrupted)
         (locking active-turns (swap! active-turns dissoc bot-id))))))
