@@ -5432,6 +5432,7 @@
           (when-not path
             (throw (ex-info "このMacでComputer Use helperを準備できませんでした。"
                             {:type :desktop/build-failed})))
+          (desktop/request-permissions!)
           (send! exchange 200
                  {:helper path
                   :diagnostics (agent-control/diagnostics config)})))

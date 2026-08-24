@@ -58,6 +58,14 @@
     (is (str/includes? code "AXUIElementPerformAction")
         "the search cannot find a call that is definitely there, so a negative result means nothing")))
 
+(deftest permission-prompts-are-opt-in-not-diagnostics
+  (let [source (slurp helper-source)
+        desktop-source (slurp (io/file "src/cloud/itonami/app/desktop.clj"))]
+    (is (str/includes? source "option(\"prompt\") == \"true\""))
+    (is (str/includes? source "CGRequestScreenCaptureAccess"))
+    (is (str/includes? desktop-source "[helper \"permissions\" \"--prompt\" \"true\"]"))
+    (is (str/includes? desktop-source "[helper \"permissions\"]"))))
+
 ;; ── 2. what a write has to quote ────────────────────────────────────────
 
 (def ^:private valid-digest

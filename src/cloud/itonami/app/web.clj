@@ -1574,7 +1574,7 @@
     [:button {:class "primary-action" :id "agent-machine-save" :type "button"}
      "このMacの設定を保存"]
     [:button {:class "tool-button" :id "agent-machine-prepare-computer" :type "button"}
-     "Computer Useを準備"]]
+     "macOS権限を確認して準備"]]
    [:p {:class "form-help"}
     "パスワード・2FA・CAPTCHA・支払い・セキュリティ確認は自動操作しません。Computer操作は対象アプリ名と画面digestをreceiptに残します。"]])
 
