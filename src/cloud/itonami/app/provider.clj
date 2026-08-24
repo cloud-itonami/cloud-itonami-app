@@ -25,14 +25,15 @@
   on 2026-08-19 under live load: 11.4 output tokens/second, 75.8 prompt
   tokens/second, one production slot. A resident tick is given 768 output
   tokens -- 68 seconds -- and carries roughly 3.3k prompt tokens per turn, or
-  another 44. That is 112 seconds of a 120 second wall, so a tick which waits
-  even briefly for the slot exceeds it. 7 of 24 resident runs did on the day
-  this was written.
+  another 44. That is 112 seconds before queueing, response framing, or a
+  larger governed tool call. A 120 second wall therefore classified healthy
+  work as a provider failure whenever the one-slot service was briefly busy.
+  7 of 24 resident runs did on the day this was written.
 
-  Raising it is not obviously the fix: with one slot, a request allowed to run
-  longer holds the whole workforce longer. The cheaper direction is a smaller
-  prompt."
-  120)
+  The extra wall time is paired with a smaller unattended output budget; with
+  one slot, raising this limit alone would only let one request hold the whole
+  workforce longer."
+  180)
 
 (defn- timeout->typed
   "Rethrow a request timeout as something the ledger can tell apart.
