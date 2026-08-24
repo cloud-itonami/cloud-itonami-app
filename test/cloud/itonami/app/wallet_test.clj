@@ -1,9 +1,12 @@
 (ns cloud.itonami.app.wallet-test
   (:require [clojure.test :refer [deftest is]]
+            [btc-crypto.bip32 :as bip32]
+            [btc-crypto.bip39 :as bip39]
             [cloud.itonami.app.config :as config]
             [cloud.itonami.app.store :as store]
             [cloud.itonami.app.wallet :as wallet]
             [eth-crypto.core :as eth]
+            [wallet.signer :as wsigner]
             [wallet.siwe :as siwe]))
 
 (def alice {:user-id "alice" :organization-id "org-1" :kind :passkey})
@@ -55,6 +58,41 @@
                             alice {:transaction-id (:id again)
                                    :signature signature}
                             "localhost")))))))))
+
+(deftest kagi-custody-walks-the-same-siwe-path
+  ;; ADR-2608241100 decision 6: the self-custodied (kagi-backed) signer attaches
+  ;; where MetaMask would have signed — same challenge, same verify, and the
+  ;; link records :custody :kagi + the derivation path. seed-signer stands in
+  ;; for kagi.chain-signer here (byte-parity between the two is pinned in
+  ;; kagi's own chain-signer tests); this module only sees the Signer protocol.
+  (with-wallet-store
+    (fn []
+      (let [sgnr (wsigner/seed-signer
+                  (bip32/seed->master
+                   (bip39/mnemonic->seed
+                    "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about")))
+            link (wallet/connect-kagi-signer!
+                  alice sgnr {} "localhost" "http://localhost:1338")
+            persisted (get-in (store/snapshot) [:wallet :links "alice" (:id link)])
+            bot {:id "bot-k" :did "did:key:bot-k" :name "Treasurer"
+                 :owner-id "alice" :organization-id "org-1"}]
+        (is (= :active (:status link)))
+        (is (= :kagi (:custody link)))
+        (is (= "m/44'/60'/0'/0/0" (:derivation-path link)))
+        (is (= "eip4361" (:proof-type link)) "same proof an injected wallet leaves")
+        (is (nil? (:private-key persisted)))
+        (is (nil? (:signature persisted)))
+        ;; custody follows the link into the assignment and the bot container,
+        ;; and reverts to the birth default when unassigned
+        (let [assignment (wallet/assign! alice bot (:id link))]
+          (is (= :kagi (:custody assignment)))
+          (is (= :kagi (:custody (wallet/bot-wallet "bot-k")))))
+        (wallet/unassign! alice "bot-k")
+        (is (= :external-wallet (:custody (wallet/bot-wallet "bot-k"))))
+        ;; the external path keeps its custody default
+        (let [external (connect!)]
+          (is (= :external-wallet (:custody external)))
+          (is (nil? (:derivation-path external))))))))
 
 (deftest a-siwe-challenge-is-one-use-and-domain-bound
   (with-wallet-store

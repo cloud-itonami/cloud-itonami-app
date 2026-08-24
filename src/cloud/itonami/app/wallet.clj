@@ -2,12 +2,24 @@
   "Non-custodial EVM wallets for people and Bots.
 
   The app stores ownership proofs, assignments, and transfer receipts. It does
-  not store or derive private keys. A Bot may expose its receive address and
-  propose a transfer; an injected wallet remains the only component capable of
-  signing and submitting that transfer."
+  not store or derive private keys. Signers come in two custodies
+  (ADR-2608241100 decision 6):
+
+    :custody :external-wallet  an injected wallet (MetaMask etc.) signs in the
+                               browser — the original shape.
+    :custody :kagi             the org's self-custodied signer
+                               (wallet.signer/Signer, production:
+                               kagi.chain-signer/vault-signer — the seed never
+                               leaves the kagi vault, every signature is
+                               governed and ledgered there).
+
+  Both walk the SAME one-use SIWE challenge/verify path; the proof recorded is
+  the same EIP-4361 signature either way, so this module still never stores or
+  derives a private key."
   (:require [clojure.string :as str]
             [cloud.itonami.app.identity :as identity]
             [cloud.itonami.app.store :as store]
+            [wallet.chain :as wchain]
             [wallet.siwe :as siwe])
   (:import [java.math BigInteger]
            [java.time Instant]
@@ -93,8 +105,11 @@
     link))
 
 (defn start-connection!
-  "Create a short-lived, one-use SIWE challenge for an injected wallet."
-  [session {:keys [address chain-id]} domain origin]
+  "Create a short-lived, one-use SIWE challenge. Injected wallets pass only
+  {:address :chain-id}; the self-custody path (connect-kagi-signer!) also
+  threads :custody / :derivation-path through the transaction so the link can
+  record HOW it is signed for."
+  [session {:keys [address chain-id custody derivation-path]} domain origin]
   (let [address (address! address "接続元")
         chain-id (chain-id! (or chain-id 1))
         subject-did (identity/session-did session)]
@@ -112,13 +127,15 @@
                     :uri origin :version "1" :chain-id chain-id :nonce nonce
                     :issued-at (str now) :expiration-time expires-at
                     :request-id link-id :resources [resource]})
-          transaction {:id transaction-id :link-id link-id
-                       :user-id (:user-id session)
-                       :organization-id (:organization-id session)
-                       :subject-did subject-did :address address
-                       :chain-id chain-id :domain domain :origin origin
-                       :nonce nonce :resource resource :message message
-                       :expires-at expires-at :used? false}]
+          transaction (cond-> {:id transaction-id :link-id link-id
+                               :user-id (:user-id session)
+                               :organization-id (:organization-id session)
+                               :subject-did subject-did :address address
+                               :chain-id chain-id :domain domain :origin origin
+                               :nonce nonce :resource resource :message message
+                               :expires-at expires-at :used? false}
+                        custody (assoc :custody custody)
+                        derivation-path (assoc :derivation-path derivation-path))]
       (store/transact! assoc-in [:wallet :connection-transactions transaction-id]
                        transaction)
       (select-keys transaction [:id :link-id :address :chain-id :message
@@ -156,16 +173,19 @@
                              (mapcat vals (vals (get-in (wallet-state) [:links] {}))))]
         (when duplicate?
           (refuse :wallet/already-bound "このWalletは既に接続済みです。"))
-        (let [link {:schema "cloud.itonami.app.wallet.link.v1"
-                    :id (:link-id transaction) :user-id (:user-id session)
-                    :organization-id (:organization-id session)
-                    :subject-did (:subject-did transaction)
-                    :namespace "eip155" :chain-id (:chain-id transaction)
-                    :address (:address transaction)
-                    :account (str "eip155:" (:chain-id transaction) ":" address)
-                    :proof-type "eip4361" :status :active
-                    :capabilities ["receive" "propose-send"]
-                    :connected-at (store/now)}]
+        (let [link (cond-> {:schema "cloud.itonami.app.wallet.link.v1"
+                            :id (:link-id transaction) :user-id (:user-id session)
+                            :organization-id (:organization-id session)
+                            :subject-did (:subject-did transaction)
+                            :namespace "eip155" :chain-id (:chain-id transaction)
+                            :address (:address transaction)
+                            :account (str "eip155:" (:chain-id transaction) ":" address)
+                            :proof-type "eip4361" :status :active
+                            :custody (or (:custody transaction) :external-wallet)
+                            :capabilities ["receive" "propose-send"]
+                            :connected-at (store/now)}
+                     (:derivation-path transaction)
+                     (assoc :derivation-path (:derivation-path transaction)))]
           (store/transact!
            (fn [state]
              (-> state
@@ -173,6 +193,30 @@
                            true)
                  (assoc-in (link-path (:user-id session) (:id link)) link))))
           link)))))
+
+(defn connect-kagi-signer!
+  "Connect the org's self-custodied wallet as a signer link. Walks the SAME
+  one-use SIWE challenge/verify path an injected wallet walks — the recorded
+  proof is the same EIP-4361 signature — with the signature produced by
+  `sgnr` (a wallet.signer/Signer; production: kagi.chain-signer/vault-signer,
+  where the seed never leaves the vault and every signature is governed and
+  ledgered) instead of a browser popup. The link carries :custody :kagi and
+  the BIP-44 :derivation-path so later signing knows WHICH key answers for
+  this address. `opts`: {:chain <wallet.chains key, default :eth>
+  :account-index <BIP-44 account, default 0>}."
+  [session sgnr {:keys [chain account-index] :or {chain :eth account-index 0}}
+   domain origin]
+  (let [account (wchain/account-with sgnr chain account-index)
+        challenge (start-connection! session
+                                     {:address (:address account)
+                                      :chain-id (:chain-id account)
+                                      :custody :kagi
+                                      :derivation-path (:path account)}
+                                     domain origin)
+        signature (siwe/sign-message-with (:message challenge) sgnr (:path account))]
+    (finish-connection! session
+                        {:transaction-id (:id challenge) :signature signature}
+                        domain)))
 
 (defn assign!
   "Assign one verified address to one owned Bot. `bot` is already ownership-
@@ -193,12 +237,14 @@
       (refuse :wallet/already-assigned
               (str "このWalletは既に別のBotへ割り当て済みです: " other)))
     (let [container (provision-bot! session bot)
+          custody (or (:custody link) :external-wallet)
           assignment {:schema "cloud.itonami.app.wallet.assignment.v1"
                       :bot-id bot-id :bot-did (:did bot) :bot-name (:name bot)
                       :user-id (:user-id session)
                       :organization-id (:organization-id session)
                       :link-id link-id :address (:address link)
                       :chain-id (:chain-id link)
+                      :custody custody
                       :capabilities ["receive" "propose-send"]
                       :assigned-at (store/now)}]
       (store/transact!
@@ -207,6 +253,7 @@
              (assoc-in [:wallet :assignments bot-id] assignment)
              (assoc-in (conj (bot-wallet-path bot-id) :status) :active)
              (assoc-in (conj (bot-wallet-path bot-id) :activated-at) (store/now))
+             (assoc-in (conj (bot-wallet-path bot-id) :custody) custody)
              (assoc-in (conj (bot-wallet-path bot-id) :signer-link-id) link-id))))
       (assoc assignment :wallet-id (:id container)))))
 
@@ -221,6 +268,8 @@
        (-> state
            (update-in [:wallet :assignments] dissoc bot-id)
            (assoc-in (conj (bot-wallet-path bot-id) :status) :awaiting-signer)
+           ;; back to the birth default — the next signer decides the custody
+           (assoc-in (conj (bot-wallet-path bot-id) :custody) :external-wallet)
            (update-in (bot-wallet-path bot-id) dissoc :signer-link-id :activated-at))))
     {:bot-id bot-id :unassigned? true}))
 
