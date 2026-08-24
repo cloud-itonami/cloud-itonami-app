@@ -73,6 +73,7 @@
 (def max-brief 2000)
 (def max-provider-id 100)
 (def max-model 200)
+(def max-context-project-id 80)
 (def max-workspace 4096)
 (def max-responsibilities 12)
 (def max-responsibility 1000)
@@ -177,6 +178,9 @@
         provider-id (optional-name (:bot/provider-id value)
                                    :bot/provider-id max-provider-id)
         model (optional-name (:bot/model value) :bot/model max-model)
+        context-project-id (optional-name (:bot/context-project-id value)
+                                          :bot/context-project-id
+                                          max-context-project-id)
         email (optional-name (:bot/email value) :bot/email 320)
         workspace (optional-name (:bot/workspace value)
                                  :bot/workspace max-workspace)
@@ -196,6 +200,9 @@
      ;; routing default until somebody explicitly pins a provider and model.
      :bot/provider-id provider-id
      :bot/model model
+     ;; Read-only conversation reference. Tool and workspace admission never
+     ;; consults this field; ADR-0074 keeps context separate from authority.
+     :bot/context-project-id context-project-id
      ;; Stable mailbox identity. It is minted from the immutable Bot id by the
      ;; host and is not editable with the Bot's display name.
      :bot/email email

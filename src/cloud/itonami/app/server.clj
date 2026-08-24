@@ -2173,6 +2173,13 @@
           prompt (:prompt request)
           session-id (scoped-chat-session-id
                       session (:session request) (:project request))
+          project-context (when-let [project-id (some-> (:project request)
+                                                        str str/trim not-empty)]
+                            (or (project-repository/project-context-prompt
+                                 (project-scope session project-id))
+                                (throw (ex-info "選択した Project が見つかりません。"
+                                                {:type :project/not-found
+                                                 :project project-id}))))
           chat {:messages [{:role "user" :content prompt}]
                 :model (:model request)
                 :provider-id (:provider request)
@@ -2183,6 +2190,7 @@
                 :memory-user-id (:user-id session)
                 :memory-eligible? (identity/human-session? session)
                 :project-id (:project request)
+                :project-context project-context
                 :memory-source (if (:tool-assisted? request)
                                  "tool-chat" "chat")}]
       (if (str/blank? prompt)

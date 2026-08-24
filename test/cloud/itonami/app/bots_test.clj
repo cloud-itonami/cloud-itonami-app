@@ -160,6 +160,28 @@
       (is (str/includes? prompt "Work local-first"))
       (is (str/includes? prompt "external connector only when")))))
 
+(deftest project-context-changes-reference-data-not-bot-authority
+  (with-store
+    (fn []
+      (store/transact! assoc-in [:chat-projects ["org-1" "alpha"]]
+                       {:project-id "alpha" :title "Alpha"
+                        :description "Reference only"})
+      (let [created (make-bot alice {:workspace nil})
+            bot-id (:bot/id created)
+            before (select-keys created [:bot/tools :bot/accounts :bot/workspace
+                                         :bot/writes? :bot/browser?])
+            updated (bots/update! nil alice bot-id {:context-project-id "alpha"})
+            public (some #(when (= bot-id (:id %)) %)
+                         (:bots (bots/overview nil alice)))
+            transcript ((private-fn 'transcript) nil updated [])]
+        (is (= before (select-keys updated (keys before))))
+        (is (= "alpha" (:context-project-id public)))
+        (is (some #(str/includes? (:content %) "Reference only") transcript))
+        (is (some #(str/includes? (:content %) "does not grant tools") transcript))
+        (is (thrown-with-msg? clojure.lang.ExceptionInfo #"見つかりません"
+                              (bots/update! nil alice bot-id
+                                            {:context-project-id "missing"})))))))
+
 (defn- workforce-catalog [roles]
   {:schema "network.awai.workforce-bots.v1"
    :businesses (if (seq roles) 1 0)
