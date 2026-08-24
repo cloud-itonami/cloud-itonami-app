@@ -703,10 +703,27 @@
 
 (defn create!
   "Create a Bot. `:tools` may be given directly, or derived from `:connectors`
-  when the caller is the onboarding screen and has only picked services."
+  when the caller is the onboarding screen and has only picked services.
+
+  A newly created Bot is autonomous inside the authority the caller actually
+  gave it: writes, omakase and peer notes default on; a supplied local
+  workspace defaults to coding; the isolated browser defaults on only when
+  this deployment has one. Explicit false values always win. This grants no
+  connector, account, network, push or Wallet signer by itself -- those remain
+  separate capabilities and the Bot settings screen may narrow any default."
   [configuration session {:keys [name avatar brief connectors tools accounts
                                  writes? browser? peers? coding? virtual-shell?
-                                 omakase? workspace provider-id model]}]
+                                 omakase? workspace provider-id model]
+                          :as attrs}]
+  (let [writes? (if (contains? attrs :writes?) (boolean writes?) true)
+        omakase? (if (contains? attrs :omakase?) (boolean omakase?) true)
+        peers? (if (contains? attrs :peers?) (boolean peers?) true)
+        coding? (if (contains? attrs :coding?)
+                  (boolean coding?)
+                  (boolean (some-> workspace str str/trim not-empty)))
+        browser? (if (contains? attrs :browser?)
+                   (boolean browser?)
+                   (boolean (agent-control/browser-enabled? configuration)))]
   (validate-provider-choice! configuration provider-id model)
   (let [workspace (cond
                     virtual-shell? (virtual-shell/admit-workspace workspace)
@@ -772,7 +789,7 @@
                       :last-error-at (store/now)
                       :last-error-type (:type (ex-data error))
                       :last-error-message (error-message error)}))))
-    b))
+    b)))
 
 (defn update!
   "Change what a Bot is. Name, colour, glyph and brief are free to change and

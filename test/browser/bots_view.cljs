@@ -111,8 +111,8 @@
       (check! "ten colours" (= 10 colors))
       (check! "eight glyphs" (= 8 glyphs))
       (check! "a suggestion is offered for the picked connector" (pos? suggestions))
-      (check! "the isolated-browser permission is on the create step"
-              (.isVisible page "#bots-browser")))
+      (check! "detailed permission flags stay out of the create step"
+              (zero? (.count (.locator page "#bots-browser, #bots-omakase, #bots-writes")))))
 
     (println "\n── making a Bot ──")
     (p/let [_ (.click page (str "#bots-color-row .bots-swatch >> nth=2"))
