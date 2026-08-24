@@ -9857,6 +9857,39 @@
           : '（読み取りのみ）'}`));
       panel.append(make('div', null,
         `Model: ${bot['provider-id']} / ${bot.model}`));
+      const commerce = bot.commerce || {};
+      const commerceReadiness = commerce.readiness || {};
+      const commerceStore = commerce.store || {};
+      const commerceCard = make('div', 'bots-card');
+      commerceCard.append(
+        make('strong', null, 'Commerce'),
+        make('div', 'bots-card__summary', commerceReadiness['ready?']
+          ? 'DID・x402・住所・発送の開設準備が揃っています。公開はまだ実行していません。'
+          : `開設準備: ${(commerceReadiness.checks || []).filter((check) => check['ready?']).length}` +
+            ` / ${(commerceReadiness.checks || []).length}`));
+      if (commerceStore['merchant-did']) {
+        commerceCard.append(make('div', 'bots-card__summary',
+          `${commerceStore['display-name']} · ${commerceStore['merchant-did']}`));
+      }
+      const missing = (commerceReadiness.checks || [])
+        .filter((check) => !check['ready?'])
+        .map((check) => check.label);
+      if (missing.length) {
+        commerceCard.append(make('div', 'bots-card__summary', `次に必要: ${missing.join('、')}`));
+      }
+      const commercePrompt = make('button', 'tool-button',
+        commerce.status === 'not-configured' ? 'ショップ開設を始める' : 'Commerce設定を会話で進める');
+      commercePrompt.type = 'button';
+      commercePrompt.addEventListener('click', () => {
+        const input = $('#bots-input');
+        input.value = commerce.status === 'not-configured'
+          ? 'このTenantでECショップを開設したい。法人か個人事業主かを確認して、DID・法的表示・x402・発送を順に設定して。'
+          : 'ショップ開設状況を確認して、不足しているCommerce設定を次の1件から進めて。公開済みとは扱わないで。';
+        input.focus();
+        input.dispatchEvent(new Event('input', {bubbles:true}));
+      });
+      commerceCard.append(commercePrompt);
+      panel.append(commerceCard);
       if (bot['workforce-key']) {
         const workforceCard = make('div', 'bots-card');
         workforceCard.append(
