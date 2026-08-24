@@ -1491,6 +1491,42 @@
     [:ul {:class "memory-recent" :id "memory-recent-list"}
      [:li "まだcontextはありません。"]]]])
 
+(defn- agent-machine-settings []
+  [:div {:class "local-card" :id "agent-machine-settings"}
+   (dds/heading 2 "BotのブラウザーとComputer Use" {:size "20"})
+   [:p {:class "view-lead"}
+    "このMacで使える機能だけを有効にします。さらに各Botの設定で個別に許可するまで、そのBotには届きません。"]
+   [:p {:class "settings-notice" :id "agent-machine-status"
+        :role "status" :aria-live "polite"}
+    "接続状態を確認しています…"]
+   [:div {:class "settings-stack"}
+    [:label {:class "bots-permission"}
+     [:input {:id "agent-machine-browser" :type "checkbox"}]
+     [:span {:class "bots-permission__copy"}
+      [:span "Bot専用の分離ブラウザー"]
+      [:span {:class "bots-permission__help" :id "agent-machine-browser-help"}
+       "BotごとにCookieと履歴を分離します。"]]]
+    [:div {:class "field"}
+     [:label {:for "agent-machine-domains"} "ブラウザーで開いてよいドメイン"]
+     [:input {:id "agent-machine-domains" :type "text"
+              :autocomplete "off"
+              :placeholder "localhost, itonami.cloud, example.com"}]
+     [:span {:class "form-help"}
+      "カンマ区切り。サブドメインも含みます。空欄ならlocalhostだけです。"]]
+    [:label {:class "bots-permission"}
+     [:input {:id "agent-machine-computer" :type "checkbox"}]
+     [:span {:class "bots-permission__copy"}
+      [:span "フォーカスを奪わないComputer Use"]
+      [:span {:class "bots-permission__help" :id "agent-machine-computer-help"}
+       "アクセシビリティツリーを読み、承認時の画面にだけ操作します。座標クリックや合成キー入力は使いません。"]]]]
+   [:div {:class "button-row"}
+    [:button {:class "primary-action" :id "agent-machine-save" :type "button"}
+     "このMacの設定を保存"]
+    [:button {:class "tool-button" :id "agent-machine-prepare-computer" :type "button"}
+     "Computer Useを準備"]]
+   [:p {:class "form-help"}
+    "パスワード・2FA・CAPTCHA・支払い・セキュリティ確認は自動操作しません。Computer操作は対象アプリ名と画面digestをreceiptに残します。"]])
+
 (defn page-html [configuration]
   (let [cloud? (get-in configuration [:routing :cloud-enabled?])
         provider (get-in configuration [:routing :default-provider])
@@ -3062,6 +3098,7 @@
         [:section {:class "view" :data-view-panel "settings" :hidden true}
          (view-header "Settings" "サインイン済みのUser、Organization、外部サービス接続を管理します。")
          (context-capture-settings)
+         (agent-machine-settings)
          [:div {:class "local-card" :id "desktop-update-card"}
           (dds/heading 2 "Desktop update" {:size "20"})
           [:p {:class "view-lead" :id "desktop-update-status"

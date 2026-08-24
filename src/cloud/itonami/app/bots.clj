@@ -712,7 +712,7 @@
   connector, account, network, push or Wallet signer by itself -- those remain
   separate capabilities and the Bot settings screen may narrow any default."
   [configuration session {:keys [name avatar brief connectors tools accounts
-                                 writes? browser? peers? coding? virtual-shell?
+                                 writes? browser? computer? peers? coding? virtual-shell?
                                  omakase? workspace provider-id model]
                           :as attrs}]
   (let [writes? (if (contains? attrs :writes?) (boolean writes?) true)
@@ -746,6 +746,10 @@
                     :bot/accounts accounts
                     :bot/writes? writes?
                     :bot/browser? browser?
+                    ;; Computer Use is never inferred from autonomy or from a
+                    ;; machine that happens to support it. It is a separate,
+                    ;; high-impact grant selected in this Bot's settings.
+                    :bot/computer? (boolean computer?)
                     :bot/peers? peers?
                     :bot/coding? coding?
                     :bot/virtual-shell? virtual-shell?
@@ -829,6 +833,7 @@
                                                     (set (map str (:accounts attrs))))
                  (contains? attrs :writes?) (assoc :bot/writes? (:writes? attrs))
                  (contains? attrs :browser?) (assoc :bot/browser? (:browser? attrs))
+                 (contains? attrs :computer?) (assoc :bot/computer? (:computer? attrs))
                  (contains? attrs :peers?) (assoc :bot/peers? (:peers? attrs))
                  (contains? attrs :omakase?) (assoc :bot/omakase? (:omakase? attrs))
                  (or (contains? attrs :coding?)
@@ -1308,6 +1313,8 @@
         local-tools (concat
                      (when (:bot/browser? b)
                        (agent-control/browser-tool-definitions configuration))
+                     (when (:bot/computer? b)
+                       (agent-control/computer-tool-definitions configuration))
                      (when (:bot/peers? b)
          (str "You can leave a note for another of this owner's Bots with "
               "send_message. The note appears in that Bot's conversation "
@@ -1362,9 +1369,12 @@
      :grant-widens? (bot/grant-widens? b rows)
      :writes? (:bot/writes? b)
      :browser? (:bot/browser? b)
+     :computer? (boolean (:bot/computer? b))
      :peers? (boolean (:bot/peers? b))
      :browser-ready? (boolean (and (:bot/browser? b)
                                    (agent-control/browser-enabled? configuration)))
+     :computer-ready? (boolean (and (:bot/computer? b)
+                                    (agent-control/computer-ready? configuration)))
      :coding? (:bot/coding? b)
      :virtual-shell? (:bot/virtual-shell? b)
      :omakase? (boolean (:bot/omakase? b))
@@ -1610,7 +1620,8 @@
      :palette {:colors (mapv name bot/avatar-colors)
                :glyphs (mapv name bot/avatar-glyphs)}
      :default-workspace (default-local-workspace configuration)
-     :browser-available? (agent-control/browser-enabled? configuration)}))
+     :browser-available? (agent-control/browser-enabled? configuration)
+     :computer-available? (agent-control/computer-ready? configuration)}))
 
 (defn suggestions
   "Starting points for the connectors somebody picked."
@@ -1650,6 +1661,11 @@
   [configuration b]
   (if (:bot/browser? b)
     (vec (agent-control/browser-tool-definitions configuration))
+    []))
+
+(defn- computer-tools [configuration b]
+  (if (:bot/computer? b)
+    (vec (agent-control/computer-tool-definitions configuration))
     []))
 
 (def ^:private peer-tool
@@ -1713,7 +1729,9 @@
                                    (or (:connector/description t) (:connector/name t))
                                    (when (= :write (:connector/effect t)) " (write)"))
                  :parameters (:connector/input-schema t)}))]
-    (into (into (into (into (browser-tools configuration b) (peer-tools b))
+    (into (into (into (into (into (browser-tools configuration b)
+                                  (computer-tools configuration b))
+                            (peer-tools b))
                       (coding-tools b))
                 (wallet/bot-tool-definitions (:bot/id b)))
           connector-tools)))
@@ -1721,6 +1739,7 @@
 (defn- write-tool? [configuration tool-name]
   (or (peer-tool? tool-name)
       (agent-control/browser-write? tool-name)
+      (agent-control/computer-write? tool-name)
       (wallet/write-tool? tool-name)
       (workspace-tools/write-tool? tool-name)
       (virtual-shell/write-tool? tool-name)
@@ -1753,6 +1772,9 @@
 
     (agent-control/browser-tool? tool-name)
     (agent-control/describe-browser-tool tool-name args)
+
+    (agent-control/computer-tool? tool-name)
+    (agent-control/describe-computer-tool tool-name args)
 
     :else
     (let [registry (connectors/enabled configuration)
@@ -1940,6 +1962,7 @@
         structured (if (or (peer-tool? tool-name)
                            (wallet/tool? tool-name)
                            (agent-control/browser-tool? tool-name)
+                           (agent-control/computer-tool? tool-name)
                            (workspace-tools/tool? tool-name)
                            (virtual-shell/tool? tool-name))
                      (cond
@@ -1956,6 +1979,10 @@
                        (virtual-shell/call! {:bot-id (:bot/id b)
                                              :workspace (:bot/workspace b)}
                                             tool-name args)
+
+                       (agent-control/computer-tool? tool-name)
+                       (agent-control/call-computer-tool!
+                        configuration tool-name args)
 
                        :else
                        (agent-control/call-browser-tool!
@@ -2052,6 +2079,14 @@
               "Stay inside the domains Settings has allowed. "
               "If a site asks for a password, 2FA, CAPTCHA or payment, stop "
               "and tell the person — do not try to bypass it.\n\n"))
+       (when (and (:bot/computer? b)
+                  (agent-control/computer-ready? configuration))
+         (str "You can inspect and operate named macOS applications without "
+              "taking the person's pointer or keyboard focus. Read the "
+              "accessibility tree before acting. Every write must carry the "
+              "current tree digest and is refused if the UI changed. "
+              "There is no coordinate click, synthetic keystroke, free-form "
+              "typing, password, payment, CAPTCHA or security-prompt tool.\n\n"))
        (when (and (:bot/coding? b) (:bot/workspace b))
          (str "Work local-first. Repository files, source history, and the "
               "current Git diff are your primary evidence. Use an external "
@@ -2549,6 +2584,10 @@
   (cond
     (agent-control/browser-tool? name)
     "この Bot 専用の分離ブラウザーのページ状態が変わります。"
+    (agent-control/computer-tool? name)
+    (str "指定したmacOSアプリの状態が変わる可能性があります。"
+         "カーソルとキーボードフォーカスは動かさず、"
+         "承認時の画面digestから変化していれば実行を拒否します。")
     (wallet/tool? name)
     "送金提案を記録します。秘密鍵はBotへ渡らず、外部Walletでの署名までは実行しません。"
     (workspace-tools/tool? name)

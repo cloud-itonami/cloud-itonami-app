@@ -1356,11 +1356,24 @@
     (doseq [label ["ファイル・Git・接続先への書き込みを許可"
                    "おまかせモード"
                    "Bot専用の分離ブラウザーを許可"
+                   "このBotにフォーカスを奪わないComputer Useを許可"
                    "ほかのBotとの書き置きを許可"
                    "この PC の Git workspace で coding する"
                    "隔離された仮想環境で汎用shellを使う"]]
       (is (str/includes? js label)
           (str label " has no control in the selected Bot settings")))))
+
+(deftest machine-agent-settings-explain-and-gate-browser-and-computer
+  (let [html (web/page-html {})
+        js (slurp (clojure.java.io/file "resources/cloud/itonami/app/interaction.js"))]
+    (doseq [id ["agent-machine-settings" "agent-machine-browser"
+                "agent-machine-computer" "agent-machine-save"
+                "agent-machine-domains" "agent-machine-prepare-computer"]]
+      (is (str/includes? html (str "id=\"" id "\""))))
+    (is (str/includes? html "各Botの設定で個別に許可"))
+    (is (str/includes? html "座標クリックや合成キー入力は使いません"))
+    (is (str/includes? js "/api/bots/machine"))
+    (is (str/includes? js "computer-available?"))))
 
 (deftest the-omakase-copy-describes-what-omakase-now-does
   ;; It read "shell・メール送信・Git変更" until 2026-08-19 — the three-effect

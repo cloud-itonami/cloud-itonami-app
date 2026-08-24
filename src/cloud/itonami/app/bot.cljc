@@ -205,12 +205,13 @@
      ;; which stays correct when they add a second — the count then makes the
      ;; Bot ask rather than quietly pick one.
      :bot/accounts (into (sorted-set) (map str) (:bot/accounts value))
-     ;; Two permissions, separate on purpose. `writes?` is about the connected
-     ;; services; `browser?` is about this machine's isolated browser, which
-     ;; `agent-control` gates independently and which is how a Bot reaches a
-     ;; site with no API at all.
+     ;; Three permissions, separate on purpose. `writes?` is about effects;
+     ;; `browser?` is a Bot-isolated browser profile; `computer?` is bounded,
+     ;; focus-free access to named macOS applications. The machine Settings
+     ;; gate browser and computer again, independently.
      :bot/writes? (boolean (:bot/writes? value))
      :bot/browser? (boolean (:bot/browser? value))
+     :bot/computer? (boolean (:bot/computer? value))
      ;; ADR-0061/0062. Off by default like every other capability
      ;; here: a Bot that was never opted in cannot be reached by a
      ;; peer and cannot reach one.
