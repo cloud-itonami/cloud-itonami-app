@@ -9279,7 +9279,7 @@
       browserAvailable:false, controller:null, runId:null, shellBusy:false,
       activeRuns:new Map(),
       latestTurn:null, threadVersion:null, syncTimer:null, syncing:false,
-      slo:null
+      slo:null, routines:[], routinesLoading:false
     };
     const botAvatar = (node, avatar, status = null) => {
       node.dataset.color = avatar?.color || 'blue';
@@ -9361,9 +9361,149 @@
       $('#bots-quality-panel').hidden = !open;
       $('#bots-quality').setAttribute('aria-expanded', String(open));
       if (open) {
+        $('#bots-routines-panel').hidden = true;
+        $('#bots-routines').setAttribute('aria-expanded', 'false');
         $('#bots-conversations-panel').hidden = true;
         $('#bots-conversations').setAttribute('aria-expanded', 'false');
         renderBotsSlo();
+      }
+    };
+    const routineDate = (value) => value
+      ? new Date(value).toLocaleString('ja-JP', {dateStyle:'short', timeStyle:'short'})
+      : 'まだありません';
+    const routineNext = (value) => {
+      if (!value) return '未設定';
+      return new Date(value).getTime() <= Date.now() ? '次の確認時' : routineDate(value);
+    };
+    const routineCadence = (routine) => {
+      const minutes = routine.schedule?.['every-minutes'];
+      if (!minutes) return '手動のみ';
+      if (minutes === 60) return '1時間ごと';
+      if (minutes === 1440) return '毎日';
+      if (minutes === 10080) return '毎週';
+      return `${minutes}分ごと`;
+    };
+    const routineStateText = {
+      idle:'実行可能', disabled:'停止中', stale:'権限の見直しが必要',
+      running:'実行中', 'waiting-approval':'承認待ち', completed:'完了',
+      blocked:'停止', failed:'失敗', checkpointed:'継続中'
+    };
+    const renderBotRoutines = () => {
+      const list = $('#bots-routines-list');
+      list.replaceChildren();
+      if (botsState.routinesLoading) {
+        list.append(make('li', 'empty-state', '定期ジョブを読んでいます…'));
+        return;
+      }
+      if (!botsState.routines.length) {
+        list.append(make('li', 'empty-state',
+          'まだ定期ジョブはありません。Botに仕事を一度実行してもらってから保存してください。'));
+        return;
+      }
+      botsState.routines.forEach((routine) => {
+        const row = make('li', 'bots-routine');
+        const head = make('div', 'bots-routine__head');
+        const dot = make('span', 'bots-routine__dot');
+        dot.dataset.state = routine.status;
+        const title = make('strong', null, routine.name || '名前のないジョブ');
+        const enabled = make('input');
+        enabled.type = 'checkbox';
+        enabled.checked = Boolean(routine['enabled?']);
+        enabled.setAttribute('aria-label', `${routine.name}を有効にする`);
+        enabled.addEventListener('change', async () => {
+          enabled.disabled = true;
+          try {
+            await postJSON(`/api/bots/${botsState.selected}/routines/${routine.id}`,
+                           {'enabled?':enabled.checked}, true);
+            await loadBotRoutines();
+          } catch (error) {
+            enabled.checked = !enabled.checked;
+            $('#bots-routines-status').textContent = error.message;
+          } finally { enabled.disabled = false; }
+        });
+        head.append(dot, title, enabled);
+        row.append(head,
+          make('div', 'bots-routine__meta',
+            `${routineStateText[routine.status] || routine.status} · ${routineCadence(routine)} · 次回 ${routineNext(routine['next-run-at'])} · 最終 ${routineDate(routine['last-run-at'])}`));
+        const actions = make('div', 'bots-routine__actions');
+        const run = make('button', 'tool-button', '今すぐ実行');
+        run.type = 'button';
+        run.disabled = !routine['may-start?'];
+        run.addEventListener('click', async () => {
+          run.disabled = true;
+          $('#bots-routines-status').textContent = `${routine.name}を実行しています…`;
+          try {
+            await postJSON(`/api/bots/${botsState.selected}/routines/${routine.id}/start`, {}, true);
+            await Promise.all([loadBotRoutines(), refreshBotsThread()]);
+            $('#bots-routines-status').textContent = `${routine.name}を実行しました。`;
+          } catch (error) {
+            $('#bots-routines-status').textContent = error.message;
+          } finally { run.disabled = false; }
+        });
+        const cadence = make('select');
+        [[15,'15分'],[30,'30分'],[60,'1時間'],[360,'6時間'],[1440,'毎日'],[10080,'毎週']]
+          .forEach(([value, label]) => {
+            const option = make('option', null, label);
+            option.value = String(value);
+            option.selected = value === routine.schedule?.['every-minutes'];
+            cadence.append(option);
+          });
+        cadence.setAttribute('aria-label', `${routine.name}の繰り返し`);
+        cadence.addEventListener('change', async () => {
+          cadence.disabled = true;
+          try {
+            await postJSON(`/api/bots/${botsState.selected}/routines/${routine.id}`,
+              {schedule:{kind:'every-minutes', 'every-minutes':Number(cadence.value)}}, true);
+            await loadBotRoutines();
+          } catch (error) { $('#bots-routines-status').textContent = error.message; }
+          finally { cadence.disabled = false; }
+        });
+        const forget = make('button', 'tool-button', '削除');
+        forget.type = 'button';
+        forget.addEventListener('click', async () => {
+          if (!window.confirm(`定期ジョブ「${routine.name}」を削除しますか？`)) return;
+          forget.disabled = true;
+          try {
+            await postJSON(`/api/bots/${botsState.selected}/routines/${routine.id}/forget`, {}, true);
+            await loadBotRoutines();
+          } catch (error) { $('#bots-routines-status').textContent = error.message; }
+        });
+        actions.append(run, cadence, forget);
+        row.append(actions);
+        if ((routine.runs || []).length) {
+          const history = make('ol', 'bots-routine__history');
+          routine.runs.slice(0, 5).forEach((entry) => history.append(make('li', null,
+            `${entry.source === 'schedule' ? '定期' : '手動'} · ${routineStateText[entry.state] || entry.state} · ${routineDate(entry['started-at'])}`)));
+          row.append(make('div', 'bots-routine__meta', '最近の実行'), history);
+        }
+        list.append(row);
+      });
+    };
+    async function loadBotRoutines() {
+      if (!botsState.selected) return;
+      const botId = botsState.selected;
+      botsState.routinesLoading = true;
+      renderBotRoutines();
+      try {
+        const request = await fetch(`/api/bots/${botId}/routines`);
+        const data = await request.json();
+        if (!request.ok) throw new Error(data?.error?.message || '定期ジョブを読めませんでした。');
+        if (botsState.selected === botId) botsState.routines = data.routines || [];
+      } catch (error) {
+        $('#bots-routines-status').textContent = error.message;
+      } finally {
+        botsState.routinesLoading = false;
+        renderBotRoutines();
+      }
+    }
+    const setBotRoutinesOpen = async (open) => {
+      $('#bots-routines-panel').hidden = !open;
+      $('#bots-routines').setAttribute('aria-expanded', String(open));
+      if (open) {
+        setBotsQualityOpen(false);
+        $('#bots-conversations-panel').hidden = true;
+        $('#bots-conversations').setAttribute('aria-expanded', 'false');
+        await loadBotRoutines();
       }
     };
     const botsPhaseText = (phase, tool = null) => ({
@@ -10171,9 +10311,12 @@
       $('#bots-titlebar-identity').hidden = !selected;
       $('#bots-mobile-context').hidden = !selected;
       $('#bots-thread-tools').hidden = !selected;
+      $('#bots-routines').hidden = !selected;
+      if (!selected) setBotRoutinesOpen(false);
     };
     const selectBot = async (botId) => {
       botsState.selected = botId;
+      botsState.routines = [];
       const selectedBot = botsState.bots.find((bot) => bot.id === botId);
       botsState.latestTurn = selectedBot?.['last-turn'] || null;
       $('#bots-goal').checked = Boolean(selectedBot?.['coding?'] || selectedBot?.['virtual-shell?']);
@@ -10333,6 +10476,35 @@
     $('#bots-quality').addEventListener('click', () =>
       setBotsQualityOpen($('#bots-quality').getAttribute('aria-expanded') !== 'true'));
     $('#bots-quality-close').addEventListener('click', () => setBotsQualityOpen(false));
+    $('#bots-routines').addEventListener('click', () =>
+      setBotRoutinesOpen($('#bots-routines').getAttribute('aria-expanded') !== 'true'));
+    $('#bots-routines-close').addEventListener('click', () => setBotRoutinesOpen(false));
+    $('#bots-routine-create').addEventListener('submit', async (event) => {
+      event.preventDefault();
+      if (!botsState.selected) return;
+      const button = event.currentTarget.querySelector('button[type="submit"]');
+      const name = $('#bots-routine-name').value.trim();
+      const intent = $('#bots-routine-intent').value.trim();
+      if (!name || !intent) {
+        $('#bots-routines-status').textContent = 'ジョブ名と目的を入力してください。';
+        return;
+      }
+      button.disabled = true;
+      $('#bots-routines-status').textContent = '直前の仕事を定期ジョブに保存しています…';
+      try {
+        await postJSON(`/api/bots/${botsState.selected}/routines`, {
+          name, intent,
+          schedule:{kind:'every-minutes',
+                    'every-minutes':Number($('#bots-routine-cadence').value)}
+        }, true);
+        $('#bots-routine-name').value = '';
+        $('#bots-routine-intent').value = '';
+        await loadBotRoutines();
+        $('#bots-routines-status').textContent = '定期ジョブを作成しました。';
+      } catch (error) {
+        $('#bots-routines-status').textContent = error.message;
+      } finally { button.disabled = false; }
+    });
     $('#bots-create').addEventListener('click', async () => {
       const button = $('#bots-create');
       const name = $('#bots-name').value.trim();
@@ -10720,6 +10892,8 @@
       $('#bots-conversations').setAttribute('aria-expanded', String(open));
       if (open) {
         setBotsQualityOpen(false);
+        $('#bots-routines-panel').hidden = true;
+        $('#bots-routines').setAttribute('aria-expanded', 'false');
         loadRooms();
       }
     };
