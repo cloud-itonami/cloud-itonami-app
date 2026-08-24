@@ -5415,6 +5415,15 @@
         (send! exchange 200 (bots/cancel-shell! session bot-id)))
 
       (and (= method "POST")
+           (bot-id-from path #"/api/bots/([^/]+)/messages/[^/]+/followups"))
+      (let [bot-id (bot-id-from path #"/api/bots/([^/]+)/messages/[^/]+/followups")
+            run-id (bot-id-from path #"/api/bots/[^/]+/messages/([^/]+)/followups")
+            body (read-json exchange)]
+        (require-origin! exchange config)
+        (require-csrf! exchange session)
+        (send! exchange 202 (bots/queue-followup! session bot-id run-id (:text body))))
+
+      (and (= method "POST")
            (bot-id-from path #"/api/bots/([^/]+)/messages/[^/]+/cancel"))
       (let [bot-id (bot-id-from path #"/api/bots/([^/]+)/messages/[^/]+/cancel")
             run-id (bot-id-from path #"/api/bots/[^/]+/messages/([^/]+)/cancel")]

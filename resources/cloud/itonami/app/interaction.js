@@ -9277,6 +9277,7 @@
       draft:{color:'blue', glyph:'circle'}, loaded:false, busy:false,
       defaultWorkspace:'',
       browserAvailable:false, controller:null, runId:null, shellBusy:false,
+      activeRuns:new Map(),
       latestTurn:null, threadVersion:null, syncTimer:null, syncing:false,
       slo:null
     };
@@ -10159,6 +10160,7 @@
         renderBotsThread();
         botsShowLastTurn(botsState.bots.find((candidate) => candidate.id === botId));
       } catch (error) { botsSetStatus(error.message); }
+      finally { if (typeof resizeBotsInput === 'function') resizeBotsInput(); }
     };
     const stopBotsRealtime = () => {
       if (botsState.syncTimer) window.clearTimeout(botsState.syncTimer);
@@ -10172,7 +10174,8 @@
     const syncBotsFromResident = async () => {
       botsState.syncTimer = null;
       if (!appUnlocked || currentView !== 'bots') return;
-      if (document.hidden || botsState.busy || botsState.syncing || !botsState.selected) {
+      if (document.hidden || botsState.activeRuns.has(botsState.selected) ||
+          botsState.shellBusy || botsState.syncing || !botsState.selected) {
         scheduleBotsRealtime(document.hidden ? 5000 : 1000);
         return;
       }
@@ -10369,10 +10372,15 @@
 
     const botsInput = $('#bots-input');
     const botsCancel = $('#bots-cancel');
+    const selectedBotsRun = () => botsState.activeRuns.get(botsState.selected) || null;
     const resizeBotsInput = () => {
       botsInput.style.height = 'auto';
       botsInput.style.height = `${Math.min(botsInput.scrollHeight, 192)}px`;
-      $('#bots-send').disabled = !botsInput.value.trim() || botsState.busy;
+      const active = selectedBotsRun();
+      $('#bots-send').disabled = !botsInput.value.trim() || botsState.shellBusy;
+      $('#bots-send').textContent = active ? '追加で伝える' : '送る';
+      $('#bots-goal').disabled = Boolean(active);
+      botsCancel.hidden = !(active || botsState.shellBusy);
     };
     botsInput.addEventListener('input', resizeBotsInput);
     botsInput.addEventListener('keydown', (event) => {
@@ -10401,7 +10409,7 @@
       }
       return request;
     };
-    const readBotsStream = async (request, provisional, onPhase) => {
+    const readBotsStream = async (request, run, onPhase) => {
       const reader = request.body.getReader();
       const decoder = new TextDecoder();
       let buffer = '';
@@ -10414,81 +10422,135 @@
           if (!line.trim()) continue;
           const frame = JSON.parse(line);
           if (frame.type === 'delta') {
-            provisional.dataset.markdown =
-              (provisional.dataset.markdown || '') + (frame.content || '');
-            renderMarkdown(provisional, provisional.dataset.markdown);
-            botsSetStatus('応答中…');
+            run.provisional.dataset.markdown =
+              (run.provisional.dataset.markdown || '') + (frame.content || '');
+            renderMarkdown(run.provisional, run.provisional.dataset.markdown);
+            if (botsState.selected === run.botId) botsSetStatus('応答中…');
           } else if (frame.type === 'phase') {
             onPhase(frame);
-            if (botsState.latestTurn) {
-              botsState.latestTurn.state = 'running';
-              botsState.latestTurn.phase = frame.phase;
-              botsState.latestTurn.tool = frame.tool || botsState.latestTurn.tool;
-              botsState.latestTurn['tool-count'] = frame['tool-count'] ||
-                botsState.latestTurn['tool-count'] || 0;
+            run.turn = {...(run.turn || {}), state:'running', phase:frame.phase,
+              tool:frame.tool || run.turn?.tool,
+              'tool-count':frame['tool-count'] || run.turn?.['tool-count'] || 0};
+            if (botsState.selected === run.botId && botsState.latestTurn) {
+              botsState.latestTurn = run.turn;
               renderBotsRun(botsState.latestTurn);
             }
-            botsSetStatus(botsPhaseText(frame.phase, frame.tool));
+            if (botsState.selected === run.botId) {
+              botsSetStatus(botsPhaseText(frame.phase, frame.tool));
+            }
+          } else if (frame.type === 'followup-applied') {
+            if (botsState.selected === run.botId) {
+              const followupIds = new Set((frame.followups || []).map((item) => item.id));
+              const anchors = [...$('#bots-messages').querySelectorAll('[data-followup-id]')]
+                .filter((node) => followupIds.has(node.dataset.followupId));
+              const entry = make('li', 'bots-msg');
+              entry.dataset.role = 'bot';
+              run.provisional = make('div', 'bots-msg__bubble');
+              entry.append(run.provisional);
+              const anchor = anchors[anchors.length - 1];
+              if (anchor) anchor.after(entry); else $('#bots-messages').append(entry);
+              botsSetStatus('追加メッセージを次のステップに反映しました。');
+            } else {
+              run.provisional = make('div', 'bots-msg__bubble');
+            }
           } else if (frame.type === 'done') {
-            botsState.messages = frame.messages || [];
-            botsState.latestTurn = frame.turn || botsState.latestTurn;
+            run.messages = frame.messages || [];
+            run.turn = frame.turn || run.turn;
+            if (botsState.selected === run.botId) {
+              botsState.messages = run.messages;
+              botsState.latestTurn = run.turn || botsState.latestTurn;
+            }
           } else if (frame.type === 'error') {
-            botsState.latestTurn = frame.turn || botsState.latestTurn;
-            renderBotsRun(botsState.latestTurn);
+            run.turn = frame.turn || run.turn;
+            if (botsState.selected === run.botId) {
+              botsState.latestTurn = run.turn || botsState.latestTurn;
+              renderBotsRun(botsState.latestTurn);
+            }
             throw new Error(frame.message || 'Bot の実行に失敗しました。');
           }
         }
         if (done) break;
       }
     };
-    const followDetachedGoal = async (botId, runId, signal) => {
+    const followDetachedGoal = async (run, signal) => {
       for (let poll = 0; poll < 1200; poll += 1) {
         if (signal.aborted) throw new DOMException('Aborted', 'AbortError');
         await new Promise((resolve) => window.setTimeout(resolve, 1000));
-        await refreshBotsThread();
-        renderBotsRun(botsState.latestTurn);
-        const state = botsState.latestTurn?.state;
-        if (botsState.latestTurn?.id === runId && state !== 'running') return;
-        if (botsState.selected !== botId) return;
+        const request = await fetch(`/api/bots/${run.botId}/messages`, {cache:'no-store'});
+        const data = await request.json();
+        if (!request.ok) throw new Error(data?.error?.message || '会話を読めませんでした。');
+        run.messages = data.messages || [];
+        run.turn = data.turn || run.turn;
+        if (botsState.selected === run.botId) {
+          botsState.messages = run.messages;
+          botsState.latestTurn = run.turn;
+          renderBotsRun(run.turn);
+          renderBotsThread();
+        }
+        if (run.turn?.id === run.runId && run.turn?.state !== 'running') return;
       }
       throw new Error('Goal は background で継続しています。後でこの Bot を開いて確認してください。');
     };
     $('#bots-form').addEventListener('submit', async (event) => {
       event.preventDefault();
       const text = botsInput.value.trim();
-      if (!text || !botsState.selected || botsState.busy) return;
-      botsState.busy = true;
+      if (!text || !botsState.selected || botsState.shellBusy) return;
       const botId = botsState.selected;
+      const active = botsState.activeRuns.get(botId);
+      if (active) {
+        try {
+          const queued = await postJSON(
+            `/api/bots/${botId}/messages/${encodeURIComponent(active.runId)}/followups`,
+            {text}, true);
+          botsInput.value = '';
+          resizeBotsInput();
+          if (botsState.selected === botId) {
+            const personEntry = make('li', 'bots-msg');
+            personEntry.dataset.role = 'person';
+            personEntry.dataset.followupId = queued.id;
+            personEntry.append(make('div', 'bots-msg__bubble', text));
+            $('#bots-messages').append(personEntry);
+            botsSetStatus(`追加メッセージを受け付けました（待機 ${queued.queued}件）。`);
+          }
+        } catch (error) {
+          botsSetStatus(error.message);
+        }
+        return;
+      }
       const runId = crypto.randomUUID();
       const goal = $('#bots-goal').checked;
       const startedAt = Date.now();
       const progress = {phase:'accepted', tool:null};
-      botsState.latestTurn = {
+      const turn = {
         id:runId, 'goal?':goal, objective:goal ? text : null,
         state:'running', phase:'accepted', 'elapsed-seconds':0,
-        'tool-count':0, usage:null
+        'tool-count':0, 'followup-count':0, usage:null
       };
-      renderBotsRun(botsState.latestTurn);
-      botsState.runId = runId;
-      botsState.controller = new AbortController();
+      const controller = new AbortController();
       botsInput.value = '';
-      resizeBotsInput();
-      botsCancel.hidden = false;
       const entry = make('li', 'bots-msg');
       entry.dataset.role = 'bot';
       const provisional = make('div', 'bots-msg__bubble');
       entry.append(provisional);
+      const run = {botId, runId, goal, controller, provisional, turn, messages:[]};
+      botsState.activeRuns.set(botId, run);
+      botsState.latestTurn = turn;
+      renderBotsRun(turn);
+      resizeBotsInput();
       const personEntry = make('li', 'bots-msg');
       personEntry.dataset.role = 'person';
       personEntry.append(make('div', 'bots-msg__bubble', text));
       $('#bots-messages').append(personEntry, entry);
       const elapsed = window.setInterval(() => {
         const seconds = Math.floor((Date.now() - startedAt) / 1000);
-        if (botsState.latestTurn?.id === runId) {
-          botsState.latestTurn['elapsed-seconds'] = seconds;
-          renderBotsRun(botsState.latestTurn);
+        if (run.turn?.id === runId) {
+          run.turn['elapsed-seconds'] = seconds;
+          if (botsState.selected === botId) {
+            botsState.latestTurn = run.turn;
+            renderBotsRun(run.turn);
+          }
         }
-        if (provisional.textContent) return;
+        if (run.provisional.textContent || botsState.selected !== botId) return;
         const phase = botsPhaseText(progress.phase, progress.tool);
         botsSetStatus(seconds >= 30
           ? `${phase} 通常より時間がかかっています… ${seconds}秒`
@@ -10497,33 +10559,41 @@
       botsSetStatus(`${botsPhaseText(progress.phase)} 0秒`);
       try {
         const request = await openBotsStream(botId, text, runId, goal,
-                                             botsState.controller.signal);
-        await readBotsStream(request, provisional, (frame) => {
+                                             controller.signal);
+        await readBotsStream(request, run, (frame) => {
           progress.phase = frame.phase;
           progress.tool = frame.tool || null;
         });
-        if (goal && botsState.latestTurn?.state === 'running') {
-          await followDetachedGoal(botId, runId, botsState.controller.signal);
+        if (goal && run.turn?.state === 'running') {
+          await followDetachedGoal(run, controller.signal);
         }
-        renderBotsRun(botsState.latestTurn);
-        renderBotsThread();
-        botsSetStatus('');
+        if (botsState.selected === botId) {
+          botsState.messages = run.messages || botsState.messages;
+          botsState.latestTurn = run.turn || botsState.latestTurn;
+          renderBotsRun(botsState.latestTurn);
+          renderBotsThread();
+          botsSetStatus('');
+        }
+        // The run may have finished while another Bot was selected. Refresh
+        // the rail independently so its preview/status does not stay stale.
         await loadBots({keepSelection:true});
       } catch (error) {
-        botsSetStatus(error.name === 'AbortError' ? '中止しました。' : error.message);
-        await refreshBotsThread().catch(() => {});
+        if (botsState.selected === botId) {
+          botsSetStatus(error.name === 'AbortError' ? '中止しました。' : error.message);
+          await refreshBotsThread().catch(() => {});
+        }
       } finally {
         window.clearInterval(elapsed);
-        botsState.busy = false;
-        botsState.controller = null;
-        botsState.runId = null;
-        botsCancel.hidden = true;
-        resizeBotsInput();
+        if (botsState.activeRuns.get(botId)?.runId === runId) {
+          botsState.activeRuns.delete(botId);
+        }
+        if (botsState.selected === botId) resizeBotsInput();
       }
     });
     botsCancel.addEventListener('click', async () => {
       const botId = botsState.selected;
-      const runId = botsState.runId;
+      const active = botsState.activeRuns.get(botId);
+      const runId = active?.runId;
       if (!botId || (!runId && !botsState.shellBusy)) return;
       botsCancel.disabled = true;
       botsSetStatus('中止しています…');
@@ -10534,8 +10604,9 @@
         }
         await postJSON(`/api/bots/${botId}/messages/${encodeURIComponent(runId)}/cancel`, {}, true);
         window.setTimeout(() => {
-          if (botsState.busy && botsState.runId === runId) {
-            botsState.controller?.abort();
+          const current = botsState.activeRuns.get(botId);
+          if (current?.runId === runId) {
+            current.controller.abort();
             refreshBotsThread().catch((error) => botsSetStatus(error.message));
           }
         }, 3000);
@@ -10546,7 +10617,9 @@
       }
     });
     document.addEventListener('keydown', (event) => {
-      if (event.key === 'Escape' && botsState.busy) botsCancel.click();
+      if (event.key === 'Escape' && (selectedBotsRun() || botsState.shellBusy)) {
+        botsCancel.click();
+      }
     });
 
     // ── rooms (ADR-0063) ────────────────────────────────────────────────

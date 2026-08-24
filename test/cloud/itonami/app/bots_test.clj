@@ -1083,6 +1083,55 @@
               (is (not= ::timeout messages))
               (is (= "中止しました。" (:text (last messages)))))))))))
 
+(deftest an-active-turn-accepts-a-followup-at-the-next-model-boundary
+  (with-store
+    (fn []
+      (let [b (make-bot alice {})
+            bot-id (:bot/id b)
+            run-id "run-followup-test"
+            entered (promise)
+            release (promise)
+            calls (atom 0)
+            requests (atom [])]
+        (with-redefs [policy/select-provider (fn [_ _] {:id :local})
+                      provider/agent-turn-stream!
+                      (fn [_ request _]
+                        (swap! requests conj request)
+                        (case (swap! calls inc)
+                          1 (do
+                              (deliver entered true)
+                              (deref release 3000 nil)
+                              {:content "最初の確認結果です。" :tool-calls []})
+                          {:content "追加条件も反映しました。" :tool-calls []}))]
+          (let [work (future
+                       (bots/send-stream! nil alice bot-id "最初の依頼"
+                                          run-id (constantly nil)))]
+            (is (= true (deref entered 2000 false)))
+            (let [queued (bots/queue-followup! alice bot-id run-id "追加条件を優先して")]
+              (is (= "queued" (:state queued)))
+              (is (= 1 (:queued queued))))
+            (deliver release true)
+            (is (not= ::timeout (deref work 4000 ::timeout)))
+            (is (= 2 @calls))
+            (is (some #(str/includes? (str (:content %)) "追加条件を優先して")
+                      (:messages (second @requests))))
+            (let [messages (bots/messages alice bot-id)
+                  turn (bots/latest-turn alice bot-id)]
+              (is (= [["person" "最初の依頼"]
+                      ["bot" "最初の確認結果です。"]
+                      ["person" "追加条件を優先して"]
+                      ["bot" "追加条件も反映しました。"]]
+                     (mapv (juxt :role :text) messages)))
+              (is (= "completed" (:state turn)))
+              (is (= 1 (:followup-count turn)))
+              (is (zero? (:pending-followups turn))))
+            (is (= :bot/turn-not-active
+                   (try
+                     (bots/queue-followup! alice bot-id run-id "遅すぎる追加")
+                     nil
+                     (catch clojure.lang.ExceptionInfo error
+                       (:type (ex-data error))))))))))))
+
 (deftest a-bot-pins-its-model-provider-without-bypassing-policy
   (with-store
     (fn []
