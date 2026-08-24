@@ -145,14 +145,24 @@
       (check! "the face has eyes and pupils" (and (= "\"\"" eye-content)
                                                    (= "\"\"" pupil-content))))
 
-    (println "\n── the titlebar keeps human controls minimal ──")
+    (println "\n── scheduled work stays scoped to the selected Bot ──")
     (p/let [titlebar-visible (.isVisible page "#bots-titlebar-context")
             identity-visible (.isVisible page "#bots-titlebar-identity")
             new-visible (.isVisible page "#bots-new")
-            routine-controls (.count (.locator page "#bots-routines-panel, #bots-thread-routines, #bots-handoff-send"))]
+            routines-visible (.isVisible page "#bots-routines")
+            _ (.click page "#bots-routines")
+            _ (.waitForTimeout page 300)
+            routines-panel-visible (.isVisible page "#bots-routines-panel")
+            routine-create-visible (.isVisible page "#bots-routine-create")
+            handoff-controls (.count (.locator page "#bots-handoff-send"))]
       (check! "the selected Bot lives in the app titlebar" (and titlebar-visible identity-visible))
       (check! "new Bot is a titlebar action" new-visible)
-      (check! "routine and handoff controls are not exposed to the person" (zero? routine-controls)))
+      (check! "scheduled work is a compact titlebar action" routines-visible)
+      (check! "the selected Bot's scheduled work opens in its own panel"
+              (and routines-panel-visible routine-create-visible))
+      (check! "Bot-to-Bot handoff remains outside the human control surface"
+              (zero? handoff-controls))
+      (.click page "#bots-routines-close"))
 
     (println "\n── quality is scored without turning missing evidence green ──")
     (p/let [quality-visible (.isVisible page "#bots-quality")

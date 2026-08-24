@@ -4509,6 +4509,11 @@
   schedule would mostly measure how long the last run took."
   5)
 
+(def max-routine-runs
+  "A compact operator-facing history. The conversation remains the complete
+  audit trail; this list only answers whether the schedule has been running."
+  20)
+
 (defn schedule*
   "Validate a schedule, or nil for one that only runs when asked."
   [spec]
@@ -4573,6 +4578,17 @@
                                        (connectors/catalog-rows configuration)
                                        (connected-connectors configuration did))}))
 
+(defn- next-routine-run-at [r]
+  (when (and (:routine/enabled? r) (:routine/schedule r))
+    (let [schedule (:routine/schedule r)]
+    (when-let [anchor (or (:routine/last-run-at r) (:routine/created-at r))]
+      (try
+        (if (:routine/last-run-at r)
+          (str (.plusSeconds (java.time.Instant/parse anchor)
+                             (* 60 (:schedule/every-minutes schedule))))
+          anchor)
+        (catch Exception _ nil))))))
+
 (defn- public-routine [configuration r b did]
   (let [state (routine-state configuration r b did)]
     {:id (:routine/id r)
@@ -4590,7 +4606,17 @@
      :stale? (routine/stale? r b state)
      :may-start? (routine/may-start? r b state)
      :created-at (:routine/created-at r)
-     :last-run-at (:routine/last-run-at r)}))
+     :last-run-at (:routine/last-run-at r)
+     :next-run-at (next-routine-run-at r)
+     :runs (mapv (fn [run]
+                   {:id (:routine.run/id run)
+                    :source (name (:routine.run/source run))
+                    :state (name (:routine.run/state run))
+                    :started-at (:routine.run/started-at run)
+                    :finished-at (:routine.run/finished-at run)
+                    :result (:routine.run/result run)
+                    :error-type (some-> (:routine.run/error-type run) name)})
+                 (reverse (:routine/runs r)))}))
 
 (defn routines
   "This Bot's routines, newest first."
@@ -4674,23 +4700,62 @@
                                           " — " (:step/intent s)))
                                    (:routine/steps r)))))
 
+(defn- finish-routine-run!
+  [routine-id run-id outcome]
+  (let [finished-at (store/now)]
+    (transact!
+     update-in [:routines routine-id :routine/runs]
+     (fn [runs]
+       (mapv (fn [run]
+               (if (= run-id (:routine.run/id run))
+                 (cond-> (assoc run
+                                :routine.run/state (:turn/state outcome)
+                                :routine.run/finished-at finished-at)
+                   (:turn/result outcome)
+                   (assoc :routine.run/result (:turn/result outcome))
+                   (:turn/error-type outcome)
+                   (assoc :routine.run/error-type (:turn/error-type outcome)))
+                 run))
+             (or runs []))))))
+
 (defn- run-routine!
   "Start one routine as its Bot. The gate is the caller's to choose —
   `may-start?` for a person, `may-fire?` for a schedule — because those differ
   by exactly one fact and the difference is who is watching."
-  [configuration b r did]
-  (transact! assoc-in [:routines (:routine/id r) :routine/last-run-at] (store/now))
+  [configuration b r did source]
+  (let [started-at (store/now)
+        run-id (new-id "routine-run")
+        routine-id (:routine/id r)]
+  (transact!
+   (fn [state]
+     (-> state
+         (assoc-in [:routines routine-id :routine/last-run-at] started-at)
+         (update-in [:routines routine-id :routine/runs]
+                    #(vec (take-last max-routine-runs
+                                     (conj (vec %)
+                                           {:routine.run/id run-id
+                                            :routine.run/source source
+                                            :routine.run/state :running
+                                            :routine.run/started-at started-at})))))))
   (append! (:bot/id b) (bot/message {:id (new-id "msg") :bot (:bot/id b)
                                      :role :person
                                      :text (routine-prompt r)
-                                     :at (store/now)}))
-  (advance! configuration b
-            (merge (turn-admission configuration b did)
-                   {:id (new-id "run")
-                    :messages (transcript configuration b
-                                          (conversation (:bot/id b)))
-                    :turn-count 0
-                    :tool-count 0})))
+                                     :at started-at}))
+  (try
+    (advance! configuration b
+              (merge (turn-admission configuration b did)
+                     {:id (new-id "run")
+                      :messages (transcript configuration b
+                                            (conversation (:bot/id b)))
+                      :turn-count 0
+                      :tool-count 0})
+              {:on-finish #(finish-routine-run! routine-id run-id %)})
+    (catch Exception error
+      (finish-routine-run! routine-id run-id
+                           {:turn/state :failed
+                            :turn/error-type (or (:type (ex-data error))
+                                                 :routine/error)})
+      (throw error)))))
 
 (defn start-routine!
   "A person running a routine now."
@@ -4706,7 +4771,7 @@
                       {:type :routine/refused
                        :routine routine-id
                        :status (name (routine/status r b state))})))
-    (run-routine! configuration b r did)
+    (run-routine! configuration b r did :manual)
     (public-conversation did bot-id)))
 
 (defn fire-due!
@@ -4730,7 +4795,7 @@
            (cond
              (not (due? r now)) acc
              (routine/may-fire? r b state)
-             (do (run-routine! configuration b r did)
+             (do (run-routine! configuration b r did :schedule)
                  (update acc :started conj (:routine/id r)))
              :else
              (update acc :skipped conj {:routine (:routine/id r)

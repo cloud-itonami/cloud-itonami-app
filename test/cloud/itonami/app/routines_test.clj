@@ -19,6 +19,7 @@
             [cloud.itonami.app.config :as config]
             [cloud.itonami.app.policy :as policy]
             [cloud.itonami.app.provider :as provider]
+            [cloud.itonami.app.routine :as routine]
             [cloud.itonami.app.store :as store]))
 
 (defn- with-store [f]
@@ -184,6 +185,24 @@
         (bots/record-routine! nil alice (:bot/id b) {:name "x" :intent "i"})
         (is (= {:started [] :skipped []}
                (quiet-model #(bots/fire-due! nil alice (store/now)))))))))
+
+(deftest a-routine-exposes-a-bounded-operator-history
+  (with-store
+    (fn []
+      (let [b (make-bot alice {})]
+        (traced! (:bot/id b) ["a"])
+        (let [r (bots/record-routine! nil alice (:bot/id b)
+                                      {:name "x" :intent "i"
+                                       :schedule {:kind "every-minutes"
+                                                  :every-minutes 30}})]
+          (with-redefs [routine/may-start? (constantly true)]
+            (quiet-model #(bots/start-routine! nil alice (:bot/id b) (:id r))))
+          (let [run (-> (bots/routines nil alice (:bot/id b)) first :runs first)]
+            (is (= "manual" (:source run)))
+            (is (= "completed" (:state run)))
+            (is (= "done" (:result run)))
+            (is (string? (:started-at run)))
+            (is (string? (:finished-at run)))))))))
 
 ;; ── handoff ──────────────────────────────────────────────────────────
 
