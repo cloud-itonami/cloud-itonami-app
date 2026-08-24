@@ -1215,12 +1215,42 @@
     background:var(--color-neutral-solid-gray-50);white-space:pre-wrap;
     overflow-wrap:anywhere;line-height:1.8}
   .worker-actions{display:flex;justify-content:flex-end;margin-top:1rem}
+  .storefront-shell{display:grid;grid-template-columns:minmax(0,1.45fr) minmax(18rem,.55fr);
+    gap:1rem;align-items:start;max-width:78rem;margin:0 auto}
+  .storefront-main,.storefront-cart{border:1px solid var(--color-neutral-solid-gray-200);
+    border-radius:.75rem;background:var(--color-neutral-white)}
+  .storefront-identity{padding:1.25rem;border-bottom:1px solid var(--color-neutral-solid-gray-200)}
+  .storefront-identity__did{margin:.375rem 0 0;color:var(--color-neutral-solid-gray-600);
+    font-size:.8125rem;overflow-wrap:anywhere}
+  .storefront-thread{min-height:12rem;max-height:22rem;overflow:auto;padding:1rem;
+    background:var(--color-neutral-solid-gray-50)}
+  .storefront-message{max-width:42rem;margin:.5rem 0;padding:.75rem 1rem;border-radius:.75rem;
+    background:var(--color-neutral-white);line-height:1.7}
+  .storefront-message--buyer{margin-left:auto;background:var(--color-key-50)}
+  .storefront-products{display:grid;grid-template-columns:repeat(auto-fill,minmax(13rem,1fr));
+    gap:.75rem;padding:1rem}
+  .storefront-product{display:flex;flex-direction:column;gap:.5rem;min-width:0;padding:1rem;
+    border:1px solid var(--color-neutral-solid-gray-200);border-radius:.75rem}
+  .storefront-product__price{margin-top:auto;font-weight:700;color:var(--color-key-900)}
+  .storefront-composer{display:flex;gap:.5rem;padding:1rem;border-top:1px solid var(--color-neutral-solid-gray-200)}
+  .storefront-composer input{flex:1;min-width:0}
+  .storefront-cart{position:sticky;top:5rem;padding:1rem}
+  .storefront-cart__items{display:grid;gap:.5rem;margin:.75rem 0;padding:0;list-style:none}
+  .storefront-cart__item{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:.5rem;
+    align-items:center;padding:.625rem 0;border-bottom:1px solid var(--color-neutral-solid-gray-100)}
+  .storefront-cart__total{display:flex;justify-content:space-between;gap:1rem;padding:.75rem 0;
+    font-weight:700}
+  .storefront-address{display:grid;gap:.625rem;margin-top:.75rem}
+  .storefront-address .field{gap:.25rem}
+  .storefront-order{margin-top:1rem;padding:.875rem;border-left:4px solid var(--color-key-600);
+    background:var(--color-key-50);overflow-wrap:anywhere}
   .skeleton{height:4.5rem;margin:.5rem 0;border-radius:.5rem;
     background:linear-gradient(90deg,var(--color-neutral-solid-gray-50),var(--color-neutral-solid-gray-100),var(--color-neutral-solid-gray-50));
     background-size:200% 100%;animation:pulse 1.4s infinite}
   @keyframes pulse{to{background-position:-200% 0}}
   @media(max-width:64rem){.local-grid,.settings-grid,.organization-studio__grid,.site-layout{
     grid-template-columns:1fr}.organization-studio__summary{grid-template-columns:1fr 1fr}
+    .storefront-shell{grid-template-columns:1fr}.storefront-cart{position:static}
     .governance-row{grid-template-columns:1fr 1fr}.governance-row>*:last-child{justify-self:start}
     .messenger-shell{grid-template-columns:minmax(13rem,.65fr) minmax(22rem,1.35fr)}
     .messenger-context{grid-column:1/-1;border-left:0;border-top:1px solid var(--color-neutral-solid-gray-200)}}
@@ -1581,6 +1611,7 @@
        [:nav {:class "local-nav" :aria-label "機能メニュー"}
         [:div {:class "nav-primary authenticated-only" :hidden true}
          (nav-item "bots" "Bots" "◕" "bots-count")
+         (nav-item "storefront" "Store" "▤" nil)
          (nav-item "wallet" "Wallet" "◈" "wallet-count")
          (nav-item "messenger" "Messenger" "◇" "messenger-count")]
         [:div {:class "nav-overflow-panel" :id "mobile-overflow-panel"}
@@ -1947,6 +1978,54 @@
             [:li {:class "skeleton"}]]]
           [:article {:class "record-detail" :id "capture-detail" :aria-live "polite"}
            [:div {:class "empty-state"} "記録を読み込んでいます。"]]]]
+        [:section {:class "view storefront-view" :data-view-panel "storefront" :hidden true}
+         [:div {:class "storefront-shell"}
+          [:section {:class "storefront-main" :aria-labelledby "storefront-name"}
+           [:header {:class "storefront-identity"}
+            [:span {:class "state-chip" :id "storefront-state"} "Storeを確認中"]
+            (dds/heading 1 "Storefront" {:size "32" :id "storefront-name"})
+            [:p {:class "view-lead" :id "storefront-lead"}
+             "公開カタログを読み込んでいます…"]
+            [:p {:class "storefront-identity__did" :id "storefront-merchant-did"}]]
+           [:div {:class "storefront-thread" :id "storefront-thread"
+                  :role "log" :aria-live "polite" :aria-relevant "additions"}
+            [:div {:class "storefront-message"}
+             "商品について話しかけてください。回答は公開カタログの内容だけを使います。"]]
+           [:div {:class "storefront-products" :id "storefront-products"}
+            [:div {:class "skeleton"}]]
+           [:form {:class "storefront-composer" :id "storefront-chat-form"}
+            [:label {:class "visually-hidden" :for "storefront-chat-input"} "商品を探す"]
+            [:input {:id "storefront-chat-input" :type "search" :autocomplete "off"
+                     :placeholder "例: 1,000円以下の商品は？"}]
+            [:button {:class "primary-action" :type "submit"} "聞く"]]]
+          [:aside {:class "storefront-cart" :aria-labelledby "storefront-cart-title"}
+           (dds/heading 2 "カート" {:size "24" :id "storefront-cart-title"})
+           [:ul {:class "storefront-cart__items" :id "storefront-cart-items"}
+            [:li "商品はまだありません。"]]
+           [:div {:class "storefront-cart__total"}
+            [:span "合計"] [:span {:id "storefront-cart-total"} "0 USDC"]]
+           [:form {:id "storefront-checkout-form"}
+            [:details
+             [:summary "配送先を入力"]
+             [:div {:class "storefront-address"}
+              [:div {:class "field"} [:label {:for "storefront-country"} "国"]
+               [:input {:id "storefront-country" :name "country" :value "JP" :required true}]]
+              [:div {:class "field"} [:label {:for "storefront-postal-code"} "郵便番号"]
+               [:input {:id "storefront-postal-code" :name "postal_code" :autocomplete "postal-code" :required true}]]
+              [:div {:class "field"} [:label {:for "storefront-region"} "都道府県"]
+               [:input {:id "storefront-region" :name "region" :autocomplete "address-level1" :required true}]]
+              [:div {:class "field"} [:label {:for "storefront-locality"} "市区町村"]
+               [:input {:id "storefront-locality" :name "locality" :autocomplete "address-level2" :required true}]]
+              [:div {:class "field"} [:label {:for "storefront-line1"} "町名・番地"]
+               [:input {:id "storefront-line1" :name "line1" :autocomplete "address-line1" :required true}]]
+              [:div {:class "field"} [:label {:for "storefront-line2"} "建物名など（任意）"]
+               [:input {:id "storefront-line2" :name "line2" :autocomplete "address-line2"}]]]]
+            [:p {:class "form-help"}
+             "注文額はサーバーが公開価格から再計算します。送信後もWallet署名までは決済されません。"]
+            [:button {:class "primary-action" :id "storefront-checkout" :type "submit" :disabled true}
+             "x402支払い内容を確認"]]
+           [:p {:class "form-help" :id "storefront-checkout-status" :role "status" :aria-live "polite"}]
+           [:div {:class "storefront-order" :id "storefront-order" :hidden true}]]]]
         [:section {:class "view" :data-view-panel "wallet" :hidden true}
          (view-header "Wallet"
                       "Botを作ると専用Walletも自動で生まれます。受取・送金提案・履歴をBot単位で管理します。")
