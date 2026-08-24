@@ -747,6 +747,56 @@
           (is (= (get-in public [:last-message :at]) (:activity-at public))
               "the picker sorts on the conversation it previews"))))))
 
+(deftest a-correctable-workspace-argument-error-stays-inside-the-bot-loop
+  ;; Live evidence 2026-08-24: nexus x402 / Engineer had already proved the
+  ;; repository was clean, then passed a file to workspace_list.  The host
+  ;; classified :workspace/not-a-directory correctly but failed the whole
+  ;; resident run, even though the admitted repository contained everything
+  ;; needed to retry with its root.
+  (with-store
+    (fn []
+      (let [root (git-workspace)
+            _ (spit (io/file root "README.md") "evidence\n")
+            b (make-bot alice {:coding? true :workspace (.getPath root)})
+            calls (atom 0)
+            requests (atom [])
+            events (atom [])]
+        (with-redefs [policy/select-provider (fn [_ _] {:id :local})
+                      provider/agent-turn-stream!
+                      (fn [_ request _]
+                        (swap! requests conj request)
+                        (case (swap! calls inc)
+                          1 {:content "Inspecting a file as a directory."
+                             :tool-calls [{:id "bad-list" :name "workspace_list"
+                                           :input {:path "README.md"}}]}
+                          2 {:content "Correcting the target from the tool error."
+                             :tool-calls [{:id "root-list" :name "workspace_list"
+                                           :input {:path "."}}]}
+                          {:content "Repository inspection recovered."
+                           :tool-calls []}))]
+          (bots/send-stream! nil alice (:bot/id b) "Inspect the repository"
+                             "recoverable-tool-1" #(swap! events conj %)))
+        (let [turn (bots/latest-turn alice (:bot/id b))
+              correction-request (second @requests)
+              tool-text (->> (:messages correction-request)
+                             (filter #(= "tool" (:role %)))
+                             last :content)]
+          (is (= 3 @calls))
+          (is (= "completed" (:state turn)))
+          (is (= 2 (:tool-count turn))
+              "the refused attempt consumes budget, so retries remain bounded")
+          (is (str/includes? tool-text "workspace/not-a-directory"))
+          (is (str/includes? tool-text "Correct the arguments"))
+          (is (some #(= "tool-correctable-error" (:phase %)) @events))
+          (is (some #(= "tool-executed" (:phase %)) @events)))))))
+
+(deftest authority-and-host-failures-are-not-presented-as-self-correctable
+  (let [result (private-fn 'self-correctable-tool-result)]
+    (is (nil? (result (ex-info "escaped" {:type :workspace/unsafe-path}))))
+    (is (nil? (result (ex-info "slow" {:type :provider/timeout}))))
+    (is (some? (result (ex-info "not a directory"
+                                {:type :workspace/not-a-directory}))))))
+
 (deftest server-start-closes-a-running-turn-as-interrupted
   (with-store
     (fn []
