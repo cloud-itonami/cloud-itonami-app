@@ -150,6 +150,7 @@
             [cloud.itonami.app.filecoin-test]
             [cloud.itonami.app.fleet-test]
             [cloud.itonami.app.folder-sync-test]
+            [cloud.itonami.app.gc-test]
             [cloud.itonami.app.operator-test]
             [cloud.itonami.app.funding-test]
             [cloud.itonami.app.mcp-test]
@@ -297,6 +298,7 @@
     cloud.itonami.app.filecoin-test
     cloud.itonami.app.fleet-test
     cloud.itonami.app.folder-sync-test
+    cloud.itonami.app.gc-test
     cloud.itonami.app.operator-test
     cloud.itonami.app.funding-test
     cloud.itonami.app.mcp-test

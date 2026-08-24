@@ -30,6 +30,7 @@
             [cloud.itonami.app.executor :as executor]
             [cloud.itonami.app.filecoin :as filecoin]
             [cloud.itonami.app.folder-sync :as folder-sync]
+            [cloud.itonami.app.gc :as gc]
             [cloud.itonami.app.nfs :as nfs-service]
             [cloud.itonami.app.fleet :as fleet]
             [cloud.itonami.app.operator :as operator]
@@ -5975,6 +5976,12 @@
    ;; After the surfaces it drives, so a routine that fires on the first pass
    ;; finds a store that is already open rather than one still being read.
    (bots/start-tick! configuration)
+   ;; After the tick, because the first thing a sweep relieves is the store
+   ;; the tick is about to write into. Retention for terminal goal-jobs and
+   ;; archived mail bodies, plus the disk floor `fire-due-workforce!` consults
+   ;; before admitting a resident batch (2026-08-23: a full disk met a
+   ;; sixteen-job batch and every job died at its first write).
+   (gc/start! configuration)
    (updater/start! configuration)
    ;; Re-measures both proven authorities — a name that stops resolving here and
    ;; a mail posture whose records were pulled — so neither is carried until
@@ -6072,6 +6079,7 @@
   (folder-sync/stop!)
   (nfs-service/stop!)
   (bots/stop-tick!)
+  (gc/stop!)
   (updater/stop!)
   (binding-sweep/stop!)
   (when-let [instance @https-server]

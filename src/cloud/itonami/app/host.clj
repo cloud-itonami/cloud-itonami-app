@@ -116,7 +116,26 @@
         handle (filesystem-at root max-bytes)
         name (.getName file)
         tmp (str name ".tmp")
-        body (str content)]
+        body (str content)
+        ;; Preflight the disk BEFORE the tmp write. On 2026-08-23 the disk
+        ;; filled and thirteen resident turns died as an opaque `fs/io write
+        ;; failed`; the one that kept its message said `No space left on
+        ;; device` after the bytes were already half-written. Refusing here
+        ;; loses nothing — the write was going to fail — and keeps the
+        ;; provenance: a typed error carrying what was measured, which the
+        ;; SLO surface can aggregate and `gc/sweep!` can act on. A probe
+        ;; that answers 0 means 'unable to determine' and does NOT refuse:
+        ;; the write itself is the better witness then.
+        needed (+ (count body) (* 32 1024 1024))
+        usable (try (.getUsableSpace (io/file root))
+                    (catch Exception _ 0))]
+    (when (and (pos? usable) (< usable needed))
+      (throw (ex-info (str "disk pressure: refusing atomic write of "
+                           (.getName file))
+                      {:type :fs/disk-pressure
+                       :file (.getPath file)
+                       :usable-bytes usable
+                       :needed-bytes needed})))
     (warn-approaching-bound! file (count body) max-bytes)
     (fs/write handle tmp body)
     (Files/move (.toPath (io/file parent tmp))
