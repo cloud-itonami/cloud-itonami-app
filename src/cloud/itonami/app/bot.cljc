@@ -74,6 +74,28 @@
 (def max-provider-id 100)
 (def max-model 200)
 (def max-context-project-id 80)
+(def max-context-refs 12)
+
+(defn- context-refs [value legacy-project-id]
+  (let [refs (if (contains? value :bot/context-refs)
+               (:bot/context-refs value)
+               (when legacy-project-id
+                 [{:kind "project" :target legacy-project-id}]))]
+    (when (> (count (or refs [])) max-context-refs)
+      (throw (ex-info "too many context references"
+                      {:type :bot/invalid :field :bot/context-refs})))
+    (mapv (fn [ref]
+            (let [kind (some-> (:kind ref) name)
+                  target (some-> (:target ref) str str/trim)]
+              (when-not (and (contains? #{"project" "folder" "document" "dataset"}
+                                        kind)
+                             (seq target)
+                             (<= (count target) 160))
+                (throw (ex-info "invalid context reference"
+                                {:type :bot/invalid :field :bot/context-refs
+                                 :value ref})))
+              {:kind kind :target target}))
+          (or refs []))))
 (def max-workspace 4096)
 (def max-responsibilities 12)
 (def max-responsibility 1000)
@@ -181,6 +203,7 @@
         context-project-id (optional-name (:bot/context-project-id value)
                                           :bot/context-project-id
                                           max-context-project-id)
+        context-refs (context-refs value context-project-id)
         email (optional-name (:bot/email value) :bot/email 320)
         workspace (optional-name (:bot/workspace value)
                                  :bot/workspace max-workspace)
@@ -202,7 +225,11 @@
      :bot/model model
      ;; Read-only conversation reference. Tool and workspace admission never
      ;; consults this field; ADR-0074 keeps context separate from authority.
-     :bot/context-project-id context-project-id
+     :bot/context-project-id (some (fn [ref]
+                                    (when (= "project" (:kind ref))
+                                      (:target ref)))
+                                  context-refs)
+     :bot/context-refs context-refs
      ;; Stable mailbox identity. It is minted from the immutable Bot id by the
      ;; host and is not editable with the Bot's display name.
      :bot/email email

@@ -184,6 +184,27 @@
                             :project-context "Project Alpha reference"}))
       (finally (reset! store/state previous)))))
 
+(deftest context-set-prompt-and-receipts-cross-one-chat-turn
+  (let [previous @store/state
+        receipts [{:kind "project" :target "alpha" :digest "abc" :chars 10}]]
+    (try
+      (reset! store/state (store/initial-state))
+      (with-redefs [provider/chat
+                    (fn [_ request]
+                      (is (= "Bounded multi-source context"
+                             (get-in request [:messages 1 :content])))
+                      {:content "ok" :usage {}})]
+        (let [response (service/run-chat!
+                        config {:messages [{:role "user" :content "hello"}]
+                                :session-id "context-set"
+                                :context-prompt "Bounded multi-source context"
+                                :context-receipts receipts})]
+          (is (= receipts (:context-receipts response)))
+          (is (= receipts (get-in response [:message :context-receipts])))
+          (is (= receipts (:context-receipts
+                           (last (store/session-messages "context-set")))))))
+      (finally (reset! store/state previous)))))
+
 (deftest chronicle-context-never-crosses-into-a-cloud-provider-request
   (let [previous @store/state
         cloud-config (-> config
@@ -381,8 +402,9 @@
 (deftest bots-use-the-app-titlebar-for-selected-bot-jobs
   (let [html (web/page-html {})]
     (is (re-find #"id=\"bots-titlebar-context\"" html))
-    (is (re-find #"id=\"bots-context-project-select\"" html))
-    (is (re-find #"id=\"chat-context-project-select\"" html))
+    (is (re-find #"id=\"bots-context-button\"" html))
+    (is (re-find #"id=\"chat-context-button\"" html))
+    (is (re-find #"id=\"conversation-context-panel\"" html))
     (is (not (re-find #"id=\"active-project-select\"" html)))
     (is (re-find #"id=\"bots-titlebar-name\"" html))
     (is (re-find #"id=\"bots-new\"" html))

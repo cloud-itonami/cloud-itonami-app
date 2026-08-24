@@ -69,6 +69,7 @@
             [cloud.itonami.app.mail-authentication-test]
             [cloud.itonami.app.mail-origins-test]
             [cloud.itonami.app.mail-projects-test]
+            [cloud.itonami.app.conversation-context-test]
             [cloud.itonami.app.project-repository-test]
             [cloud.itonami.app.project-remote-test]
             [cloud.itonami.app.project-transfer-test]
@@ -240,6 +241,7 @@
     cloud.itonami.app.mail-authentication-test
     cloud.itonami.app.mail-origins-test
     cloud.itonami.app.mail-projects-test
+    cloud.itonami.app.conversation-context-test
     cloud.itonami.app.project-repository-test
     cloud.itonami.app.project-remote-test
     cloud.itonami.app.project-transfer-test

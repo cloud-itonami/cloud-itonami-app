@@ -168,6 +168,9 @@
       (store/transact! assoc-in [:chat-projects ["org-1" "alpha"]]
                        {:project-id "alpha" :title "Alpha"
                         :description "Reference only"})
+      (store/transact! assoc-in [:chat-projects ["org-1" "beta"]]
+                       {:project-id "beta" :title "Beta"
+                        :description "Second reference"})
       (let [created (make-bot alice {:workspace nil})
             bot-id (:bot/id created)
             before (select-keys created [:bot/tools :bot/accounts :bot/workspace
@@ -178,8 +181,25 @@
             transcript ((private-fn 'transcript) nil updated [])]
         (is (= before (select-keys updated (keys before))))
         (is (= "alpha" (:context-project-id public)))
+        (let [multiple (bots/update! nil alice bot-id
+                                     {:context-refs [{:kind "project" :target "alpha"}
+                                                     {:kind "project" :target "beta"}]})
+              multiple-public (some #(when (= bot-id (:id %)) %)
+                                    (:bots (bots/overview nil alice)))]
+          (is (= 2 (count (:bot/context-refs multiple))))
+          (is (= 2 (count (:context-refs multiple-public))))
+          (is (= before (select-keys multiple (keys before)))))
         (is (some #(str/includes? (:content %) "Reference only") transcript))
         (is (some #(str/includes? (:content %) "does not grant tools") transcript))
+        (store/transact! update-in [:bots :bots bot-id] dissoc :bot/context-refs)
+        (let [legacy-public (some #(when (= bot-id (:id %)) %)
+                                  (:bots (bots/overview nil alice)))
+              legacy-bot (get-in (store/snapshot) [:bots :bots bot-id])
+              legacy-transcript ((private-fn 'transcript) nil legacy-bot [])]
+          (is (= [{:kind "project" :target "alpha"}]
+                 (:context-refs legacy-public)))
+          (is (some #(str/includes? (:content %) "Reference only")
+                    legacy-transcript)))
         (is (thrown-with-msg? clojure.lang.ExceptionInfo #"見つかりません"
                               (bots/update! nil alice bot-id
                                             {:context-project-id "missing"})))))))

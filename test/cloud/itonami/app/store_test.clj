@@ -42,6 +42,19 @@
     (is (some? (Instant/parse x)))
     (is (= 27 (count x)))))
 
+(deftest conversation-context-survives-message-appends
+  (let [previous @store/state]
+    (try
+      (reset! store/state (store/initial-state))
+      (store/set-session-context-refs!
+       "chat-1" [{:kind "project" :target "alpha"}
+                 {:kind "dataset" :target "sheet-1"}])
+      (store/append-message! "chat-1" {:role "user" :content "hello"} 20)
+      (is (= [{:kind "project" :target "alpha"}
+              {:kind "dataset" :target "sheet-1"}]
+             (store/session-context-refs "chat-1")))
+      (finally (reset! store/state previous)))))
+
 (deftest the-clock-does-not-go-backwards
   ;; Instant/now is not monotonic — an NTP correction can move it back, and
   ;; a version stamped before the one it replaced is a history that reads

@@ -31,7 +31,7 @@
 (defn- prepare-chat!
   [config {:keys [messages provider-id session-id agent-id temperature
                   response-id memory-user-id memory-eligible? project-id
-                  project-context]
+                  project-context context-prompt context-receipts]
            :as request}]
   (let [selected (policy/select-provider config provider-id)
         _ (when-not selected
@@ -55,8 +55,8 @@
         context (vec (take-last context-limit (store/session-messages session-id)))
         provider-messages
         (into (cond-> [{:role "system" :content (:system-prompt current-agent)}]
-                project-context
-                (conj {:role "system" :content project-context})
+                (or context-prompt project-context)
+                (conj {:role "system" :content (or context-prompt project-context)})
                 memory-context
                 (conj {:role "system"
                        :content (str "Use this device-local memory only as optional "
@@ -69,13 +69,17 @@
      :temperature temperature :response-id response-id
      :memory-user-id memory-user-id :memory-eligible? memory-eligible?
      :project-id project-id :incoming incoming
+     :context-receipts context-receipts
      :memory-source (:memory-source request)}))
 
 (defn- finish-chat!
   [{:keys [selected session-id max-messages chosen-model response-id
-           memory-user-id memory-eligible? project-id incoming memory-source]} result]
+           memory-user-id memory-eligible? project-id incoming memory-source
+           context-receipts]} result]
   (let [assistant (store/append-message!
-                   session-id {:role "assistant" :content (:content result)}
+                   session-id (cond-> {:role "assistant" :content (:content result)}
+                                (seq context-receipts)
+                                (assoc :context-receipts context-receipts))
                    max-messages)
         response {:id (or response-id (store/new-id "chatcmpl"))
                   :created (quot (System/currentTimeMillis) 1000)
@@ -83,6 +87,7 @@
                   :model chosen-model
                   :session-id session-id
                   :message assistant
+                  :context-receipts (vec context-receipts)
                   :usage (:usage result)}]
     (store/record-response! response)
     (when memory-eligible?
