@@ -2,15 +2,19 @@
   "Tenant-scoped commerce setup driven from a Bot conversation.
 
   This namespace joins identity, a non-custodial Bot Wallet, x402 discovery,
-  and fulfillment configuration into one durable aggregate.  It deliberately
-  stops at `:ready`: a ready store has the information required for a public
-  storefront, but no site has been deployed and no payment has been signed.
-  Those are separate observed effects, not statuses this local record may
-  invent."
-  (:require [clojure.string :as str]
+  fulfillment configuration, public ordering, payment proof, inventory, and a
+  one-way shipping state machine into durable aggregates. Wallet signing stays
+  an explicit buyer action, and inventory is captured only after an on-chain
+  payment verifier accepts the proof."
+  (:require [clojure.data.json :as json]
+            [clojure.string :as str]
             [cloud.itonami.app.identity :as identity]
             [cloud.itonami.app.store :as store]
-            [cloud.itonami.app.wallet :as wallet]))
+            [cloud.itonami.app.wallet :as wallet])
+  (:import [java.net URI]
+           [java.net.http HttpClient HttpRequest HttpRequest$BodyPublishers
+            HttpResponse$BodyHandlers]
+           [java.time Duration Instant]))
 
 (def schema "cloud.itonami.app.commerce.store.v1")
 (def default-facilitator "https://x402.nexus")
@@ -19,6 +23,37 @@
 (def base-chain-id 8453)
 (def storefront-schema "cloud.itonami.app.commerce.storefront.v1")
 (def order-schema "cloud.itonami.app.commerce.order.v1")
+(def usdc-base "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913")
+(def payment-network "base")
+(def payment-scheme "transaction")
+(def reservation-seconds (* 30 60))
+
+(declare refuse)
+
+(defonce ^:private facilitator-client
+  (-> (HttpClient/newBuilder)
+      (.connectTimeout (Duration/ofSeconds 8))
+      .build))
+
+(defn- verify-payment-http!
+  [facilitator payment requirements]
+  (let [request (-> (HttpRequest/newBuilder
+                     (URI/create (str (str/replace facilitator #"/$" "") "/verify")))
+                    (.timeout (Duration/ofSeconds 15))
+                    (.header "Content-Type" "application/json")
+                    (.POST (HttpRequest$BodyPublishers/ofString
+                            (json/write-str {:payment payment
+                                             :requirements requirements})))
+                    .build)
+        response (.send facilitator-client request
+                        (HttpResponse$BodyHandlers/ofString))]
+    (when-not (<= 200 (.statusCode response) 299)
+      (refuse :commerce/payment-verifier-unavailable
+              "x402決済確認サービスが応答しませんでした。送金hashを保持して再試行してください。"))
+    (json/read-str (.body response) :key-fn keyword)))
+
+(def ^:dynamic *verify-payment!* verify-payment-http!)
+(def ^:dynamic *instant* #(Instant/now))
 
 (defn- refuse [type message]
   (throw (ex-info message {:type type})))
@@ -287,16 +322,36 @@
                        assoc :publication publication :updated-at (store/now))
       (overview session))))
 
-(defn- safe-product [product]
-  (select-keys product [:sku :name :description :price-usdc :inventory]))
+(defn- reservation-active?
+  [order now]
+  (and (contains? #{:awaiting-wallet-signature :payment-verification-pending}
+                  (:status order))
+       (= :active (get-in order [:reservation :status]))
+       (try (.isAfter (Instant/parse (get-in order [:reservation :expires-at])) now)
+            (catch Exception _ false))))
 
-(defn- public-record [record]
+(defn- reserved-quantity
+  [state tenant sku now]
+  (reduce + 0
+          (for [order (vals (get-in state [:commerce :orders tenant]))
+                :when (reservation-active? order now)
+                line (:lines order)
+                :when (= sku (:sku line))]
+            (:quantity line))))
+
+(defn- safe-product [state tenant product now]
+  (assoc (select-keys product [:sku :name :description :price-usdc])
+         :inventory (max 0 (- (:inventory product)
+                              (reserved-quantity state tenant (:sku product) now)))))
+
+(defn- public-record [state tenant record]
   (when (= "published" (get-in record [:publication :status]))
     {:schema storefront-schema
      :slug (get-in record [:publication :slug])
      :store {:display-name (:display-name record)
              :merchant-did (:merchant-did record)}
-     :products (mapv safe-product (active-products record))
+     :products (mapv #(safe-product state tenant % (*instant*))
+                     (active-products record))
      :payment (select-keys (:payment record)
                            [:protocol :version :facilitator :network :chain-id :asset :pay-to])
      :shipping {:carrier (get-in record [:shipping :carrier])
@@ -307,14 +362,18 @@
 (defn storefront
   "Public, deliberately redacted storefront by slug. Legal and delivery addresses stay private."
   [slug]
-  (some (fn [[_ record]]
-          (when (= (str/lower-case (str slug))
-                   (get-in record [:publication :slug]))
-            (public-record record)))
-        (get-in (store/snapshot) [:commerce :stores])))
+  (let [state (store/snapshot)]
+    (some (fn [[tenant record]]
+            (when (= (str/lower-case (str slug))
+                     (get-in record [:publication :slug]))
+              (public-record state tenant record)))
+          (get-in state [:commerce :stores]))))
 
 (defn current-storefront [session]
-  (some-> (stored session) public-record))
+  (let [state (store/snapshot)
+        tenant (:organization-id session)]
+    (some->> (get-in state [:commerce :stores tenant])
+             (public-record state tenant))))
 
 (defn- quantity! [value]
   (let [quantity (if (integer? value) value
@@ -334,61 +393,236 @@
 (defn- atomic-usdc [amount]
   (str (.toBigIntegerExact (.movePointRight (bigdec amount) 6))))
 
+(defn- payment-requirements
+  [record slug order-id amount]
+  {:scheme payment-scheme
+   :network payment-network
+   :maxAmountRequired (atomic-usdc amount)
+   :resource (str "/api/storefront/" slug "/orders/" order-id "/payment")
+   :description (str "Cloud Itonami order " order-id)
+   :mimeType "application/json"
+   :payTo (get-in record [:payment :pay-to])
+   :maxTimeoutSeconds reservation-seconds
+   :asset usdc-base
+   :extra {:name "USD Coin" :version "2"}})
+
+(defn- public-order
+  [order]
+  (let [expired? (and (= :awaiting-wallet-signature (:status order))
+                      (not (reservation-active? order (*instant*))))]
+    (-> order
+        (dissoc :buyer-user-id)
+        (assoc :status (name (if expired? :payment-window-expired (:status order))))
+        (cond-> expired? (assoc-in [:reservation :status] :expired))
+        (update-in [:reservation :status] name)
+        (update-in [:fulfillment :status] name)
+        (update-in [:fulfillment :effect-boundary] name))))
+
+(defn- storefront-record
+  [state slug]
+  (some (fn [[tenant record]]
+          (when (= (str/lower-case (str slug))
+                   (get-in record [:publication :slug]))
+            [tenant record]))
+        (get-in state [:commerce :stores])))
+
 (defn create-order!
   [session slug input]
-  (let [storefront-record (some (fn [[tenant record]]
-                                  (when (= (str/lower-case (str slug))
-                                           (get-in record [:publication :slug]))
-                                    [tenant record]))
-                                (get-in (store/snapshot) [:commerce :stores]))
-        [tenant record] (or storefront-record
-                            (refuse :commerce/storefront-not-found
-                                    "公開storefrontが見つかりません。"))
-        buyer-did (or (identity/session-did session)
+  (let [buyer-did (or (identity/session-did session)
                       (refuse :commerce/buyer-did-required
                               "注文にはUser DIDが必要です。"))
         requested (present input :lines)
         _ (when-not (and (vector? requested) (seq requested) (<= (count requested) 100))
             (refuse :commerce/order-lines-required "商品を1〜100件指定してください。"))
-        lines (mapv
-               (fn [line]
-                 (let [sku (sku! (:sku line))
-                       quantity (quantity! (:quantity line))
-                       product (or (get-in record [:products sku])
-                                   (refuse :commerce/product-not-found
-                                           (str sku "は販売されていません。")))]
-                   (when (> quantity (:inventory product))
-                     (refuse :commerce/insufficient-inventory
-                             (str sku "の在庫が不足しています。")))
-                   {:sku sku :name (:name product) :quantity quantity
-                    :unit-price-usdc (:price-usdc product)
-                    :line-total-usdc (line-total (:price-usdc product) quantity)}))
-               requested)
-        amount (reduce money-add "0" (map :line-total-usdc lines))
+        requested-skus (mapv #(sku! (:sku %)) requested)
+        _ (when-not (= (count requested-skus) (count (distinct requested-skus)))
+            (refuse :commerce/duplicate-order-sku
+                    "同じSKUは注文内で1行にまとめてください。"))
         order-id (str (java.util.UUID/randomUUID))
         now (store/now)
-        order {:schema order-schema :id order-id :store-slug slug
-               :merchant-did (:merchant-did record) :buyer-did buyer-did
-               :buyer-user-id (:user-id session) :lines lines
-               :delivery-address (address! (present input :delivery-address :delivery_address)
-                                           "配送先")
-               :amount-usdc amount :status :awaiting-wallet-signature
-               :payment-request {:protocol "x402" :version 1 :scheme "exact"
-                                 :network "base" :chain-id base-chain-id :asset "USDC"
-                                 :amount amount :amount-atomic (atomic-usdc amount)
-                                 :pay-to (get-in record [:payment :pay-to])
-                                 :facilitator (get-in record [:payment :facilitator])
-                                 :signature nil
-                                 :note "外部Walletでの署名とsettlementはまだ行われていません。"}
-               :fulfillment {:status :not-requested
-                             :effect-boundary :plan-only}
-               :created-at now :updated-at now}]
-    (store/transact! assoc-in [:commerce :orders tenant order-id] order)
-    (-> order
-        (dissoc :buyer-user-id)
-        (update :status name)
-        (update-in [:fulfillment :status] name)
-        (update-in [:fulfillment :effect-boundary] name))))
+        expires-at (str (.plusSeconds (*instant*) reservation-seconds))
+        delivery (address! (present input :delivery-address :delivery_address) "配送先")
+        created (atom nil)]
+    (store/transact!
+     (fn [state]
+       (let [[tenant record] (or (storefront-record state slug)
+                                 (refuse :commerce/storefront-not-found
+                                         "公開storefrontが見つかりません。"))
+             lines (mapv
+                    (fn [line]
+                      (let [sku (sku! (:sku line))
+                            quantity (quantity! (:quantity line))
+                            product (or (get-in record [:products sku])
+                                        (refuse :commerce/product-not-found
+                                                (str sku "は販売されていません。")))
+                            available (- (:inventory product)
+                                         (reserved-quantity state tenant sku (*instant*)))]
+                        (when (> quantity available)
+                          (refuse :commerce/insufficient-inventory
+                                  (str sku "の予約可能在庫が不足しています。")))
+                        {:sku sku :name (:name product) :quantity quantity
+                         :unit-price-usdc (:price-usdc product)
+                         :line-total-usdc (line-total (:price-usdc product) quantity)}))
+                    requested)
+             amount (reduce money-add "0" (map :line-total-usdc lines))
+             requirements (payment-requirements record slug order-id amount)
+             order {:schema order-schema :id order-id :store-slug slug
+                    :merchant-did (:merchant-did record) :buyer-did buyer-did
+                    :buyer-user-id (:user-id session) :lines lines
+                    :delivery-address delivery :amount-usdc amount
+                    :status :awaiting-wallet-signature
+                    :reservation {:status :active :expires-at expires-at}
+                    :payment-request {:protocol "x402" :version 1
+                                      :facilitator (get-in record [:payment :facilitator])
+                                      :requirements requirements
+                                      :signature nil
+                                      :note "外部Wallet送信とオンチェーン検証はまだ行われていません。"}
+                    :fulfillment {:status :not-requested
+                                  :effect-boundary :payment-required}
+                    :created-at now :updated-at now}]
+         (reset! created order)
+         (assoc-in state [:commerce :orders tenant order-id] order))))
+    (public-order @created)))
+
+(defn order
+  [session slug order-id]
+  (let [state (store/snapshot)
+        [tenant _] (or (storefront-record state slug)
+                       (refuse :commerce/storefront-not-found
+                               "公開storefrontが見つかりません。"))
+        found (or (get-in state [:commerce :orders tenant order-id])
+                  (refuse :commerce/order-not-found "注文が見つかりません。"))]
+    (when-not (= (:user-id session) (:buyer-user-id found))
+      (refuse :commerce/order-forbidden "この注文を読む権限がありません。"))
+    (public-order found)))
+
+(defn- transaction-hash! [value]
+  (let [value (some-> value str str/trim str/lower-case)]
+    (when-not (and value (re-matches #"0x[0-9a-f]{64}" value))
+      (refuse :commerce/invalid-transaction "Base transaction hashが不正です。"))
+    value))
+
+(defn- payer-address! [value]
+  (let [value (some-> value str str/trim str/lower-case)]
+    (when-not (and value (re-matches #"0x[0-9a-f]{40}" value))
+      (refuse :commerce/invalid-payer "支払Walletアドレスが不正です。"))
+    value))
+
+(defn verify-order-payment!
+  [session slug order-id input]
+  (let [state (store/snapshot)
+        [tenant _] (or (storefront-record state slug)
+                       (refuse :commerce/storefront-not-found
+                               "公開storefrontが見つかりません。"))
+        found (or (get-in state [:commerce :orders tenant order-id])
+                  (refuse :commerce/order-not-found "注文が見つかりません。"))
+        tx (transaction-hash! (present input :transaction :tx-hash :tx_hash))
+        payer (payer-address! (present input :payer :from))]
+    (when-not (= (:user-id session) (:buyer-user-id found))
+      (refuse :commerce/order-forbidden "この注文を決済する権限がありません。"))
+    (if (and (= :paid (:status found))
+             (= tx (get-in found [:payment :transaction])))
+      (public-order found)
+      (do
+        (when-not (reservation-active? found (*instant*))
+          (refuse :commerce/payment-window-expired
+                  "在庫予約の有効期限が切れました。送金せず、カートから注文を作り直してください。"))
+        (when-let [used-by (get-in state [:commerce :payment-transactions tx])]
+          (when-not (= order-id used-by)
+            (refuse :commerce/payment-replayed
+                    "このtransactionは別の注文ですでに使用されています。")))
+        (let [payment {:x402Version 1 :scheme payment-scheme :network payment-network
+                       :payload {:txHash tx :from payer}}
+              requirements (get-in found [:payment-request :requirements])
+              verdict (*verify-payment!* (get-in found [:payment-request :facilitator])
+                                         payment requirements)]
+          (when-not (:isValid verdict)
+            (throw (ex-info "決済はまだオンチェーンで確認できません。確認後に再試行します。"
+                            {:type :commerce/payment-unverified
+                             :reason (:invalidReason verdict)})))
+          (let [settled (atom nil)]
+            (store/transact!
+             (fn [current]
+               (let [latest (or (get-in current [:commerce :orders tenant order-id])
+                                (refuse :commerce/order-not-found "注文が見つかりません。"))
+                     used-by (get-in current [:commerce :payment-transactions tx])]
+                 (cond
+                   (and (= :paid (:status latest))
+                        (= tx (get-in latest [:payment :transaction])))
+                   (do (reset! settled latest) current)
+
+                   (and used-by (not= order-id used-by))
+                   (refuse :commerce/payment-replayed
+                           "このtransactionは別の注文ですでに使用されています。")
+
+                   (not (reservation-active? latest (*instant*)))
+                   (refuse :commerce/payment-window-expired
+                           "在庫予約の有効期限が切れました。サポートへtransaction hashを連絡してください。")
+
+                   :else
+                   (let [paid-at (store/now)
+                         next-order (-> latest
+                                        (assoc :status :paid :paid-at paid-at :updated-at paid-at
+                                               :payment {:status :verified-onchain
+                                                         :transaction tx :payer payer
+                                                         :network payment-network
+                                                         :verified-at paid-at})
+                                        (assoc-in [:reservation :status] :captured)
+                                        (assoc :fulfillment {:status :ready-to-pack
+                                                             :effect-boundary :merchant-action-required}))
+                         next-state (reduce
+                                     (fn [s {:keys [sku quantity]}]
+                                       (let [on-hand (get-in s [:commerce :stores tenant :products sku :inventory])]
+                                         (when (< on-hand quantity)
+                                           (refuse :commerce/inventory-invariant
+                                                   "予約済み在庫を確定できません。手動確認が必要です。"))
+                                         (update-in s [:commerce :stores tenant :products sku :inventory]
+                                                    - quantity)))
+                                     current (:lines latest))]
+                     (reset! settled next-order)
+                     (-> next-state
+                         (assoc-in [:commerce :orders tenant order-id] next-order)
+                         (assoc-in [:commerce :payment-transactions tx] order-id)))))))
+            (public-order @settled)))))))
+
+(defn merchant-orders [session]
+  (let [tenant (:organization-id session)]
+    {:orders (->> (get-in (store/snapshot) [:commerce :orders tenant])
+                  vals (sort-by :created-at) reverse (mapv public-order))}))
+
+(def ^:private fulfillment-next
+  {:ready-to-pack #{:packed}
+   :packed #{:shipped}
+   :shipped #{:delivered}})
+
+(defn advance-fulfillment!
+  [session input]
+  (let [tenant (:organization-id session)
+        order-id (text! (present input :order-id :order_id) "注文ID" 100)
+        next-status (some-> (present input :status) name keyword)
+        tracking (some-> (present input :tracking-number :tracking_number) str str/trim not-empty)
+        carrier (some-> (present input :carrier) str str/trim not-empty)
+        changed (atom nil)]
+    (store/transact!
+     (fn [state]
+       (let [found (or (get-in state [:commerce :orders tenant order-id])
+                       (refuse :commerce/order-not-found "注文が見つかりません。"))
+             current (get-in found [:fulfillment :status])]
+         (when-not (contains? (get fulfillment-next current #{}) next-status)
+           (refuse :commerce/invalid-fulfillment-transition
+                   (str (name current) "から" (name next-status) "へは進めません。")))
+         (when (and (= :shipped next-status) (str/blank? tracking))
+           (refuse :commerce/tracking-required "発送済みには追跡番号が必要です。"))
+         (let [now (store/now)
+               next-order (-> found
+                              (assoc-in [:fulfillment :status] next-status)
+                              (assoc-in [:fulfillment :updated-at] now)
+                              (cond-> carrier (assoc-in [:fulfillment :carrier] carrier)
+                                      tracking (assoc-in [:fulfillment :tracking-number] tracking))
+                              (assoc :updated-at now))]
+           (reset! changed next-order)
+           (assoc-in state [:commerce :orders tenant order-id] next-order)))))
+    (public-order @changed)))
 
 (def tool-definitions
   [{:name "commerce_store_overview"
@@ -432,14 +666,28 @@
                       "This does not claim an external DNS or separate deployment. (write)")
     :parameters {:type "object"
                  :properties {:slug {:type "string"}}
-                 :required ["slug"]}}])
+                 :required ["slug"]}}
+   {:name "commerce_order_list"
+    :description (str "List this tenant's paid and unpaid storefront orders, including "
+                      "reservation and fulfillment state.")
+    :parameters {:type "object" :properties {}}}
+   {:name "commerce_fulfillment_advance"
+    :description (str "Advance a paid order through ready-to-pack, packed, shipped, and delivered. "
+                      "Shipping requires a tracking number. (write)")
+    :parameters {:type "object"
+                 :properties {:order_id {:type "string"}
+                              :status {:type "string" :enum ["packed" "shipped" "delivered"]}
+                              :carrier {:type "string"}
+                              :tracking_number {:type "string"}}
+                 :required ["order_id" "status"]}}])
 
 (defn tool? [name]
   (str/starts-with? (str name) "commerce_"))
 
 (defn write-tool? [name]
   (and (tool? name)
-       (not= "commerce_store_overview" (str name))))
+       (not (contains? #{"commerce_store_overview" "commerce_order_list"}
+                       (str name)))))
 
 (defn describe [name input]
   (case (str name)
@@ -457,6 +705,11 @@
     (str (or (:sku input) "商品") "の商品名・USDC価格・在庫を公開カタログ候補へ記録します。")
     "commerce_store_publish"
     (str (or (:slug input) "store") "として、このCloud Itonami上のstorefrontを公開します。")
+    "commerce_order_list"
+    "このTenantの注文、決済確認、在庫予約、発送状態を読みます。"
+    "commerce_fulfillment_advance"
+    (str (or (:order_id input) (:order-id input) "注文") "を"
+         (or (:status input) "次の発送状態") "へ進めます。")
     "Commerce設定を更新します。"))
 
 (defn call-tool!
@@ -470,6 +723,8 @@
       "commerce_store_finalize" (finalize! session)
       "commerce_product_upsert" (upsert-product! session input)
       "commerce_store_publish" (publish-storefront! session input)
+      "commerce_order_list" (merchant-orders session)
+      "commerce_fulfillment_advance" (advance-fulfillment! session input)
       (refuse :commerce/unknown-tool "未知のCommerce toolです。"))))
 
 (defn bot-summary [bot]

@@ -2571,8 +2571,12 @@
 (defn- storefront-route? [method path]
   (or (and (= method "GET") (= path "/api/storefront/current"))
       (and (= method "GET") (re-matches #"/api/storefront/([^/]+)" path))
+      (and (= method "GET")
+           (re-matches #"/api/storefront/([^/]+)/orders/([^/]+)" path))
       (and (= method "POST")
-           (re-matches #"/api/storefront/([^/]+)/orders" path))))
+           (re-matches #"/api/storefront/([^/]+)/orders" path))
+      (and (= method "POST")
+           (re-matches #"/api/storefront/([^/]+)/orders/([^/]+)/payment" path))))
 
 (defn- route-storefront! [exchange config method path]
   (cond
@@ -2583,6 +2587,12 @@
       (send! exchange 404 {:error {:type "storefront-not-published"
                                    :message "このTenantのstorefrontは未公開です。"}}))
 
+    (and (= method "GET")
+         (re-matches #"/api/storefront/([^/]+)/orders/([^/]+)" path))
+    (let [session (require-human-session! exchange)
+          [_ slug order-id] (re-matches #"/api/storefront/([^/]+)/orders/([^/]+)" path)]
+      (send! exchange 200 (commerce/order session slug order-id)))
+
     (= method "GET")
     (let [[_ slug] (re-matches #"/api/storefront/([^/]+)" path)]
       (if-some [published (commerce/storefront slug)]
@@ -2590,13 +2600,23 @@
         (send! exchange 404 {:error {:type "storefront-not-found"
                                      :message "公開storefrontが見つかりません。"}})))
 
-    :else
+    (re-matches #"/api/storefront/([^/]+)/orders" path)
     (let [session (require-human-session! exchange)
           [_ slug] (re-matches #"/api/storefront/([^/]+)/orders" path)]
       (require-origin! exchange config)
       (require-csrf! exchange session)
       (send! exchange 201
-             (commerce/create-order! session slug (read-json exchange))))))
+             (commerce/create-order! session slug (read-json exchange))))
+
+    :else
+    (let [session (require-human-session! exchange)
+          [_ slug order-id]
+          (re-matches #"/api/storefront/([^/]+)/orders/([^/]+)/payment" path)]
+      (require-origin! exchange config)
+      (require-csrf! exchange session)
+      (send! exchange 200
+             (commerce/verify-order-payment! session slug order-id
+                                             (read-json exchange))))))
 
 (defn- storefront-handler [configuration]
   (reify HttpHandler
@@ -2616,6 +2636,12 @@
                        :identity/invalid-origin 403
                        :identity/invalid-csrf 403
                        :commerce/storefront-not-found 404
+                       :commerce/order-not-found 404
+                       :commerce/order-forbidden 403
+                       :commerce/payment-unverified 402
+                       :commerce/payment-window-expired 409
+                       :commerce/payment-replayed 409
+                       :commerce/inventory-invariant 409
                        400)
                      {:error {:type (name (or type :storefront/error))
                               :message (.getMessage error)}})))

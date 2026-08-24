@@ -7659,7 +7659,12 @@
         await refreshIdentityForWrite();
         ({request, data} = await send());
       }
-      if (!request.ok) throw new Error(data?.error?.message || '認証要求を完了できませんでした。');
+      if (!request.ok) {
+        const error = new Error(data?.error?.message || '認証要求を完了できませんでした。');
+        error.status = request.status;
+        error.type = data?.error?.type;
+        throw error;
+      }
       return data;
     };
     const postJSON = (path, body={}, authenticated=false) =>
@@ -11254,7 +11259,7 @@
     });
 
     const storefrontState = {
-      data:null, cart:new Map(), loadedFor:null
+      data:null, cart:new Map(), loadedFor:null, order:null
     };
     const storefrontSlugFromAddress = () => initialParams.get('store') || '';
     const usdcAtomic = (value) => {
@@ -11265,6 +11270,97 @@
       const whole = atomic / 1000000n;
       const fraction = String(atomic % 1000000n).padStart(6, '0').replace(/0+$/, '');
       return `${whole}${fraction ? `.${fraction}` : ''} USDC`;
+    };
+    const hex32 = (value) => value.toString(16).padStart(64, '0');
+    const erc20TransferData = (to, value) =>
+      `0xa9059cbb${to.toLowerCase().replace(/^0x/, '').padStart(64, '0')}${hex32(value)}`;
+    const sleep = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
+    const waitForBaseConfirmations = async (transaction, status) => {
+      for (let attempt = 0; attempt < 60; attempt += 1) {
+        const receipt = await ethereum.request({method:'eth_getTransactionReceipt', params:[transaction]});
+        if (receipt) {
+          if (receipt.status !== '0x1') throw new Error('USDC送金がrevertされました。');
+          const head = BigInt(await ethereum.request({method:'eth_blockNumber'}));
+          if (head - BigInt(receipt.blockNumber) + 1n >= 3n) return;
+        }
+        status.textContent = '送金済みです。Baseの3 confirmationを待っています…';
+        await sleep(4000);
+      }
+      throw new Error('確認待ちがタイムアウトしました。transaction hashを保存して再確認してください。');
+    };
+    const payStorefrontOrder = async (order, card, status, button) => {
+      if (!window.ethereum) throw new Error('Base対応の外部Walletが見つかりません。');
+      const requirements = order['payment-request'].requirements;
+      let transaction = button.dataset.transaction || '';
+      let from = button.dataset.payer || '';
+      button.disabled = true;
+      try {
+        if (!transaction) {
+          status.textContent = 'Base Walletへの接続を確認しています…';
+          const accounts = await ethereum.request({method:'eth_requestAccounts'});
+          let chain = await ethereum.request({method:'eth_chainId'});
+          if (chain !== '0x2105') {
+            try {
+              await ethereum.request({method:'wallet_switchEthereumChain', params:[{chainId:'0x2105'}]});
+            } catch (error) {
+              if (error.code !== 4902) throw error;
+              await ethereum.request({method:'wallet_addEthereumChain', params:[{
+                chainId:'0x2105', chainName:'Base',
+                nativeCurrency:{name:'Ether', symbol:'ETH', decimals:18},
+                rpcUrls:['https://mainnet.base.org'], blockExplorerUrls:['https://basescan.org']
+              }]});
+            }
+            chain = await ethereum.request({method:'eth_chainId'});
+            if (chain !== '0x2105') throw new Error('WalletをBaseへ切り替えられませんでした。');
+          }
+          from = accounts[0];
+          status.textContent = `${order['amount-usdc']} USDCの送金をWalletで確認してください。`;
+          transaction = await ethereum.request({method:'eth_sendTransaction', params:[{
+            from, to:requirements.asset,
+            data:erc20TransferData(requirements.payTo, BigInt(requirements.maxAmountRequired)),
+            value:'0x0'
+          }]});
+          // A broadcast transaction is never replaced by a second send from this
+          // button. Retries below only wait for and re-verify the same proof.
+          button.dataset.transaction = transaction;
+          button.dataset.payer = from;
+          button.textContent = '同じtransactionを再確認する';
+        } else {
+          status.textContent = `送金済み ${transaction} を再確認しています…`;
+        }
+        await waitForBaseConfirmations(transaction, status);
+        status.textContent = 'x402.nexusでオンチェーン決済を検証しています…';
+        let paid;
+        for (let attempt = 0; attempt < 5; attempt += 1) {
+          try {
+            paid = await postJSON(
+              `/api/storefront/${encodeURIComponent(order['store-slug'])}/orders/${encodeURIComponent(order.id)}/payment`,
+              {transaction, payer:from}, true);
+            break;
+          } catch (error) {
+            if (error.status !== 402 || attempt === 4) throw error;
+            await sleep(3000);
+          }
+        }
+        storefrontState.order = paid;
+        storefrontState.cart.clear();
+        card.replaceChildren(
+          make('strong', null, '決済確認済み'),
+          make('p', null, `${paid['amount-usdc']} USDC · ${paid.status}`),
+          make('p', 'form-help', `注文 ${paid.id}`),
+          make('p', 'form-help', `発送状態 ${paid.fulfillment.status}`));
+        const explorer = make('a', null, 'Basescanでtransactionを確認');
+        explorer.href = `https://basescan.org/tx/${transaction}`;
+        explorer.target = '_blank'; explorer.rel = 'noopener noreferrer';
+        card.append(explorer);
+        status.textContent = '決済をオンチェーンで確認し、在庫を確定しました。店舗は梱包を開始できます。';
+        delete button.dataset.transaction;
+        delete button.dataset.payer;
+        storefrontState.loadedFor = null;
+        await loadStorefront();
+      } finally {
+        button.disabled = false;
+      }
     };
     const addStorefrontMessage = (text, buyer=false) => {
       const message = make('div', `storefront-message${buyer ? ' storefront-message--buyer' : ''}`, text);
@@ -11387,13 +11483,21 @@
         const order = await postJSON(
           `/api/storefront/${encodeURIComponent(storefrontState.data.slug)}/orders`,
           {lines, 'delivery-address':address}, true);
+        storefrontState.order = order;
+        const requirements = order['payment-request'].requirements;
         const card = $('#storefront-order'); card.hidden = false; card.replaceChildren();
         card.append(make('strong', null, 'x402 支払い内容'),
           make('p', null, `${order['amount-usdc']} USDC · ${order.status}`),
           make('p', 'form-help', `注文 ${order.id}`),
-          make('p', 'form-help', `受取先 ${order['payment-request']['pay-to']}`),
-          make('p', 'form-help', 'まだ決済・在庫減算・発送依頼は行われていません。外部Wallet署名が次の工程です。'));
-        status.textContent = '注文内容を固定しました。外部Wallet署名待ちです。';
+          make('p', 'form-help', `受取先 ${requirements.payTo}`),
+          make('p', 'form-help', `在庫予約期限 ${order.reservation['expires-at']}`),
+          make('p', 'form-help', '支払いボタンは外部Walletの確認画面を開きます。秘密鍵やseed phraseは入力しないでください。'));
+        const pay = make('button', 'primary-action', 'Base WalletでUSDCを支払う');
+        pay.type = 'button';
+        pay.addEventListener('click', () => payStorefrontOrder(order, card, status, pay)
+          .catch((error) => { status.textContent = error.message; pay.disabled = false; }));
+        card.append(pay);
+        status.textContent = '在庫を30分予約しました。Walletで確認するまで送金されません。';
       } catch (error) { status.textContent = error.message; }
       finally { button.disabled = storefrontState.cart.size === 0; }
     });

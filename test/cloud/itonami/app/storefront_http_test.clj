@@ -99,7 +99,7 @@
         (is (nil? (get-in response [:body :store :legal-address])))
         (is (nil? (get-in response [:body :shipping :ship-from])))))))
 
-(deftest checkout-requires-passkey-and-csrf-and-returns-unsigned-x402
+(deftest checkout-requires-passkey-and-csrf-and-returns-reserved-x402-order
   (with-server
     (fn []
       (let [body {:lines [{:sku "TEE-01" :quantity 2 :price_usdc "0.01"}]
@@ -117,4 +117,47 @@
           (is (= "24.68" (get-in response [:body :amount-usdc])))
           (is (= "awaiting-wallet-signature" (get-in response [:body :status])))
           (is (nil? (get-in response [:body :payment-request :signature])))
+          (is (= "transaction"
+                 (get-in response [:body :payment-request :requirements :scheme])))
+          (is (= "active" (get-in response [:body :reservation :status])))
           (is (= "not-requested" (get-in response [:body :fulfillment :status]))))))))
+
+(deftest payment-route-verifies-onchain-before-capturing-inventory
+  (with-server
+    (fn []
+      (reset! current-session {:csrf csrf :user-id "bob" :organization-id "buyer-org"
+                               :kind :passkey :authn-level :phishing-resistant})
+      (let [created (call :post "/api/storefront/alice-store/orders"
+                          {:lines [{:sku "TEE-01" :quantity 2}]
+                           :delivery_address address} true)
+            order-id (get-in created [:body :id])
+            path (str "/api/storefront/alice-store/orders/" order-id "/payment")
+            proof {:transaction "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                   :payer "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}]
+        (testing "unverified proof is a 402 and leaves on-hand stock untouched"
+          (with-redefs [commerce/*verify-payment!*
+                        (fn [_ _ _] {:isValid false :invalidReason "tx-not-found"})]
+            (is (= 402 (:status (call :post path proof true)))))
+          (is (= 4 (get-in (store/snapshot)
+                           [:commerce :stores "org-1" :products "TEE-01" :inventory]))))
+        (testing "verified proof captures stock exactly once"
+          (with-redefs [commerce/*verify-payment!*
+                        (fn [_ _ _] {:isValid true :payer (:payer proof)})]
+            (let [paid (call :post path proof true)]
+              (is (= 200 (:status paid)))
+              (is (= "paid" (get-in paid [:body :status])))
+              (is (= "ready-to-pack" (get-in paid [:body :fulfillment :status])))
+              (is (= 2 (get-in (store/snapshot)
+                               [:commerce :stores "org-1" :products "TEE-01" :inventory])))
+              (is (= 200 (:status (call :post path proof true))))
+              (is (= 2 (get-in (store/snapshot)
+                               [:commerce :stores "org-1" :products "TEE-01" :inventory]))))))
+        (testing "only the buyer can read the private order"
+          (is (= 200 (:status (call :get
+                                    (str "/api/storefront/alice-store/orders/" order-id)
+                                    nil false))))
+          (reset! current-session {:csrf csrf :user-id "alice" :organization-id "org-1"
+                                   :kind :passkey :authn-level :phishing-resistant})
+          (is (= 403 (:status (call :get
+                                    (str "/api/storefront/alice-store/orders/" order-id)
+                                    nil false)))))))))
