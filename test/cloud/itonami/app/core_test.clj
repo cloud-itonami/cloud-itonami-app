@@ -358,9 +358,13 @@
     (is (str/includes? js "storefrontProductsFor(query)"))
     (is (str/includes? js "usdcAtomic(product['price-usdc'])"))
     (is (str/includes? js "公開価格と在庫を再確認しています"))
-    (is (str/includes? js "まだ決済・在庫減算・発送依頼は行われていません"))
+      (is (str/includes? js "eth_sendTransaction"))
+      (is (str/includes? js "waitForBaseConfirmations"))
+      (is (str/includes? js "button.dataset.transaction"))
+      (is (str/includes? js "同じtransactionを再確認する"))
+    (is (str/includes? js "決済をオンチェーンで確認し、在庫を確定しました"))
     (is (str/includes? html "回答は公開カタログの内容だけを使います"))
-    (is (str/includes? html "注文額はサーバーが公開価格から再計算します"))))
+    (is (str/includes? html "在庫を30分予約します"))))
 
 (deftest every-padded-box-in-the-bots-view-is-border-box
   ;; Measured 2026-08-12 in the running app: `.bots-onboard` (96px),

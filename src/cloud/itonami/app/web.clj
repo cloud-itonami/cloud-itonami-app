@@ -2031,9 +2031,9 @@
               [:div {:class "field"} [:label {:for "storefront-line2"} "建物名など（任意）"]
                [:input {:id "storefront-line2" :name "line2" :autocomplete "address-line2"}]]]]
             [:p {:class "form-help"}
-             "注文額はサーバーが公開価格から再計算します。送信後もWallet署名までは決済されません。"]
+             "注文額はサーバーが公開価格から再計算し、在庫を30分予約します。外部Walletで明示確認するまで送金されません。"]
             [:button {:class "primary-action" :id "storefront-checkout" :type "submit" :disabled true}
-             "x402支払い内容を確認"]]
+             "注文内容と在庫を予約"]]
            [:p {:class "form-help" :id "storefront-checkout-status" :role "status" :aria-live "polite"}]
            [:div {:class "storefront-order" :id "storefront-order" :hidden true}]]]]
         [:section {:class "view" :data-view-panel "wallet" :hidden true}

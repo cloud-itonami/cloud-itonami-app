@@ -158,11 +158,158 @@
                     :delivery_address address})]
         (is (= "24.68" (:amount-usdc order))
             "client-supplied prices are ignored")
-        (is (= "24680000" (get-in order [:payment-request :amount-atomic])))
+        (is (= "24680000"
+               (get-in order [:payment-request :requirements :maxAmountRequired])))
+        (is (= "transaction"
+               (get-in order [:payment-request :requirements :scheme])))
+        (is (= commerce/usdc-base
+               (get-in order [:payment-request :requirements :asset])))
         (is (= "did:key:bob" (:buyer-did order)))
         (is (= "awaiting-wallet-signature" (:status order)))
         (is (nil? (get-in order [:payment-request :signature])))
         (is (= "not-requested" (get-in order [:fulfillment :status])))
-        (is (= 4 (get-in (commerce/storefront "alice-store")
+        (is (= 2 (get-in (commerce/storefront "alice-store")
                          [:products 0 :inventory]))
-            "inventory is not decremented before settlement")))))
+            "the public availability excludes active reservations")
+        (is (= 4 (get-in (store/snapshot)
+                         [:commerce :stores "org-1" :products "TEE-01" :inventory]))
+            "on-hand inventory is not decremented before verified payment")))))
+
+(deftest verified-x402-payment-captures-inventory-once-and-enables-fulfillment
+  (with-commerce-store
+    (fn []
+      (ready-store!)
+      (commerce/upsert-product!
+       alice {:sku "TEE-01" :name "営みTシャツ" :description "綿100%"
+              :price_usdc "12.34" :inventory 4})
+      (commerce/publish-storefront! alice {:slug "alice-store"})
+      (let [instant (java.time.Instant/parse "2026-08-24T06:00:00Z")
+            order-a (binding [commerce/*instant* (constantly instant)]
+                      (commerce/create-order!
+                       bob "alice-store"
+                       {:lines [{:sku "TEE-01" :quantity 2}]
+                        :delivery_address address}))
+            order-b (binding [commerce/*instant* (constantly instant)]
+                      (commerce/create-order!
+                       bob "alice-store"
+                       {:lines [{:sku "TEE-01" :quantity 2}]
+                        :delivery_address address}))
+            tx "0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            payer "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+            verify-calls (atom [])
+            settle (fn [order]
+                     (binding [commerce/*instant* (constantly instant)
+                               commerce/*verify-payment!*
+                               (fn [facilitator payment requirements]
+                                 (swap! verify-calls conj [facilitator payment requirements])
+                                 {:isValid true :payer payer})]
+                       (commerce/verify-order-payment!
+                        bob "alice-store" (:id order) {:transaction tx :payer payer})))]
+        (let [paid (settle order-a)]
+          (is (= "paid" (:status paid)))
+          (is (= "ready-to-pack" (get-in paid [:fulfillment :status])))
+          (is (= tx (get-in paid [:payment :transaction])))
+          (is (= 2 (get-in (store/snapshot)
+                           [:commerce :stores "org-1" :products "TEE-01" :inventory])))
+          (is (= "x402.nexus" (some-> @verify-calls first first java.net.URI/create .getHost))))
+        (testing "the same verified transaction is idempotent for its order"
+          (settle order-a)
+          (is (= 2 (get-in (store/snapshot)
+                           [:commerce :stores "org-1" :products "TEE-01" :inventory]))))
+        (testing "one transaction cannot buy a second order"
+          (is (= :commerce/payment-replayed
+                 (refuses #(settle order-b)))))
+        (testing "merchant Chat tools drive a one-way fulfillment state machine"
+          (is (= 2 (count (:orders (commerce/merchant-orders alice)))))
+          (is (= "packed"
+                 (get-in (commerce/advance-fulfillment!
+                          alice {:order_id (:id order-a) :status "packed"})
+                         [:fulfillment :status])))
+          (is (= :commerce/tracking-required
+                 (refuses #(commerce/advance-fulfillment!
+                            alice {:order_id (:id order-a) :status "shipped"}))))
+          (let [shipped (commerce/advance-fulfillment!
+                         alice {:order_id (:id order-a) :status "shipped"
+                                :carrier "日本郵便" :tracking_number "JP-TRACK-1"})]
+            (is (= "shipped" (get-in shipped [:fulfillment :status])))
+            (is (= "JP-TRACK-1" (get-in shipped [:fulfillment :tracking-number])))
+            (is (= "delivered"
+                   (get-in (commerce/advance-fulfillment!
+                            alice {:order_id (:id order-a) :status "delivered"})
+                           [:fulfillment :status])))))))))
+
+(deftest unverified-payment-never-decrements-inventory
+  (with-commerce-store
+    (fn []
+      (ready-store!)
+      (commerce/upsert-product!
+       alice {:sku "TEE-01" :name "営みTシャツ" :description "綿100%"
+              :price_usdc "12.34" :inventory 4})
+      (commerce/publish-storefront! alice {:slug "alice-store"})
+      (let [order (commerce/create-order!
+                   bob "alice-store"
+                   {:lines [{:sku "TEE-01" :quantity 1}]
+                    :delivery_address address})]
+        (binding [commerce/*verify-payment!*
+                  (fn [_ _ _] {:isValid false :invalidReason "tx-not-found"})]
+          (is (= :commerce/payment-unverified
+                 (refuses #(commerce/verify-order-payment!
+                            bob "alice-store" (:id order)
+                            {:transaction "0xcccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+                             :payer "0xdddddddddddddddddddddddddddddddddddddddd"})))))
+        (is (= 4 (get-in (store/snapshot)
+                         [:commerce :stores "org-1" :products "TEE-01" :inventory])))
+        (is (= :awaiting-wallet-signature
+               (get-in (store/snapshot)
+                       [:commerce :orders "org-1" (:id order) :status])))))))
+
+(deftest expired-reservation-cannot-capture-inventory
+  (with-commerce-store
+    (fn []
+      (ready-store!)
+      (commerce/upsert-product!
+       alice {:sku "TEE-01" :name "営みTシャツ" :description "綿100%"
+              :price_usdc "12.34" :inventory 4})
+      (commerce/publish-storefront! alice {:slug "alice-store"})
+      (let [created-at (java.time.Instant/parse "2026-08-24T06:00:00Z")
+            expired-at (.plusSeconds created-at (inc commerce/reservation-seconds))
+            order (binding [commerce/*instant* (constantly created-at)]
+                    (commerce/create-order!
+                     bob "alice-store"
+                     {:lines [{:sku "TEE-01" :quantity 1}]
+                      :delivery_address address}))
+            verify-called? (atom false)]
+        (binding [commerce/*instant* (constantly expired-at)
+                  commerce/*verify-payment!*
+                  (fn [& _]
+                    (reset! verify-called? true)
+                    {:isValid true})]
+          (is (= :commerce/payment-window-expired
+                 (refuses #(commerce/verify-order-payment!
+                            bob "alice-store" (:id order)
+                            {:transaction "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+                             :payer "0xffffffffffffffffffffffffffffffffffffffff"})))))
+        (is (false? @verify-called?) "expired orders never reach the verifier")
+        (is (= "expired"
+               (get-in (binding [commerce/*instant* (constantly expired-at)]
+                         (commerce/order bob "alice-store" (:id order)))
+                       [:reservation :status])))
+        (is (= 4 (get-in (store/snapshot)
+                         [:commerce :stores "org-1" :products "TEE-01" :inventory])))))))
+
+(deftest duplicate-sku-lines-cannot-over-reserve
+  (with-commerce-store
+    (fn []
+      (ready-store!)
+      (commerce/upsert-product!
+       alice {:sku "TEE-01" :name "営みTシャツ" :description "綿100%"
+              :price_usdc "12.34" :inventory 4})
+      (commerce/publish-storefront! alice {:slug "alice-store"})
+      (is (= :commerce/duplicate-order-sku
+             (refuses #(commerce/create-order!
+                        bob "alice-store"
+                        {:lines [{:sku "TEE-01" :quantity 3}
+                                 {:sku "TEE-01" :quantity 3}]
+                         :delivery_address address}))))
+      (is (= 4 (get-in (commerce/storefront "alice-store")
+                       [:products 0 :inventory]))))))
