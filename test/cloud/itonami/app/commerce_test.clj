@@ -93,7 +93,11 @@
         (is (true? (get-in ready [:readiness :ready?])))
         (is (= "not-published" (get-in ready [:publication :status])))
         (is (nil? (get-in ready [:publication :public-url])))
-        (is (= :plan-only (get-in ready [:store :shipping :effect-boundary])))))))
+        (is (= :plan-only (get-in ready [:store :shipping :effect-boundary])))
+        (is (= :not-connected
+               (get-in ready [:store :shipping :fulfillment-integration :status])))
+        (is (= :marketplace-order-reference-required
+               (get-in ready [:store :shipping :fulfillment-integration :reason])))))))
 
 (deftest bot-tools-stay-tenant-scoped
   (with-commerce-store
@@ -225,12 +229,52 @@
                  (get-in (commerce/advance-fulfillment!
                           alice {:order_id (:id order-a) :status "packed"})
                          [:fulfillment :status])))
-          (is (= :commerce/tracking-required
+          (is (= :commerce/order-not-found
+                 (refuses #(commerce/prepare-shipment!
+                            bob {:order_id (:id order-a) :weight_kg 0.5
+                                 :length_cm 30 :width_cm 20 :height_cm 10}))))
+          (is (= :commerce/invalid-fulfillment-transition
                  (refuses #(commerce/advance-fulfillment!
-                            alice {:order_id (:id order-a) :status "shipped"}))))
+                            alice {:order_id (:id order-a) :status "shipped"
+                                   :carrier "日本郵便" :tracking_number "JP-TRACK-1"}))))
+          (is (= :commerce/invalid-parcel
+                 (refuses #(commerce/prepare-shipment!
+                            alice {:order_id (:id order-a) :weight_kg 0
+                                   :length_cm 30 :width_cm 20 :height_cm 10}))))
+          (let [prepared (commerce/prepare-shipment!
+                          alice {:order_id (:id order-a) :weight_kg 0.5
+                                 :length_cm 30 :width_cm 20 :height_cm 10})]
+            (is (= "awaiting-carrier-booking"
+                   (get-in prepared [:fulfillment :shipment :status])))
+            (is (= "carrier-booking-required"
+                   (get-in prepared [:fulfillment :effect-boundary])))
+            (is (= "100-0001"
+                   (get-in prepared [:fulfillment :shipment :ship-to :postal-code])))
+            (is (= prepared
+                   (commerce/prepare-shipment!
+                    alice {:order_id (:id order-a) :weight_kg 0.5
+                           :length_cm 30 :width_cm 20 :height_cm 10})))
+            (is (= :commerce/shipment-already-prepared
+                   (refuses #(commerce/prepare-shipment!
+                              alice {:order_id (:id order-a) :weight_kg 0.6
+                                     :length_cm 30 :width_cm 20 :height_cm 10})))))
+          (let [booked (commerce/record-carrier-booking!
+                        alice {:order_id (:id order-a) :carrier "日本郵便"
+                               :tracking_number "JP-TRACK-1"
+                               :label_reference "carrier-receipt:label-1"
+                               :pickup_reference "carrier-receipt:pickup-1"})]
+            (is (= "label-ready" (get-in booked [:fulfillment :status])))
+            (is (= "label-ready" (get-in booked [:fulfillment :shipment :status])))
+            (is (= "carrier-receipt:label-1"
+                   (get-in booked [:fulfillment :shipment :label-reference])))
+            (is (= booked
+                   (commerce/record-carrier-booking!
+                    alice {:order_id (:id order-a) :carrier "日本郵便"
+                           :tracking_number "JP-TRACK-1"
+                           :label_reference "carrier-receipt:label-1"
+                           :pickup_reference "carrier-receipt:pickup-1"}))))
           (let [shipped (commerce/advance-fulfillment!
-                         alice {:order_id (:id order-a) :status "shipped"
-                                :carrier "日本郵便" :tracking_number "JP-TRACK-1"})]
+                         alice {:order_id (:id order-a) :status "shipped"})]
             (is (= "shipped" (get-in shipped [:fulfillment :status])))
             (is (= "JP-TRACK-1" (get-in shipped [:fulfillment :tracking-number])))
             (is (= "delivered"
