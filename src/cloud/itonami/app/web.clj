@@ -430,6 +430,26 @@
   .bots-dot[data-status='idle']{background:var(--color-neutral-solid-gray-300)}
   .bots-dot[data-status='disabled']{background:var(--color-neutral-solid-gray-200)}
   .bots-main{position:relative;display:flex;flex-direction:column;min-height:0;min-width:0}
+  .bots-routines-panel{position:absolute;z-index:6;inset:0 0 0 auto;width:min(100%,36rem);
+    overflow-y:auto;padding:1rem;border-left:1px solid var(--color-neutral-solid-gray-200);
+    background:var(--color-neutral-white);display:grid;align-content:start;gap:1rem}
+  .bots-routines-panel[hidden]{display:none}
+  .bots-routine-create{display:grid;gap:.75rem;padding:1rem;border-radius:.75rem;
+    border:1px solid var(--color-neutral-solid-gray-200);background:var(--color-neutral-solid-gray-50)}
+  .bots-routine-create label{display:grid;gap:.25rem;font-size:.8125rem;font-weight:600}
+  .bots-routine-create input,.bots-routine-create select{width:100%;padding:.625rem .75rem;
+    border:1px solid var(--color-neutral-solid-gray-300);border-radius:.5rem;background:white}
+  .bots-routines-list{display:grid;gap:.75rem;margin:0;padding:0;list-style:none}
+  .bots-routine{display:grid;gap:.625rem;padding:1rem;border-radius:.75rem;
+    border:1px solid var(--color-neutral-solid-gray-200)}
+  .bots-routine__head{display:grid;grid-template-columns:auto minmax(0,1fr) auto;align-items:center;gap:.625rem}
+  .bots-routine__dot{width:.625rem;height:.625rem;border-radius:50%;background:var(--color-neutral-solid-gray-300)}
+  .bots-routine__dot[data-state='idle'],.bots-routine__dot[data-state='running']{background:var(--color-semantic-success-1)}
+  .bots-routine__dot[data-state='stale']{background:var(--color-semantic-error-1)}
+  .bots-routine__meta,.bots-routine__history{font-size:.75rem;color:var(--color-neutral-solid-gray-600)}
+  .bots-routine__actions{display:flex;gap:.5rem;align-items:center;flex-wrap:wrap}
+  .bots-routine__actions select{padding:.45rem;border:1px solid var(--color-neutral-solid-gray-300);border-radius:.5rem}
+  .bots-routine__history{display:grid;gap:.25rem;margin:.25rem 0 0;padding-left:1.25rem}
   .bots-quality-panel{position:absolute;z-index:5;inset:0 0 0 auto;width:min(100%,32rem);
     overflow-y:auto;padding:1rem;border-left:1px solid var(--color-neutral-solid-gray-200);
     background:var(--color-neutral-white);display:grid;align-content:start;gap:1rem}
@@ -1325,6 +1345,7 @@
     .bots-main{flex:1}
     .bots-conversations{width:100%;border-left:0}
     .bots-quality-panel{width:100%;border-left:0}
+    .bots-routines-panel{width:100%;border-left:0}
     .bots-conversations__layout{grid-template-columns:1fr}
     .bots-rail{display:block;flex:0 0 auto;padding:.375rem .75rem;border-right:0;
       border-bottom:1px solid var(--color-neutral-solid-gray-200);overflow-x:auto}
@@ -1590,6 +1611,10 @@
          [:button {:class "tool-button" :id "bots-thread-tools" :type "button"
                    :aria-expanded "false" :aria-controls "bots-thread-panel"
                    :title "この Bot が届く範囲" :hidden true} "▤"]
+         [:button {:class "tool-button" :id "bots-routines" :type "button"
+                   :aria-expanded "false" :aria-controls "bots-routines-panel"
+                   :aria-label "このBotの定期ジョブ" :title "このBotの定期ジョブ"
+                   :hidden true} "◷"]
          [:button {:class "tool-button" :id "bots-conversations" :type "button"
                    :aria-expanded "false" :aria-controls "bots-conversations-panel"
                    :aria-label "Bot同士の会話を読む" :title "Bot同士の会話を読む"}
@@ -1683,6 +1708,33 @@
            [:ul {:class "bots-rail__list" :id "bots-list"}]
            [:p {:class "bots-rail__empty" :id "bots-rail-empty"} "まだ Bot がいません"]]
           [:div {:class "bots-main"}
+           [:aside {:class "bots-routines-panel" :id "bots-routines-panel" :hidden true
+                    :aria-label "このBotの定期ジョブ"}
+            [:div {:class "section-heading"}
+             (dds/heading 2 "定期ジョブ" {:size "24"})
+             [:button {:class "tool-button" :id "bots-routines-close" :type "button"
+                       :aria-label "定期ジョブを閉じる"} "閉じる"]]
+            [:p {:class "form-help" :id "bots-routines-help"}
+             "このBotが実際に実行した直前の仕事を保存し、同じ権限と承認ルールで繰り返します。"]
+            [:form {:class "bots-routine-create" :id "bots-routine-create"}
+             [:label "ジョブ名"
+              [:input {:id "bots-routine-name" :maxlength "60" :required true
+                       :placeholder "受信箱を確認"}]]
+             [:label "実行時の目的"
+              [:input {:id "bots-routine-intent" :maxlength "200" :required true
+                       :placeholder "返事が必要なメールを見つける"}]]
+             [:label "繰り返し"
+              [:select {:id "bots-routine-cadence"}
+               [:option {:value "15"} "15分ごと"]
+               [:option {:value "30"} "30分ごと"]
+               [:option {:value "60" :selected true} "1時間ごと"]
+               [:option {:value "360"} "6時間ごと"]
+               [:option {:value "1440"} "毎日"]
+               [:option {:value "10080"} "毎週"]]]
+             [:button {:class "primary-action" :type "submit"} "直前の仕事から作成"]]
+            [:p {:class "form-help" :id "bots-routines-status" :role "status"
+                 :aria-live "polite"}]
+            [:ul {:class "bots-routines-list" :id "bots-routines-list"}]]
            [:aside {:class "bots-quality-panel" :id "bots-quality-panel" :hidden true
                     :aria-label "Bots の安定性と出力品質"}
             [:div {:class "section-heading"}

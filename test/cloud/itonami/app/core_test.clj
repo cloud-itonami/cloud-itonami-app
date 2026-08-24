@@ -341,12 +341,13 @@
       "the Bots view must size its boxes border-box, or padding overflows the
        grid column it is laid out in and the whole document scrolls sideways"))
 
-(deftest bots-use-the-app-titlebar-and-hide-agent-internals
+(deftest bots-use-the-app-titlebar-for-selected-bot-jobs
   (let [html (web/page-html {})]
     (is (re-find #"id=\"bots-titlebar-context\"" html))
     (is (re-find #"id=\"bots-titlebar-name\"" html))
     (is (re-find #"id=\"bots-new\"" html))
-    (is (not (re-find #"id=\"bots-routines-panel\"" html)))
+    (is (re-find #"id=\"bots-routines-panel\"" html))
+    (is (re-find #"id=\"bots-routine-create\"" html))
     (is (not (re-find #"id=\"bots-handoff-send\"" html)))))
 
 (deftest bots-remain-a-single-viewport-pane-in-the-phone-layout
