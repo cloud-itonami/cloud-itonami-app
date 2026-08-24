@@ -58,6 +58,27 @@
     (testing "GitHub is named as optional, never as the authority for this answer"
       (is (= "optional" (get-in snapshot [:integration :github :mode]))))))
 
+(deftest conversation-context-is-bounded-and-carries-no-authority
+  (store/transact!
+   (fn [state]
+     (-> state
+         (assoc-in [:chat-projects ["org-test" "alpha"]]
+                   {:project-id "alpha" :title "Alpha" :description "Launch work"})
+         (assoc-in [:project-workspaces ["org-test" "alpha"]]
+                   {:repositories [{:name "app" :url "https://example.invalid/app"}]
+                    :issues {"i-1" {:id "i-1" :number 1 :title "Ship UI"
+                                     :column "ready"}}}))))
+  (let [context (projects/project-context (scope "alpha"))
+        prompt (projects/project-context-prompt (scope "alpha"))]
+    (is (= "Alpha" (:title context)))
+    (is (= 1 (:issue-count context)))
+    (is (nil? (:directory context)))
+    (is (nil? (:tools context)))
+    (is (nil? (get-in context [:repositories 0 :url])))
+    (is (str/includes? prompt "does not grant tools"))
+    (is (str/includes? prompt "Ship UI")))
+  (is (nil? (projects/project-context (scope "missing")))))
+
 (deftest creating-a-project-makes-a-real-git-repository
   ;; A project id unique to this test. The directory is
   ;; `projects/<organization-storage-id>/<slug>` and that middle segment is a

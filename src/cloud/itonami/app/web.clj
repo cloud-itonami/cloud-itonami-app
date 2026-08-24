@@ -1361,6 +1361,7 @@
        operations a compact, horizontal icon group. */
     .bots-titlebar__identity{display:none!important}
     #bots-titlebar-context{gap:.25rem;flex:0 0 auto}
+    #bots-context-project-select{max-width:9rem;min-height:2.25rem}
     #bots-titlebar-context>.tool-button{width:2.25rem;min-width:2.25rem;
       min-height:2.25rem;padding:.125rem;white-space:nowrap}
     .bots-conversations__count{position:absolute;clip:rect(0,0,0,0);
@@ -1663,13 +1664,22 @@
        [:header {:class "topbar" :data-kotoba-window-drag "true"}
         [:h2 {:class "topbar__title" :id "current-view"} "Bots"]
         [:div {:class "topbar__context authenticated-only" :id "project-titlebar-context"
-               :data-topbar-view "default" :hidden true}
-         [:label {:class "visually-hidden" :for "active-project-select"} "現在のProject"]
-         [:select {:class "project-select" :id "active-project-select"}
-          [:option {:value ""} "Projectを選択"]]
-         [:p {:class "topbar__meta"} "許可された接続先のみ"]]
+               :data-topbar-view "chat" :hidden true}
+         [:label {:class "visually-hidden" :for "chat-context-project-select"}
+          "このChatのProject context"]
+         [:select {:class "project-select" :id "chat-context-project-select"
+                   :title "会話の参照context。権限や保存先は変わりません"}
+          [:option {:value ""} "Contextなし"]]
+         [:p {:class "topbar__meta"} "会話contextのみ"]]
         [:div {:class "topbar__context authenticated-only" :id "bots-titlebar-context"
                :data-topbar-view "bots" :hidden true}
+         [:label {:class "visually-hidden" :for "bots-context-project-select"}
+          "このBot会話のProject context"]
+         [:select {:class "project-select bots-context-project-select"
+                   :id "bots-context-project-select"
+                   :title "会話の参照context。権限・workspace・保存先は変わりません"
+                   :disabled true}
+          [:option {:value ""} "Contextなし"]]
          [:div {:class "bots-titlebar__identity" :id "bots-titlebar-identity" :hidden true}
           [:span {:class "bot-avatar" :id "bots-titlebar-avatar"}]
           [:div {:class "bots-titlebar__copy"}

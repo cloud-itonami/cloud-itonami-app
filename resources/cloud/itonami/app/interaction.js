@@ -180,8 +180,7 @@
       active?.closest('.nav-section')?.setAttribute('open', '');
       $('#current-view').textContent = active?.dataset.title || 'Bots';
       $$('[data-topbar-view]').forEach((context) => {
-        context.hidden = !appUnlocked ||
-          (context.dataset.topbarView === 'bots' ? name !== 'bots' : name === 'bots');
+        context.hidden = !appUnlocked || context.dataset.topbarView !== name;
       });
       const target = `#/${name}`;
       if (location.hash !== target) history.replaceState(null, '', target);
@@ -212,7 +211,11 @@
     const chatShell = $('#chat-shell');
     const modelSelect = $('#model-select');
     let sessionId = localStorage.getItem('cloud-itonami-session') || 'desktop';
-    let activeProjectId = localStorage.getItem('cloud-itonami-project') || '';
+    const legacyProjectId = localStorage.getItem('cloud-itonami-project') || '';
+    let chatContextProjectId =
+      localStorage.getItem('cloud-itonami-chat-context-project') || legacyProjectId;
+    let selectedProjectId =
+      localStorage.getItem('cloud-itonami-project-board') || legacyProjectId;
     let localProjects = [];
     let selectedSiteId = null;
     let currentController = null;
@@ -280,13 +283,13 @@
       });
     };
     const loadSession = async () => {
-      const requestedProject = activeProjectId;
+      const requestedProject = chatContextProjectId;
       try {
         const params = new URLSearchParams({session:sessionId});
         if (requestedProject) params.set('project', requestedProject);
         const request = await fetch(`/api/session?${params}`);
         const data = await request.json();
-        if (activeProjectId !== requestedProject) return false;
+        if (chatContextProjectId !== requestedProject) return false;
         thread.querySelectorAll('.message-row').forEach((node) => node.remove());
         data.messages.forEach((message) => {
           if (message.role === 'user') lastPrompt = message.content;
@@ -360,7 +363,7 @@
           method:'POST', headers:{'Content-Type':'application/json'},
           signal:currentController.signal,
           body:JSON.stringify({prompt:value, session:sessionId, agent:'local',
-            model:modelSelect.value, project:activeProjectId || null})
+            model:modelSelect.value, project:chatContextProjectId || null})
         });
         await parseStream(request, assistant, value);
       } catch (error) {
@@ -4884,9 +4887,9 @@
         return false;
       });
     const projectPath = (suffix = '') =>
-      `/api/projects/${encodeURIComponent(activeProjectId)}${suffix}`;
+      `/api/projects/${encodeURIComponent(selectedProjectId)}${suffix}`;
     const projectRequired = (element, message = 'Projectを選択してください。') => {
-      if (activeProjectId) return true;
+      if (selectedProjectId) return true;
       if (element) element.textContent = message;
       return false;
     };
@@ -4927,20 +4930,20 @@
         board.append(lane);
       });
       $('#local-project-board-source').textContent =
-        `${data.project?.title || activeProjectId} · ${issues.length} issues`;
+        `${data.project?.title || selectedProjectId} · ${issues.length} issues`;
       $('#local-project-board-card').hidden = false;
     };
     const loadProjectBoard = async () => {
-      if (!activeProjectId) {
+      if (!selectedProjectId) {
         $('#local-project-board-card').hidden = true;
         return false;
       }
-      const requestedProject = activeProjectId;
+      const requestedProject = selectedProjectId;
       try {
         const request = await fetch(`/api/projects/${encodeURIComponent(requestedProject)}`);
         const data = await request.json();
         if (!request.ok) throw new Error(data?.error?.message || 'Projectを読み込めませんでした。');
-        if (activeProjectId !== requestedProject) return false;
+        if (selectedProjectId !== requestedProject) return false;
         renderProjectBoard(data);
         return true;
       } catch (error) {
@@ -4966,18 +4969,18 @@
       $('#sites-count').textContent = (data.items || []).length;
     };
     const loadSites = async () => {
-      if (!activeProjectId) {
+      if (!selectedProjectId) {
         $('#site-list').replaceChildren(make('li', 'empty-state', 'Projectを選択してください。'));
         $('#site-editor-panel').hidden = true;
         $('#sites-count').textContent = '0';
         return false;
       }
-      const requestedProject = activeProjectId;
+      const requestedProject = selectedProjectId;
       try {
         const request = await fetch(`/api/sites?project=${encodeURIComponent(requestedProject)}`);
         const data = await request.json();
         if (!request.ok) throw new Error(data?.error?.message || 'Sitesを読み込めませんでした。');
-        if (activeProjectId !== requestedProject) return false;
+        if (selectedProjectId !== requestedProject) return false;
         renderSites(data);
         if (selectedSiteId && !(data.items || []).some((site) => site.id === selectedSiteId)) {
           selectedSiteId = null;
@@ -4991,14 +4994,14 @@
     };
     const selectSite = async (siteId) => {
       selectedSiteId = siteId;
-      const requestedProject = activeProjectId;
+      const requestedProject = selectedProjectId;
       $('#site-editor-status').textContent = '読み込み中…';
       try {
         const request = await fetch(
           `/api/sites/${encodeURIComponent(siteId)}?project=${encodeURIComponent(requestedProject)}`);
         const site = await request.json();
         if (!request.ok) throw new Error(site?.error?.message || 'Siteを読み込めませんでした。');
-        if (activeProjectId !== requestedProject || selectedSiteId !== siteId) return;
+        if (selectedProjectId !== requestedProject || selectedSiteId !== siteId) return;
         $('#site-editor-panel').hidden = false;
         $('#site-html').value = site.html || '';
         $('#site-editor-meta').textContent =
@@ -5013,33 +5016,37 @@
         $('#site-editor-status').textContent = error.message;
       }
     };
-    const setActiveProject = async (projectId, reloadChat = true) => {
-      activeProjectId = projectId || '';
+    const selectWorkspaceProject = async (projectId) => {
+      selectedProjectId = projectId || '';
       selectedSiteId = null;
-      if (activeProjectId) localStorage.setItem('cloud-itonami-project', activeProjectId);
-      else localStorage.removeItem('cloud-itonami-project');
-      $('#active-project-select').value = activeProjectId;
+      if (selectedProjectId) localStorage.setItem('cloud-itonami-project-board', selectedProjectId);
+      else localStorage.removeItem('cloud-itonami-project-board');
       document.querySelectorAll('#local-project-list [data-project-id]').forEach((item) =>
         item.querySelector('button')?.setAttribute(
-          'aria-pressed', item.dataset.projectId === activeProjectId ? 'true' : 'false'));
+          'aria-pressed', item.dataset.projectId === selectedProjectId ? 'true' : 'false'));
       $('#site-editor-panel').hidden = true;
-      await Promise.all([loadProjectBoard(), loadSites(), reloadChat ? loadSession() : true]);
+      await Promise.all([loadProjectBoard(), loadSites()]);
     };
     const renderLocalProjects = (data) => {
       localProjects = data.items || [];
       const list = $('#local-project-list');
-      const select = $('#active-project-select');
+      const contextSelects = [$('#chat-context-project-select'), $('#bots-context-project-select')];
       list.replaceChildren();
-      select.replaceChildren();
-      const placeholder = make('option', null, 'Projectを選択');
-      placeholder.value = '';
-      select.append(placeholder);
+      contextSelects.forEach((select) => {
+        select.replaceChildren();
+        const placeholder = make('option', null, 'Contextなし');
+        placeholder.value = '';
+        select.append(placeholder);
+      });
       localProjects.forEach((project) => {
-        const option = make('option', null, project.title || project['project-id']);
-        option.value = project['project-id'];
-        select.append(option);
-        const row = recordButton(project, project['project-id'] === activeProjectId,
-          (selected) => setActiveProject(selected['project-id']),
+        contextSelects.forEach((select) => {
+          const option = make('option', null,
+            `Context: ${project.title || project['project-id']}`);
+          option.value = project['project-id'];
+          select.append(option);
+        });
+        const row = recordButton(project, project['project-id'] === selectedProjectId,
+          (selected) => selectWorkspaceProject(selected['project-id']),
           {title:project.title || project['project-id'], time:`${project['issue-count'] || 0} issues`,
            meta:project['project-id']});
         row.dataset.projectId = project['project-id'];
@@ -5048,13 +5055,17 @@
       if (!localProjects.length) {
         list.append(make('li', 'empty-state', '最初のProjectを作成してください。'));
       }
-      if (!localProjects.some((project) => project['project-id'] === activeProjectId)) {
-        activeProjectId = localProjects[0]?.['project-id'] || '';
+      if (!localProjects.some((project) => project['project-id'] === selectedProjectId)) {
+        selectedProjectId = localProjects[0]?.['project-id'] || '';
       }
-      select.value = activeProjectId;
+      if (!localProjects.some((project) => project['project-id'] === chatContextProjectId)) {
+        chatContextProjectId = '';
+      }
+      $('#chat-context-project-select').value = chatContextProjectId;
       document.querySelectorAll('#local-project-list [data-project-id]').forEach((item) =>
         item.querySelector('button')?.setAttribute(
-          'aria-pressed', item.dataset.projectId === activeProjectId ? 'true' : 'false'));
+          'aria-pressed', item.dataset.projectId === selectedProjectId ? 'true' : 'false'));
+      syncBotsProjectContext();
       $('#projects-count').textContent = localProjects.length;
     };
     const loadLocalProjects = async () => {
@@ -5063,8 +5074,9 @@
         const data = await request.json();
         if (!request.ok) throw new Error(data?.error?.message || 'Projectsを読み込めませんでした。');
         renderLocalProjects(data);
-        if (activeProjectId) localStorage.setItem('cloud-itonami-project', activeProjectId);
-        else localStorage.removeItem('cloud-itonami-project');
+        if (selectedProjectId) localStorage.setItem('cloud-itonami-project-board', selectedProjectId);
+        else localStorage.removeItem('cloud-itonami-project-board');
+        localStorage.removeItem('cloud-itonami-project');
         await Promise.all([loadProjectBoard(), loadSites(), loadSession()]);
         return true;
       } catch (error) {
@@ -5072,8 +5084,13 @@
         return false;
       }
     };
-    $('#active-project-select').addEventListener('change', (event) =>
-      setActiveProject(event.currentTarget.value));
+    $('#chat-context-project-select').addEventListener('change', async (event) => {
+      chatContextProjectId = event.currentTarget.value || '';
+      if (chatContextProjectId) {
+        localStorage.setItem('cloud-itonami-chat-context-project', chatContextProjectId);
+      } else localStorage.removeItem('cloud-itonami-chat-context-project');
+      await loadSession();
+    });
     $('#local-project-create-form').addEventListener('submit', async (event) => {
       event.preventDefault();
       const status = $('#local-project-create-status');
@@ -5086,7 +5103,7 @@
         event.currentTarget.reset();
         status.textContent = 'Projectを作成しました。';
         await loadLocalProjects();
-        await setActiveProject(data.item['project-id']);
+        await selectWorkspaceProject(data.item['project-id']);
       } catch (error) { status.textContent = error.message; }
       finally { button.disabled = false; }
     });
@@ -5112,7 +5129,7 @@
       button.disabled = true;
       status.textContent = 'Siteを作成中…';
       try {
-        const site = await postJSON('/api/sites', {...fields, project:activeProjectId}, true);
+        const site = await postJSON('/api/sites', {...fields, project:selectedProjectId}, true);
         event.currentTarget.reset();
         status.textContent = 'Siteを作成しました。';
         await loadSites();
@@ -5126,7 +5143,7 @@
       $('#site-editor-status').textContent = '保存中…';
       try {
         await writeJSON(`/api/sites/${encodeURIComponent(selectedSiteId)}`, 'PUT',
-          {project:activeProjectId, html:$('#site-html').value}, true);
+          {project:selectedProjectId, html:$('#site-html').value}, true);
         $('#site-editor-status').textContent = '下書きを保存しました。';
         await Promise.all([loadSites(), selectSite(selectedSiteId)]);
       } catch (error) { $('#site-editor-status').textContent = error.message; }
@@ -5138,7 +5155,7 @@
       $('#site-editor-status').textContent = '公開中…';
       try {
         const site = await postJSON(`/api/sites/${encodeURIComponent(selectedSiteId)}/publish`,
-          {project:activeProjectId}, true);
+          {project:selectedProjectId}, true);
         $('#site-editor-status').replaceChildren(document.createTextNode('公開しました: '));
         const link = make('a', null, site.url);
         link.href = site.url; link.target = '_blank'; link.rel = 'noopener';
@@ -9346,6 +9363,31 @@
       latestTurn:null, threadVersion:null, syncTimer:null, syncing:false,
       slo:null, routines:[], routinesLoading:false
     };
+    const syncBotsProjectContext = () => {
+      const select = $('#bots-context-project-select');
+      const selected = botsState.bots.find((bot) => bot.id === botsState.selected);
+      select.disabled = !selected;
+      select.value = selected?.['context-project-id'] || '';
+    };
+    $('#bots-context-project-select').addEventListener('change', async (event) => {
+      const botId = botsState.selected;
+      if (!botId) return;
+      const nextProject = event.currentTarget.value || null;
+      event.currentTarget.disabled = true;
+      try {
+        const data = await postJSON(`/api/bots/${botId}`,
+          {'context-project-id':nextProject}, true);
+        botsState.bots = data.bots || [];
+        syncBotsProjectContext();
+        renderBotsRail();
+        botsSetStatus(nextProject
+          ? 'この Project を会話contextにしました。権限やworkspaceは変わりません。'
+          : 'この Bot の Project context を外しました。');
+      } catch (error) {
+        syncBotsProjectContext();
+        botsSetStatus(error.message);
+      }
+    });
     const botAvatar = (node, avatar, status = null) => {
       node.dataset.color = avatar?.color || 'blue';
       node.dataset.glyph = avatar?.glyph || 'circle';
@@ -10394,6 +10436,7 @@
       $('#bots-mobile-context').hidden = !selected;
       $('#bots-thread-tools').hidden = !selected;
       $('#bots-routines').hidden = !selected;
+      syncBotsProjectContext();
       if (!selected) setBotRoutinesOpen(false);
     };
     const selectBot = async (botId) => {
@@ -10404,6 +10447,7 @@
       $('#bots-goal').checked = Boolean(selectedBot?.['coding?'] || selectedBot?.['virtual-shell?']);
       renderBotsRail();
       showBotsPane();
+      syncBotsProjectContext();
       try {
         const request = await fetch(`/api/bots/${botId}/messages`);
         const data = await request.json();
