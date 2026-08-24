@@ -2070,6 +2070,40 @@
                                     :image_url {:url (:data-url img)}})
                                  usable))}))))
 
+(def ^:private self-correctable-tool-errors
+  "Tool-call mistakes the model can correct from the admitted repository.
+
+  These are argument/shape failures, not authority failures.  Returning them
+  to the model lets it choose the repository root, a directory, or a smaller
+  file on the next bounded turn.  Unsafe paths, symlinks, missing grants,
+  provider failures, and host configuration errors are deliberately absent:
+  those still fail closed instead of teaching a model to probe a boundary."
+  #{:workspace/not-a-directory
+    :workspace/not-a-file
+    :workspace/file-too-large
+    :workspace/invalid-query
+    :workspace/parent-required
+    :workspace/invalid-commit-paths
+    :workspace/invalid-commit-message})
+
+(defn- self-correctable-tool-result [error]
+  (let [error-type (:type (ex-data error))]
+    (when (contains? self-correctable-tool-errors error-type)
+      {:text (str "The tool call was refused with " error-type ": "
+                  (or (error-message error) "invalid tool arguments")
+                  " Correct the arguments from the admitted repository evidence and retry. "
+                  "Do not ask the person unless the required target or authority is genuinely external.")
+       :images []
+       :error-type error-type})))
+
+(defn- execute-tool-attempt! [configuration b selection tool-name input]
+  (try
+    {:output (run-tool! configuration b selection tool-name input)}
+    (catch Exception error
+      (if-let [output (self-correctable-tool-result error)]
+        {:output output :error error}
+        (throw error)))))
+
 (defn- system-prompt [b configuration goal]
   (str "You are " (:bot/name b) ", a bounded worker inside Cloud Itonami. "
        "Use exactly one tool per turn. Prefer reading before writing. "
@@ -3279,19 +3313,32 @@
                         _ (goal-event! :action/started
                                        {:action/id (:id call) :tool name
                                         :step-id (current-plan-step-id run)})
-                        output (run-tool! configuration b (:selection run) name input)
-                        _ (goal-event! :action/finished
-                                       {:action/id (:id call) :tool name
-                                        :step-id (current-plan-step-id run)
-                                        :duration-ms (- (now-ms) started)
-                                        :output-sha256 (receipt-sha256 (:text output))})
+                        attempt (execute-tool-attempt!
+                                 configuration b (:selection run) name input)
+                        output (:output attempt)
+                        tool-error (:error attempt)
+                        _ (goal-event! (if tool-error :action/failed :action/finished)
+                                       (cond->
+                                        {:action/id (:id call) :tool name
+                                         :step-id (current-plan-step-id run)
+                                         :duration-ms (- (now-ms) started)}
+                                         tool-error
+                                         (assoc :error-type (:type (ex-data tool-error))
+                                                :message (error-message tool-error))
+                                         (not tool-error)
+                                         (assoc :output-sha256
+                                                (receipt-sha256 (:text output)))))
                         run (-> run
                                 (update :tool-count (fnil inc 0))
                                 (update :messages into
                                         (tool-messages call name output)))]
-                    (trace! configuration (:bot/id b) name)
+                    (when-not tool-error
+                      (trace! configuration (:bot/id b) name))
                     (when on-event
-                      (on-event {:type "phase" :phase "tool-executed"
+                      (on-event {:type "phase"
+                                 :phase (if tool-error
+                                          "tool-correctable-error"
+                                          "tool-executed")
                                  :tool name :tool-count (:tool-count run)}))
                     (save-run! (:bot/id b) run)
                     (recur run))
@@ -3310,19 +3357,32 @@
                     _ (goal-event! :action/started
                                    {:action/id (:id call) :tool name
                                     :step-id (current-plan-step-id run)})
-                    output (run-tool! configuration b (:selection run) name input)
-                    _ (goal-event! :action/finished
-                                   {:action/id (:id call) :tool name
-                                    :step-id (current-plan-step-id run)
-                                    :duration-ms (- (now-ms) started)
-                                    :output-sha256 (receipt-sha256 (:text output))})
+                    attempt (execute-tool-attempt!
+                             configuration b (:selection run) name input)
+                    output (:output attempt)
+                    tool-error (:error attempt)
+                    _ (goal-event! (if tool-error :action/failed :action/finished)
+                                   (cond->
+                                    {:action/id (:id call) :tool name
+                                     :step-id (current-plan-step-id run)
+                                     :duration-ms (- (now-ms) started)}
+                                     tool-error
+                                     (assoc :error-type (:type (ex-data tool-error))
+                                            :message (error-message tool-error))
+                                     (not tool-error)
+                                     (assoc :output-sha256
+                                            (receipt-sha256 (:text output)))))
                     run (-> run
                             (update :tool-count (fnil inc 0))
                             (update :messages into
                                     (tool-messages call name output)))]
-                (trace! configuration (:bot/id b) name)
+                (when-not tool-error
+                  (trace! configuration (:bot/id b) name))
                 (when on-event
-                  (on-event {:type "phase" :phase "tool-executed"
+                  (on-event {:type "phase"
+                             :phase (if tool-error
+                                      "tool-correctable-error"
+                                      "tool-executed")
                              :tool name :tool-count (:tool-count run)}))
                 (save-run! (:bot/id b) run)
                 (recur run)))))))))))
