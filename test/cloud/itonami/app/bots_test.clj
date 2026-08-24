@@ -89,7 +89,16 @@
 
 (defn- make-bot [session attrs]
   (bots/create! nil session (merge {:name "workspace worker"
-                                    :connectors ["com.google.gmail"]}
+                                    :connectors ["com.google.gmail"]
+                                    ;; Most tests below exercise the legacy
+                                    ;; approval path explicitly. Keep that
+                                    ;; fixture narrow while production create!
+                                    ;; now defaults a new Bot to autonomy.
+                                    :writes? false
+                                    :omakase? false
+                                    :browser? false
+                                    :peers? false
+                                    :coding? false}
                                    attrs)))
 
 (deftest uncustomised-bots-get-stable-distinct-public-faces
@@ -112,6 +121,24 @@
         (is (= :awaiting-signer (:status bot-wallet)))
         (is (= :external-wallet (:custody bot-wallet)))
         (is (nil? (:private-key bot-wallet)))))))
+
+(deftest a-new-bot-defaults-to-bounded-autonomy
+  (with-store
+    (fn []
+      (with-redefs [workspace-tools/admit-root identity
+                    agent-control/browser-enabled? (constantly true)]
+        (let [created (bots/create! {} alice
+                                    {:name "autonomous local worker"
+                                     :workspace "/chosen/repo"
+                                     :connectors []})]
+          (is (true? (:bot/writes? created)))
+          (is (true? (:bot/omakase? created)))
+          (is (true? (:bot/browser? created)))
+          (is (true? (:bot/peers? created)))
+          (is (true? (:bot/coding? created)))
+          (is (false? (:bot/virtual-shell? created)))
+          (is (empty? (:bot/tools created))
+              "autonomy does not silently grant an external connector"))))))
 
 (deftest overview-offers-only-an-admitted-local-git-root
   (with-store

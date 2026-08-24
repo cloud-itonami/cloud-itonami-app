@@ -1720,12 +1720,13 @@
                        :placeholder "/Users/name/github/project"}]
               [:span {:class "form-help"}
                "既存Git repositoryのrootを正確に指定します。この範囲の外は読めません。"]]
-             [:label {:class "bots-permission"}
-              [:input {:id "bots-coding" :type "checkbox" :checked true}]
+             [:div {:class "bots-permission bots-permission--summary"}
               [:span {:class "bots-permission__copy"}
-               [:span "ローカルのファイルとGitを中心に作業する"]
+               [:span "自律モードで開始します"]
                [:span {:class "bots-permission__help"}
-                "読み取りは自動、ファイル変更とlocal commitは承認制です。pushはしません。"]]]
+                (str "このworkspace内の読み取り・ファイル変更・local commitを自律実行します。"
+                     "push、外部アカウント、Wallet署名は自動では付与されません。"
+                     "細かな権限やModelは、作成後にBot設定から変更できます。")]]]
              [:button {:class "tool-button" :id "bots-pick-services" :type "button"}
               "外部サービスを追加（任意）"]
              [:div {:class "bots-avatar-preview"}
@@ -1742,46 +1743,6 @@
               [:label {:for "bots-brief"} "この Bot に任せること"]
               [:textarea {:id "bots-brief" :maxlength "2000" :rows "4"
                           :placeholder "毎朝わたしの受信箱を見て、返事が要るものと待てるものを分けて。"}]]
-             [:div {:class "field"}
-              [:label {:for "bots-provider"} "Model provider"]
-              [:select {:id "bots-provider"}]
-              [:span {:class "form-help" :id "bots-provider-help"}
-               "この配備で許可された provider だけを表示します。"]]
-             [:ul {:class "form-help" :id "bots-provider-readiness"}]
-             [:div {:class "field"}
-              [:label {:for "bots-model"} "Model"]
-              [:select {:id "bots-model"}]]
-             [:label {:class "bots-permission"}
-              [:input {:id "bots-writes" :type "checkbox"}]
-              [:span "書き込みも任せる（実行前に毎回わたしが承認する）"]]
-             [:label {:class "bots-permission"}
-              [:input {:id "bots-omakase" :type "checkbox"}]
-              [:span {:class "bots-permission__copy"}
-               [:span "おまかせモード（Bot自身が承認して実行する）"]
-               [:span {:class "bots-permission__help"}
-                (str "この Bot が使えるツールすべてを、待たずに実行します"
-                     "（承認receiptは会話に残ります）。"
-                     "できることの上限は変わりません — 渡していないツールは、"
-                     "自分で承認しても使えません。")]]]
-             [:label {:class "bots-permission"}
-              [:input {:id "bots-browser" :type "checkbox"}]
-              [:span {:class "bots-permission__copy"}
-               [:span "API の無いサイトは、このマシンの分離ブラウザーで（実行前に承認する）"]
-               [:span {:class "bots-permission__help" :id "bots-browser-help"}]]]
-             [:label {:class "bots-permission"}
-              [:input {:id "bots-peers" :type "checkbox"}]
-              [:span {:class "bots-permission__copy"}
-               [:span "ほかの Bot に書き置きできる／される"]
-               [:span {:class "bots-permission__help"}
-                (str "相手の会話に、名前つきで note が残ります（起こしません）。"
-                     "送る側と受け取る側の両方で有効にする必要があります。"
-                     "ツールやアカウントは渡りません。")]]]
-             [:label {:class "bots-permission"}
-              [:input {:id "bots-virtual-shell" :type "checkbox"}]
-              [:span {:class "bots-permission__copy"}
-               [:span "隔離された仮想環境で汎用shellを使う"]
-               [:span {:class "bots-permission__help"}
-                "Bot専用・networkなし・毎回承認。選択したGit rootだけを共有します。"]]]
              [:button {:class "primary-action" :id "bots-create" :type "button"}
               "はじめる"]
              [:p {:class "drive-create__status" :id "bots-create-status"

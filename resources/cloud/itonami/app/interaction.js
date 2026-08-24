@@ -9596,44 +9596,6 @@
       if (!select.value && provider?.model) select.value = provider.model;
       select.disabled = !models.length;
     };
-    const renderBotsModelProviders = () => {
-      const select = $('#bots-provider');
-      const model = $('#bots-model');
-      if (!select || !model) return;
-      const previous = select.value;
-      select.replaceChildren();
-      botsState.modelProviders.forEach((provider) => {
-        const option = make('option', null, provider.name || provider.id);
-        option.value = provider.id;
-        option.dataset.model = provider.model || '';
-        select.append(option);
-      });
-      if (botsState.modelProviders.some((provider) => provider.id === previous)) {
-        select.value = previous;
-      }
-      select.disabled = !botsState.modelProviders.length;
-      const selected = botsState.modelProviders.find((provider) => provider.id === select.value);
-      fillBotModels(model, selected, previous ? model.value : selected?.model);
-      $('#bots-provider-help').textContent = botsState.modelProviders.length
-        ? 'この配備で許可された provider だけを表示します。'
-        : '許可された model provider がありません。Settings の routing を確認してください。';
-      const readiness = $('#bots-provider-readiness');
-      readiness.replaceChildren();
-      const blockerText = {
-        'disabled':'無効', 'unreviewed':'未レビュー',
-        'cloud-egress-disabled':'cloud egress 無効',
-        'tls-required':'HTTPS 必須', 'credential-missing':'credential 未設定'
-      };
-      botsState.providerReadiness.forEach((provider) => {
-        const blockers = (provider.blocking || []).map((item) => blockerText[item] || item);
-        readiness.append(make('li', null,
-          `${provider.name || provider.id}: ${provider['allowed?'] ? '利用可能' : blockers.join('・')}`));
-      });
-    };
-    $('#bots-provider').addEventListener('change', (event) => {
-      const selected = botsState.modelProviders.find((provider) => provider.id === event.target.value);
-      fillBotModels($('#bots-model'), selected, selected?.model);
-    });
     const renderBotsSuggestions = async () => {
       const holder = $('#bots-suggestions');
       holder.replaceChildren();
@@ -9887,6 +9849,7 @@
       $('#bots-thread-tools').hidden = false;
       const panel = $('#bots-thread-panel');
       panel.replaceChildren();
+      panel.append(make('strong', 'bots-settings__title', 'Bot設定'));
       panel.append(make('div', null,
         `届く範囲: ${bot['admitted-tools'].length} 個のツール` +
         `${bot['writes?']
@@ -10028,33 +9991,65 @@
       });
       modelEditor.append(providerSelect, modelInput, saveModel);
       panel.append(modelEditor);
-      const omakaseEditor = make('div', 'bots-card__row');
+      const authorityEditor = make('div', 'bots-card');
+      authorityEditor.append(make('strong', null, '自律実行と権限'));
+      const writesBox = make('input');
+      writesBox.type = 'checkbox';
+      writesBox.checked = Boolean(bot['writes?']);
+      writesBox.setAttribute('aria-label', 'ファイル・Git・接続先への書き込みを許可');
       const omakaseBox = make('input');
       omakaseBox.type = 'checkbox';
       omakaseBox.checked = Boolean(bot['omakase?']);
       omakaseBox.setAttribute('aria-label', 'おまかせモード');
-      const omakaseLabel = make('span', null,
-        'おまかせモード — shell・メール送信・Git変更をBot自身が承認');
-      const saveOmakase = make('button', 'tool-button', 'おまかせ設定を保存');
-      saveOmakase.type = 'button';
-      saveOmakase.addEventListener('click', async () => {
-        saveOmakase.disabled = true;
+      const browserBox = make('input');
+      browserBox.type = 'checkbox';
+      browserBox.checked = Boolean(bot['browser?']);
+      browserBox.disabled = !botsState.browserAvailable;
+      browserBox.setAttribute('aria-label', 'Bot専用の分離ブラウザーを許可');
+      const peersBox = make('input');
+      peersBox.type = 'checkbox';
+      peersBox.checked = Boolean(bot['peers?']);
+      peersBox.setAttribute('aria-label', 'ほかのBotとの書き置きを許可');
+      const authorityOption = (box, title, help) => {
+        const label = make('label', 'bots-permission');
+        const copy = make('span', 'bots-permission__copy');
+        copy.append(make('span', null, title), make('span', 'bots-permission__help', help));
+        label.append(box, copy);
+        return label;
+      };
+      authorityEditor.append(
+        authorityOption(writesBox, '書き込みを許可',
+          '選択したworkspaceと、明示的に接続したサービスの範囲だけです。'),
+        authorityOption(omakaseBox, '自律モード',
+          '許可済みの操作を待たずに実行し、承認receiptを会話に残します。渡していないツールは、自分で承認しても使えません。'),
+        authorityOption(browserBox, '分離ブラウザー',
+          botsState.browserAvailable
+            ? 'このBot専用プロファイルで画面認識・操作します。'
+            : 'このマシンのSettingsで分離ブラウザーが無効です。'),
+        authorityOption(peersBox, 'Bot間連携',
+          'ほかのBotへ書き置きできます。ツール・アカウント・秘密は渡しません。'));
+      const saveAuthority = make('button', 'tool-button', '権限を保存');
+      saveAuthority.type = 'button';
+      saveAuthority.addEventListener('click', async () => {
+        saveAuthority.disabled = true;
         try {
-          const data = await postJSON(`/api/bots/${bot.id}`,
-            {'omakase?':omakaseBox.checked}, true);
+          const data = await postJSON(`/api/bots/${bot.id}`, {
+            'writes?':writesBox.checked,
+            'omakase?':omakaseBox.checked,
+            'browser?':browserBox.checked,
+            'peers?':peersBox.checked
+          }, true);
           botsState.bots = data.bots || [];
           renderBotsRail();
           renderBotsThread();
-          botsSetStatus(omakaseBox.checked
-            ? 'おまかせモードを有効にしました。以後の書き込みは待たずに実行します。'
-            : 'おまかせモードを無効にしました。');
+          botsSetStatus('この Bot の自律実行と権限を保存しました。');
         } catch (error) {
-          saveOmakase.disabled = false;
+          saveAuthority.disabled = false;
           botsSetStatus(error.message);
         }
       });
-      omakaseEditor.append(omakaseBox, omakaseLabel, saveOmakase);
-      panel.append(omakaseEditor);
+      authorityEditor.append(saveAuthority);
+      panel.append(authorityEditor);
       const codingEditor = make('div', 'bots-card__row');
       const codingBox = make('input');
       codingBox.type = 'checkbox';
@@ -10222,19 +10217,6 @@
     document.addEventListener('visibilitychange', () => {
       if (!document.hidden && currentView === 'bots') scheduleBotsRealtime(0);
     });
-    const syncBotsBrowserPermission = () => {
-      const box = $('#bots-browser');
-      const help = $('#bots-browser-help');
-      if (!box) return;
-      const available = Boolean(botsState.browserAvailable);
-      box.disabled = !available;
-      if (!available) {
-        box.checked = false;
-        if (help) help.textContent = 'このマシンの Settings で分離ブラウザーが有効になっていません。';
-      } else if (help) {
-        help.textContent = '';
-      }
-    };
     const loadBots = async (options = {}) => {
       try {
         const request = await fetch('/api/bots');
@@ -10250,14 +10232,9 @@
         botsState.slo = data.slo || null;
         botsState.loaded = true;
         renderBotsSlo();
-        syncBotsBrowserPermission();
-        // Provider readiness belongs to the overview, not to the selected
-        // thread. Render it before the initial selectBot fast path returns.
-        renderBotsModelProviders();
         if (!$('#bots-workspace').value && botsState.defaultWorkspace) {
           $('#bots-workspace').value = botsState.defaultWorkspace;
         }
-        $('#bots-coding').checked = true;
         if (!options.keepSelection && !botsState.selected && botsState.bots.length) {
           await selectBot(botsRecentFirst(botsState.bots)[0].id);
           return;
@@ -10279,16 +10256,13 @@
       $('#bots-step-services').hidden = true;
       $('#bots-step-create').hidden = false;
       renderBotsPalette();
-      renderBotsModelProviders();
       renderBotsSuggestions();
-      syncBotsBrowserPermission();
     });
     $('#bots-new').addEventListener('click', () => {
       botsState.selected = null;
       botsState.messages = [];
       $('#bots-step-services').hidden = true;
       $('#bots-step-create').hidden = false;
-      $('#bots-coding').checked = true;
       $('#bots-workspace').value = botsState.defaultWorkspace || '';
       if (botsState.palette.colors.length && botsState.palette.glyphs.length) {
         const bytes = new Uint32Array(2); crypto.getRandomValues(bytes);
@@ -10330,8 +10304,7 @@
       const button = $('#bots-create');
       const name = $('#bots-name').value.trim();
       if (!name) { $('#bots-create-status').textContent = '名前を入れてください。'; return; }
-      if (($('#bots-coding').checked || $('#bots-virtual-shell').checked) &&
-          !$('#bots-workspace').value.trim()) {
+      if (!$('#bots-workspace').value.trim()) {
         $('#bots-create-status').textContent = 'Git workspace の絶対パスを入れてください。';
         return;
       }
@@ -10342,15 +10315,13 @@
           name,
           avatar:{color:botsState.draft.color, glyph:botsState.draft.glyph},
           brief:$('#bots-brief').value,
-          'provider-id':$('#bots-provider').value,
-          model:$('#bots-model').value.trim(),
           connectors:[...botsState.picked],
-          'writes?':$('#bots-writes').checked,
-          'omakase?':$('#bots-omakase').checked,
-          'browser?':$('#bots-browser').checked,
-          'peers?':$('#bots-peers').checked,
-          'coding?':$('#bots-coding').checked,
-          'virtual-shell?':$('#bots-virtual-shell').checked,
+          'writes?':true,
+          'omakase?':true,
+          'browser?':botsState.browserAvailable,
+          'peers?':true,
+          'coding?':true,
+          'virtual-shell?':false,
           workspace:$('#bots-workspace').value.trim()
         }, true);
         botsState.bots = data.bots || [];

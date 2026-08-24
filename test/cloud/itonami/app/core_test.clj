@@ -1349,22 +1349,30 @@
   ;; A capability with no control is a capability nobody can use. `:bot/peers?`
   ;; landed with `send_message` and without this checkbox, which made the tool
   ;; unreachable by the only person allowed to grant it.
-  (let [html (web/page-html {})]
-    (doseq [id ["bots-writes" "bots-omakase" "bots-browser" "bots-peers"
-                "bots-coding" "bots-virtual-shell"]]
-      (is (re-find (re-pattern (str "id=\"" id "\"")) html)
-          (str id " has no control on the Bot screen")))))
+  (let [html (web/page-html {})
+        js (slurp (clojure.java.io/file "resources/cloud/itonami/app/interaction.js"))]
+    (is (not (str/includes? html "id=\"bots-writes\""))
+        "authority flags do not burden Bot creation")
+    (doseq [label ["ファイル・Git・接続先への書き込みを許可"
+                   "おまかせモード"
+                   "Bot専用の分離ブラウザーを許可"
+                   "ほかのBotとの書き置きを許可"
+                   "この PC の Git workspace で coding する"
+                   "隔離された仮想環境で汎用shellを使う"]]
+      (is (str/includes? js label)
+          (str label " has no control in the selected Bot settings")))))
 
 (deftest the-omakase-copy-describes-what-omakase-now-does
   ;; It read "shell・メール送信・Git変更" until 2026-08-19 — the three-effect
   ;; allowlist ADR-0060 deleted. The screen was telling the owner something
   ;; false about the switch they were being asked to turn on, which is worse
   ;; than saying nothing.
-  (let [html (web/page-html {})]
+  (let [html (web/page-html {})
+        js (slurp (clojure.java.io/file "resources/cloud/itonami/app/interaction.js"))]
     (is (not (str/includes? html "shell・メール送信・Git変更を待たずに実行"))
         "the screen still describes the allowlist that no longer exists")
-    (is (str/includes? html "この Bot が使えるツールすべてを、待たずに実行します"))
-    (is (str/includes? html "渡していないツールは、自分で承認しても使えません")
+    (is (str/includes? js "許可済みの操作を待たずに実行"))
+    (is (str/includes? js "渡していないツールは、自分で承認しても使えません")
         "the ceiling is the part a person most needs told")))
 
 (deftest bot-conversations-are-a-read-only-part-of-bots

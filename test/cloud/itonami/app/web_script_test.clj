@@ -81,24 +81,21 @@
         load-bots (second (re-find
                            #"(?s)const loadBots = async \(options = \{\}\) => \{(.*?)\n    \};"
                            js))]
-    (doseq [id ["bots-provider" "bots-provider-help"
-                "bots-provider-readiness" "bots-model"]]
-      (is (str/includes? html (str "id=\"" id "\"")) id))
-    (is (str/includes? html "<select id=\"bots-model\">")
-        "Bot model is a choice, not a free-form model id")
+    (doseq [id ["bots-provider" "bots-model"]]
+      (is (not (str/includes? html (str "id=\"" id "\"")))
+          (str id " belongs to the selected Bot settings, not creation")))
     (is (str/includes? js "data['model-providers'] || []"))
     (is (str/includes? js "provider?.models || []"))
     (is (str/includes? js "data['model-provider-readiness'] || []"))
-    (is (str/includes? js "'credential-missing':'credential 未設定'"))
-    (is (str/includes? js "'provider-id':$('#bots-provider').value"))
-    (is (str/includes? js "model:$('#bots-model').value.trim()"))
+    (is (str/includes? js "const providerSelect = make('select')"))
+    (is (not (str/includes? js "'provider-id':$('#bots-provider').value")))
+    (is (not (str/includes? js "model:$('#bots-model').value.trim()")))
     (is (str/includes? js "`/api/bots/${bot.id}`"))
     (is (str/includes? js "'provider-id':providerSelect.value"))
     (is (str/includes? js "Model: ${bot['provider-id']} / ${bot.model}"))
     (is load-bots "loadBots remains independently inspectable")
-    (is (< (.indexOf load-bots "renderBotsModelProviders();")
-           (.indexOf load-bots "await selectBot(botsRecentFirst(botsState.bots)[0].id);"))
-        "provider readiness renders before the initial selection fast path")))
+    (is (str/includes? load-bots "await selectBot(botsRecentFirst(botsState.bots)[0].id);")
+        "the initial Bot selection opens its per-Bot model setting")))
 
 (deftest startup-workforce-is-visible-and-human-provisioned
   (let [html (with-redefs [store/snapshot (constantly (store/initial-state))]
@@ -128,10 +125,11 @@
   (let [html (with-redefs [store/snapshot (constantly (store/initial-state))]
                (web/page-html config))
         js (slurp (io/file "resources/cloud/itonami/app/interaction.js"))]
-    (doseq [id ["bots-coding" "bots-workspace" "bots-cancel"
+    (doseq [id ["bots-workspace" "bots-cancel"
                 "bots-goal" "bots-run"]]
       (is (str/includes? html (str "id=\"" id "\"")) id))
-    (is (str/includes? html "ファイル変更と commit は毎回承認"))
+    (is (not (str/includes? html "id=\"bots-coding\"")))
+    (is (str/includes? html "ファイル変更・local commitを自律実行"))
     (is (str/includes? js "messages/stream"))
     (is (str/includes? js "messages/${encodeURIComponent(active.runId)}/followups"))
     (is (str/includes? js "messages/${encodeURIComponent(runId)}/cancel"))
@@ -148,7 +146,7 @@
     (is (str/includes? js "前回の実行はアプリの再起動で中断されました。"))
     (is (str/includes? js "personEntry.dataset.role = 'person'"))
     (is (str/includes? js "append(personEntry, entry)"))
-    (is (str/includes? js "'coding?':$('#bots-coding').checked"))
+    (is (str/includes? js "'coding?':true"))
     (is (str/includes? js "workspace:$('#bots-workspace').value.trim()"))))
 
 (deftest bots-render-markdown-safely-and-start-from-a-local-workspace
@@ -163,7 +161,8 @@
     (is (not (str/includes? js "provisional.innerHTML")))
     (is (str/includes? html "Local workspace で働く Bot"))
     (is (str/includes? html "外部サービスを追加（任意）"))
-    (is (re-find #"id=\"bots-coding\"[^>]*checked" html))
+    (is (not (str/includes? html "id=\"bots-coding\"")))
+    (is (str/includes? html "自律モードで開始します"))
     (is (str/includes? js "botsState.defaultWorkspace = data['default-workspace'] || ''"))
     (is (str/includes? js "$('#bots-services-next').disabled = false"))))
 
@@ -221,9 +220,9 @@
   (let [html (with-redefs [store/snapshot (constantly (store/initial-state))]
                (web/page-html config))
         js (slurp (io/file "resources/cloud/itonami/app/interaction.js"))]
-    (is (str/includes? html "id=\"bots-virtual-shell\""))
-    (is (str/includes? html "隔離された仮想環境"))
-    (is (str/includes? js "'virtual-shell?':$('#bots-virtual-shell').checked"))
+    (is (not (str/includes? html "id=\"bots-virtual-shell\"")))
+    (is (str/includes? js "virtualShellBox.setAttribute('aria-label', '隔離された仮想環境で汎用shellを使う')"))
+    (is (str/includes? js "'virtual-shell?':virtualShellBox.checked"))
     (is (str/includes? js "bot['virtual-shell?']"))
     (is (str/includes? js "`/api/bots/${botId}/shell/cancel`"))))
 
@@ -418,10 +417,10 @@
   (let [html (with-redefs [store/snapshot (constantly (store/initial-state))]
                (web/page-html config))
         js (slurp (io/file "resources/cloud/itonami/app/interaction.js"))]
-    (is (str/includes? html "id=\"bots-omakase\""))
-    (is (str/includes? html "shell・メール送信・Git変更"))
-    (is (str/includes? js "'omakase?':$('#bots-omakase').checked"))
-    (is (str/includes? js "{'omakase?':omakaseBox.checked}"))
+    (is (not (str/includes? html "id=\"bots-omakase\"")))
+    (is (str/includes? js "make('strong', 'bots-settings__title', 'Bot設定')"))
+    (is (str/includes? js "'omakase?':true"))
+    (is (str/includes? js "'omakase?':omakaseBox.checked"))
     (is (str/includes? js "'おまかせ承認済み'"))))
 
 (deftest wallet-is-bot-native-rather-than-an-assignment-grid
