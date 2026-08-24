@@ -135,6 +135,8 @@
           (is (true? (:bot/writes? created)))
           (is (true? (:bot/omakase? created)))
           (is (true? (:bot/browser? created)))
+          (is (false? (:bot/computer? created))
+              "Computer Use is never inferred from general autonomy")
           (is (true? (:bot/peers? created)))
           (is (true? (:bot/coding? created)))
           (is (false? (:bot/virtual-shell? created)))
@@ -1515,8 +1517,8 @@
     (io/copy (byte-array (map unchecked-byte
                               [0x89 0x50 0x4E 0x47 0x0D 0x0A 0x1A 0x0A]))
              png)
-    (with-redefs [agent-control/browser-tool? (fn [n] (= n "computer_screenshot"))
-                  agent-control/call-browser-tool!
+    (with-redefs [agent-control/computer-tool? (fn [n] (= n "computer_screenshot"))
+                  agent-control/call-computer-tool!
                   (fn [& _] {:image-path (.getCanonicalPath png)
                              :media-type "image/png"
                              :window "Test"})]
@@ -1875,6 +1877,7 @@
               (is (nil? (cports/-token tokens 'com.github))))))))))
 
 (def ^:private browser-on {:agent-control {:browser {:enabled? true}}})
+(def ^:private computer-on {:agent-control {:computer {:enabled? true}}})
 
 (defn- execute-tool-var []
   (ns-resolve 'cloud.itonami.app.agent-control 'execute-tool!))
@@ -2049,6 +2052,57 @@
         (is false "a disabled browser must not execute")
         (catch clojure.lang.ExceptionInfo e
           (is (= :agent/browser-disabled (:type (ex-data e)))))))))
+
+(deftest computer-tools-require-both-machine-and-bot-grants
+  (with-store
+    (fn []
+      (let [plain (make-bot alice {})
+            computer (make-bot alice {:name "computer" :computer? true})]
+        (with-redefs [agent-control/computer-ready? (constantly true)]
+          (let [definitions (private-fn 'tool-definitions)
+                plain-tools (set (map :name (definitions nil plain)))
+                computer-tools (set (map :name (definitions nil computer)))]
+            (is (not-any? #(str/starts-with? % "computer_") plain-tools))
+            (is (contains? computer-tools "computer_tree"))
+            (is (contains? computer-tools "computer_screenshot"))
+            (is (contains? computer-tools "computer_press"))
+            (is (not (contains? computer-tools "computer_click"))
+                "coordinate clicking remains outside the contract")))))))
+
+(deftest computer-reads-run-and-computer-writes-hold
+  (with-store
+    (fn []
+      (let [b (make-bot alice {:computer? true})
+            executed (atom [])]
+        (with-redefs [agent-control/computer-ready? (constantly true)
+                      agent-control/call-computer-tool!
+                      (fn [_ name input]
+                        (swap! executed conj [name input])
+                        "ok")]
+          (let [run-tool (private-fn 'run-tool!)
+                write-tool? (private-fn 'write-tool?)
+                describe (private-fn 'describe-tool)]
+            (run-tool computer-on b nil "computer_tree" {:application "Safari"})
+            (is (= ["computer_tree"] (mapv first @executed)))
+            (is (false? (write-tool? computer-on "computer_tree")))
+            (is (true? (write-tool? computer-on "computer_press"))
+                "the ordinary Bot loop therefore holds this call for approval")
+            (is (str/includes?
+                 (describe computer-on "computer_press"
+                           {:application "Safari" :ref "@a1"})
+                 "Safari"))
+            (is (str/includes?
+                 ((private-fn 'approval-impact) "computer_press")
+                 "画面digest"))))))))
+
+(deftest call-computer-tool-refuses-a-disabled-machine
+  (with-store
+    (fn []
+      (try
+        (agent-control/call-computer-tool! {} "computer_tree" {:application "Safari"})
+        (is false "a disabled machine must not execute")
+        (catch clojure.lang.ExceptionInfo error
+          (is (= :agent/computer-disabled (:type (ex-data error)))))))))
 
 ;; ── peer notes (ADR-0061 / ADR-0062) ────────────────────────────────────
 

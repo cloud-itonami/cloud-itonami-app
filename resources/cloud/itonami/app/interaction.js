@@ -7731,6 +7731,70 @@
         $('#memory-status').textContent = 'ローカルメモリを削除しました。';
       } catch (error) { $('#memory-status').textContent = error.message; }
     });
+    const renderAgentMachine = (data) => {
+      const settings = data.settings || {};
+      const diagnostics = data.diagnostics || {};
+      const browser = diagnostics.browser || {};
+      const computer = diagnostics.computer || {};
+      $('#agent-machine-browser').checked = Boolean(settings.browser?.['enabled?']);
+      $('#agent-machine-computer').checked = Boolean(settings.computer?.['enabled?']);
+      $('#agent-machine-domains').value = (settings.browser?.['allowed-domains'] || []).join(', ');
+      $('#agent-machine-browser').disabled = !browser['available?'];
+      $('#agent-machine-computer').disabled = !computer['helper?'] || !computer['accessibility?'];
+      $('#agent-machine-browser-help').textContent = browser['available?']
+        ? '接続済み。BotごとにCookieと履歴を分離します。'
+        : 'agent-browser が見つかりません。公式の agent-browser をインストールしてください。';
+      const missing = [];
+      if (!computer['helper?']) missing.push('helper未準備');
+      if (!computer['accessibility?']) missing.push('アクセシビリティ未許可');
+      if (!computer['screen-recording?']) missing.push('画面収録未許可');
+      $('#agent-machine-computer-help').textContent = missing.length
+        ? `未接続: ${missing.join(' / ')}`
+        : '接続済み。フォーカスを奪わず、画面digestで操作対象を固定します。';
+      const enabled = Boolean(settings['enabled?']);
+      $('#agent-machine-status').textContent =
+        `実行基盤 ${enabled ? 'ON' : 'OFF'} / 分離ブラウザー ${browser['available?'] ? 'ready' : '未接続'} / Computer Use ${computer['available?'] ? 'ready' : '未接続'}`;
+    };
+    const loadAgentMachine = async () => {
+      const response = await fetch('/api/bots/machine');
+      const data = await response.json();
+      if (!response.ok) throw new Error(data?.error?.message || 'Bot実行基盤を確認できませんでした。');
+      renderAgentMachine(data);
+      return data;
+    };
+    $('#agent-machine-save').addEventListener('click', async () => {
+      const button = $('#agent-machine-save');
+      button.disabled = true;
+      try {
+        const browser = $('#agent-machine-browser').checked;
+        const computer = $('#agent-machine-computer').checked;
+        const domains = $('#agent-machine-domains').value.split(',')
+          .map((value) => value.trim().toLowerCase()).filter(Boolean);
+        const current = await loadAgentMachine();
+        const settings = current.settings || {};
+        renderAgentMachine(await postJSON('/api/bots/machine', {
+          'enabled?':browser || computer || Boolean(settings.cli?.['enabled?']),
+          browser:{'enabled?':browser,
+                   'allowed-domains':domains},
+          computer:{'enabled?':computer},
+          cli:{'enabled?':Boolean(settings.cli?.['enabled?']),
+               workspace:settings.cli?.workspace || null,
+               access:settings.cli?.access || 'read-only'}
+        }, true));
+        $('#agent-machine-status').textContent = 'このMacのBot実行基盤を保存しました。';
+        await loadBots({keepSelection:true});
+      } catch (error) { $('#agent-machine-status').textContent = error.message; }
+      finally { button.disabled = false; }
+    });
+    $('#agent-machine-prepare-computer').addEventListener('click', async () => {
+      const button = $('#agent-machine-prepare-computer');
+      button.disabled = true;
+      try {
+        $('#agent-machine-status').textContent = 'Computer Use helperを準備しています…';
+        renderAgentMachine(await postJSON('/api/bots/machine/prepare-computer', {}, true));
+      } catch (error) { $('#agent-machine-status').textContent = error.message; }
+      finally { button.disabled = false; }
+    });
     const requireWebAuthn = () => {
       if (!window.PublicKeyCredential || !navigator.credentials) {
         throw new Error('このブラウザは Passkey / WebAuthn に対応していません。');
@@ -9276,7 +9340,8 @@
       selected:null, messages:[], picked:new Set(),
       draft:{color:'blue', glyph:'circle'}, loaded:false, busy:false,
       defaultWorkspace:'',
-      browserAvailable:false, controller:null, runId:null, shellBusy:false,
+      browserAvailable:false, computerAvailable:false,
+      controller:null, runId:null, shellBusy:false,
       activeRuns:new Map(),
       latestTurn:null, threadVersion:null, syncTimer:null, syncing:false,
       slo:null, routines:[], routinesLoading:false
@@ -10179,6 +10244,11 @@
       browserBox.checked = Boolean(bot['browser?']);
       browserBox.disabled = !botsState.browserAvailable;
       browserBox.setAttribute('aria-label', 'Bot専用の分離ブラウザーを許可');
+      const computerBox = make('input');
+      computerBox.type = 'checkbox';
+      computerBox.checked = Boolean(bot['computer?']);
+      computerBox.disabled = !botsState.computerAvailable;
+      computerBox.setAttribute('aria-label', 'このBotにフォーカスを奪わないComputer Useを許可');
       const peersBox = make('input');
       peersBox.type = 'checkbox';
       peersBox.checked = Boolean(bot['peers?']);
@@ -10199,6 +10269,10 @@
           botsState.browserAvailable
             ? 'このBot専用プロファイルで画面認識・操作します。'
             : 'このマシンのSettingsで分離ブラウザーが無効です。'),
+        authorityOption(computerBox, 'Computer Use',
+          botsState.computerAvailable
+            ? '指定アプリの画面を認識し、画面digestに固定した操作だけを実行します。'
+            : 'このマシンのSettingsでComputer Useが無効です。'),
         authorityOption(peersBox, 'Bot間連携',
           'ほかのBotへ書き置きできます。ツール・アカウント・秘密は渡しません。'));
       const saveAuthority = make('button', 'tool-button', '権限を保存');
@@ -10210,6 +10284,7 @@
             'writes?':writesBox.checked,
             'omakase?':omakaseBox.checked,
             'browser?':browserBox.checked,
+            'computer?':computerBox.checked,
             'peers?':peersBox.checked
           }, true);
           botsState.bots = data.bots || [];
@@ -10285,6 +10360,13 @@
       } else if (bot['browser?']) {
         panel.append(make('div', null,
           '分離ブラウザーは依頼されていますが、このマシンの Settings で有効になっていません。'));
+      }
+      if (bot['computer-ready?']) {
+        panel.append(make('div', null,
+          'Computer Use: フォーカスを奪わない画面認識とdigest固定操作（書き込みは承認または自律receipt）'));
+      } else if (bot['computer?']) {
+        panel.append(make('div', null,
+          'Computer Useは依頼されていますが、このマシンの Settings で有効になっていません。'));
       }
       if (bot['admitted-tools'].length) {
         const list = make('ul');
@@ -10405,6 +10487,7 @@
         botsState.palette = data.palette || botsState.palette;
         botsState.defaultWorkspace = data['default-workspace'] || '';
         botsState.browserAvailable = Boolean(data['browser-available?']);
+        botsState.computerAvailable = Boolean(data['computer-available?']);
         botsState.slo = data.slo || null;
         botsState.loaded = true;
         renderBotsSlo();
@@ -11154,9 +11237,10 @@
         $('#capture-status').textContent = error.message;
       });
       if (currentView === 'sites') loadSites();
-      if (currentView === 'settings') loadChronicle().catch((error) => {
-        $('#memory-status').textContent = error.message;
-      });
+      if (currentView === 'settings') {
+        loadChronicle().catch((error) => { $('#memory-status').textContent = error.message; });
+        loadAgentMachine().catch((error) => { $('#agent-machine-status').textContent = error.message; });
+      }
     };
     $('#worker-form').addEventListener('submit', async (event) => {
       event.preventDefault();
