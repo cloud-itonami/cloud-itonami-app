@@ -177,7 +177,8 @@
             [cloud.itonami.app.oauth-did-binding-test]
             [cloud.itonami.app.worker-http-test]
             [cloud.itonami.app.wallet-test]
-            [cloud.itonami.app.wallet-http-test]))
+            [cloud.itonami.app.wallet-http-test]
+            [cloud.itonami.app.commerce-test]))
 
 (def ^:private namespaces
   '[cloud.itonami.app.authority-test
@@ -346,7 +347,8 @@
     cloud.itonami.app.oauth-did-binding-test
     cloud.itonami.app.worker-http-test
     cloud.itonami.app.wallet-test
-    cloud.itonami.app.wallet-http-test])
+    cloud.itonami.app.wallet-http-test
+    cloud.itonami.app.commerce-test])
 
 (defn- test-namespaces-on-disk
   "Every `*_test.clj` under test/, as the namespace symbol it declares."
