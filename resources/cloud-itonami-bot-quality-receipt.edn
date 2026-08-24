@@ -1,17 +1,22 @@
 {:schema "cloud.itonami.app.bot-quality-receipt.v1"
- :as-of "2026-08-23T03:30:00Z"
- :sample-size 3
+ :as-of "2026-08-24T02:40:00Z"
+ :sample-size 20
  :required-sample-size 20
- :source "ADR-2608212400 live read-only audit; factual claims checked against files and Git"
+ :source "docs/bot-quality-audit-20260824.md — 20-sample live read-only audit; every checkable claim re-executed against the Bot's admitted workspace"
  :components
- {:factual-grounding {:points 22 :max 25}
-  :instruction-adherence {:points 16 :max 20}
-  :specificity-actionability {:points 11 :max 20}
-  :clarity {:points 11 :max 15}
-  :structure {:points 6 :max 10}
-  :uncertainty-non-hallucination {:points 9 :max 10}}
- ;; Three checked examples establish a baseline score, not the fixed-suite
- ;; rates required for PASS. Missing rates remain nil and fail closed.
- :metrics {:factual-grounding-rate nil
-           :instruction-adherence-rate nil
-           :actionable-answer-rate nil}}
+ {:factual-grounding {:points 18 :max 25}
+  :instruction-adherence {:points 20 :max 20}
+  :specificity-actionability {:points 17 :max 20}
+  :clarity {:points 14 :max 15}
+  :structure {:points 8 :max 10}
+  :uncertainty-non-hallucination {:points 8 :max 10}}
+ ;; Fractions, as `bot_slo/quality-pass?` consumes them. Grounding is
+ ;; 12/16 — four samples carry no checkable claim and are excluded from the
+ ;; denominator rather than counted as true. 0.75 < the 0.95 the gate
+ ;; requires, so the quality-suite gate is MEASURED AND FAILING: all four
+ ;; grounding failures are Bots asserting search results ("0 hits", "only
+ ;; in test files") that re-execution contradicts. The failure detail and
+ ;; every sample's turn id are in the audit document named in :source.
+ :metrics {:factual-grounding-rate 0.75
+           :instruction-adherence-rate 1.0
+           :actionable-answer-rate 1.0}}
