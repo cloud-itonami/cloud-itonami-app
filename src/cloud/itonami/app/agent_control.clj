@@ -242,12 +242,25 @@
                                                          [:cli :enabled?])}))))
     next-settings))
 
-(defn- executable? [name]
-  (let [path (some #(let [candidate (io/file % name)]
-                      (when (and (.isFile candidate) (.canExecute candidate))
-                        (.getPath candidate)))
-                   (str/split (or (System/getenv "PATH") "") #":"))]
-    (boolean path)))
+(defn- executable-path [name]
+  (some #(let [candidate (io/file % name)]
+           (when (and (.isFile candidate) (.canExecute candidate))
+             (.getCanonicalPath candidate)))
+        (distinct
+         (concat (str/split (or (System/getenv "PATH") "") #":")
+                 ;; A Finder/LaunchAgent process often has a deliberately
+                 ;; narrow PATH. These are installation locations, not a
+                 ;; request to run an arbitrary shell command.
+                 ["/opt/homebrew/bin" "/usr/local/bin"]))))
+
+(defn- browser-executable []
+  (let [override (some-> (System/getenv "CLOUD_ITONAMI_AGENT_BROWSER")
+                         str str/trim not-empty)]
+    (if override
+      (let [candidate (io/file override)]
+        (when (and (.isFile candidate) (.canExecute candidate))
+          (.getCanonicalPath candidate)))
+      (executable-path "agent-browser"))))
 
 (defn diagnostics [configuration]
   (let [s (settings configuration)]
@@ -255,7 +268,8 @@
      :enabled? (:enabled? s)
      :browser {:enabled? (get-in s [:browser :enabled?])
                :host "kotoba-lang/browser-use compatible agent-browser"
-               :available? (executable? "agent-browser")
+               :available? (boolean (browser-executable))
+               :executable (browser-executable)
                :allowed-domains (get-in s [:browser :allowed-domains])}
      :computer (let [state (desktop/available?)]
                  (merge {:enabled? (get-in s [:computer :enabled?])
@@ -296,7 +310,9 @@
 
 (defn- browser-command! [& args]
   (run-command!
-   (into ["agent-browser"] args)
+   (into [(or (browser-executable)
+              (throw (ex-info "agent-browser がインストールされていません。"
+                              {:type :agent/browser-unavailable})))] args)
    45 {"AGENT_BROWSER_SESSION" (or *browser-session* default-session-name)
        "AGENT_BROWSER_HEADED" "true"}))
 
@@ -496,6 +512,21 @@
   [configuration]
   (boolean (get-in (settings (or configuration {})) [:browser :enabled?])))
 
+(defn computer-enabled?
+  "Whether THIS MACHINE admits focus-free macOS computer tools.
+
+  This is only the deployment half of the gate. A Bot must also carry its own
+  `:bot/computer?` grant before any tool is shown to its model."
+  [configuration]
+  (boolean (get-in (settings (or configuration {})) [:computer :enabled?])))
+
+(defn computer-ready?
+  "Machine admission plus the concrete helper and Accessibility grant."
+  [configuration]
+  (let [state (desktop/available?)]
+    (boolean (and (computer-enabled? configuration)
+                  (:helper? state) (:accessibility? state)))))
+
 (defn browser-tool?
   "Is this an isolated-browser tool name, and not a computer or connector one?"
   [tool-name]
@@ -506,6 +537,13 @@
   holds it the same way it holds a Gmail send."
   [tool-name]
   (and (browser-tool? tool-name)
+       (not (contains? read-only-tools (str tool-name)))))
+
+(defn computer-tool? [tool-name]
+  (str/starts-with? (str tool-name) "computer_"))
+
+(defn computer-write? [tool-name]
+  (and (computer-tool? tool-name)
        (not (contains? read-only-tools (str tool-name)))))
 
 (defn browser-tool-definitions
@@ -523,9 +561,26 @@
           browser-tools)
     []))
 
+(defn computer-tool-definitions
+  "The focus-free computer tools as a Bot model sees them, or none.
+
+  No coordinate click, synthetic key or free-form typing tool exists. Writes
+  remain bound to the digest returned by `computer_tree`."
+  [configuration]
+  (if (computer-ready? configuration)
+    (mapv (fn [t]
+            (cond-> t
+              (computer-write? (:name t))
+              (update :description #(str % " (write; requires current tree digest)"))))
+          computer-tools)
+    []))
+
 (defn describe-browser-tool
   "What an approval card should say about one browser call."
   [tool-name input]
+  (approval-summary (str tool-name) (or input {})))
+
+(defn describe-computer-tool [tool-name input]
   (approval-summary (str tool-name) (or input {})))
 
 (defn call-browser-tool!
@@ -544,6 +599,21 @@
                       {:type :agent/browser-disabled :tool name})))
     (binding [*browser-session* (session-for principal-id)]
       (execute-tool! (or configuration {}) name (or input {})))))
+
+(defn call-computer-tool!
+  "Run one focus-free computer tool after both machine and Bot admission.
+
+  The Bot admission is checked by `bots/tool-definitions`; this seam repeats
+  the machine check so a stale model call cannot cross a Settings change."
+  [configuration tool-name input]
+  (let [name (str tool-name)]
+    (when-not (computer-tool? name)
+      (throw (ex-info "computer tool ではありません。"
+                      {:type :agent/unknown-tool :tool name})))
+    (when-not (computer-ready? configuration)
+      (throw (ex-info "Computer Use は有効ではありません。"
+                      {:type :agent/computer-disabled :tool name})))
+    (execute-tool! (or configuration {}) name (or input {}))))
 
 (defn- approval [run-id tool-name input]
   (hil/approval-request

@@ -5,6 +5,7 @@
             [clojure.string :as str]
             [cloud.itonami.app.kaiyu-local :as kaiyu-local]
             [cloud.itonami.app.agent-session :as agent-session]
+            [cloud.itonami.app.agent-control :as agent-control]
             [cloud.itonami.app.app-client :as app-client]
             [cloud.itonami.app.authority.api :as authority-api]
             [cloud.itonami.app.business :as business]
@@ -21,6 +22,7 @@
             [cloud.itonami.app.presentation-request :as presentation-request]
             [webauthn.assurance :as credential-assurance]
             [cloud.itonami.app.documents :as documents]
+            [cloud.itonami.app.desktop :as desktop]
             [cloud.itonami.app.binding-sweep :as binding-sweep]
             [cloud.itonami.app.domain-binding :as domain-binding]
             [cloud.itonami.app.domain-verification :as domain-verification]
@@ -5349,6 +5351,34 @@
     (cond
       (and (= method "GET") (= path "/api/bots"))
       (send! exchange 200 (bots/overview config session))
+
+      (and (= method "GET") (= path "/api/bots/machine"))
+      (send! exchange 200
+             {:settings (agent-control/settings config)
+              :diagnostics (agent-control/diagnostics config)})
+
+      (and (= method "POST") (= path "/api/bots/machine"))
+      (let [body (read-json exchange)]
+        (require-human-session! exchange)
+        (require-origin! exchange config)
+        (require-csrf! exchange session)
+        (agent-control/configure! config body)
+        (send! exchange 200
+               {:settings (agent-control/settings config)
+                :diagnostics (agent-control/diagnostics config)}))
+
+      (and (= method "POST") (= path "/api/bots/machine/prepare-computer"))
+      (do
+        (require-human-session! exchange)
+        (require-origin! exchange config)
+        (require-csrf! exchange session)
+        (let [path (desktop/build!)]
+          (when-not path
+            (throw (ex-info "このMacでComputer Use helperを準備できませんでした。"
+                            {:type :desktop/build-failed})))
+          (send! exchange 200
+                 {:helper path
+                  :diagnostics (agent-control/diagnostics config)})))
 
       (and (= method "POST") (= path "/api/bots"))
       (let [body (read-json exchange)]
