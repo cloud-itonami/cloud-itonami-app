@@ -154,6 +154,18 @@
 (defn session-messages [session-id]
   (get-in @state [:sessions session-id :messages] []))
 
+(defn session-context-refs [session-id]
+  (vec (get-in @state [:sessions session-id :context-refs] [])))
+
+(defn set-session-context-refs! [session-id refs]
+  (transact!
+   (fn [s]
+     (-> s
+         (update-in [:sessions session-id]
+                    #(merge {:id session-id :messages []} (or % {})
+                            {:updated-at (now) :context-refs (vec refs)})))))
+  (session-context-refs session-id))
+
 (defn append-message!
   [session-id {:keys [role content] :as message} max-messages]
   (let [message-id (or (:id message) (new-id "msg"))
@@ -168,8 +180,11 @@
                         (kgraph/assert-datom [message-id :message/role role])
                         (kgraph/assert-datom [message-id :message/content content]))]
          (-> s
-             (assoc-in [:sessions session-id]
-                       {:id session-id :updated-at (now) :messages kept})
+             ;; Context belongs to the conversation, not to one message.
+             ;; Preserve all session fields while appending the transcript.
+             (update-in [:sessions session-id]
+                        #(merge {:id session-id} (or % {})
+                                {:updated-at (now) :messages kept}))
              (assoc :datoms datoms)))))
     recorded))
 

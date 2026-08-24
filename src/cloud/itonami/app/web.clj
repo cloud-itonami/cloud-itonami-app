@@ -1361,7 +1361,21 @@
        operations a compact, horizontal icon group. */
     .bots-titlebar__identity{display:none!important}
     #bots-titlebar-context{gap:.25rem;flex:0 0 auto}
-    #bots-context-project-select{max-width:9rem;min-height:2.25rem}
+    .context-button{min-height:2.25rem;padding:.375rem .625rem;border:1px solid var(--color-neutral-solid-gray-300);
+      border-radius:.65rem;background:var(--color-neutral-white);color:var(--color-neutral-solid-gray-900);
+      white-space:nowrap;cursor:pointer}
+    .conversation-context-panel{position:fixed;z-index:60;top:0;right:0;width:min(26rem,100vw);
+      height:100dvh;box-sizing:border-box;padding:1rem;background:var(--color-neutral-white);
+      border-left:1px solid var(--color-neutral-solid-gray-200);box-shadow:-1rem 0 2rem rgb(0 0 0 / .12);
+      overflow:auto}
+    .context-panel__header{display:flex;align-items:flex-start;justify-content:space-between;gap:1rem}
+    .context-panel__header h2{margin:.25rem 0}.context-panel__lead{margin:.25rem 0 1rem;color:var(--color-neutral-solid-gray-600);line-height:1.5}
+    .context-source-list{display:grid;gap:.5rem;margin:1rem 0;padding:0;list-style:none}
+    .context-source{display:grid;grid-template-columns:auto 1fr;gap:.125rem .625rem;align-items:start;
+      padding:.75rem;border:1px solid var(--color-neutral-solid-gray-200);border-radius:.75rem}
+    .context-source input{grid-row:1/3;margin-top:.2rem}.context-source__detail{font-size:.8rem;color:var(--color-neutral-solid-gray-600)}
+    .context-panel__actions{position:sticky;bottom:0;display:flex;align-items:center;gap:.75rem;
+      padding:.75rem 0;background:var(--color-neutral-white)}
     #bots-titlebar-context>.tool-button{width:2.25rem;min-width:2.25rem;
       min-height:2.25rem;padding:.125rem;white-space:nowrap}
     .bots-conversations__count{position:absolute;clip:rect(0,0,0,0);
@@ -1579,6 +1593,25 @@
    [:p {:class "form-help"}
     "パスワード・2FA・CAPTCHA・支払い・セキュリティ確認は自動操作しません。Computer操作は対象アプリ名、画面digest、要素tokenをreceiptに残します。"]])
 
+(defn- conversation-context-panel []
+  [:aside {:class "conversation-context-panel authenticated-only"
+           :id "conversation-context-panel" :hidden true
+           :aria-labelledby "context-panel-title"}
+   [:div {:class "context-panel__header"}
+    [:div [:p {:class "eyebrow"} "会話ごとの参照資料"]
+     [:h2 {:id "context-panel-title"} "Context"]]
+    [:button {:class "tool-button" :id "context-panel-close" :type "button"
+              :aria-label "Contextを閉じる"} "×"]]
+   [:p {:class "context-panel__lead"}
+    "Project、フォルダ、データ、ドキュメントを複数追加できます。Contextは権限・接続先・保存先を変更しません。"]
+   [:label {:for "context-search"} "検索"]
+   [:input {:class "text-input" :id "context-search" :type "search"
+            :placeholder "名前で絞り込む"}]
+   [:ul {:class "context-source-list" :id "context-source-list"}]
+   [:div {:class "context-panel__actions"}
+    [:button {:class "primary-button" :id "context-save" :type "button"} "追加内容を保存"]
+    [:span {:class "form-status" :id "context-status" :role "status"}]]])
+
 (defn page-html [configuration]
   (let [cloud? (get-in configuration [:routing :cloud-enabled?])
         provider (get-in configuration [:routing :default-provider])
@@ -1665,21 +1698,16 @@
         [:h2 {:class "topbar__title" :id "current-view"} "Bots"]
         [:div {:class "topbar__context authenticated-only" :id "project-titlebar-context"
                :data-topbar-view "chat" :hidden true}
-         [:label {:class "visually-hidden" :for "chat-context-project-select"}
-          "このChatのProject context"]
-         [:select {:class "project-select" :id "chat-context-project-select"
-                   :title "会話の参照context。権限や保存先は変わりません"}
-          [:option {:value ""} "Contextなし"]]
-         [:p {:class "topbar__meta"} "会話contextのみ"]]
+         [:button {:class "context-button" :id "chat-context-button" :type "button"
+                   :aria-expanded "false" :aria-controls "conversation-context-panel"
+                   :title "このChatにProject、フォルダ、データを追加"}
+          "Context 0"]]
         [:div {:class "topbar__context authenticated-only" :id "bots-titlebar-context"
                :data-topbar-view "bots" :hidden true}
-         [:label {:class "visually-hidden" :for "bots-context-project-select"}
-          "このBot会話のProject context"]
-         [:select {:class "project-select bots-context-project-select"
-                   :id "bots-context-project-select"
-                   :title "会話の参照context。権限・workspace・保存先は変わりません"
-                   :disabled true}
-          [:option {:value ""} "Contextなし"]]
+         [:button {:class "context-button" :id "bots-context-button" :type "button"
+                   :aria-expanded "false" :aria-controls "conversation-context-panel"
+                   :title "このBotにProject、フォルダ、データを追加" :disabled true}
+          "Context 0"]
          [:div {:class "bots-titlebar__identity" :id "bots-titlebar-identity" :hidden true}
           [:span {:class "bot-avatar" :id "bots-titlebar-avatar"}]
           [:div {:class "bots-titlebar__copy"}
@@ -1706,6 +1734,7 @@
          [:button {:class "tool-button" :id "bots-new" :type "button"
                    :aria-label "新しい Bot を作る"} "＋"]]]
        [:main {:id "main-content"}
+        (conversation-context-panel)
         [:p {:class "settings-notice global-status" :id "identity-status"
              :role "status" :aria-live "polite"} ""]
         ;; Legacy local chat stays in the document for compatibility with the

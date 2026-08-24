@@ -64,6 +64,7 @@
             [cloud.itonami.app.connectors :as connectors]
             [cloud.itonami.app.chronicle :as chronicle]
             [cloud.itonami.app.commerce :as commerce]
+            [cloud.itonami.app.conversation-context :as conversation-context]
             [cloud.itonami.app.gc :as gc]
             [cloud.itonami.app.handoff :as handoff]
             [cloud.itonami.app.identity :as identity]
@@ -71,7 +72,6 @@
             [cloud.itonami.app.mail-account :as mail-account]
             [cloud.itonami.app.mail-sync :as mail-sync]
             [cloud.itonami.app.policy :as policy]
-            [cloud.itonami.app.project-repository :as project-repository]
             [cloud.itonami.app.wallet :as wallet]
             [cloud.itonami.app.provider :as provider]
             [cloud.itonami.app.relay :as relay]
@@ -807,13 +807,19 @@
         context-project-id (when (contains? attrs :context-project-id)
                              (some-> (:context-project-id attrs)
                                      str str/trim not-empty))
-        _ (when (and context-project-id
-                     (nil? (project-repository/project-context
-                            {:organization-id (:organization-id session)
-                             :project-id context-project-id})))
-            (throw (ex-info "選択した Project が見つかりません。"
-                            {:type :project/not-found
-                             :project context-project-id})))
+        context-refs (cond
+                       (contains? attrs :context-refs)
+                       (conversation-context/normalize-refs (:context-refs attrs))
+
+                       (contains? attrs :context-project-id)
+                       (if context-project-id
+                         [{:kind "project" :target context-project-id}]
+                         [])
+
+                       :else (:bot/context-refs existing))
+        _ (when (or (contains? attrs :context-refs)
+                    (contains? attrs :context-project-id))
+            (conversation-context/resolve-refs session context-refs))
         next-provider (if (contains? attrs :provider-id)
                         (:provider-id attrs) (:bot/provider-id existing))
         next-model (if (contains? attrs :model)
@@ -839,8 +845,12 @@
                  (contains? attrs :brief) (assoc :bot/brief (:brief attrs))
                  (contains? attrs :provider-id) (assoc :bot/provider-id (:provider-id attrs))
                  (contains? attrs :model) (assoc :bot/model (:model attrs))
-                 (contains? attrs :context-project-id)
-                 (assoc :bot/context-project-id context-project-id)
+                 (or (contains? attrs :context-refs)
+                     (contains? attrs :context-project-id))
+                 (assoc :bot/context-refs context-refs
+                        :bot/context-project-id
+                        (some #(when (= "project" (:kind %)) (:target %))
+                              context-refs))
                  (contains? attrs :tools) (assoc :bot/tools
                                                  (set (map str (:tools attrs))))
                  (contains? attrs :accounts) (assoc :bot/accounts
@@ -1362,6 +1372,7 @@
               :variant (mod face-hash 7)}
      :brief (:bot/brief b)
      :context-project-id (:bot/context-project-id b)
+     :context-refs (:bot/context-refs b)
      :provider-id (or (:bot/provider-id b)
                       (get-in configuration [:routing :default-provider]))
      :model (or (:bot/model b)
@@ -2218,17 +2229,19 @@
   stored in provider shape: `:person`/`:bot` is what this application records,
   and a stored `\"user\"`/`\"assistant\"` transcript would be a second copy of
   the conversation whose only purpose is to be sent somewhere."
-  ([configuration b messages] (transcript configuration b messages nil))
-  ([configuration b messages goal]
+  ([configuration b messages] (transcript configuration b messages nil nil))
+  ([configuration b messages goal] (transcript configuration b messages goal nil))
+  ([configuration b messages goal resolved-context]
   (let [device-context (bot-device-context configuration b messages goal)
-        project-context
-        (when-let [project-id (:bot/context-project-id b)]
-          (project-repository/project-context-prompt
-           {:organization-id (:bot/organization b)
-            :project-id project-id}))]
+        context-prompt (:prompt
+                        (or resolved-context
+                            (conversation-context/resolve-refs
+                             {:organization-id (:bot/organization b)
+                              :user-id (:bot/owner b)}
+                             (:bot/context-refs b))))]
   (into (cond-> [{:role "system" :content (system-prompt b configuration goal)}]
-          project-context
-          (conj {:role "system" :content project-context})
+          context-prompt
+          (conj {:role "system" :content context-prompt})
           device-context
           (conj {:role "system"
                  :content (str "Device context captured on this Mac follows. "
@@ -3639,6 +3652,8 @@
     ;; because the person did not decide anything, they moved on.
     (transact! update-in [:directions bot-id] (fnil inc 0))
     (let [current-direction (direction bot-id)
+          resolved-context (conversation-context/resolve-refs
+                            session (:bot/context-refs b))
           context-id (new-id "context")
           person-message
           (bot/message {:id (new-id "msg") :bot bot-id :role :person
@@ -3647,7 +3662,10 @@
                         :context-id context-id :source :person})
           _ (append! bot-id person-message)
           context (store-context! context-id b current-direction :person
-                                  (conversation bot-id) {})
+                                  (conversation bot-id)
+                                  {:context/refs (:refs resolved-context)
+                                   :context/source-receipts
+                                   (:receipts resolved-context)})
           did (identity/session-did session)
           admission (turn-admission configuration b did goal?)]
       ;; The turn is taken. An unauthorized connector is no longer a reason to
@@ -3673,7 +3691,8 @@
                               :objective (when goal? text)
                               :messages (transcript configuration b
                                                     (:context/messages context)
-                                                    (when goal? text))
+                                                    (when goal? text)
+                                                    resolved-context)
                               :turn-count 0
                               :tool-count 0
                               :usage nil})

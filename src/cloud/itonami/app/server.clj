@@ -15,6 +15,7 @@
             [cloud.itonami.app.bots :as bots]
             [cloud.itonami.app.chronicle :as chronicle]
             [cloud.itonami.app.commerce :as commerce]
+            [cloud.itonami.app.conversation-context :as conversation-context]
             [cloud.itonami.app.config :as config]
             [cloud.itonami.app.contracts :as contracts]
             [cloud.itonami.app.credential :as credential]
@@ -728,8 +729,13 @@
 (defn- public-session [session-id]
   {:schema "cloud.itonami.app.session.v1"
    :id session-id
-   :messages (mapv #(select-keys % [:id :role :content :at])
+   :context-refs (store/session-context-refs session-id)
+   :messages (mapv #(select-keys % [:id :role :content :at :context-receipts])
                    (store/session-messages session-id))})
+
+(defn- context-chat-session-id [session logical-id]
+  (str "context\u0000" (:organization-id session) "\u0000" (:user-id session)
+       "\u0000" (or (not-empty (str/trim (str logical-id))) "desktop")))
 
 (defn- scoped-chat-session-id [session logical-id project-id]
   (let [logical-id (or (not-empty (str/trim (str logical-id))) "desktop")
@@ -2080,7 +2086,8 @@
 
 (defn- conversation-route? [path]
   (contains? #{"/api/session" "/api/chat" "/api/chat/stream"
-               "/api/session/clear"} path))
+               "/api/session/clear" "/api/session/context"
+               "/api/session/context/sources"} path))
 
 (defn- handle-capture!
   "Human-only, record-only capture. No route in here invokes a model or an
@@ -2165,24 +2172,52 @@
     (let [session (require-app-session! exchange)
           params (query-params exchange)
           logical-id (or (:session params) "desktop")
-          scoped-id (scoped-chat-session-id session logical-id (:project params))]
+          context-set? (= "1" (:context-set params))
+          scoped-id (if context-set?
+                      (context-chat-session-id session logical-id)
+                      (scoped-chat-session-id session logical-id (:project params)))]
       (send! exchange 200
              (assoc (public-session scoped-id)
                     :id logical-id :project (:project params))))
+
+    (and (= method "GET") (= path "/api/session/context/sources"))
+    (let [session (require-app-session! exchange)]
+      (send! exchange 200 (conversation-context/catalog session)))
+
+    (and (= method "POST") (= path "/api/session/context"))
+    (let [session (require-app-session! exchange)
+          request (read-json exchange)
+          logical-id (or (:session request) "desktop")
+          scoped-id (context-chat-session-id session logical-id)
+          resolved (conversation-context/resolve-refs session (:refs request))]
+      (require-origin! exchange config)
+      (require-csrf! exchange session)
+      (store/set-session-context-refs! scoped-id (:refs resolved))
+      (send! exchange 200
+             (assoc (public-session scoped-id) :id logical-id)))
 
     (and (= method "POST") (contains? #{"/api/chat" "/api/chat/stream"} path))
     (let [session (require-app-session! exchange)
           request (read-json exchange)
           prompt (:prompt request)
-          session-id (scoped-chat-session-id
-                      session (:session request) (:project request))
-          project-context (when-let [project-id (some-> (:project request)
-                                                        str str/trim not-empty)]
+          context-set? (boolean (:context-set? request))
+          session-id (if context-set?
+                       (context-chat-session-id session (:session request))
+                       (scoped-chat-session-id
+                        session (:session request) (:project request)))
+          context (when context-set?
+                    (conversation-context/resolve-refs
+                     session (store/session-context-refs session-id)))
+          project-context (when (and (not context-set?)
+                                     (some-> (:project request)
+                                             str str/trim not-empty))
+                            (let [project-id (some-> (:project request)
+                                                     str str/trim not-empty)]
                             (or (project-repository/project-context-prompt
                                  (project-scope session project-id))
                                 (throw (ex-info "選択した Project が見つかりません。"
                                                 {:type :project/not-found
-                                                 :project project-id}))))
+                                                 :project project-id})))))
           chat {:messages [{:role "user" :content prompt}]
                 :model (:model request)
                 :provider-id (:provider request)
@@ -2194,6 +2229,8 @@
                 :memory-eligible? (identity/human-session? session)
                 :project-id (:project request)
                 :project-context project-context
+                :context-prompt (:prompt context)
+                :context-receipts (:receipts context)
                 :memory-source (if (:tool-assisted? request)
                                  "tool-chat" "chat")}]
       (if (str/blank? prompt)
@@ -2207,7 +2244,9 @@
     (let [session (require-app-session! exchange)
           request (read-json exchange)
           logical-id (or (:session request) "desktop")
-          scoped-id (scoped-chat-session-id session logical-id (:project request))]
+          scoped-id (if (:context-set? request)
+                      (context-chat-session-id session logical-id)
+                      (scoped-chat-session-id session logical-id (:project request)))]
       (store/clear-session! scoped-id)
       (send! exchange 200 {:ok true :session logical-id
                            :project (:project request)}))

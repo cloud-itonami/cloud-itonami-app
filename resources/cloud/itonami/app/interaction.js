@@ -212,8 +212,10 @@
     const modelSelect = $('#model-select');
     let sessionId = localStorage.getItem('cloud-itonami-session') || 'desktop';
     const legacyProjectId = localStorage.getItem('cloud-itonami-project') || '';
-    let chatContextProjectId =
+    const legacyChatContextProjectId =
       localStorage.getItem('cloud-itonami-chat-context-project') || legacyProjectId;
+    let chatContextRefs = [];
+    let legacyContextMigrated = false;
     let selectedProjectId =
       localStorage.getItem('cloud-itonami-project-board') || legacyProjectId;
     let localProjects = [];
@@ -283,13 +285,12 @@
       });
     };
     const loadSession = async () => {
-      const requestedProject = chatContextProjectId;
       try {
-        const params = new URLSearchParams({session:sessionId});
-        if (requestedProject) params.set('project', requestedProject);
+        const params = new URLSearchParams({session:sessionId, 'context-set':'1'});
         const request = await fetch(`/api/session?${params}`);
         const data = await request.json();
-        if (chatContextProjectId !== requestedProject) return false;
+        chatContextRefs = data['context-refs'] || [];
+        $('#chat-context-button').textContent = `Context ${chatContextRefs.length}`;
         thread.querySelectorAll('.message-row').forEach((node) => node.remove());
         data.messages.forEach((message) => {
           if (message.role === 'user') lastPrompt = message.content;
@@ -363,7 +364,7 @@
           method:'POST', headers:{'Content-Type':'application/json'},
           signal:currentController.signal,
           body:JSON.stringify({prompt:value, session:sessionId, agent:'local',
-            model:modelSelect.value, project:chatContextProjectId || null})
+            model:modelSelect.value, 'context-set?':true})
         });
         await parseStream(request, assistant, value);
       } catch (error) {
@@ -397,6 +398,8 @@
     $('#new-chat-button').addEventListener('click', () => {
       currentController?.abort();
       sessionId = `chat-${crypto.randomUUID()}`;
+      chatContextRefs = [];
+      $('#chat-context-button').textContent = 'Context 0';
       localStorage.setItem('cloud-itonami-session', sessionId);
       chatShell.dataset.session = sessionId;
       thread.querySelectorAll('.message-row').forEach((node) => node.remove());
@@ -5030,21 +5033,8 @@
     const renderLocalProjects = (data) => {
       localProjects = data.items || [];
       const list = $('#local-project-list');
-      const contextSelects = [$('#chat-context-project-select'), $('#bots-context-project-select')];
       list.replaceChildren();
-      contextSelects.forEach((select) => {
-        select.replaceChildren();
-        const placeholder = make('option', null, 'Contextなし');
-        placeholder.value = '';
-        select.append(placeholder);
-      });
       localProjects.forEach((project) => {
-        contextSelects.forEach((select) => {
-          const option = make('option', null,
-            `Context: ${project.title || project['project-id']}`);
-          option.value = project['project-id'];
-          select.append(option);
-        });
         const row = recordButton(project, project['project-id'] === selectedProjectId,
           (selected) => selectWorkspaceProject(selected['project-id']),
           {title:project.title || project['project-id'], time:`${project['issue-count'] || 0} issues`,
@@ -5058,14 +5048,10 @@
       if (!localProjects.some((project) => project['project-id'] === selectedProjectId)) {
         selectedProjectId = localProjects[0]?.['project-id'] || '';
       }
-      if (!localProjects.some((project) => project['project-id'] === chatContextProjectId)) {
-        chatContextProjectId = '';
-      }
-      $('#chat-context-project-select').value = chatContextProjectId;
       document.querySelectorAll('#local-project-list [data-project-id]').forEach((item) =>
         item.querySelector('button')?.setAttribute(
           'aria-pressed', item.dataset.projectId === selectedProjectId ? 'true' : 'false'));
-      syncBotsProjectContext();
+      syncBotsContextButton();
       $('#projects-count').textContent = localProjects.length;
     };
     const loadLocalProjects = async () => {
@@ -5078,19 +5064,21 @@
         else localStorage.removeItem('cloud-itonami-project-board');
         localStorage.removeItem('cloud-itonami-project');
         await Promise.all([loadProjectBoard(), loadSites(), loadSession()]);
+        if (!legacyContextMigrated && legacyChatContextProjectId && !chatContextRefs.length &&
+            localProjects.some((project) => project['project-id'] === legacyChatContextProjectId)) {
+          legacyContextMigrated = true;
+          const migrated = await postJSON('/api/session/context', {session:sessionId,
+            refs:[{kind:'project', target:legacyChatContextProjectId}]}, true);
+          chatContextRefs = migrated['context-refs'] || [];
+          $('#chat-context-button').textContent = `Context ${chatContextRefs.length}`;
+          localStorage.removeItem('cloud-itonami-chat-context-project');
+        }
         return true;
       } catch (error) {
         $('#local-project-list').replaceChildren(make('li', 'empty-state', error.message));
         return false;
       }
     };
-    $('#chat-context-project-select').addEventListener('change', async (event) => {
-      chatContextProjectId = event.currentTarget.value || '';
-      if (chatContextProjectId) {
-        localStorage.setItem('cloud-itonami-chat-context-project', chatContextProjectId);
-      } else localStorage.removeItem('cloud-itonami-chat-context-project');
-      await loadSession();
-    });
     $('#local-project-create-form').addEventListener('submit', async (event) => {
       event.preventDefault();
       const status = $('#local-project-create-status');
@@ -9369,30 +9357,93 @@
       latestTurn:null, threadVersion:null, syncTimer:null, syncing:false,
       slo:null, routines:[], routinesLoading:false
     };
-    const syncBotsProjectContext = () => {
-      const select = $('#bots-context-project-select');
+    const syncBotsContextButton = () => {
+      const button = $('#bots-context-button');
       const selected = botsState.bots.find((bot) => bot.id === botsState.selected);
-      select.disabled = !selected;
-      select.value = selected?.['context-project-id'] || '';
+      const refs = selected?.['context-refs'] || [];
+      button.disabled = !selected;
+      button.textContent = `Context ${refs.length}`;
     };
-    $('#bots-context-project-select').addEventListener('change', async (event) => {
-      const botId = botsState.selected;
-      if (!botId) return;
-      const nextProject = event.currentTarget.value || null;
-      event.currentTarget.disabled = true;
+    const contextState = {mode:null, sources:[], refs:[]};
+    const contextKey = (ref) => `${ref.kind}:${ref.target}`;
+    const contextKindLabel = (kind) => ({project:'Project', folder:'フォルダ',
+      dataset:'データ', document:'ドキュメント'}[kind] || kind);
+    const renderContextSources = () => {
+      const list = $('#context-source-list');
+      const query = $('#context-search').value.trim().toLowerCase();
+      const selected = new Set(contextState.refs.map(contextKey));
+      list.replaceChildren();
+      contextState.sources.filter((source) => !query ||
+        `${source.label || ''} ${source.detail || ''}`.toLowerCase().includes(query))
+        .forEach((source) => {
+          const row = make('li', 'context-source');
+          const checkbox = make('input');
+          checkbox.type = 'checkbox';
+          checkbox.checked = selected.has(contextKey(source));
+          checkbox.addEventListener('change', () => {
+            if (checkbox.checked) contextState.refs.push({kind:source.kind, target:source.target});
+            else contextState.refs = contextState.refs.filter((ref) => contextKey(ref) !== contextKey(source));
+            $('#context-status').textContent = `${contextState.refs.length}件を選択中`;
+          });
+          row.append(checkbox, make('strong', null, source.label || source.target),
+            make('span', 'context-source__detail',
+              `${contextKindLabel(source.kind)}${source.detail ? ` · ${source.detail}` : ''}`));
+          list.append(row);
+        });
+      if (!list.children.length) list.append(make('li', 'empty-state', '該当するContextはありません。'));
+    };
+    const closeContextPanel = () => {
+      $('#conversation-context-panel').hidden = true;
+      $('#chat-context-button').setAttribute('aria-expanded', 'false');
+      $('#bots-context-button').setAttribute('aria-expanded', 'false');
+      contextState.mode = null;
+    };
+    const openContextPanel = async (mode) => {
+      const selectedBot = botsState.bots.find((bot) => bot.id === botsState.selected);
+      if (mode === 'bot' && !selectedBot) return;
+      contextState.mode = mode;
+      contextState.refs = (mode === 'bot' ? selectedBot['context-refs'] : chatContextRefs)
+        .map((ref) => ({kind:ref.kind, target:ref.target}));
+      $('#conversation-context-panel').hidden = false;
+      $(`#${mode === 'bot' ? 'bots' : 'chat'}-context-button`).setAttribute('aria-expanded', 'true');
+      $('#context-status').textContent = 'Contextを読み込んでいます…';
       try {
-        const data = await postJSON(`/api/bots/${botId}`,
-          {'context-project-id':nextProject}, true);
-        botsState.bots = data.bots || [];
-        syncBotsProjectContext();
-        renderBotsRail();
-        botsSetStatus(nextProject
-          ? 'この Project を会話contextにしました。権限やworkspaceは変わりません。'
-          : 'この Bot の Project context を外しました。');
-      } catch (error) {
-        syncBotsProjectContext();
-        botsSetStatus(error.message);
-      }
+        const request = await fetch('/api/session/context/sources');
+        const data = await request.json();
+        if (!request.ok) throw new Error(data?.error?.message || 'Contextを読み込めませんでした。');
+        contextState.sources = data.sources || [];
+        renderContextSources();
+        $('#context-status').textContent = `${contextState.refs.length}件を選択中`;
+      } catch (error) { $('#context-status').textContent = error.message; }
+    };
+    $('#chat-context-button').addEventListener('click', () => openContextPanel('chat'));
+    $('#bots-context-button').addEventListener('click', () => openContextPanel('bot'));
+    $('#context-panel-close').addEventListener('click', closeContextPanel);
+    $('#context-search').addEventListener('input', renderContextSources);
+    $('#context-save').addEventListener('click', async () => {
+      const mode = contextState.mode;
+      if (!mode) return;
+      const button = $('#context-save');
+      button.disabled = true;
+      $('#context-status').textContent = '保存しています…';
+      try {
+        if (mode === 'bot') {
+          const data = await postJSON(`/api/bots/${botsState.selected}`,
+            {'context-refs':contextState.refs}, true);
+          botsState.bots = data.bots || [];
+          syncBotsContextButton();
+          renderBotsRail();
+          botsSetStatus('会話Contextを保存しました。権限やworkspaceは変わりません。');
+        } else {
+          const data = await postJSON('/api/session/context',
+            {session:sessionId, refs:contextState.refs}, true);
+          chatContextRefs = data['context-refs'] || [];
+          $('#chat-context-button').textContent = `Context ${chatContextRefs.length}`;
+          await loadSession();
+        }
+        closeContextPanel();
+      } catch (error) { $('#context-status').textContent = error.message; }
+      finally { button.disabled = false; }
     });
     const botAvatar = (node, avatar, status = null) => {
       node.dataset.color = avatar?.color || 'blue';
@@ -10442,7 +10493,7 @@
       $('#bots-mobile-context').hidden = !selected;
       $('#bots-thread-tools').hidden = !selected;
       $('#bots-routines').hidden = !selected;
-      syncBotsProjectContext();
+      syncBotsContextButton();
       if (!selected) setBotRoutinesOpen(false);
     };
     const selectBot = async (botId) => {
@@ -10453,7 +10504,7 @@
       $('#bots-goal').checked = Boolean(selectedBot?.['coding?'] || selectedBot?.['virtual-shell?']);
       renderBotsRail();
       showBotsPane();
-      syncBotsProjectContext();
+      syncBotsContextButton();
       try {
         const request = await fetch(`/api/bots/${botId}/messages`);
         const data = await request.json();
