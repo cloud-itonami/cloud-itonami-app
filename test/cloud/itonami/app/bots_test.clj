@@ -1616,15 +1616,31 @@
                                        (assoc :workforce.job/trigger :capability-repair
                                               :workforce.job/triggered-at now))]))
                        current)))
+        (swap! store/state assoc-in
+               [:bots :capability-incidents [:source "commerce_store_overview" "fingerprint"]]
+               {:incident/state :open
+                :incident/tool "commerce_store_overview"
+                :incident/source-name "Store Bot"
+                :incident/source-bot "source"
+                :incident/fingerprint "fingerprint"
+                :incident/targets [qa-id]
+                :incident/last-seen-at now})
         (with-redefs [bots/submit-goal!
-                      (fn [_ _ bot-id _ run-id _]
-                        (swap! submitted conj bot-id)
+                      (fn [_ _ bot-id objective run-id _]
+                        (swap! submitted conj {:bot-id bot-id
+                                               :objective objective})
                         {:id run-id})]
           (let [result (bots/fire-due-workforce!
                         {:bots {:workforce {:max-starts-per-tick 1 :max-active 1}}}
                         alice now)]
-            (is (= [qa-id] @submitted)
+            (is (= [qa-id] (mapv :bot-id @submitted))
                 "repair runs before an older ordinary cadence")
+            (is (str/includes? (:objective (first @submitted))
+                               "commerce_store_overview")
+                "the repair run receives the exact incident, not only its ordinary role")
+            (is (str/includes? (:objective (first @submitted))
+                               "src/cloud/itonami/app/bots.clj")
+                "the repair starts at the host projection instead of a broad search")
             (is (= ["cloud-itonami/qa"] (:started result)))
             (is (nil? (get-in @store/state
                               [:bots :workforce-jobs qa-id
