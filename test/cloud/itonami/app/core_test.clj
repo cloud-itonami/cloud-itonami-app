@@ -433,6 +433,14 @@
     (is (str/includes? web/app-css
                        "body[data-current-view='bots'] .topbar{padding-right:1rem}"))))
 
+(deftest resident-runtime-prompts-are-collapsed-in-the-human-transcript
+  (is (str/includes? web/interaction-js "message.source === 'resident'")
+      "resident runtime instructions need their own presentation path")
+  (is (str/includes? web/interaction-js "自動確認の内部指示")
+      "the collapsed row must remain inspectable for audit")
+  (is (str/includes? web/app-css ".bots-msg__resident")
+      "the compact runtime row has a deliberate visual treatment"))
+
 (deftest bots-remain-a-single-viewport-pane-in-the-phone-layout
   (is (str/includes? web/app-css
                      ".bots-view{max-width:none;padding:0;height:calc(100dvh - 5rem);overflow:hidden}"))

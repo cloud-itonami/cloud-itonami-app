@@ -3063,6 +3063,24 @@
       (let [ms [(msg :person "a") (msg :bot "b") (msg :person "c")]]
         (is (= ms (drop-repeats ms)))))))
 
+(deftest resident-objectives-are-labelled-as-runtime-not-person-speech
+  ;; Existing installations already hold resident objectives written before
+  ;; the source label existed.  The public projection must recognise those as
+  ;; well as newly-labelled messages; otherwise upgrading does not improve the
+  ;; transcript the person is actually looking at.
+  (let [public-message (deref (ns-resolve 'cloud.itonami.app.bots
+                                          'public-message))
+        message {:message/id "m1"
+                 :message/role :person
+                 :message/text "Resident startup job tick for Example / QA.\nInspect evidence."
+                 :message/source :person
+                 :message/at "2026-08-25T00:00:00Z"
+                 :message/cards []}]
+    (is (= "resident" (:source (public-message message))))
+    (is (= "person"
+           (:source (public-message (assoc message :message/text
+                                           "Please inspect evidence.")))))))
+
 (deftest a-call-carries-a-bounded-window-that-never-splits-a-tool-pair
   ;; The run's live message list was the only accumulating list in this
   ;; namespace without a bound, and a run re-sends all of it on every call.

@@ -1624,21 +1624,30 @@
   ([m] (public-message m #{} nil))
   ([m providers] (public-message m providers nil))
   ([m providers bot-id]
-   (cond-> {:id (:message/id m)
-            :role (name (:message/role m))
-            :text (:message/text m)
-            :at (:message/at m)
-            :cards (mapv #(public-card % providers bot-id) (:message/cards m))}
+   (let [source (if (and (= :person (:message/role m))
+                         (str/starts-with? (str (:message/text m))
+                                           "Resident startup job tick for "))
+                  ;; Messages stored before this source existed still dominate
+                  ;; real upgraded transcripts.  The host-authored prefix is a
+                  ;; stable wire marker; recognizing it here improves those
+                  ;; records without rewriting the owner's audit history.
+                  :resident
+                  (:message/source m))]
+     (cond-> {:id (:message/id m)
+              :role (name (:message/role m))
+              :text (:message/text m)
+              :at (:message/at m)
+              :cards (mapv #(public-card % providers bot-id) (:message/cards m))}
      (some? (:message/direction m))
      (assoc :direction (:message/direction m))
      (:message/context-id m)
      (assoc :context-id (:message/context-id m))
-     (:message/source m)
-     (assoc :source (name (:message/source m)))
+     source
+     (assoc :source (name source))
      (:message/handoff-id m)
      (assoc :handoff-id (:message/handoff-id m))
      (:message/from-bot m)
-     (assoc :from-bot (:message/from-bot m)))))
+     (assoc :from-bot (:message/from-bot m))))))
 
 (defn- public-conversation
   "One Bot's conversation, as the client should see it now. Every route that
@@ -3779,11 +3788,16 @@
           (when-let [run-id (:run-id advance-options)]
             (:job/parent-context-id (goal-job run-id)))
           context-id (new-id "context")
+          resident? (boolean
+                     (some-> (:run-id advance-options)
+                             goal-job
+                             :job/resident-workforce?))
           person-message
           (bot/message {:id (new-id "msg") :bot bot-id :role :person
                         :text text :at (store/now)
                         :direction current-direction
-                        :context-id context-id :source :person})
+                        :context-id context-id
+                        :source (if resident? :resident :person)})
           _ (append! bot-id person-message)
           context (store-context! context-id b current-direction :person
                                   (conversation bot-id)
