@@ -1061,7 +1061,7 @@
                      :bot/model (or (get-in configuration
                                              [:bots :workforce :model])
                                     (get-in entry [:profile :profile/model])
-                                    "qwen3.8-27b-fastmtp-aggressive")
+                                    "qwen3.8-27b-throughput-5090")
                      :bot/email (mailbox-address configuration id)
                      :bot/tools #{} :bot/accounts #{}
                      :bot/writes? false :bot/browser? false
@@ -3358,7 +3358,12 @@
             run (-> run
                     (update :turn-count (fnil inc 0))
                     (assoc :provider (some-> (:id provider) name)
-                           :model model
+                           ;; A configured fallback is recorded as the model
+                           ;; that actually served the turn. Never present a
+                           ;; murakumo-main answer as RTX 5090 output.
+                           :model (or (:model result) model)
+                           :requested-model (or (:requested-model result) model)
+                           :model-fallback? (boolean (:fallback? result))
                            :context (select-keys request
                                                  [:context-window-tokens
                                                   :context-threshold-tokens

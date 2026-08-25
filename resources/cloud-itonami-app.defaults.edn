@@ -110,24 +110,34 @@
    ;; which the provider layer refused with `unsupported provider kind` — the
    ;; refusal is why it was found the same day.
    :base-url "https://api.murakumo.cloud/v1"
-   :default-model "qwen3.8-27b-fastmtp-aggressive"
-   ;; The FastMTP deployment is the measured Bot default. On 2026-08-23 the
-   ;; alias route returned HTTP 502 after 45.4 s while this route returned a
-   ;; correct completion in 20.9 s. The alias remains selectable for workloads
-   ;; which explicitly need the fleet main, but an unhealthy alias must not be
-   ;; the default path for an unattended workforce.
+   :default-model "qwen3.8-27b-throughput-5090"
+   ;; This is the public RunPod RTX 5090 selector advertised and live-verified
+   ;; by https://murakumo.cloud/llm.txt on 2026-08-25.  A cold start took
+   ;; 237.45 s there, so this provider gets a deliberately wider request bound
+   ;; than local and warm providers.  The requested model is checked against
+   ;; the response before output is admitted; a failed bounded request is
+   ;; retried explicitly as murakumo-main and remains labelled as that model.
    :models ["murakumo-main"
+            "qwen3.8-27b-throughput-5090"
             "qwen3.8-27b-fastmtp-aggressive"]
-   ;; Both currently resolve to the Qwen3.8 27B 32K deployment. Keep this map
+   :request-timeout-seconds 420
+   :max-transient-retries 0
+   :assert-response-model? true
+   :model-fallbacks {"qwen3.8-27b-throughput-5090" "murakumo-main"}
+   ;; The stable alias currently reports 262,144 while both explicit Qwen3.8
+   ;; deployments report 32,768. Keep this map
    ;; beside the alias: repointing `murakumo-main` must update its model metadata
    ;; in the same configuration change. Every Bot uses the window of the model
    ;; it selected; this does not change that model selection.
-   :context-window-tokens {"murakumo-main" 32768
+   :accepted-response-models
+   {"murakumo-main" #{"murakumo-main" "Qwen3.8-27B-Q4_K_M.gguf"}}
+   :context-window-tokens {"murakumo-main" 262144
+                           "qwen3.8-27b-throughput-5090" 32768
                            "qwen3.8-27b-fastmtp-aggressive" 32768}
-   ;; The current Qwen3.8 fleet decodes around 10 tok/s. A non-streaming
-   ;; 2048-token agent turn can therefore exceed this client's 120 s HTTP
-   ;; bound even while the service is healthy. 512 leaves room for a concise
-   ;; role/tool decision and measured at 24 s on the live endpoint.
+   ;; Keep unattended turns concise even though the 5090 route has higher
+   ;; throughput: context and output budgets are product bounds, not a reason
+   ;; to fill the wider cold-start wall with prose. 512 leaves room for a
+   ;; role/tool decision while preserving capacity for other Bots.
    :max-output-tokens 512
    :api-key-env "MURAKUMO_API_KEY"
    :local? false
@@ -245,7 +255,7 @@
                     ;; into a red "tool budget" failure after four reads.
                     :max-tool-calls 8
                     :max-tool-output-chars 1600
-                    :model "qwen3.8-27b-fastmtp-aggressive"
+                    :model "qwen3.8-27b-throughput-5090"
                     ;; Standing delegation, deliberately ABSENT here: `:all`
                     ;; or a set of workforce keys ("business/kind") an
                     ;; operator writes into their own config.edn. A
