@@ -1310,6 +1310,13 @@
       padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0}
     .workspace-switcher select{min-height:2.75rem;padding:.375rem 1.75rem .375rem .5rem;
       background:var(--color-neutral-white);font-size:.75rem;text-overflow:ellipsis}
+    /* Bots needs the full native title strip for its six compact operations.
+       Organization switching remains available from その他, where the same
+       control is revealed only while that panel is open. */
+    body[data-current-view='bots'] .workspace-switcher{display:none}
+    body[data-current-view='bots'] .sidebar[data-mobile-menu-open='true'] .workspace-switcher{
+      display:block;top:auto;right:1.5rem;bottom:calc(var(--mobile-nav-height) + 1.5rem);
+      z-index:45;width:calc(100% - 3rem)}
     .local-nav{position:static;display:block;width:auto;overflow:visible;padding:0}
     .nav-primary{position:fixed;z-index:44;left:0;right:20%;bottom:0;
       height:var(--mobile-nav-height);display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:0;
@@ -1353,6 +1360,7 @@
        a second toolbar. Browser windows never receive the data attribute. */
     body[data-native-titlebar='overlay'] .topbar{
       padding-left:5rem}
+    body[data-current-view='bots'] .topbar{padding-right:1rem}
     .topbar__title{flex:0 0 auto;font-size:1rem;line-height:1.4;overflow:hidden;
       text-overflow:ellipsis;white-space:nowrap}
     /* The titlebar has only 210px beside the traffic lights and workspace
@@ -1701,13 +1709,13 @@
          [:button {:class "context-button" :id "chat-context-button" :type "button"
                    :aria-expanded "false" :aria-controls "conversation-context-panel"
                    :title "このChatにProject、フォルダ、データを追加"}
-          "Context 0"]]
+          "参照 0"]]
         [:div {:class "topbar__context authenticated-only" :id "bots-titlebar-context"
                :data-topbar-view "bots" :hidden true}
          [:button {:class "context-button" :id "bots-context-button" :type "button"
                    :aria-expanded "false" :aria-controls "conversation-context-panel"
                    :title "このBotにProject、フォルダ、データを追加" :disabled true}
-          "Context 0"]
+          "参照 0"]
          [:div {:class "bots-titlebar__identity" :id "bots-titlebar-identity" :hidden true}
           [:span {:class "bot-avatar" :id "bots-titlebar-avatar"}]
           [:div {:class "bots-titlebar__copy"}

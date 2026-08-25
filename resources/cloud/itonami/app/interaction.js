@@ -290,7 +290,7 @@
         const request = await fetch(`/api/session?${params}`);
         const data = await request.json();
         chatContextRefs = data['context-refs'] || [];
-        $('#chat-context-button').textContent = `Context ${chatContextRefs.length}`;
+        $('#chat-context-button').textContent = `参照 ${chatContextRefs.length}`;
         thread.querySelectorAll('.message-row').forEach((node) => node.remove());
         data.messages.forEach((message) => {
           if (message.role === 'user') lastPrompt = message.content;
@@ -399,7 +399,7 @@
       currentController?.abort();
       sessionId = `chat-${crypto.randomUUID()}`;
       chatContextRefs = [];
-      $('#chat-context-button').textContent = 'Context 0';
+      $('#chat-context-button').textContent = '参照 0';
       localStorage.setItem('cloud-itonami-session', sessionId);
       chatShell.dataset.session = sessionId;
       thread.querySelectorAll('.message-row').forEach((node) => node.remove());
@@ -5070,7 +5070,7 @@
           const migrated = await postJSON('/api/session/context', {session:sessionId,
             refs:[{kind:'project', target:legacyChatContextProjectId}]}, true);
           chatContextRefs = migrated['context-refs'] || [];
-          $('#chat-context-button').textContent = `Context ${chatContextRefs.length}`;
+          $('#chat-context-button').textContent = `参照 ${chatContextRefs.length}`;
           localStorage.removeItem('cloud-itonami-chat-context-project');
         }
         return true;
@@ -9362,7 +9362,7 @@
       const selected = botsState.bots.find((bot) => bot.id === botsState.selected);
       const refs = selected?.['context-refs'] || [];
       button.disabled = !selected;
-      button.textContent = `Context ${refs.length}`;
+      button.textContent = `参照 ${refs.length}`;
     };
     const contextState = {mode:null, sources:[], refs:[]};
     const contextKey = (ref) => `${ref.kind}:${ref.target}`;
@@ -9438,7 +9438,7 @@
           const data = await postJSON('/api/session/context',
             {session:sessionId, refs:contextState.refs}, true);
           chatContextRefs = data['context-refs'] || [];
-          $('#chat-context-button').textContent = `Context ${chatContextRefs.length}`;
+          $('#chat-context-button').textContent = `参照 ${chatContextRefs.length}`;
           await loadSession();
         }
         closeContextPanel();
@@ -9459,6 +9459,21 @@
       'waiting-approval':'承認待ち', 'waiting-connection':'接続待ち',
       'blocked':'前提待ち',
       'disabled':'停止中'
+    };
+    const botsStatusSummary = (bot) => {
+      const status = botsStatusText[bot?.status] || bot?.status || '状態不明';
+      const job = bot?.['resident-job'];
+      if (!job?.['enabled?'] || !job['next-run-at'] || bot?.status === 'working') {
+        return status;
+      }
+      const nextRun = new Date(job['next-run-at']);
+      if (Number.isNaN(nextRun.getTime())) return status;
+      const next = nextRun.toLocaleString('ja-JP', {
+        month:'numeric', day:'numeric', hour:'2-digit', minute:'2-digit'
+      });
+      const outcome = job.continuation?.outcome;
+      const state = outcome === 'blocked' ? '前提待ち' : status;
+      return `${state} · 次回 ${next}`;
     };
     const botsSetStatus = (message) => {
       $('#bots-thread-status-line').textContent = message || '';
@@ -9773,10 +9788,10 @@
         const item = make('button', 'bots-rail__item');
         item.type = 'button';
         item.setAttribute('aria-current', String(bot.id === botsState.selected));
-        const preview = bot['last-message']?.text ||
-          botsStatusText[bot.status] || bot.status;
+        const statusSummary = botsStatusSummary(bot);
+        const preview = bot['last-message']?.text || statusSummary;
         item.setAttribute('aria-label',
-          `${bot.name}、${botsStatusText[bot.status] || bot.status}、${preview}`);
+          `${bot.name}、${statusSummary}、${preview}`);
         const avatar = botAvatar(make('span', 'bot-avatar'), bot.avatar, bot.status);
         const copy = make('div', 'bots-rail__copy');
         const headline = make('span', 'bots-rail__headline');
@@ -9786,7 +9801,7 @@
         copy.append(headline, make('span', 'bots-rail__last', preview));
         const dot = make('span', 'bots-dot');
         dot.dataset.status = bot.status;
-        dot.title = botsStatusText[bot.status] || bot.status;
+        dot.title = statusSummary;
         item.append(avatar, copy, dot);
         item.addEventListener('click', () => selectBot(bot.id));
         const entry = make('li');
@@ -10145,10 +10160,10 @@
       renderBotsRun(botsState.latestTurn);
       botAvatar($('#bots-titlebar-avatar'), bot.avatar, bot.status);
       $('#bots-titlebar-name').textContent = bot.name;
-      $('#bots-titlebar-status').textContent = botsStatusText[bot.status] || bot.status;
+      $('#bots-titlebar-status').textContent = botsStatusSummary(bot);
       botAvatar($('#bots-mobile-avatar'), bot.avatar, bot.status);
       $('#bots-mobile-name').textContent = bot.name;
-      $('#bots-mobile-status').textContent = botsStatusText[bot.status] || bot.status;
+      $('#bots-mobile-status').textContent = botsStatusSummary(bot);
       $('#bots-mobile-context').hidden = false;
       $('#bots-input').placeholder = `${bot.name} に頼む`;
       $('#bots-titlebar-identity').hidden = false;
@@ -10566,10 +10581,14 @@
           renderBotsRun(botsState.latestTurn);
           if (bot) {
             botAvatar($('#bots-titlebar-avatar'), bot.avatar, bot.status);
-            $('#bots-titlebar-status').textContent = botsStatusText[bot.status] || bot.status;
+            $('#bots-titlebar-status').textContent = botsStatusSummary(bot);
+            $('#bots-mobile-status').textContent = botsStatusSummary(bot);
           }
           renderBotsMessages(bot, {stickToBottom, scrollTop:previousTop});
-          botsSetStatus('CLI / MCP からの会話を同期しました。');
+          // Background synchronization is expected steady state, not an
+          // action result. Keeping a permanent toast here made a healthy Bot
+          // look like it had stopped after a special operation.
+          botsSetStatus('');
         }
       } catch (error) {
         // A transient resident restart should not turn a still-readable thread
