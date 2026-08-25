@@ -2210,9 +2210,16 @@
        :images []
        :error-type error-type})))
 
+(declare resolve-capability-drift!)
+
 (defn- execute-tool-attempt! [configuration b selection tool-name input]
   (try
-    {:output (run-tool! configuration b selection tool-name input)}
+    (let [output (run-tool! configuration b selection tool-name input)]
+      ;; A real execution is stronger evidence than either repair Bot prose.
+      ;; Close matching incidents only after the host tool returned normally;
+      ;; an argument error or policy refusal leaves them open.
+      (resolve-capability-drift! b tool-name)
+      {:output output})
     (catch Exception error
       (if-let [output (self-correctable-tool-result error)]
         {:output output :error error}
@@ -3242,6 +3249,28 @@
                           :target-count (count targets)})
          partition)))
     @outcome))
+
+(defn- resolve-capability-drift!
+  "Close open incidents when the same source Bot successfully executes the
+  tool again.  Historical evidence remains in the store; only its lifecycle
+  state changes."
+  [source tool-name]
+  (let [matches? (fn [incident]
+                   (and (= :open (:incident/state incident))
+                        (= (:bot/id source) (:incident/source-bot incident))
+                        (= tool-name (:incident/tool incident))))]
+    (when (some matches? (vals (:capability-incidents (snapshot))))
+      (let [now (store/now)]
+        (transact!
+         update :capability-incidents
+         (fn [incidents]
+           (into {}
+                 (map (fn [[key incident]]
+                        [key (if (matches? incident)
+                               (assoc incident :incident/state :resolved
+                                               :incident/resolved-at now)
+                               incident)]))
+                 incidents)))))))
 
 (defn- advance!
   "Turn until the Bot is done or needs a person.
