@@ -65,6 +65,7 @@
             [cloud.itonami.app.chronicle :as chronicle]
             [cloud.itonami.app.commerce :as commerce]
             [cloud.itonami.app.conversation-context :as conversation-context]
+            [cloud.itonami.app.decision-method :as decision-method]
             [cloud.itonami.app.gc :as gc]
             [cloud.itonami.app.handoff :as handoff]
             [cloud.itonami.app.identity :as identity]
@@ -195,6 +196,7 @@
                                                            :depends_on {:type "array" :items {:type "string"}}}
                                               :required ["id" "title"]}}}
                  :required ["steps"]}}
+   decision-method/tool-definition
    {:name "goal_step_complete"
     :description "Request verification of one plan step after tools for that step actually executed."
     :parameters {:type "object"
@@ -480,6 +482,10 @@
   (let [plan (:job/plan (goal-job run-id))]
     (and (seq plan) (every? #(= :verified (:step/state %)) plan))))
 
+(defn- decision-frame [run]
+  (or (:decision-frame run)
+      (:job/decision-frame (goal-job (:id run)))))
+
 (defn- goal-refusal
   "Why `goal_complete` was refused, in terms the provider can act on.
 
@@ -494,6 +500,7 @@
   explanation is."
   [run-id summary evidence tool-count]
   (let [plan (:job/plan (goal-job run-id))
+        frame (decision-frame {:id run-id})
         receipts (group-by #(get-in % [:event/data :step-id]) (action-receipts run-id))
         pending (remove #(= :verified (:step/state %)) plan)
         starved (filter #(empty? (get receipts (:step/id %))) pending)]
@@ -502,6 +509,8 @@
            "No tool has executed in this run. ")
          (when (str/blank? summary) "Summary is empty. ")
          (when (empty? evidence) "Evidence is empty. ")
+         (when-not frame
+           "No decision_frame is recorded. Gather evidence, then record ontology, dynamics applicability, scenarios, scores, and the selected scenario. ")
          (when (seq pending)
            (str "Unverified plan step(s): "
                 (str/join ", " (map :step/id pending)) ". "))
@@ -528,6 +537,15 @@
                     :state (name (:step/state step))
                     :summary (:step/summary step)})
                  (:job/plan job))
+     :decision (when-let [frame (:job/decision-frame job)]
+                 {:schema (:decision.method/schema frame)
+                  :selected (:decision.method/selected frame)
+                  :dynamics (get-in frame [:decision.method/dynamics
+                                           :dynamics/mode])
+                  :ranked-scenarios
+                  (mapv #(select-keys % [:scenario/id :scenario/label
+                                         :scenario/weighted-score])
+                        (:decision.method/scenarios frame))})
      :children (mapv (fn [run]
                        {:id (:agent.run/id run)
                         :parent (:agent.run/parent run)
@@ -2220,6 +2238,7 @@
          "A write tool will be held for the person's approval before it runs. ")
        "Call a write only when it is the right next step and say what you are about to do. "
        "Answer in the language the person used.\n\n"
+       decision-method/prompt "\n\n"
        ;; The repository's top level, handed over instead of charged for.
        ;; Measured 2026-08-19 across 84 resident ticks: `workspace_list` took
        ;; 103 of 187 tool calls and only 37 of 84 runs ever opened a file --
@@ -3400,6 +3419,34 @@
                                {:role "tool" :tool-call-id (:id call) :name name
                                 :content "goal_plan is available only in Goal mode."})))
 
+              (= "decision_frame" name)
+              (if (:goal? run)
+                (let [{:keys [frame content]}
+                      (try
+                        (let [frame (decision-method/prepare-frame input)]
+                          (when (goal-job (:id run))
+                            (update-goal-job! (:id run) assoc :job/decision-frame frame)
+                            (append-goal-event!
+                             (:id run) :decision/frame-recorded
+                             {:schema (:decision.method/schema frame)
+                              :selected (:decision.method/selected frame)
+                              :dynamics (get-in frame [:decision.method/dynamics
+                                                       :dynamics/mode])
+                              :ranked-scenarios
+                              (mapv #(select-keys % [:scenario/id
+                                                     :scenario/weighted-score])
+                                    (:decision.method/scenarios frame))}))
+                          {:frame frame
+                           :content "Decision frame recorded. Continue with the selected scenario, subject to every existing authority and approval gate."})
+                        (catch Exception error {:content (.getMessage error)}))
+                      run (cond-> run frame (assoc :decision-frame frame))]
+                  (recur (update run :messages conj
+                                 {:role "tool" :tool-call-id (:id call) :name name
+                                  :content content})))
+                (recur (update run :messages conj
+                               {:role "tool" :tool-call-id (:id call) :name name
+                                :content "decision_frame is available only in Goal mode."})))
+
               (= "goal_step_complete" name)
               (let [step-id (some-> (:step_id input) str str/trim)
                     step (plan-step (:id run) step-id)
@@ -3435,6 +3482,7 @@
               (let [summary (some-> (:summary input) str str/trim)
                     evidence (->> (:evidence input) (map str) (remove str/blank?) vec)]
                 (if (and (:goal? run) (pos? (:tool-count run 0))
+                         (decision-frame run)
                          (or (nil? (goal-job (:id run)))
                              (plan-complete? (:id run)))
                          (seq summary) (seq evidence))
@@ -3510,6 +3558,17 @@
                               "能力不一致として記録しましたが、修復担当 Bot はまだ配備されていません。"))
                        (str "「" name "」はこの Bot が使えるツールではありません。"))
                      nil))
+
+              (and (:goal? run)
+                   (write-tool? configuration name)
+                   (nil? (decision-frame run)))
+              (recur (update run :messages conj
+                             {:role "tool" :tool-call-id (:id call)
+                              :name name
+                              :content (str "Write refused: record decision_frame first. "
+                                            "Use the evidence already gathered to state the ontology, "
+                                            "XMILE/stock-flow applicability, alternative scenarios, scores, "
+                                            "and selected scenario.")}))
 
               (write-tool? configuration name)
               (let [card-id (new-id "card")
@@ -4468,7 +4527,8 @@
                (now-ms))
           job {:job/id run-id :job/bot bot-id
                :job/session (select-keys session [:user-id :organization-id :kind])
-               :job/objective text :job/run run :job/plan [] :job/events []
+               :job/objective text :job/run run :job/plan []
+               :job/decision-frame nil :job/events []
                :job/parent-context-id parent-context-id
                :job/continuation-summary continuation-summary
                :job/max-tool-calls max-tool-calls

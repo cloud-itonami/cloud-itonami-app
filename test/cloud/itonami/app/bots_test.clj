@@ -42,6 +42,28 @@
 (def ^:private alice {:user-id "alice" :organization-id "org-1" :kind :passkey})
 (def ^:private bob {:user-id "bob" :organization-id "org-1" :kind :passkey})
 
+(def ^:private decision-frame-input
+  {:scope "verify repository state"
+   :facts [{:id "request" :statement "The repository state must be verified"
+            :evidence ["active goal"]}]
+   :entities [{:id "repository" :type "git-repository"}]
+   :relations []
+   :dynamics {:mode "not-material"
+              :reason "a read-only point-in-time inspection has no material delayed feedback"
+              :stocks [] :flows []}
+   :scenarios
+   [{:id "baseline" :label "do not inspect" :assumptions []
+     :outcomes ["state remains unknown"]
+     :scores {:expected_value 0.1 :evidence_confidence 0.2 :reversibility 1.0
+              :authority_fit 1.0 :time_efficiency 1.0 :cost_efficiency 1.0
+              :dependency_independence 1.0}}
+    {:id "inspect" :label "read repository state" :assumptions []
+     :outcomes ["state is evidenced"]
+     :scores {:expected_value 0.9 :evidence_confidence 0.9 :reversibility 1.0
+              :authority_fit 1.0 :time_efficiency 0.9 :cost_efficiency 1.0
+              :dependency_independence 1.0}}]
+   :selected "inspect"})
+
 (defn- private-fn [name]
   (some-> (ns-resolve 'cloud.itonami.app.bots name) deref))
 
@@ -172,6 +194,16 @@
                   nil nil)]
       (is (str/includes? prompt "Work local-first"))
       (is (str/includes? prompt "external connector only when")))))
+
+(deftest every-bot-goal-receives-the-decision-method
+  (with-redefs [workspace-tools/orientation (constantly nil)]
+    (let [prompt ((private-fn 'system-prompt)
+                  {:bot/name "Decision worker"} nil "choose and execute")
+          tool-names (set (map :name bots/goal-tool-definitions))]
+      (is (str/includes? prompt "Ontology:"))
+      (is (str/includes? prompt "System dynamics:"))
+      (is (str/includes? prompt "public-concept Maven-style"))
+      (is (contains? tool-names "decision_frame")))))
 
 (deftest project-context-changes-reference-data-not-bot-authority
   (with-store
@@ -945,6 +977,11 @@
                              :tool-calls [{:id "c1" :name "git_status" :input {}}]
                              :usage {:prompt_tokens 20 :completion_tokens 3
                                      :total_tokens 23}}
+                          3 {:content ""
+                             :tool-calls [{:id "frame" :name "decision_frame"
+                                           :input decision-frame-input}]
+                             :usage {:prompt_tokens 25 :completion_tokens 3
+                                     :total_tokens 28}}
                           {:content ""
                            :tool-calls [{:id "c2" :name "goal_complete"
                                         :input {:summary "確認まで完了しました。"
@@ -955,7 +992,7 @@
                                             "repo の状態を確認して"
                                             "goal-test-1" true (constantly nil))
                 turn (bots/latest-turn alice (:bot/id b))]
-            (is (= 3 @turns)
+            (is (= 4 @turns)
                 "a prose capability statement must not terminate an active goal")
             (is (some #(= "goal_complete" (:name %))
                       (:tools (first @requests))))
@@ -964,7 +1001,7 @@
             (is (= "completed" (:state turn)))
             (is (true? (:goal? turn)))
             (is (= 1 (:tool-count turn)))
-            (is (= {:prompt_tokens 60 :completion_tokens 9 :total_tokens 69}
+            (is (= {:prompt_tokens 85 :completion_tokens 12 :total_tokens 97}
                    (:usage turn)))
             (is (= "not-calculated" (get-in turn [:cost :status])))
             (is (= ["git status を実行"] (:evidence turn)))
@@ -1015,6 +1052,9 @@
                   [{:id "status" :name "git_status" :input {}}
                    {:id "diff" :name "git_diff" :input {}}]}
                3 {:content "" :tool-calls
+                  [{:id "frame" :name "decision_frame"
+                    :input decision-frame-input}]}
+               4 {:content "" :tool-calls
                   [{:id "verify-step" :name "goal_step_complete"
                     :input {:step_id "inspect" :summary "repository inspected"
                             :evidence ["status and log receipts"]}}]}
