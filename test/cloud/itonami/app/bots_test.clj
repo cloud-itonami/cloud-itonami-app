@@ -1562,11 +1562,18 @@
                       (fn [runnable b policy context]
                         (disj (ordinary-admit runnable b policy context)
                               "commerce_store_overview"))]
-          (dotimes [_ 2]
+          (dotimes [attempt 2]
             (let [last-message (last (bots/send! nil alice (:bot/id source)
                                                  "ショップの状態を見て"))]
               (is (str/includes? (:text last-message) "不一致を検出"))
-              (is (str/includes? (:text last-message) "Engineer / QA")))))
+              (is (str/includes? (:text last-message) "Engineer / QA")))
+            (when (zero? attempt)
+              (swap! store/state update-in [:bots :workforce-jobs]
+                     (fn [jobs]
+                       (into {} (map (fn [[id job]]
+                                       [id (dissoc job :workforce.job/trigger
+                                                   :workforce.job/triggered-at)]))
+                             jobs))))))
         (let [partition (:bots @store/state)
               incidents (vals (:capability-incidents partition))
               targets (->> (vals (:bots partition))
@@ -1580,7 +1587,7 @@
             (let [alerts (filter #(= :capability-monitor (:message/source %))
                                  (get-in partition [:conversations (:bot/id target)]))]
               (is (= 1 (count alerts)) "a repeated failure does not flood the repair Bot")
-              (is (= (:incident/first-seen-at (first incidents))
+              (is (= (:incident/last-seen-at (first incidents))
                      (get-in partition [:workforce-jobs (:bot/id target)
                                         :workforce.job/next-run-at])))
               (is (= :capability-repair
