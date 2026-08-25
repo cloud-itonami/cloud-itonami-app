@@ -3423,7 +3423,9 @@
               (if (:goal? run)
                 (let [{:keys [frame content]}
                       (try
-                        (let [frame (decision-method/prepare-frame input)]
+                        (let [frame (->> input
+                                         decision-method/prepare-frame
+                                         (decision-method/verify-dynamics configuration))]
                           (when (goal-job (:id run))
                             (update-goal-job! (:id run) assoc :job/decision-frame frame)
                             (append-goal-event!

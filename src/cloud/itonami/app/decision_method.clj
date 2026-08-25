@@ -7,7 +7,8 @@
 
   The frame is decision evidence, not execution authority.  It may rank an
   action highly and the capability/HITL gates may still refuse that action."
-  (:require [clojure.string :as str]))
+  (:require [clojure.string :as str]
+            [cloud.itonami.app.loops :as loops]))
 
 (def score-weights
   {:expected-value 0.25
@@ -29,7 +30,8 @@
         "relations, decide whether dynamics require a bound XMILE model or a stock-flow "
         "sketch, compare at least baseline and one alternative, and select one scenario. "
         "The host computes weighted scores; this record grants no execution authority. "
-        "Call it after enough read evidence is available and before any write or goal_complete.")
+        "Call it after enough read evidence is available and before any write or goal_complete. "
+        "An xmile-bound frame is accepted only after the host runs that workspace model successfully.")
    :parameters
    {:type "object"
     :required ["scope" "facts" "entities" "relations" "dynamics" "scenarios" "selected"]
@@ -103,6 +105,13 @@
                (+ total (* weight (get values key))))
              0.0 score-weights))
 
+(defn- safe-relative-model? [path]
+  (and path
+       (not (str/starts-with? path "/"))
+       (not (str/starts-with? path "~"))
+       (not (re-find #"(^|[\\/])\.\.([\\/]|$)" path))
+       (not (re-find #"^[A-Za-z][A-Za-z0-9+.-]*:" path))))
+
 (defn prepare-frame
   "Validate, bound and score a model-produced frame."
   [input]
@@ -169,6 +178,10 @@
     (when (and (= "xmile-bound" mode) (nil? (:dynamics/model dynamics)))
       (throw (ex-info "xmile-bound dynamics requires a model reference"
                       {:type :decision/invalid-dynamics})))
+    (when (and (= "xmile-bound" mode)
+               (not (safe-relative-model? (:dynamics/model dynamics))))
+      (throw (ex-info "XMILE model must be a safe workspace-relative path"
+                      {:type :decision/unsafe-model-path})))
     (when-not (and (every? :scenario/id scenarios)
                    (every? :scenario/label scenarios)
                    (= (count scenarios) (count scenario-ids))
@@ -184,6 +197,34 @@
      :decision.method/scenarios (vec (sort-by (comp - :scenario/weighted-score) scenarios))
      :decision.method/selected selected
      :decision.method/score-weights score-weights}))
+
+(defn verify-dynamics
+  "Execute an XMILE-bound frame with Cloud Itonami's canonical engine.
+
+  Structural sketches and explicit non-dynamic exceptions carry no simulated
+  receipt.  The receipt is deliberately bounded: the full trajectory can be
+  re-run from the model, while the decision record needs only enough to prove
+  which model ran and that it produced a trajectory."
+  [configuration frame]
+  (if-not (= "xmile-bound"
+             (get-in frame [:decision.method/dynamics :dynamics/mode]))
+    frame
+    (let [path (get-in frame [:decision.method/dynamics :dynamics/model])
+          result (loops/model configuration {:business/model path})
+          trajectory (:trajectory result)]
+      (when-not (and (= :resolved (:state result))
+                     (= :simulated (:state trajectory)))
+        (throw (ex-info
+                (str "XMILE execution did not produce a trajectory: "
+                     (or (:detail result) (:reason trajectory) (:state result)))
+                {:type :decision/xmile-not-simulated
+                 :state (:state result)
+                 :trajectory-state (:state trajectory)})))
+      (assoc frame :decision.method/xmile-execution
+             {:xmile/source (:source result)
+              :xmile/model (:simulated-model result)
+              :xmile/steps (:steps trajectory)
+              :xmile/state :simulated}))))
 
 (def prompt
   (str "Default decision method for business work:\n"

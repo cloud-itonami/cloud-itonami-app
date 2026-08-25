@@ -23,7 +23,9 @@ Every Bot Goal uses this default loop:
    entities and relations connect only declared entities.
 2. **System dynamics** — use a business-bound XMILE model when one fits. Without
    one, record a stock-flow sketch. `not-material` is an explicit exception with
-   a reason, not an omitted analysis.
+   a reason, not an omitted analysis. An `xmile-bound` frame must name a safe
+   workspace-relative model and is accepted only after the canonical engine
+   produces a trajectory.
 3. **Scenarios** — compare the baseline with at least one feasible alternative.
    Scenarios fork assumptions without rewriting the baseline.
 4. **Inference** — score expected value, evidence confidence, reversibility,
