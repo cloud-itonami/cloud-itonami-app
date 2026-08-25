@@ -1631,6 +1631,38 @@
                                :workforce.job/trigger]))
                 "the priority is consumed by the first submission")))))))
 
+(deftest workforce-reprovision-preserves-a-pending-capability-repair
+  (with-store
+    (fn []
+      (let [catalog (workforce-catalog [(engineer-entry) (qa-entry)])]
+        (with-redefs [workspace-tools/admit-root (fn [path] path)]
+          (bots/provision-workforce! {} alice catalog))
+        (let [repair-at "2026-08-25T09:40:00Z"
+              repair-ids (->> (vals (get-in @store/state [:bots :bots]))
+                              (filter #(contains? #{"cloud-itonami/engineer"
+                                                    "cloud-itonami/qa"}
+                                                  (:bot/workforce-key %)))
+                              (map :bot/id)
+                              set)]
+          (swap! store/state update-in [:bots :workforce-jobs]
+                 (fn [jobs]
+                   (into {}
+                         (map (fn [[id job]]
+                                [id (cond-> job
+                                      (contains? repair-ids id)
+                                      (assoc :workforce.job/trigger :capability-repair
+                                             :workforce.job/triggered-at repair-at))]))
+                         jobs)))
+          (with-redefs [workspace-tools/admit-root (fn [path] path)]
+            (bots/provision-workforce! {} alice catalog))
+          (doseq [id repair-ids]
+            (is (= :capability-repair
+                   (get-in @store/state
+                           [:bots :workforce-jobs id :workforce.job/trigger])))
+            (is (= repair-at
+                   (get-in @store/state
+                           [:bots :workforce-jobs id :workforce.job/triggered-at])))))))))
+
 (deftest a-connection-card-stops-asking-once-the-provider-is-connected
   ;; Nothing rewrites a stored card, so a card written while Google was
   ;; unauthorized said `:offered` for the life of the conversation. The Bot

@@ -1093,6 +1093,14 @@
                       :workforce.job/last-run-id (:workforce.job/last-run-id old-job)
                       :workforce.job/continuation
                       (:workforce.job/continuation old-job)
+                      ;; A reviewed catalog refresh changes the role projection,
+                      ;; not the fact that a current runtime defect still needs
+                      ;; repair.  Keep the one-shot priority until a submission
+                      ;; consumes it in `fire-due-workforce!`.
+                      :workforce.job/trigger
+                      (:workforce.job/trigger old-job)
+                      :workforce.job/triggered-at
+                      (:workforce.job/triggered-at old-job)
                       :workforce.job/created-at
                       (or (:workforce.job/created-at old-job) now)
                       :workforce.job/updated-at now}]
