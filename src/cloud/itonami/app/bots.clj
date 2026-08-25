@@ -1340,7 +1340,7 @@
                                                       (not (met? providers %))))))
    :active-run? (boolean (get-in (snapshot) [:runs bot-id :pending-call]))})
 
-(declare public-turn peer-tools coding-tools)
+(declare public-turn peer-tools coding-tools local-tool-definitions)
 
 (defn- workforce-continuation
   "Return the explicit continuation, or recover it from a pre-upgrade no-op.
@@ -1419,14 +1419,7 @@
         activity-at (or (:message/at last-message)
                         (:turn/updated-at last-turn)
                         (:bot/updated-at b))
-        local-tools (concat
-                     commerce/tool-definitions
-                     (when (:bot/browser? b)
-                       (agent-control/browser-tool-definitions configuration))
-                     (when (:bot/computer? b)
-                       (agent-control/computer-tool-definitions configuration))
-                     (peer-tools b)
-                     (coding-tools b))
+        local-tools (local-tool-definitions configuration b)
         admitted (into (bot/admitted-tools b rows connected)
                        (map :name) local-tools)
         stored-avatar (:bot/avatar b)
@@ -1825,6 +1818,22 @@
           virtual-shell/tool-definitions
           [])))
 
+(defn- local-tool-definitions
+  "Built-in tools this Bot may run without an external connector grant.
+
+  This is deliberately one projection shared by the model offer, the public
+  settings surface and turn admission.  Keeping three handwritten lists was
+  the cause of the 2026-08-25 capability drift: Commerce was shown to the
+  model and in Settings, but omitted from the set checked immediately before
+  execution.  Computer Use and Wallet had the same latent split."
+  [configuration b]
+  (vec (concat commerce/tool-definitions
+               (browser-tools configuration b)
+               (computer-tools configuration b)
+               (peer-tools b)
+               (coding-tools b)
+               (wallet/bot-tool-definitions (:bot/id b)))))
+
 (defn- tool-definitions
   "The tools the Bot's grant REACHES, as the model sees them.
 
@@ -1856,12 +1865,7 @@
                                    (or (:connector/description t) (:connector/name t))
                                    (when (= :write (:connector/effect t)) " (write)"))
                  :parameters (:connector/input-schema t)}))]
-    (vec (concat (browser-tools configuration b)
-                 (computer-tools configuration b)
-                 (peer-tools b)
-                 commerce/tool-definitions
-                 (coding-tools b)
-                 (wallet/bot-tool-definitions (:bot/id b))
+    (vec (concat (local-tool-definitions configuration b)
                  connector-tools))))
 
 (defn- write-tool? [configuration tool-name]
@@ -3122,6 +3126,107 @@
            ;; These two go together -- do not set one without the other.
            :disable-thinking? true))))
 
+(def ^:private capability-repair-workforce-keys
+  "The two governed roles that close a capability-drift incident.
+
+  Engineer owns the repair and QA owns the independent reproduction.  They
+  are existing workforce roles, not privileged hidden agents, and receive no
+  authority from this routing event."
+  #{"cloud-itonami/engineer" "cloud-itonami/qa"})
+
+(defn- capability-drift?
+  "True only when the host offered a tool and then lost it before the policy
+  gate.  Connector authorization and an intentional workforce-policy denial
+  are not drift, and a model-invented name was never offered."
+  [run tool-name]
+  (let [offered (into #{} (map :name) (:tools run))
+        provider (get (:tool-provider run) tool-name)]
+    (and (contains? offered tool-name)
+         (not (contains? (:runnable run) tool-name))
+         (nil? (get (:blocked run) provider))
+         ;; A mapped workforce capability may intentionally remove a tool at
+         ;; the second gate.  Every other disappearance is host drift whether
+         ;; it occurred before or during that narrowing.
+         (or (not (contains? (:pre-policy-runnable run) tool-name))
+             (not (contains? (bot-authority/covered-tools) tool-name))))))
+
+(defn- report-capability-drift!
+  "Record one deduplicated host capability incident and wake the owner's
+  governed Engineer and QA Bots.
+
+  The incident never widens the source Bot's grant.  A target receives only
+  the mismatch facts and must work through its own repository/tool ceiling.
+  Repeated calls update the counter but do not flood either conversation."
+  [source run tool-name]
+  (let [now (store/now)
+        fingerprint (receipt-sha256
+                     {:tool tool-name
+                      :offered (sort (map :name (:tools run)))
+                      :pre-policy-runnable (sort (:pre-policy-runnable run))})
+        incident-key [(:bot/id source) tool-name fingerprint]
+        outcome (atom nil)]
+    (transact!
+     (fn [partition]
+       (let [existing (get-in partition [:capability-incidents incident-key])
+             targets (->> (vals (:bots partition))
+                          (filter #(and (= (:bot/owner source) (:bot/owner %))
+                                        (= (:bot/organization source)
+                                           (:bot/organization %))
+                                        (:bot/enabled? %)
+                                        (contains? capability-repair-workforce-keys
+                                                   (:bot/workforce-key %))))
+                          (sort-by :bot/workforce-key)
+                          vec)
+             target-ids (mapv :bot/id targets)
+             incident (merge existing
+                             {:incident/schema "cloud.itonami.app.capability-incident.v1"
+                              :incident/source-bot (:bot/id source)
+                              :incident/source-name (:bot/name source)
+                              :incident/tool tool-name
+                              :incident/fingerprint fingerprint
+                              :incident/state :open
+                              :incident/targets target-ids
+                              :incident/last-seen-at now
+                              :incident/count (inc (long (or (:incident/count existing) 0)))}
+                             (when-not existing {:incident/first-seen-at now}))
+             note (str "Cloud Itonami capability monitor detected an offered-but-not-runnable tool.\n"
+                       "Source Bot: " (:bot/name source) " (" (:bot/id source) ")\n"
+                       "Tool: " tool-name "\n"
+                       "Fingerprint: " (subs fingerprint 0 12) "\n"
+                       "Engineer: reproduce the admission drift and make the smallest verified repair. "
+                       "QA: independently verify that offered built-in tools are runnable or explicitly governed. "
+                       "Do not widen the source Bot's authority; use only your admitted repository and tools.")
+             partition (assoc-in partition [:capability-incidents incident-key] incident)
+             partition
+             (if existing
+               partition
+               (reduce
+                (fn [p target]
+                  (let [target-id (:bot/id target)
+                        message (bot/message
+                                 {:id (new-id "msg") :bot target-id :role :person
+                                  :text note :at now
+                                  :direction (get-in p [:directions target-id] 0)
+                                  :source :capability-monitor
+                                  :from-bot (:bot/id source)})]
+                    (-> p
+                        (update-in [:conversations target-id]
+                                   (fn [messages]
+                                     (vec (take-last max-conversation
+                                                     (conj (vec messages) message)))))
+                        ;; A routed incident is work now, not at the role's
+                        ;; next ordinary cadence.  The global active/slot gate
+                        ;; still decides when it may actually start.
+                        (cond-> (get-in p [:workforce-jobs target-id])
+                          (assoc-in [:workforce-jobs target-id
+                                     :workforce.job/next-run-at] now)))))
+                partition targets))]
+         (reset! outcome {:new? (nil? existing)
+                          :incident incident
+                          :target-count (count targets)})
+         partition)))
+    @outcome))
+
 (defn- advance!
   "Turn until the Bot is done or needs a person.
 
@@ -3389,12 +3494,22 @@
               ;; deeper with a message about a registry; refusing here says the
               ;; true thing in the Bot's own transcript.
               (not (contains? (:runnable run) name))
-              (do (clear-run! (:bot/id b))
-                  (finish-visible! on-finish run :failed
-                                   {:turn/error-type :tool-not-admitted})
-                  (say (:bot/id b)
-                       (str "「" name "」はこの Bot が使えるツールではありません。")
-                       nil))
+              (let [drift? (capability-drift? run name)
+                    report (when drift?
+                             (report-capability-drift! b run name))]
+                (clear-run! (:bot/id b))
+                (finish-visible! on-finish run :failed
+                                 {:turn/error-type (if drift?
+                                                     :capability-drift
+                                                     :tool-not-admitted)})
+                (say (:bot/id b)
+                     (if drift?
+                       (str "「" name "」は提示されていましたが、実行許可との不一致を検出しました。"
+                            (if (pos? (:target-count report 0))
+                              "Cloud Itonami の Engineer / QA Bot に修復と再検証を依頼しました。同じ不一致は重複通知しません。"
+                              "能力不一致として記録しましたが、修復担当 Bot はまだ配備されていません。"))
+                       (str "「" name "」はこの Bot が使えるツールではありません。"))
+                     nil))
 
               (write-tool? configuration name)
               (let [card-id (new-id "card")
@@ -3598,9 +3713,11 @@
   ([configuration b did goal?]
   (let [rows (connectors/catalog-rows configuration)
         connected (connected-connectors configuration did)
-        browser (browser-tools configuration b)
-        peers (peer-tools b)
-        coding (coding-tools b)
+        local (local-tool-definitions configuration b)
+        connector-runnable (bot/admitted-tools b rows connected)
+        pre-policy-runnable (cond-> (into (set (map :name local))
+                                              connector-runnable)
+                              goal? (into goal-tool-names))
         {:keys [selection blocked]} (resolve-accounts configuration b did)]
     {:selection selection
      :blocked blocked
@@ -3612,13 +3729,14 @@
      ;; capability is unambiguous; see `tool->capability`, which is small on
      ;; purpose.
      :runnable (bot-authority/admit
-                (cond-> (into (into (into (into #{} (map :name) browser)
-                                          (map :name) peers)
-                                    (map :name) coding)
-                              (bot/admitted-tools b rows connected))
-                  goal? (into goal-tool-names))
+                pre-policy-runnable
                 b (:bot/capability-policy b)
                 {:now (store/now)})
+     ;; Kept separately so a refusal can distinguish an intentional workforce
+     ;; policy denial from a host bug that offered a tool but forgot to admit
+     ;; it.  It is diagnostic evidence only; execution still consults
+     ;; `:runnable` and nothing else.
+     :pre-policy-runnable pre-policy-runnable
      :tools (cond-> (tool-definitions configuration b)
               goal? (into goal-tool-definitions))})))
 

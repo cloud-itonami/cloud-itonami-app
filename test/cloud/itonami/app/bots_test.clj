@@ -20,6 +20,7 @@
             [cloud.itonami.app.provider :as provider]
             [cloud.itonami.app.relay :as relay]
             [cloud.itonami.app.bot :as bot]
+            [cloud.itonami.app.bot-authority :as bot-authority]
             [cloud.itonami.app.peer :as peer]
             [cloud.itonami.app.store :as store]
             [cloud.itonami.app.workspace-tools :as workspace-tools]
@@ -227,6 +228,16 @@
    :objective "Advance one verified engineering step."
    :responsibilities ["Verify before changing"]
    :capabilities [{:capability :repository.write :decision :approval-required}]
+   :workspace "orgs/network-awai/cloud-itonami"
+   :cadence-minutes 60})
+
+(defn- qa-entry []
+  {:key "cloud-itonami/qa"
+   :business {:id :cloud-itonami :name "Cloud Itonami"}
+   :role {:id :qa :name "QA" :job :qa}
+   :objective "Verify one resident path from observable evidence."
+   :responsibilities ["Reproduce before accepting a repair"]
+   :capabilities [{:capability :patch.create :decision :blocked}]
    :workspace "orgs/network-awai/cloud-itonami"
    :cadence-minutes 60})
 
@@ -1500,6 +1511,78 @@
             (is (empty? (:cards last-message)))
             (is (str/includes? (:text last-message) "gmail_delete_everything"))
             (is (str/includes? (:text last-message) "使えるツールではありません"))))))))
+
+(deftest an-offered-commerce-tool-is-runnable-in-the-same-turn
+  ;; Regression for the live 2026-08-25 result card: Commerce was appended to
+  ;; the model's tool list and the public admitted-tools list, but turn
+  ;; admission forgot it and answered that the very tool it offered was not
+  ;; available.  A built-in read must cross the execution seam, not merely be
+  ;; present in metadata.
+  (with-store
+    (fn []
+      (let [b (make-bot alice {:connectors []})
+            turns (atom 0)]
+        (with-redefs [policy/select-provider (fn [_ _] {:id :local})
+                      provider/agent-turn
+                      (fn [_ _]
+                        (if (= 1 (swap! turns inc))
+                          {:content "ショップを確認します。"
+                           :tool-calls [{:id "commerce-1"
+                                         :name "commerce_store_overview"
+                                         :input {}}]}
+                          {:content "ショップの状態を確認しました。" :tool-calls []}))]
+          (let [last-message (last (bots/send! nil alice (:bot/id b)
+                                               "ショップの状態を見て"))]
+            (is (= "ショップの状態を確認しました。" (:text last-message)))
+            (is (= ["commerce_store_overview"]
+                   (mapv :trace/tool
+                         ((private-fn 'trace-of) (:bot/id b)))))))))))
+
+(deftest an-offered-but-lost-tool-opens-one-repair-incident
+  ;; The monitor is not a second authority path.  Force a host regression by
+  ;; removing one built-in tool immediately before execution, then verify that
+  ;; the source Bot recognises the mismatch and wakes the governed Engineer +
+  ;; QA pair exactly once even if the same broken tick repeats.
+  (with-store
+    (fn []
+      (with-redefs [workspace-tools/admit-root (fn [path] path)]
+        (bots/provision-workforce! {} alice
+                                   (workforce-catalog [(engineer-entry)
+                                                       (qa-entry)])))
+      (let [source (make-bot alice {:connectors []})
+            ordinary-admit bot-authority/admit]
+        (with-redefs [policy/select-provider (fn [_ _] {:id :local})
+                      provider/agent-turn
+                      (fn [_ _]
+                        {:content "調べます。"
+                         :tool-calls [{:id "drift-1"
+                                       :name "commerce_store_overview"
+                                       :input {}}]})
+                      bot-authority/admit
+                      (fn [runnable b policy context]
+                        (disj (ordinary-admit runnable b policy context)
+                              "commerce_store_overview"))]
+          (dotimes [_ 2]
+            (let [last-message (last (bots/send! nil alice (:bot/id source)
+                                                 "ショップの状態を見て"))]
+              (is (str/includes? (:text last-message) "不一致を検出"))
+              (is (str/includes? (:text last-message) "Engineer / QA")))))
+        (let [partition (:bots @store/state)
+              incidents (vals (:capability-incidents partition))
+              targets (->> (vals (:bots partition))
+                           (filter #(contains? #{"cloud-itonami/engineer"
+                                                 "cloud-itonami/qa"}
+                                               (:bot/workforce-key %))))]
+          (is (= 1 (count incidents)) "one fingerprint is one incident")
+          (is (= 2 (:incident/count (first incidents))))
+          (is (= 2 (count targets)))
+          (doseq [target targets]
+            (let [alerts (filter #(= :capability-monitor (:message/source %))
+                                 (get-in partition [:conversations (:bot/id target)]))]
+              (is (= 1 (count alerts)) "a repeated failure does not flood the repair Bot")
+              (is (= (:incident/first-seen-at (first incidents))
+                     (get-in partition [:workforce-jobs (:bot/id target)
+                                        :workforce.job/next-run-at]))))))))))
 
 (deftest a-connection-card-stops-asking-once-the-provider-is-connected
   ;; Nothing rewrites a stored card, so a card written while Google was
