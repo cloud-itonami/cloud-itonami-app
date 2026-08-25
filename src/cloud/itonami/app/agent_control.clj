@@ -527,11 +527,12 @@
 (defn computer-ready?
   "Machine admission plus the concrete helper and Accessibility grant."
   [configuration]
-  (let [state (desktop/available?)]
-    (boolean (and (computer-enabled? configuration)
-                  (:helper? state)
-                  (:accessibility? state)
-                  (:screen-recording? state)))))
+  (boolean
+   (and (computer-enabled? configuration)
+        (let [state (desktop/available?)]
+          (and (:helper? state)
+               (:accessibility? state)
+               (:screen-recording? state))))))
 
 (defn browser-tool?
   "Is this an isolated-browser tool name, and not a computer or connector one?"

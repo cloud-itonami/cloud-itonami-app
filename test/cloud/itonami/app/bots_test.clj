@@ -14,6 +14,7 @@
             [cloud.itonami.app.chronicle :as chronicle]
             [cloud.itonami.app.commerce :as commerce]
             [cloud.itonami.app.config :as config]
+            [cloud.itonami.app.desktop :as desktop]
             [cloud.itonami.app.identity :as identity]
             [cloud.itonami.app.policy :as policy]
             [cloud.itonami.app.provider :as provider]
@@ -31,7 +32,9 @@
         previous @store/state]
     (try
       (reset! store/state (store/initial-state))
-      (with-redefs [config/data-dir (fn [] (.toFile temporary))]
+      (with-redefs [config/data-dir (fn [] (.toFile temporary))
+                    store/transact! (fn [f & args]
+                                      (apply swap! store/state f args))]
         (f))
       (finally (reset! store/state previous)))))
 
@@ -101,6 +104,13 @@
                                     :peers? false
                                     :coding? false}
                                    attrs)))
+
+(deftest bot-unit-fixture-does-not-cross-the-durable-store-boundary
+  (with-store
+    (fn []
+      (make-bot alice {:connectors []})
+      (is (not (.isFile (store/state-file)))
+          "Bot state-machine tests stay in memory; store durability has its own suite"))))
 
 (deftest uncustomised-bots-get-stable-distinct-public-faces
   (with-store
@@ -2002,6 +2012,17 @@
 
 (def ^:private browser-on {:agent-control {:browser {:enabled? true}}})
 (def ^:private computer-on {:agent-control {:computer {:enabled? true}}})
+
+(deftest disabled-computer-use-does-not-probe-the-host
+  (let [probes (atom 0)]
+    (with-redefs [desktop/available? (fn []
+                                      (swap! probes inc)
+                                      {:helper? true
+                                       :accessibility? true
+                                       :screen-recording? true})]
+      (is (false? (agent-control/computer-ready? nil)))
+      (is (zero? @probes)
+          "an ordinary Bots overview must not start a CUA permission probe"))))
 
 (defn- execute-tool-var []
   (ns-resolve 'cloud.itonami.app.agent-control 'execute-tool!))
