@@ -134,6 +134,15 @@
 
 (def ^:private max-error-message 300)
 
+(defn- compact-line
+  "One bounded line for human-facing status and continuation metadata."
+  ([value] (compact-line value 220))
+  ([value max-chars]
+   (let [text (-> (str (or value ""))
+                  (str/replace #"\s+" " ")
+                  str/trim)]
+     (subs text 0 (min (count text) max-chars)))))
+
 (defn- error-message
   "One line of why, short enough to store on every failed turn.
 
@@ -1082,6 +1091,8 @@
                       :workforce.job/last-submitted-at
                       (:workforce.job/last-submitted-at old-job)
                       :workforce.job/last-run-id (:workforce.job/last-run-id old-job)
+                      :workforce.job/continuation
+                      (:workforce.job/continuation old-job)
                       :workforce.job/created-at
                       (or (:workforce.job/created-at old-job) now)
                       :workforce.job/updated-at now}]
@@ -1331,6 +1342,35 @@
 
 (declare public-turn peer-tools coding-tools)
 
+(defn- workforce-continuation
+  "Return the explicit continuation, or recover it from a pre-upgrade no-op.
+
+  Older stores already have the durable turn, context id and receipt event but
+  not `:workforce.job/continuation`.  Treating that evidence as absent would
+  make the first upgraded tick repeat the same discovery once more."
+  [partition bot-id workforce-job]
+  (or (:workforce.job/continuation workforce-job)
+      (let [run-id (:workforce.job/last-run-id workforce-job)
+            goal-job (get-in partition [:goal-jobs run-id])
+            no-op (some #(when (= :run/no-op-completed (:event/kind %)) %)
+                        (reverse (:job/events goal-job)))
+            outcome (get-in no-op [:event/data :reason])
+            turn (some #(when (= run-id (:turn/id %)) %)
+                       (reverse (get-in partition [:turn-history bot-id])))
+            result (str (:turn/result turn))
+            prerequisite (some-> (re-find
+                                   #"(?s)Reported prerequisite:\s*(.+?)\s*$"
+                                   result)
+                                  second
+                                  compact-line)
+            summary (or prerequisite
+                        (when (seq result) (compact-line result)))]
+        (when (and run-id outcome turn)
+          {:outcome outcome
+           :context-id (:turn/context-id turn)
+           :summary summary
+           :run-id run-id}))))
+
 (defn- public-bot [configuration did b]
   (let [partition (snapshot)
         rows (connectors/catalog-rows configuration)
@@ -1363,7 +1403,21 @@
            :avatar/glyph (nth bot/avatar-glyphs
                               (mod (quot face-hash (count bot/avatar-colors))
                                    (count bot/avatar-glyphs)))}
-          stored-avatar)]
+          stored-avatar)
+        workforce-job (get-in partition [:workforce-jobs (:bot/id b)])
+        continuation (workforce-continuation partition (:bot/id b)
+                                              workforce-job)
+        public-continuation
+        (when continuation
+          (-> continuation
+              (update :outcome #(some-> % name))
+              (select-keys [:outcome :context-id :summary :run-id])))
+        base-status (bot/status b (presence (:bot/id b)
+                                            (connected-providers did)))
+        public-status (if (and (= :idle base-status)
+                               (= :blocked (:outcome continuation)))
+                        :blocked
+                        base-status)]
     {:id (:bot/id b)
      ;; The Bot's own name outside this process. `:id` is a row identifier and
      ;; means nothing to anyone else; the did is self-certifying and is what a
@@ -1413,12 +1467,13 @@
      :capability-policy
      (mapv #(update % :decision name) (:bot/capability-policy b))
      :resident-job
-     (when-let [job (get-in partition [:workforce-jobs (:bot/id b)])]
-       {:enabled? (:workforce.job/enabled? job)
-        :cadence-minutes (:workforce.job/cadence-minutes job)
-        :next-run-at (:workforce.job/next-run-at job)
-        :last-submitted-at (:workforce.job/last-submitted-at job)
-        :last-run-id (:workforce.job/last-run-id job)})
+     (when workforce-job
+       {:enabled? (:workforce.job/enabled? workforce-job)
+        :cadence-minutes (:workforce.job/cadence-minutes workforce-job)
+        :next-run-at (:workforce.job/next-run-at workforce-job)
+        :last-submitted-at (:workforce.job/last-submitted-at workforce-job)
+        :last-run-id (:workforce.job/last-run-id workforce-job)
+        :continuation public-continuation})
      ;; The Bot picker is a conversation list, not an identity catalog. Give
      ;; the owner's UI the same safe projection it can already fetch after a
      ;; selection, so it can show recency and a one-line preview without 92
@@ -1430,8 +1485,7 @@
      :activity-at activity-at
      :last-turn (public-turn last-turn)
      :enabled? (:bot/enabled? b)
-     :status (name (bot/status b (presence (:bot/id b)
-                                           (connected-providers did))))
+     :status (name public-status)
      :updated-at (:bot/updated-at b)}))
 
 (defn- address-list [value]
@@ -3721,6 +3775,9 @@
           resolved-context (conversation-context/resolve-refs
                             session
                             (bot-context-refs b))
+          parent-context-id
+          (when-let [run-id (:run-id advance-options)]
+            (:job/parent-context-id (goal-job run-id)))
           context-id (new-id "context")
           person-message
           (bot/message {:id (new-id "msg") :bot bot-id :role :person
@@ -3730,9 +3787,13 @@
           _ (append! bot-id person-message)
           context (store-context! context-id b current-direction :person
                                   (conversation bot-id)
-                                  {:context/refs (:refs resolved-context)
-                                   :context/source-receipts
-                                   (:receipts resolved-context)})
+                                  (cond->
+                                   {:context/refs (:refs resolved-context)
+                                    :context/source-receipts
+                                    (:receipts resolved-context)}
+                                    parent-context-id
+                                    (assoc :context/parent-id
+                                           parent-context-id)))
           did (identity/session-did session)
           admission (turn-admission configuration b did goal?)]
       ;; The turn is taken. An unauthorized connector is no longer a reason to
@@ -3965,13 +4026,14 @@
   A no-op that reported itself as ordinary success would make an idle workforce
   and a working one look the same."
   [configuration run-id {:keys [reason status detail]}]
-  (let [{:job/keys [bot resident-workforce?]} (goal-job run-id)
+  (let [{:job/keys [bot resident-workforce? session]} (goal-job run-id)
         receipts (vec (action-receipts run-id))]
     (when (and resident-workforce?
                (contains? completable-reasons reason)
                (seq receipts)
                (attempted-nothing? configuration bot receipts))
-      (let [summary (str (case reason
+      (let [detail (compact-line detail)
+            summary (str (case reason
                            :provider/http-error
                            (str "Provider became unavailable"
                                 (when status (str " (HTTP " status ")")))
@@ -3986,12 +4048,24 @@
                          "No write or external effect was attempted; this resident tick completed as a safe no-op."
                          (when (seq detail)
                            (str "\nReported prerequisite: " detail)))
+            visible-summary
+            (case reason
+              :blocked (str "前提待ち: " (if (seq detail) detail "安全に進めるための情報が不足しています"))
+              :provider/http-error
+              (str "モデル接続待ち" (when status (str " (HTTP " status ")")) "。次回再試行します。")
+              :provider/empty-response "モデル応答待ち。次回再試行します。"
+              "次回再試行します。")
             evidence (mapv (fn [event]
                              (let [data (:event/data event)]
                                (str (:tool data) " output sha256:"
                                     (:output-sha256 data))))
                            receipts)
-            type reason]
+            type reason
+            context-id (some-> (latest-turn session bot) :context-id)
+            continuation {:outcome type
+                          :context-id context-id
+                          :summary (if (seq detail) detail visible-summary)
+                          :run-id run-id}]
         ;; The provider cannot be allowed to turn a read-only resident tick into
         ;; an endless retry loop. Receipts prove what was observed without
         ;; pretending that the model interpreted it or that business work was
@@ -4003,7 +4077,7 @@
                        :turn/tool-count (count receipts)
                        :turn/error-type nil :turn/error-status nil
                        :turn/finished-at (store/now)})
-        (say bot summary nil)
+        (say bot visible-summary nil)
         (append-goal-event! run-id :run/no-op-completed
                             {:reason type
                              :error-status status
@@ -4012,6 +4086,13 @@
         (transition-goal-run! run-id :succeeded
                               {:agent.run/result :safe-no-op
                                :agent.run/finished-at (now-ms)})
+        (transact!
+         (fn [partition]
+           (if (get-in partition [:workforce-jobs bot])
+             (assoc-in partition [:workforce-jobs bot
+                                  :workforce.job/continuation]
+                       continuation)
+             partition)))
         true))))
 
 (defn- goal-job-configuration
@@ -4183,7 +4264,8 @@
   ([configuration session bot-id text run-id]
    (submit-goal! configuration session bot-id text run-id {}))
   ([configuration session bot-id text run-id
-    {:keys [max-tool-calls max-tool-output-chars resident-workforce?]}]
+    {:keys [max-tool-calls max-tool-output-chars resident-workforce?
+            parent-context-id continuation-summary]}]
   (let [b (owned! session bot-id)
         text (str/trim (str text))
         run-id (str/trim (str run-id))]
@@ -4212,6 +4294,8 @@
           job {:job/id run-id :job/bot bot-id
                :job/session (select-keys session [:user-id :organization-id :kind])
                :job/objective text :job/run run :job/plan [] :job/events []
+               :job/parent-context-id parent-context-id
+               :job/continuation-summary continuation-summary
                :job/max-tool-calls max-tool-calls
                :job/max-tool-output-chars max-tool-output-chars
                :job/resident-workforce? (boolean resident-workforce?)
@@ -4265,14 +4349,20 @@
             (vals (:goal-jobs (snapshot))))))
 
 (defn- workforce-goal [b job]
-  (str "Resident startup job tick for " (get-in b [:bot/business :name])
-       " / " (get-in b [:bot/role :name]) ".\n"
-       (:workforce.job/objective job) "\n\n"
-       "Inspect current evidence inside the admitted business repository and advance exactly one bounded step. "
-       "Use the repository reads needed to verify that step; the host may checkpoint and resume long work automatically. "
-       "Keep observed facts, forecasts and proposals separate. Do not cross into another business. "
-       "If there is no safe actionable change, record the evidence for a no-op and complete the goal; do not invent work. "
-       "Any write or external effect remains subject to the concrete tool grant and its governor."))
+  (let [{:keys [context-id outcome summary]}
+        (:workforce.job/continuation job)]
+    (str "Resident job: " (get-in b [:bot/business :name])
+         " / " (get-in b [:bot/role :name]) "\n"
+         "Task: " (:workforce.job/objective job) "\n\n"
+         "Contract:\n"
+         "- Advance one verified step using admitted repository evidence.\n"
+         "- Reuse recorded evidence; do not repeat discovery.\n"
+         "- Separate observed facts from proposals; external effects require their grant.\n"
+         "- If blocked, name one exact prerequisite once and stop."
+         (when context-id
+           (str "\n\nContinuation: {:parent-context \"" context-id
+                "\" :outcome " (pr-str outcome)
+                " :summary " (pr-str (compact-line summary)) "}")))))
 
 (defn fire-due-workforce!
   "Start a bounded number of due startup jobs for one person's live sessions.
@@ -4303,7 +4393,8 @@
         ;; with the measurement is something the SLO surface can show, a
         ;; sixteen-way `fs/io` crash is not. See `cloud.itonami.app.gc`.
         disk-pressure (gc/refuse-admission? configuration)
-        all-owned (->> (vals (:workforce-jobs (snapshot)))
+        workforce-state (snapshot)
+        all-owned (->> (vals (:workforce-jobs workforce-state))
                        (filter #(= owner (:workforce.job/owner %))))
         owned-jobs (filter #(contains? by-organization
                                        (:workforce.job/organization %))
@@ -4322,6 +4413,11 @@
         limit (min starts-per-tick available)
         jobs (->> owned-jobs
                   (filter #(workforce-job-due? % now))
+                  (map #(assoc % :workforce.job/continuation
+                               (workforce-continuation
+                                workforce-state
+                                (:workforce.job/bot %)
+                                %)))
                   (sort-by (juxt :workforce.job/next-run-at :workforce.job/key)))
         jobs (if disk-pressure [] jobs)]
     (loop [remaining jobs
@@ -4371,12 +4467,16 @@
                         (max 1 (long (or (get-in configuration
                                                [:bots :workforce :max-tool-calls])
                                          4)))
-                        :max-tool-output-chars
+                       :max-tool-output-chars
                         (max 1 (long (or (get-in configuration
                                                [:bots :workforce
                                                 :max-tool-output-chars])
                                          1600)))
-                        :resident-workforce? true})
+                        :resident-workforce? true
+                        :parent-context-id
+                        (get-in job [:workforce.job/continuation :context-id])
+                        :continuation-summary
+                        (get-in job [:workforce.job/continuation :summary])})
                       (transact! update-in [:workforce-jobs bot-id]
                                  merge {:workforce.job/last-submitted-at now
                                         :workforce.job/last-run-id run-id

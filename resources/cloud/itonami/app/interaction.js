@@ -9457,6 +9457,7 @@
     const botsStatusText = {
       'idle':'待機中', 'working':'作業中',
       'waiting-approval':'承認待ち', 'waiting-connection':'接続待ち',
+      'blocked':'前提待ち',
       'disabled':'停止中'
     };
     const botsSetStatus = (message) => {
@@ -9795,7 +9796,8 @@
       const badge = $('#bots-count');
       if (badge) {
         const needing = botsState.bots.filter((bot) =>
-          bot.status === 'waiting-approval' || bot.status === 'waiting-connection').length;
+          bot.status === 'waiting-approval' || bot.status === 'waiting-connection' ||
+          bot.status === 'blocked').length;
         badge.textContent = needing ? String(needing) : '';
         badge.dataset.tone = needing ? 'warn' : 'ok';
       }
@@ -10223,6 +10225,11 @@
             ? new Date(job['next-run-at']).toLocaleString('ja-JP') : '未設定';
           workforceCard.append(make('div', 'bots-card__state',
             `${job['enabled?'] ? '常駐中' : '停止中'} · ${job['cadence-minutes']}分周期 · 次回 ${next}`));
+          const continuation = job.continuation;
+          if (continuation?.outcome === 'blocked') {
+            workforceCard.append(make('div', 'bots-card__summary',
+              `前提待ち: ${continuation.summary || '必要な情報が不足しています'}`));
+          }
         }
         workforceCard.append(make('div', 'form-help',
           'Capability policy は職務上の境界です。実行権限は上の「届く範囲」と承認ゲートを越えません。'));

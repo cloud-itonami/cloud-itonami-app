@@ -435,8 +435,14 @@
           (swap! store/state update-in [:bots :workforce-jobs]
                  (fn [jobs]
                    (into {} (map (fn [[id job]]
-                                   [id (assoc job :workforce.job/next-run-at
-                                              "2026-08-15T00:00:00Z")]))
+                                   [id (assoc job
+                                              :workforce.job/next-run-at
+                                              "2026-08-15T00:00:00Z"
+                                              :workforce.job/continuation
+                                              {:outcome :blocked
+                                               :context-id "context-previous"
+                                               :summary "catalog repository is not admitted"
+                                               :run-id "run-previous"})]))
                          jobs)))
           (with-redefs [bots/submit-goal!
                         (fn [_ _ bot-id objective run-id options]
@@ -448,11 +454,15 @@
               (is (= 1 (count (:started result))))
               (is (= 1 (count @submitted)))
               (is (str/includes? (second (first @submitted))
-                                 "advance exactly one bounded step"))
+                                 "Advance one verified step"))
               (is (str/includes? (second (first @submitted))
-                                 "checkpoint and resume long work automatically"))
+                                 "catalog repository is not admitted"))
+              (is (not (str/includes? (second (first @submitted))
+                                      "Keep observed facts, forecasts and proposals separate")))
               (is (= {:max-tool-calls 4 :max-tool-output-chars 1600
-                      :resident-workforce? true}
+                      :resident-workforce? true
+                      :parent-context-id "context-previous"
+                      :continuation-summary "catalog repository is not admitted"}
                      (nth (first @submitted) 3))))))))))
 
 (deftest resident-provider-failure-after-read-receipts-becomes-a-safe-no-op
@@ -492,8 +502,8 @@
           (is (= ["workspace_list output sha256:abc123"] (:evidence turn)))
           (is (some #{"run/no-op-completed"}
                     (map :kind (get-in turn [:job :events]))))
-          (is (str/includes? (:text (last (bots/messages alice bot-id)))
-                             "safe no-op")))))))
+          (is (= "モデル応答待ち。次回再試行します。"
+                 (:text (last (bots/messages alice bot-id))))))))))
 
 (deftest resident-http-failure-after-read-receipts-becomes-an-observed-safe-no-op
   (with-store
@@ -746,6 +756,28 @@
                  (select-keys (:last-message public) [:text :role])))
           (is (= (get-in public [:last-message :at]) (:activity-at public))
               "the picker sorts on the conversation it previews"))))))
+
+(deftest a-resident-child-context-keeps-its-durable-parent
+  (with-store
+    (fn []
+      (let [b (make-bot alice {})
+            bot-id (:bot/id b)
+            run-id "resident-child-context"]
+        (swap! store/state assoc-in [:bots :goal-jobs run-id]
+               {:job/id run-id :job/bot bot-id
+                :job/parent-context-id "context-parent"
+                :job/resident-workforce? true})
+        ;; Context lineage is host state and is established before admission.
+        ;; The provider seam is replaced so this test never calls a model.
+        (with-redefs [policy/select-provider (fn [_ _] {:id :local})
+                      provider/agent-turn
+                      (fn [_ _] {:content "continued" :tool-calls []})]
+          (bots/send! nil alice bot-id "continue"
+                      {:run-id run-id :goal? true}))
+        (let [context-id (:context-id (first (bots/messages alice bot-id)))]
+          (is (= "context-parent"
+                 (get-in @store/state [:bots :contexts context-id
+                                       :context/parent-id]))))))))
 
 (deftest a-correctable-workspace-argument-error-stays-inside-the-bot-loop
   ;; Live evidence 2026-08-24: nexus x402 / Engineer had already proved the
@@ -2526,6 +2558,7 @@
 (defn- seed-resident-turn! [bot-id run-id]
   (swap! store/state assoc-in [:bots :turn-history bot-id]
          [{:turn/id run-id :turn/bot bot-id
+           :turn/context-id "context-parent-1"
            :turn/state :blocked :turn/phase :blocked
            :turn/goal? true :turn/objective "bounded tick"
            :turn/started-at "2026-08-19T00:00:00Z"}]))
@@ -2552,6 +2585,11 @@
       (let [bot-id (:bot/id (make-bot alice {}))
             run-id "resident-blocked-1"
             complete! (ns-resolve 'cloud.itonami.app.bots 'complete-resident-no-op!)]
+        (swap! store/state assoc-in [:bots :workforce-jobs bot-id]
+               {:workforce.job/bot bot-id
+                :workforce.job/enabled? true
+                :workforce.job/cadence-minutes 60
+                :workforce.job/next-run-at "2026-08-19T01:00:00Z"})
         (swap! store/state assoc-in [:bots :goal-jobs run-id]
                (resident-run-with bot-id run-id ["workspace_list" "git_status"]))
         (seed-resident-turn! bot-id run-id)
@@ -2569,8 +2607,48 @@
             (is (= "run/no-op-completed" (:kind no-op)))
             (is (= :blocked (get-in no-op [:data :reason]))))
           (testing "what it said it needed is kept"
-            (is (str/includes? (:text (last (bots/messages alice bot-id)))
-                               "a named seller to onboard"))))))))
+            (let [visible (:text (last (bots/messages alice bot-id)))]
+              (is (= "前提待ち: a named seller to onboard" visible))
+              (is (not (str/includes? visible "safe no-op")))))
+          (testing "the next resident turn receives a durable context parent"
+            (let [shown (first (:bots (bots/overview {} alice)))]
+              (is (= "blocked" (:status shown)))
+              (is (= {:outcome "blocked"
+                      :context-id "context-parent-1"
+                      :summary "a named seller to onboard"
+                      :run-id run-id}
+                     (get-in shown [:resident-job :continuation]))))))))))
+
+(deftest a-pre-upgrade-resident-no-op-is-recovered-as-continuation
+  (with-store
+    (fn []
+      (let [bot-id (:bot/id (make-bot alice {}))
+            run-id "resident-legacy-blocked"
+            complete! (ns-resolve 'cloud.itonami.app.bots
+                                  'complete-resident-no-op!)]
+        (swap! store/state assoc-in [:bots :workforce-jobs bot-id]
+               {:workforce.job/bot bot-id
+                :workforce.job/enabled? true
+                :workforce.job/cadence-minutes 60
+                :workforce.job/last-run-id run-id
+                :workforce.job/next-run-at "2026-08-19T01:00:00Z"})
+        (swap! store/state assoc-in [:bots :goal-jobs run-id]
+               (resident-run-with bot-id run-id ["workspace_list"]))
+        (seed-resident-turn! bot-id run-id)
+        (is (true? (complete! {} run-id
+                              {:reason :blocked
+                               :detail "repository grant is missing"})))
+        ;; Model a store created by the previous release, which has the turn
+        ;; and receipt but no explicit continuation field yet.
+        (swap! store/state update-in [:bots :workforce-jobs bot-id]
+               dissoc :workforce.job/continuation)
+        (let [shown (first (:bots (bots/overview {} alice)))]
+          (is (= "blocked" (:status shown)))
+          (is (= {:outcome "blocked"
+                  :context-id "context-parent-1"
+                  :summary "repository grant is missing"
+                  :run-id run-id}
+                 (get-in shown [:resident-job :continuation]))))))))
 
 (deftest a-resident-tick-that-wrote-is-not-called-a-no-op
   (with-store
