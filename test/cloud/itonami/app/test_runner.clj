@@ -23,6 +23,7 @@
             [cloud.itonami.app.commands-test]
             [cloud.itonami.app.connectors-test]
             [cloud.itonami.app.desktop-test]
+            [cloud.itonami.app.decision-method-test]
             [cloud.itonami.app.bot-test]
             [cloud.itonami.app.bot-slo-test]
             [cloud.itonami.app.bot-authority-test]
@@ -199,6 +200,7 @@
     cloud.itonami.app.commands-test
     cloud.itonami.app.connectors-test
     cloud.itonami.app.desktop-test
+    cloud.itonami.app.decision-method-test
     cloud.itonami.app.bot-test
     cloud.itonami.app.bot-slo-test
     cloud.itonami.app.bot-authority-test
