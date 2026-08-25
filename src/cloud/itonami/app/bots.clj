@@ -1111,6 +1111,14 @@
                       :workforce.job/last-run-id (:workforce.job/last-run-id old-job)
                       :workforce.job/continuation
                       (:workforce.job/continuation old-job)
+                      ;; A reviewed catalog refresh changes the role projection,
+                      ;; not the fact that a current runtime defect still needs
+                      ;; repair.  Keep the one-shot priority until a submission
+                      ;; consumes it in `fire-due-workforce!`.
+                      :workforce.job/trigger
+                      (:workforce.job/trigger old-job)
+                      :workforce.job/triggered-at
+                      (:workforce.job/triggered-at old-job)
                       :workforce.job/created-at
                       (or (:workforce.job/created-at old-job) now)
                       :workforce.job/updated-at now}]
@@ -4593,6 +4601,24 @@
                   (not= :held (get-in % [:job/run :agent.run/status])))
             (vals (:goal-jobs (snapshot))))))
 
+(defn- capability-repair-context [b job]
+  (when (= :capability-repair (:workforce.job/trigger job))
+    (when-let [incident
+               (->> (vals (:capability-incidents (snapshot)))
+                    (filter #(and (= :open (:incident/state %))
+                                  (some #{(:bot/id b)} (:incident/targets %))))
+                    (sort-by :incident/last-seen-at)
+                    last)]
+      (str "\n\nCurrent capability incident:\n"
+           "- Tool: " (:incident/tool incident) "\n"
+           "- Source Bot: " (:incident/source-name incident)
+           " (" (:incident/source-bot incident) ")\n"
+           "- Fingerprint: " (:incident/fingerprint incident) "\n"
+           "- Observed: the host offered this tool, then lost it before runtime admission.\n"
+           "Start from the shared built-in offer/runtime projection and capability-drift monitor "
+           "in src/cloud/itonami/app/bots.clj and its focused tests. Do not run a broad "
+           "repository-wide search first. Reproduce this exact tool, then repair or verify it."))))
+
 (defn- workforce-goal [b job]
   (let [{:keys [context-id outcome summary]}
         (:workforce.job/continuation job)]
@@ -4604,6 +4630,7 @@
          "- Reuse recorded evidence; do not repeat discovery.\n"
          "- Separate observed facts from proposals; external effects require their grant.\n"
          "- If blocked, name one exact prerequisite once and stop."
+         (capability-repair-context b job)
          (when context-id
            (str "\n\nContinuation: {:parent-context \"" context-id
                 "\" :outcome " (pr-str outcome)
