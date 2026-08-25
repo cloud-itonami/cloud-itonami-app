@@ -412,6 +412,27 @@
     (is (re-find #"id=\"bots-routine-create\"" html))
     (is (not (re-find #"id=\"bots-handoff-send\"" html)))))
 
+(deftest bots-phone-state-explains-when-resident-work-resumes
+  (let [html (web/page-html {})
+        js web/interaction-js]
+    (is (str/includes? html ">参照 0<")
+        "the compact titlebar uses a Japanese task label instead of jargon")
+    (is (str/includes? js "const botsStatusSummary = (bot) =>")
+        "the selected Bot state has one shared human-facing summary")
+    (is (str/includes? js "次回 ")
+        "an idle resident Bot must show when it will resume")
+    (is (not (str/includes? js
+                            "botsSetStatus('CLI / MCP からの会話を同期しました。')"))
+        "background synchronization is not a persistent user-facing message")
+    (is (str/includes? web/app-css
+                       "body[data-current-view='bots'] .workspace-switcher{display:none}"))
+    (is (str/includes? web/app-css
+                       "body[data-current-view='bots'] .sidebar[data-mobile-menu-open='true'] .workspace-switcher{"))
+    (is (str/includes? web/app-css "display:block;top:auto")
+        "the Organization switcher remains reachable from その他")
+    (is (str/includes? web/app-css
+                       "body[data-current-view='bots'] .topbar{padding-right:1rem}"))))
+
 (deftest bots-remain-a-single-viewport-pane-in-the-phone-layout
   (is (str/includes? web/app-css
                      ".bots-view{max-width:none;padding:0;height:calc(100dvh - 5rem);overflow:hidden}"))
