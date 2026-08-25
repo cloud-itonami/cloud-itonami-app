@@ -35,23 +35,33 @@ guard let context = NSGraphicsContext.current?.cgContext else {
 context.setAllowsAntialiasing(true)
 context.interpolationQuality = .high
 
-// macOS rounds app icons at roughly 22.4% of the edge; matching it keeps the
-// icon from looking foreign next to system apps.
-let radius = size * 0.2237
-let plate = NSBezierPath(roundedRect: NSRect(x: 0, y: 0, width: size, height: size),
+// A macOS app icon does not fill its source canvas. The system's icon grid
+// keeps the visible plate at roughly 82% so circles, squircles and irregular
+// marks have the same optical weight in the Dock. Filling all 1024 units made
+// Cloud Itonami look one size larger than Chrome, ChatGPT and Terminal even
+// though the Dock assigned every app the same slot.
+let plateSize = size * 0.82
+let plateInset = (size - plateSize) / 2
+let plateRect = NSRect(x: plateInset, y: plateInset,
+                       width: plateSize, height: plateSize)
+
+// macOS rounds app icon plates at roughly 22.4% of the plate edge.
+let radius = plateSize * 0.2237
+let plate = NSBezierPath(roundedRect: plateRect,
                          xRadius: radius, yRadius: radius)
 plate.addClip()
-NSGradient(starting: top, ending: bottom)?.draw(in: NSRect(x: 0, y: 0, width: size, height: size),
+NSGradient(starting: top, ending: bottom)?.draw(in: plateRect,
                                                 angle: -90)
 
 // A single soft highlight across the top third, so the plate reads as a surface
 // rather than a flat swatch at large sizes.
 if let sheen = NSGradient(colors: [NSColor(white: 1, alpha: 0.16), NSColor(white: 1, alpha: 0)]) {
-  sheen.draw(in: NSRect(x: 0, y: size * 0.62, width: size, height: size * 0.38), angle: -90)
+  sheen.draw(in: NSRect(x: plateInset, y: plateInset + plateSize * 0.62,
+                        width: plateSize, height: plateSize * 0.38), angle: -90)
 }
 
 let glyph = "い"
-let fontSize = size * 0.60
+let fontSize = plateSize * 0.60
 let font = NSFont(name: "HiraginoSans-W6", size: fontSize)
   ?? NSFont(name: "HiraKakuProN-W6", size: fontSize)
   ?? NSFont.systemFont(ofSize: fontSize, weight: .semibold)
