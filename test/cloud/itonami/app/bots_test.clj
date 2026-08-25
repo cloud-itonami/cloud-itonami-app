@@ -1602,11 +1602,18 @@
                       (fn [runnable b policy context]
                         (disj (ordinary-admit runnable b policy context)
                               "commerce_store_overview"))]
-          (dotimes [_ 2]
+          (dotimes [attempt 2]
             (let [last-message (last (bots/send! nil alice (:bot/id source)
                                                  "ショップの状態を見て"))]
               (is (str/includes? (:text last-message) "不一致を検出"))
-              (is (str/includes? (:text last-message) "Engineer / QA")))))
+              (is (str/includes? (:text last-message) "Engineer / QA")))
+            (when (zero? attempt)
+              (swap! store/state update-in [:bots :workforce-jobs]
+                     (fn [jobs]
+                       (into {} (map (fn [[id job]]
+                                       [id (dissoc job :workforce.job/trigger
+                                                   :workforce.job/triggered-at)]))
+                             jobs))))))
         (let [partition (:bots @store/state)
               incidents (vals (:capability-incidents partition))
               targets (->> (vals (:bots partition))
@@ -1620,9 +1627,49 @@
             (let [alerts (filter #(= :capability-monitor (:message/source %))
                                  (get-in partition [:conversations (:bot/id target)]))]
               (is (= 1 (count alerts)) "a repeated failure does not flood the repair Bot")
-              (is (= (:incident/first-seen-at (first incidents))
+              (is (= (:incident/last-seen-at (first incidents))
                      (get-in partition [:workforce-jobs (:bot/id target)
-                                        :workforce.job/next-run-at]))))))))))
+                                        :workforce.job/next-run-at])))
+              (is (= :capability-repair
+                     (get-in partition [:workforce-jobs (:bot/id target)
+                                        :workforce.job/trigger]))))))))))
+
+(deftest capability-repair-jumps-the-ordinary-resident-backlog-once
+  (with-store
+    (fn []
+      (with-redefs [workspace-tools/admit-root (fn [path] path)]
+        (bots/provision-workforce! {} alice
+                                   (workforce-catalog [(engineer-entry)
+                                                       (qa-entry)
+                                                       (tamaki-entry)])))
+      (let [now "2026-08-25T09:10:02Z"
+            old "2026-08-01T00:00:00Z"
+            qa-id (->> (vals (get-in @store/state [:bots :bots]))
+                       (some #(when (= "cloud-itonami/qa" (:bot/workforce-key %))
+                                (:bot/id %))))
+            submitted (atom [])]
+        (swap! store/state update-in [:bots :workforce-jobs]
+               (fn [current]
+                 (into {} (map (fn [[id job]]
+                                 [id (cond-> (assoc job :workforce.job/next-run-at old)
+                                       (= id qa-id)
+                                       (assoc :workforce.job/trigger :capability-repair
+                                              :workforce.job/triggered-at now))]))
+                       current)))
+        (with-redefs [bots/submit-goal!
+                      (fn [_ _ bot-id _ run-id _]
+                        (swap! submitted conj bot-id)
+                        {:id run-id})]
+          (let [result (bots/fire-due-workforce!
+                        {:bots {:workforce {:max-starts-per-tick 1 :max-active 1}}}
+                        alice now)]
+            (is (= [qa-id] @submitted)
+                "repair runs before an older ordinary cadence")
+            (is (= ["cloud-itonami/qa"] (:started result)))
+            (is (nil? (get-in @store/state
+                              [:bots :workforce-jobs qa-id
+                               :workforce.job/trigger]))
+                "the priority is consumed by the first submission")))))))
 
 (deftest a-connection-card-stops-asking-once-the-provider-is-connected
   ;; Nothing rewrites a stored card, so a card written while Google was
