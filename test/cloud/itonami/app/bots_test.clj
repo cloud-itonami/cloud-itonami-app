@@ -1687,6 +1687,26 @@
                                :workforce.job/trigger]))
                 "the priority is consumed by the first submission")))))))
 
+(deftest a-successful-host-tool-execution-resolves-its-open-drift-incident
+  (with-store
+    (fn []
+      (let [source (make-bot alice {})
+            incident-key [(:bot/id source) "commerce_store_overview" "fingerprint"]
+            execute (private-fn 'execute-tool-attempt!)]
+        (swap! store/state assoc-in [:bots :capability-incidents incident-key]
+               {:incident/source-bot (:bot/id source)
+                :incident/tool "commerce_store_overview"
+                :incident/state :open})
+        (with-redefs-fn
+          {(ns-resolve 'cloud.itonami.app.bots 'run-tool!)
+           (fn [_ _ _ _ _] {:status :ready})}
+          #(is (= {:output {:status :ready}}
+                  (execute {} source nil "commerce_store_overview" {}))))
+        (let [incident (get-in @store/state
+                               [:bots :capability-incidents incident-key])]
+          (is (= :resolved (:incident/state incident)))
+          (is (string? (:incident/resolved-at incident))))))))
+
 (deftest workforce-reprovision-preserves-a-pending-capability-repair
   (with-store
     (fn []
