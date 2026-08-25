@@ -3081,6 +3081,34 @@
            (:source (public-message (assoc message :message/text
                                            "Please inspect evidence.")))))))
 
+(deftest resident-results-are-runtime-output-and-do-not-replace-the-picker-preview
+  (with-store
+    (fn []
+      (let [b (make-bot alice {:connectors []})
+            bot-id (:bot/id b)
+            resident-prompt "Resident startup job tick for Example / QA.\nInspect evidence."
+            result "No actionable step was found after bounded repository reads."
+            messages [{:message/id "m1" :message/role :bot
+                       :message/text "Previous useful result" :message/source :bot
+                       :message/at "2026-08-25T00:00:00Z" :message/cards []}
+                      {:message/id "m2" :message/role :person
+                       :message/text resident-prompt :message/source :person
+                       :message/at "2026-08-25T01:00:00Z" :message/cards []}
+                      {:message/id "m3" :message/role :bot
+                       :message/text result :message/source :bot
+                       :message/at "2026-08-25T01:01:00Z" :message/cards []}
+                      {:message/id "m4" :message/role :person
+                       :message/text resident-prompt :message/source :person
+                       :message/at "2026-08-25T02:00:00Z" :message/cards []}]]
+        (swap! store/state assoc-in [:bots :conversations bot-id] messages)
+        (let [public-messages (bots/messages alice bot-id)
+              public-bot (first (:bots (bots/overview nil alice)))]
+          (is (= ["bot" "resident" "resident" "resident"]
+                 (mapv :source public-messages))
+              "the result following a resident objective is runtime output too")
+          (is (= result (get-in public-bot [:last-message :text]))
+              "an unanswered runtime prompt must not replace the last result in the Bot picker"))))))
+
 (deftest a-call-carries-a-bounded-window-that-never-splits-a-tool-pair
   ;; The run's live message list was the only accumulating list in this
   ;; namespace without a bound, and a run re-sends all of it on every call.

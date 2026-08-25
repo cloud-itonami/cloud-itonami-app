@@ -9789,7 +9789,9 @@
         item.type = 'button';
         item.setAttribute('aria-current', String(bot.id === botsState.selected));
         const statusSummary = botsStatusSummary(bot);
-        const preview = bot['last-message']?.text || statusSummary;
+        const preview = bot['last-message']?.source === 'resident'
+          ? `自動確認 · ${residentResultState(bot['last-message']?.text)}`
+          : (bot['last-message']?.text || statusSummary);
         item.setAttribute('aria-label',
           `${bot.name}、${statusSummary}、${preview}`);
         const avatar = botAvatar(make('span', 'bot-avatar'), bot.avatar, bot.status);
@@ -10124,6 +10126,22 @@
         id:handoff.id, state:handoff.state, updatedAt:handoff['updated-at']
       }))
     });
+    const residentResultState = (text) => {
+      const value = String(text || '').toLocaleLowerCase('ja');
+      if (/failed|failure|error|失敗/.test(value)) return '失敗';
+      if (/no[- ]?op|no actionable|nothing (?:safe )?to do|変更なし|対象なし/.test(value)) {
+        return '変更なし';
+      }
+      if (/blocked|prerequisite|waiting|前提待ち|接続待ち/.test(value)) return '前提待ち';
+      return '確認済み';
+    };
+    const residentResultPreview = (text, limit = 120) => {
+      const value = String(text || '')
+        .replace(/```[\s\S]*?```/g, ' コード省略 ')
+        .replace(/[#*_`>\[\]()]/g, ' ')
+        .replace(/\s+/g, ' ').trim();
+      return value.length > limit ? `${value.slice(0, limit - 1)}…` : value;
+    };
     const renderBotsMessages = (bot, options = {}) => {
       const holder = $('#bots-messages');
       holder.replaceChildren();
@@ -10131,7 +10149,7 @@
       botsState.messages.forEach((message) => {
         const entry = make('li', 'bots-msg');
         entry.dataset.role = message.role;
-        if (message.text && message.source === 'resident') {
+        if (message.text && message.source === 'resident' && message.role === 'person') {
           // A resident objective is host runtime input, not something the
           // person said and not the Bot's result.  Keeping its full prose in a
           // normal blue chat bubble made a waiting Bot look like it had merely
@@ -10140,6 +10158,18 @@
           const detail = make('details', 'bots-msg__resident');
           detail.append(make('summary', null, '自動確認の内部指示'),
                         make('p', null, message.text));
+          entry.append(detail);
+        } else if (message.text && message.source === 'resident' && message.role === 'bot') {
+          entry.dataset.role = 'resident-result';
+          const detail = make('details', 'bots-msg__resident-result');
+          const summary = make('summary');
+          summary.append(make('strong', null, '自動確認の結果'),
+                         make('span', 'bots-msg__resident-state', residentResultState(message.text)),
+                         make('span', 'bots-msg__resident-preview', residentResultPreview(message.text)),
+                         make('span', 'bots-msg__resident-open', '全文を見る'));
+          const body = make('div', 'bots-msg__resident-body');
+          renderMarkdown(body, message.text);
+          detail.append(summary, body);
           entry.append(detail);
         } else if (message.text) {
           const bubble = make('div', 'bots-msg__bubble');

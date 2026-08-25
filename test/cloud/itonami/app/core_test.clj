@@ -441,6 +441,16 @@
   (is (str/includes? web/app-css ".bots-msg__resident")
       "the compact runtime row has a deliberate visual treatment"))
 
+(deftest resident-runtime-results-lead-with-outcome-and-keep-the-audit-text
+  (is (str/includes? web/interaction-js "message.role === 'bot'")
+      "resident input and resident output must not share one anonymous row")
+  (is (str/includes? web/interaction-js "自動確認の結果")
+      "the normal transcript leads with the outcome")
+  (is (str/includes? web/interaction-js "全文を見る")
+      "the complete provider output remains inspectable")
+  (is (str/includes? web/app-css ".bots-msg__resident-result")
+      "the outcome row has a bounded visual treatment"))
+
 (deftest bots-remain-a-single-viewport-pane-in-the-phone-layout
   (is (str/includes? web/app-css
                      ".bots-view{max-width:none;padding:0;height:calc(100dvh - 5rem);overflow:hidden}"))

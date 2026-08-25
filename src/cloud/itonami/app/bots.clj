@@ -1371,12 +1371,51 @@
            :summary summary
            :run-id run-id}))))
 
+(defn- resident-objective-message?
+  "Host-authored resident input, including records written before :resident
+  became a stored source. The prefix is emitted only by the workforce host."
+  [message]
+  (and (= :person (:message/role message))
+       (str/starts-with? (str (:message/text message))
+                         "Resident startup job tick for ")))
+
+(defn- classify-resident-messages
+  "Project resident input and its Bot output as one runtime turn.
+
+  This is a read projection: existing audit records remain byte-for-byte
+  unchanged. A normal person message resets the classification, so an answer
+  to the owner cannot inherit an earlier background tick's presentation."
+  [messages]
+  (first
+   (reduce
+    (fn [[classified resident-turn?] message]
+      (let [source (if (resident-objective-message? message)
+                     :resident
+                     (:message/source message))
+            resident-turn? (if (= :person (:message/role message))
+                             (= :resident source)
+                             resident-turn?)
+            message (cond-> (assoc message :message/source source)
+                      (and resident-turn? (= :bot (:message/role message)))
+                      (assoc :message/source :resident))]
+        [(conj classified message) resident-turn?]))
+    [[] false]
+    messages)))
+
 (defn- public-bot [configuration did b]
   (let [partition (snapshot)
         rows (connectors/catalog-rows configuration)
         connected (connected-connectors configuration did)
         last-turn (last (get-in partition [:turn-history (:bot/id b)]))
-        last-message (last (get-in partition [:conversations (:bot/id b)]))
+        classified-messages
+        (classify-resident-messages
+         (get-in partition [:conversations (:bot/id b)]))
+        ;; Runtime input is not a conversation preview. An unanswered tick is
+        ;; already represented by status and next-run time; it must not replace
+        ;; useful output with a long internal objective in every picker row.
+        last-message (last (remove #(and (= :person (:message/role %))
+                                          (= :resident (:message/source %)))
+                                   classified-messages))
         activity-at (or (:message/at last-message)
                         (:turn/updated-at last-turn)
                         (:bot/updated-at b))
@@ -1481,7 +1520,8 @@
      :last-message (when last-message
                      {:text (:message/text last-message)
                       :at (:message/at last-message)
-                      :role (some-> (:message/role last-message) name)})
+                      :role (some-> (:message/role last-message) name)
+                      :source (some-> (:message/source last-message) name)})
      :activity-at activity-at
      :last-turn (public-turn last-turn)
      :enabled? (:bot/enabled? b)
@@ -1624,9 +1664,7 @@
   ([m] (public-message m #{} nil))
   ([m providers] (public-message m providers nil))
   ([m providers bot-id]
-   (let [source (if (and (= :person (:message/role m))
-                         (str/starts-with? (str (:message/text m))
-                                           "Resident startup job tick for "))
+   (let [source (if (resident-objective-message? m)
                   ;; Messages stored before this source existed still dominate
                   ;; real upgraded transcripts.  The host-authored prefix is a
                   ;; stable wire marker; recognizing it here improves those
@@ -1656,7 +1694,8 @@
   ended up correct on the Bots screen and stale everywhere else."
   [did bot-id]
   (let [providers (connected-providers did)]
-    (mapv #(public-message % providers bot-id) (conversation bot-id))))
+    (mapv #(public-message % providers bot-id)
+          (classify-resident-messages (conversation bot-id)))))
 
 (defn- default-local-workspace
   "The exact local Git root offered when a person creates a Bot.
@@ -3819,7 +3858,7 @@
       ;; it is true: `advance!` stops at the CALL, before the tool is reached,
       ;; and the card arrives then.
       (binding [*context-id* context-id
-                *message-source* :bot]
+                *message-source* (if resident? :resident :bot)]
         (try
           (if (empty? (:tools admission))
             (say bot-id
@@ -3967,7 +4006,10 @@
                                   "Use existing evidence now and complete the goal, or call goal_blocked with the exact missing prerequisite. "
                                   "Call another tool only when one specific missing fact prevents that decision.")}))
             messages (binding [*context-id* (:context-id run)
-                               *message-source* :bot]
+                               *message-source* (if (:job/resident-workforce?
+                                                    (goal-job run-id))
+                                                  :resident
+                                                  :bot)]
                        (advance! configuration b run
                                  {:cancelled? #(deref cancelled)
                                   :on-finish #(reset! outcome %)})
@@ -4091,7 +4133,8 @@
                        :turn/tool-count (count receipts)
                        :turn/error-type nil :turn/error-status nil
                        :turn/finished-at (store/now)})
-        (say bot visible-summary nil)
+        (binding [*message-source* :resident]
+          (say bot visible-summary nil))
         (append-goal-event! run-id :run/no-op-completed
                             {:reason type
                              :error-status status
