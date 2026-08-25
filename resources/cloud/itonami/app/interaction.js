@@ -10131,7 +10131,17 @@
       botsState.messages.forEach((message) => {
         const entry = make('li', 'bots-msg');
         entry.dataset.role = message.role;
-        if (message.text) {
+        if (message.text && message.source === 'resident') {
+          // A resident objective is host runtime input, not something the
+          // person said and not the Bot's result.  Keeping its full prose in a
+          // normal blue chat bubble made a waiting Bot look like it had merely
+          // echoed a long request.  It remains one-click inspectable for audit.
+          entry.dataset.role = 'resident';
+          const detail = make('details', 'bots-msg__resident');
+          detail.append(make('summary', null, '自動確認の内部指示'),
+                        make('p', null, message.text));
+          entry.append(detail);
+        } else if (message.text) {
           const bubble = make('div', 'bots-msg__bubble');
           if (message.role === 'bot') renderMarkdown(bubble, message.text);
           else bubble.textContent = message.text;

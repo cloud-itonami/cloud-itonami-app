@@ -571,6 +571,13 @@
     color:var(--color-neutral-solid-gray-700)}
   .bots-msg[data-role='person']{justify-items:end}
   .bots-msg[data-role='person'] .bots-msg__bubble{background:var(--color-key-50)}
+  .bots-msg[data-role='resident']{justify-items:center}
+  .bots-msg__resident{max-width:min(34rem,92%);color:var(--color-neutral-solid-gray-600);
+    font-size:.8125rem}
+  .bots-msg__resident summary{cursor:pointer;padding:.25rem .625rem;border-radius:999px;
+    background:var(--color-neutral-solid-gray-100);list-style-position:inside}
+  .bots-msg__resident p{white-space:pre-wrap;margin:.5rem 0 0;padding:.75rem;
+    border-left:2px solid var(--color-neutral-solid-gray-300);text-align:left}
   .bots-card{border:1px solid var(--color-neutral-solid-gray-200);
     border-radius:.75rem;padding:.875rem;background:var(--color-neutral-white);
     display:grid;gap:.5rem;width:100%}
