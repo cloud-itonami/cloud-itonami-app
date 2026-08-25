@@ -110,17 +110,18 @@
    ;; which the provider layer refused with `unsupported provider kind` — the
    ;; refusal is why it was found the same day.
    :base-url "https://api.murakumo.cloud/v1"
-   :default-model "qwen3.8-27b-throughput-5090"
+   :default-model "qwen3.8-27b-fastmtp-aggressive"
    ;; This is the public RunPod RTX 5090 selector advertised and live-verified
    ;; by https://murakumo.cloud/llm.txt on 2026-08-25.  A cold start took
-   ;; 237.45 s there, so this provider gets a deliberately wider request bound
-   ;; than local and warm providers.  The requested model is checked against
+   ;; 237.45 s there, so this selector gets a deliberately wider request bound
+   ;; than local and warm models.  The requested model is checked against
    ;; the response before output is admitted; a failed bounded request is
    ;; retried explicitly as murakumo-main and remains labelled as that model.
    :models ["murakumo-main"
             "qwen3.8-27b-throughput-5090"
             "qwen3.8-27b-fastmtp-aggressive"]
-   :request-timeout-seconds 420
+   :model-request-timeout-seconds
+   {"qwen3.8-27b-throughput-5090" 420}
    :max-transient-retries 0
    :assert-response-model? true
    :model-fallbacks {"qwen3.8-27b-throughput-5090" "murakumo-main"}
@@ -255,7 +256,7 @@
                     ;; into a red "tool budget" failure after four reads.
                     :max-tool-calls 8
                     :max-tool-output-chars 1600
-                    :model "qwen3.8-27b-throughput-5090"
+                    :model "qwen3.8-27b-fastmtp-aggressive"
                     ;; Standing delegation, deliberately ABSENT here: `:all`
                     ;; or a set of workforce keys ("business/kind") an
                     ;; operator writes into their own config.edn. A

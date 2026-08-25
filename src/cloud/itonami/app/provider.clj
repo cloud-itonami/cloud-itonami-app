@@ -35,8 +35,12 @@
   workforce longer."
   180)
 
-(defn- provider-timeout-seconds [provider]
-  (long (or (:request-timeout-seconds provider) request-timeout-seconds)))
+(defn- provider-timeout-seconds
+  ([provider] (provider-timeout-seconds provider nil))
+  ([provider model]
+   (long (or (get (:model-request-timeout-seconds provider) model)
+             (:request-timeout-seconds provider)
+             request-timeout-seconds))))
 
 (defn- timeout->typed
   "Rethrow a request timeout as something the ledger can tell apart.
@@ -258,7 +262,7 @@
                                                      "medium")))
                       (config/env-secret provider)
                       (xai-headers provider request)
-                      (provider-timeout-seconds provider)
+                      (provider-timeout-seconds provider candidate)
                       (long (or (:max-transient-retries provider)
                                 max-transient-retries)))
               _ (assert-response-model! provider candidate result)]
@@ -504,7 +508,7 @@
                 (openai-url provider "/chat/completions")
                 body (config/env-secret provider)
                 (xai-headers provider request)
-                (provider-timeout-seconds provider)
+                (provider-timeout-seconds provider model)
                 (long (or (:max-transient-retries provider)
                           max-transient-retries)))
         _ (assert-response-model! provider model result)
@@ -589,7 +593,7 @@
                                             "medium")))
              (config/env-secret provider)
              (xai-headers provider request)
-             (provider-timeout-seconds provider))]
+             (provider-timeout-seconds provider model))]
         (with-open [reader (BufferedReader.
                             (InputStreamReader. (.body response)))]
           (doseq [line (line-seq reader)
@@ -683,7 +687,7 @@
                       (openai-url provider "/chat/completions") body
                       (config/env-secret provider)
                       (xai-headers provider request)
-                      (provider-timeout-seconds provider))]
+                      (provider-timeout-seconds provider model))]
         (with-active-agent-reader
           response
           (fn [reader]

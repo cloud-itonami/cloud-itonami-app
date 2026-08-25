@@ -208,11 +208,12 @@
   (let [provider (some #(when (= "murakumo" (:id %)) %)
                        (:providers (config/load-config)))]
     (is (= 512 (:max-output-tokens provider)))
-    (is (= "qwen3.8-27b-throughput-5090" (:default-model provider)))
+    (is (= "qwen3.8-27b-fastmtp-aggressive" (:default-model provider)))
     (is (= ["murakumo-main" "qwen3.8-27b-throughput-5090"
             "qwen3.8-27b-fastmtp-aggressive"]
            (:models provider)))
-    (is (= 420 (:request-timeout-seconds provider)))
+    (is (= {"qwen3.8-27b-throughput-5090" 420}
+           (:model-request-timeout-seconds provider)))
     (is (zero? (:max-transient-retries provider)))
     (is (true? (:assert-response-model? provider)))
     (is (= {"qwen3.8-27b-throughput-5090" "murakumo-main"}

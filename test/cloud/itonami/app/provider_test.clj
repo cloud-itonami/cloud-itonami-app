@@ -111,7 +111,11 @@
 
 (deftest provider-request-bound-can-cover-a-runpod-cold-start
   (let [timeout (private-fn 'provider-timeout-seconds)]
-    (is (= 420 (timeout {:request-timeout-seconds 420})))
+    (is (= 420 (timeout {:model-request-timeout-seconds {"runpod" 420}}
+                        "runpod")))
+    (is (= provider/request-timeout-seconds
+           (timeout {:model-request-timeout-seconds {"runpod" 420}}
+                    "another-model")))
     (is (= provider/request-timeout-seconds (timeout {})))))
 
 (deftest a-stable-alias-can-admit-only-its-observed-concrete-model

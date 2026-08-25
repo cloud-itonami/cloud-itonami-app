@@ -3584,7 +3584,7 @@
           (bots/provision-workforce! {} alice (workforce-catalog [(engineer-entry)]))
           (let [b (first (:bots (bots/overview {} alice)))]
             (is (= "murakumo" (:provider-id b)))
-            (is (= "qwen3.8-27b-throughput-5090" (:model b)))))
+            (is (= "qwen3.8-27b-fastmtp-aggressive" (:model b)))))
         (testing "a profile chooses where the role runs"
           (bots/provision-workforce!
            {} alice (workforce-catalog
