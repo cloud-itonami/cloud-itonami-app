@@ -3218,8 +3218,13 @@
                         ;; next ordinary cadence.  The global active/slot gate
                         ;; still decides when it may actually start.
                         (cond-> (get-in p [:workforce-jobs target-id])
-                          (assoc-in [:workforce-jobs target-id
-                                     :workforce.job/next-run-at] now)))))
+                          (-> (assoc-in [:workforce-jobs target-id
+                                        :workforce.job/next-run-at] now)
+                              (assoc-in [:workforce-jobs target-id
+                                         :workforce.job/trigger]
+                                        :capability-repair)
+                              (assoc-in [:workforce-jobs target-id
+                                         :workforce.job/triggered-at] now))))))
                 partition targets))]
          (reset! outcome {:new? (nil? existing)
                           :incident incident
@@ -4593,7 +4598,17 @@
                                 workforce-state
                                 (:workforce.job/bot %)
                                 %)))
-                  (sort-by (juxt :workforce.job/next-run-at :workforce.job/key)))
+                  ;; A repair incident is a current host defect, not another
+                  ;; ordinary cadence.  Sorting only by `next-run-at` left a
+                  ;; freshly woken Engineer/QA pair behind the resident
+                  ;; backlog, so the monitor could report a repair and then
+                  ;; starve it indefinitely.  Priority changes ordering only;
+                  ;; the same owner, tenant, slot and authority gates remain.
+                  (sort-by (juxt #(if (= :capability-repair
+                                         (:workforce.job/trigger %))
+                                   0 1)
+                                 :workforce.job/next-run-at
+                                 :workforce.job/key)))
         jobs (if disk-pressure [] jobs)]
     (loop [remaining jobs
            result {:started []
@@ -4653,10 +4668,14 @@
                         :continuation-summary
                         (get-in job [:workforce.job/continuation :summary])})
                       (transact! update-in [:workforce-jobs bot-id]
-                                 merge {:workforce.job/last-submitted-at now
-                                        :workforce.job/last-run-id run-id
-                                        :workforce.job/next-run-at next-at
-                                        :workforce.job/updated-at now})
+                                 (fn [stored-job]
+                                   (-> stored-job
+                                       (merge {:workforce.job/last-submitted-at now
+                                               :workforce.job/last-run-id run-id
+                                               :workforce.job/next-run-at next-at
+                                               :workforce.job/updated-at now})
+                                       (dissoc :workforce.job/trigger
+                                               :workforce.job/triggered-at))))
                       (update result :started conj (:workforce.job/key job)))
                     (catch Exception error
                       (update result :skipped conj
