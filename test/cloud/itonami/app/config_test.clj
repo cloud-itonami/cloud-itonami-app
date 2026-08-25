@@ -204,17 +204,24 @@
       (doseq [k [:server :privacy :providers :authorities :identity :credentials]]
         (is (contains? c k) (str "missing " k))))))
 
-(deftest murakumo-agent-output-fits-the-non-streaming-client-bound
+(deftest murakumo-runpod-route-has-a-cold-start-safe-client-bound
   (let [provider (some #(when (= "murakumo" (:id %)) %)
                        (:providers (config/load-config)))]
     (is (= 512 (:max-output-tokens provider)))
     (is (= "qwen3.8-27b-fastmtp-aggressive" (:default-model provider)))
-    (is (= ["murakumo-main" "qwen3.8-27b-fastmtp-aggressive"]
+    (is (= ["murakumo-main" "qwen3.8-27b-throughput-5090"
+            "qwen3.8-27b-fastmtp-aggressive"]
            (:models provider)))
+    (is (= {"qwen3.8-27b-throughput-5090" 420}
+           (:model-request-timeout-seconds provider)))
+    (is (zero? (:max-transient-retries provider)))
+    (is (true? (:assert-response-model? provider)))
+    (is (= {"qwen3.8-27b-throughput-5090" "murakumo-main"}
+           (:model-fallbacks provider)))
     (is (= 32768
            (get-in provider [:context-window-tokens
-                             "qwen3.8-27b-fastmtp-aggressive"])))
-    (is (= 32768 (get-in provider [:context-window-tokens "murakumo-main"]))
+                             "qwen3.8-27b-throughput-5090"])))
+    (is (= 262144 (get-in provider [:context-window-tokens "murakumo-main"]))
         "the alias metadata must move in the same config change as its target")))
 
 (deftest shipped-models-declare-their-current-maximum-context
@@ -222,7 +229,11 @@
                         (:providers (config/load-config)))]
     (is (= 500000
            (get-in providers ["xai" :context-window-tokens "grok-4.6"])))
-    (doseq [model (get-in providers ["murakumo" :models])]
+    (is (= 262144
+           (get-in providers ["murakumo" :context-window-tokens
+                              "murakumo-main"])))
+    (doseq [model ["qwen3.8-27b-throughput-5090"
+                   "qwen3.8-27b-fastmtp-aggressive"]]
       (is (= 32768
              (get-in providers ["murakumo" :context-window-tokens model]))
           (str model " must carry the selected model's window")))))

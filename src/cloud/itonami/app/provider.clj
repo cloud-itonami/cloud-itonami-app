@@ -35,6 +35,13 @@
   workforce longer."
   180)
 
+(defn- provider-timeout-seconds
+  ([provider] (provider-timeout-seconds provider nil))
+  ([provider model]
+   (long (or (get (:model-request-timeout-seconds provider) model)
+             (:request-timeout-seconds provider)
+             request-timeout-seconds))))
+
 (defn- timeout->typed
   "Rethrow a request timeout as something the ledger can tell apart.
 
@@ -47,8 +54,10 @@
 
   A slow provider and a broken host are different problems with different
   fixes. They must not arrive under one name."
-  [^Exception error url]
-  (cond
+  ([^Exception error url]
+   (timeout->typed error url request-timeout-seconds))
+  ([^Exception error url timeout-seconds]
+   (cond
     ;; Checked FIRST, because `HttpConnectTimeoutException` extends
     ;; `HttpTimeoutException` and the general branch would swallow it. They are
     ;; not one problem: a model too slow to answer is a capacity question, and
@@ -64,7 +73,7 @@
     (throw (ex-info "model provider request timed out"
                     {:type :provider/timeout
                      :url url
-                     :timeout-seconds request-timeout-seconds}
+                     :timeout-seconds timeout-seconds}
                     error))
 
     ;; The transport failed some other way -- a reset, a broken pipe, an EOF
@@ -83,16 +92,21 @@
                      :cause-class (.getName (class error))}
                     error))
 
-    :else (throw error)))
+    :else (throw error))))
 
 (defn- request-json
   ([method url body] (request-json method url body nil))
   ([method url body api-key]
    (request-json method url body api-key nil))
   ([method url body api-key headers]
+   (request-json method url body api-key headers request-timeout-seconds))
+  ([method url body api-key headers timeout-seconds]
+   (request-json method url body api-key headers timeout-seconds
+                 max-transient-retries))
+  ([method url body api-key headers timeout-seconds transient-retries]
    (loop [attempt 0]
      (let [builder (-> (HttpRequest/newBuilder (URI/create url))
-                       (.timeout (Duration/ofSeconds request-timeout-seconds))
+                       (.timeout (Duration/ofSeconds timeout-seconds))
                        (.header "Accept" "application/json")
                        (.header "Content-Type" "application/json"))
            _ (when api-key (.header builder "Authorization" (str "Bearer " api-key)))
@@ -105,14 +119,15 @@
                                    (json/write-str body))))
            response (try (.send client (.build request)
                                 (HttpResponse$BodyHandlers/ofString))
-                         (catch Exception error (timeout->typed error url)))
+                         (catch Exception error
+                           (timeout->typed error url timeout-seconds)))
            status (.statusCode response)
            parsed (try (json/read-str (.body response) :key-fn keyword)
                        (catch Exception _ {:raw (.body response)}))]
        (cond
          (<= 200 status 299) parsed
 
-         (and (< attempt max-transient-retries)
+         (and (< attempt transient-retries)
               (contains? retryable-http-statuses status))
          (do
            ;; Generation has no external effect until a returned tool call is
@@ -216,6 +231,8 @@
             (swap! model-context-cache assoc key {:at now :value value})
             value)))))
 
+(declare assert-response-model! with-model-fallback)
+
 (defn chat
   [provider {:keys [model messages temperature] :as request}]
   (cond
@@ -231,19 +248,27 @@
                                 (get result :eval_count 0))}})
 
     (openai-shaped? provider)
-    (let [result (request-json
-                  :post (openai-url provider "/chat/completions")
-                  (cond-> {:model model :messages messages :stream false
-                           :temperature (or temperature 0.7)}
-                    (= :xai (:kind provider))
-                    (assoc :max_tokens (or (:max-output-tokens provider) 8192)
-                           :reasoning_effort (or (:reasoning-effort request)
-                                                 (:reasoning-effort provider)
-                                                 "medium")))
-                  (config/env-secret provider)
-                  (xai-headers provider request))]
-      {:content (get-in result [:choices 0 :message :content])
-       :usage (:usage result)})
+    (with-model-fallback
+      provider model
+      (fn [candidate]
+        (let [result (request-json
+                      :post (openai-url provider "/chat/completions")
+                      (cond-> {:model candidate :messages messages :stream false
+                               :temperature (or temperature 0.7)}
+                        (= :xai (:kind provider))
+                        (assoc :max_tokens (or (:max-output-tokens provider) 8192)
+                               :reasoning_effort (or (:reasoning-effort request)
+                                                     (:reasoning-effort provider)
+                                                     "medium")))
+                      (config/env-secret provider)
+                      (xai-headers provider request)
+                      (provider-timeout-seconds provider candidate)
+                      (long (or (:max-transient-retries provider)
+                                max-transient-retries)))
+              _ (assert-response-model! provider candidate result)]
+          {:content (get-in result [:choices 0 :message :content])
+           :usage (:usage result)
+           :served-model (:model result)})))
 
     :else (throw (ex-info "unsupported provider kind" {:provider provider}))))
 
@@ -423,13 +448,82 @@
     (:context-window-tokens request)
     (assoc :num_ctx (:context-window-tokens request))))
 
+(def ^:private fallback-error-types
+  #{:provider/timeout :provider/unreachable :provider/network-error
+    :provider/http-error :provider/model-mismatch :provider/empty-response})
+
+(defn- assert-response-model!
+  [provider requested response]
+  (when (:assert-response-model? provider)
+    (let [served (:model response)
+          accepted (conj (get (:accepted-response-models provider)
+                              requested #{})
+                         requested)]
+      (when-not (contains? accepted served)
+        (throw (ex-info "model provider returned a different model"
+                        {:type :provider/model-mismatch
+                         :requested-model requested
+                         :served-model served})))))
+  response)
+
+(defn- with-model-fallback
+  "Run `invoke` with requested model, then its explicitly configured fallback.
+
+  The result always carries the model that actually served it. A fallback is
+  never relabelled as the requested accelerator, and arbitrary application
+  exceptions do not silently change routing."
+  [provider requested invoke]
+  (try
+    (let [result (invoke requested)]
+      (assoc result
+             :model (or (:served-model result) requested)
+             :requested-model requested :fallback? false))
+    (catch Exception primary
+      (let [error-type (:type (ex-data primary))
+            fallback (get (:model-fallbacks provider) requested)]
+        (if (and fallback
+                 (contains? fallback-error-types error-type)
+                 (not (:stream-emitted? (ex-data primary))))
+          (try
+            (let [result (invoke fallback)]
+              (assoc result
+                     :model (or (:served-model result) fallback)
+                     :requested-model requested :fallback? true
+                     :fallback-error-type error-type))
+            (catch Exception secondary
+              (throw (ex-info "model provider and explicit fallback both failed"
+                              {:type :provider/fallback-failed
+                               :requested-model requested
+                               :fallback-model fallback
+                               :primary-error-type error-type
+                               :fallback-error-type (:type (ex-data secondary))}
+                              secondary))))
+          (throw primary))))))
+
+(defn- openai-agent-turn-once
+  [provider request model]
+  (let [body (agent-request-body provider (assoc request :model model))
+        result (request-json
+                :post
+                (openai-url provider "/chat/completions")
+                body (config/env-secret provider)
+                (xai-headers provider request)
+                (provider-timeout-seconds provider model)
+                (long (or (:max-transient-retries provider)
+                          max-transient-retries)))
+        _ (assert-response-model! provider model result)
+        message (get-in result [:choices 0 :message])]
+    (assoc (agent-result message (get-in result [:choices 0 :finish_reason])
+                         (:usage result))
+           :served-model (:model result))))
+
 (defn agent-turn
   "One non-streaming tool-capable model turn, normalized for Agent Control."
   [provider request]
-  (let [body (agent-request-body provider request)]
-    (cond
+  (cond
       (= :ollama (:kind provider))
-      (let [result (request-json :post (str (:base-url provider) "/api/chat")
+      (let [body (agent-request-body provider request)
+            result (request-json :post (str (:base-url provider) "/api/chat")
                                  (-> body
                                      (dissoc :temperature :max_tokens
                                              :parallel_tool_calls :reasoning_effort)
@@ -443,22 +537,18 @@
                                         (get result :eval_count 0))}))
 
       (openai-shaped? provider)
-      (let [result (request-json
-                    :post
-                    (openai-url provider "/chat/completions")
-                    body (config/env-secret provider)
-                    (xai-headers provider request))
-            message (get-in result [:choices 0 :message])]
-        (agent-result message (get-in result [:choices 0 :finish_reason])
-                      (:usage result)))
+      (with-model-fallback provider (:model request)
+        #(openai-agent-turn-once provider request %))
 
-      :else (throw (ex-info "unsupported provider kind" {:provider provider})))))
+      :else (throw (ex-info "unsupported provider kind" {:provider provider}))))
 
 (defn- streaming-response
   ([url body api-key] (streaming-response url body api-key nil))
   ([url body api-key headers]
+   (streaming-response url body api-key headers request-timeout-seconds))
+  ([url body api-key headers timeout-seconds]
    (let [builder (-> (HttpRequest/newBuilder (URI/create url))
-                     (.timeout (Duration/ofSeconds request-timeout-seconds))
+                     (.timeout (Duration/ofSeconds timeout-seconds))
                      (.header "Accept" "*/*")
                      (.header "Content-Type" "application/json"))
          _ (when api-key
@@ -471,7 +561,8 @@
                      .build)
          response (try (.send client request
                               (HttpResponse$BodyHandlers/ofInputStream))
-                       (catch Exception error (timeout->typed error url)))]
+                       (catch Exception error
+                         (timeout->typed error url timeout-seconds)))]
      (when-not (<= 200 (.statusCode response) 299)
        (throw (ex-info "model provider streaming request failed"
                        {:type :provider/http-error
@@ -483,11 +574,57 @@
     (on-delta content)
     content))
 
+(defn- openai-chat-stream-once!
+  [provider request model on-delta]
+  (let [content (StringBuilder.)
+        usage (volatile! nil)
+        served-model (volatile! nil)]
+    (try
+      (let [response
+            (streaming-response
+             (openai-url provider "/chat/completions")
+             (cond-> {:model model :messages (:messages request) :stream true
+                      :stream_options {:include_usage true}
+                      :temperature (or (:temperature request) 0.7)}
+               (= :xai (:kind provider))
+               (assoc :max_tokens (or (:max-output-tokens provider) 8192)
+                      :reasoning_effort (or (:reasoning-effort request)
+                                            (:reasoning-effort provider)
+                                            "medium")))
+             (config/env-secret provider)
+             (xai-headers provider request)
+             (provider-timeout-seconds provider model))]
+        (with-open [reader (BufferedReader.
+                            (InputStreamReader. (.body response)))]
+          (doseq [line (line-seq reader)
+                  :let [data (when (str/starts-with? line "data:")
+                               (str/trim (subs line 5)))]
+                  :when (and data (not= data "[DONE]"))]
+            (let [chunk (json/read-str data :key-fn keyword)
+                  _ (when-let [observed (:model chunk)]
+                      (vreset! served-model observed)
+                      (assert-response-model! provider model chunk))
+                  delta (get-in chunk [:choices 0 :delta :content])]
+              (when-let [emitted (emit! on-delta delta)]
+                (.append content emitted))
+              (when-let [chunk-usage (:usage chunk)]
+                (vreset! usage chunk-usage))))))
+      (when (:assert-response-model? provider)
+        (assert-response-model! provider model {:model @served-model}))
+      {:content (.toString content) :usage @usage
+       :served-model @served-model}
+      (catch Exception error
+        (throw (ex-info (.getMessage error)
+                        (assoc (or (ex-data error) {})
+                               :stream-emitted? (pos? (.length content)))
+                        error))))))
+
 (defn chat-stream!
   "Stream provider deltas to `on-delta` and return the complete result."
   [provider {:keys [model messages temperature] :as request} on-delta]
   (let [content (StringBuilder.)
-        usage (volatile! nil)]
+        usage (volatile! nil)
+        routing (volatile! nil)]
     (cond
       (= :ollama (:kind provider))
       (let [response
@@ -512,34 +649,17 @@
                                            (get chunk :eval_count 0))}))))))
 
       (openai-shaped? provider)
-      (let [response
-            (streaming-response
-             (openai-url provider "/chat/completions")
-             (cond-> {:model model :messages messages :stream true
-                      :stream_options {:include_usage true}
-                      :temperature (or temperature 0.7)}
-               (= :xai (:kind provider))
-               (assoc :max_tokens (or (:max-output-tokens provider) 8192)
-                      :reasoning_effort (or (:reasoning-effort request)
-                                            (:reasoning-effort provider)
-                                            "medium")))
-             (config/env-secret provider)
-             (xai-headers provider request))]
-        (with-open [reader (BufferedReader.
-                            (InputStreamReader. (.body response)))]
-          (doseq [line (line-seq reader)
-                  :let [data (when (str/starts-with? line "data:")
-                               (str/trim (subs line 5)))]
-                  :when (and data (not= data "[DONE]"))]
-            (let [chunk (json/read-str data :key-fn keyword)
-                  delta (get-in chunk [:choices 0 :delta :content])]
-              (when-let [emitted (emit! on-delta delta)]
-                (.append content emitted))
-              (when-let [chunk-usage (:usage chunk)]
-                (vreset! usage chunk-usage))))))
+      (let [result (with-model-fallback
+                     provider model
+                     #(openai-chat-stream-once! provider request % on-delta))]
+        (.append content (:content result))
+        (vreset! usage (:usage result))
+        (vreset! routing (select-keys result
+                                      [:model :requested-model :fallback?
+                                       :fallback-error-type])))
 
       :else (throw (ex-info "unsupported provider kind" {:provider provider})))
-    {:content (.toString content) :usage @usage}))
+    (merge {:content (.toString content) :usage @usage} @routing)))
 
 (defn- append-fragment [current fragment]
   (str (or current "") (or fragment "")))
@@ -553,48 +673,21 @@
                 :arguments (append-fragment (get-in current [:function :arguments])
                                              (:arguments function))}}))
 
-(defn agent-turn-stream!
-  "Stream a tool-capable model turn. Text deltas are visible immediately;
-  fragmented OpenAI tool calls are assembled before Agent Control sees them."
-  [provider request on-delta]
+(defn- openai-agent-turn-stream-once!
+  [provider request model on-delta]
   (let [content (StringBuilder.)
         calls (atom {})
         finish-reason (volatile! nil)
         usage (volatile! nil)
-        body (assoc (agent-request-body provider request) :stream true)]
-    (cond
-      (= :ollama (:kind provider))
+        served-model (volatile! nil)
+        body (assoc (agent-request-body provider (assoc request :model model))
+                    :stream true :stream_options {:include_usage true})]
+    (try
       (let [response (streaming-response
-                      (str (:base-url provider) "/api/chat")
-                      (-> body
-                          (dissoc :temperature :max_tokens :parallel_tool_calls
-                                  :reasoning_effort)
-                          (assoc :options (ollama-agent-options provider request)))
-                      nil)]
-        (with-active-agent-reader
-          response
-          (fn [reader]
-            (doseq [line (line-seq reader) :when (not (str/blank? line))]
-              (let [chunk (json/read-str line :key-fn keyword)
-                    message (:message chunk)
-                    delta (:content message)]
-                (when-let [emitted (emit! on-delta delta)] (.append content emitted))
-                (when-let [tool-calls (seq (:tool_calls message))]
-                  (reset! calls (into {} (map-indexed vector tool-calls))))
-                (when (:done chunk)
-                  (vreset! finish-reason (:done_reason chunk))
-                  (vreset! usage
-                           {:prompt_tokens (get chunk :prompt_eval_count 0)
-                            :completion_tokens (get chunk :eval_count 0)
-                            :total_tokens (+ (get chunk :prompt_eval_count 0)
-                                             (get chunk :eval_count 0))})))))))
-
-      (openai-shaped? provider)
-      (let [response (streaming-response
-                      (openai-url provider "/chat/completions")
-                      (assoc body :stream_options {:include_usage true})
+                      (openai-url provider "/chat/completions") body
                       (config/env-secret provider)
-                      (xai-headers provider request))]
+                      (xai-headers provider request)
+                      (provider-timeout-seconds provider model))]
         (with-active-agent-reader
           response
           (fn [reader]
@@ -603,6 +696,9 @@
                                  (str/trim (subs line 5)))]
                     :when (and data (not= data "[DONE]"))]
               (let [chunk (json/read-str data :key-fn keyword)
+                    _ (when-let [observed (:model chunk)]
+                        (vreset! served-model observed)
+                        (assert-response-model! provider model chunk))
                     choice (get-in chunk [:choices 0])
                     delta (:delta choice)]
                 (when-let [emitted (emit! on-delta (:content delta))]
@@ -614,8 +710,59 @@
                   (vreset! finish-reason reason))
                 (when-let [chunk-usage (:usage chunk)]
                   (vreset! usage chunk-usage)))))))
+      (when (:assert-response-model? provider)
+        (assert-response-model! provider model {:model @served-model}))
+      (assoc (agent-result {:content (.toString content)
+                            :tool_calls (mapv val (sort-by key @calls))}
+                           @finish-reason @usage)
+             :served-model @served-model)
+      (catch Exception error
+        (throw (ex-info (.getMessage error)
+                        (assoc (or (ex-data error) {})
+                               :stream-emitted? (pos? (.length content)))
+                        error))))))
 
-      :else (throw (ex-info "unsupported provider kind" {:provider provider})))
-    (agent-result {:content (.toString content)
-                   :tool_calls (mapv val (sort-by key @calls))}
-                  @finish-reason @usage)))
+(defn agent-turn-stream!
+  "Stream a tool-capable model turn. Text deltas are visible immediately;
+  fragmented OpenAI tool calls are assembled before Agent Control sees them."
+  [provider request on-delta]
+  (cond
+    (= :ollama (:kind provider))
+    (let [content (StringBuilder.)
+          calls (atom {})
+          finish-reason (volatile! nil)
+          usage (volatile! nil)
+          body (assoc (agent-request-body provider request) :stream true)
+          response (streaming-response
+                    (str (:base-url provider) "/api/chat")
+                    (-> body
+                        (dissoc :temperature :max_tokens :parallel_tool_calls
+                                :reasoning_effort)
+                        (assoc :options (ollama-agent-options provider request)))
+                    nil)]
+      (with-active-agent-reader
+        response
+        (fn [reader]
+          (doseq [line (line-seq reader) :when (not (str/blank? line))]
+            (let [chunk (json/read-str line :key-fn keyword)
+                  message (:message chunk)
+                  delta (:content message)]
+              (when-let [emitted (emit! on-delta delta)] (.append content emitted))
+              (when-let [tool-calls (seq (:tool_calls message))]
+                (reset! calls (into {} (map-indexed vector tool-calls))))
+              (when (:done chunk)
+                (vreset! finish-reason (:done_reason chunk))
+                (vreset! usage
+                         {:prompt_tokens (get chunk :prompt_eval_count 0)
+                          :completion_tokens (get chunk :eval_count 0)
+                          :total_tokens (+ (get chunk :prompt_eval_count 0)
+                                           (get chunk :eval_count 0))}))))))
+      (agent-result {:content (.toString content)
+                     :tool_calls (mapv val (sort-by key @calls))}
+                    @finish-reason @usage))
+
+    (openai-shaped? provider)
+    (with-model-fallback provider (:model request)
+      #(openai-agent-turn-stream-once! provider request % on-delta))
+
+    :else (throw (ex-info "unsupported provider kind" {:provider provider}))))

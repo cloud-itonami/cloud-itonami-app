@@ -109,6 +109,117 @@
     (is (= 1024 (:max_tokens body))
         "a resident request can be bounded without shrinking human turns")))
 
+(deftest provider-request-bound-can-cover-a-runpod-cold-start
+  (let [timeout (private-fn 'provider-timeout-seconds)]
+    (is (= 420 (timeout {:model-request-timeout-seconds {"runpod" 420}}
+                        "runpod")))
+    (is (= provider/request-timeout-seconds
+           (timeout {:model-request-timeout-seconds {"runpod" 420}}
+                    "another-model")))
+    (is (= provider/request-timeout-seconds (timeout {})))))
+
+(deftest a-stable-alias-can-admit-only-its-observed-concrete-model
+  (let [assert-model! (private-fn 'assert-response-model!)
+        p {:assert-response-model? true
+           :accepted-response-models
+           {"murakumo-main" #{"Qwen3.8-27B-Q4_K_M.gguf"}}}]
+    (is (= {:model "Qwen3.8-27B-Q4_K_M.gguf"}
+           (assert-model! p "murakumo-main"
+                          {:model "Qwen3.8-27B-Q4_K_M.gguf"})))
+    (try
+      (assert-model! p "murakumo-main" {:model "some-other-checkpoint"})
+      (is false "an unreviewed alias target must be rejected")
+      (catch clojure.lang.ExceptionInfo error
+        (is (= :provider/model-mismatch (:type (ex-data error))))))))
+
+(deftest a-failed-5090-request-falls-back-without-relabeling-the-result
+  (let [requested (atom [])
+        server (HttpServer/create (InetSocketAddress. "127.0.0.1" 0) 0)]
+    (.createContext
+     server "/v1/chat/completions"
+     (reify HttpHandler
+       (handle [_ exchange]
+         (let [request (json/read-str (slurp (.getRequestBody exchange))
+                                      :key-fn keyword)
+               model (:model request)
+               _ (swap! requested conj model)
+               [status payload]
+               (if (= "qwen3.8-27b-throughput-5090" model)
+                 [502 {:error "cold origin unavailable"}]
+                 [200 {:model "murakumo-main"
+                       :choices [{:finish_reason "stop"
+                                  :message {:content "fallback-ok"}}]}])
+               bytes (.getBytes (json/write-str payload) "UTF-8")]
+           (.sendResponseHeaders exchange status (alength bytes))
+           (with-open [out (.getResponseBody exchange)] (.write out bytes))))))
+    (.start server)
+    (try
+      (let [provider {:kind :openai-compatible
+                      :base-url (str "http://127.0.0.1:"
+                                     (.getPort (.getAddress server)) "/v1")
+                      :max-transient-retries 0
+                      :assert-response-model? true
+                      :model-fallbacks
+                      {"qwen3.8-27b-throughput-5090" "murakumo-main"}}
+            result (provider/agent-turn
+                    provider {:model "qwen3.8-27b-throughput-5090"
+                              :messages [] :tools []})]
+        (is (= "fallback-ok" (:content result)))
+        (is (= "murakumo-main" (:model result)))
+        (is (= "qwen3.8-27b-throughput-5090" (:requested-model result)))
+        (is (true? (:fallback? result)))
+        (is (= ["qwen3.8-27b-throughput-5090" "murakumo-main"]
+               @requested)
+            "the bounded accelerator request precedes one explicit fallback"))
+      (finally (.stop server 0)))))
+
+(deftest streamed-5090-fallback-is-verified-before-it-is-emitted
+  (let [requested (atom [])
+        server (HttpServer/create (InetSocketAddress. "127.0.0.1" 0) 0)]
+    (.createContext
+     server "/v1/chat/completions"
+     (reify HttpHandler
+       (handle [_ exchange]
+         (let [request (json/read-str (slurp (.getRequestBody exchange))
+                                      :key-fn keyword)
+               model (:model request)
+               _ (swap! requested conj model)]
+           (if (= "qwen3.8-27b-throughput-5090" model)
+             (let [bytes (.getBytes "{\"error\":\"cold origin unavailable\"}" "UTF-8")]
+               (.sendResponseHeaders exchange 502 (alength bytes))
+               (with-open [out (.getResponseBody exchange)] (.write out bytes)))
+             (let [payload (str "data: "
+                                (json/write-str
+                                 {:model "murakumo-main"
+                                  :choices [{:finish_reason "stop"
+                                             :delta {:content "stream-ok"}}]})
+                                "\n\ndata: [DONE]\n\n")
+                   bytes (.getBytes payload "UTF-8")]
+               (.getResponseHeaders exchange)
+               (.add (.getResponseHeaders exchange) "Content-Type"
+                     "text/event-stream")
+               (.sendResponseHeaders exchange 200 0)
+               (with-open [out (.getResponseBody exchange)] (.write out bytes))))))))
+    (.start server)
+    (try
+      (let [provider {:kind :openai-compatible
+                      :base-url (str "http://127.0.0.1:"
+                                     (.getPort (.getAddress server)) "/v1")
+                      :assert-response-model? true
+                      :model-fallbacks
+                      {"qwen3.8-27b-throughput-5090" "murakumo-main"}}
+            deltas (atom [])
+            result (provider/agent-turn-stream!
+                    provider {:model "qwen3.8-27b-throughput-5090"
+                              :messages [] :tools []}
+                    #(swap! deltas conj %))]
+        (is (= ["stream-ok"] @deltas))
+        (is (= "stream-ok" (:content result)))
+        (is (= "murakumo-main" (:model result)))
+        (is (true? (:fallback? result)))
+        (is (= ["qwen3.8-27b-throughput-5090" "murakumo-main"] @requested)))
+      (finally (.stop server 0)))))
+
 (deftest transient-json-provider-failures-retry-once
   (let [attempts (atom 0)
         server (HttpServer/create (InetSocketAddress. "127.0.0.1" 0) 0)]
