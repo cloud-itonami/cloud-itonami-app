@@ -3198,34 +3198,37 @@
                        "Do not widen the source Bot's authority; use only your admitted repository and tools.")
              partition (assoc-in partition [:capability-incidents incident-key] incident)
              partition
-             (if existing
-               partition
-               (reduce
-                (fn [p target]
-                  (let [target-id (:bot/id target)
-                        message (bot/message
-                                 {:id (new-id "msg") :bot target-id :role :person
-                                  :text note :at now
-                                  :direction (get-in p [:directions target-id] 0)
-                                  :source :capability-monitor
-                                  :from-bot (:bot/id source)})]
-                    (-> p
-                        (update-in [:conversations target-id]
-                                   (fn [messages]
-                                     (vec (take-last max-conversation
-                                                     (conj (vec messages) message)))))
-                        ;; A routed incident is work now, not at the role's
-                        ;; next ordinary cadence.  The global active/slot gate
-                        ;; still decides when it may actually start.
-                        (cond-> (get-in p [:workforce-jobs target-id])
-                          (-> (assoc-in [:workforce-jobs target-id
-                                        :workforce.job/next-run-at] now)
-                              (assoc-in [:workforce-jobs target-id
-                                         :workforce.job/trigger]
-                                        :capability-repair)
-                              (assoc-in [:workforce-jobs target-id
-                                         :workforce.job/triggered-at] now))))))
-                partition targets))]
+             (reduce
+              (fn [p target]
+                (let [target-id (:bot/id target)
+                      message (bot/message
+                               {:id (new-id "msg") :bot target-id :role :person
+                                :text note :at now
+                                :direction (get-in p [:directions target-id] 0)
+                                :source :capability-monitor
+                                :from-bot (:bot/id source)})
+                      ;; The transcript is deduplicated, but a recurrence is
+                      ;; still a current defect.  Re-arm the repair trigger
+                      ;; without adding another copy of the same alert.
+                      p (if existing
+                          p
+                          (update-in p [:conversations target-id]
+                                     (fn [messages]
+                                       (vec (take-last max-conversation
+                                                       (conj (vec messages) message))))))]
+                  ;; A routed incident is work now, not at the role's next
+                  ;; ordinary cadence.  The global active/slot gate still
+                  ;; decides when it may actually start.
+                  (cond-> p
+                    (get-in p [:workforce-jobs target-id])
+                    (-> (assoc-in [:workforce-jobs target-id
+                                   :workforce.job/next-run-at] now)
+                        (assoc-in [:workforce-jobs target-id
+                                   :workforce.job/trigger]
+                                  :capability-repair)
+                        (assoc-in [:workforce-jobs target-id
+                                   :workforce.job/triggered-at] now)))))
+              partition targets)]
          (reset! outcome {:new? (nil? existing)
                           :incident incident
                           :target-count (count targets)})
