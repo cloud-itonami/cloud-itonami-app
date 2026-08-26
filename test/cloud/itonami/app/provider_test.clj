@@ -101,6 +101,17 @@
       (is (= "murakumo-main" (:model body)))
       (is (= [{:role "user" :content "hello"}] (:messages body))))))
 
+(deftest an-agent-turn-without-tools-omits-the-tool-protocol
+  (let [body ((private-fn 'agent-request-body)
+              {:kind :openai-compatible}
+              {:model "qwen3.8-27b-throughput-5090"
+               :messages [{:role "user" :content "hello"}]
+               :tools []})]
+    (is (not (contains? body :tools))
+        "vLLM rejects an explicitly empty tools array")
+    (is (not (contains? body :parallel_tool_calls))
+        "parallel tool configuration is meaningless without a tool")))
+
 (deftest agent-turn-honors-a-narrower-request-envelope
   (let [body ((private-fn 'agent-request-body)
               {:kind :openai-compatible :max-output-tokens 2048}

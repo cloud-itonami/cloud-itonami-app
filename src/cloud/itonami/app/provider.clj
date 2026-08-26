@@ -394,7 +394,7 @@
            :max_tokens (or max-output-tokens
                            (:max-output-tokens provider)
                            default-agent-max-tokens)}
-    (not text-only?)
+    (and (not text-only?) (seq tools))
     (assoc :tools (mapv tool-definition tools))
 
     ;; llama.cpp vendor extension, passed through by the murakumo bridge. A
@@ -416,7 +416,7 @@
     ;; re-measures.
     disable-thinking?
     (assoc :chat_template_kwargs {:enable_thinking false})
-    (and (openai-shaped? provider) (not text-only?))
+    (and (openai-shaped? provider) (not text-only?) (seq tools))
     ;; Cloud Itonami admits, runs and audits one capability at a time. This is
     ;; also a compatibility boundary: some OpenAI-shaped inference servers can
     ;; emit parallel calls but reject the continuation containing several tool
