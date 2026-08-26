@@ -41,6 +41,8 @@
     (is (= "https://itonami.cloud/a2a"
            (get-in card [:supportedInterfaces 0 :url])))
     (is (= ["research"] (mapv :id (:skills card))))
+    (is (= {:streaming true :pushNotifications false}
+           (:capabilities card)))
     (is (nil? (:bot-id card)))
     (is (nil? (:tools card)))))
 
@@ -71,6 +73,44 @@
           (is (= {:isolated? true :source :a2a :text-only? true
                   :run-id (:id task)}
                  (nth (first @calls) 2)))))
+      (finally (reset! store/state previous)))))
+
+(deftest streaming-send-emits-working-and-terminal-durable-tasks
+  (let [previous @store/state
+        frames (atom [])
+        streaming-request (assoc request :method "SendStreamingMessage")]
+    (try
+      (reset! store/state (store/initial-state))
+      (with-redefs [bots/send!
+                    (fn [& _] [{:role "bot" :text "streamed"}])]
+        (let [task (a2a/send-streaming-message!
+                    configuration session streaming-request
+                    #(swap! frames conj %))]
+          (is (= ["TASK_STATE_WORKING" "TASK_STATE_COMPLETED"]
+                 (mapv #(get-in % [:status :state]) @frames)))
+          (is (= "streamed" (get-in task [:status :message :parts 0 :text])))
+          (is (= task (last @frames)))
+          (is (= task
+                 (a2a/send-streaming-message!
+                  configuration session streaming-request
+                  #(swap! frames conj %))))
+          (is (= 3 (count @frames)) "an idempotent replay emits one terminal frame")))
+      (finally (reset! store/state previous)))))
+
+(deftest a-dropped-stream-does-not-fail-durable-work
+  (let [previous @store/state
+        streaming-request (-> request
+                              (assoc :method "SendStreamingMessage")
+                              (assoc-in [:params :message :messageId]
+                                        "dropped-stream"))]
+    (try
+      (reset! store/state (store/initial-state))
+      (with-redefs [bots/send! (fn [& _] [{:role "bot" :text "done"}])]
+        (let [task (a2a/send-streaming-message!
+                    configuration session streaming-request
+                    (fn [_] (throw (ex-info "client left" {}))))]
+          (is (= "TASK_STATE_COMPLETED" (get-in task [:status :state])))
+          (is (= "done" (get-in task [:status :message :parts 0 :text])))))
       (finally (reset! store/state previous)))))
 
 (deftest tasks-are-owned-by-the-authenticated-agent
