@@ -37,6 +37,7 @@
     :description (get-in configuration [:a2a :description])
     :url (str (str/replace (base-origin configuration) #"/+$" "") "/a2a")
     :version (get-in configuration [:a2a :version])
+    :streaming? true
     :skills (vec (get-in configuration [:a2a :skills] []))
     :security-schemes {:bearerAuth {:type "http" :scheme "bearer"}}
     :security [{:bearerAuth [scope]}]}))
@@ -147,45 +148,77 @@
 (defn- answer-text [messages]
   (some->> messages reverse (some #(when (= "bot" (:role %)) (:text %)))))
 
-(defn send-message! [configuration session request]
+(defn- execute-admitted!
+  [configuration session admitted on-task!]
+  (let [emit! (fn [task]
+                (let [wire (wire-task task)]
+                  ;; A dropped SSE client does not cancel or fail durable work.
+                  ;; The caller can reconnect with GetTask using the id from
+                  ;; the WORKING frame it already received.
+                  (when on-task!
+                    (try (on-task! wire) (catch Exception _ nil)))
+                  wire))
+        {:keys [task claimed?]} (claim-task! configuration session admitted)]
+    (if-not claimed?
+      (emit! task)
+      (let [working (save-task! (assoc task
+                                       :state "TASK_STATE_WORKING"
+                                       :updated-at (store/now)))]
+        (emit! working)
+        (try
+          (let [messages (bots/send!
+                          configuration session
+                          (get-in configuration [:a2a :bot-id])
+                          (:text admitted)
+                          {:isolated? true :source :a2a
+                           :text-only? true
+                           :run-id (:id working)})
+                completed (save-task!
+                           (assoc working
+                                  :state "TASK_STATE_COMPLETED"
+                                  :text (or (answer-text messages) "")
+                                  :updated-at (store/now)))]
+            (emit! completed))
+          (catch Exception error
+            (let [data (ex-data error)
+                  failed (save-task!
+                          (cond-> (assoc working
+                                         :state "TASK_STATE_FAILED"
+                                         :text "Task failed"
+                                         :updated-at (store/now)
+                                         :failure-type (:type data))
+                            (:status data)
+                            (assoc :failure-status (:status data))))]
+              (emit! failed))))))))
+
+(defn- admit-send! [configuration request parser message]
   (when-not (enabled? configuration)
     (throw (ex-info "A2A is not configured" {:type :a2a/not-configured})))
-  (let [admitted (protocol-a2a/send-message-request request)]
+  (let [admitted (parser request)]
     (when (:error admitted)
-      (throw (ex-info "Invalid A2A SendMessage request"
+      (throw (ex-info message
                       {:type :a2a/invalid-request
                        :problems (:problems admitted)})))
-    (let [{:keys [task claimed?]} (claim-task! configuration session admitted)]
-      (if-not claimed?
-        (wire-task task)
-        (let [working (save-task! (assoc task
-                                         :state "TASK_STATE_WORKING"
-                                         :updated-at (store/now)))]
-          (try
-            (let [messages (bots/send!
-                            configuration session
-                            (get-in configuration [:a2a :bot-id])
-                            (:text admitted)
-                            {:isolated? true :source :a2a
-                             :text-only? true
-                             :run-id (:id working)})
-                  completed (save-task!
-                             (assoc working
-                                    :state "TASK_STATE_COMPLETED"
-                                    :text (or (answer-text messages) "")
-                                    :updated-at (store/now)))]
-              (wire-task completed))
-            (catch Exception error
-              (let [data (ex-data error)
-                    failed (save-task!
-                            (cond-> (assoc working
-                                           :state "TASK_STATE_FAILED"
-                                           :text "Task failed"
-                                           :updated-at (store/now)
-                                           :failure-type (:type data))
-                              (:status data)
-                              (assoc :failure-status (:status data))))]
-                (wire-task failed)))))))))
+    admitted))
+
+(defn send-message! [configuration session request]
+  (execute-admitted!
+   configuration session
+   (admit-send! configuration request protocol-a2a/send-message-request
+                "Invalid A2A SendMessage request")
+   nil))
+
+(defn send-streaming-message!
+  "Execute a text-only A2A turn and emit durable WORKING and terminal Tasks.
+  The callback receives complete A2A Task projections; the HTTP host owns SSE
+  framing and JSON-RPC correlation."
+  [configuration session request on-task!]
+  (execute-admitted!
+   configuration session
+   (admit-send! configuration request
+                protocol-a2a/send-streaming-message-request
+                "Invalid A2A SendStreamingMessage request")
+   on-task!))
 
 (defn get-task [session request]
   (let [admitted (protocol-a2a/get-task-request request)]
