@@ -143,15 +143,15 @@
    :max-transient-retries 0
    :assert-response-model? true
    :model-fallbacks {"qwen3.8-27b-throughput-5090" "murakumo-main"}
-   ;; The stable alias currently reports 262,144 while both explicit Qwen3.8
-   ;; deployments report 32,768. Keep this map
+   ;; The stable alias currently reports 262,144, the Community RTX 5090 Pod
+   ;; reports 65,536, and the FastMTP deployment reports 32,768. Keep this map
    ;; beside the alias: repointing `murakumo-main` must update its model metadata
    ;; in the same configuration change. Every Bot uses the window of the model
    ;; it selected; this does not change that model selection.
    :accepted-response-models
    {"murakumo-main" #{"murakumo-main" "Qwen3.8-27B-Q4_K_M.gguf"}}
    :context-window-tokens {"murakumo-main" 262144
-                           "qwen3.8-27b-throughput-5090" 32768
+                           "qwen3.8-27b-throughput-5090" 65536
                            "qwen3.8-27b-fastmtp-aggressive" 32768}
    ;; Keep unattended turns concise even though the 5090 route has higher
    ;; throughput: context and output budgets are product bounds, not a reason
