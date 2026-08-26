@@ -19,7 +19,11 @@
   (is (= ["https://auth.itonami.cloud"]
          (:authorization_servers (oauth/metadata configuration))))
   (is (= ["header"] (:bearer_methods_supported
-                      (oauth/metadata configuration)))))
+                      (oauth/metadata configuration))))
+  (is (= "https://itonami.cloud/a2a"
+         (:resource (oauth/a2a-metadata configuration))))
+  (is (= ["a2a:tasks"]
+         (:scopes_supported (oauth/a2a-metadata configuration)))))
 
 (deftest hosted-resource-origin-is-independent-from-passkey-origin
   (let [split-origin (-> configuration

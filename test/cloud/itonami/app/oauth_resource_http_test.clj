@@ -33,6 +33,8 @@
    :memory {:max-session-messages 10 :max-context-messages 10}
    :providers [{:id "ollama" :kind :ollama :local? true
                 :base-url "http://127.0.0.1:11434" :reviewed? true :enabled? true}]
+   :a2a {:enabled? true :bot-id "bot-a" :name "Test Bot"
+         :description "A test Bot" :version "1.0.0" :skills []}
    :mcp {:oauth {:authorization-servers ["https://auth.itonami.cloud"]}}})
 
 (defonce ^:private client (HttpClient/newHttpClient))
@@ -87,6 +89,17 @@
                (get-in ok [:body :authorization_servers]))))
       (is (not= 200 (:status (request :post discovery)))
           "POST is not the RFC 9728 document"))))
+
+(deftest a2a-discovery-is-public-but-tasks-require-bearer
+  (with-server
+    (fn []
+      (let [card (request :get "/.well-known/agent-card.json")
+            oauth (request :get "/.well-known/oauth-protected-resource/a2a")]
+        (is (= 200 (:status card)))
+        (is (= "Test Bot" (get-in card [:body :name])))
+        (is (= "https://itonami.cloud/a2a" (get-in oauth [:body :resource])))
+        (is (= ["a2a:tasks"] (get-in oauth [:body :scopes_supported]))))
+      (is (= 401 (:status (request :post "/a2a")))))))
 
 (deftest the-handler-follows-the-artifact-and-leaves-health-alone
   (with-server
