@@ -233,6 +233,61 @@
             "the public readiness probe receives no inference credential"))
       (finally (.stop server 0)))))
 
+(deftest exact-hosted-model-readiness-survives-aggregate-503
+  (let [requested (atom [])
+        server (HttpServer/create (InetSocketAddress. "127.0.0.1" 0) 0)]
+    (.createContext
+     server "/ready"
+     (reify HttpHandler
+       (handle [_ exchange]
+         (let [bytes (.getBytes
+                      (json/write-str
+                       {:ok false
+                        :inference {:ok false}
+                        :hosted-models
+                        {"qwen3.8-27b-throughput-5090"
+                         {:ok true :idle 1 :running 1
+                          :generation-ok true}}})
+                      "UTF-8")]
+           (.sendResponseHeaders exchange 503 (alength bytes))
+           (with-open [out (.getResponseBody exchange)] (.write out bytes))))))
+    (.createContext
+     server "/v1/chat/completions"
+     (reify HttpHandler
+       (handle [_ exchange]
+         (let [request (json/read-str (slurp (.getRequestBody exchange))
+                                      :key-fn keyword)
+               model (:model request)
+               _ (swap! requested conj model)
+               bytes (.getBytes
+                      (json/write-str
+                       {:model model
+                        :choices [{:finish_reason "stop"
+                                   :message {:content "5090-primary-ok"}}]})
+                      "UTF-8")]
+           (.sendResponseHeaders exchange 200 (alength bytes))
+           (with-open [out (.getResponseBody exchange)] (.write out bytes))))))
+    (.start server)
+    (try
+      (let [origin (str "http://127.0.0.1:" (.getPort (.getAddress server)))
+            provider {:kind :openai-compatible
+                      :base-url (str origin "/v1")
+                      :max-transient-retries 0
+                      :assert-response-model? true
+                      :model-readiness
+                      {"qwen3.8-27b-throughput-5090"
+                       {:url (str origin "/ready") :timeout-seconds 1}}
+                      :model-fallbacks
+                      {"qwen3.8-27b-throughput-5090" "murakumo-main"}}
+            result (provider/agent-turn
+                    provider {:model "qwen3.8-27b-throughput-5090"
+                              :messages [] :tools []})]
+        (is (= "5090-primary-ok" (:content result)))
+        (is (= "qwen3.8-27b-throughput-5090" (:model result)))
+        (is (false? (:fallback? result)))
+        (is (= ["qwen3.8-27b-throughput-5090"] @requested)))
+      (finally (.stop server 0)))))
+
 (deftest streamed-5090-fallback-is-verified-before-it-is-emitted
   (let [requested (atom [])
         server (HttpServer/create (InetSocketAddress. "127.0.0.1" 0) 0)]
@@ -362,6 +417,17 @@
     (is (= 512 (:max_tokens body)))
     (is (nil? (:reasoning_effort body))
         "xAI-specific reasoning policy is not sent to Murakumo")))
+
+(deftest text-only-agent-turn-omits-the-tool-protocol-entirely
+  (let [body ((private-fn 'agent-request-body)
+              {:kind :openai-compatible :max-output-tokens 512}
+              {:model "murakumo-main"
+               :messages [{:role "user" :content "answer only"}]
+               :tools []
+               :text-only? true})]
+    (is (not (contains? body :tools)))
+    (is (not (contains? body :parallel_tool_calls)))
+    (is (= false (:stream body)))))
 
 (deftest an-empty-finished-turn-is-not-a-silent-answer
   (let [normalize (private-fn 'agent-result)]

@@ -3139,6 +3139,9 @@
            :context-threshold-tokens threshold-budget
            :context-estimated-tokens after-tokens
            :context-compacted? (boolean compacted?)}
+    (:text-only? run)
+    (assoc :text-only? true)
+
     ;; A handoff is capped by the provider default (2048) and had reasoning
     ;; left ON, which is the pairing this very comment forbids -- measured
     ;; 2026-08-20 by running one: the model spent the budget thinking and the
@@ -4034,6 +4037,7 @@
         text (str/trim (str text))
         goal? (boolean (:goal? advance-options))
         isolated? (boolean (:isolated? advance-options))
+        text-only? (boolean (:text-only? advance-options))
         requested-source (:source advance-options)]
     (when (str/blank? text)
       (throw (ex-info "メッセージが空です。" {:type :bot/empty-message})))
@@ -4080,7 +4084,8 @@
                                     (assoc :context/parent-id
                                            parent-context-id)))
           did (identity/session-did session)
-          admission (turn-admission configuration b did goal?)]
+          admission (cond-> (turn-admission configuration b did goal?)
+                      text-only? (assoc :tools []))]
       ;; The turn is taken. An unauthorized connector is no longer a reason to
       ;; refuse the message: it used to be, and the cost was a Bot that
       ;; answered "先に接続が要ります" to hello, to thanks, and to every
@@ -4093,7 +4098,7 @@
                 *message-source* (or requested-source
                                      (if resident? :resident :bot))]
         (try
-          (if (empty? (:tools admission))
+          (if (and (empty? (:tools admission)) (not text-only?))
             (say bot-id
                  "使えるツールがひとつもありません。Settings で有効にするか、この Bot の権限を見直してください。"
                  nil)
@@ -4103,6 +4108,7 @@
                               :context-id context-id
                               :goal? goal?
                               :objective (when goal? text)
+                              :text-only? text-only?
                               :messages (transcript configuration b
                                                     (:context/messages context)
                                                     (when goal? text)

@@ -386,15 +386,17 @@
 
 (defn- agent-request-body
   [provider {:keys [model messages tools temperature reasoning-effort
-                    max-output-tokens disable-thinking?]}]
+                    max-output-tokens disable-thinking? text-only?]}]
   (cond-> {:model model
            :messages (mapv provider-message messages)
-           :tools (mapv tool-definition tools)
            :stream false
            :temperature (or temperature 0.2)
            :max_tokens (or max-output-tokens
                            (:max-output-tokens provider)
                            default-agent-max-tokens)}
+    (not text-only?)
+    (assoc :tools (mapv tool-definition tools))
+
     ;; llama.cpp vendor extension, passed through by the murakumo bridge. A
     ;; reasoning model spends output tokens on `thinking` BEFORE it emits any
     ;; text, so a tight :max-output-tokens does not produce a short answer --
@@ -414,7 +416,7 @@
     ;; re-measures.
     disable-thinking?
     (assoc :chat_template_kwargs {:enable_thinking false})
-    (openai-shaped? provider)
+    (and (openai-shaped? provider) (not text-only?))
     ;; Cloud Itonami admits, runs and audits one capability at a time. This is
     ;; also a compatibility boundary: some OpenAI-shaped inference servers can
     ;; emit parallel calls but reject the continuation containing several tool
@@ -453,6 +455,19 @@
     :provider/http-error :provider/model-mismatch :provider/empty-response
     :provider/model-unready})
 
+(defn- model-ready-response?
+  "Accept either aggregate readiness or exact hosted-model readiness.
+
+  A provider may expose several independent inference planes. Its aggregate
+  status can therefore be unavailable while the model this Bot requested has
+  warm, generation-qualified capacity. The exact model entry is narrower
+  evidence and must not be masked by an unrelated plane's failure."
+  [model response]
+  (or (true? (:ok response))
+      (true? (get-in response [:hosted-models model :ok]))
+      ;; request-json keywordizes JSON object keys, including model ids.
+      (true? (get-in response [:hosted-models (keyword model) :ok]))))
+
 (defn- assert-model-ready!
   "Fail fast when a specialized model has no immediately usable capacity.
 
@@ -467,14 +482,19 @@
     (try
       (let [result (request-json :get url nil nil nil
                                  (long (or timeout-seconds 5)) 0)]
-        (when-not (true? (:ok result))
+        (when-not (model-ready-response? model result)
           (throw (ex-info "requested model readiness failed"
                           {:type :provider/model-unready
                            :requested-model model
                            :readiness-url url}))))
       (catch Exception error
-        (if (= :provider/model-unready (:type (ex-data error)))
+        (cond
+          (model-ready-response? model (:response (ex-data error))) true
+
+          (= :provider/model-unready (:type (ex-data error)))
           (throw error)
+
+          :else
           (throw (ex-info "requested model is not ready"
                           {:type :provider/model-unready
                            :requested-model model
