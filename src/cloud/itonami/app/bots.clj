@@ -717,9 +717,10 @@
   when the caller is the onboarding screen and has only picked services.
 
   A newly created Bot is autonomous inside the authority the caller actually
-  gave it: writes, omakase and peer notes default on; a supplied local
-  workspace defaults to coding; the isolated browser defaults on only when
-  this deployment has one. Explicit false values always win. This grants no
+  gave it: writes, omakase, peer notes, the isolated browser and bounded
+  Computer Use default on; a supplied local workspace defaults to coding.
+  Explicit false values always win. A machine that is not ready simply keeps
+  the requested capability unavailable until it is prepared. This grants no
   connector, account, network, push or Wallet signer by itself -- those remain
   separate capabilities and the Bot settings screen may narrow any default."
   [configuration session {:keys [name avatar brief connectors tools accounts
@@ -732,9 +733,8 @@
         coding? (if (contains? attrs :coding?)
                   (boolean coding?)
                   (boolean (some-> workspace str str/trim not-empty)))
-        browser? (if (contains? attrs :browser?)
-                   (boolean browser?)
-                   (boolean (agent-control/browser-enabled? configuration)))]
+        browser? (if (contains? attrs :browser?) (boolean browser?) true)
+        computer? (if (contains? attrs :computer?) (boolean computer?) true)]
   (validate-provider-choice! configuration provider-id model)
   (let [workspace (cond
                     virtual-shell? (virtual-shell/admit-workspace workspace)
@@ -757,10 +757,7 @@
                     :bot/accounts accounts
                     :bot/writes? writes?
                     :bot/browser? browser?
-                    ;; Computer Use is never inferred from autonomy or from a
-                    ;; machine that happens to support it. It is a separate,
-                    ;; high-impact grant selected in this Bot's settings.
-                    :bot/computer? (boolean computer?)
+                    :bot/computer? computer?
                     :bot/peers? peers?
                     :bot/coding? coding?
                     :bot/virtual-shell? virtual-shell?

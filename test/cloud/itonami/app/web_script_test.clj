@@ -437,6 +437,11 @@
     (is (not (str/includes? html "id=\"bots-omakase\"")))
     (is (str/includes? js "make('strong', 'bots-settings__title', 'Bot設定')"))
     (is (str/includes? js "'omakase?':true"))
+    (is (str/includes? js "'computer?':true"))
+    (is (str/includes? js "'browser?':true"))
+    (is (str/includes? js "通常モード — 5つの自律機能がオン"))
+    (is (str/includes? js "permissionDrag.addEventListener('pointerdown'"))
+    (is (str/includes? js "showView('settings')"))
     (is (str/includes? js "'omakase?':omakaseBox.checked"))
     (is (str/includes? js "'おまかせ承認済み'"))))
 

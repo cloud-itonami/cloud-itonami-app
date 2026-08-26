@@ -102,6 +102,7 @@
                                     :writes? false
                                     :omakase? false
                                     :browser? false
+                                    :computer? false
                                     :peers? false
                                     :coding? false}
                                    attrs)))
@@ -137,8 +138,7 @@
 (deftest a-new-bot-defaults-to-bounded-autonomy
   (with-store
     (fn []
-      (with-redefs [workspace-tools/admit-root identity
-                    agent-control/browser-enabled? (constantly true)]
+      (with-redefs [workspace-tools/admit-root identity]
         (let [created (bots/create! {} alice
                                     {:name "autonomous local worker"
                                      :workspace "/chosen/repo"
@@ -146,8 +146,7 @@
           (is (true? (:bot/writes? created)))
           (is (true? (:bot/omakase? created)))
           (is (true? (:bot/browser? created)))
-          (is (false? (:bot/computer? created))
-              "Computer Use is never inferred from general autonomy")
+          (is (true? (:bot/computer? created)))
           (is (true? (:bot/peers? created)))
           (is (true? (:bot/coding? created)))
           (is (false? (:bot/virtual-shell? created)))

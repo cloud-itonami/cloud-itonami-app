@@ -7819,8 +7819,6 @@
       $('#agent-machine-browser').checked = Boolean(settings.browser?.['enabled?']);
       $('#agent-machine-computer').checked = Boolean(settings.computer?.['enabled?']);
       $('#agent-machine-domains').value = (settings.browser?.['allowed-domains'] || []).join(', ');
-      $('#agent-machine-browser').disabled = !browser['available?'];
-      $('#agent-machine-computer').disabled = !computer['helper?'] || !computer['accessibility?'] || !computer['screen-recording?'];
       $('#agent-machine-browser-help').textContent = browser['available?']
         ? '接続済み。BotごとにCookieと履歴を分離します。'
         : 'agent-browser が見つかりません。公式の agent-browser をインストールしてください。';
@@ -7834,7 +7832,49 @@
       const enabled = Boolean(settings['enabled?']);
       $('#agent-machine-status').textContent =
         `実行基盤 ${enabled ? 'ON' : 'OFF'} / 分離ブラウザー ${browser['available?'] ? 'ready' : '未接続'} / Computer Use ${computer['available?'] ? 'ready' : '未接続'}`;
+      const needs = [];
+      if (settings.browser?.['enabled?'] && !browser['available?']) needs.push('分離ブラウザーの導入');
+      if (settings.computer?.['enabled?'] && !computer['available?']) needs.push('Computer UseのmacOS権限');
+      const permissionBar = $('#agent-permission-bar');
+      permissionBar.hidden = !needs.length || sessionStorage.getItem('agent-permission-dismissed') === needs.join('|');
+      $('#agent-permission-message').textContent = needs.length
+        ? `${needs.join('と')}が必要です。通常モードを使える状態にします。` : '';
+      permissionBar.dataset.request = needs.join('|');
     };
+    const permissionBar = $('#agent-permission-bar');
+    $('#agent-permission-open').addEventListener('click', () => {
+      showView('settings');
+      const machine = $('#agent-machine-settings');
+      machine.querySelector('details').open = true;
+      machine.scrollIntoView({behavior:'smooth', block:'start'});
+    });
+    $('#agent-permission-dismiss').addEventListener('click', () => {
+      sessionStorage.setItem('agent-permission-dismissed', permissionBar.dataset.request || 'dismissed');
+      permissionBar.hidden = true;
+    });
+    const permissionDrag = $('#agent-permission-drag');
+    permissionDrag.addEventListener('pointerdown', (event) => {
+      const rect = permissionBar.getBoundingClientRect();
+      const offsetX = event.clientX - rect.left;
+      const offsetY = event.clientY - rect.top;
+      permissionDrag.setPointerCapture(event.pointerId);
+      const move = (moveEvent) => {
+        const maxLeft = Math.max(8, window.innerWidth - rect.width - 8);
+        const maxTop = Math.max(8, window.innerHeight - rect.height - 8);
+        permissionBar.dataset.dragged = 'true';
+        permissionBar.style.left = `${Math.min(maxLeft, Math.max(8, moveEvent.clientX - offsetX))}px`;
+        permissionBar.style.top = `${Math.min(maxTop, Math.max(8, moveEvent.clientY - offsetY))}px`;
+        permissionBar.style.bottom = 'auto';
+      };
+      const stop = () => {
+        permissionDrag.removeEventListener('pointermove', move);
+        permissionDrag.removeEventListener('pointerup', stop);
+        permissionDrag.removeEventListener('pointercancel', stop);
+      };
+      permissionDrag.addEventListener('pointermove', move);
+      permissionDrag.addEventListener('pointerup', stop);
+      permissionDrag.addEventListener('pointercancel', stop);
+    });
     const loadAgentMachine = async () => {
       const response = await fetch('/api/bots/machine');
       const data = await response.json();
@@ -10459,8 +10499,15 @@
       });
       modelEditor.append(providerSelect, modelInput, saveModel);
       panel.append(modelEditor);
-      const authorityEditor = make('div', 'bots-card');
-      authorityEditor.append(make('strong', null, '自律実行と権限'));
+      const authorityEditor = make('details', 'bots-card');
+      const normalCapabilities = [bot['writes?'], bot['omakase?'], bot['browser?'],
+        bot['computer?'], bot['peers?']].filter(Boolean).length;
+      authorityEditor.append(make('summary', 'bots-settings__title',
+        normalCapabilities === 5
+          ? '通常モード — 5つの自律機能がオン'
+          : `制限モード — ${5 - normalCapabilities}項目をオフ`));
+      authorityEditor.append(make('p', 'bots-permission__help',
+        '通常はすべてオンです。特別な目的のBotだけ、ここで使わない機能を制限します。'));
       const writesBox = make('input');
       writesBox.type = 'checkbox';
       writesBox.checked = Boolean(bot['writes?']);
@@ -10491,7 +10538,7 @@
         return label;
       };
       authorityEditor.append(
-        authorityOption(writesBox, '書き込みを許可',
+        authorityOption(writesBox, '自動書き込み',
           '選択したworkspaceと、明示的に接続したサービスの範囲だけです。'),
         authorityOption(omakaseBox, '自律モード',
           '許可済みの操作を待たずに実行し、承認receiptを会話に残します。渡していないツールは、自分で承認しても使えません。'),
@@ -10505,7 +10552,7 @@
             : 'このマシンのSettingsでComputer Useが無効です。'),
         authorityOption(peersBox, 'Bot間連携',
           'ほかのBotへ書き置きできます。ツール・アカウント・秘密は渡しません。'));
-      const saveAuthority = make('button', 'tool-button', '権限を保存');
+      const saveAuthority = make('button', 'tool-button', '制限設定を保存');
       saveAuthority.type = 'button';
       saveAuthority.addEventListener('click', async () => {
         saveAuthority.disabled = true;
@@ -10842,7 +10889,8 @@
           connectors:[...botsState.picked],
           'writes?':true,
           'omakase?':true,
-          'browser?':botsState.browserAvailable,
+          'browser?':true,
+          'computer?':true,
           'peers?':true,
           'coding?':true,
           'virtual-shell?':false,

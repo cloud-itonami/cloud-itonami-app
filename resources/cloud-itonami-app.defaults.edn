@@ -70,6 +70,15 @@
  :routing {:default-provider "ollama"
            :default-model "gemma4:e2b"
            :cloud-enabled? false}
+ ;; Normal Bots start with the local interaction surfaces requested. Concrete
+ ;; tool admission still fails closed when agent-browser, CuaDriver or the
+ ;; required macOS permissions are missing, and an explicit saved false value
+ ;; remains a durable special-purpose restriction.
+ :agent-control {:enabled? true
+                 :browser {:enabled? true
+                           :headed? true
+                           :allowed-domains ["localhost" "127.0.0.1"]}
+                 :computer {:enabled? true}}
  ;; `:reviewed?` is per provider and positive: somebody looked at THIS
  ;; destination and said yes. It is the whole gate for a loopback provider and
  ;; half of it for one that leaves the machine — the rest (TLS, a credential
@@ -379,7 +388,8 @@
  ;; `cloud.itonami.app.authority` spine: deterministic pre-check -> Passkey
  ;; consent -> hand-off to an actor that has its own Governor and ledger.
  ;;
- ;; ALL DISABLED BY DEFAULT, the same posture as :agent-control. These are the
+ ;; ALL DISABLED BY DEFAULT. Unlike the local, bounded :agent-control surfaces,
+ ;; these authorities can commit an effect outside this Mac. They are the
  ;; only surfaces in this app that carry a proposal outward to something that
  ;; could affect a real card, a real line or a real phone call, so switching one
  ;; on is a deployment decision and not a default.

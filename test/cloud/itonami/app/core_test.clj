@@ -1470,9 +1470,12 @@
         js (slurp (clojure.java.io/file "resources/cloud/itonami/app/interaction.js"))]
     (doseq [id ["agent-machine-settings" "agent-machine-browser"
                 "agent-machine-computer" "agent-machine-save"
-                "agent-machine-domains" "agent-machine-prepare-computer"]]
+                "agent-machine-domains" "agent-machine-prepare-computer"
+                "agent-permission-bar" "agent-permission-drag"
+                "agent-permission-open"]]
       (is (str/includes? html (str "id=\"" id "\""))))
-    (is (str/includes? html "各Botの設定で個別に許可"))
+    (is (str/includes? html "ブラウザーとComputer Useは通常オン"))
+    (is (str/includes? html "特別な目的で機能を停止・制限する"))
     (is (str/includes? html "座標クリックや合成キー入力は使いません"))
     (is (str/includes? js "/api/bots/machine"))
     (is (str/includes? js "computer-available?"))))
