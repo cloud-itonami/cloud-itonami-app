@@ -363,6 +363,17 @@
     (is (nil? (:reasoning_effort body))
         "xAI-specific reasoning policy is not sent to Murakumo")))
 
+(deftest text-only-agent-turn-omits-the-tool-protocol-entirely
+  (let [body ((private-fn 'agent-request-body)
+              {:kind :openai-compatible :max-output-tokens 512}
+              {:model "murakumo-main"
+               :messages [{:role "user" :content "answer only"}]
+               :tools []
+               :text-only? true})]
+    (is (not (contains? body :tools)))
+    (is (not (contains? body :parallel_tool_calls)))
+    (is (= false (:stream body)))))
+
 (deftest an-empty-finished-turn-is-not-a-silent-answer
   (let [normalize (private-fn 'agent-result)]
     (try

@@ -1441,6 +1441,7 @@
             (is (str/includes? rendered "external-second"))
             (is (not (str/includes? rendered "private-first")))
             (is (empty? (:tools external)))
+            (is (true? (:text-only? external)))
             (is (= :a2a (:context/source context)))
             (is (= [:a2a]
                    (mapv :message/source (:context/messages context))))))))))

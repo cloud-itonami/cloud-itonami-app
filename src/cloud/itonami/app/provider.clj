@@ -386,15 +386,17 @@
 
 (defn- agent-request-body
   [provider {:keys [model messages tools temperature reasoning-effort
-                    max-output-tokens disable-thinking?]}]
+                    max-output-tokens disable-thinking? text-only?]}]
   (cond-> {:model model
            :messages (mapv provider-message messages)
-           :tools (mapv tool-definition tools)
            :stream false
            :temperature (or temperature 0.2)
            :max_tokens (or max-output-tokens
                            (:max-output-tokens provider)
                            default-agent-max-tokens)}
+    (not text-only?)
+    (assoc :tools (mapv tool-definition tools))
+
     ;; llama.cpp vendor extension, passed through by the murakumo bridge. A
     ;; reasoning model spends output tokens on `thinking` BEFORE it emits any
     ;; text, so a tight :max-output-tokens does not produce a short answer --
@@ -414,7 +416,7 @@
     ;; re-measures.
     disable-thinking?
     (assoc :chat_template_kwargs {:enable_thinking false})
-    (openai-shaped? provider)
+    (and (openai-shaped? provider) (not text-only?))
     ;; Cloud Itonami admits, runs and audits one capability at a time. This is
     ;; also a compatibility boundary: some OpenAI-shaped inference servers can
     ;; emit parallel calls but reject the continuation containing several tool
