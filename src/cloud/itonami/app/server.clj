@@ -4,6 +4,7 @@
             [clojure.java.io :as io]
             [clojure.string :as str]
             [cloud.itonami.app.kaiyu-local :as kaiyu-local]
+            [cloud.itonami.app.a2a :as a2a]
             [cloud.itonami.app.agent-session :as agent-session]
             [cloud.itonami.app.agent-control :as agent-control]
             [cloud.itonami.app.app-client :as app-client]
@@ -33,6 +34,7 @@
             [cloud.itonami.app.esign.retention :as esign-retention]
             [cloud.itonami.app.executor :as executor]
             [cloud.itonami.app.filecoin :as filecoin]
+            [cloud.itonami.app.file-provider :as file-provider]
             [cloud.itonami.app.folder-sync :as folder-sync]
             [cloud.itonami.app.gc :as gc]
             [cloud.itonami.app.nfs :as nfs-service]
@@ -431,6 +433,7 @@
         path (.getPath (.getRequestURI exchange))]
     (cond
       (= path "/mcp") "mcp:tools"
+      (= path "/a2a") a2a/scope
       (re-matches #"/v1/tenant-connections/[^/]+/repository/publish" path)
       "repository:write"
       (re-matches #"/v1/tenant-connections/[^/]+/repository" path)
@@ -446,12 +449,18 @@
   Bearer first, so a CLI that also happens to carry a stale browser cookie acts
   as the token it presented rather than as whoever last logged in."
   [exchange]
-  (or (some-> (bearer-token exchange) identity/session)
-      (when-let [scope (and @active-config (oauth-scope-for exchange))]
-        (oauth-resource/session @active-config (bearer-token exchange) scope
-                                (oauth-resource/resource-url @active-config)))
-      (identity/session (cookie-value exchange identity/cookie-name))
-      (throw (ex-info "認証が必要です。" {:type :identity/unauthenticated}))))
+  (let [scope (and @active-config (oauth-scope-for exchange))
+        resource (when scope
+                   (if (= scope a2a/scope)
+                     (oauth-resource/a2a-resource-url @active-config)
+                     (oauth-resource/resource-url @active-config)))]
+    (or (some-> (bearer-token exchange) identity/session)
+        (when scope
+          (oauth-resource/session @active-config (bearer-token exchange)
+                                  scope resource))
+        (identity/session (cookie-value exchange identity/cookie-name))
+        (throw (ex-info "認証が必要です。"
+                        {:type :identity/unauthenticated})))))
 
 (defn- require-app-session! [exchange]
   (identity/require-passkey! (require-session! exchange)))
@@ -633,6 +642,80 @@
       (send! exchange 400
              {"jsonrpc" "2.0" "id" nil
               "error" {"code" -32700 "message" "parse error"}}))))
+
+(defn- require-a2a-bearer-session! [exchange]
+  (when-not (bearer-token exchange)
+    (throw (ex-info "A2A requires bearer authentication"
+                    {:type :identity/unauthenticated})))
+  (require-session! exchange))
+
+(defn- a2a-handler [configuration]
+  (reify HttpHandler
+    (handle [_ exchange]
+      (let [method (.getRequestMethod exchange)
+            path (.getPath (.getRequestURI exchange))]
+        (try
+          (cond
+            (and (= method "GET")
+                 (= path "/.well-known/agent-card.json"))
+            (send! exchange 200 (a2a/agent-card configuration))
+
+            (and (= method "GET")
+                 (= path "/.well-known/oauth-protected-resource/a2a"))
+            (send! exchange 200 (oauth-resource/a2a-metadata configuration))
+
+            (and (= method "POST") (= path "/a2a"))
+            (let [session (require-a2a-bearer-session! exchange)
+                  content-type (or (.getFirst (.getRequestHeaders exchange)
+                                              "Content-Type") "")]
+              (when-not (str/starts-with? (str/lower-case content-type)
+                                          "application/json")
+                (throw (ex-info "A2A request must be application/json"
+                                {:type :a2a/unsupported-media-type})))
+              (send! exchange 200
+                     (a2a/respond! configuration session
+                                   (read-json-limited exchange
+                                                      (* 2 1024 1024) nil))))
+
+            :else (send! exchange 404 {:error "not_found"}))
+          (catch clojure.lang.ExceptionInfo error
+            (let [type (:type (ex-data error))
+                  auth? (contains? #{:identity/unauthenticated
+                                     :oauth-resource/invalid-token
+                                     :oauth-resource/invalid-audience
+                                     :oauth-resource/unknown-subject
+                                     :oauth-resource/not-configured
+                                     :oauth-resource/introspection-failed}
+                                   type)
+                  insufficient? (= :oauth-resource/insufficient-scope type)
+                  status (cond
+                           auth? 401
+                           insufficient? 403
+                           (= :a2a/not-configured type) 404
+                           (= :a2a/not-found type) 404
+                           (= :a2a/unsupported-media-type type) 415
+                           (= :http/payload-too-large type) 413
+                           :else 400)
+                  code (cond
+                         (= :a2a/invalid-request type) -32602
+                         (= :a2a/not-found type) -32001
+                         auth? -32001
+                         insufficient? -32002
+                         :else -32600)]
+              (send! exchange status
+                     {"jsonrpc" "2.0" "id" nil
+                      "error" {"code" code "message" (.getMessage error)}}
+                     (cond-> {}
+                       (or auth? insufficient?)
+                       (assoc "WWW-Authenticate"
+                              (str (oauth-resource/a2a-challenge
+                                    configuration a2a/scope)
+                                   (when insufficient?
+                                     ", error=\"insufficient_scope\"")))))))
+          (catch Exception _
+            (send! exchange 400
+                   {"jsonrpc" "2.0" "id" nil
+                    "error" {"code" -32700 "message" "parse error"}})))))))
 
 (defn- provider-from-path [path pattern]
   (some-> (re-matches pattern path) second keyword))
@@ -1052,6 +1135,194 @@
   (->> (get-in (identity-context exchange) [:organization :users])
        (remove #(= actor (:id %)))
        (mapv #(select-keys % [:id :display-name :email]))))
+
+(defn- handle-drive-sharing!
+  "Keep the complete encrypted-sharing route outside the main HttpHandler.
+  Besides making the boundary testable, this keeps the generated reify method
+  below the JVM's 64 KiB bytecode ceiling."
+  [exchange config method id]
+  (let [session (require-app-session! exchange)
+        actor (:user-id session)]
+    (if (= method "GET")
+      (send! exchange 200
+             (assoc (documents/sharing id actor)
+                    :candidates (share-candidates exchange actor)))
+      (let [request (read-json exchange)
+            object-store (documents/store-instance)]
+        (require-origin! exchange config)
+        (require-csrf! exchange session)
+        (send! exchange 200
+               (case (:action request)
+                 "revoke" (documents/revoke-grant! id (:principal request) actor
+                                                    object-store)
+                 "link" (documents/create-link! id (:role request)
+                                                 (:expires-in-hours request)
+                                                 actor (System/currentTimeMillis)
+                                                 object-store)
+                 "revoke-link" (documents/revoke-link! id (:token request) actor
+                                                        object-store)
+                 (documents/grant! id (:principal request) (:role request)
+                                   actor object-store)))))))
+
+(defn- drive-delivery-route? [_method path]
+  ;; Keep route regexes in the handler below. The command-registry generator
+  ;; reads those forms; repeating them in this predicate would register one
+  ;; HTTP route twice under two different templates.
+  (or (str/starts-with? path "/api/workspace/drive/deliveries/")
+      (boolean
+       (re-matches #"/api/workspace/drive/documents/[^/]+/deliveries" path))))
+
+(defn- handle-drive-delivery!
+  "Keep personalized delivery outside the main HttpHandler bytecode method."
+  [^HttpExchange exchange config method path]
+  (let [object-store (documents/store-instance)]
+    (cond
+      (and (= method "POST")
+           (re-matches #"/api/workspace/drive/documents/([^/]+)/deliveries" path))
+      (let [session (require-human-session! exchange)
+            actor (:user-id session)
+            request (read-json exchange)]
+        (require-origin! exchange config)
+        (require-csrf! exchange session)
+        (send! exchange 200
+               (documents/issue-delivery!
+                (id-from-path path
+                              #"/api/workspace/drive/documents/([^/]+)/deliveries")
+                actor (:audience request)
+                (keyword (or (:action request) "download")) object-store
+                {:format (:format request)
+                 :expires-in-hours (:expires-in-hours request)
+                 :max-uses (:max-uses request)})))
+
+      (and (= method "GET")
+           (re-matches #"/api/workspace/drive/deliveries/([^/]+)/(view|download)" path))
+      (let [session (require-human-session! exchange)
+            actor (:user-id session)
+            [_ delivery-id action]
+            (re-matches #"/api/workspace/drive/deliveries/([^/]+)/(view|download)" path)
+            out (documents/redeem-delivery! delivery-id actor (keyword action)
+                                            object-store)
+            headers (.getResponseHeaders exchange)]
+        (.set headers "X-Cloud-Itonami-Delivery-ID" delivery-id)
+        (.set headers "X-Cloud-Itonami-Watermark" (:watermark out))
+        (.set headers "X-Content-Type-Options" "nosniff")
+        (if (= action "download")
+          (send-bytes! exchange "application/octet-stream" (:filename out) (:bytes out))
+          (do
+            (doto headers
+              (.set "Content-Type" (:media-type out))
+              (.set "Cache-Control" "no-store")
+              (.set "Content-Disposition" "inline")
+              (.set "Content-Security-Policy"
+                    "default-src 'none'; style-src 'unsafe-inline'; sandbox"))
+            (.sendResponseHeaders exchange 200 (alength ^bytes (:bytes out)))
+            (with-open [o (.getResponseBody exchange)]
+              (.write o ^bytes (:bytes out))))))
+
+      (and (= method "POST")
+           (re-matches #"/api/workspace/drive/deliveries/([^/]+)/copy" path))
+      (let [session (require-human-session! exchange)
+            actor (:user-id session)
+            request (read-json exchange)]
+        (require-origin! exchange config)
+        (require-csrf! exchange session)
+        (send! exchange 200
+               (documents/copy-delivery!
+                (id-from-path path #"/api/workspace/drive/deliveries/([^/]+)/copy")
+                actor object-store {:title (:title request) :folder (:folder request)})))
+
+      (and (= method "POST")
+           (re-matches #"/api/workspace/drive/deliveries/([^/]+)/revoke" path))
+      (let [session (require-human-session! exchange)
+            actor (:user-id session)]
+        (require-origin! exchange config)
+        (require-csrf! exchange session)
+        (send! exchange 200
+               (documents/revoke-delivery!
+                (id-from-path path #"/api/workspace/drive/deliveries/([^/]+)/revoke")
+                actor)))
+
+      :else (send! exchange 404 {:error {:type "not_found" :path path}}))))
+
+(defn- decoded-path-id [value]
+  (URLDecoder/decode (str value) StandardCharsets/UTF_8))
+
+(defn- send-file-provider-content!
+  [^HttpExchange exchange {:keys [item bytes]}]
+  (let [body (byte-array (map unchecked-byte bytes))
+        metadata (.getBytes (json/write-str item) StandardCharsets/UTF_8)
+        encoded (.encodeToString (java.util.Base64/getEncoder) metadata)]
+    (doto (.getResponseHeaders exchange)
+      (.set "Content-Type" "application/octet-stream")
+      (.set "Cache-Control" "no-store")
+      (.set "X-Kotoba-Item" encoded))
+    (.sendResponseHeaders exchange 200 (alength body))
+    (with-open [out (.getResponseBody exchange)] (.write out body))))
+
+(defn- handle-file-provider!
+  "The complete Finder bridge outside the generated HttpHandler method."
+  [exchange config method path]
+  (let [session (require-app-session! exchange)
+        actor (:user-id session)
+        object-store (documents/store-instance)
+        item-id (fn [pattern]
+                  (some-> (id-from-path path pattern) decoded-path-id))]
+    (when (#{"POST" "PUT" "PATCH" "DELETE"} method)
+      (require-origin! exchange config)
+      (require-csrf! exchange session))
+    (cond
+      (and (= method "GET")
+           (item-id #"/v1/file-provider/items/([^/]+)/children"))
+      (send! exchange 200
+             (file-provider/children
+              actor (item-id #"/v1/file-provider/items/([^/]+)/children")))
+
+      (and (= method "GET")
+           (item-id #"/v1/file-provider/items/([^/]+)/content"))
+      (send-file-provider-content!
+       exchange (file-provider/materialize
+                 actor (item-id #"/v1/file-provider/items/([^/]+)/content")
+                 object-store))
+
+      (and (= method "GET") (item-id #"/v1/file-provider/items/([^/]+)"))
+      (send! exchange 200
+             (file-provider/item actor
+                                 (item-id #"/v1/file-provider/items/([^/]+)")))
+
+      (and (= method "POST") (= path "/v1/file-provider/items"))
+      (let [request (read-json exchange)]
+        (send! exchange 200
+               (file-provider/create! actor (:parentID request) (:name request)
+                                      (boolean (:directory request)) object-store)))
+
+      (and (= method "PATCH")
+           (item-id #"/v1/file-provider/items/([^/]+)/mode"))
+      (let [request (read-json exchange)]
+        (send! exchange 200
+               (file-provider/set-mode!
+                actor (item-id #"/v1/file-provider/items/([^/]+)/mode")
+                (keyword (:schedule request)) (keyword (:residency request)))))
+
+      (and (= method "PATCH") (item-id #"/v1/file-provider/items/([^/]+)"))
+      (let [request (read-json exchange)]
+        (send! exchange 200
+               (file-provider/modify! actor
+                                      (item-id #"/v1/file-provider/items/([^/]+)")
+                                      (:parentID request) (:name request))))
+
+      (and (= method "PUT")
+           (item-id #"/v1/file-provider/items/([^/]+)/content"))
+      (send! exchange 200
+             (file-provider/upload!
+              actor (item-id #"/v1/file-provider/items/([^/]+)/content")
+              (read-body-bytes exchange) object-store))
+
+      (and (= method "DELETE") (item-id #"/v1/file-provider/items/([^/]+)"))
+      (do (file-provider/delete! actor
+                                 (item-id #"/v1/file-provider/items/([^/]+)"))
+          (send! exchange 200 {:ok true}))
+
+      :else (send! exchange 404 {:error "file-provider route not found"}))))
 
 (defn- active-organization-slug [exchange]
   (get-in (identity-context exchange) [:organization :organization-id]))
@@ -2717,7 +2988,15 @@
             ;; Measured 2026-08-20.
             (send! exchange 200 {:ok true :service "cloud-itonami-app"
                                  :schema "cloud.itonami.app.health.v1"
-                                 :store (config/store-fingerprint)})
+                                 :store (config/store-fingerprint)
+                                 :drive-store (name (documents/selected-store-kind))})
+
+            (and (= method "GET") (= path "/health/storage"))
+            (let [result (documents/storage-readiness)]
+              (send! exchange (if (:ok result) 200 503) result))
+
+            (str/starts-with? path "/v1/file-provider/")
+            (handle-file-provider! exchange config method path)
 
             (oauth-protected-resource-mcp? method path)
             (send! exchange 200 (oauth-resource/metadata config))
@@ -4285,40 +4564,13 @@
                       (id-from-path path #"/api/workspace/drive/documents/([^/]+)/purge")
                       (:user-id session))))
 
-            ;; The candidates come from identity rather than from documents:
-            ;; who exists is the directory's question, and `documents` stays
-            ;; able to grant to any principal string without knowing where
-            ;; the name came from.
-            (and (= method "GET")
+            ;; The candidates come from identity rather than documents; the
+            ;; helper also owns key-wrap grant/revoke and fragment-link minting.
+            (and (#{"GET" "POST"} method)
                  (id-from-path path #"/api/workspace/drive/documents/([^/]+)/sharing"))
-            (let [session (require-app-session! exchange)]
-              (send! exchange 200
-                     (assoc (documents/sharing
-                             (id-from-path path
-                                           #"/api/workspace/drive/documents/([^/]+)/sharing")
-                             (:user-id session))
-                            :candidates (share-candidates exchange (:user-id session)))))
-
-            (and (= method "POST")
-                 (id-from-path path #"/api/workspace/drive/documents/([^/]+)/sharing"))
-            (let [session (require-app-session! exchange)
-                  request (read-json exchange)
-                  id (id-from-path path
-                                   #"/api/workspace/drive/documents/([^/]+)/sharing")]
-              (require-origin! exchange config)
-              (require-csrf! exchange session)
-              (send! exchange 200
-                     (case (:action request)
-                       "revoke" (documents/revoke-grant! id (:principal request)
-                                                        (:user-id session))
-                       "link" (documents/create-link! id (:role request)
-                                                      (:expires-in-hours request)
-                                                      (:user-id session)
-                                                      (System/currentTimeMillis))
-                       "revoke-link" (documents/revoke-link! id (:token request)
-                                                            (:user-id session))
-                       (documents/grant! id (:principal request) (:role request)
-                                         (:user-id session)))))
+            (handle-drive-sharing!
+             exchange config method
+             (id-from-path path #"/api/workspace/drive/documents/([^/]+)/sharing"))
 
             ;; Inside the documents, not only across their names. Separate
             ;; from the Drive listing because it reads every readable
@@ -4462,6 +4714,11 @@
                        (:user-id session))]
               (.set (.getResponseHeaders exchange) "X-Content-Type-Options" "nosniff")
               (send-bytes! exchange (:media-type out) (:filename out) (:bytes out)))
+
+            ;; Personalized delivery is one delegated clause so the main
+            ;; handler remains below the JVM's 64 KiB method ceiling.
+            (drive-delivery-route? method path)
+            (handle-drive-delivery! exchange config method path)
 
             ;; The body is the file. No multipart: one file per request with
             ;; the name in the query is the whole of what this needs, and a
@@ -5277,6 +5534,18 @@
                      :drive/invalid-comment 400
                      :drive/not-found 404
                      :drive/not-permitted 403
+                     :drive/delivery-action-invalid 400
+                     :drive/delivery-audience-required 400
+                     :drive/delivery-not-owner 403
+                     :drive/delivery-not-found 404
+                     :drive/delivery-audience-mismatch 404
+                     :drive/delivery-not-authorized 404
+                     :drive/delivery-action-mismatch 409
+                     :drive/delivery-expired 410
+                     :drive/delivery-revoked 410
+                     :drive/delivery-use-limit 410
+                     :drive/delivery-object-missing 502
+                     :drive/delivery-package-mismatch 502
                      :drive/no-content 409
                      :drive/quota-exceeded 507
                      ;; The model says these bytes exist and the store
@@ -6193,6 +6462,13 @@
                      (reify HttpHandler
                        (handle [_ exchange]
                          (send-icon! exchange))))
+     ;; A2A remains outside the already full root handler. Exact-path checks in
+     ;; the handler keep HttpServer's prefix matching from widening discovery.
+     (.createContext instance "/.well-known/agent-card.json"
+                     (a2a-handler configuration))
+     (.createContext instance "/.well-known/oauth-protected-resource/a2a"
+                     (a2a-handler configuration))
+     (.createContext instance "/a2a" (a2a-handler configuration))
      ;; Keep this family outside `handler`; that method sits at the JVM's
      ;; 64 KB bytecode limit. A longer HttpServer prefix wins over "/".
      (.createContext instance "/api/chronicle"

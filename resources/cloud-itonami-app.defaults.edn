@@ -70,6 +70,15 @@
  :routing {:default-provider "ollama"
            :default-model "gemma4:e2b"
            :cloud-enabled? false}
+ ;; Normal Bots start with the local interaction surfaces requested. Concrete
+ ;; tool admission still fails closed when agent-browser, CuaDriver or the
+ ;; required macOS permissions are missing, and an explicit saved false value
+ ;; remains a durable special-purpose restriction.
+ :agent-control {:enabled? true
+                 :browser {:enabled? true
+                           :headed? true
+                           :allowed-domains ["localhost" "127.0.0.1"]}
+                 :computer {:enabled? true}}
  ;; `:reviewed?` is per provider and positive: somebody looked at THIS
  ;; destination and said yes. It is the whole gate for a loopback provider and
  ;; half of it for one that leaves the machine — the rest (TLS, a credential
@@ -134,15 +143,15 @@
    :max-transient-retries 0
    :assert-response-model? true
    :model-fallbacks {"qwen3.8-27b-throughput-5090" "murakumo-main"}
-   ;; The stable alias currently reports 262,144 while both explicit Qwen3.8
-   ;; deployments report 32,768. Keep this map
+   ;; The stable alias currently reports 262,144, the Community RTX 5090 Pod
+   ;; reports 65,536, and the FastMTP deployment reports 32,768. Keep this map
    ;; beside the alias: repointing `murakumo-main` must update its model metadata
    ;; in the same configuration change. Every Bot uses the window of the model
    ;; it selected; this does not change that model selection.
    :accepted-response-models
    {"murakumo-main" #{"murakumo-main" "Qwen3.8-27B-Q4_K_M.gguf"}}
    :context-window-tokens {"murakumo-main" 262144
-                           "qwen3.8-27b-throughput-5090" 32768
+                           "qwen3.8-27b-throughput-5090" 65536
                            "qwen3.8-27b-fastmtp-aggressive" 32768}
    ;; Keep unattended turns concise even though the 5090 route has higher
    ;; throughput: context and output budgets are product bounds, not a reason
@@ -321,6 +330,28 @@
         :client-id-env "CLOUD_ITONAMI_OAUTH_RESOURCE_CLIENT_ID"
         :client-secret-env "CLOUD_ITONAMI_OAUTH_RESOURCE_CLIENT_SECRET"}}
 
+ ;; A2A v1.0 is a separate, text-only Bot boundary. It is off until an owner
+ ;; selects one Bot explicitly; the public Agent Card never enumerates the
+ ;; private Bot or tool catalog. Remote calls require a bearer token carrying
+ ;; `a2a:tasks`, and every request is run with isolated conversation context.
+ :a2a {:enabled? false
+       :bot-id nil
+       :name "Cloud Itonami"
+       :description "A bounded Cloud Itonami Bot"
+       :version "1.0.0"
+       :resource-origin nil
+       :max-tasks 1000
+       :skills []}
+
+ ;; AGNTCY SLIM is adopted as an optional carrier for the same A2A payload.
+ ;; The portable envelope is implemented in kotoba-protocol. A deployment must
+ ;; still supply a concrete SLIM publisher and names before this becomes ready.
+ :agent-messaging
+ {:transport :direct
+  :slim {:enabled? false
+         :from nil
+         :to nil}}
+
  ;; 事業 (ADR-2607309600). A Business holds one key from each analysis plane —
  ;; BMC canvas, XMILE model, adopted blueprints, repo paths, LEI — so that the
  ;; three planes that cannot currently join to each other meet on one entity.
@@ -379,7 +410,8 @@
  ;; `cloud.itonami.app.authority` spine: deterministic pre-check -> Passkey
  ;; consent -> hand-off to an actor that has its own Governor and ledger.
  ;;
- ;; ALL DISABLED BY DEFAULT, the same posture as :agent-control. These are the
+ ;; ALL DISABLED BY DEFAULT. Unlike the local, bounded :agent-control surfaces,
+ ;; these authorities can commit an effect outside this Mac. They are the
  ;; only surfaces in this app that carry a proposal outward to something that
  ;; could affect a real card, a real line or a real phone call, so switching one
  ;; on is a deployment decision and not a default.

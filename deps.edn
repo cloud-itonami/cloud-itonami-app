@@ -10,7 +10,7 @@
   ;; App identity: raw CIDv1 + :kotoba.app/* manifest (zero runtime deps).
   io.github.kotoba-lang/kotoba-protocol
   {:git/url "https://github.com/kotoba-lang/kotoba-protocol.git"
-   :git/sha "ca72b830ec27a14e562be2a8dcf92f68901e486b"}
+   :git/sha "90358d82923d5e1bb1efd06225dd8dfe8f02dd9b"}
   ;; L2 graph CID: protocol.graph overlay + chain.core/commit! (ADR-2608145400).
   ;; Protocol does not hash and does not depend on chain.
   io.github.kotoba-lang/chain
@@ -285,6 +285,15 @@
   io.github.kotoba-lang/drive
   {:git/url "https://github.com/kotoba-lang/drive.git"
    :git/sha "20f6f4940a60061b692aa53ae501e2d36f8bf010"}
+  ;; Client-side Drive encryption. Object stores receive only ciphertext
+  ;; packages; sharing adds recipient key wraps without touching the chunks.
+  io.github.kotoba-lang/envelope
+  {:git/url "https://github.com/kotoba-lang/envelope.git"
+   :git/sha "3b31e3f4c1414ffd4406168ef449e4b8fc573397"}
+  ;; Portable schedule/residency policy shared with the Finder bridge.
+  io.github.kotoba-lang/com-apple-fileprovider
+  {:git/url "https://github.com/kotoba-lang/com-apple-fileprovider.git"
+   :git/sha "25b10f4d6c3cc041da7ca99aa1a0f1535d3f4758"}
 
   ;; UnixFS file DAGs — the reference `cloud.itonami.app.kotobase-objects`
   ;; stores under is the CID `ipfs add` prints for the same bytes, which is
@@ -631,6 +640,9 @@
     io.github.kotoba-lang/org-ietf-pop3
     {:local/root "../../kotoba-lang/org-ietf-pop3"}
     io.github.kotoba-lang/drive {:local/root "../../kotoba-lang/drive"}
+    io.github.kotoba-lang/envelope {:local/root "../../kotoba-lang/envelope"}
+    io.github.kotoba-lang/com-apple-fileprovider
+    {:local/root "../../kotoba-lang/com-apple-fileprovider"}
     io.github.kotoba-lang/sheets {:local/root "../../kotoba-lang/sheets"}
     io.github.kotoba-lang/esim {:local/root "../../kotoba-lang/esim"}
     io.github.kotoba-lang/card {:local/root "../../kotoba-lang/card"}

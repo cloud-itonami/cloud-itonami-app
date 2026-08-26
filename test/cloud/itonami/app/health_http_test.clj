@@ -9,6 +9,7 @@
             [clojure.test :refer [deftest is]]
             [cloud.itonami.app.config :as config-loader]
             [cloud.itonami.app.health :as health]
+            [cloud.itonami.app.documents :as documents]
             [cloud.itonami.app.identity :as local-identity]
             [cloud.itonami.app.kotoba-oracle :as oracle]
             [cloud.itonami.app.kotoba-oracle-gen :as gen]
@@ -82,6 +83,7 @@
         (is (true? (get-in ok [:body :ok])))
         (is (= "cloud-itonami-app" (get-in ok [:body :service])))
         (is (= "cloud.itonami.app.health.v1" (get-in ok [:body :schema])))
+        (is (= "fs" (get-in ok [:body :drive-store])))
         (is (= (config-loader/store-fingerprint) (get-in ok [:body :store]))
             "the probe says WHOSE store this process opened. Without it a client
              that finds a server here cannot tell it apart from a different
@@ -91,6 +93,21 @@
             "a fingerprint, not a path: this route takes no session"))
       (is (not= 200 (:status (request :post "/health")))
           "POST /health is not the probe"))))
+
+(deftest storage-health-reports-live-backend-readiness
+  (with-server
+    (fn []
+      (with-redefs [documents/storage-readiness
+                    (fn [] {:ok true :backend "kotobase"
+                            :schema "cloud.itonami.app.drive-storage-health.v1"})]
+        (let [answer (request :get "/health/storage")]
+          (is (= 200 (:status answer)))
+          (is (= "kotobase" (get-in answer [:body :backend])))))
+      (with-redefs [documents/storage-readiness
+                    (fn [] {:ok false :backend "kotobase"
+                            :schema "cloud.itonami.app.drive-storage-health.v1"
+                            :error "storage-unavailable"})]
+        (is (= 503 (:status (request :get "/health/storage"))))))))
 
 (deftest the-handler-follows-the-artifact
   (with-server

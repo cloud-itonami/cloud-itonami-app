@@ -175,3 +175,12 @@
       (is (:ok? w1))
       (is (:ok? w2) "the second write is not refused as a duplicate reference")
       (is (= 1 (count @held))))))
+
+(deftest readiness-is-an-idempotent-write-read-proof
+  (let [{:keys [held transport]} (fake-archive)
+        store (ko/store transport)
+        first-probe (ko/readiness! store)
+        second-probe (ko/readiness! store)]
+    (is (:ok first-probe))
+    (is (= first-probe second-probe))
+    (is (= 1 (count @held)) "both probes address the same canary")))

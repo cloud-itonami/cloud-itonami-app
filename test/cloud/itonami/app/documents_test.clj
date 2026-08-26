@@ -10,6 +10,7 @@
             [clojure.test :refer [deftest is testing]]
             [cloud.itonami.app.capability :as capability]
             [cloud.itonami.app.documents :as documents]
+            [cloud.itonami.app.drive-crypto :as drive-crypto]
             [cloud.itonami.app.filecoin :as filecoin]
             [cloud.itonami.app.store :as store]
             [drive.object :as object]
@@ -83,7 +84,8 @@
       (let [{:keys [item]} (documents/create! :docs "設計メモ" alice object-store)
             workspace (documents/workspace-for @state alice)
             stored (object/read-item workspace object-store (:id item) alice)
-            text (String. (byte-array (map unchecked-byte (:bytes stored)))
+            plaintext (drive-crypto/open alice (:bytes stored))
+            text (String. (byte-array (map unchecked-byte plaintext))
                           java.nio.charset.StandardCharsets/UTF_8)
             envelope (edn/read-string text)]
         ;; Self-describing on the way out, as it was as JSON: a reader
@@ -112,7 +114,8 @@
             workspace (documents/workspace-for @state alice)
             stored (object/read-item workspace object-store (:id item) alice)
             envelope (edn/read-string
-                      (String. (byte-array (map unchecked-byte (:bytes stored)))
+                      (String. (byte-array (map unchecked-byte
+                                                        (drive-crypto/open alice (:bytes stored))))
                                java.nio.charset.StandardCharsets/UTF_8))]
         (is (= {[1 1] {:sheets/value "Q1"}}
                (get-in (:kotoba.resource/payload envelope)
@@ -148,9 +151,11 @@
           (is (= "application/edn"
                  (:media-type (first (documents/documents @state alice)))))
           (is (= :edn (:format (documents/decode-stored
-                                (:bytes (object/read-item
-                                         (documents/workspace-for @state alice)
-                                         object-store (:id item) alice)))))))))))
+                                (drive-crypto/open
+                                 alice
+                                 (:bytes (object/read-item
+                                          (documents/workspace-for @state alice)
+                                          object-store (:id item) alice))))))))))))
 
 (deftest content-reads-back-through-the-surfaces-own-reader
   (with-state
@@ -171,7 +176,8 @@
       (let [{:keys [item]} (documents/create! :forms "問い合わせ" alice object-store)
             workspace (documents/workspace-for @state alice)
             stored (object/read-item workspace object-store (:id item) alice)
-            text (String. (byte-array (map unchecked-byte (:bytes stored)))
+            plaintext (drive-crypto/open alice (:bytes stored))
+            text (String. (byte-array (map unchecked-byte plaintext))
                           java.nio.charset.StandardCharsets/UTF_8)]
         (is (= (:size-bytes item) (count (:bytes stored))))
         (is (= (:size-bytes item) (:drive.workspace/used-bytes workspace)))
@@ -180,7 +186,7 @@
         ;; the bytes the store holds, which is the direction that lets a
         ;; workspace exceed it — `drive.object/write-item` says so and this
         ;; is the app holding up its end.
-        (is (< (count text) (count (:bytes stored))))))))
+        (is (< (count text) (count plaintext)))))))
 
 (deftest another-principal-cannot-read-it
   (with-state
@@ -2202,6 +2208,34 @@
                  (:reason (capability/verify-grant cap "doc-other" :editor
                                                    (java.time.Instant/now))))))))))
 
+(deftest production-sharing-rewraps-without-reencrypting-content
+  (with-state
+    (fn [state object-store]
+      (let [{:keys [item]} (documents/create! :docs "共同暗号" alice object-store)
+            id (:id item)
+            before (:bytes (object/read-item (documents/workspace-for @state alice)
+                                             object-store id alice))
+            before-package (edn/read-string
+                            (String. (byte-array (map unchecked-byte before))
+                                     java.nio.charset.StandardCharsets/UTF_8))]
+        (documents/grant! id bob "viewer" alice object-store)
+        (let [after (:bytes (object/read-item (documents/workspace-for @state alice)
+                                              object-store id alice))
+              after-package (edn/read-string
+                             (String. (byte-array (map unchecked-byte after))
+                                      java.nio.charset.StandardCharsets/UTF_8))]
+          (is (= (:kotoba.drive.encrypted/chunks before-package)
+                 (:kotoba.drive.encrypted/chunks after-package)))
+          (is (= "共同暗号" (get (:payload (documents/content id bob object-store))
+                                  "docs/title")))
+          (is (= (drive-crypto/open alice after)
+                 (drive-crypto/open bob after))))
+        (let [out (documents/revoke-grant! id bob alice object-store)
+              revoked (:bytes (object/read-item (documents/workspace-for @state alice)
+                                                object-store id alice))]
+          (is (:requires-content-key-rotation? out))
+          (is (thrown? Exception (drive-crypto/open bob revoked))))))))
+
 (deftest an-expired-capability-stops-being-honoured
   (with-state
     (fn [state object-store]
@@ -2265,6 +2299,32 @@
           (is (= "viewer" (:role read)))
           (is (= "配布資料" (get (:payload read) "docs/title")))
           (is (false? (:writable? (:item read)))))))))
+
+(deftest encrypted-link-secret-is-returned-once-and-never-persisted
+  (with-state
+    (fn [state object-store]
+      (let [{:keys [item]} (documents/create! :docs "断片共有" alice object-store)
+            id (:id item)
+            {:keys [token fragment-grant]}
+            (documents/create-link! id "viewer" nil alice now-ms object-store)
+            package (:bytes (object/read-item (documents/workspace-for @state alice)
+                                              object-store id alice))]
+        (is (= :url-fragment (:grant/placement fragment-grant)))
+        (is (= "断片共有"
+               (get (:payload
+                     (documents/decode-stored
+                      (drive-crypto/open-link package fragment-grant)))
+                    :docs/title)))
+        (is (not (str/includes? (pr-str @state) (:grant/secret fragment-grant))))
+        (is (not (str/includes?
+                  (String. (byte-array (map unchecked-byte package))
+                           java.nio.charset.StandardCharsets/UTF_8)
+                  (:grant/secret fragment-grant))))
+        (documents/revoke-link! id token alice object-store)
+        (let [revoked (:bytes (object/read-item (documents/workspace-for @state alice)
+                                                object-store id alice))]
+          (is (thrown? Exception
+                       (drive-crypto/open-link revoked fragment-grant))))))))
 
 (deftest a-link-cannot-be-made-writable
   (with-state
@@ -3033,9 +3093,9 @@
           (is (= "見積.pdf" (:filename back)))
           (is (= (seq (pdf-bytes "quote")) (seq (:bytes back)))))))))
 
-(deftest the-reference-is-the-content
-  ;; A PieceCID, so the same bytes are stored once and named by what they
-  ;; are. Two uploads of one file are two items over one object.
+(deftest encrypted-uploads-do-not-leak-equality
+  ;; A fresh content key makes identical plaintext produce distinct packages.
+  ;; Convergent encryption would reveal who holds the same file.
   (with-state
     (fn [_ object-store]
       (let [bytes (pdf-bytes "same")
@@ -3045,10 +3105,9 @@
                                         object-store))
             c (:item (documents/upload! "c.pdf" "application/pdf"
                                         (pdf-bytes "different") alice object-store))]
-        (is (= (:etag a) (:etag b)) "same bytes, same reference")
+        (is (not= (:etag a) (:etag b)) "same bytes, unlinkable references")
         (is (not= (:etag a) (:etag c)))
-        ;; And the reference really is derived from the content, not minted.
-        (is (= (filecoin/piece-ref bytes) (:etag a)))))))
+        (is (not= (filecoin/piece-ref bytes) (:etag a)))))))
 
 (deftest purging-one-holder-does-not-delete-the-other-s-bytes
   ;; The failure content addressing makes possible: two items over one
@@ -3074,10 +3133,7 @@
                (:type (try (documents/file-bytes (:id b) alice object-store)
                            (catch clojure.lang.ExceptionInfo e (ex-data e))))))))))
 
-(deftest another-drive-holding-the-same-bytes-counts-too
-  ;; The other holder may be somebody else entirely. A check scoped to one
-  ;; Drive would be correct exactly until two people uploaded the same file,
-  ;; which is the case content addressing exists for.
+(deftest another-drive-holding-the-same-plaintext-is-independent
   (with-state
     (fn [_ object-store]
       (let [bytes (pdf-bytes "everyone has this")
@@ -3085,7 +3141,7 @@
                                            object-store))
             theirs (:item (documents/upload! "a.pdf" "application/pdf" bytes bob
                                              object-store))]
-        (is (= (:etag mine) (:etag theirs)))
+        (is (not= (:etag mine) (:etag theirs)))
         (documents/trash! (:id mine) alice)
         (documents/purge! (:id mine) alice object-store)
         (is (= (seq bytes) (seq (:bytes (documents/file-bytes (:id theirs) bob

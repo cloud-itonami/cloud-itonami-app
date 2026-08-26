@@ -174,6 +174,48 @@
                           (sync/sync-root! (assoc config :maximum-file-bytes 4)
                                            remote)))))
 
+(deftest unsigned-byte-vectors-from-json-remotes-are-materialized
+  (let [{:keys [root config]} (temporary-config)
+        delegate (memory-remote {"vector.bin" "abc"})
+        vector-remote
+        (reify sync/RemoteDrive
+          (remote-snapshot [_] (sync/remote-snapshot delegate))
+          (remote-bytes [_ entry]
+            (mapv #(bit-and (int %) 0xff)
+                  (sync/remote-bytes delegate entry)))
+          (remote-put! [_ path content media-type]
+            (sync/remote-put! delegate path content media-type))
+          (remote-trash! [_ entry] (sync/remote-trash! delegate entry)))]
+    (is (= ["vector.bin"] (:pulled (sync/sync-root! config vector-remote))))
+    (is (= "abc" (slurp (io/file root "vector.bin"))))))
+
+(deftest folder-roots-expose-continuous-manual-and-paused-schedules
+  (let [{:keys [config]} (temporary-config)
+        base-root (assoc config :actor "did:example:alice")]
+    (try
+      (is (true? (sync/start! {:folder-sync
+                               {:enabled? true
+                                :roots [(assoc base-root :schedule :manual)]}})))
+      (is (false? (:running? (sync/status "did:example:alice"))))
+      (is (= :manual (get-in (sync/status "did:example:alice") [:roots 0 :schedule])))
+      (is (empty? (sync/sync-configured! "did:example:alice" #{:continuous})))
+      (is (= :paused
+             (get-in (sync/set-root-mode! "did:example:alice" "test-root"
+                                          :paused :pinned)
+                     [:roots 0 :schedule])))
+      (is (empty? (sync/sync-configured! "did:example:alice" #{:continuous :manual})))
+      (finally
+        (sync/stop!)))))
+
+(deftest ordinary-folder-sync-refuses-placeholder-residency
+  (let [{:keys [config]} (temporary-config)]
+    (is (thrown-with-msg?
+         clojure.lang.ExceptionInfo
+         #"File Provider"
+         (sync/start! {:folder-sync
+                       {:roots [(assoc config :actor "did:example:alice"
+                                      :residency :online-only)]}})))))
+
 (deftest configured-roots-always-have-a-local-owner
   (is (thrown-with-msg? clojure.lang.ExceptionInfo
                         #"requires an actor"

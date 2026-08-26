@@ -1435,6 +1435,47 @@
         status.textContent = error.message;
       }
     };
+    const fileSyncControls = (item) => {
+      const box = make('div', 'detail-actions');
+      const title = make('strong', '', 'Finder / オフライン');
+      const row = make('div', 'detail-actions__row');
+      const schedule = document.createElement('select');
+      [['continuous','常に同期'], ['manual','必要時だけ同期'], ['paused','同期停止']]
+        .forEach(([value, label]) => {
+          const option = new Option(label, value);
+          option.selected = value === (item['sync-schedule'] || 'continuous');
+          schedule.add(option);
+        });
+      const residency = document.createElement('select');
+      [['online-only','オンラインのみ'], ['automatic','自動（空き容量に応じる）'],
+       ['pinned','このMacに常に実体を置く']]
+        .forEach(([value, label]) => {
+          const option = new Option(label, value);
+          option.selected = value === (item.residency || 'automatic');
+          residency.add(option);
+        });
+      const save = make('button', 'tool-button', '同期設定を保存');
+      save.type = 'button';
+      const status = make('span', 'surface-note', '');
+      save.addEventListener('click', async () => {
+        save.disabled = true; status.textContent = '保存しています…';
+        try {
+          const response = await fetch(
+            `/v1/file-provider/items/${encodeURIComponent(item.id)}/mode`, {
+              method:'PATCH', headers:identityHeaders(),
+              body:JSON.stringify({schedule:schedule.value, residency:residency.value})});
+          const data = await response.json();
+          if (!response.ok) throw new Error(data?.error?.message || '同期設定を保存できませんでした。');
+          item['sync-schedule'] = data.schedule;
+          item.residency = data.residency;
+          status.textContent = '保存しました。Finder に同じ設定が反映されます。';
+        } catch (error) { status.textContent = error.message; }
+        finally { save.disabled = false; }
+      });
+      row.append(field('同期', schedule), field('実体', residency), save, status);
+      box.append(title, row);
+      return box;
+    };
     const renderDrive = (data) => {
       driveData = data;
       const query = ($('#drive-search').value || '').trim().toLocaleLowerCase('ja');
@@ -1460,7 +1501,9 @@
       const select = (item) => { selectedDrive = item; renderDrive(driveData); };
       items.forEach((item) => list.append(recordButton(item, item.id === selectedDrive?.id, select, {
         title:item.name, time:bytes(item['size-bytes']),
-        meta:item.origin === 'workspace' ? `${item.label} · ${item.folder}` : item.folder,
+        meta:item.origin === 'workspace'
+          ? `${item.label} · ${item.folder}${item['encrypted?'] ? ' · 🔒 client encrypted' : ''}`
+          : item.folder,
         snippet:item['media-type']})));
       if (!items.length) {
         list.append(make('li', 'empty-state',
@@ -1477,6 +1520,9 @@
            ['権限', selectedDrive['own?'] ? '所有者'
              : `${selectedDrive.role || '—'}（${selectedDrive.owner || '不明'} から共有）`],
            ['形式', selectedDrive['media-type']],
+           ['保存時暗号', selectedDrive['encrypted?'] ? 'client-side encrypted' : '旧形式 / 未移行'],
+           ['同期', selectedDrive['sync-schedule'] || 'continuous'],
+           ['Mac上の実体', selectedDrive.residency || 'automatic'],
            ['サイズ', bytes(selectedDrive['size-bytes'])],
            ['全版の合計', bytes(selectedDrive['held-bytes'])],
            ['版数', String(selectedDrive.versions ?? 1)],
@@ -1484,6 +1530,7 @@
            ['最終更新', selectedDrive['updated-at'] || '—'],
            ['最終更新者', selectedDrive['updated-by'] || '—']]);
         $('#drive-detail').append(documentActions(selectedDrive));
+        if (selectedDrive['file?']) $('#drive-detail').append(fileSyncControls(selectedDrive));
       } else if (selectedDrive) {
         setDetail($('#drive-detail'), selectedDrive.folder,
           selectedDrive.name, 'OneDrive アーカイブに保存されているファイルです。',
@@ -4367,6 +4414,30 @@
       });
       const makeLink = make('button', 'tool-button', 'リンクを作成');
       makeLink.type = 'button';
+      const deliveryAction = make('select', 'model-pill');
+      deliveryAction.setAttribute('aria-label', '個別配信の操作');
+      [['view','閲覧'], ['download','ダウンロード'], ['copy','コピー']]
+        .forEach(([value, label]) => {
+          const option = make('option', null, label); option.value = value;
+          deliveryAction.append(option);
+        });
+      const deliveryExpiry = make('select', 'model-pill');
+      deliveryExpiry.setAttribute('aria-label', '個別配信の有効期限');
+      [['24','24時間'], ['168','7日間'], ['720','30日間']]
+        .forEach(([value, label]) => {
+          const option = make('option', null, label); option.value = value;
+          deliveryExpiry.append(option);
+        });
+      const makeDelivery = make('button', 'tool-button', '個別CIDを発行');
+      makeDelivery.type = 'button';
+      const deliveries = make('ul', 'sharing__list');
+      const fragmentStorageKey = (token) => `cloud-itonami.drive.link-grant.${token}`;
+      const encodeFragmentGrant = (grant) => {
+        const bytes = new TextEncoder().encode(JSON.stringify(grant));
+        let binary = '';
+        bytes.forEach((value) => { binary += String.fromCharCode(value); });
+        return btoa(binary).replaceAll('+', '-').replaceAll('/', '_').replaceAll('=', '');
+      };
 
       // Options come from the server's own lists, so `:owner` never appears
       // among them — `documents/grantable-roles` leaves it out on purpose.
@@ -4377,6 +4448,13 @@
         });
       };
       const render = (data) => {
+        if (data.token && data['fragment-grant']) {
+          // The one-time private link key remains in this browser session.
+          // Hash fragments are not sent in HTTP requests, and the server,
+          // persisted state and encrypted package never receive this value.
+          sessionStorage.setItem(fragmentStorageKey(data.token),
+            encodeFragmentGrant(data['fragment-grant']));
+        }
         fillOnce(role, data.roles);
         fillOnce(linkRole, data['link-roles']);
         if (!whoPicker.options.length && (data.candidates || []).length) {
@@ -4403,7 +4481,10 @@
         });
         (data.links || []).forEach((link) => {
           const entry = make('li', 'sharing__entry');
-          const url = `${window.location.origin}/api/workspace/drive/shared/${encodeURIComponent(link.token)}`;
+          const fragment = sessionStorage.getItem(fragmentStorageKey(link.token));
+          const url = fragment
+            ? `${window.location.origin}/api/workspace/drive/shared/${encodeURIComponent(link.token)}#kotoba-grant=${fragment}`
+            : '暗号鍵はこのブラウザに残っていません。リンクを無効化して再作成してください。';
           const field = make('input', 'workspace-search sharing__token');
           field.type = 'text'; field.readOnly = true; field.value = url;
           field.setAttribute('aria-label', `共有リンク（${link.role}）`);
@@ -4411,8 +4492,11 @@
             `リンク（${link.role}・${link['expires-at'] ? '期限あり' : '期限なし'}）`), field);
           const revoke = make('button', 'tool-button', '無効化');
           revoke.type = 'button';
-          revoke.addEventListener('click', () => submit(
-            {action:'revoke-link', token:link.token}, 'リンクを無効化しました。'));
+          revoke.addEventListener('click', async () => {
+            if (await submit({action:'revoke-link', token:link.token}, 'リンクを無効化しました。')) {
+              sessionStorage.removeItem(fragmentStorageKey(link.token));
+            }
+          });
           entry.append(revoke);
           current.append(entry);
         });
@@ -4428,8 +4512,10 @@
             body, true);
           render(data);
           status.textContent = done;
+          return true;
         } catch (error) {
           status.textContent = error.message;
+          return false;
         }
       };
       share.addEventListener('click', () => submit(
@@ -4438,11 +4524,46 @@
         {action:'link', role:linkRole.value,
          'expires-in-hours':expiry.value ? Number(expiry.value) : null},
         'リンクを作成しました。'));
+      makeDelivery.addEventListener('click', async () => {
+        const audience = (who.value || '').trim();
+        if (!audience) {
+          status.textContent = '個別配信の受取人を指定してください。';
+          return;
+        }
+        makeDelivery.disabled = true;
+        status.textContent = '受取人専用の暗号配送 CID を作成しています…';
+        try {
+          const data = await postJSON(
+            `/api/workspace/drive/documents/${encodeURIComponent(item.id)}/deliveries`,
+            {audience, action:deliveryAction.value,
+             'expires-in-hours':Number(deliveryExpiry.value),
+             'max-uses':deliveryAction.value === 'view' ? 20 : 1}, true);
+          const entry = make('li', 'sharing__entry');
+          const url = `${window.location.origin}${data.url}`;
+          const field = make('input', 'workspace-search sharing__token');
+          field.type = 'text'; field.readOnly = true; field.value = url;
+          field.setAttribute('aria-label', `${audience} 専用の配信 CID`);
+          const copy = make('button', 'tool-button', 'URLをコピー');
+          copy.type = 'button';
+          copy.addEventListener('click', async () => {
+            await navigator.clipboard.writeText(url);
+            status.textContent = '個別配信 URL をコピーしました。';
+          });
+          entry.append(make('span', 'sharing__who',
+            `${audience} · ${data.action} · ${data.watermark}`), field, copy);
+          deliveries.prepend(entry);
+          status.textContent = '個別 CID を発行しました。元の保存 CID は公開されません。';
+        } catch (error) { status.textContent = error.message; }
+        finally { makeDelivery.disabled = false; }
+      });
 
       form.append(whoPicker, who, role, share);
       const linkForm = make('div', 'detail-actions__row');
       linkForm.append(make('span', 'sharing__who', '共有リンク'), linkRole, expiry, makeLink);
-      panel.append(heading, current, form, linkForm);
+      const deliveryForm = make('div', 'detail-actions__row');
+      deliveryForm.append(make('span', 'sharing__who', '透かし付き個別配信'),
+        deliveryAction, deliveryExpiry, makeDelivery);
+      panel.append(heading, current, form, linkForm, deliveryForm, deliveries);
       (async () => {
         try {
           const request = await fetch(
@@ -7750,8 +7871,6 @@
       $('#agent-machine-browser').checked = Boolean(settings.browser?.['enabled?']);
       $('#agent-machine-computer').checked = Boolean(settings.computer?.['enabled?']);
       $('#agent-machine-domains').value = (settings.browser?.['allowed-domains'] || []).join(', ');
-      $('#agent-machine-browser').disabled = !browser['available?'];
-      $('#agent-machine-computer').disabled = !computer['helper?'] || !computer['accessibility?'] || !computer['screen-recording?'];
       $('#agent-machine-browser-help').textContent = browser['available?']
         ? '接続済み。BotごとにCookieと履歴を分離します。'
         : 'agent-browser が見つかりません。公式の agent-browser をインストールしてください。';
@@ -7765,7 +7884,49 @@
       const enabled = Boolean(settings['enabled?']);
       $('#agent-machine-status').textContent =
         `実行基盤 ${enabled ? 'ON' : 'OFF'} / 分離ブラウザー ${browser['available?'] ? 'ready' : '未接続'} / Computer Use ${computer['available?'] ? 'ready' : '未接続'}`;
+      const needs = [];
+      if (settings.browser?.['enabled?'] && !browser['available?']) needs.push('分離ブラウザーの導入');
+      if (settings.computer?.['enabled?'] && !computer['available?']) needs.push('Computer UseのmacOS権限');
+      const permissionBar = $('#agent-permission-bar');
+      permissionBar.hidden = !needs.length || sessionStorage.getItem('agent-permission-dismissed') === needs.join('|');
+      $('#agent-permission-message').textContent = needs.length
+        ? `${needs.join('と')}が必要です。通常モードを使える状態にします。` : '';
+      permissionBar.dataset.request = needs.join('|');
     };
+    const permissionBar = $('#agent-permission-bar');
+    $('#agent-permission-open').addEventListener('click', () => {
+      showView('settings');
+      const machine = $('#agent-machine-settings');
+      machine.querySelector('details').open = true;
+      machine.scrollIntoView({behavior:'smooth', block:'start'});
+    });
+    $('#agent-permission-dismiss').addEventListener('click', () => {
+      sessionStorage.setItem('agent-permission-dismissed', permissionBar.dataset.request || 'dismissed');
+      permissionBar.hidden = true;
+    });
+    const permissionDrag = $('#agent-permission-drag');
+    permissionDrag.addEventListener('pointerdown', (event) => {
+      const rect = permissionBar.getBoundingClientRect();
+      const offsetX = event.clientX - rect.left;
+      const offsetY = event.clientY - rect.top;
+      permissionDrag.setPointerCapture(event.pointerId);
+      const move = (moveEvent) => {
+        const maxLeft = Math.max(8, window.innerWidth - rect.width - 8);
+        const maxTop = Math.max(8, window.innerHeight - rect.height - 8);
+        permissionBar.dataset.dragged = 'true';
+        permissionBar.style.left = `${Math.min(maxLeft, Math.max(8, moveEvent.clientX - offsetX))}px`;
+        permissionBar.style.top = `${Math.min(maxTop, Math.max(8, moveEvent.clientY - offsetY))}px`;
+        permissionBar.style.bottom = 'auto';
+      };
+      const stop = () => {
+        permissionDrag.removeEventListener('pointermove', move);
+        permissionDrag.removeEventListener('pointerup', stop);
+        permissionDrag.removeEventListener('pointercancel', stop);
+      };
+      permissionDrag.addEventListener('pointermove', move);
+      permissionDrag.addEventListener('pointerup', stop);
+      permissionDrag.addEventListener('pointercancel', stop);
+    });
     const loadAgentMachine = async () => {
       const response = await fetch('/api/bots/machine');
       const data = await response.json();
@@ -10390,8 +10551,15 @@
       });
       modelEditor.append(providerSelect, modelInput, saveModel);
       panel.append(modelEditor);
-      const authorityEditor = make('div', 'bots-card');
-      authorityEditor.append(make('strong', null, '自律実行と権限'));
+      const authorityEditor = make('details', 'bots-card');
+      const normalCapabilities = [bot['writes?'], bot['omakase?'], bot['browser?'],
+        bot['computer?'], bot['peers?']].filter(Boolean).length;
+      authorityEditor.append(make('summary', 'bots-settings__title',
+        normalCapabilities === 5
+          ? '通常モード — 5つの自律機能がオン'
+          : `制限モード — ${5 - normalCapabilities}項目をオフ`));
+      authorityEditor.append(make('p', 'bots-permission__help',
+        '通常はすべてオンです。特別な目的のBotだけ、ここで使わない機能を制限します。'));
       const writesBox = make('input');
       writesBox.type = 'checkbox';
       writesBox.checked = Boolean(bot['writes?']);
@@ -10422,7 +10590,7 @@
         return label;
       };
       authorityEditor.append(
-        authorityOption(writesBox, '書き込みを許可',
+        authorityOption(writesBox, '自動書き込み',
           '選択したworkspaceと、明示的に接続したサービスの範囲だけです。'),
         authorityOption(omakaseBox, '自律モード',
           '許可済みの操作を待たずに実行し、承認receiptを会話に残します。渡していないツールは、自分で承認しても使えません。'),
@@ -10436,7 +10604,7 @@
             : 'このマシンのSettingsでComputer Useが無効です。'),
         authorityOption(peersBox, 'Bot間連携',
           'ほかのBotへ書き置きできます。ツール・アカウント・秘密は渡しません。'));
-      const saveAuthority = make('button', 'tool-button', '権限を保存');
+      const saveAuthority = make('button', 'tool-button', '制限設定を保存');
       saveAuthority.type = 'button';
       saveAuthority.addEventListener('click', async () => {
         saveAuthority.disabled = true;
@@ -10773,7 +10941,8 @@
           connectors:[...botsState.picked],
           'writes?':true,
           'omakase?':true,
-          'browser?':botsState.browserAvailable,
+          'browser?':true,
+          'computer?':true,
           'peers?':true,
           'coding?':true,
           'virtual-shell?':false,

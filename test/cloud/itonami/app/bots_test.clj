@@ -124,6 +124,7 @@
                                     :writes? false
                                     :omakase? false
                                     :browser? false
+                                    :computer? false
                                     :peers? false
                                     :coding? false}
                                    attrs)))
@@ -159,8 +160,7 @@
 (deftest a-new-bot-defaults-to-bounded-autonomy
   (with-store
     (fn []
-      (with-redefs [workspace-tools/admit-root identity
-                    agent-control/browser-enabled? (constantly true)]
+      (with-redefs [workspace-tools/admit-root identity]
         (let [created (bots/create! {} alice
                                     {:name "autonomous local worker"
                                      :workspace "/chosen/repo"
@@ -168,8 +168,7 @@
           (is (true? (:bot/writes? created)))
           (is (true? (:bot/omakase? created)))
           (is (true? (:bot/browser? created)))
-          (is (false? (:bot/computer? created))
-              "Computer Use is never inferred from general autonomy")
+          (is (true? (:bot/computer? created)))
           (is (true? (:bot/peers? created)))
           (is (true? (:bot/coding? created)))
           (is (false? (:bot/virtual-shell? created)))
@@ -1459,6 +1458,30 @@
             (is false "a batch must not be reduced to its first call")
             (catch clojure.lang.ExceptionInfo error
               (is (= :agent/multiple-tool-calls (:type (ex-data error)))))))))))
+
+(deftest isolated-agent-turn-does-not-inherit-private-conversation
+  (with-store
+    (fn []
+      (let [b (make-bot alice {})
+            requests (atom [])]
+        (with-redefs [policy/select-provider (fn [_ _] {:id :local})
+                      provider/agent-turn
+                      (fn [_ request]
+                        (swap! requests conj request)
+                        {:content "ok" :tool-calls []})]
+          (bots/send! nil alice (:bot/id b) "private-first")
+          (bots/send! nil alice (:bot/id b) "external-second"
+                      {:isolated? true :source :a2a :run-id "a2a-task-test"})
+          (let [external (last @requests)
+                rendered (pr-str (:messages external))
+                context (->> (vals (get-in @store/state [:bots :contexts]))
+                             (filter #(= :a2a (:context/source %)))
+                             first)]
+            (is (str/includes? rendered "external-second"))
+            (is (not (str/includes? rendered "private-first")))
+            (is (= :a2a (:context/source context)))
+            (is (= [:a2a]
+                   (mapv :message/source (:context/messages context))))))))))
 
 (deftest a-bot-with-nothing-connected-asks-when-it-reaches-for-the-tool
   (with-store

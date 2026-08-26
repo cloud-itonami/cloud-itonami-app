@@ -19,6 +19,8 @@ its Swift implementation.
 | Local/cloud model transport | localhost service adapters |
 | Session memory | `kotoba.kgraph` EAV datoms + durable EDN |
 | Compatible client access | OpenAI-compatible HTTP; MCP over stdio and authenticated Streamable HTTP |
+| External agent tasks | A2A v1 text-task adapter (implemented; opt-in) |
+| Cross-network agent messaging | AGNTCY SLIM envelope implemented; publisher disabled until configured |
 | Secret access | named environment variables at provider boundary |
 
 ## Workspace integrations
@@ -1328,6 +1330,27 @@ The default test suite does run one native-crossable export
 compile's interpreter (ADR-0037). That is a canary, not the production path:
 `kotoba-oracle/call` is not pointed at kexe artifacts. Native is a process
 spawn, and the exports that take a record cannot cross a kexe boundary.
+
+## Open agent protocol stack
+
+Cloud Itonami adopts three complementary open protocol boundaries. They do not
+replace the resident's Goal, Assignment, context-envelope, grant, approval or
+replay semantics.
+
+| Boundary | Protocol | State |
+|---|---|---|
+| Agent to tools and data | MCP | Implemented over stdio and authenticated Streamable HTTP |
+| Agent to external agent | A2A | v1 Agent Card, SendMessage and GetTask implemented; opt-in |
+| Secure cross-network messaging | AGNTCY SLIM | Authority-free envelope and readiness boundary implemented; publisher not configured |
+
+A2A text tasks adapt to isolated resident Bot runs with durable task state and
+message-id deduplication; A2A context ids correlate exchanges but do not select
+ambient conversation history. SLIM is used only where cross-device,
+cross-organization, group, secure routing or reconnecting delivery requires it.
+Its envelope is implemented while a deployment must still provide the network
+publisher. Same-resident Bot work keeps the direct resident path. Protocol messages convey no grant, approval, wallet
+authority, credential, private memory, browser cookie or replay permission.
+See ADR-0077.
 
 ## MCP surface
 

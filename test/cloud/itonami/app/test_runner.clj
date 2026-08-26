@@ -11,6 +11,7 @@
             [cloud.itonami.app.authority-test]
             [cloud.itonami.app.business-test]
             [cloud.itonami.app.agent-session-test]
+            [cloud.itonami.app.a2a-test]
             [cloud.itonami.app.kaiyu-local-test]
             [cloud.itonami.app.launcher-test]
             [cloud.itonami.app.business-http-test]
@@ -132,11 +133,16 @@
             [cloud.itonami.app.loopback-origin-test]
             [cloud.itonami.app.sso-login-test]
             [cloud.itonami.app.documents-test]
+            [cloud.itonami.app.drive-crypto-test]
+            [cloud.itonami.app.drive-delivery-test]
+            [cloud.itonami.app.file-provider-test]
+            [cloud.itonami.app.file-provider-http-test]
             [cloud.itonami.app.workspace-reachability-test]
             [cloud.itonami.app.workspace-tools-test]
             [cloud.itonami.app.web-script-test]
             [cloud.itonami.app.bundle-test]
             [cloud.itonami.app.kotobase-objects-test]
+            [cloud.itonami.app.drive-store-migration-test]
             [cloud.itonami.app.drive-fs-test]
             [cloud.itonami.app.latest-test]
             [cloud.itonami.app.graph-test]
@@ -186,6 +192,7 @@
 
 (def ^:private namespaces
   '[cloud.itonami.app.authority-test
+    cloud.itonami.app.a2a-test
     cloud.itonami.app.business-test
     cloud.itonami.app.agent-session-test
     cloud.itonami.app.kaiyu-local-test
@@ -284,12 +291,17 @@
     cloud.itonami.app.loopback-origin-test
     cloud.itonami.app.sso-login-test
     cloud.itonami.app.documents-test
+    cloud.itonami.app.drive-crypto-test
+    cloud.itonami.app.drive-delivery-test
+    cloud.itonami.app.file-provider-test
+    cloud.itonami.app.file-provider-http-test
     cloud.itonami.app.email-login-test
     cloud.itonami.app.workspace-reachability-test
     cloud.itonami.app.workspace-tools-test
     cloud.itonami.app.web-script-test
     cloud.itonami.app.bundle-test
     cloud.itonami.app.kotobase-objects-test
+    cloud.itonami.app.drive-store-migration-test
     cloud.itonami.app.drive-fs-test
     cloud.itonami.app.latest-test
     cloud.itonami.app.graph-test

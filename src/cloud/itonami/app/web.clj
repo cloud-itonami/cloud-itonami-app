@@ -1215,6 +1215,22 @@
      taller than the viewport. It overlays the pane like a toast. */
   .global-status{position:fixed;z-index:35;top:6rem;left:18rem;right:1rem;
     margin:0;box-shadow:0 .25rem 1rem rgb(0 0 0 / .08)}
+  .permission-request-bar{position:fixed;z-index:42;left:50%;bottom:1.25rem;
+    width:min(42rem,calc(100vw - 2rem));display:grid;
+    grid-template-columns:auto minmax(0,1fr) auto auto;align-items:center;gap:.75rem;
+    padding:.75rem;border:1px solid var(--color-neutral-solid-gray-300);
+    border-radius:.875rem;background:var(--color-neutral-white);
+    box-shadow:0 .75rem 2rem rgb(0 0 0 / .18);transform:translateX(-50%)}
+  .permission-request-bar[hidden]{display:none}
+  .permission-request-bar[data-dragged='true']{transform:none}
+  .permission-request-bar__handle{align-self:stretch;min-width:1.75rem;border:0;
+    border-radius:.5rem;background:var(--color-neutral-solid-gray-100);cursor:grab;
+    color:var(--color-neutral-solid-gray-600);font:inherit;touch-action:none}
+  .permission-request-bar__handle:active{cursor:grabbing}
+  .permission-request-bar__copy{display:grid;gap:.125rem;min-width:0}
+  .permission-request-bar__copy span{font-size:.75rem;color:var(--color-neutral-solid-gray-600)}
+  .permission-request-bar__dismiss{border:0;background:transparent;cursor:pointer;
+    min-width:2.25rem;min-height:2.25rem;font-size:1.25rem}
   .member-list{list-style:none;margin:1rem 0 0;padding:0}
   .member-list li{display:flex;justify-content:space-between;gap:1rem;padding:.75rem 0;
     border-top:1px solid var(--color-neutral-solid-gray-200)}
@@ -1432,6 +1448,10 @@
     .bots-rail__item .bots-dot{position:absolute;right:.3rem;bottom:.3rem}
     .bots-mobile-context{display:flex}
     .global-status{top:calc(4.5rem + env(safe-area-inset-top));left:1rem;right:1rem}
+    .permission-request-bar{bottom:calc(var(--mobile-nav-height) + .75rem);
+      grid-template-columns:auto minmax(0,1fr) auto}
+    .permission-request-bar__handle{grid-row:1 / span 2}
+    #agent-permission-open{grid-column:2 / 4;width:100%}
     .chat-shell{height:calc(100dvh - 4rem - var(--mobile-nav-height))}
     .data-card,.settings-card{padding:1rem}
     input,select,textarea,button{max-width:100%}
@@ -1588,13 +1608,14 @@
 
 (defn- agent-machine-settings []
   [:div {:class "local-card" :id "agent-machine-settings"}
-   (dds/heading 2 "BotのブラウザーとComputer Use" {:size "20"})
+   (dds/heading 2 "Botの操作環境" {:size "20"})
    [:p {:class "view-lead"}
-    "このMacで使える機能だけを有効にします。さらに各Botの設定で個別に許可するまで、そのBotには届きません。"]
+    "ブラウザーとComputer Useは通常オンです。未準備の機能があれば、必要な対応をここに表示します。"]
    [:p {:class "settings-notice" :id "agent-machine-status"
         :role "status" :aria-live "polite"}
     "接続状態を確認しています…"]
-   [:div {:class "settings-stack"}
+   [:details {:class "settings-stack"}
+    [:summary "特別な目的で機能を停止・制限する"]
     [:label {:class "bots-permission"}
      [:input {:id "agent-machine-browser" :type "checkbox"}]
      [:span {:class "bots-permission__copy"}
@@ -1613,11 +1634,11 @@
      [:span {:class "bots-permission__copy"}
       [:span "フォーカスを奪わないComputer Use"]
       [:span {:class "bots-permission__help" :id "agent-machine-computer-help"}
-       "署名済みCuaDriverを優先し、アクセシビリティツリーを読みます。座標クリックや合成キー入力は使いません。Botへ公開するのは要素token操作だけです。"]]]]
+       "署名済みCuaDriverを優先し、アクセシビリティツリーを読みます。座標クリックや合成キー入力は使いません。Botへ公開するのは要素token操作だけです。"]]]
+    [:button {:class "tool-button" :id "agent-machine-save" :type "button"}
+     "制限設定を保存"]]
    [:div {:class "button-row"}
-    [:button {:class "primary-action" :id "agent-machine-save" :type "button"}
-     "このMacの設定を保存"]
-    [:button {:class "tool-button" :id "agent-machine-prepare-computer" :type "button"}
+    [:button {:class "primary-action" :id "agent-machine-prepare-computer" :type "button"}
      "macOS権限を確認して準備"]]
    [:p {:class "form-help"}
     "パスワード・2FA・CAPTCHA・支払い・セキュリティ確認は自動操作しません。Computer操作は対象アプリ名、画面digest、要素tokenをreceiptに残します。"]])
@@ -1640,6 +1661,21 @@
    [:div {:class "context-panel__actions"}
     [:button {:class "primary-button" :id "context-save" :type "button"} "追加内容を保存"]
     [:span {:class "form-status" :id "context-status" :role "status"}]]])
+
+(defn- agent-permission-bar []
+  [:aside {:class "permission-request-bar" :id "agent-permission-bar"
+           :role "status" :aria-live "polite" :hidden true}
+   [:button {:class "permission-request-bar__handle"
+             :id "agent-permission-drag" :type "button"
+             :aria-label "準備リクエストバーをドラッグして移動"} "⋮⋮"]
+   [:div {:class "permission-request-bar__copy"}
+    [:strong {:id "agent-permission-title"} "Botの操作環境を準備"]
+    [:span {:id "agent-permission-message"}]]
+   [:button {:class "primary-action" :id "agent-permission-open"
+             :type "button"} "Settingsを開く"]
+   [:button {:class "permission-request-bar__dismiss"
+             :id "agent-permission-dismiss" :type "button"
+             :aria-label "準備リクエストを閉じる"} "×"]])
 
 (defn page-html [configuration]
   (let [cloud? (get-in configuration [:routing :cloud-enabled?])
@@ -1766,6 +1802,7 @@
         (conversation-context-panel)
         [:p {:class "settings-notice global-status" :id "identity-status"
              :role "status" :aria-live "polite"} ""]
+        (agent-permission-bar)
         ;; Legacy local chat stays in the document for compatibility with the
         ;; API, but it is no longer a destination: direct conversation happens
         ;; in the selected Bot thread.
@@ -2947,6 +2984,10 @@
                            "検索・確認し、Sheets / Docs / Forms / Slides を作成します。"))
          [:p {:class "source-note"} [:span {:class "source-dot"}]
           [:span {:id "drive-source"} "m365-archive を読み込み中…"]]
+         [:div {:class "security-callout" :role "status"}
+          [:strong "新しく保存する内容はクライアント側で暗号化します。"]
+          " Kotobase・Filecoin・ローカル object store には暗号文だけを送り、"
+          "共有時は本文ではなく内容鍵だけを相手へ包み直します。公開リンクの秘密鍵は URL の #fragment に置き、サーバには保存しません。"]
          [:div {:class "drive-create-bar"}
           [:div {:class "drive-create" :id "drive-create"
                  :role "group" :aria-label "新しいドキュメントを作成"}]

@@ -13,7 +13,8 @@
             [clojure.string :as str]
             [cloud.itonami.app.config :as config]
             [cloud.itonami.app.documents :as documents]
-            [cloud.itonami.app.store :as store])
+            [cloud.itonami.app.store :as store]
+            [fileprovider.model :as sync-model])
   (:import [java.io File InputStream]
            [java.net URI URLEncoder]
            [java.net.http HttpClient HttpRequest HttpRequest$BodyPublishers
@@ -257,7 +258,13 @@
                       {:type :folder-sync/file-too-large
                        :size-bytes declared
                        :maximum-file-bytes maximum-file-bytes})))
-    (let [bytes (remote-bytes remote entry)]
+    (let [value (remote-bytes remote entry)
+          bytes (cond
+                  (bytes? value) value
+                  (and (sequential? value)
+                       (every? #(and (integer? %) (<= 0 % 255)) value))
+                  (byte-array (map unchecked-byte value))
+                  :else nil)]
       (when-not (bytes? bytes)
         (throw (ex-info "remote Drive returned a non-binary file body"
                         {:type :folder-sync/invalid-remote-body})))
@@ -680,9 +687,11 @@
    (filter #(= (str actor) (str (:actor %))) (root-configs))))
 
 (defn sync-configured!
-  ([] (sync-configured! nil))
-  ([actor]
-   (let [roots (if actor (root-configs actor) (root-configs))]
+  ([] (sync-configured! nil #{:continuous :manual}))
+  ([actor] (sync-configured! actor #{:continuous :manual}))
+  ([actor schedules]
+   (let [roots (->> (if actor (root-configs actor) (root-configs))
+                    (filter #(contains? schedules (:schedule % :continuous))))]
      (mapv
       (fn [root]
         (let [id (str (:id root))]
@@ -715,7 +724,9 @@
       :enabled? (boolean (:enabled? @runtime-config))
       :running? (boolean @scheduler)
       :roots (mapv (fn [root]
-                     (merge {:id (str (:id root))}
+                     (merge {:id (str (:id root))
+                             :schedule (:schedule root :continuous)
+                             :residency (:residency root :pinned)}
                             (select-keys (get @last-status (str (:id root)))
                                          [:status :at :counts :error])))
                    roots)})))
@@ -724,7 +735,12 @@
   ([] (start! {}))
   ([configuration]
    (let [settings (merge {:enabled? false :interval-seconds 30 :roots []}
-                         (:folder-sync configuration))]
+                         (:folder-sync configuration))
+         settings (update settings :roots
+                          (fn [roots]
+                            (mapv #(merge {:schedule :continuous
+                                           :residency :pinned} %)
+                                  roots)))]
      (doseq [root (:roots settings)]
        (safe-id (:id root))
        (when (str/blank? (str (:actor root)))
@@ -732,13 +748,25 @@
                          {:type :folder-sync/actor-required})))
        (when (str/blank? (str (:path root)))
          (throw (ex-info "folder sync root requires a local path"
-                         {:type :folder-sync/path-required}))))
+                         {:type :folder-sync/path-required})))
+       (when-not (contains? sync-model/schedules (:schedule root))
+         (throw (ex-info "folder sync schedule is invalid"
+                         {:type :folder-sync/invalid-schedule
+                          :schedule (:schedule root)})))
+       ;; An ordinary directory contains real bytes by definition. Placeholder
+       ;; and automatic eviction belong to File Provider, not folder sync.
+       (when-not (= :pinned (:residency root))
+         (throw (ex-info "folder sync roots are always pinned; use Finder File Provider for online-only"
+                         {:type :folder-sync/residency-requires-file-provider
+                          :residency (:residency root)}))))
      (when-not (= (count (:roots settings))
                   (count (set (map (comp str :id) (:roots settings)))))
        (throw (ex-info "folder sync ids must be unique"
                        {:type :folder-sync/duplicate-id})))
      (reset! runtime-config settings)
-     (when (and (:enabled? settings) (seq (:roots settings)) (nil? @scheduler))
+     (when (and (:enabled? settings)
+                (some #(= :continuous (:schedule %)) (:roots settings))
+                (nil? @scheduler))
        (let [executor (Executors/newSingleThreadScheduledExecutor
                        (reify ThreadFactory
                          (newThread [_ runnable]
@@ -747,9 +775,35 @@
              interval (max 2 (long (:interval-seconds settings)))]
          (.scheduleWithFixedDelay
           ^ScheduledExecutorService executor
-          ^Runnable #(sync-configured!) 2 interval TimeUnit/SECONDS)
+          ^Runnable #(sync-configured! nil #{:continuous}) 2 interval TimeUnit/SECONDS)
          (reset! scheduler executor)))
      true)))
+
+(defn set-root-mode!
+  "Change one configured root's schedule. Folder roots are always materialized
+  (`:pinned`); online-only/automatic residency is provided by File Provider."
+  [actor id schedule residency]
+  (when-not (contains? sync-model/schedules schedule)
+    (throw (ex-info "folder sync schedule is invalid"
+                    {:type :folder-sync/invalid-schedule :schedule schedule})))
+  (when-not (= :pinned residency)
+    (throw (ex-info "folder sync roots are always pinned"
+                    {:type :folder-sync/residency-requires-file-provider
+                     :residency residency})))
+  (let [matched (atom false)]
+    (swap! runtime-config update :roots
+           (fn [roots]
+             (mapv (fn [root]
+                     (if (and (= (str actor) (str (:actor root)))
+                              (= (str id) (str (:id root))))
+                       (do (reset! matched true)
+                           (assoc root :schedule schedule :residency residency))
+                       root))
+                   roots)))
+    (when-not @matched
+      (throw (ex-info "folder sync root not found"
+                      {:type :folder-sync/not-found :id id})))
+    (status actor)))
 
 (defn stop! []
   (when-let [^ScheduledExecutorService executor @scheduler]
