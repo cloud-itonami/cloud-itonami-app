@@ -52,6 +52,7 @@
             [cloud.itonami.app.filecoin :as filecoin]
             [cloud.itonami.app.kotobase-objects :as kotobase-objects]
             [cloud.itonami.app.config :as config]
+            [cloud.itonami.app.drive-delivery :as drive-delivery]
             [cloud.itonami.app.drive-crypto :as drive-crypto]
             [cloud.itonami.app.store :as store]
             [cloud.itonami.app.storj :as storj]
@@ -87,9 +88,28 @@
             ;; always been given, so the client contract does not move.
             [transit.core :as transit])
   (:import [java.nio.charset StandardCharsets]
+           [java.security MessageDigest]
            [java.util UUID]))
 
 (def schema "cloud.itonami.app.documents.v1")
+
+(defn- hex [^bytes value]
+  (apply str (map #(format "%02x" (bit-and (int %) 0xff)) value)))
+
+(defn content-etag
+  "The logical version identifier exposed to clients.
+
+  Legacy items predate `:drive/content-etag` and stored their object CID as
+  the ETag. Hashing that reference keeps comparisons stable without handing
+  a caller the storage address that personalized delivery is meant to hide."
+  [item]
+  (or (:drive/content-etag item)
+      (when-let [ref (:drive/object-ref item)]
+        (str "content-sha256:"
+             (hex (.digest (MessageDigest/getInstance "SHA-256")
+                           (.getBytes (pr-str ["cloud-itonami-drive-etag-v1"
+                                              (:drive/id item) ref])
+                                      StandardCharsets/UTF_8)))))))
 
 (def quota-bytes
   "Per-user Drive quota.
@@ -618,10 +638,10 @@
       ;; the allowlist is one place and this is a report of it.
       :previewable? (and (nil? kind) (previewable? item))
       :created-at (:drive/created-at item)
-      ;; What a save has to echo back. The object reference of the current
-      ;; version, which `write-item` guarantees is unique per version, so it
-      ;; is an ETag in every sense but the header it is not sent in.
-      :etag (or (:drive/content-etag item) (:drive/object-ref item))
+      ;; What a save has to echo back. New items carry a random logical ETag;
+      ;; legacy object references are hashed so this never reveals a storage
+      ;; CID while remaining stable for the same version.
+      :etag (content-etag item)
       :encrypted? (boolean (:drive/encrypted? item))
       :sync-schedule (name (or (:drive/sync-schedule item) :continuous))
       :residency (name (or (:drive/residency item) :automatic))
@@ -1576,8 +1596,7 @@
   replaces an earlier version's bytes while the history saying otherwise is
   still sitting in `:drive/versions`."
   [{:keys [workspace item spec owner own?]} id actor object-store resource expected-etag]
-  (when-not (= expected-etag (or (:drive/content-etag item)
-                                 (:drive/object-ref item)))
+  (when-not (= expected-etag (content-etag item))
     ;; The lost update this exists to stop. Two editors open version 1, both
     ;; save, and the second write silently discards the first — measured
     ;; before this check existed: alice's paragraph was simply gone and the
@@ -1586,8 +1605,7 @@
     (throw (ex-info "他の人がこのドキュメントを更新しました。読み込み直してください。"
                     {:type :drive/stale-version
                      :item-id id
-                     :etag (or (:drive/content-etag item)
-                               (:drive/object-ref item))
+                     :etag (content-etag item)
                      :versions (count (:drive/versions item))
                      :updated-by (:drive.version/author (peek (:drive/versions item)))})))
   (let [{:keys [errors warnings]} (problems-in spec resource)
@@ -1690,8 +1708,7 @@
        (let [resource (assoc (:resource (content id actor object-store))
                              (:title-key spec) title)]
          (write-resource! target id actor object-store resource
-                          (or (:drive/content-etag item)
-                              (:drive/object-ref item))))))))
+                          (content-etag item)))))))
 
 (defn version-content
   "The stored envelope of one *earlier* version of `id`.
@@ -2646,8 +2663,7 @@
                                         %)
                                      blocks)))]
          (write-resource! target id actor object-store updated
-                          (or (:drive/content-etag item)
-                              (:drive/object-ref item))))))))
+                          (content-etag item)))))))
 
 (defn reject-suggestion!
   "Decline a proposal. Nothing is written to the document.
@@ -2934,6 +2950,100 @@
           :object-ref (:drive/object-ref item)
           :bytes (open-body owner (:bytes result))}
          (refuse! result))))))
+
+;; ── personalized delivery ──────────────────────────────────────────────────
+
+(declare printable export import!)
+
+(defn issue-delivery!
+  "Issue a recipient/action-bound delivery without exposing the source CID.
+
+  Native documents are rendered as watermarked HTML for view, exported in
+  the requested format for download, and carried as their EDN envelope for
+  copy. Uploaded files keep their bytes and declared media type; formats for
+  which the delivery layer has a safe writer receive a visible mark."
+  ([id issuer audience action options]
+   (issue-delivery! id issuer audience action (store-instance) options))
+  ([id issuer audience action object-store
+    {:keys [format expires-in-hours max-uses]}]
+   (let [{:keys [workspace owner]} (owned! issuer id)
+         item (ws/item workspace id)
+         action (keyword action)
+         audience (not-empty (str/trim (str audience)))
+         _action (when-not (contains? #{:view :download :copy} action)
+                   (throw (ex-info "個別配信は view / download / copy のいずれかです。"
+                                   {:type :drive/delivery-action-invalid
+                                    :action action})))
+         _audience (when-not audience
+                     (throw (ex-info "個別配信の受取人を指定してください。"
+                                     {:type :drive/delivery-audience-required})))
+         native? (boolean (:drive/resource-kind item))
+         out
+         (if native?
+           (case action
+             :view (let [page (printable id issuer object-store)]
+                     {:bytes (.getBytes ^String (:html page) StandardCharsets/UTF_8)
+                      :media-type "text/html"
+                      :filename (safe-filename (:drive/title item) "html")})
+             :copy (export id "edn" issuer object-store {})
+             :download (export id (or format "edn") issuer object-store {}))
+           (let [file (file-bytes id issuer object-store)]
+             (when (= action :view)
+               (when-not (:inline? file)
+                 (throw (ex-info "この形式は個別view配信できません。downloadを使ってください。"
+                                 {:type :drive/not-previewable :item-id id}))))
+             {:bytes (:bytes file)
+              ;; Used to choose a safe watermark writer. The HTTP route still
+              ;; forces attachment/octet-stream for download.
+              :media-type (:declared-media-type file)
+              :filename (:filename file)}))
+         hours (-> (long (or expires-in-hours 24)) (max 1) (min 720))
+         uses (-> (long (or max-uses (if (= action :view) 20 1))) (max 1) (min 100))
+         expires-at (+ (System/currentTimeMillis) (* hours 60 60 1000))]
+     (drive-delivery/issue!
+      {:source-id id :source-version (content-etag item)
+       :owner owner :audience audience :action action
+       :expires-at expires-at :max-uses uses
+       :filename (:filename out) :media-type (:media-type out) :bytes (:bytes out)
+       :object-store object-store
+       :content-ref #(object-ref object-store %)}))))
+
+(defn redeem-delivery!
+  ([delivery-id actor action]
+   (redeem-delivery! delivery-id actor action (store-instance)))
+  ([delivery-id actor action object-store]
+   (drive-delivery/redeem! delivery-id actor action
+                           (System/currentTimeMillis) object-store)))
+
+(defn copy-delivery!
+  "Consume a copy delivery and create a new, independently encrypted item.
+
+  The copy records the forensic delivery id and watermark in its Drive
+  metadata. It never inherits the source CID, ACL or version history."
+  ([delivery-id actor] (copy-delivery! delivery-id actor (store-instance) {}))
+  ([delivery-id actor object-store {:keys [title folder]}]
+   (let [delivery (redeem-delivery! delivery-id actor :copy object-store)
+         native? (= "application/edn" (:media-type delivery))
+         created (if native?
+                   (import! "edn" title (:bytes delivery) actor object-store
+                            {:folder folder})
+                   (upload! (or title (:filename delivery)) (:media-type delivery)
+                            (:bytes delivery) actor object-store {:folder folder}))
+         copy-id (get-in created [:item :id])
+         {:keys [workspace owner]} (locate (store/snapshot) actor copy-id)
+         provenance {:delivery/id delivery-id
+                     :delivery/watermark (:watermark delivery)
+                     :delivery/source-id (:source-id delivery)
+                     :delivery/copied-at (store/now)}
+         marked (assoc-in workspace
+                          [:drive.workspace/items copy-id :drive/delivery-provenance]
+                          provenance)]
+     (save-workspace! owner marked)
+     (assoc created :delivery {:id delivery-id
+                               :watermark (:watermark delivery)}))))
+
+(defn revoke-delivery! [delivery-id actor]
+  (drive-delivery/revoke! delivery-id actor))
 
 (defn copy!
   "A new document with this one's contents, in `actor`'s Drive.

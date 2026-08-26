@@ -62,8 +62,7 @@
      ;; will cache and reconcile against a size it can never fetch.
      :size (long (or (:drive/logical-size-bytes item)
                      (:drive.version/size-bytes newest) 0))
-     :contentVersion (or (:drive/content-etag item)
-                         (:drive/object-ref item) "folder")
+     :contentVersion (or (documents/content-etag item) "folder")
      :metadataVersion (version-of metadata)
      :schedule (name (:sync/schedule policy))
      :residency (name (:sync/residency policy))}))
