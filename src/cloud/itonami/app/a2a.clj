@@ -12,6 +12,11 @@
 
 (def scope "a2a:tasks")
 
+(def ^:private retryable-failure-types
+  #{:a2a/interrupted :provider/http-error :provider/network-error
+    :provider/timeout :provider/unreachable :provider/model-unready
+    :provider/fallback-failed})
+
 (defprotocol SlimPublisher
   (publisher-ready? [publisher])
   (publish-envelope! [publisher envelope]))
@@ -39,6 +44,12 @@
 (defn- owner-key [session]
   [(:user-id session) (:organization-id session) (:id session)])
 
+(defn- failure-type-name [failure-type]
+  (when failure-type
+    (if-let [failure-ns (namespace failure-type)]
+      (str failure-ns "/" (name failure-type))
+      (name failure-type))))
+
 (defn- wire-task [task]
   (protocol-a2a/task
    {:id (:id task)
@@ -46,7 +57,14 @@
     :state (:state task)
     :timestamp (:updated-at task)
     :text (:text task)
-    :metadata {:profile "cloud.itonami.a2a-task.v1"}}))
+    :metadata (cond-> {:profile "cloud.itonami.a2a-task.v1"}
+                (:failure-type task)
+                (assoc :failureType (failure-type-name (:failure-type task))
+                       :retryable (contains? retryable-failure-types
+                                             (:failure-type task)))
+
+                (:failure-status task)
+                (assoc :failureStatus (:failure-status task)))}))
 
 (defn- task-for [session task-id]
   (let [task (get-in (store/snapshot) [:a2a :tasks task-id])]
@@ -55,6 +73,36 @@
 (defn- save-task! [task]
   (store/transact! assoc-in [:a2a :tasks (:id task)] task)
   task)
+
+(defn recover-interrupted!
+  "Close tasks left WORKING by the previous process.
+
+  A text-only generation has no external effect to recover, but replaying it
+  automatically would require retaining and impersonating the caller's bearer
+  session. Marking the task retryable and terminal is honest: callers can
+  observe the restart and submit a new messageId, while no task remains
+  WORKING forever."
+  []
+  (let [interrupted-ids (->> (get-in (store/snapshot) [:a2a :tasks])
+                             vals
+                             (filter #(= "TASK_STATE_WORKING" (:state %)))
+                             (map :id)
+                             vec)]
+    (when (seq interrupted-ids)
+      (let [now (store/now)]
+        (store/transact!
+         (fn [state]
+           (reduce (fn [next-state task-id]
+                     (-> next-state
+                         (assoc-in [:a2a :tasks task-id :state]
+                                   "TASK_STATE_FAILED")
+                         (assoc-in [:a2a :tasks task-id :text]
+                                   "Task interrupted by host restart")
+                         (assoc-in [:a2a :tasks task-id :failure-type]
+                                   :a2a/interrupted)
+                         (assoc-in [:a2a :tasks task-id :updated-at] now)))
+                   state interrupted-ids)))))
+    (count interrupted-ids)))
 
 (defn- prune-tasks [state limit]
   (let [tasks (get-in state [:a2a :tasks] {})
@@ -128,12 +176,15 @@
                                     :updated-at (store/now)))]
               (wire-task completed))
             (catch Exception error
-              (let [failed (save-task!
-                            (assoc working
-                                   :state "TASK_STATE_FAILED"
-                                   :text "Task failed"
-                                   :updated-at (store/now)
-                                   :failure-type (some-> error ex-data :type)))]
+              (let [data (ex-data error)
+                    failed (save-task!
+                            (cond-> (assoc working
+                                           :state "TASK_STATE_FAILED"
+                                           :text "Task failed"
+                                           :updated-at (store/now)
+                                           :failure-type (:type data))
+                              (:status data)
+                              (assoc :failure-status (:status data))))]
                 (wire-task failed)))))))))
 
 (defn get-task [session request]

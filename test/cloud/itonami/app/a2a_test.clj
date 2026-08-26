@@ -88,6 +88,30 @@
                            :params {:id (:id task)}}))))))
       (finally (reset! store/state previous)))))
 
+(deftest provider-failures-expose-only-safe-retry-metadata
+  (let [previous @store/state]
+    (try
+      (reset! store/state (store/initial-state))
+      (with-redefs [bots/send!
+                    (fn [& _]
+                      (throw (ex-info "upstream detail must stay private"
+                                      {:type :provider/http-error
+                                       :status 502
+                                       :url "https://private-provider.invalid"
+                                       :response {:internal "private"}})))]
+        (let [task (get-in (a2a/respond! configuration session request)
+                           [:result :task])]
+          (is (= "TASK_STATE_FAILED" (get-in task [:status :state])))
+          (is (= "Task failed" (get-in task [:status :message :parts 0 :text])))
+          (is (= {:profile "cloud.itonami.a2a-task.v1"
+                  :failureType "provider/http-error"
+                  :retryable true
+                  :failureStatus 502}
+                 (:metadata task)))
+          (is (not (re-find #"private-provider|internal"
+                            (pr-str task))))))
+      (finally (reset! store/state previous)))))
+
 (deftest durable-task-history-is-bounded
   (let [previous @store/state
         bounded (assoc-in configuration [:a2a :max-tasks] 1)]
@@ -105,6 +129,48 @@
                   #(a2a/get-task
                     session {:jsonrpc "2.0" :id 10 :method "GetTask"
                              :params {:id (:id first-task)}}))))))
+      (finally (reset! store/state previous)))))
+
+(deftest restart-closes-interrupted-tasks-with-retryable-metadata
+  (let [previous @store/state
+        now (store/now)]
+    (try
+      (reset! store/state
+              (assoc (store/initial-state)
+                     :a2a {:tasks
+                           {"working" {:id "working"
+                                       :context-id "context-working"
+                                       :owner ["user-a" "org-a" "agent-session-a"]
+                                       :state "TASK_STATE_WORKING"
+                                       :updated-at now}
+                            "completed" {:id "completed"
+                                         :context-id "context-completed"
+                                         :owner ["user-a" "org-a" "agent-session-a"]
+                                         :state "TASK_STATE_COMPLETED"
+                                         :text "done"
+                                         :updated-at now}}}))
+      (is (= 1 (a2a/recover-interrupted!)))
+      (is (= 0 (a2a/recover-interrupted!)) "recovery is idempotent")
+      (let [working (:result
+                     (a2a/respond!
+                      configuration session
+                      {:jsonrpc "2.0" :id 11 :method "GetTask"
+                       :params {:id "working"}}))
+            completed (:result
+                       (a2a/respond!
+                        configuration session
+                        {:jsonrpc "2.0" :id 12 :method "GetTask"
+                         :params {:id "completed"}}))]
+        (is (= "TASK_STATE_FAILED" (get-in working [:status :state])))
+        (is (= "Task interrupted by host restart"
+               (get-in working [:status :message :parts 0 :text])))
+        (is (= {:profile "cloud.itonami.a2a-task.v1"
+                :failureType "a2a/interrupted"
+                :retryable true}
+               (:metadata working)))
+        (is (= "TASK_STATE_COMPLETED" (get-in completed [:status :state])))
+        (is (= {:profile "cloud.itonami.a2a-task.v1"}
+               (:metadata completed))))
       (finally (reset! store/state previous)))))
 
 (deftest slim-boundary-refuses-authority
