@@ -450,7 +450,39 @@
 
 (def ^:private fallback-error-types
   #{:provider/timeout :provider/unreachable :provider/network-error
-    :provider/http-error :provider/model-mismatch :provider/empty-response})
+    :provider/http-error :provider/model-mismatch :provider/empty-response
+    :provider/model-unready})
+
+(defn- assert-model-ready!
+  "Fail fast when a specialized model has no immediately usable capacity.
+
+  A model catalog entry proves routing, not generation. Providers may attach a
+  read-only readiness URL to a model so a scale-to-zero or saturated accelerator
+  falls through to its explicit fallback before the much wider generation
+  timeout. The readiness request deliberately carries no provider credential:
+  this endpoint is public operational evidence, not the inference boundary."
+  [provider model]
+  (when-let [{:keys [url timeout-seconds]}
+             (get (:model-readiness provider) model)]
+    (try
+      (let [result (request-json :get url nil nil nil
+                                 (long (or timeout-seconds 5)) 0)]
+        (when-not (true? (:ok result))
+          (throw (ex-info "requested model readiness failed"
+                          {:type :provider/model-unready
+                           :requested-model model
+                           :readiness-url url}))))
+      (catch Exception error
+        (if (= :provider/model-unready (:type (ex-data error)))
+          (throw error)
+          (throw (ex-info "requested model is not ready"
+                          {:type :provider/model-unready
+                           :requested-model model
+                           :readiness-url url
+                           :readiness-error-type (:type (ex-data error))
+                           :readiness-status (:status (ex-data error))}
+                          error))))))
+  true)
 
 (defn- assert-response-model!
   [provider requested response]
@@ -473,8 +505,11 @@
   never relabelled as the requested accelerator, and arbitrary application
   exceptions do not silently change routing."
   [provider requested invoke]
-  (try
-    (let [result (invoke requested)]
+  (let [invoke-ready (fn [model]
+                       (assert-model-ready! provider model)
+                       (invoke model))]
+    (try
+    (let [result (invoke-ready requested)]
       (assoc result
              :model (or (:served-model result) requested)
              :requested-model requested :fallback? false))
@@ -485,7 +520,7 @@
                  (contains? fallback-error-types error-type)
                  (not (:stream-emitted? (ex-data primary))))
           (try
-            (let [result (invoke fallback)]
+            (let [result (invoke-ready fallback)]
               (assoc result
                      :model (or (:served-model result) fallback)
                      :requested-model requested :fallback? true
@@ -498,7 +533,7 @@
                                :primary-error-type error-type
                                :fallback-error-type (:type (ex-data secondary))}
                               secondary))))
-          (throw primary))))))
+          (throw primary)))))))
 
 (defn- openai-agent-turn-once
   [provider request model]
