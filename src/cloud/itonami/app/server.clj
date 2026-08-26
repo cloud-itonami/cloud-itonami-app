@@ -1082,6 +1082,86 @@
                  (documents/grant! id (:principal request) (:role request)
                                    actor object-store)))))))
 
+(defn- drive-delivery-route? [_method path]
+  ;; Keep route regexes in the handler below. The command-registry generator
+  ;; reads those forms; repeating them in this predicate would register one
+  ;; HTTP route twice under two different templates.
+  (or (str/starts-with? path "/api/workspace/drive/deliveries/")
+      (boolean
+       (re-matches #"/api/workspace/drive/documents/[^/]+/deliveries" path))))
+
+(defn- handle-drive-delivery!
+  "Keep personalized delivery outside the main HttpHandler bytecode method."
+  [^HttpExchange exchange config method path]
+  (let [object-store (documents/store-instance)]
+    (cond
+      (and (= method "POST")
+           (re-matches #"/api/workspace/drive/documents/([^/]+)/deliveries" path))
+      (let [session (require-human-session! exchange)
+            actor (:user-id session)
+            request (read-json exchange)]
+        (require-origin! exchange config)
+        (require-csrf! exchange session)
+        (send! exchange 200
+               (documents/issue-delivery!
+                (id-from-path path
+                              #"/api/workspace/drive/documents/([^/]+)/deliveries")
+                actor (:audience request)
+                (keyword (or (:action request) "download")) object-store
+                {:format (:format request)
+                 :expires-in-hours (:expires-in-hours request)
+                 :max-uses (:max-uses request)})))
+
+      (and (= method "GET")
+           (re-matches #"/api/workspace/drive/deliveries/([^/]+)/(view|download)" path))
+      (let [session (require-human-session! exchange)
+            actor (:user-id session)
+            [_ delivery-id action]
+            (re-matches #"/api/workspace/drive/deliveries/([^/]+)/(view|download)" path)
+            out (documents/redeem-delivery! delivery-id actor (keyword action)
+                                            object-store)
+            headers (.getResponseHeaders exchange)]
+        (.set headers "X-Cloud-Itonami-Delivery-ID" delivery-id)
+        (.set headers "X-Cloud-Itonami-Watermark" (:watermark out))
+        (.set headers "X-Content-Type-Options" "nosniff")
+        (if (= action "download")
+          (send-bytes! exchange "application/octet-stream" (:filename out) (:bytes out))
+          (do
+            (doto headers
+              (.set "Content-Type" (:media-type out))
+              (.set "Cache-Control" "no-store")
+              (.set "Content-Disposition" "inline")
+              (.set "Content-Security-Policy"
+                    "default-src 'none'; style-src 'unsafe-inline'; sandbox"))
+            (.sendResponseHeaders exchange 200 (alength ^bytes (:bytes out)))
+            (with-open [o (.getResponseBody exchange)]
+              (.write o ^bytes (:bytes out))))))
+
+      (and (= method "POST")
+           (re-matches #"/api/workspace/drive/deliveries/([^/]+)/copy" path))
+      (let [session (require-human-session! exchange)
+            actor (:user-id session)
+            request (read-json exchange)]
+        (require-origin! exchange config)
+        (require-csrf! exchange session)
+        (send! exchange 200
+               (documents/copy-delivery!
+                (id-from-path path #"/api/workspace/drive/deliveries/([^/]+)/copy")
+                actor object-store {:title (:title request) :folder (:folder request)})))
+
+      (and (= method "POST")
+           (re-matches #"/api/workspace/drive/deliveries/([^/]+)/revoke" path))
+      (let [session (require-human-session! exchange)
+            actor (:user-id session)]
+        (require-origin! exchange config)
+        (require-csrf! exchange session)
+        (send! exchange 200
+               (documents/revoke-delivery!
+                (id-from-path path #"/api/workspace/drive/deliveries/([^/]+)/revoke")
+                actor)))
+
+      :else (send! exchange 404 {:error {:type "not_found" :path path}}))))
+
 (defn- decoded-path-id [value]
   (URLDecoder/decode (str value) StandardCharsets/UTF_8))
 
@@ -4553,6 +4633,11 @@
               (.set (.getResponseHeaders exchange) "X-Content-Type-Options" "nosniff")
               (send-bytes! exchange (:media-type out) (:filename out) (:bytes out)))
 
+            ;; Personalized delivery is one delegated clause so the main
+            ;; handler remains below the JVM's 64 KiB method ceiling.
+            (drive-delivery-route? method path)
+            (handle-drive-delivery! exchange config method path)
+
             ;; The body is the file. No multipart: one file per request with
             ;; the name in the query is the whole of what this needs, and a
             ;; multipart parser is a lot of surface to add for a boundary
@@ -5367,6 +5452,18 @@
                      :drive/invalid-comment 400
                      :drive/not-found 404
                      :drive/not-permitted 403
+                     :drive/delivery-action-invalid 400
+                     :drive/delivery-audience-required 400
+                     :drive/delivery-not-owner 403
+                     :drive/delivery-not-found 404
+                     :drive/delivery-audience-mismatch 404
+                     :drive/delivery-not-authorized 404
+                     :drive/delivery-action-mismatch 409
+                     :drive/delivery-expired 410
+                     :drive/delivery-revoked 410
+                     :drive/delivery-use-limit 410
+                     :drive/delivery-object-missing 502
+                     :drive/delivery-package-mismatch 502
                      :drive/no-content 409
                      :drive/quota-exceeded 507
                      ;; The model says these bytes exist and the store

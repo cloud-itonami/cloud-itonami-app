@@ -4414,6 +4414,23 @@
       });
       const makeLink = make('button', 'tool-button', 'リンクを作成');
       makeLink.type = 'button';
+      const deliveryAction = make('select', 'model-pill');
+      deliveryAction.setAttribute('aria-label', '個別配信の操作');
+      [['view','閲覧'], ['download','ダウンロード'], ['copy','コピー']]
+        .forEach(([value, label]) => {
+          const option = make('option', null, label); option.value = value;
+          deliveryAction.append(option);
+        });
+      const deliveryExpiry = make('select', 'model-pill');
+      deliveryExpiry.setAttribute('aria-label', '個別配信の有効期限');
+      [['24','24時間'], ['168','7日間'], ['720','30日間']]
+        .forEach(([value, label]) => {
+          const option = make('option', null, label); option.value = value;
+          deliveryExpiry.append(option);
+        });
+      const makeDelivery = make('button', 'tool-button', '個別CIDを発行');
+      makeDelivery.type = 'button';
+      const deliveries = make('ul', 'sharing__list');
       const fragmentStorageKey = (token) => `cloud-itonami.drive.link-grant.${token}`;
       const encodeFragmentGrant = (grant) => {
         const bytes = new TextEncoder().encode(JSON.stringify(grant));
@@ -4507,11 +4524,46 @@
         {action:'link', role:linkRole.value,
          'expires-in-hours':expiry.value ? Number(expiry.value) : null},
         'リンクを作成しました。'));
+      makeDelivery.addEventListener('click', async () => {
+        const audience = (who.value || '').trim();
+        if (!audience) {
+          status.textContent = '個別配信の受取人を指定してください。';
+          return;
+        }
+        makeDelivery.disabled = true;
+        status.textContent = '受取人専用の暗号配送 CID を作成しています…';
+        try {
+          const data = await postJSON(
+            `/api/workspace/drive/documents/${encodeURIComponent(item.id)}/deliveries`,
+            {audience, action:deliveryAction.value,
+             'expires-in-hours':Number(deliveryExpiry.value),
+             'max-uses':deliveryAction.value === 'view' ? 20 : 1}, true);
+          const entry = make('li', 'sharing__entry');
+          const url = `${window.location.origin}${data.url}`;
+          const field = make('input', 'workspace-search sharing__token');
+          field.type = 'text'; field.readOnly = true; field.value = url;
+          field.setAttribute('aria-label', `${audience} 専用の配信 CID`);
+          const copy = make('button', 'tool-button', 'URLをコピー');
+          copy.type = 'button';
+          copy.addEventListener('click', async () => {
+            await navigator.clipboard.writeText(url);
+            status.textContent = '個別配信 URL をコピーしました。';
+          });
+          entry.append(make('span', 'sharing__who',
+            `${audience} · ${data.action} · ${data.watermark}`), field, copy);
+          deliveries.prepend(entry);
+          status.textContent = '個別 CID を発行しました。元の保存 CID は公開されません。';
+        } catch (error) { status.textContent = error.message; }
+        finally { makeDelivery.disabled = false; }
+      });
 
       form.append(whoPicker, who, role, share);
       const linkForm = make('div', 'detail-actions__row');
       linkForm.append(make('span', 'sharing__who', '共有リンク'), linkRole, expiry, makeLink);
-      panel.append(heading, current, form, linkForm);
+      const deliveryForm = make('div', 'detail-actions__row');
+      deliveryForm.append(make('span', 'sharing__who', '透かし付き個別配信'),
+        deliveryAction, deliveryExpiry, makeDelivery);
+      panel.append(heading, current, form, linkForm, deliveryForm, deliveries);
       (async () => {
         try {
           const request = await fetch(

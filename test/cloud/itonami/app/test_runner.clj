@@ -132,6 +132,7 @@
             [cloud.itonami.app.sso-login-test]
             [cloud.itonami.app.documents-test]
             [cloud.itonami.app.drive-crypto-test]
+            [cloud.itonami.app.drive-delivery-test]
             [cloud.itonami.app.file-provider-test]
             [cloud.itonami.app.file-provider-http-test]
             [cloud.itonami.app.workspace-reachability-test]
@@ -287,6 +288,7 @@
     cloud.itonami.app.sso-login-test
     cloud.itonami.app.documents-test
     cloud.itonami.app.drive-crypto-test
+    cloud.itonami.app.drive-delivery-test
     cloud.itonami.app.file-provider-test
     cloud.itonami.app.file-provider-http-test
     cloud.itonami.app.email-login-test
