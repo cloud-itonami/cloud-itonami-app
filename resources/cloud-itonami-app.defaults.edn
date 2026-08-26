@@ -330,6 +330,28 @@
         :client-id-env "CLOUD_ITONAMI_OAUTH_RESOURCE_CLIENT_ID"
         :client-secret-env "CLOUD_ITONAMI_OAUTH_RESOURCE_CLIENT_SECRET"}}
 
+ ;; A2A v1.0 is a separate, text-only Bot boundary. It is off until an owner
+ ;; selects one Bot explicitly; the public Agent Card never enumerates the
+ ;; private Bot or tool catalog. Remote calls require a bearer token carrying
+ ;; `a2a:tasks`, and every request is run with isolated conversation context.
+ :a2a {:enabled? false
+       :bot-id nil
+       :name "Cloud Itonami"
+       :description "A bounded Cloud Itonami Bot"
+       :version "1.0.0"
+       :resource-origin nil
+       :max-tasks 1000
+       :skills []}
+
+ ;; AGNTCY SLIM is adopted as an optional carrier for the same A2A payload.
+ ;; The portable envelope is implemented in kotoba-protocol. A deployment must
+ ;; still supply a concrete SLIM publisher and names before this becomes ready.
+ :agent-messaging
+ {:transport :direct
+  :slim {:enabled? false
+         :from nil
+         :to nil}}
+
  ;; 事業 (ADR-2607309600). A Business holds one key from each analysis plane —
  ;; BMC canvas, XMILE model, adopted blueprints, repo paths, LEI — so that the
  ;; three planes that cannot currently join to each other meet on one entity.

@@ -35,9 +35,10 @@ Passkey signs its own `authenticatorData || clientDataHash` and cannot produce a
 Data Integrity proof.
 
 The open interoperability stack assigns one responsibility to each protocol:
-MCP for tools and data is implemented; A2A for external agent tasks and AGNTCY
-SLIM for secure cross-network messaging are adopted but their adapters are not
-yet implemented. The resident remains the authority for Goals, Assignments,
+MCP for tools and data is implemented. The opt-in A2A v1 text-task adapter
+serves an Agent Card plus authenticated `SendMessage` and `GetTask`. AGNTCY
+SLIM has an authority-free portable envelope, but no network publisher is
+enabled by default. The resident remains the authority for Goals, Assignments,
 context envelopes, grants, approval and replay. See
 [ADR-0077](docs/adr/0077-open-agent-interoperability-uses-mcp-a2a-and-agntcy-slim.md).
 

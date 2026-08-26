@@ -4,6 +4,7 @@
             [clojure.java.io :as io]
             [clojure.string :as str]
             [cloud.itonami.app.kaiyu-local :as kaiyu-local]
+            [cloud.itonami.app.a2a :as a2a]
             [cloud.itonami.app.agent-session :as agent-session]
             [cloud.itonami.app.agent-control :as agent-control]
             [cloud.itonami.app.app-client :as app-client]
@@ -432,6 +433,7 @@
         path (.getPath (.getRequestURI exchange))]
     (cond
       (= path "/mcp") "mcp:tools"
+      (= path "/a2a") a2a/scope
       (re-matches #"/v1/tenant-connections/[^/]+/repository/publish" path)
       "repository:write"
       (re-matches #"/v1/tenant-connections/[^/]+/repository" path)
@@ -447,12 +449,18 @@
   Bearer first, so a CLI that also happens to carry a stale browser cookie acts
   as the token it presented rather than as whoever last logged in."
   [exchange]
-  (or (some-> (bearer-token exchange) identity/session)
-      (when-let [scope (and @active-config (oauth-scope-for exchange))]
-        (oauth-resource/session @active-config (bearer-token exchange) scope
-                                (oauth-resource/resource-url @active-config)))
-      (identity/session (cookie-value exchange identity/cookie-name))
-      (throw (ex-info "認証が必要です。" {:type :identity/unauthenticated}))))
+  (let [scope (and @active-config (oauth-scope-for exchange))
+        resource (when scope
+                   (if (= scope a2a/scope)
+                     (oauth-resource/a2a-resource-url @active-config)
+                     (oauth-resource/resource-url @active-config)))]
+    (or (some-> (bearer-token exchange) identity/session)
+        (when scope
+          (oauth-resource/session @active-config (bearer-token exchange)
+                                  scope resource))
+        (identity/session (cookie-value exchange identity/cookie-name))
+        (throw (ex-info "認証が必要です。"
+                        {:type :identity/unauthenticated})))))
 
 (defn- require-app-session! [exchange]
   (identity/require-passkey! (require-session! exchange)))
@@ -634,6 +642,80 @@
       (send! exchange 400
              {"jsonrpc" "2.0" "id" nil
               "error" {"code" -32700 "message" "parse error"}}))))
+
+(defn- require-a2a-bearer-session! [exchange]
+  (when-not (bearer-token exchange)
+    (throw (ex-info "A2A requires bearer authentication"
+                    {:type :identity/unauthenticated})))
+  (require-session! exchange))
+
+(defn- a2a-handler [configuration]
+  (reify HttpHandler
+    (handle [_ exchange]
+      (let [method (.getRequestMethod exchange)
+            path (.getPath (.getRequestURI exchange))]
+        (try
+          (cond
+            (and (= method "GET")
+                 (= path "/.well-known/agent-card.json"))
+            (send! exchange 200 (a2a/agent-card configuration))
+
+            (and (= method "GET")
+                 (= path "/.well-known/oauth-protected-resource/a2a"))
+            (send! exchange 200 (oauth-resource/a2a-metadata configuration))
+
+            (and (= method "POST") (= path "/a2a"))
+            (let [session (require-a2a-bearer-session! exchange)
+                  content-type (or (.getFirst (.getRequestHeaders exchange)
+                                              "Content-Type") "")]
+              (when-not (str/starts-with? (str/lower-case content-type)
+                                          "application/json")
+                (throw (ex-info "A2A request must be application/json"
+                                {:type :a2a/unsupported-media-type})))
+              (send! exchange 200
+                     (a2a/respond! configuration session
+                                   (read-json-limited exchange
+                                                      (* 2 1024 1024) nil))))
+
+            :else (send! exchange 404 {:error "not_found"}))
+          (catch clojure.lang.ExceptionInfo error
+            (let [type (:type (ex-data error))
+                  auth? (contains? #{:identity/unauthenticated
+                                     :oauth-resource/invalid-token
+                                     :oauth-resource/invalid-audience
+                                     :oauth-resource/unknown-subject
+                                     :oauth-resource/not-configured
+                                     :oauth-resource/introspection-failed}
+                                   type)
+                  insufficient? (= :oauth-resource/insufficient-scope type)
+                  status (cond
+                           auth? 401
+                           insufficient? 403
+                           (= :a2a/not-configured type) 404
+                           (= :a2a/not-found type) 404
+                           (= :a2a/unsupported-media-type type) 415
+                           (= :http/payload-too-large type) 413
+                           :else 400)
+                  code (cond
+                         (= :a2a/invalid-request type) -32602
+                         (= :a2a/not-found type) -32001
+                         auth? -32001
+                         insufficient? -32002
+                         :else -32600)]
+              (send! exchange status
+                     {"jsonrpc" "2.0" "id" nil
+                      "error" {"code" code "message" (.getMessage error)}}
+                     (cond-> {}
+                       (or auth? insufficient?)
+                       (assoc "WWW-Authenticate"
+                              (str (oauth-resource/a2a-challenge
+                                    configuration a2a/scope)
+                                   (when insufficient?
+                                     ", error=\"insufficient_scope\"")))))))
+          (catch Exception _
+            (send! exchange 400
+                   {"jsonrpc" "2.0" "id" nil
+                    "error" {"code" -32700 "message" "parse error"}})))))))
 
 (defn- provider-from-path [path pattern]
   (some-> (re-matches pattern path) second keyword))
@@ -6380,6 +6462,13 @@
                      (reify HttpHandler
                        (handle [_ exchange]
                          (send-icon! exchange))))
+     ;; A2A remains outside the already full root handler. Exact-path checks in
+     ;; the handler keep HttpServer's prefix matching from widening discovery.
+     (.createContext instance "/.well-known/agent-card.json"
+                     (a2a-handler configuration))
+     (.createContext instance "/.well-known/oauth-protected-resource/a2a"
+                     (a2a-handler configuration))
+     (.createContext instance "/a2a" (a2a-handler configuration))
      ;; Keep this family outside `handler`; that method sits at the JVM's
      ;; 64 KB bytecode limit. A longer HttpServer prefix wins over "/".
      (.createContext instance "/api/chronicle"

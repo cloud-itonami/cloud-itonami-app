@@ -74,21 +74,27 @@
                              :status (.statusCode response)})))
           (json/read-str (.body response) :key-fn keyword))))))
 
-(defn- resource-origin [configuration]
-  (or (get-in configuration [:mcp :resource-origin])
+(defn- resource-origin [configuration service]
+  (or (get-in configuration [service :resource-origin])
       (get-in configuration [:server :public-origin])))
 
-(defn resource-url [configuration]
-  (let [base (str/replace (resource-origin configuration)
+(defn resource-url-for [configuration service path]
+  (let [base (str/replace (resource-origin configuration service)
                           #"/+$" "")
         uri (URI/create base)
         loopback? (contains? #{"localhost" "127.0.0.1" "::1"}
                              (.getHost uri))]
     (when-not (or (= "https" (.getScheme uri))
                   (and (= "http" (.getScheme uri)) loopback?))
-      (throw (ex-info "hosted MCP resource requires HTTPS"
+      (throw (ex-info "hosted agent resource requires HTTPS"
                       {:type :oauth-resource/insecure-resource})))
-    (str base "/mcp")))
+    (str base path)))
+
+(defn resource-url [configuration]
+  (resource-url-for configuration :mcp "/mcp"))
+
+(defn a2a-resource-url [configuration]
+  (resource-url-for configuration :a2a "/a2a"))
 
 
 (defn oauth-resource-route? [method path]
@@ -99,29 +105,44 @@
   (oracle/call :oauth-resource 'oauth-resource-route? [(str method) (str path)]))
 
 (defn metadata-url [configuration]
-  (str (str/replace (resource-origin configuration) #"/+$" "")
+  (str (str/replace (resource-origin configuration :mcp) #"/+$" "")
        "/.well-known/oauth-protected-resource/mcp"))
 
+(defn a2a-metadata-url [configuration]
+  (str (str/replace (resource-origin configuration :a2a) #"/+$" "")
+       "/.well-known/oauth-protected-resource/a2a"))
+
+(defn- authorization-servers [configuration]
+  (vec (remove str/blank?
+               (get-in configuration [:mcp :oauth :authorization-servers]))))
+
+(defn- metadata* [resource resource-name supported-scopes servers]
+  (when (empty? servers)
+    (throw (ex-info "OAuth authorization server is not configured"
+                    {:type :oauth-resource/no-authorization-server})))
+  {:resource resource
+   :resource_name resource-name
+   :bearer_methods_supported ["header"]
+   :scopes_supported supported-scopes
+   :authorization_servers servers})
+
 (defn metadata [configuration]
-  (let [authorization-servers
-        (vec (remove str/blank?
-                     (get-in configuration [:mcp :oauth
-                                            :authorization-servers])))]
-    (when (empty? authorization-servers)
-      (throw (ex-info "MCP OAuth authorization server is not configured"
-                      {:type :oauth-resource/no-authorization-server})))
-    ;; Underscores are protocol field names, not Clojure naming preference.
-    ;; data.json preserves them exactly on the wire.
-    (cond-> {:resource (resource-url configuration)
-             :resource_name "Itonami Cloud MCP"
-             :bearer_methods_supported ["header"]
-             :scopes_supported scopes}
-      (seq authorization-servers)
-      (assoc :authorization_servers authorization-servers))))
+  (metadata* (resource-url configuration) "Itonami Cloud MCP" scopes
+             (authorization-servers configuration)))
+
+(defn a2a-metadata [configuration]
+  (metadata* (a2a-resource-url configuration) "Cloud Itonami A2A"
+             ["a2a:tasks"] (authorization-servers configuration)))
+
+(defn challenge-for [metadata-document required-scope]
+  (str "Bearer resource_metadata=\"" metadata-document "\""
+       (when required-scope (str ", scope=\"" required-scope "\""))))
 
 (defn challenge [configuration required-scope]
-  (str "Bearer resource_metadata=\"" (metadata-url configuration) "\""
-       (when required-scope (str ", scope=\"" required-scope "\""))))
+  (challenge-for (metadata-url configuration) required-scope))
+
+(defn a2a-challenge [configuration required-scope]
+  (challenge-for (a2a-metadata-url configuration) required-scope))
 
 (defn- stable-session-id [configuration claims]
   (let [digest (.digest (MessageDigest/getInstance "SHA-256")

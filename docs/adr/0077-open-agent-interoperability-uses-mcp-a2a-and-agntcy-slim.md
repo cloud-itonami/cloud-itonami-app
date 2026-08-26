@@ -1,6 +1,7 @@
 # ADR-0077: Open agent interoperability uses MCP, A2A and AGNTCY SLIM
 
-Status: accepted; MCP implemented, A2A and SLIM adapters not yet implemented
+Status: accepted; MCP and opt-in A2A text tasks implemented; SLIM envelope
+implemented, network publisher not configured
 
 ## Context
 
@@ -28,8 +29,8 @@ Adopt this three-layer interoperability stack:
 | Layer | Protocol | Cloud Itonami role | Current state |
 |---|---|---|---|
 | Agent to tools and data | Model Context Protocol (MCP) | Publish admitted tools through the existing dispatcher | Implemented: stdio and authenticated Streamable HTTP |
-| Agent to agent | Agent2Agent Protocol (A2A) | Discover an external agent and adapt an A2A Task to an Assignment or handoff run | Adopted; adapter not implemented |
-| Secure messaging transport | AGNTCY SLIM | Carry agent messages across devices or organizations, including group and reconnecting delivery | Adopted; transport not implemented |
+| Agent to agent | Agent2Agent Protocol (A2A) | Discover an external agent and adapt an A2A Task to an isolated resident Bot run | Implemented for opt-in text `SendMessage` and `GetTask` |
+| Secure messaging transport | AGNTCY SLIM | Carry agent messages across devices or organizations, including group and reconnecting delivery | Authority-free envelope and readiness boundary implemented; publisher absent |
 
 AGNTCY is the adopted infrastructure family; SLIM is its selected messaging
 component. Directory, identity and observability components may be profiled
@@ -62,19 +63,23 @@ properties are required; it is not an extra hop for local calls.
 
 ## First compatible slice
 
-The first A2A implementation must be a narrow, reversible adapter:
+The first A2A implementation is a narrow, reversible adapter:
 
-1. Serve a minimal Agent Card derived from an allowlisted Bot capability
-   projection.
-2. Accept one authenticated message/task method and create one isolated
-   resident handoff run.
-3. Map resident run states to A2A task states without copying provider history.
-4. Return the final bounded result or artifact reference.
-5. Prove that credentials, grants and approval cannot enter either envelope.
-6. Interoperate with a second implementation, initially Hermes' A2A adapter.
+1. It serves a minimal Agent Card derived from an explicit public skill list.
+2. Bearer-authenticated `SendMessage` creates one isolated resident Bot run;
+   `GetTask` is owner-bound.
+3. Submitted, working, completed and failed state is durable, and retrying the
+   same authenticated `messageId` cannot execute the Bot twice.
+4. It returns bounded text and never copies prior private conversation into the
+   model context.
+5. Kotoba's A2A and SLIM models refuse authority-bearing transport fields.
 
-The first SLIM slice comes later and carries that same admitted task envelope
-between two test residents. It must prove authenticated peer attribution,
+Interoperation with a second implementation, initially Hermes' A2A adapter,
+remains an external qualification step and is not implied by the local tests.
+
+The portable SLIM slice constructs that same admitted task envelope and reports
+not-ready until names and a publisher are configured. A later network
+qualification between two test residents must prove authenticated peer attribution,
 duplicate delivery safety, offline/reconnect delivery and group membership
 removal before it may carry a Room.
 
@@ -94,4 +99,3 @@ interoperability exchange passes.
 Shared computer, browser lease, per-Bot screen, Room UX, memory, routine and
 human approval remain Cloud Itonami product contracts. None is inferred from
 protocol compliance.
-

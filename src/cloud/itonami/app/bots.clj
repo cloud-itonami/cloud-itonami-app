@@ -3971,7 +3971,9 @@
   ([configuration session bot-id text advance-options]
   (let [b (owned! session bot-id)
         text (str/trim (str text))
-        goal? (boolean (:goal? advance-options))]
+        goal? (boolean (:goal? advance-options))
+        isolated? (boolean (:isolated? advance-options))
+        requested-source (:source advance-options)]
     (when (str/blank? text)
       (throw (ex-info "メッセージが空です。" {:type :bot/empty-message})))
     (when (> (count text) max-message-chars)
@@ -3996,15 +3998,19 @@
                      (some-> (:run-id advance-options)
                              goal-job
                              :job/resident-workforce?))
+          message-source (or requested-source
+                             (if resident? :resident :person))
           person-message
           (bot/message {:id (new-id "msg") :bot bot-id :role :person
                         :text text :at (store/now)
                         :direction current-direction
                         :context-id context-id
-                        :source (if resident? :resident :person)})
+                        :source message-source})
           _ (append! bot-id person-message)
-          context (store-context! context-id b current-direction :person
-                                  (conversation bot-id)
+          context (store-context! context-id b current-direction message-source
+                                  (if isolated?
+                                    [person-message]
+                                    (conversation bot-id))
                                   (cond->
                                    {:context/refs (:refs resolved-context)
                                     :context/source-receipts
@@ -4023,7 +4029,8 @@
       ;; it is true: `advance!` stops at the CALL, before the tool is reached,
       ;; and the card arrives then.
       (binding [*context-id* context-id
-                *message-source* (if resident? :resident :bot)]
+                *message-source* (or requested-source
+                                     (if resident? :resident :bot))]
         (try
           (if (empty? (:tools admission))
             (say bot-id

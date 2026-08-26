@@ -19,8 +19,8 @@ its Swift implementation.
 | Local/cloud model transport | localhost service adapters |
 | Session memory | `kotoba.kgraph` EAV datoms + durable EDN |
 | Compatible client access | OpenAI-compatible HTTP; MCP over stdio and authenticated Streamable HTTP |
-| External agent tasks | A2A adapter (adopted; not implemented) |
-| Cross-network agent messaging | AGNTCY SLIM transport (adopted; not implemented) |
+| External agent tasks | A2A v1 text-task adapter (implemented; opt-in) |
+| Cross-network agent messaging | AGNTCY SLIM envelope implemented; publisher disabled until configured |
 | Secret access | named environment variables at provider boundary |
 
 ## Workspace integrations
@@ -1340,14 +1340,15 @@ replay semantics.
 | Boundary | Protocol | State |
 |---|---|---|
 | Agent to tools and data | MCP | Implemented over stdio and authenticated Streamable HTTP |
-| Agent to external agent | A2A | Adopted; adapter not implemented |
-| Secure cross-network messaging | AGNTCY SLIM | Adopted; transport not implemented |
+| Agent to external agent | A2A | v1 Agent Card, SendMessage and GetTask implemented; opt-in |
+| Secure cross-network messaging | AGNTCY SLIM | Authority-free envelope and readiness boundary implemented; publisher not configured |
 
-A2A tasks will adapt to resident Assignments or handoff runs; A2A context ids
-will correlate exchanges but will not select ambient conversation history.
-SLIM will be used only where cross-device, cross-organization, group, secure
-routing or reconnecting delivery requires it. Same-resident Bot work keeps the
-direct resident path. Protocol messages convey no grant, approval, wallet
+A2A text tasks adapt to isolated resident Bot runs with durable task state and
+message-id deduplication; A2A context ids correlate exchanges but do not select
+ambient conversation history. SLIM is used only where cross-device,
+cross-organization, group, secure routing or reconnecting delivery requires it.
+Its envelope is implemented while a deployment must still provide the network
+publisher. Same-resident Bot work keeps the direct resident path. Protocol messages convey no grant, approval, wallet
 authority, credential, private memory, browser cookie or replay permission.
 See ADR-0077.
 
