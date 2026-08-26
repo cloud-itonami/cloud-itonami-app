@@ -201,8 +201,17 @@
   (testing "named explicitly so a defaults edit that drops one fails here rather than
             as a nil somewhere far away"
     (let [c (config/load-config)]
-      (doseq [k [:server :privacy :providers :authorities :identity :credentials]]
+      (doseq [k [:server :privacy :providers :authorities :identity :credentials
+                 :agent-control]]
         (is (contains? c k) (str "missing " k))))))
+
+(deftest local-agent-surfaces-ship-requested-for-normal-mode
+  (let [agent (:agent-control (config/load-config))]
+    (is (true? (:enabled? agent)))
+    (is (true? (get-in agent [:browser :enabled?])))
+    (is (true? (get-in agent [:computer :enabled?])))
+    (is (= ["localhost" "127.0.0.1"]
+           (get-in agent [:browser :allowed-domains])))))
 
 (deftest murakumo-runpod-route-has-a-cold-start-safe-client-bound
   (let [provider (some #(when (= "murakumo" (:id %)) %)

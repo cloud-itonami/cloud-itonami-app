@@ -24,9 +24,19 @@ Admission is the intersection of two explicit grants:
 1. the machine Settings enable the browser or Computer Use; and
 2. the selected Bot carries `:bot/browser?` or `:bot/computer?`.
 
-The grants are independent. Creating a Bot never infers Computer Use from
-`writes?`, `omakase?`, browser availability, or a macOS permission that happens
-to be present. Existing Bots therefore remain computer-disabled.
+The grants are independent, but the product default is normal autonomy rather
+than a setup checklist. A newly created Bot requests writes, omakase, peer
+notes, the isolated browser, and Computer Use. A fresh machine configuration
+also requests browser and Computer Use. An explicitly saved false value always
+wins, so a special-purpose Bot or machine can remain restricted and existing
+explicit restrictions are never widened.
+
+Requested is not ready. Missing `agent-browser`, CuaDriver, Accessibility, or
+Screen Recording keeps the corresponding tools out of the model surface. The
+UI presents that gap as a movable preparation request bar; opening it takes the
+person to the relevant Settings card and names the missing dependency. Thus the
+default removes repetitive setup without turning an unavailable capability into
+a readiness claim.
 
 The browser uses `agent-browser` and `AGENT_BROWSER_SESSION` derived from the
 immutable Bot id. Allowed domains remain a machine-level allowlist. LaunchAgent
@@ -97,7 +107,9 @@ ADR-0072's grounding gate passes on resident runs that actually use these tools.
   sharing another Bot's browser state or interrupting the person's pointer.
 - A model call made before Settings changed is refused again at execution time.
 - Missing installation and missing macOS permissions have distinct remedies.
-- Computer Use remains off on every existing and newly created Bot until the
-  person opens that Bot's settings and enables it.
+- New Bots request Computer Use by default, while the concrete helper and macOS
+  permissions remain hard runtime gates. Existing explicit opt-outs remain off.
+- Detailed switches live under a special-purpose restriction disclosure; the
+  ordinary state is summarized as normal mode.
 - Browser installation and the signed CuaDriver daemon are operational
   dependencies. The source-built desktop helper remains the bounded fallback.
