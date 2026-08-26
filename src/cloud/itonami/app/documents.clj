@@ -294,6 +294,30 @@
 (defn store-instance []
   (or @cached-store (reset! cached-store (default-store))))
 
+(defn selected-store-kind
+  "The configured write backend, without exposing credentials or paths."
+  []
+  (case (some-> (System/getenv "CLOUD_ITONAMI_DRIVE_OBJECT_STORE")
+                str/trim not-empty str/lower-case)
+    "kotobase" :kotobase
+    "storj" :storj
+    "fs" :fs
+    (if (storj/configured?) :storj :fs)))
+
+(defn storage-readiness
+  "A bounded live proof for the selected Drive write backend."
+  []
+  (let [backend (selected-store-kind)]
+    (try
+      (case backend
+        :kotobase (kotobase-objects/readiness! (store-instance))
+        {:ok true :backend (name backend)
+         :schema "cloud.itonami.app.drive-storage-health.v1"})
+      (catch Exception error
+        {:ok false :backend (name backend)
+         :schema "cloud.itonami.app.drive-storage-health.v1"
+         :error (name (or (:type (ex-data error)) :storage-unavailable))}))))
+
 ;; ── workspaces ──────────────────────────────────────────────────────────────
 
 (defn- workspace-path [actor] [:drive :workspaces actor])

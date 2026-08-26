@@ -2826,7 +2826,12 @@
             ;; Measured 2026-08-20.
             (send! exchange 200 {:ok true :service "cloud-itonami-app"
                                  :schema "cloud.itonami.app.health.v1"
-                                 :store (config/store-fingerprint)})
+                                 :store (config/store-fingerprint)
+                                 :drive-store (name (documents/selected-store-kind))})
+
+            (and (= method "GET") (= path "/health/storage"))
+            (let [result (documents/storage-readiness)]
+              (send! exchange (if (:ok result) 200 503) result))
 
             (str/starts-with? path "/v1/file-provider/")
             (handle-file-provider! exchange config method path)

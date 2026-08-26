@@ -169,3 +169,23 @@
   store that can only read is not a store the Drive can be given."
   []
   (archive/configured?))
+
+(def ^:private readiness-bytes
+  (.getBytes "cloud-itonami-kotobase-drive-readiness-v1"
+             java.nio.charset.StandardCharsets/UTF_8))
+
+(defn readiness!
+  "Idempotent live write/read proof for the archive used by Drive.
+
+  The canary is fixed and public, so repeated probes address the same immutable
+  object instead of filling the archive with health-check debris."
+  ([] (readiness! (store)))
+  ([object-store]
+   (let [ref (content-ref object-store readiness-bytes)]
+     (object/-put-object object-store ref readiness-bytes)
+     (let [read-back (object/-get-object object-store ref)]
+       {:ok (boolean (= (mapv #(bit-and (int %) 0xff) readiness-bytes)
+                           (mapv #(bit-and (int %) 0xff) read-back)))
+        :backend "kotobase"
+        :schema "cloud.itonami.app.drive-storage-health.v1"
+        :canary ref}))))
