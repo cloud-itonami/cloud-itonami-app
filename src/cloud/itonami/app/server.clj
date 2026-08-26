@@ -33,6 +33,7 @@
             [cloud.itonami.app.esign.retention :as esign-retention]
             [cloud.itonami.app.executor :as executor]
             [cloud.itonami.app.filecoin :as filecoin]
+            [cloud.itonami.app.file-provider :as file-provider]
             [cloud.itonami.app.folder-sync :as folder-sync]
             [cloud.itonami.app.gc :as gc]
             [cloud.itonami.app.nfs :as nfs-service]
@@ -1052,6 +1053,114 @@
   (->> (get-in (identity-context exchange) [:organization :users])
        (remove #(= actor (:id %)))
        (mapv #(select-keys % [:id :display-name :email]))))
+
+(defn- handle-drive-sharing!
+  "Keep the complete encrypted-sharing route outside the main HttpHandler.
+  Besides making the boundary testable, this keeps the generated reify method
+  below the JVM's 64 KiB bytecode ceiling."
+  [exchange config method id]
+  (let [session (require-app-session! exchange)
+        actor (:user-id session)]
+    (if (= method "GET")
+      (send! exchange 200
+             (assoc (documents/sharing id actor)
+                    :candidates (share-candidates exchange actor)))
+      (let [request (read-json exchange)
+            object-store (documents/store-instance)]
+        (require-origin! exchange config)
+        (require-csrf! exchange session)
+        (send! exchange 200
+               (case (:action request)
+                 "revoke" (documents/revoke-grant! id (:principal request) actor
+                                                    object-store)
+                 "link" (documents/create-link! id (:role request)
+                                                 (:expires-in-hours request)
+                                                 actor (System/currentTimeMillis)
+                                                 object-store)
+                 "revoke-link" (documents/revoke-link! id (:token request) actor
+                                                        object-store)
+                 (documents/grant! id (:principal request) (:role request)
+                                   actor object-store)))))))
+
+(defn- decoded-path-id [value]
+  (URLDecoder/decode (str value) StandardCharsets/UTF_8))
+
+(defn- send-file-provider-content!
+  [^HttpExchange exchange {:keys [item bytes]}]
+  (let [body (byte-array (map unchecked-byte bytes))
+        metadata (.getBytes (json/write-str item) StandardCharsets/UTF_8)
+        encoded (.encodeToString (java.util.Base64/getEncoder) metadata)]
+    (doto (.getResponseHeaders exchange)
+      (.set "Content-Type" "application/octet-stream")
+      (.set "Cache-Control" "no-store")
+      (.set "X-Kotoba-Item" encoded))
+    (.sendResponseHeaders exchange 200 (alength body))
+    (with-open [out (.getResponseBody exchange)] (.write out body))))
+
+(defn- handle-file-provider!
+  "The complete Finder bridge outside the generated HttpHandler method."
+  [exchange config method path]
+  (let [session (require-app-session! exchange)
+        actor (:user-id session)
+        object-store (documents/store-instance)
+        item-id (fn [pattern]
+                  (some-> (id-from-path path pattern) decoded-path-id))]
+    (when (#{"POST" "PUT" "PATCH" "DELETE"} method)
+      (require-origin! exchange config)
+      (require-csrf! exchange session))
+    (cond
+      (and (= method "GET")
+           (item-id #"/v1/file-provider/items/([^/]+)/children"))
+      (send! exchange 200
+             (file-provider/children
+              actor (item-id #"/v1/file-provider/items/([^/]+)/children")))
+
+      (and (= method "GET")
+           (item-id #"/v1/file-provider/items/([^/]+)/content"))
+      (send-file-provider-content!
+       exchange (file-provider/materialize
+                 actor (item-id #"/v1/file-provider/items/([^/]+)/content")
+                 object-store))
+
+      (and (= method "GET") (item-id #"/v1/file-provider/items/([^/]+)"))
+      (send! exchange 200
+             (file-provider/item actor
+                                 (item-id #"/v1/file-provider/items/([^/]+)")))
+
+      (and (= method "POST") (= path "/v1/file-provider/items"))
+      (let [request (read-json exchange)]
+        (send! exchange 200
+               (file-provider/create! actor (:parentID request) (:name request)
+                                      (boolean (:directory request)) object-store)))
+
+      (and (= method "PATCH")
+           (item-id #"/v1/file-provider/items/([^/]+)/mode"))
+      (let [request (read-json exchange)]
+        (send! exchange 200
+               (file-provider/set-mode!
+                actor (item-id #"/v1/file-provider/items/([^/]+)/mode")
+                (keyword (:schedule request)) (keyword (:residency request)))))
+
+      (and (= method "PATCH") (item-id #"/v1/file-provider/items/([^/]+)"))
+      (let [request (read-json exchange)]
+        (send! exchange 200
+               (file-provider/modify! actor
+                                      (item-id #"/v1/file-provider/items/([^/]+)")
+                                      (:parentID request) (:name request))))
+
+      (and (= method "PUT")
+           (item-id #"/v1/file-provider/items/([^/]+)/content"))
+      (send! exchange 200
+             (file-provider/upload!
+              actor (item-id #"/v1/file-provider/items/([^/]+)/content")
+              (read-body-bytes exchange) object-store))
+
+      (and (= method "DELETE") (item-id #"/v1/file-provider/items/([^/]+)"))
+      (do (file-provider/delete! actor
+                                 (item-id #"/v1/file-provider/items/([^/]+)"))
+          (send! exchange 200 {:ok true}))
+
+      :else (send! exchange 404 {:error "file-provider route not found"}))))
 
 (defn- active-organization-slug [exchange]
   (get-in (identity-context exchange) [:organization :organization-id]))
@@ -2719,6 +2828,9 @@
                                  :schema "cloud.itonami.app.health.v1"
                                  :store (config/store-fingerprint)})
 
+            (str/starts-with? path "/v1/file-provider/")
+            (handle-file-provider! exchange config method path)
+
             (oauth-protected-resource-mcp? method path)
             (send! exchange 200 (oauth-resource/metadata config))
 
@@ -4285,40 +4397,13 @@
                       (id-from-path path #"/api/workspace/drive/documents/([^/]+)/purge")
                       (:user-id session))))
 
-            ;; The candidates come from identity rather than from documents:
-            ;; who exists is the directory's question, and `documents` stays
-            ;; able to grant to any principal string without knowing where
-            ;; the name came from.
-            (and (= method "GET")
+            ;; The candidates come from identity rather than documents; the
+            ;; helper also owns key-wrap grant/revoke and fragment-link minting.
+            (and (#{"GET" "POST"} method)
                  (id-from-path path #"/api/workspace/drive/documents/([^/]+)/sharing"))
-            (let [session (require-app-session! exchange)]
-              (send! exchange 200
-                     (assoc (documents/sharing
-                             (id-from-path path
-                                           #"/api/workspace/drive/documents/([^/]+)/sharing")
-                             (:user-id session))
-                            :candidates (share-candidates exchange (:user-id session)))))
-
-            (and (= method "POST")
-                 (id-from-path path #"/api/workspace/drive/documents/([^/]+)/sharing"))
-            (let [session (require-app-session! exchange)
-                  request (read-json exchange)
-                  id (id-from-path path
-                                   #"/api/workspace/drive/documents/([^/]+)/sharing")]
-              (require-origin! exchange config)
-              (require-csrf! exchange session)
-              (send! exchange 200
-                     (case (:action request)
-                       "revoke" (documents/revoke-grant! id (:principal request)
-                                                        (:user-id session))
-                       "link" (documents/create-link! id (:role request)
-                                                      (:expires-in-hours request)
-                                                      (:user-id session)
-                                                      (System/currentTimeMillis))
-                       "revoke-link" (documents/revoke-link! id (:token request)
-                                                            (:user-id session))
-                       (documents/grant! id (:principal request) (:role request)
-                                         (:user-id session)))))
+            (handle-drive-sharing!
+             exchange config method
+             (id-from-path path #"/api/workspace/drive/documents/([^/]+)/sharing"))
 
             ;; Inside the documents, not only across their names. Separate
             ;; from the Drive listing because it reads every readable

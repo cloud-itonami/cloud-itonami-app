@@ -1435,6 +1435,47 @@
         status.textContent = error.message;
       }
     };
+    const fileSyncControls = (item) => {
+      const box = make('div', 'detail-actions');
+      const title = make('strong', '', 'Finder / オフライン');
+      const row = make('div', 'detail-actions__row');
+      const schedule = document.createElement('select');
+      [['continuous','常に同期'], ['manual','必要時だけ同期'], ['paused','同期停止']]
+        .forEach(([value, label]) => {
+          const option = new Option(label, value);
+          option.selected = value === (item['sync-schedule'] || 'continuous');
+          schedule.add(option);
+        });
+      const residency = document.createElement('select');
+      [['online-only','オンラインのみ'], ['automatic','自動（空き容量に応じる）'],
+       ['pinned','このMacに常に実体を置く']]
+        .forEach(([value, label]) => {
+          const option = new Option(label, value);
+          option.selected = value === (item.residency || 'automatic');
+          residency.add(option);
+        });
+      const save = make('button', 'tool-button', '同期設定を保存');
+      save.type = 'button';
+      const status = make('span', 'surface-note', '');
+      save.addEventListener('click', async () => {
+        save.disabled = true; status.textContent = '保存しています…';
+        try {
+          const response = await fetch(
+            `/v1/file-provider/items/${encodeURIComponent(item.id)}/mode`, {
+              method:'PATCH', headers:identityHeaders(),
+              body:JSON.stringify({schedule:schedule.value, residency:residency.value})});
+          const data = await response.json();
+          if (!response.ok) throw new Error(data?.error?.message || '同期設定を保存できませんでした。');
+          item['sync-schedule'] = data.schedule;
+          item.residency = data.residency;
+          status.textContent = '保存しました。Finder に同じ設定が反映されます。';
+        } catch (error) { status.textContent = error.message; }
+        finally { save.disabled = false; }
+      });
+      row.append(field('同期', schedule), field('実体', residency), save, status);
+      box.append(title, row);
+      return box;
+    };
     const renderDrive = (data) => {
       driveData = data;
       const query = ($('#drive-search').value || '').trim().toLocaleLowerCase('ja');
@@ -1460,7 +1501,9 @@
       const select = (item) => { selectedDrive = item; renderDrive(driveData); };
       items.forEach((item) => list.append(recordButton(item, item.id === selectedDrive?.id, select, {
         title:item.name, time:bytes(item['size-bytes']),
-        meta:item.origin === 'workspace' ? `${item.label} · ${item.folder}` : item.folder,
+        meta:item.origin === 'workspace'
+          ? `${item.label} · ${item.folder}${item['encrypted?'] ? ' · 🔒 client encrypted' : ''}`
+          : item.folder,
         snippet:item['media-type']})));
       if (!items.length) {
         list.append(make('li', 'empty-state',
@@ -1477,6 +1520,9 @@
            ['権限', selectedDrive['own?'] ? '所有者'
              : `${selectedDrive.role || '—'}（${selectedDrive.owner || '不明'} から共有）`],
            ['形式', selectedDrive['media-type']],
+           ['保存時暗号', selectedDrive['encrypted?'] ? 'client-side encrypted' : '旧形式 / 未移行'],
+           ['同期', selectedDrive['sync-schedule'] || 'continuous'],
+           ['Mac上の実体', selectedDrive.residency || 'automatic'],
            ['サイズ', bytes(selectedDrive['size-bytes'])],
            ['全版の合計', bytes(selectedDrive['held-bytes'])],
            ['版数', String(selectedDrive.versions ?? 1)],
@@ -1484,6 +1530,7 @@
            ['最終更新', selectedDrive['updated-at'] || '—'],
            ['最終更新者', selectedDrive['updated-by'] || '—']]);
         $('#drive-detail').append(documentActions(selectedDrive));
+        if (selectedDrive['file?']) $('#drive-detail').append(fileSyncControls(selectedDrive));
       } else if (selectedDrive) {
         setDetail($('#drive-detail'), selectedDrive.folder,
           selectedDrive.name, 'OneDrive アーカイブに保存されているファイルです。',

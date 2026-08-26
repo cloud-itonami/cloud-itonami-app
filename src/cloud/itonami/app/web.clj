@@ -2947,6 +2947,10 @@
                            "検索・確認し、Sheets / Docs / Forms / Slides を作成します。"))
          [:p {:class "source-note"} [:span {:class "source-dot"}]
           [:span {:id "drive-source"} "m365-archive を読み込み中…"]]
+         [:div {:class "security-callout" :role "status"}
+          [:strong "新しく保存する内容はクライアント側で暗号化します。"]
+          " Kotobase・Filecoin・ローカル object store には暗号文だけを送り、"
+          "共有時は本文ではなく内容鍵だけを相手へ包み直します。公開リンクの秘密鍵は URL の #fragment に置き、サーバには保存しません。"]
          [:div {:class "drive-create-bar"}
           [:div {:class "drive-create" :id "drive-create"
                  :role "group" :aria-label "新しいドキュメントを作成"}]
