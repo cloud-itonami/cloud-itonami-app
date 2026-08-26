@@ -214,6 +214,10 @@
            (:models provider)))
     (is (= {"qwen3.8-27b-throughput-5090" 420}
            (:model-request-timeout-seconds provider)))
+    (is (= {:url "https://api.murakumo.cloud/ready?model=qwen3.8-27b-throughput-5090"
+            :timeout-seconds 5}
+           (get-in provider [:model-readiness
+                             "qwen3.8-27b-throughput-5090"])))
     (is (zero? (:max-transient-retries provider)))
     (is (true? (:assert-response-model? provider)))
     (is (= {"qwen3.8-27b-throughput-5090" "murakumo-main"}
