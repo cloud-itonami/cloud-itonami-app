@@ -3679,3 +3679,35 @@
       (let [m (err (ex-info "model provider timed out"
                             {:type :provider/timeout :timeout-seconds 120}))]
         (is (= "model provider timed out" m))))))
+
+(deftest ordinary-turns-are-serialized-per-bot
+  ;; A2A and the ordinary CLI endpoint both call `send!`, not `send-stream!`.
+  ;; Before the per-Bot monitor, two such requests could overwrite `:runs` and
+  ;; attach request A's provider answer to request B's context.
+  (let [implementation (ns-resolve 'cloud.itonami.app.bots 'send-unlocked!)
+        active (atom 0)
+        maximum (atom 0)
+        calls (atom 0)
+        first-entered (promise)
+        release-first (promise)
+        fake (fn [& _]
+               (let [n (swap! active inc)
+                     call (swap! calls inc)]
+                 (swap! maximum max n)
+                 (when (= call 1)
+                   (deliver first-entered true)
+                   @release-first)
+                 (swap! active dec)
+                 call))]
+    (with-redefs-fn
+      {implementation fake}
+      (fn []
+        (let [first-turn (future (bots/send! {} {} "bot-1" "first"))
+              _ @first-entered
+              second-turn (future (bots/send! {} {} "bot-1" "second"))]
+          (Thread/sleep 50)
+          (is (= 1 @maximum) "the second turn waits outside the Bot")
+          (deliver release-first true)
+          (is (= 1 @first-turn))
+          (is (= 2 @second-turn))
+          (is (= 1 @maximum)))))))

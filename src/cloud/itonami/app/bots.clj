@@ -3962,15 +3962,23 @@
              :answers (+ spoke answered)
              :messages (group-messages session group-id)}))))))
 
-(defn send!
-  "One message to a Bot, and its answer.
+(defonce ^:private turn-locks (atom {}))
 
-  Synchronous on purpose. A Bot that answered in the background would need a
-  second delivery mechanism for the case a person has closed the screen, and
-  this application already has one — `work-runtime` — for work that is supposed
-  to outlive a window. A chat turn is not that."
+(defn- turn-lock
+  "One stable monitor per Bot. Both ordinary HTTP/A2A turns and streamed turns
+  pass through it, so a second request waits before it can append a direction
+  or replace the durable `:runs` entry of the first."
+  [bot-id]
+  (locking turn-locks
+    (or (get @turn-locks bot-id)
+        (let [monitor (Object.)]
+          (swap! turn-locks assoc bot-id monitor)
+          monitor))))
+
+(defn- send-unlocked!
+  "Implementation of one message turn. Call only while holding `turn-lock`."
   ([configuration session bot-id text]
-   (send! configuration session bot-id text nil))
+   (send-unlocked! configuration session bot-id text nil))
   ([configuration session bot-id text advance-options]
   (let [b (owned! session bot-id)
         text (str/trim (str text))
@@ -4061,6 +4069,23 @@
               (say bot-id message nil))
             (throw error))))
       (public-conversation did bot-id)))))
+
+(defn send!
+  "One message to a Bot, and its answer.
+
+  Synchronous on purpose. A Bot that answered in the background would need a
+  second delivery mechanism for the case a person has closed the screen, and
+  this application already has one — `work-runtime` — for work that is supposed
+  to outlive a window. A chat turn is not that.
+
+  All entry points share one per-Bot monitor. Without it, an A2A request and a
+  CLI request could both build from the same live Bot, overwrite `:runs`, and
+  attach one request's provider answer to the other request's context."
+  ([configuration session bot-id text]
+   (send! configuration session bot-id text nil))
+  ([configuration session bot-id text advance-options]
+   (locking (turn-lock bot-id)
+     (send-unlocked! configuration session bot-id text advance-options))))
 
 (defn send-stream!
   "Run one visible Bot turn with progress events and a cancellable run id."
