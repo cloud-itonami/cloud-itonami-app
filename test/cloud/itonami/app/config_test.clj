@@ -231,7 +231,7 @@
     (is (true? (:assert-response-model? provider)))
     (is (= {"qwen3.8-27b-throughput-5090" "murakumo-main"}
            (:model-fallbacks provider)))
-    (is (= 32768
+    (is (= 65536
            (get-in provider [:context-window-tokens
                              "qwen3.8-27b-throughput-5090"])))
     (is (= 262144 (get-in provider [:context-window-tokens "murakumo-main"]))
