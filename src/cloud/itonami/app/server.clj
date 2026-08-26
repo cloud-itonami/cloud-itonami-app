@@ -6437,6 +6437,7 @@
    ;; Ordinary HTTP/model streams are closed as interrupted. Goal AgentRuns
    ;; checkpoint and requeue from their durable transcript before new work is
    ;; accepted, so a restart does not silently discard an objective.
+   (a2a/recover-interrupted!)
    (bots/recover-interrupted! configuration)
    ;; After the surfaces it drives, so a routine that fires on the first pass
    ;; finds a store that is already open rather than one still being read.
