@@ -3120,6 +3120,9 @@
            :context-threshold-tokens threshold-budget
            :context-estimated-tokens after-tokens
            :context-compacted? (boolean compacted?)}
+    (:text-only? run)
+    (assoc :text-only? true)
+
     ;; A handoff is capped by the provider default (2048) and had reasoning
     ;; left ON, which is the pairing this very comment forbids -- measured
     ;; 2026-08-20 by running one: the model spent the budget thinking and the
@@ -4044,6 +4047,7 @@
                               :context-id context-id
                               :goal? goal?
                               :objective (when goal? text)
+                              :text-only? text-only?
                               :messages (transcript configuration b
                                                     (:context/messages context)
                                                     (when goal? text)
