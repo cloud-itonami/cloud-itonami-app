@@ -6213,8 +6213,9 @@
 (defn- handle-agent-bots!
   "The narrow CLI/MCP Bot surface. Agent sessions may submit and observe work,
   cancel their owner's run, re-provision the workforce from the declared
-  registry, and decide a held card only when that Bot already carries
-  human-enabled omakase. They cannot create a Bot or widen its grant."
+  registry, select an admitted inference route, and decide a held card only when
+  that Bot already carries human-enabled omakase. They cannot create a Bot or
+  widen its grant."
   [config exchange method path]
   (let [session (require-app-session! exchange)]
     (cond
@@ -6225,8 +6226,7 @@
       (send! exchange 200 (bots/workforce-status session))
 
       ;; Re-provisioning is on the agent surface (owner directive 2026-08-18)
-      ;; and it is the ONLY configuration verb that is. The reason it can be
-      ;; here without breaking `handle-bots!`'s argument is that the caller does
+      ;; without breaking `handle-bots!`'s argument because the caller does
       ;; not name anything: `provision-workforce!` reconciles the installed Bots
       ;; to what `network-awai/loop-yakuwari` declares, so authority comes from
       ;; a reviewed repository, not from the request. Creating a Bot and
@@ -6244,6 +6244,25 @@
       (and (= method "POST") (= path "/api/agent-bots/workforce/provision"))
       (send! exchange 200
              (bots/provision-workforce! config session (workforce/load-catalog)))
+
+      ;; Model selection changes the inference route, not Bot authority. The
+      ;; handler constructs the two-field update itself, so extra request keys
+      ;; cannot enable writes, tools, browser, Computer Use, or omakase. The
+      ;; provider/model pair still passes the deployment admission policy in
+      ;; `bots/update!`. Unlike registry reconciliation above, this request is a
+      ;; caller-named mutation, so it retains both Origin and CSRF checks.
+      (and (= method "POST")
+           (bot-id-from path #"/api/agent-bots/([^/]+)/model"))
+      (let [bot-id (bot-id-from path #"/api/agent-bots/([^/]+)/model")
+            body (read-json exchange)]
+        (require-origin! exchange config)
+        (require-csrf! exchange session)
+        (bots/update! config session bot-id
+                      {:provider-id (:provider-id body)
+                       :model (:model body)})
+        (send! exchange 200
+               {:bot (some #(when (= bot-id (:id %)) %)
+                           (:bots (bots/overview config session)))}))
 
       (and (= method "GET")
            (bot-id-from path #"/api/agent-bots/([^/]+)/messages"))
