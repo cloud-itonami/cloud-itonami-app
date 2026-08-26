@@ -122,6 +122,15 @@
             "qwen3.8-27b-fastmtp-aggressive"]
    :model-request-timeout-seconds
    {"qwen3.8-27b-throughput-5090" 420}
+   ;; Do not spend that 420-second cold-start wall when RunPod lacks verified
+   ;; generation capacity. The gateway requires an idle worker plus a recent
+   ;; exact-model generation; it receives no inference bearer from this probe.
+   ;; A 503 becomes the explicit fallback below and the result remains labelled
+   ;; as the model that actually served.
+   :model-readiness
+   {"qwen3.8-27b-throughput-5090"
+    {:url "https://api.murakumo.cloud/ready?model=qwen3.8-27b-throughput-5090"
+     :timeout-seconds 5}}
    :max-transient-retries 0
    :assert-response-model? true
    :model-fallbacks {"qwen3.8-27b-throughput-5090" "murakumo-main"}
