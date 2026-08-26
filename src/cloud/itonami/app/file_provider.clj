@@ -56,7 +56,12 @@
      :parentID (external-parent actor (:drive/parent-id item))
      :name (:drive/title item)
      :directory (= :folder (:drive/kind item))
-     :size (long (or (:drive.version/size-bytes newest) 0))
+     ;; The object version contains the encrypted envelope, whose byte length
+     ;; is intentionally larger than the file Finder materializes. File
+     ;; Provider's documentSize must describe those plaintext bytes or macOS
+     ;; will cache and reconcile against a size it can never fetch.
+     :size (long (or (:drive/logical-size-bytes item)
+                     (:drive.version/size-bytes newest) 0))
      :contentVersion (or (:drive/content-etag item)
                          (:drive/object-ref item) "folder")
      :metadataVersion (version-of metadata)
@@ -123,6 +128,7 @@
                                                      "名称未設定")
                                     :drive/media-type "application/octet-stream"
                                     :drive/content-etag (str "content-" (UUID/randomUUID))
+                                    :drive/logical-size-bytes 0
                                     :drive/created-at created-at
                                     :drive/encrypted? true
                                     :drive/sync-schedule :continuous
@@ -166,6 +172,8 @@
           staged (-> workspace
                      (assoc-in [:drive.workspace/items id :drive/content-etag]
                                (str "content-" (UUID/randomUUID)))
+                     (assoc-in [:drive.workspace/items id :drive/logical-size-bytes]
+                               (count bytes))
                      (assoc-in [:drive.workspace/items id :drive/encrypted?] true)
                      (assoc-in [:drive.workspace/items id :drive/sync-local-state]
                                :materialized))

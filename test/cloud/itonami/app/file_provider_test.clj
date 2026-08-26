@@ -28,6 +28,9 @@
         (is (= (:id folder) (:parentID file)))
         (is (= "hello" (text (:bytes (provider/materialize actor (:id file)
                                                            object-store)))))
+        ;; Finder sees the bytes it materializes, not the larger encrypted
+        ;; package persisted by the object store.
+        (is (= 5 (:size uploaded)))
         (is (= "automatic" (:residency uploaded)))
         (is (= "pinned" (:residency
                           (provider/set-mode! actor (:id file) :manual :pinned))))
