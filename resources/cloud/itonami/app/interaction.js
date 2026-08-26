@@ -4414,6 +4414,13 @@
       });
       const makeLink = make('button', 'tool-button', 'リンクを作成');
       makeLink.type = 'button';
+      const fragmentStorageKey = (token) => `cloud-itonami.drive.link-grant.${token}`;
+      const encodeFragmentGrant = (grant) => {
+        const bytes = new TextEncoder().encode(JSON.stringify(grant));
+        let binary = '';
+        bytes.forEach((value) => { binary += String.fromCharCode(value); });
+        return btoa(binary).replaceAll('+', '-').replaceAll('/', '_').replaceAll('=', '');
+      };
 
       // Options come from the server's own lists, so `:owner` never appears
       // among them — `documents/grantable-roles` leaves it out on purpose.
@@ -4424,6 +4431,13 @@
         });
       };
       const render = (data) => {
+        if (data.token && data['fragment-grant']) {
+          // The one-time private link key remains in this browser session.
+          // Hash fragments are not sent in HTTP requests, and the server,
+          // persisted state and encrypted package never receive this value.
+          sessionStorage.setItem(fragmentStorageKey(data.token),
+            encodeFragmentGrant(data['fragment-grant']));
+        }
         fillOnce(role, data.roles);
         fillOnce(linkRole, data['link-roles']);
         if (!whoPicker.options.length && (data.candidates || []).length) {
@@ -4450,7 +4464,10 @@
         });
         (data.links || []).forEach((link) => {
           const entry = make('li', 'sharing__entry');
-          const url = `${window.location.origin}/api/workspace/drive/shared/${encodeURIComponent(link.token)}`;
+          const fragment = sessionStorage.getItem(fragmentStorageKey(link.token));
+          const url = fragment
+            ? `${window.location.origin}/api/workspace/drive/shared/${encodeURIComponent(link.token)}#kotoba-grant=${fragment}`
+            : '暗号鍵はこのブラウザに残っていません。リンクを無効化して再作成してください。';
           const field = make('input', 'workspace-search sharing__token');
           field.type = 'text'; field.readOnly = true; field.value = url;
           field.setAttribute('aria-label', `共有リンク（${link.role}）`);
@@ -4458,8 +4475,11 @@
             `リンク（${link.role}・${link['expires-at'] ? '期限あり' : '期限なし'}）`), field);
           const revoke = make('button', 'tool-button', '無効化');
           revoke.type = 'button';
-          revoke.addEventListener('click', () => submit(
-            {action:'revoke-link', token:link.token}, 'リンクを無効化しました。'));
+          revoke.addEventListener('click', async () => {
+            if (await submit({action:'revoke-link', token:link.token}, 'リンクを無効化しました。')) {
+              sessionStorage.removeItem(fragmentStorageKey(link.token));
+            }
+          });
           entry.append(revoke);
           current.append(entry);
         });
@@ -4475,8 +4495,10 @@
             body, true);
           render(data);
           status.textContent = done;
+          return true;
         } catch (error) {
           status.textContent = error.message;
+          return false;
         }
       };
       share.addEventListener('click', () => submit(

@@ -74,6 +74,14 @@
         (is (zero? exit) (str source " does not parse under node " version ":\n" err))))
     (println "web-script-test: node is not on PATH, so the interaction layer was not parsed.")))
 
+(deftest encrypted-share-links-keep-the-one-time-key-in-the-url-fragment
+  (let [js (slurp (io/file "resources/cloud/itonami/app/interaction.js"))]
+    (is (str/includes? js "sessionStorage.setItem(fragmentStorageKey(data.token)"))
+    (is (str/includes? js "#kotoba-grant=${fragment}"))
+    (is (str/includes? js "sessionStorage.removeItem(fragmentStorageKey(link.token))"))
+    (is (not (str/includes? js "localStorage.setItem(fragmentStorageKey"))
+        "a link private key does not outlive the browser session")))
+
 (deftest context-drawer-stays-closed-until-the-person-opens-it
   (let [html (with-redefs [store/snapshot (constantly (store/initial-state))]
                (web/page-html config))]
