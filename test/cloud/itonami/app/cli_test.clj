@@ -60,6 +60,25 @@
               {:text "repo を確認して"}]
              @seen)))))
 
+(deftest bots-cli-selects-only-the-inference-route
+  (let [seen (atom nil)]
+    (with-redefs [client/request!
+                  (fn [_ method path body]
+                    (reset! seen [method path body])
+                    {:bot {:id "bot-1"
+                           :provider-id "murakumo"
+                           :model "qwen3.8-27b-throughput-5090"}})]
+      (is (= "qwen3.8-27b-throughput-5090"
+             (get-in (cli/run {} ["bots" "model"
+                                  "--id" "bot-1"
+                                  "--provider" "murakumo"
+                                  "--model" "qwen3.8-27b-throughput-5090"])
+                     [:bot :model])))
+      (is (= [:post "/api/agent-bots/bot-1/model"
+              {:provider-id "murakumo"
+               :model "qwen3.8-27b-throughput-5090"}]
+             @seen)))))
+
 (deftest west-refactor-inspection-does-not-start-the-server
   (is (false? (cli/needs-server? ["bots" "refactor" "scan" "--root" "/tmp/ws"])))
   (is (false? (cli/needs-server? ["bots" "refactor" "inspect" "--root" "/tmp/ws"
