@@ -245,11 +245,12 @@
     (is (= 262144
            (get-in providers ["murakumo" :context-window-tokens
                               "murakumo-main"])))
-    (doseq [model ["qwen3.8-27b-throughput-5090"
-                   "qwen3.8-27b-fastmtp-aggressive"]]
-      (is (= 32768
-             (get-in providers ["murakumo" :context-window-tokens model]))
-          (str model " must carry the selected model's window")))))
+    (is (= 65536
+           (get-in providers ["murakumo" :context-window-tokens
+                              "qwen3.8-27b-throughput-5090"])))
+    (is (= 32768
+           (get-in providers ["murakumo" :context-window-tokens
+                              "qwen3.8-27b-fastmtp-aggressive"])))))
 
 ;; ---------------------------------------------------------------------------
 ;; secrets are read from the environment, never held in config
