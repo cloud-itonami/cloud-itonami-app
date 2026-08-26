@@ -119,7 +119,7 @@
    ;; which the provider layer refused with `unsupported provider kind` — the
    ;; refusal is why it was found the same day.
    :base-url "https://api.murakumo.cloud/v1"
-   :default-model "qwen3.8-27b-fastmtp-aggressive"
+   :default-model "murakumo-main"
    ;; This is the public RunPod RTX 5090 selector advertised and live-verified
    ;; by https://murakumo.cloud/llm.txt on 2026-08-25.  A cold start took
    ;; 237.45 s there, so this selector gets a deliberately wider request bound
@@ -142,7 +142,11 @@
      :timeout-seconds 5}}
    :max-transient-retries 0
    :assert-response-model? true
-   :model-fallbacks {"qwen3.8-27b-throughput-5090" "murakumo-main"}
+   ;; 5090 cold-start 503 and FastMTP's dead Modal origin (measured
+   ;; 2026-08-26: HTTP 502 body starting `modal-http`, not JSON) both
+   ;; retry the alias. The result stays labelled as the model that served.
+   :model-fallbacks {"qwen3.8-27b-throughput-5090" "murakumo-main"
+                    "qwen3.8-27b-fastmtp-aggressive" "murakumo-main"}
    ;; The stable alias currently reports 262,144, the Community RTX 5090 Pod
    ;; reports 65,536, and the FastMTP deployment reports 32,768. Keep this map
    ;; beside the alias: repointing `murakumo-main` must update its model metadata
@@ -274,7 +278,7 @@
                     ;; into a red "tool budget" failure after four reads.
                     :max-tool-calls 8
                     :max-tool-output-chars 1600
-                    :model "qwen3.8-27b-fastmtp-aggressive"
+                    :model "murakumo-main"
                     ;; Standing delegation, deliberately ABSENT here: `:all`
                     ;; or a set of workforce keys ("business/kind") an
                     ;; operator writes into their own config.edn. A
