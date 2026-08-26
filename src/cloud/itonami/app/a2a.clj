@@ -119,6 +119,7 @@
                             (get-in configuration [:a2a :bot-id])
                             (:text admitted)
                             {:isolated? true :source :a2a
+                             :text-only? true
                              :run-id (:id working)})
                   completed (save-task!
                              (assoc working

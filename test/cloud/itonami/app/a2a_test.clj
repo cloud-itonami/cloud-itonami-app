@@ -68,7 +68,8 @@
           (is (= 1 (count @calls)) "retry must not execute the Bot twice")
           (is (= ["bot-a" "verify this"]
                  (subvec (vec (first @calls)) 0 2)))
-          (is (= {:isolated? true :source :a2a :run-id (:id task)}
+          (is (= {:isolated? true :source :a2a :text-only? true
+                  :run-id (:id task)}
                  (nth (first @calls) 2)))))
       (finally (reset! store/state previous)))))
 

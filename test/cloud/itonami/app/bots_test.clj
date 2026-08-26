@@ -1431,7 +1431,8 @@
                         {:content "ok" :tool-calls []})]
           (bots/send! nil alice (:bot/id b) "private-first")
           (bots/send! nil alice (:bot/id b) "external-second"
-                      {:isolated? true :source :a2a :run-id "a2a-task-test"})
+                      {:isolated? true :source :a2a :text-only? true
+                       :run-id "a2a-task-test"})
           (let [external (last @requests)
                 rendered (pr-str (:messages external))
                 context (->> (vals (get-in @store/state [:bots :contexts]))
@@ -1439,6 +1440,7 @@
                              first)]
             (is (str/includes? rendered "external-second"))
             (is (not (str/includes? rendered "private-first")))
+            (is (empty? (:tools external)))
             (is (= :a2a (:context/source context)))
             (is (= [:a2a]
                    (mapv :message/source (:context/messages context))))))))))
