@@ -50,6 +50,18 @@ were then recorded as failed even when every call had made progress.
    after 24 continuation slices; crossing it reports a long-running execution
    stop rather than silently looping forever.
 
+## Current decision (2026-08-26)
+
+Item 1 above is reversed for the same reason it was written: live
+measurement. On 2026-08-26 `POST /v1/chat/completions` with
+`qwen3.8-27b-fastmtp-aggressive` returned HTTP 502 and a non-JSON body
+starting `modal-http`. The same hour, `murakumo-main` returned HTTP 200
+(`alias-for: qwen3.8-27b`, serving). New and provisioned resident Bots
+therefore use the alias `murakumo-main`. FastMTP remains a named model
+and an explicit operator override; it is also a `model-fallbacks` *source*
+that retries the alias. Items 2–5 are unchanged. The 2026-08-23
+measurement is not rewritten.
+
 ## Acceptance gates
 
 The live workforce is accepted only when a new post-change window measures:
