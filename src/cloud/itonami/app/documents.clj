@@ -52,6 +52,7 @@
             [cloud.itonami.app.filecoin :as filecoin]
             [cloud.itonami.app.kotobase-objects :as kotobase-objects]
             [cloud.itonami.app.config :as config]
+            [cloud.itonami.app.drive-crypto :as drive-crypto]
             [cloud.itonami.app.store :as store]
             [cloud.itonami.app.storj :as storj]
             [docs.model :as docs]
@@ -471,6 +472,13 @@
 (defn- bytes->string [bytes]
   (String. (byte-array (map unchecked-byte bytes)) StandardCharsets/UTF_8))
 
+(defn- seal-body [principals item-id bytes]
+  (drive-crypto/seal-for principals
+                         (str "drive:" item-id ":" (UUID/randomUUID)) bytes))
+
+(defn- open-body [actor bytes]
+  (drive-crypto/open actor bytes))
+
 (defn decode-stored
   "Stored bytes back into `{:kind k :payload resource}`, as EDN.
 
@@ -589,7 +597,10 @@
       ;; What a save has to echo back. The object reference of the current
       ;; version, which `write-item` guarantees is unique per version, so it
       ;; is an ETag in every sense but the header it is not sent in.
-      :etag (:drive/object-ref item)
+      :etag (or (:drive/content-etag item) (:drive/object-ref item))
+      :encrypted? (boolean (:drive/encrypted? item))
+      :sync-schedule (name (or (:drive/sync-schedule item) :continuous))
+      :residency (name (or (:drive/residency item) :automatic))
       :updated-at (:drive.version/created-at newest)
       ;; Who last wrote it, which is only a question worth asking because a
       ;; document can now have more than one writer.
@@ -630,6 +641,8 @@
    :kind "folder"
    :label "フォルダ"
    :parent-id (:drive/parent-id item)
+   :sync-schedule (name (or (:drive/sync-schedule item) :continuous))
+   :residency (name (or (:drive/residency item) :automatic))
    :trashed? (ws/trashed? workspace (:drive/id item))
    :role (some-> (ws/effective-role workspace (:drive/id item) actor) name)
    :count (count (ws/children workspace (:drive/id item) actor))})
@@ -862,6 +875,79 @@
   have a real one."
   [object-store bytes]
   (object-ref object-store bytes))
+
+(defn- replace-current-bytes
+  "Replace only the package of the newest version.
+
+  Used when recipient wraps change: ciphertext content is unchanged, so this
+  is metadata rotation rather than a new document version. The old opaque
+  object is left in place because a content-addressed ref may be shared by a
+  workspace this function cannot see."
+  [workspace object-store id bytes]
+  (let [item (ws/item workspace id)
+        versions (:drive/versions item)
+        index (dec (count versions))
+        old-size (:drive.version/size-bytes (peek versions) 0)
+        new-size (count bytes)
+        new-ref (object-ref object-store bytes)
+        next-used (+ (:drive.workspace/used-bytes workspace)
+                     (- new-size old-size))]
+    (when (> next-used (:drive.workspace/quota-bytes workspace))
+      (refuse! {:reason :quota-exceeded :size new-size
+                :used (:drive.workspace/used-bytes workspace)
+                :quota (:drive.workspace/quota-bytes workspace)}))
+    (object/-put-object object-store new-ref bytes)
+    (-> workspace
+        (assoc-in [:drive.workspace/items id :drive/object-ref] new-ref)
+        (assoc-in [:drive.workspace/items id :drive/versions index
+                   :drive.version/object-ref] new-ref)
+        (assoc-in [:drive.workspace/items id :drive/versions index
+                   :drive.version/size-bytes] new-size)
+        (assoc :drive.workspace/used-bytes next-used))))
+
+(defn- grant-current-package
+  [workspace object-store id owner recipient]
+  (let [item (ws/item workspace id)
+        ref (:drive/object-ref item)]
+    (if-not ref
+      workspace
+      (if-let [stored (object/-get-object object-store ref)]
+        (let [_ (drive-crypto/ensure-keypair! recipient)
+              package (if (drive-crypto/encrypted? stored)
+                        (drive-crypto/grant stored owner recipient)
+                        (seal-body [owner recipient] id stored))]
+          (-> (replace-current-bytes workspace object-store id package)
+              (assoc-in [:drive.workspace/items id :drive/encrypted?] true)))
+        ;; A caller may be exercising the model against an injected store
+        ;; while grant! uses the resident store. The ACL still lands; the next
+        ;; write seals to every ACL principal. Production uses one store and
+        ;; therefore takes the re-wrap branch above.
+        workspace))))
+
+(defn- revoke-current-package
+  [workspace object-store id recipient]
+  (let [item (ws/item workspace id)
+        ref (:drive/object-ref item)]
+    (if-let [stored (and ref (object/-get-object object-store ref))]
+      (if (drive-crypto/encrypted? stored)
+        (let [{:keys [bytes requires-rotation?]} (drive-crypto/revoke stored recipient)]
+          {:workspace (replace-current-bytes workspace object-store id bytes)
+           :requires-rotation? requires-rotation?})
+        {:workspace workspace :requires-rotation? false})
+      {:workspace workspace :requires-rotation? false})))
+
+(defn- mint-current-link
+  [workspace object-store id owner]
+  (let [item (ws/item workspace id)
+        ref (:drive/object-ref item)]
+    (if-let [stored (and ref (object/-get-object object-store ref))]
+      (let [package (if (drive-crypto/encrypted? stored)
+                      stored
+                      (seal-body [owner] id stored))
+            {:keys [bytes grant]} (drive-crypto/mint-link package owner)]
+        {:workspace (replace-current-bytes workspace object-store id bytes)
+         :grant grant})
+      {:workspace workspace :grant nil})))
 
 (defn save-workspace!
   "Persist one principal's Drive.
@@ -1166,7 +1252,7 @@
          result (object/read-item workspace object-store id actor)]
      (if (:ok? result)
        (let [item (ws/item workspace id)
-             resource (stored-payload id item (:bytes result))]
+             resource (stored-payload id item (open-body owner (:bytes result)))]
          {:schema schema
           :ok? true
           :item (item-view item {:owner owner :own? own?
@@ -1255,11 +1341,11 @@
      (if (:ok? result)
        (let [item (ws/item workspace id)]
          {:ok? true
-          :bytes (:bytes result)
+          :bytes (open-body owner (:bytes result))
           :object-ref (:drive/object-ref item)
           :media-type (:drive/media-type item)
           :resource-kind (some-> (:drive/resource-kind item) str)
-          :resource (stored-payload id item (:bytes result))
+          :resource (stored-payload id item (open-body owner (:bytes result)))
           :item (item-view item {:owner owner :own? own?
                                  :role (ws/effective-role workspace id actor)})})
        (refuse! result)))))
@@ -1394,6 +1480,7 @@
                                     {:drive/title title
                                      :drive/media-type stored-media-type
                                      :drive/resource-kind (:resource-kind spec)
+                                     :drive/content-etag (str "content-" (UUID/randomUUID))
                                      :drive/created-at created-at}
                                     actor)
              ;; A document belongs to the Drive it is in. `ws/create-file`
@@ -1407,7 +1494,8 @@
                       (not= owner actor)
                       (assoc-in [:drive.workspace/items id :drive/permissions]
                                 {owner :owner actor :editor}))
-             body (envelope-bytes envelope)
+             body (seal-body [owner actor] id (envelope-bytes envelope))
+             staged (assoc-in staged [:drive.workspace/items id :drive/encrypted?] true)
              written (object/write-item staged object-store id actor body
                                         {:object-ref (object-ref object-store body)
                                          :created-at created-at})]
@@ -1464,7 +1552,8 @@
   replaces an earlier version's bytes while the history saying otherwise is
   still sitting in `:drive/versions`."
   [{:keys [workspace item spec owner own?]} id actor object-store resource expected-etag]
-  (when-not (= expected-etag (:drive/object-ref item))
+  (when-not (= expected-etag (or (:drive/content-etag item)
+                                 (:drive/object-ref item)))
     ;; The lost update this exists to stop. Two editors open version 1, both
     ;; save, and the second write silently discards the first — measured
     ;; before this check existed: alice's paragraph was simply gone and the
@@ -1473,7 +1562,8 @@
     (throw (ex-info "他の人がこのドキュメントを更新しました。読み込み直してください。"
                     {:type :drive/stale-version
                      :item-id id
-                     :etag (:drive/object-ref item)
+                     :etag (or (:drive/content-etag item)
+                               (:drive/object-ref item))
                      :versions (count (:drive/versions item))
                      :updated-by (:drive.version/author (peek (:drive/versions item)))})))
   (let [{:keys [errors warnings]} (problems-in spec resource)
@@ -1493,12 +1583,16 @@
           ;; the list disagree with what is open.
           retitled (-> workspace
                        (assoc-in [:drive.workspace/items id :drive/title] title)
+                       (assoc-in [:drive.workspace/items id :drive/content-etag]
+                                 (str "content-" (UUID/randomUUID)))
                        ;; A document written before EDN at rest still says
                        ;; application/json; the save that rewrites its bytes
                        ;; is the save that corrects what it claims to be.
                        (assoc-in [:drive.workspace/items id :drive/media-type]
                                  stored-media-type))
-          body (envelope-bytes envelope)
+          body (seal-body (conj (vec (keys (:drive/permissions item))) owner actor)
+                          id (envelope-bytes envelope))
+          retitled (assoc-in retitled [:drive.workspace/items id :drive/encrypted?] true)
           written (object/write-item retitled object-store id actor body
                                      {:object-ref (object-ref object-store body)
                                       :created-at (store/now)})]
@@ -1572,7 +1666,8 @@
        (let [resource (assoc (:resource (content id actor object-store))
                              (:title-key spec) title)]
          (write-resource! target id actor object-store resource
-                          (:drive/object-ref item)))))))
+                          (or (:drive/content-etag item)
+                              (:drive/object-ref item))))))))
 
 (defn version-content
   "The stored envelope of one *earlier* version of `id`.
@@ -1608,7 +1703,7 @@
          ;; An old version may still be JSON while the newest is EDN, which
          ;; is exactly what `decode-stored` is for — a Drive migrating as it
          ;; is used has both in the same item's history.
-         (let [resource (stored-payload id item bytes)]
+         (let [resource (stored-payload id item (open-body owner bytes))]
            {:schema schema
             :ok? true
             :item (item-view item {:owner owner :own? own?
@@ -1879,8 +1974,10 @@
   Recorded on the item, in the owner's workspace, which is why `locate`
   exists: the grantee's own Drive has no idea this happened, and looking
   only there is what would make the grant invisible."
-  [id principal role-name actor]
-  (locking write-lock
+  ([id principal role-name actor]
+   (grant! id principal role-name actor nil))
+  ([id principal role-name actor object-store]
+   (locking write-lock
     (let [{:keys [workspace owner]} (owned! actor id)
           principal (not-empty (str/trim (str principal)))
           role (get grantable-roles (some-> role-name str/trim))]
@@ -1899,34 +1996,42 @@
         ;; The ACL entry and the capability are written together. The entry
         ;; is what `drive` answers from; the capability is what anybody else
         ;; can check, and what stops the entry being true forever.
-        (let [granted (ws/grant workspace id principal role)
+        (let [encrypted (if object-store
+                          (grant-current-package workspace object-store
+                                                 id owner principal)
+                          workspace)
+              granted (ws/grant encrypted id principal role)
               cap (capability/mint-grant {:document-id id :role role
                                           :audience principal})]
           (store/transact! assoc-in (workspace-path owner) granted)
           (store/transact! assoc-in (capability-path id principal) cap)
-          (sharing id actor))))))
+          (sharing id actor)))))))
 
 (defn revoke-grant!
   "Take a role away again.
 
   `drive.workspace` has no `revoke`, so this removes the entry directly —
   which is what `grant` writes, and the only thing it writes."
-  [id principal actor]
-  (locking write-lock
-    (let [{:keys [workspace owner]} (owned! actor id)]
-      (when (= principal actor)
-        (throw (ex-info "所有者の権限は取り消せません。"
-                        {:type :drive/invalid-share :field :principal})))
-      (let [revoked (update-in workspace
-                               [:drive.workspace/items id :drive/permissions]
-                               dissoc principal)]
-        (store/transact! assoc-in (workspace-path owner) revoked)
-        ;; The capability goes with the entry. Leaving it behind would mean
-        ;; handing a revoked grantee something that still verifies, which is
-        ;; the failure this layer exists to not have — and is why revocation
-        ;; is still this server's word rather than the capability's.
-        (store/transact! update-in [:drive :capabilities id] dissoc principal)
-        (sharing id actor)))))
+  ([id principal actor] (revoke-grant! id principal actor nil))
+  ([id principal actor object-store]
+   (locking write-lock
+     (let [{:keys [workspace owner]} (owned! actor id)]
+       (when (= principal actor)
+         (throw (ex-info "所有者の権限は取り消せません。"
+                         {:type :drive/invalid-share :field :principal})))
+       (let [{crypt-workspace :workspace rotation? :requires-rotation?}
+             (if object-store
+               (revoke-current-package workspace object-store id principal)
+               {:workspace workspace :requires-rotation? false})
+             revoked (update-in crypt-workspace
+                                [:drive.workspace/items id :drive/permissions]
+                                dissoc principal)]
+         (store/transact! assoc-in (workspace-path owner) revoked)
+         (store/transact! update-in [:drive :capabilities id] dissoc principal)
+         (assoc (sharing id actor)
+                ;; Current downloads stop now. Already decrypted copies and
+                ;; old versions cannot be made to forget their plaintext.
+                :requires-content-key-rotation? rotation?))))))
 
 (defn create-link!
   "A token that reads this document without a role on it.
@@ -1937,7 +2042,9 @@
   from what it points at is not a token.
 
   Redeeming one still requires an app session — see `link-content`."
-  [id role-name expires-in-hours actor now-ms]
+  ([id role-name expires-in-hours actor now-ms]
+   (create-link! id role-name expires-in-hours actor now-ms nil))
+  ([id role-name expires-in-hours actor now-ms object-store]
   (locking write-lock
     (let [{:keys [workspace owner]} (owned! actor id)
           role (get link-roles (some-> role-name str/trim))
@@ -1955,16 +2062,33 @@
               ;; Epoch millis, because `resolve-share-link` compares with `<`.
               ;; `store/now` is an ISO string and would compare as nonsense.
               expires-at (when hours (+ now-ms (* hours 60 60 1000)))
-              linked (ws/create-share-link workspace token id role expires-at)]
+              {encrypted :workspace grant :grant}
+              (if object-store
+                (mint-current-link workspace object-store id owner)
+                {:workspace workspace :grant nil})
+              linked (cond-> (ws/create-share-link encrypted token id role expires-at)
+                       grant
+                       (assoc-in [:drive.workspace/share-links token
+                                  :drive.share/encryption-recipient-id]
+                                 (:grant/recipient-id grant)))]
           (store/transact! assoc-in (workspace-path owner) linked)
-          (assoc (sharing id actor) :token token))))))
+          (cond-> (assoc (sharing id actor) :token token)
+            grant (assoc :fragment-grant grant))))))))
 
-(defn revoke-link! [id token actor]
-  (locking write-lock
-    (let [{:keys [workspace owner]} (owned! actor id)]
-      (store/transact! assoc-in (workspace-path owner)
-                       (ws/revoke-share-link workspace token))
-      (sharing id actor))))
+(defn revoke-link!
+  ([id token actor] (revoke-link! id token actor nil))
+  ([id token actor object-store]
+   (locking write-lock
+     (let [{:keys [workspace owner]} (owned! actor id)
+           recipient (get-in workspace [:drive.workspace/share-links token
+                                        :drive.share/encryption-recipient-id])
+           {crypt-workspace :workspace rotation? :requires-rotation?}
+           (if (and object-store recipient)
+             (revoke-current-package workspace object-store id recipient)
+             {:workspace workspace :requires-rotation? false})]
+       (store/transact! assoc-in (workspace-path owner)
+                        (ws/revoke-share-link crypt-workspace token))
+       (assoc (sharing id actor) :requires-content-key-rotation? rotation?)))))
 
 (defn link-content
   "Read a document by share-link token.
@@ -1997,7 +2121,11 @@
          (if (:ok? result)
            (let [link (ws/resolve-share-link workspace token now-ms)
                  item (ws/item workspace (:drive.share/item-id link))
-                 resource (stored-payload (:drive.share/item-id link) item (:bytes result))]
+                 ;; The resident process is the owner's client. Legacy links
+                 ;; have no fragment key, so it opens locally as the owner;
+                 ;; new links additionally receive a link recipient below.
+                 resource (stored-payload (:drive.share/item-id link) item
+                                          (open-body owner (:bytes result)))]
              {:schema schema
               :ok? true
               :item (item-view item {:owner owner :own? (= owner actor)
@@ -2494,7 +2622,8 @@
                                         %)
                                      blocks)))]
          (write-resource! target id actor object-store updated
-                          (:drive/object-ref item)))))))
+                          (or (:drive/content-etag item)
+                              (:drive/object-ref item))))))))
 
 (defn reject-suggestion!
   "Decline a proposal. Nothing is written to the document.
@@ -2725,21 +2854,24 @@
                                    ;; the response — see `upload-media-type`.
                                    :drive/media-type (or (not-empty (str media-type))
                                                          upload-media-type)
+                                   :drive/content-etag (str "content-" (UUID/randomUUID))
                                    :drive/created-at created-at}
                                   actor)
            staged (cond-> staged
                     (not= owner actor)
                     (assoc-in [:drive.workspace/items id :drive/permissions]
                               {owner :owner actor :editor}))
-           written (object/write-item staged object-store id actor bytes
+           encrypted-bytes (seal-body [owner actor] id bytes)
+           staged (assoc-in staged [:drive.workspace/items id :drive/encrypted?] true)
+           written (object/write-item staged object-store id actor encrypted-bytes
                                       {;; A store that names its own
                                        ;; references wins over the PieceCID:
                                        ;; both are content-derived, and the
                                        ;; one the store can actually resolve
                                        ;; is the one that has to be recorded.
                                        :object-ref
-                                       (object-ref object-store bytes
-                                                   #(filecoin/piece-ref bytes))
+                                       (object-ref object-store encrypted-bytes
+                                                   #(filecoin/piece-ref encrypted-bytes))
                                        :created-at created-at})]
        (if (:ok? written)
          (do (store/transact! assoc-in (workspace-path owner) (:workspace written))
@@ -2757,7 +2889,7 @@
   for the same reason."
   ([id actor] (file-bytes id actor (store-instance)))
   ([id actor object-store]
-   (let [{:keys [workspace]} (locate (store/snapshot) actor id)
+   (let [{:keys [workspace owner]} (locate (store/snapshot) actor id)
          item (when workspace (ws/item workspace id))]
      (when-not item (refuse! {:reason :no-such-item :item-id id}))
      (when (:drive/resource-kind item)
@@ -2776,7 +2908,7 @@
                         upload-media-type)
           :inline? (previewable? item)
           :object-ref (:drive/object-ref item)
-          :bytes (:bytes result)}
+          :bytes (open-body owner (:bytes result))}
          (refuse! result))))))
 
 (defn copy!
@@ -3003,7 +3135,8 @@
                          :sheets/title (:name (:item created)))
          target (writable! actor sheet-id)]
      (write-resource! target sheet-id actor object-store workbook
-                      (:drive/object-ref (:item target))))))
+                      (or (:drive/content-etag (:item target))
+                          (:drive/object-ref (:item target)))))))
 
 (defn- office-parts
   "The entry names of `bytes` if they are a zip, else nil.

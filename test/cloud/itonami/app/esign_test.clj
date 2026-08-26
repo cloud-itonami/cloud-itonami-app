@@ -310,7 +310,7 @@
     (testing "the frozen digest is over the stored bytes of that version"
       (is (str/starts-with? (:esign/document-digest envelope) "sha256:"))
       (is (= (:esign/object-ref envelope)
-             (:etag (:item (documents/content (:id document) alice object-store))))))
+             (:object-ref (documents/source-bytes (:id document) alice object-store)))))
 
     (testing "an exhaustive outline was captured, SEALED, and digested as plaintext"
       ;; The digest is over the plaintext — what the signer saw and what the
