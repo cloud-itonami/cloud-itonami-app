@@ -80,6 +80,7 @@
             [cloud.itonami.app.tenant-repository :as tenant-repository]
             [cloud.itonami.app.tenant-tools :as tenant-tools]
             [cloud.itonami.app.updater :as updater]
+            [kotoba.protocol.a2a :as protocol-a2a]
             [cloud.itonami.app.wallet :as wallet]
             [cloud.itonami.app.web :as web]
             [cloud.itonami.app.worker :as worker]
@@ -649,6 +650,32 @@
                     {:type :identity/unauthenticated})))
   (require-session! exchange))
 
+(defn- send-a2a-stream!
+  [^HttpExchange exchange configuration session request]
+  (doto (.getResponseHeaders exchange)
+    (.set "Content-Type" "text/event-stream; charset=utf-8")
+    (.set "Cache-Control" "no-store")
+    (.set "X-Content-Type-Options" "nosniff"))
+  (.sendResponseHeaders exchange 200 0)
+  (with-open [writer (OutputStreamWriter. (.getResponseBody exchange)
+                                          StandardCharsets/UTF_8)]
+    (let [request-id (protocol-a2a/field request "id")
+          frame! (fn [response]
+                   (.write writer "data: ")
+                   (.write writer (json/write-str response))
+                   (.write writer "\n\n")
+                   (.flush writer))]
+      (try
+        (a2a/send-streaming-message!
+         configuration session request
+         #(frame! (protocol-a2a/json-rpc-result request-id {:task %})))
+        (catch clojure.lang.ExceptionInfo error
+          (frame! (protocol-a2a/json-rpc-error
+                   request-id
+                   (if (= :a2a/invalid-request (:type (ex-data error)))
+                     -32602 -32603)
+                   (.getMessage error))))))))
+
 (defn- a2a-handler [configuration]
   (reify HttpHandler
     (handle [_ exchange]
@@ -667,15 +694,17 @@
             (and (= method "POST") (= path "/a2a"))
             (let [session (require-a2a-bearer-session! exchange)
                   content-type (or (.getFirst (.getRequestHeaders exchange)
-                                              "Content-Type") "")]
+                                              "Content-Type") "")
+                  request (read-json-limited exchange (* 2 1024 1024) nil)]
               (when-not (str/starts-with? (str/lower-case content-type)
                                           "application/json")
                 (throw (ex-info "A2A request must be application/json"
                                 {:type :a2a/unsupported-media-type})))
-              (send! exchange 200
-                     (a2a/respond! configuration session
-                                   (read-json-limited exchange
-                                                      (* 2 1024 1024) nil))))
+              (if (= "SendStreamingMessage"
+                     (protocol-a2a/field request "method"))
+                (send-a2a-stream! exchange configuration session request)
+                (send! exchange 200
+                       (a2a/respond! configuration session request))))
 
             :else (send! exchange 404 {:error "not_found"}))
           (catch clojure.lang.ExceptionInfo error

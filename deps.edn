@@ -10,7 +10,7 @@
   ;; App identity: raw CIDv1 + :kotoba.app/* manifest (zero runtime deps).
   io.github.kotoba-lang/kotoba-protocol
   {:git/url "https://github.com/kotoba-lang/kotoba-protocol.git"
-   :git/sha "90358d82923d5e1bb1efd06225dd8dfe8f02dd9b"}
+   :git/sha "782a199849a425065e7685f76338ec5e534184e8"}
   ;; L2 graph CID: protocol.graph overlay + chain.core/commit! (ADR-2608145400).
   ;; Protocol does not hash and does not depend on chain.
   io.github.kotoba-lang/chain
