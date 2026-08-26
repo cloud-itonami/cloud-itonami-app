@@ -121,7 +121,7 @@
    :git/sha "f261f1e7853d26c2bf53b2236e3b7d454598ac28"}
   io.github.kotoba-lang/shell
   {:git/url "https://github.com/kotoba-lang/shell.git"
-   :git/sha "19bb540c5bc725ef513cc9e4ae420fb1b952a200"}
+   :git/sha "2fec11589465e3960ece9b8101c13ab79080dcea"}
   io.github.kotoba-lang/kotoba
   {:git/url "https://github.com/kotoba-lang/kotoba.git"
    :git/tag "v0.6.29"
