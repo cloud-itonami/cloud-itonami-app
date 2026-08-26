@@ -515,6 +515,12 @@
   (client/request! configuration :get
                    (str "/api/agent-bots/" (required-flag flags :id) "/messages")))
 
+(defn bot-model [configuration flags]
+  (client/request! configuration :post
+                   (str "/api/agent-bots/" (required-flag flags :id) "/model")
+                   {:provider-id (required-flag flags :provider)
+                    :model (required-flag flags :model)}))
+
 (defn bot-task [configuration flags]
   (client/request-with-timeout!
    configuration :post
@@ -613,6 +619,7 @@
        "  bots workforce\n"
        "  bots provision\n"
        "  bots messages --id <bot-id>\n"
+       "  bots model --id <bot-id> --provider <provider-id> --model <model-id>\n"
        "  bots task --id <bot-id> --text <依頼>\n"
        "  bots handoff --from <bot-id> --to <bot-id> --task <依頼> [--depth N]\n"
        "  bots decide --id <bot-id> --card <card-id> --decision approved|rejected\n"
@@ -620,7 +627,8 @@
        "  bots refactor scan --root <west-root> [--limit 25]\n"
        "  bots refactor inspect --root <west-root> --repo <west-name> [--limit 8]\n"
        "  bots refactor start --root <west-root> --repo <west-name> --id <bot-id>\n\n"
-       "Bot設定と通常モードの承認はブラウザ専用です。CLI承認はおまかせBotだけです。\n"))
+       "CLI では Bot の model route だけ変更できます。権限設定と通常モードの承認はブラウザ専用です。\n"
+       "CLI承認はおまかせBotだけです。\n"))
 
 (defn- run-server-command
   "Anything that needs the server. Reached only after `ensure-server!`, so the
@@ -650,6 +658,7 @@
       ["bots" "workforce"] (bot-workforce configuration)
       ["bots" "provision"] (bot-workforce-provision configuration)
       ["bots" "messages"] (bot-messages configuration flags)
+      ["bots" "model"] (bot-model configuration flags)
       ["bots" "task"] (bot-task configuration flags)
       ["bots" "handoff"] (bot-handoff configuration flags)
       ["bots" "decide"] (bot-decide configuration flags)
