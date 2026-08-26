@@ -257,7 +257,11 @@
                       {:type :folder-sync/file-too-large
                        :size-bytes declared
                        :maximum-file-bytes maximum-file-bytes})))
-    (let [bytes (remote-bytes remote entry)]
+    (let [body (remote-bytes remote entry)
+          bytes (cond
+                  (bytes? body) body
+                  (sequential? body) (byte-array (map unchecked-byte body))
+                  :else body)]
       (when-not (bytes? bytes)
         (throw (ex-info "remote Drive returned a non-binary file body"
                         {:type :folder-sync/invalid-remote-body})))

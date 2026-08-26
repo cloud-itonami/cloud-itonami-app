@@ -77,6 +77,20 @@
       (let [result (sync/sync-root! config remote)]
         (is (= #{"local.txt" "remote.txt"} (set (:unchanged result))))))))
 
+(deftest remote-byte-vectors-are-normalized-before-a-local-write
+  (let [{:keys [root config]} (temporary-config)
+        remote (memory-remote {"from-nfs.txt" "filesystem store bytes"})
+        vector-remote
+        (reify sync/RemoteDrive
+          (remote-snapshot [_] (sync/remote-snapshot remote))
+          (remote-bytes [_ entry]
+            (vec (sync/remote-bytes remote entry)))
+          (remote-put! [_ path content media-type]
+            (sync/remote-put! remote path content media-type))
+          (remote-trash! [_ entry] (sync/remote-trash! remote entry)))]
+    (is (= ["from-nfs.txt"] (:pulled (sync/sync-root! config vector-remote))))
+    (is (= "filesystem store bytes" (slurp (io/file root "from-nfs.txt"))))))
+
 (deftest one-sided-updates-and-deletes-propagate-recoverably
   (let [{:keys [root config]} (temporary-config)
         remote (memory-remote)]
