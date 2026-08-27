@@ -218,6 +218,18 @@ the registry correctable and end the hand-maintained accepted set).
 
 - 7d には別の失敗モードが在る（provider-timeout 212 = 17.2%、
   tool-budget 枯渇 60 = 4.9%）。当日は 0 だが、消えた証拠は無い。
+- **`max-active 2` は走っているプロセスに入っていない**（2026-08-27 追記、実測）。
+  「まだ二本同時に due になっていない」より手前の理由が在る: `config/load-config`
+  は `server/start!` からしか呼ばれず、`bots/start-tick!` は渡された
+  `configuration` を**クロージャに捕まえて**毎 tick その同じ map を `tick!` に
+  渡す。この install の config.edn の mtime は 15:41:35 JST、走っている java の
+  起動は 15:29:17 JST —— **編集はプロセス起動の 12 分後**なので、この process は
+  `max-active 1` のままである。反映には再起動が要る。
+  ⚠ 同日 07:13Z〜08:48Z の checkpointed run は 07:24〜07:47 の 3 本と壁時計で
+  重なっている。これは `max-active 2` の証拠ではなく、checkpoint 境界で枠が
+  解放されていることの方が説明として整合する（`:held` と checkpoint の
+  枠計上は `bots.clj` 4720 付近のコメントが持つ）。**どちらであるかは
+  測っていない。**
 - `workforce_status` の `next-run-at` が 2026-08-23T14:13 を指したままなのは、
   **測定して障害ではないと判った**（当初この行は「未測定」と書いていた）。
   この値は全 job の最小値で、該当する 5 本はいずれも `waiting-approval`。

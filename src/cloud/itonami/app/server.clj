@@ -36,6 +36,7 @@
             [cloud.itonami.app.filecoin :as filecoin]
             [cloud.itonami.app.file-provider :as file-provider]
             [cloud.itonami.app.folder-sync :as folder-sync]
+            [cloud.itonami.app.issue-comment :as issue-comment]
             [cloud.itonami.app.gc :as gc]
             [cloud.itonami.app.nfs :as nfs-service]
             [cloud.itonami.app.fleet :as fleet]
@@ -5763,6 +5764,93 @@
 (defn- bot-id-from [path pattern]
   (some-> (re-matches pattern path) second))
 
+(defn- issue-comment-directory ^java.io.File []
+  (io/file (config/data-dir) "issue-comments"))
+
+(defn- issue-comment-image-file ^java.io.File [id]
+  ;; `id` is minted here, never taken from the request, so it cannot traverse.
+  ;; Re-checked anyway: a later caller that forgets that would otherwise turn
+  ;; this into a read of any file the process can open.
+  (when (re-matches #"issue-[0-9a-f-]{36}" (str id))
+    (io/file (issue-comment-directory) (str id ".svg"))))
+
+(defn- store-issue-comment-image!
+  "Write the posted crop and answer what happened, in the caller's words.
+
+  Three outcomes, and they stay three: there was no picture, there was one and
+  it is stored, there was one and it was refused. Collapsing the first and the
+  third would make a rejected capture look exactly like a comment nobody
+  attached a picture to."
+  [id svg]
+  (let [{:keys [svg reason bytes]} (issue-comment/svg-payload svg)]
+    (cond
+      svg
+      (let [file (issue-comment-image-file id)]
+        (.mkdirs (issue-comment-directory))
+        (spit file svg :encoding "UTF-8")
+        {:stored? true :bytes bytes
+         :url (str "/api/bots/comments/" id "/image")})
+
+      (#{:too-large :script-shaped :not-svg} reason)
+      (throw (ex-info (case reason
+                        :too-large "切り抜きが大きすぎます。"
+                        :script-shaped "切り抜きに実行可能な要素が含まれています。"
+                        "切り抜きが SVG ではありません。")
+                      {:type :issue-comment/image-rejected :reason reason}))
+
+      :else {:stored? false :reason (name reason)})))
+
+(defn- handle-issue-comment-post!
+  "Record one region of this screen and one sentence, and answer with the Goal
+  they compose to.
+
+  It does NOT run the turn. A Goal is not a chat reply — `bots/send!` is
+  synchronous and a resident tick on this deployment has been measured at
+  ninety-five minutes — so dispatching here would hold an HTTP request open for
+  the length of the run and give the person a disabled button with no progress
+  and no cancel. The Bots view already owns that: `#bots-form` opens the
+  streaming run, reports the phase and the tool, and offers Cancel. The client
+  fills that composer with `:text`, which keeps one dispatch path rather than
+  two, and keeps `bots/send!` out of a request that is really a write to disk.
+
+  The Bot named in the request is validated here rather than trusted, so a
+  comment cannot record itself against a Bot this session does not own."
+  [config exchange session]
+  (let [body (read-json exchange)
+        record (issue-comment/request body)
+        _ (bots/assert-owned! session (:bot-id record))
+        id (str "issue-" (random-uuid))
+        image (store-issue-comment-image! id (:svg body))
+        text (issue-comment/goal-text
+              (assoc record :id id :image (when (:stored? image) image)))]
+    (send! exchange 200
+           {:id id :image image :bot-id (:bot-id record) :text text})))
+
+(defn- serve-issue-comment-image!
+  "Serve one stored crop.
+
+  Sandboxed and `default-src 'none'`, the same shape `send-site-html!` uses for
+  authored markup: this is an SVG built by cloning the live DOM, and the live
+  DOM shows content this application did not write. `nosniff` matters here
+  rather than being boilerplate — without it a document that failed the
+  `script-shaped` check on the way in could still be re-typed on the way out."
+  [^HttpExchange exchange id]
+  (let [file (issue-comment-image-file id)]
+    (if (and file (.isFile file))
+      (let [bytes (.getBytes (slurp file :encoding "UTF-8") StandardCharsets/UTF_8)]
+        (doto (.getResponseHeaders exchange)
+          (.set "Content-Type" "image/svg+xml; charset=utf-8")
+          (.set "Cache-Control" "no-store")
+          (.set "X-Content-Type-Options" "nosniff")
+          (.set "Referrer-Policy" "no-referrer")
+          (.set "Content-Security-Policy"
+                (str "sandbox; default-src 'none'; style-src 'unsafe-inline'; "
+                     "form-action 'none'; base-uri 'none'; frame-ancestors 'self'")))
+        (.sendResponseHeaders exchange 200 (alength bytes))
+        (with-open [out (.getResponseBody exchange)] (.write out bytes)))
+      (throw (ex-info "その受付IDの切り抜きはありません。"
+                      {:type :issue-comment/not-found})))))
+
 (defn- handle-bots!
   "The Bots surface.
 
@@ -5778,6 +5866,17 @@
     (cond
       (and (= method "GET") (= path "/api/bots"))
       (send! exchange 200 (bots/overview config session))
+
+      ;; Comment mode. Under `/api/bots` so it lands in this context rather
+      ;; than in `handler`, which is already at the JVM's 64 KB method ceiling.
+      (and (= method "POST") (= path "/api/bots/comments"))
+      (do (require-origin! exchange config)
+          (require-csrf! exchange session)
+          (handle-issue-comment-post! config exchange session))
+
+      (and (= method "GET") (bot-id-from path #"/api/bots/comments/([^/]+)/image"))
+      (serve-issue-comment-image!
+       exchange (bot-id-from path #"/api/bots/comments/([^/]+)/image"))
 
       (and (= method "GET") (= path "/api/bots/machine"))
       (send! exchange 200
@@ -6106,6 +6205,15 @@
                      ;; request was understood and the catalog was complete,
                      ;; the two just do not meet. Not a gateway failure.
                      :workforce/no-business-for-tenant 409
+                     ;; Comment mode refuses rather than repairs: an empty
+                     ;; comment, a comment about nothing on the screen, and a
+                     ;; comment with no destination are all the caller's to
+                     ;; fix, and each says which one it was.
+                     :issue-comment/empty 400
+                     :issue-comment/no-target 400
+                     :issue-comment/no-bot 400
+                     :issue-comment/image-rejected 413
+                     :issue-comment/not-found 404
                      400)
                    {:error {:type (name (or (:type (ex-data error)) :bot/error))
                             :message (.getMessage error)}}))

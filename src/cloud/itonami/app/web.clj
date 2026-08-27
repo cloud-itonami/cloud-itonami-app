@@ -1470,6 +1470,49 @@
      and the static state still says that -- the dots are still there, the
      skeleton still occupies the space it is reserving -- so nothing is lost by
      holding them still. */
+  /* Comment mode (ADR: 画面コメント). A region of this application's own screen,
+     a sentence about it, and the Goal that becomes.
+
+     The overlay is `position:fixed` and covers the viewport, so a rectangle is
+     drawn in the same coordinate space the client reports and the server
+     records: CSS pixels relative to the viewport. Any other basis would need
+     the browser chrome's offset, which a page cannot measure.
+
+     `pointer-events` moves rather than the element appearing: the layer is in
+     the DOM at all times so entering the mode costs no layout, and it is inert
+     until `data-comment-mode='on'` is on the body. */
+  .comment-layer{position:fixed;inset:0;z-index:80;display:none}
+  body[data-comment-mode='on'] .comment-layer{display:block;cursor:crosshair}
+  body[data-comment-mode='on'] .comment-layer[data-picked='true']{cursor:default}
+  .comment-layer__scrim{position:absolute;inset:0;background:rgba(28,32,38,.28)}
+  .comment-layer__hint{position:absolute;top:1rem;left:50%;transform:translateX(-50%);
+    max-width:min(90vw,42rem);padding:.5rem .875rem;border-radius:.5rem;
+    background:var(--color-neutral-white);color:var(--color-neutral-solid-gray-800);
+    font-size:.8125rem;line-height:1.5;box-shadow:0 2px 12px rgba(0,0,0,.18)}
+  .comment-layer__rect{position:absolute;border:2px solid var(--color-primitive-blue-600);
+    background:rgba(26,79,191,.12);border-radius:.25rem;pointer-events:none}
+  /* The selected region is cut out of the scrim so the thing being commented on
+     stays legible while the popover is open. Without this the person writes the
+     comment against a dimmed copy of what they are describing. */
+  .comment-layer__cutout{position:absolute;border-radius:.25rem;pointer-events:none;
+    box-shadow:0 0 0 9999px rgba(28,32,38,.28);outline:2px solid var(--color-primitive-blue-600)}
+  .comment-popover{position:absolute;width:min(92vw,26rem);padding:1rem;
+    display:flex;flex-direction:column;gap:.625rem;border-radius:.75rem;
+    background:var(--color-neutral-white);box-shadow:0 8px 32px rgba(0,0,0,.24)}
+  .comment-popover__target{margin:0;font-size:.75rem;line-height:1.5;
+    color:var(--color-neutral-solid-gray-600);word-break:break-all}
+  .comment-popover textarea{width:100%;min-height:5rem;padding:.5rem;
+    border:1px solid var(--color-neutral-solid-gray-300);border-radius:.375rem;
+    font:inherit;font-size:.875rem;resize:vertical}
+  .comment-popover select{width:100%;min-height:2.25rem;padding:.25rem .5rem;
+    border:1px solid var(--color-neutral-solid-gray-300);border-radius:.375rem;font:inherit}
+  .comment-popover__row{display:flex;gap:.5rem;justify-content:flex-end;align-items:center}
+  .comment-popover__note{margin:0;font-size:.75rem;line-height:1.5;
+    color:var(--color-neutral-solid-gray-600)}
+  .comment-popover__note[data-state='error']{color:var(--color-semantic-error-1)}
+  #comment-shot{margin:0;color:var(--color-neutral-solid-gray-700)}
+  #comment-mode-toggle[aria-pressed='true']{background:var(--color-primitive-blue-600);
+    color:var(--color-neutral-white);border-color:transparent}
   @media (prefers-reduced-motion: reduce){
     .typing span{animation:none;opacity:1}
     .skeleton{animation:none;background:var(--color-neutral-solid-gray-100)}
@@ -1677,6 +1720,57 @@
              :id "agent-permission-dismiss" :type "button"
              :aria-label "準備リクエストを閉じる"} "×"]])
 
+(defn- comment-mode-toggle
+  "Comment mode's entry point, in the topbar and not gated by
+  `data-topbar-view`: a person can be looking at any screen when they notice
+  the thing they want changed."
+  []
+       [:div {:class "topbar__context authenticated-only" :hidden true}
+        [:button {:class "tool-button" :id "comment-mode-toggle" :type "button"
+                  :aria-pressed "false"
+                  :aria-label "この画面にコメントする"
+                  :title "この画面の範囲を選んで、直してほしいことを書く"} "✎"]])
+
+(defn- comment-layer
+  "Comment mode's overlay, as its own function rather than inline in
+  `page-html`.
+
+  Not a stylistic split. `page-html` compiles to a single JVM method and was
+  already at the 64 KB ceiling — adding this markup inline is what produced
+  `Method code too large!`, which is the same limit `server.clj` names for its
+  `handler`. A new panel in this page belongs in a function for that reason."
+  []
+     ;; Comment mode's layer. Present in the DOM at all times and inert until
+     ;; the body carries `data-comment-mode='on'`, so entering the mode is a
+     ;; dataset write rather than a render. `aria-hidden` moves with it: an
+     ;; assistive reader must not meet a scrim that is not there yet.
+     [:div {:class "comment-layer" :id "comment-layer" :aria-hidden "true"}
+      [:div {:class "comment-layer__scrim" :id "comment-scrim"}]
+      [:p {:class "comment-layer__hint" :id "comment-hint" :role "status"}
+       "コメントしたい範囲をドラッグするか、要素を右クリックしてください（Esc で終了）"]
+      [:div {:class "comment-layer__rect" :id "comment-rect" :hidden true}]
+      [:div {:class "comment-layer__cutout" :id "comment-cutout" :hidden true}]
+      [:form {:class "comment-popover" :id "comment-popover" :hidden true}
+       [:p {:class "comment-popover__target" :id "comment-target"}]
+       ;; Not an `<img>`. The crop is an SVG and this page's CSP is
+       ;; `img-src 'self'` (ADR-0007), so an inline preview is the one thing
+       ;; that cannot be shown here. The selection is already cut out of the
+       ;; scrim behind this popover, which is the live version of the same
+       ;; picture; this line says the record is being kept.
+       [:p {:class "comment-popover__note" :id "comment-shot" :hidden true}]
+       [:label {:for "comment-text" :class "comment-popover__note"}
+        "直してほしいこと"]
+       [:textarea {:id "comment-text" :required true
+                   :placeholder "例: ここ、失敗の理由が出ていない"}]
+       [:label {:for "comment-bot" :class "comment-popover__note"} "宛先の Bot"]
+       [:select {:id "comment-bot"}]
+       [:p {:class "comment-popover__note" :id "comment-status" :role "status"
+            :aria-live "polite"}]
+       [:div {:class "comment-popover__row"}
+        [:button {:class "tool-button" :id "comment-cancel" :type "button"} "やめる"]
+        [:button {:class "primary-action" :id "comment-send" :type "submit"}
+         "Bot に送る"]]]])
+
 (defn page-html [configuration]
   (let [cloud? (get-in configuration [:routing :cloud-enabled?])
         provider (get-in configuration [:routing :default-provider])
@@ -1691,6 +1785,7 @@
              [:link {:rel "apple-touch-icon" :href "/icon.png"}]
              [:script signal-js] [:script interaction-js]]}
      [:div {:class "workspace" :data-brand brand}
+      (comment-layer)
       [:aside {:class "sidebar" :aria-label "メインメニュー"}
        [:div {:class "brand"}
         [:p {:class "brand__eyebrow"} green-cross "SAFETY FIRST"]
@@ -1761,6 +1856,7 @@
       [:div {:class "main"}
        [:header {:class "topbar" :data-kotoba-window-drag "true"}
         [:h2 {:class "topbar__title" :id "current-view"} "Bots"]
+        (comment-mode-toggle)
         [:div {:class "topbar__context authenticated-only" :id "project-titlebar-context"
                :data-topbar-view "chat" :hidden true}
          [:button {:class "context-button" :id "chat-context-button" :type "button"
