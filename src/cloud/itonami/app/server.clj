@@ -89,7 +89,8 @@
             [cloud.itonami.app.work-approval :as work-approval]
             [cloud.itonami.app.work-reconciler :as work-reconciler]
             [cloud.itonami.app.work-runtime :as work-runtime]
-            [cloud.itonami.app.workspace :as workspace])
+            [cloud.itonami.app.workspace :as workspace]
+            [identity.trust-profile :as external-trust])
   (:import [com.sun.net.httpserver HttpExchange HttpHandler HttpServer]
            [java.io ByteArrayOutputStream OutputStreamWriter]
            [java.net InetSocketAddress URI URLDecoder]
@@ -104,6 +105,13 @@
 ;; enables it must not have a nil check for it in the plain path.
 (defonce https-server (atom nil))
 (defonce ^:private active-config (atom nil))
+
+(def ^:private trust-discovery
+  (external-trust/profile
+   {:origin "https://itonami.cloud"
+    :authorityDid "did:web:itonami.cloud"
+    :role "human-organization-operator"
+    :identityEndpoint "https://itonami.cloud/api/identity"}))
 
 (defn- read-json [^HttpExchange exchange]
   (let [body (slurp (.getRequestBody exchange))]
@@ -2811,6 +2819,16 @@
        (= path "/.well-known/did.json")
        (did-web/did-web-route? method path)))
 
+(defn- public-identity-discovery-route?
+  "One dispatch branch for did:web and the shared Kotoba trust contract.
+  Keeping this consolidated matters because `handler` is at the JVM method
+  size ceiling."
+  [method path]
+  (or (did-web-document-route? method path)
+      (and (= method "GET")
+           (contains? #{"/.well-known/kotoba-trust.json" "/api/v1/trust"}
+                      path))))
+
 (defn- did-log-route?
   "did:webvh log discovery (ADR-0068). Literals stay in this file for the route
   scanner. `did.json` and `did.jsonl` differ by one character, so both this and
@@ -2849,6 +2867,12 @@
              (credential/did-web-document
               domain
               (some-> (identity/root-did-for-host host) :did vector))))))
+
+(defn- send-public-identity-discovery!
+  [exchange path]
+  (if (= path "/.well-known/did.json")
+    (send-did-web-document! exchange)
+    (send! exchange 200 trust-discovery {"Cache-Control" "public, max-age=300"})))
 
 (defn- send-root-did!
   "Serve the organization root DID log, or its witness proofs.
@@ -3062,8 +3086,8 @@
             ;; (every User owns a personal one, ADR-0023), so serving whichever
             ;; came first would publish a key under a name nobody asked about.
             ;; ADR-0025.
-            (did-web-document-route? method path)
-            (send-did-web-document! exchange)
+            (public-identity-discovery-route? method path)
+            (send-public-identity-discovery! exchange path)
 
             ;; The did:webvh log and its witness proofs (ADR-0068). Public for
             ;; the same reason the document above is: a verifier who has to
@@ -3812,8 +3836,9 @@
 
             (and (= method "GET") (= path "/api/identity"))
             (send! exchange 200
-                   (identity/public-state
-                    (cookie-value exchange identity/cookie-name)))
+                   (assoc (identity/public-state
+                           (cookie-value exchange identity/cookie-name))
+                          :trust-profile "/.well-known/kotoba-trust.json"))
 
             (auth-lifecycle-path? path)
             (handle-auth-lifecycle! exchange config method path)
