@@ -7,16 +7,18 @@
   (:import [java.nio.file Files]
            [java.time Instant]))
 
-(deftest assertion-is-short-scoped-and-names-the-passkey-subject
+(deftest assertion-is-short-scoped-and-separates-principal-from-controller
   (let [dir (.toFile (Files/createTempDirectory
                       "itonami-kotobase"
                       (make-array java.nio.file.attribute.FileAttribute 0)))
+        principal "urn:kotoba:principal:018f4d6c-29bf-7f80-9a21-111111111111"
         subject "did:key:zDnaeZpasskeySubject"]
     (with-redefs [config/data-dir (constantly dir)
                   store/snapshot (constantly
-                                  {:identity {:users {"u1" {:did subject}}}})]
+                                  {:identity {:users {"u1" {:principal-id principal
+                                                            :did "did:key:zUser"}}}})]
       (let [issued (federation/mint-assertion
-                    {:user-id "u1" :kind :passkey}
+                    {:user-id "u1" :kind :passkey :active-did subject}
                     (Instant/parse "2026-08-04T00:00:00Z"))
             verified (cacao/verify (:cacao_b64 issued)
                                    {:now "2026-08-04T00:01:00Z"})]
@@ -26,7 +28,8 @@
         (is (= #{federation/session-resource
                  federation/datomic-query-resource
                  federation/git-read-resource
-                 (federation/subject-resource subject)}
+                 (federation/subject-resource principal)
+                 (federation/controller-resource subject)}
                (set (get-in verified [:payload :resources]))))))))
 
 (deftest non-passkey-session-cannot-federate

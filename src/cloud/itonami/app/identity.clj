@@ -538,7 +538,7 @@
   ([user-id] (issue-session! user-id nil))
   ([user-id {:keys [kind label issued-via ttl-seconds authn-level
                     authn-decision authn-factors authn-provider
-                    organization-id]}]
+                    active-did organization-id]}]
    (let [state (identity-state (store/snapshot))
          membership (if organization-id
                       (membership-in state user-id organization-id)
@@ -570,7 +570,8 @@
           authn-level (assoc :authn-level authn-level)
           authn-decision (assoc :authn-decision authn-decision)
           authn-factors (assoc :authn-factors authn-factors)
-          authn-provider (assoc :authn-provider authn-provider)))
+          authn-provider (assoc :authn-provider authn-provider)
+          active-did (assoc :active-did active-did)))
        {:token token :expires-at expires-at :session-id session-id
         :csrf csrf
         ;; Which tenant the session landed in, so a caller that named one
@@ -698,10 +699,26 @@
   [state user-id]
   (get-in state [:users user-id :did]))
 
+(defn user-principal-id
+  "The stable logical subject for a local User. Records created before the
+  Principal field existed keep their already-issued DID forever."
+  [state user-id]
+  (let [user (get-in state [:users user-id])]
+    (or (:principal-id user) (:did user))))
+
 (defn- did-subject? [value]
   (and (string? value)
        (str/starts-with? value "did:")
        (not (str/blank? (subs value 4)))))
+
+(defn- principal-subject? [value]
+  (and (string? value)
+       (= value (str/trim value))
+       (<= 1 (count value) 256)
+       (not (str/includes? value "\n"))
+       (or (did-subject? value)
+           (and (str/starts-with? value "urn:kotoba:principal:")
+                (< (count "urn:kotoba:principal:") (count value))))))
 
 (defn- user-seed-file [user-id]
   (io/file (config/data-dir) "identity" (str user-id ".ed25519")))
@@ -1092,7 +1109,7 @@
             (mapv #(select-keys % [:provider :subject :email :display-name
                                    :linked-at]))))
      :csrf (:csrf session)
-     :user (when session (select-keys user [:id :did :account-id :email
+     :user (when session (select-keys user [:id :principal-id :did :account-id :email
                                             :contact-email :display-name :status
                                             :passkey-enrolled?]))
      :active-organization-id (:id organization)
@@ -1665,7 +1682,7 @@
   The person gets a real DID here: a hosted `did:` subject is the axis, and a
   local-only User mints Ed25519. Passkey onboarding remains step-up. A normal
   sign-up still does not pretend that an email/OAuth proof was WebAuthn."
-  [{:keys [email display-name root did]}]
+  [{:keys [email display-name root did principal-id]}]
   (let [state (identity-state (store/snapshot))
         account-id (available-account-id state email display-name)
         canonical-address (canonical-email account-id)
@@ -1692,7 +1709,9 @@
                      {:id membership-id :organization-id tenant-id
                       :user-id user-id :role :owner :created-at now})
            (assoc-in [:identity :users user-id]
-                     {:id user-id :did person-did :account-id account-id
+                     {:id user-id :did person-did
+                      :principal-id (or principal-id person-did)
+                      :account-id account-id
                       :email canonical-address :contact-email email
                       :display-name user-name :user-handle (random-token 32)
                       :passkey-enrolled? false :status :active
@@ -2403,7 +2422,8 @@
      :authn-ref (:authn.decision/request-id decision)
      :authn-level (:authn.decision/level decision)
      :authn-decision (:authn.decision/decision decision)
-     :authn-factors [:passkey]}))
+     :authn-factors [:passkey]
+     :active-did (or (:credential-did result) (:did result))}))
 
 (defn finish-passkey-registration! [session transaction-id response]
   (let [result (passkey/finish-registration!
@@ -2886,7 +2906,11 @@
               (throw (ex-info "中央認証から access token が返りませんでした。"
                               {:type :central-auth/missing-token})))
           profile (central-userinfo! config access-token)
-          subject (some-> (:sub profile) str not-empty)
+          principal-id (some-> (:sub profile) str not-empty)
+          account-did (or (some-> (:account_did profile) str not-empty)
+                          (when (did-subject? principal-id) principal-id))
+          active-did (or (some-> (:active_did profile) str not-empty)
+                         account-did)
           scopes (set (str/split (str (:scope profile)) #"\s+"))
           amr (set (map str (:amr profile)))
           passkey-proof? (and (= "phishing-resistant" (:acr profile))
@@ -2899,11 +2923,13 @@
                            (= (:client-id transaction) (:client_id profile))
                            (contains? scopes (:scope transaction))
                            (or passkey-proof? federated-proof?)
-                           subject (str/starts-with? subject "did:"))
+                           (principal-subject? principal-id)
+                           (did-subject? account-did)
+                           (did-subject? active-did))
               (throw (ex-info "中央認証の identity claims を検証できませんでした。"
                               {:type :central-auth/invalid-claims})))
           current (identity-state (store/snapshot))
-          bound-user-id (login-user current :itonami-cloud subject)
+          bound-user-id (login-user current :itonami-cloud principal-id)
           callback-user-id (when (and callback-session
                                       (human-session? callback-session)
                                       (may-act? callback-session))
@@ -2925,12 +2951,13 @@
                       (when empty-install?
                         (create-personal-user!
                          {:display-name "Itonami User"
-                          :root [:itonami-cloud subject]
-                          :did subject})))
+                          :root [:itonami-cloud principal-id]
+                          :principal-id principal-id
+                          :did account-did})))
           _ (bind-login-identity!
-             user-id {:provider :itonami-cloud :subject subject
+             user-id {:provider :itonami-cloud :subject principal-id
                       :display-name "auth.itonami.cloud"})
-          _ (adopt-did-if-blank! user-id subject)
+          _ (adopt-did-if-blank! user-id account-did)
           authn-level (if passkey-proof? :phishing-resistant :single-factor)
           authn-factors (mapv keyword amr)
           session-opts {:kind :federated :issued-via :itonami-cloud
@@ -2939,7 +2966,8 @@
                                           (first authn-factors))
                         :authn-level authn-level
                         :authn-decision :authenticated
-                        :authn-factors authn-factors}
+                        :authn-factors authn-factors
+                        :active-did active-did}
           issued (issue-session! user-id session-opts)]
       ;; The agent that started this flow may not be the one holding the
       ;; cookie just set. If it asked for a claim token, record the FACTS its
