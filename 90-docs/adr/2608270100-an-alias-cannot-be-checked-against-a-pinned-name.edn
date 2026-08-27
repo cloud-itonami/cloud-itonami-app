@@ -80,6 +80,80 @@ alias は `parallel: 2` を報告する。**2 つのスロットが応答に別�
 再発する。alias は定義上「fleet が今指している先」なので、その名前を手元に
 literal で固定すること自体が alias の契約と矛盾している。
 
+## The fleet half, traced the same day
+
+The alias did not drift. It was pooled, on purpose, hours earlier.
+`local-murakumo` PR #161 (Route murakumo-main across B70 and gad) landed
+2026-08-27, and `main-pool-endpoints` now round-robins the alias across two
+owned origins. The asymmetry is in one function:
+
+    (defn- body-for-origin
+      \"Translate murakumo-main to the model contract of the selected owned origin.\"
+      [env endpoint body]
+      (if (main-pool-model? (:model body))
+        (if (b70-origin? env endpoint)
+          (assoc body :model b70-model-id)       ; qwen3.8-27b-throughput-b70
+          (assoc body :model default-model-id))  ; qwen3.8-27b
+        body))
+
+The REQUEST is translated into each origin's contract. The ANSWER is not
+translated back. So a caller who asked for the alias receives, about half the
+time, a name that is internal routing rather than the thing it asked for.
+
+Two further facts fell out of reading it:
+
+- The registry record still said \"Two production slots with 262144 tokens per
+  slot\". That was written 2026-08-24, before the pool. The slots no longer
+  share a window: 262144 and 100000.
+- `parallel: 2` in that record is from the same pre-pool note and describes one
+  service's slots. It does NOT mean two origins. It was cited once during this
+  work as if it were a measurement, and that citation was wrong.
+
+`context` was NOT lowered to the pool minimum. The Worker documents reciprocal
+failover, so the larger window may still be reachable through it, and lowering
+it would be under-advertising. Whether to keep a mixed-window pool, and what
+such an alias should advertise, is a capacity decision and not a correction.
+
+## Why the registry was not corrected
+
+A corrected record was written and not sent. `PUT /infer/models/:id` is gated
+by the Worker secret `MURAKUMO_SERVICE_TOKEN`, and:
+
+- it cannot be read back (Cloudflare secrets are write-only);
+- the kagi item that was supposed to hold it does not exist, measured
+  2026-08-15 and already recorded in the secrets map;
+- the same env gates `/infer/runs`, `/infer/spend` and `/v1/slow/*`, so
+  reissuing it would 401 every node caller of those routes.
+
+`~/.gftd/murakumo-service-token` is a DIFFERENT token -- `murakumo.cloud`'s
+`/x402/ingest`, another Worker -- and was measured returning 401 here.
+
+Rotating a shared credential to land a metadata fix is not a trade worth
+making, so the write stopped. The gap became a standing detector finding
+instead (`model-alias-pool-undeclared`): while the alias answers to more than
+one name and the registry declares none of them, every client's accepted set
+is hand-maintained and drifts on the next redeploy.
+
+## What `failed` in the resident outcomes actually means
+
+Worth writing down, because it makes the completion rate read worse than the
+fleet is. `resident-outcome` maps `blocked` to `:failed` for resident runs,
+and the blocked answers measured after the fix were substantive -- one Bot
+reported that the admitted repository contains no customer-support inbox, and
+another that no concrete technical blocker was identifiable and the worktree
+was clean. Those are Bots that ran correctly and found nothing to act on.
+
+`:completed` and `:no-op` are counted apart on purpose. `blocked` is not, so a
+Bot with an honest empty answer lands in the same bucket as a real failure.
+**Completion rate is therefore not health.**
+
+`timeout` is a real bound -- the app reports that the model did not answer
+within 180 seconds. It is contention, not an undersized envelope. Measured at
+the workforce's own budget on 2026-08-27, 1024 output tokens took 18.5s /
+19.3s / 52.3s / 18.8s -- 19.6 to 55.5 tok/s, against the 11.4 tok/s the 180s
+wall was derived from on 2026-08-19. The 2.8x spread across four identical
+calls is the shape of the problem.
+
 ## Why the durable fix is not landed here
 
 素直な直し方は「受理集合を呼び出し時に alias から導出する」だが、
@@ -94,15 +168,59 @@ guard を alias に対して単に無効化する案は採らない。この gua
 
 したがって直すべき順序は次のとおりで、どれも別の決定である。
 
-1. fleet の registry を実態に合わせる（`alias-for` と `/infer/models` の両方）
+1. fleet の registry が自分のプールを申告する（`served-model-names`）。
+   **credential が要る** —— 上記 \"Why the registry was not corrected\"。
 2. app が alias の識別子と context window を呼び出し時に解決する
 3. その後で literal の列挙を落とす
+
+## Current state, 2026-08-27 06:45Z
+
+Landed on default branches:
+
+    cloud-itonami-app     5dae529   shipped defaults + this ADR
+                                    (suite: 1932 tests, 11477 assertions,
+                                     0 failures, 0 errors)
+    cloud-itonami-app     d15b321   ADR corrected to the two-slot mechanism
+    com-junkawasaki/root  949a2b41  detector verify-model-alias-admission
+    com-junkawasaki/root  8b207003  + the undeclared-pool finding
+    west pins advanced twice, both fast-forward, behind=0
+
+NOT in git, and this matters: the operative fix lives in the resident
+install's `~/.cloud-itonami/data/config.edn` on this machine -- the widened
+accepted set AND `:max-active 2`. Backups sit beside it as
+`config.edn.bak-20260827-*`. The shipped defaults carry the accepted set; they
+do NOT carry `:max-active`, which is a local capacity choice.
+**If that file is reset, the outage returns.**
+
+Verified: the same conversation holds a refusal at 05:37:23Z and `OK` at
+05:41:24Z; a second Bot answered `READY` at 06:16:26Z. The detector reproduces
+the outage on demand (`--accepted murakumo-main` gives exit 1) and passes
+unmodified (exit 0, 75s at load 20.71); self-test 6/6.
+
+NOT verified, and not to be reported as fixed:
+
+- The 24h SLO still reads about 36%. It is a rolling window and 26 pre-fix
+  `model-mismatch` runs are still inside it. It needs roughly a day.
+- `:max-active 2` has never been exercised: no two resident jobs have been due
+  at once since the restart (the outcome window sat still from 06:31Z to
+  06:45Z). Whether it helps or worsens `timeout` under contention is
+  unmeasured.
+- Five Bots sit at `waiting-approval` with `next-run-at` days in the past.
+  That is the design -- `:held` counts as active so a second tick is not
+  started -- not a stall, but nothing moves them except a person.
+
+Two decisions are open and both belong to a person: what a mixed-window pool
+should advertise as its `context`, and whether to reissue
+`MURAKUMO_SERVICE_TOKEN` and redistribute it to the nodes (which would make
+the registry correctable and end the hand-maintained accepted set).
 
 ## What this ADR does not claim
 
 - 7d には別の失敗モードが在る（provider-timeout 212 = 17.2%、
   tool-budget 枯渇 60 = 4.9%）。当日は 0 だが、消えた証拠は無い。
-- `workforce_status` の `next-run-at` が 2026-08-23T14:13 を指したままである。
-  これは全 job の最小値なので、遅延した job が 1 本あることは判るが、
-  原因は**未測定**。この ADR は触れていない。
+- `workforce_status` の `next-run-at` が 2026-08-23T14:13 を指したままなのは、
+  **測定して障害ではないと判った**（当初この行は「未測定」と書いていた）。
+  この値は全 job の最小値で、該当する 5 本はいずれも `waiting-approval`。
+  `workforce-bot-active?` が `:held` を active と数えて二重 tick を防ぐ設計の
+  とおりの停止であり、人が承認するまで動かない。
 "}]
