@@ -1,6 +1,8 @@
 (ns cloud.itonami.app.store
   (:require [clojure.edn :as edn]
             [clojure.java.io :as io]
+            [clojure.set :as set]
+            [clojure.string :as str]
             [cloud.itonami.app.config :as config]
             [cloud.itonami.app.work-partition-store :as work-partitions]
             [kotoba.kgraph :as kgraph]
@@ -10,6 +12,11 @@
            [java.util UUID]))
 
 (def schema "cloud.itonami.app.state.v1")
+(def journal-schema "cloud.itonami.app.state-journal.v1")
+
+(def ^:dynamic *journal-max-bytes* (* 4 1024 1024))
+(def ^:dynamic *journal-max-entries* 256)
+(defonce ^:private journal-entry-counts (atom {}))
 
 (def ^:dynamic *environment*
   "Environment lookup seam. Repository deployments inject the same canonical
@@ -36,20 +43,106 @@
 (defn- repository-mode? []
   (boolean (not-empty (*environment* "KOTOBA_REPOSITORY_STATE_FILE"))))
 
+(defn journal-file []
+  (let [file (state-file)
+        name (.getName file)
+        stem (if (.endsWith name ".edn")
+               (subs name 0 (- (count name) 4))
+               name)]
+    (io/file (.getParentFile file) (str stem ".journal.edn"))))
+
+(defn- apply-op [state {:keys [op path value]}]
+  (case op
+    :assoc (if (seq path) (assoc-in state path value) value)
+    :dissoc (if (= 1 (count path))
+              (dissoc state (first path))
+              (update-in state (pop path) dissoc (peek path)))
+    (throw (ex-info "Unknown state journal operation"
+                    {:type :store/invalid-journal-operation :op op}))))
+
+(defn- state-delta
+  "Idempotent path operations from `before` to `after`.
+
+  Persistent Clojure updates retain object identity for untouched branches, so
+  this walks only changed paths in the common case. Vectors and scalar leaves
+  are replaced as one value; replaying a record twice therefore has the same
+  result as replaying it once, which makes snapshot-before-truncate crashes
+  harmless."
+  [before after]
+  (letfn [(walk [path a b]
+            (cond
+              (identical? a b) []
+              (and (map? a) (map? b))
+              (mapcat (fn [k]
+                        (cond
+                          (not (contains? b k)) [{:op :dissoc :path (conj path k)}]
+                          (not (contains? a k)) [{:op :assoc :path (conj path k)
+                                                  :value (get b k)}]
+                          :else (walk (conj path k) (get a k) (get b k))))
+                      (set/union (set (keys a)) (set (keys b))))
+              (= a b) []
+              :else [{:op :assoc :path path :value b}]))]
+    (vec (walk [] before after))))
+
+(defn- journal-data [file]
+  (if (.isFile file)
+    (let [content (slurp file)]
+      {:lines (vec (str/split-lines content))
+       :terminated? (or (empty? content) (str/ends-with? content "\n"))})
+    {:lines [] :terminated? true}))
+
+(defn- replay-journal [base]
+  (let [file (journal-file)
+        {:keys [lines terminated?]} (journal-data file)
+        last-index (dec (count lines))]
+    (loop [value base index 0 applied 0]
+      (if (= index (count lines))
+        (do (swap! journal-entry-counts assoc (.getPath file) applied) value)
+        (let [line (nth lines index)]
+          (if (str/blank? line)
+            (recur value (inc index) applied)
+            (let [{:keys [record error]}
+                  (try
+                    {:record (edn/read-string line)}
+                    (catch Exception error {:error error}))]
+              (if-not error
+                (do
+                  (when-not (= journal-schema (:schema record))
+                    (throw (ex-info "Unknown state journal schema"
+                                    {:type :store/invalid-journal-schema
+                                     :schema (:schema record)})))
+                  (recur (reduce apply-op value (:ops record))
+                         (inc index) (inc applied)))
+                ;; `append-durable!` fsyncs complete lines. A power loss can
+                ;; still leave only the final line torn; every earlier corrupt
+                ;; record is a real integrity failure and must stop startup.
+                (if (and (= index last-index) (not terminated?))
+                  (do
+                    (binding [*out* *err*]
+                      (println "WARNING ignored incomplete final state journal record"))
+                    (swap! journal-entry-counts assoc (.getPath file) applied)
+                    value)
+                  (throw (ex-info "Invalid state journal record"
+                                  {:type :store/invalid-journal
+                                   :file (.getPath file)
+                                   :line (inc index)}
+                                  error)))))))))))
+
 (defn- load-state []
-  (let [file (state-file)]
-    (let [main (if (.isFile file)
-                 (merge (initial-state) (edn/read-string (slurp file)))
-                 (initial-state))]
-      (if-let [work (work-partitions/load-ledger (:work-governance main))]
-        (assoc main :work-governance work)
-        main))))
+  (let [file (state-file)
+        base (if (.isFile file)
+               (merge (initial-state) (edn/read-string (slurp file)))
+               (initial-state))
+        main (if (repository-mode?) base (replay-journal base))]
+    (if-let [work (work-partitions/load-ledger (:work-governance main))]
+      (assoc main :work-governance work)
+      main)))
 
 (defonce state (atom (load-state)))
 
 (defn snapshot [] @state)
 
-(defn- persist! [value]
+(defn- persist-snapshot! [value]
   (let [file (state-file)
         work (:work-governance value)]
     (.mkdirs (.getParentFile file))
@@ -63,6 +156,36 @@
                         host/store-max-bytes))
   value)
 
+(defn- persist-work! [value]
+  (when-let [work (:work-governance value)]
+    (work-partitions/persist-ledger! work)))
+
+(defn- checkpoint! [value]
+  (persist-snapshot! value)
+  (host/write-atomic! (journal-file) "" host/store-max-bytes)
+  (swap! journal-entry-counts assoc (.getPath (journal-file)) 0)
+  value)
+
+(defn- persist-delta! [before after]
+  (persist-work! after)
+  (let [before-main (dissoc before :work-governance)
+        after-main (dissoc after :work-governance)
+        ops (state-delta before-main after-main)]
+    (when (seq ops)
+      (let [file (journal-file)
+            record (str (pr-str {:schema journal-schema
+                                :at (str (Instant/now))
+                                :ops ops}) "\n")]
+        (.mkdirs (.getParentFile file))
+        (host/append-durable! file record host/store-max-bytes)
+        (let [entries (get (swap! journal-entry-counts update (.getPath file)
+                                  (fnil inc 0))
+                           (.getPath file))]
+          (when (or (>= entries *journal-max-entries*)
+                    (>= (.length file) *journal-max-bytes*))
+            (checkpoint! after))))))
+  after)
+
 (defn transact! [f & args]
   (if (repository-mode?)
     (edn-persist/with-state-lock
@@ -70,11 +193,13 @@
      (fn []
        (locking state
          (let [next-value (apply f (load-state) args)]
-           (reset! state next-value)
-           (persist! next-value)))))
+           (persist-snapshot! next-value)
+           (reset! state next-value)))))
     (locking state
-      (let [next-value (apply swap! state f args)]
-        (persist! next-value)))))
+      (let [before @state
+            next-value (apply f before args)]
+        (persist-delta! before next-value)
+        (reset! state next-value)))))
 
 (defn update-agent-control!
   "Atomically update the durable Agent Control partition.

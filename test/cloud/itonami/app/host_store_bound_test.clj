@@ -43,6 +43,16 @@
   (testing "and it is larger than the document bound, which is the whole point"
     (is (> host/store-max-bytes (* 16 1024 1024)))))
 
+(deftest durable-appends-extend-without-rewriting-and-respect-the-bound
+  (let [dir (tmp-dir)
+        file (io/file dir "state.journal.edn")]
+    (host/append-durable! file "abc" 8)
+    (host/append-durable! file "def" 8)
+    (is (= "abcdef" (slurp file)))
+    (is (thrown? clojure.lang.ExceptionInfo
+                 (host/append-durable! file "ghi" 8)))
+    (is (= "abcdef" (slurp file)) "a refused append leaves durable bytes intact")))
+
 (deftest it-says-so-before-the-write-that-cannot-happen
   ;; The store crossed its bound on 2026-08-20 with no prior signal: writes
   ;; succeeded at 99% and the process failed to START at 101%. The first thing

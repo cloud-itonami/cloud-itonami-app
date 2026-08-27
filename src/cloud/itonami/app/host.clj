@@ -15,7 +15,9 @@
             [kotoba.lang.fs-host :as fs-host]
             [kotoba.lang.process :as proc]
             [kotoba.lang.process-host :as proc-host])
-  (:import [java.nio.file Files StandardCopyOption]))
+  (:import [java.io FileOutputStream]
+           [java.nio.charset StandardCharsets]
+           [java.nio.file Files StandardCopyOption]))
 
 (def ^:private default-max-bytes
   "Bound for a confined write of a DOCUMENT -- content whose size is not ours
@@ -144,6 +146,40 @@
                             [StandardCopyOption/REPLACE_EXISTING
                              StandardCopyOption/ATOMIC_MOVE]))
     nil)))
+
+(defn append-durable!
+  "Append UTF-8 `content` to an app-owned file and fsync it before returning.
+
+  Journals need a different durability primitive from snapshots: rewriting the
+  snapshot for every small transaction is exactly the amplification a journal
+  removes, while a buffered append without `sync` can acknowledge state that a
+  power loss never records. The file is still confined to its declared parent
+  and bounded by `max-bytes`."
+  [^java.io.File file content max-bytes]
+  (require-cap! :fs/write)
+  (let [parent (.getParentFile file)
+        _ (when parent (.mkdirs parent))
+        body (.getBytes (str content) StandardCharsets/UTF_8)
+        next-size (+ (.length file) (alength body))
+        usable (try (.getUsableSpace (or parent (io/file ".")))
+                    (catch Exception _ 0))]
+    (when (> next-size max-bytes)
+      (throw (ex-info (str "append exceeds durable file bound: " (.getName file))
+                      {:type :fs/content-too-large
+                       :file (.getPath file)
+                       :bytes next-size
+                       :max-bytes max-bytes})))
+    (when (and (pos? usable) (< usable (+ (alength body) (* 4 1024 1024))))
+      (throw (ex-info (str "disk pressure: refusing append to " (.getName file))
+                      {:type :fs/disk-pressure
+                       :file (.getPath file)
+                       :usable-bytes usable
+                       :needed-bytes (+ (alength body) (* 4 1024 1024))})))
+    (with-open [stream (FileOutputStream. file true)]
+      (.write stream body)
+      (.flush stream)
+      (.sync (.getFD stream)))
+    nil))
 
 (defn process
   "IProcess with an explicit basename→absolute-path binary map. No PATH."
