@@ -131,6 +131,8 @@
             [cloud.itonami.app.domain-verification-test]
             [cloud.itonami.app.domain-verification-http-test]
             [cloud.itonami.app.email-login-test]
+            [cloud.itonami.app.config-policy-test]
+            [cloud.itonami.app.host-bounds-test]
             [cloud.itonami.app.identity-lifecycle-test]
             [cloud.itonami.app.issue-comment-test]
             [cloud.itonami.app.issue-comment-http-test]
@@ -293,6 +295,8 @@
     cloud.itonami.app.domain-verification-test
     cloud.itonami.app.domain-verification-http-test
     cloud.itonami.app.email-login-test
+    cloud.itonami.app.config-policy-test
+    cloud.itonami.app.host-bounds-test
     cloud.itonami.app.identity-lifecycle-test
     cloud.itonami.app.issue-comment-test
     cloud.itonami.app.issue-comment-http-test

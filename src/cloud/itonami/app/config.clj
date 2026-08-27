@@ -1,6 +1,7 @@
 (ns cloud.itonami.app.config
   (:require [clojure.edn :as edn]
             [clojure.java.io :as io]
+            [cloud.itonami.app.config-policy :as policy-layer]
             [clojure.string :as str]
             [cloud.itonami.app.policy :as policy])
   (:import [java.security MessageDigest]))
@@ -89,15 +90,7 @@
                          (.getBytes (.getPath (canonical dir)) "UTF-8"))]
      (subs (apply str (map #(format "%02x" (bit-and % 0xff)) digest)) 0 12))))
 
-(defn- deep-merge
-  ([a b]
-   (merge-with (fn [x y]
-                 (if (and (map? x) (map? y))
-                   (deep-merge x y)
-                   y))
-               a b))
-  ([a b & more]
-   (reduce deep-merge (deep-merge a b) more)))
+(def ^:private deep-merge policy-layer/deep-merge)
 
 (defn- read-edn-file [file]
   (when (.isFile file)
@@ -115,52 +108,21 @@
                          :path (.getPath file)})))
       (read-edn-file file))))
 
-(defn overlay-providers
-  "Apply provider overrides onto the shipped catalog, matched by `:id`.
-
-  `layers` are applied in order, so the last one wins: defaults <- profile <-
-  the store's config.edn.
-
-  The profile layer used to be missing. `load-config` collected overrides from
-  config.edn only and then `assoc`ed the result over the merged map, so a
-  profile's `:providers` were computed into the intermediate value and thrown
-  away one form later. Measured 2026-08-27: a profile setting
-  `{:id \"murakumo\" :enabled? true :reviewed? true}` left the provider
-  `enabled? false reviewed? false`, while a non-provider key in the same file
-  applied normally. A deployment profile that enabled a provider therefore read
-  as correct and did nothing — and `profiles/itonami.edn` says in its own header
-  that enabling what the tenant-neutral distribution cannot ship is the whole
-  point of a profile.
-
-  An override naming an `:id` that is not in the catalog throws. Silently
-  ignoring it is the same failure one level along: a typo in a provider name
-  would leave the operator reading a config that says the thing is on."
-  [catalog layers]
-  (reduce
-   (fn [providers overrides]
-     (let [known (into #{} (map :id) providers)
-           by-id (into {} (map (juxt :id identity)) overrides)]
-       (when-let [unknown (seq (remove known (keys by-id)))]
-         (throw (ex-info "provider override names no configured provider"
-                         {:type :config/unknown-provider
-                          :unknown (vec (sort unknown))
-                          :known (vec (sort known))})))
-       (mapv #(deep-merge % (get by-id (:id %) {})) providers)))
-   catalog
-   layers))
+(def overlay-providers
+  "See `config-policy/overlay-providers`. Re-exported because callers name it
+  here, and because the layering is the part that had a silent failure -- it
+  now lives where a test can reach it without a filesystem."
+  policy-layer/overlay-providers)
 
 (defn load-config []
   (let [defaults (-> "cloud-itonami-app.defaults.edn" io/resource slurp edn/read-string)
         override-file (io/file (data-dir) "config.edn")
         profile (or (profile-overrides) {})
         overrides (or (read-edn-file override-file) {})
-        providers (overlay-providers (:providers defaults)
-                                     [(:providers profile)
-                                      (:providers overrides)])
-        config (assoc (deep-merge defaults
-                                  (dissoc profile :providers)
-                                  (dissoc overrides :providers))
-                      :providers providers)
+        ;; The layering is `config-policy`'s; the environment, the directory
+        ;; and the slurps above are this namespace's. The one validation below
+        ;; stays here because it goes through the Kotoba oracle.
+        config (policy-layer/compose defaults profile overrides)
         host (get-in config [:server :host])]
     (when (and (get-in config [:privacy :bind-loopback-only?])
                (not (policy/loopback-host? host)))
@@ -169,6 +131,5 @@
     config))
 
 (defn env-secret [provider]
-  (let [env-name (:api-key-env provider)]
-    (when-not (str/blank? env-name)
-      (not-empty (System/getenv env-name)))))
+  (when-let [env-name (policy-layer/secret-env-name provider)]
+    (not-empty (System/getenv env-name))))
