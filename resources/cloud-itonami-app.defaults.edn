@@ -211,6 +211,48 @@
    :api-key-env "OPENAI_API_KEY"
    :local? false
    :reviewed? false
+   :enabled? false}
+  {:id "openrouter"
+   :name "OpenRouter (free plan)"
+   :kind :openai-compatible
+   :base-url "https://openrouter.ai/api/v1"
+   :api-key-env "OPENROUTER_API_KEY"
+   ;; `openrouter/free` is a ROUTER over the models that are free right now,
+   ;; not a model. That is the point of naming it here: the free tier is the
+   ;; fastest-moving set of model ids this workspace touches -- `ox-alpha` was
+   ;; the most-used model on the platform and served zero endpoints four days
+   ;; later -- so a pinned free id would go stale faster than the fleet alias
+   ;; ever did (root ADR-2608272100).
+   :default-model "openrouter/free"
+   :models ["openrouter/free"]
+   ;; NO `:assert-response-model?`, and this is the deliberate part.
+   ;;
+   ;; The router answers with the model that actually served: measured
+   ;; 2026-08-27, a request for `openrouter/free` returned HTTP 200 with
+   ;; .model = "nvidia/nemotron-3.5-lightning:free" and a well-formed tool
+   ;; call. A hand-maintained accepted-set would refuse that, and refuse a
+   ;; different name tomorrow. ADR-2608270100 is what that costs: the same
+   ;; check against `murakumo-main` refused 25 of 50 runs while the model was
+   ;; generating fine, and the 24h completion rate read 37.3%.
+   ;;
+   ;; What the assertion protects elsewhere is `:context-window-tokens`. Here
+   ;; that is bounded from the other side: the router advertises 200,000 and
+   ;; only routes to models that can take the request, and the budget below is
+   ;; set well under it rather than at any single model's window.
+   :context-window-tokens {"openrouter/free" 128000}
+   ;; Unattended Bot turns are a role/tool decision, not prose. Same bound the
+   ;; fleet entry carries, for the same reason.
+   :max-output-tokens 512
+   :local? false
+   ;; Shipped off and unreviewed, like every destination that leaves the
+   ;; machine. Two things an operator is consenting to here, and the second is
+   ;; not obvious: the transcript goes to OpenRouter, AND onward to whichever
+   ;; third party is serving the free endpoint that minute -- which is a
+   ;; different company on different turns. A free tier is priced that way for
+   ;; reasons, and the account's own data policy at
+   ;; openrouter.ai/settings/privacy decides which of those endpoints are even
+   ;; offered. A distribution cannot review that on a tenant's behalf.
+   :reviewed? false
    :enabled? false}]
  ;; `:allow-cloud-without-review?` was retired here (ADR-2608130100). It was
  ;; the only way to admit a cloud provider, and it said the opposite of what an
