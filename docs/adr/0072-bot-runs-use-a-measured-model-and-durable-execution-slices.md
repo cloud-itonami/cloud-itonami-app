@@ -62,6 +62,40 @@ and an explicit operator override; it is also a `model-fallbacks` *source*
 that retries the alias. Items 2–5 are unchanged. The 2026-08-23
 measurement is not rewritten.
 
+## Landing (2026-08-27 closing)
+
+- `cloud-itonami-app` default branch: merge `0d0cd11` of
+  `30b5ee3`. Defaults, last-resort hardcode, and FastMTP
+  `model-fallbacks` source all name `murakumo-main`.
+- Tests this session: `config-test` + `bots-test` with
+  `CLOUD_ITONAMI_DATA_DIR` unset — 157 tests, 687 assertions, 0
+  failures. Full `clojure -M:test` was not run.
+- `local-murakumo` default branch: merge `9e4f054` of `1325cee`.
+  JS entry rewrites POST `/v1/chat/completions` and `/v1/messages`
+  with model `qwen3.8-27b-fastmtp-aggressive` to `murakumo-main`.
+- Worker `api.murakumo.cloud` last-writer-wins. Version
+  `79fc440b-bcff-4fdc-b531-09b7bd84331a` (2026-08-26T10:47Z) answered
+  FastMTP HTTP 200 in 3.1 s. A later upload
+  `0bef970d-6c19-454b-aa84-4d2f60bb2121` (10:49Z) restored the
+  SyntaxError 502. Closing re-deployed `d66024cb-3e63-4ac0-80f5-96c620a4a092`.
+- 24-hour SLO gates above remain unmeasured.
+
+## Resume
+
+1. Live itonami JVM is still release `dacb86f` (PID 72151 on
+   `127.0.0.1:1338`). Operator `~/.cloud-itonami/data/config.edn`
+   already sets workforce `:model "murakumo-main"` and FastMTP
+   fallbacks. Next install picks `0d0cd11`.
+2. Six org-owned workforce Bots still store FastMTP. Personal CLI
+   session cannot retarget them. Gateway rewrite is the cover.
+3. `bot-709ea1c1-d295-471c-abcc-250f9228a550` stays on
+   `qwen3.8-27b-throughput-5090` by design.
+4. Durable Worker fix belongs in `src/local_murakumo/worker.cljs`
+   `fetch-inference` (text then parse; hosted non-JSON retries
+   fallbacks). That needs a governed `release/cljs/` refresh.
+5. Do not deploy `local-murakumo` from a tree that lacks
+   `src/dead_hosted_model.js`. Last upload wins.
+
 ## Acceptance gates
 
 The live workforce is accepted only when a new post-change window measures:
