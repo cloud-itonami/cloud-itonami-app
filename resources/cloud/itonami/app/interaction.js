@@ -11906,6 +11906,384 @@
         $('#identity-status').textContent = error.message;
       }
     };
+    // ---- Comment mode -----------------------------------------------------
+    // A region of this application's own screen, a sentence about it, and the
+    // bounded Goal that sentence becomes.
+    //
+    // Coordinates are CSS pixels relative to the VIEWPORT, in every direction:
+    // the overlay is `position:fixed`, the rectangle is drawn in that space,
+    // and that is what the server records. A page cannot measure the browser
+    // chrome's offset, so any basis that needed it would be a guess reported
+    // as a measurement.
+    const commentState = {
+      on:false, rect:null, target:null, shot:null, sending:false, dragging:false,
+      origin:null
+    };
+    const commentLayer = $('#comment-layer');
+    const commentRect = $('#comment-rect');
+    const commentCutout = $('#comment-cutout');
+    const commentPopover = $('#comment-popover');
+    const commentStatus = $('#comment-status');
+    const commentShot = $('#comment-shot');
+    const commentToggle = $('#comment-mode-toggle');
+    // A selector a Bot can search the repository for. Prefers `id`, then a
+    // `data-` attribute this application actually renders (`data-view-panel`,
+    // `data-view`, `data-topbar-view`), then class, and only then position.
+    // `nth-of-type` is last because it is the one part of a selector that says
+    // nothing about what the element IS.
+    const commentSelectorFor = (node) => {
+      const parts = [];
+      let current = node;
+      let depth = 0;
+      while (current && current.nodeType === 1 && current !== document.body && depth < 6) {
+        const tag = current.tagName.toLowerCase();
+        if (current.id) { parts.unshift(`#${current.id}`); break; }
+        const dataKey = ['viewPanel', 'view', 'topbarView', 'botId', 'kind']
+          .find((key) => current.dataset && current.dataset[key]);
+        if (dataKey) {
+          const attribute = dataKey.replace(/[A-Z]/g, (c) => `-${c.toLowerCase()}`);
+          parts.unshift(`${tag}[data-${attribute}="${current.dataset[dataKey]}"]`);
+        } else if (current.classList.length) {
+          parts.unshift(`${tag}.${[...current.classList].slice(0, 2).join('.')}`);
+        } else {
+          const siblings = current.parentElement
+            ? [...current.parentElement.children].filter((n) => n.tagName === current.tagName)
+            : [];
+          parts.unshift(siblings.length > 1
+            ? `${tag}:nth-of-type(${siblings.indexOf(current) + 1})`
+            : tag);
+        }
+        current = current.parentElement;
+        depth += 1;
+      }
+      return parts.join(' > ') || 'body';
+    };
+    const commentDescribe = (node) => {
+      if (!node || node.nodeType !== 1) return null;
+      const data = {};
+      Object.keys(node.dataset || {}).slice(0, 12).forEach((key) => {
+        data[key.replace(/[A-Z]/g, (c) => `-${c.toLowerCase()}`)] = node.dataset[key];
+      });
+      return {
+        selector:commentSelectorFor(node),
+        tag:node.tagName.toLowerCase(),
+        id:node.id || null,
+        classes:[...node.classList],
+        data,
+        text:(node.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 400)
+      };
+    };
+    // What is under the pointer, with the overlay taken out of the way. The
+    // layer covers the viewport by design, so without this every hit-test
+    // would answer "the scrim".
+    const commentElementAt = (x, y) => {
+      const previous = commentLayer.style.pointerEvents;
+      commentLayer.style.pointerEvents = 'none';
+      const node = document.elementFromPoint(x, y);
+      commentLayer.style.pointerEvents = previous;
+      return node;
+    };
+    // The CSS properties the crop carries. A curated list, not every computed
+    // property: `getComputedStyle` enumerates roughly 340 of them, and writing
+    // all of them onto every node is what made the document too large to
+    // decode. These are the ones that decide what a panel LOOKS like, which is
+    // the whole reason a picture is being taken.
+    const CAPTURED_PROPERTIES = [
+      'display', 'position', 'box-sizing', 'width', 'height', 'min-height',
+      'max-width', 'overflow', 'visibility', 'opacity', 'z-index',
+      'margin', 'padding', 'border', 'border-radius', 'outline',
+      'flex-direction', 'flex-wrap', 'align-items', 'justify-content', 'gap',
+      'grid-template-columns', 'grid-template-rows', 'flex', 'order',
+      'color', 'background-color', 'background-image', 'box-shadow',
+      'font-family', 'font-size', 'font-weight', 'font-style', 'line-height',
+      'letter-spacing', 'text-align', 'text-decoration', 'text-transform',
+      'text-overflow', 'white-space', 'word-break', 'vertical-align',
+      'list-style', 'transform', 'inset', 'top', 'left', 'right', 'bottom'
+    ];
+    // An SVG of the selected region, or null with a reason.
+    //
+    // Vector rather than raster, and not by preference. This page's CSP is
+    // `img-src 'self'` — no `data:`, no `blob:` — which ADR-0007 chose on
+    // purpose. Rasterising a DOM subtree in a browser means loading an SVG into
+    // an `<img>`, and that load is exactly what the policy refuses; measured
+    // 2026-08-27, even a ten-pixel `<rect>` from a blob URL fails here, and
+    // `createImageBitmap` cannot decode SVG in Chrome at all. So the crop stays
+    // an SVG document, the server stores it, and it is viewed at its own URL —
+    // a navigation, which `img-src` does not govern.
+    //
+    // Best-effort on purpose: a very large subtree legitimately defeats it, and
+    // the comment is still worth sending without a picture. What is NOT
+    // acceptable is failing silently, so every path returns a reason the
+    // popover shows.
+    const commentCapture = (node, rect) => {
+      const MAX_NODES = 1500;
+      try {
+        if (!node) return {svg:null, reason:'選択範囲に要素がありません'};
+        const count = node.querySelectorAll('*').length;
+        if (count > MAX_NODES) {
+          return {svg:null, reason:`範囲が大きすぎます（${count} 要素）`};
+        }
+        const clone = node.cloneNode(true);
+        // The crop is a clone of the LIVE DOM, which shows mail, Bot messages
+        // and repository text this application did not write. The server
+        // refuses a script-shaped document and serves what it stores under
+        // `sandbox; default-src 'none'`; this is the first of those three.
+        clone.querySelectorAll('script,iframe,object,embed').forEach((n) => n.remove());
+        const scrub = (element) => {
+          [...element.attributes].forEach((attribute) => {
+            if (/^on/i.test(attribute.name)) element.removeAttribute(attribute.name);
+          });
+          [...element.children].forEach(scrub);
+        };
+        scrub(clone);
+        const inline = (source, copy) => {
+          const style = getComputedStyle(source);
+          let text = '';
+          for (const property of CAPTURED_PROPERTIES) {
+            const value = style.getPropertyValue(property);
+            if (value) text += `${property}:${value};`;
+          }
+          copy.setAttribute('style', text);
+          const sourceChildren = source.children;
+          const copyChildren = copy.children;
+          for (let i = 0; i < sourceChildren.length && i < copyChildren.length; i += 1) {
+            inline(sourceChildren[i], copyChildren[i]);
+          }
+        };
+        inline(node, clone);
+        // The region is cut with `viewBox`, not by rasterising: the crop is the
+        // element's own box shifted so the selected rectangle starts at the
+        // origin. The intrinsic size is the SELECTION, so opening the file
+        // shows what was selected rather than the element it was taken from.
+        const box = node.getBoundingClientRect();
+        const serialized = new XMLSerializer().serializeToString(clone);
+        const svg =
+          `<svg xmlns="http://www.w3.org/2000/svg" ` +
+          `width="${Math.ceil(rect.width)}" height="${Math.ceil(rect.height)}" ` +
+          `viewBox="${rect.x - box.x} ${rect.y - box.y} ` +
+          `${Math.ceil(rect.width)} ${Math.ceil(rect.height)}">` +
+          `<foreignObject width="${Math.ceil(box.width)}" height="${Math.ceil(box.height)}">` +
+          `<div xmlns="http://www.w3.org/1999/xhtml">${serialized}</div>` +
+          `</foreignObject></svg>`;
+        return {svg, reason:null};
+      } catch (error) {
+        return {svg:null, reason:error.message || '切り抜きに失敗しました'};
+      }
+    };
+    const commentBotOptions = () => {
+      const select = $('#comment-bot');
+      select.replaceChildren();
+      // The wire key is `enabled?`. Reading `bot.enabled` here is always
+      // `undefined`, which would offer every stopped Bot as a destination and
+      // then fail at `bots/send!` with 「この Bot は停止しています」.
+      const bots = botsState.bots.filter((bot) => bot['enabled?'] !== false);
+      if (!bots.length) {
+        select.append(make('option', null, 'Bot がまだ読み込まれていません'));
+        select.disabled = true;
+        return;
+      }
+      select.disabled = false;
+      bots.forEach((bot) => {
+        const option = make('option', null, bot.name || bot.id);
+        option.value = bot.id;
+        select.append(option);
+      });
+      // The Bot whose thread is open is the one the person is looking at.
+      if (botsState.selected && bots.some((bot) => bot.id === botsState.selected)) {
+        select.value = botsState.selected;
+      }
+    };
+    const commentClosePopover = () => {
+      commentPopover.hidden = true;
+      commentRect.hidden = true;
+      commentCutout.hidden = true;
+      commentShot.hidden = true;
+      commentLayer.dataset.picked = 'false';
+      commentState.rect = null;
+      commentState.target = null;
+      commentState.shot = null;
+    };
+    const commentSetMode = (on) => {
+      commentState.on = on;
+      document.body.dataset.commentMode = on ? 'on' : 'off';
+      commentLayer.setAttribute('aria-hidden', on ? 'false' : 'true');
+      commentToggle?.setAttribute('aria-pressed', on ? 'true' : 'false');
+      if (!on) commentClosePopover();
+    };
+    const commentPlacePopover = (rect) => {
+      const width = Math.min(window.innerWidth * 0.92, 416);
+      const left = Math.min(Math.max(8, rect.x), window.innerWidth - width - 8);
+      const below = rect.y + rect.height + 12;
+      const fitsBelow = below + 320 < window.innerHeight;
+      commentPopover.style.left = `${left}px`;
+      commentPopover.style.top = fitsBelow ? `${below}px` : '';
+      commentPopover.style.bottom = fitsBelow
+        ? '' : `${Math.max(8, window.innerHeight - rect.y + 12)}px`;
+    };
+    const commentOpenFor = async (rect, node) => {
+      commentState.rect = rect;
+      commentState.target = commentDescribe(node);
+      commentLayer.dataset.picked = 'true';
+      Object.assign(commentCutout.style, {
+        left:`${rect.x}px`, top:`${rect.y}px`,
+        width:`${rect.width}px`, height:`${rect.height}px`
+      });
+      commentCutout.hidden = false;
+      commentRect.hidden = true;
+      commentPlacePopover(rect);
+      commentPopover.hidden = false;
+      $('#comment-target').textContent = commentState.target
+        ? commentState.target.selector
+        : `範囲 ${Math.round(rect.width)}×${Math.round(rect.height)}`;
+      commentBotOptions();
+      commentStatus.dataset.state = '';
+      commentStatus.textContent = '';
+      $('#comment-text').focus();
+      const {svg, reason} = commentCapture(node, rect);
+      commentState.shot = svg;
+      commentShot.hidden = !svg;
+      if (svg) {
+        commentShot.textContent = `切り抜きを保存します（${Math.round(svg.length / 1024)} KB）`;
+      } else {
+        // Says which of the two it was. "No picture" and "the picture failed"
+        // must not arrive looking the same.
+        commentStatus.textContent = `切り抜きなしで送ります（${reason}）`;
+      }
+    };
+    if (commentLayer && commentToggle) {
+      commentToggle.addEventListener('click', () => commentSetMode(!commentState.on));
+      document.addEventListener('keydown', (event) => {
+        if (event.key === 'Escape' && commentState.on) {
+          if (!commentPopover.hidden) commentClosePopover();
+          else commentSetMode(false);
+        }
+      });
+      // Right-click picks the element under the pointer whole. It is the fast
+      // path for "this thing here", where a drag would only approximate the
+      // box the element already has.
+      commentLayer.addEventListener('contextmenu', (event) => {
+        if (!commentState.on) return;
+        event.preventDefault();
+        const node = commentElementAt(event.clientX, event.clientY);
+        if (!node) return;
+        const box = node.getBoundingClientRect();
+        commentOpenFor(
+          {x:box.x, y:box.y, width:box.width, height:box.height}, node
+        );
+      });
+      commentLayer.addEventListener('pointerdown', (event) => {
+        if (!commentState.on || event.button !== 0) return;
+        if (commentPopover.contains(event.target)) return;
+        commentClosePopover();
+        commentState.dragging = true;
+        commentState.origin = {x:event.clientX, y:event.clientY};
+        commentLayer.setPointerCapture(event.pointerId);
+      });
+      commentLayer.addEventListener('pointermove', (event) => {
+        if (!commentState.dragging) return;
+        const origin = commentState.origin;
+        const rect = {
+          x:Math.min(origin.x, event.clientX), y:Math.min(origin.y, event.clientY),
+          width:Math.abs(event.clientX - origin.x),
+          height:Math.abs(event.clientY - origin.y)
+        };
+        Object.assign(commentRect.style, {
+          left:`${rect.x}px`, top:`${rect.y}px`,
+          width:`${rect.width}px`, height:`${rect.height}px`
+        });
+        commentRect.hidden = false;
+      });
+      commentLayer.addEventListener('pointerup', (event) => {
+        if (!commentState.dragging) return;
+        commentState.dragging = false;
+        const origin = commentState.origin;
+        const rect = {
+          x:Math.min(origin.x, event.clientX), y:Math.min(origin.y, event.clientY),
+          width:Math.abs(event.clientX - origin.x),
+          height:Math.abs(event.clientY - origin.y)
+        };
+        // A drag that never moved is a click, and a comment attached to a
+        // zero-width rectangle is a comment attached to nothing.
+        if (rect.width < 6 || rect.height < 6) { commentRect.hidden = true; return; }
+        commentOpenFor(rect, commentElementAt(rect.x + rect.width / 2,
+                                              rect.y + rect.height / 2));
+      });
+      $('#comment-cancel').addEventListener('click', commentClosePopover);
+      commentPopover.addEventListener('submit', async (event) => {
+        event.preventDefault();
+        if (commentState.sending) return;
+        const text = $('#comment-text').value.trim();
+        const botId = $('#comment-bot').value;
+        if (!text) {
+          commentStatus.dataset.state = 'error';
+          commentStatus.textContent = '直してほしいことを書いてください。';
+          return;
+        }
+        if (!botId) {
+          commentStatus.dataset.state = 'error';
+          commentStatus.textContent = '宛先の Bot を選んでください。';
+          return;
+        }
+        commentState.sending = true;
+        $('#comment-send').disabled = true;
+        commentStatus.dataset.state = '';
+        commentStatus.textContent = 'Bot に送っています…';
+        let recorded = null;
+        try {
+          const rect = commentState.rect;
+          recorded = await postJSON('/api/bots/comments', {
+            comment:text,
+            view:document.body.dataset.currentView || null,
+            'bot-id':botId,
+            element:commentState.target,
+            region:{
+              x:Math.round(rect.x), y:Math.round(rect.y),
+              width:Math.round(rect.width), height:Math.round(rect.height),
+              'viewport-width':window.innerWidth,
+              'viewport-height':window.innerHeight,
+              'device-pixel-ratio':window.devicePixelRatio || 1
+            },
+            svg:commentState.shot
+          }, true);
+        } catch (error) {
+          commentStatus.dataset.state = 'error';
+          commentStatus.textContent = error.message || '送れませんでした。';
+          return;
+        } finally {
+          commentState.sending = false;
+          $('#comment-send').disabled = false;
+        }
+        $('#comment-text').value = '';
+        commentClosePopover();
+        commentSetMode(false);
+        // Recording the comment and starting the Goal are two outcomes, and
+        // they are reported as two. The comment is on disk either way; saying
+        // "送れませんでした" after it was stored would send somebody to write it
+        // again.
+        try {
+          // The comment is recorded; the Goal is started through the Bots
+          // composer rather than by the POST above.
+          //
+          // A Goal is not a chat reply — `bots/send!` is synchronous and a
+          // resident tick has been measured at ninety-five minutes. Dispatching
+          // it from this handler would leave the popover disabled, with one
+          // spinner and no cancel, for as long as the turn took. The Bots view
+          // already owns that problem: `#bots-form` opens the streaming run,
+          // shows the phase and the tool it is on, counts elapsed seconds, and
+          // offers Cancel. Filling its composer reuses all of it and leaves one
+          // dispatch path in the client instead of two.
+          await selectBot(recorded['bot-id']);
+          showView('bots');
+          $('#bots-goal').checked = true;
+          botsInput.value = recorded.text;
+          $('#bots-form').requestSubmit();
+          announce('画面コメントを Goal として送りました。');
+        } catch (error) {
+          announce(`コメントは記録しました（${recorded.id}）が、`
+                   + `Goal を開始できませんでした: ${error.message}`);
+        }
+      });
+    }
     finishEmailLoginFromLink().finally(loadIdentity);
     // after every const above is defined — calling this next to the initial
     // showView() would hit `Cannot access 'loadFilecoin' before initialization`

@@ -691,6 +691,18 @@
                       {:type :bot/forbidden :bot bot-id})))
     b))
 
+(defn assert-owned!
+  "Refuse a Bot this session does not own, and return nothing.
+
+  `owned!` stays private because its RECORD is internal — handing a Bot's
+  stored map to another namespace is how a caller starts depending on fields
+  this one is free to change. The refusal is not internal: a handler that names
+  a Bot before doing work on its behalf should be able to make that check
+  without also being given the Bot."
+  [session bot-id]
+  (owned! session bot-id)
+  nil)
+
 (defn wallet-principal
   "The public identity Wallet needs after the ordinary Bot ownership check."
   [session bot-id]

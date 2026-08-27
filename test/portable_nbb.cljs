@@ -15,6 +15,8 @@
   not execute a single decision core."
   (:require [cljs.test :as t]
             [cloud.itonami.app.domain-name-test]
+            [cloud.itonami.app.issue-comment-test]
+            [cloud.itonami.app.mail-authentication-test]
             [cloud.itonami.app.mail-domain-records-test]
             [cloud.itonami.app.tls-binding-test]))
 
@@ -26,5 +28,7 @@
     (set! (.-exitCode js/process) 1)))
 
 (t/run-tests 'cloud.itonami.app.domain-name-test
+             'cloud.itonami.app.issue-comment-test
+             'cloud.itonami.app.mail-authentication-test
              'cloud.itonami.app.mail-domain-records-test
              'cloud.itonami.app.tls-binding-test)
