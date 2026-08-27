@@ -152,8 +152,23 @@
    ;; beside the alias: repointing `murakumo-main` must update its model metadata
    ;; in the same configuration change. Every Bot uses the window of the model
    ;; it selected; this does not change that model selection.
+   ;; Measured 2026-08-27: this set was stale and every alias turn was refused
+   ;; after generating fine -- 24h completion 37.3%, 25 of the last 50 runs
+   ;; `model-mismatch`. The gateway answered HTTP 200 with
+   ;; .model = "qwen3.8-27b-throughput-b70", while the alias entry still
+   ;; reported alias-for = "qwen3.8-27b" and /infer/models listed neither.
+   ;;
+   ;; Enumerating names is a floor, not the fix: the next redeploy that moves
+   ;; the suffix breaks it again, and pinning a literal contradicts what an
+   ;; alias is. Do not delete the guard to make this go away -- what it
+   ;; protects is `:context-window-tokens` below, which is the only thing
+   ;; standing between a repointed alias and an over-budget request.
+   ;; See 90-docs/adr/2608270100-an-alias-cannot-be-checked-against-a-pinned-name.edn
    :accepted-response-models
-   {"murakumo-main" #{"murakumo-main" "Qwen3.8-27B-Q4_K_M.gguf"}}
+   {"murakumo-main" #{"murakumo-main"
+                      "Qwen3.8-27B-Q4_K_M.gguf"
+                      "qwen3.8-27b"
+                      "qwen3.8-27b-throughput-b70"}}
    :context-window-tokens {"murakumo-main" 262144
                            "qwen3.8-27b-throughput-5090" 65536
                            "qwen3.8-27b-fastmtp-aggressive" 32768}
