@@ -20,6 +20,7 @@
             [cloud.itonami.app.issue-comment-test]
             [cloud.itonami.app.mail-authentication-test]
             [cloud.itonami.app.mail-domain-records-test]
+            [cloud.itonami.app.provider-retry-test]
             [cloud.itonami.app.store-core-test]
             [cloud.itonami.app.tls-binding-test]))
 
@@ -36,5 +37,6 @@
              'cloud.itonami.app.issue-comment-test
              'cloud.itonami.app.mail-authentication-test
              'cloud.itonami.app.mail-domain-records-test
+             'cloud.itonami.app.provider-retry-test
              'cloud.itonami.app.store-core-test
              'cloud.itonami.app.tls-binding-test)

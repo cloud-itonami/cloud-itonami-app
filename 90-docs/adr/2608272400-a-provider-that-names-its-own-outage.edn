@@ -1,0 +1,107 @@
+[{:db/id -1
+  :adr/id "adr-2608272400-a-provider-that-names-its-own-outage"
+  :adr/title "A provider that names its own outage, in a field nothing read"
+  :adr/status "accepted"
+  :adr/date "2026-08-27"
+  :adr/body
+  "## The report
+
+品質向上の続き。turn の失敗率が直近 3 日で 51%。
+
+## What was measured, 2026-08-27
+
+まず、当日の失敗を時間帯で割ると、支配的な原因が入れ替わっていた。
+
+| UTC | turns | failed | 原因 |
+|---|---|---|---|
+| 01-05Z | 36 | 30 | `model-mismatch` 26 |
+| 06-13Z | 44 | 18 | `timeout` 8 / `invalid-tool-arguments` 6 / `http-error` 3 |
+
+`model-mismatch` は **05:37Z を最後に出ていない**。ADR-2608270100 の修正が
+効いている。rolling window に残っているだけで、いま落ちている原因ではない。
+
+残る `http-error` を全期間で本文まで割った。
+
+| status | n | 本文 |
+|---|---|---|
+| 502 | 91 | Cloudflare の `error code: 502` / `error code: 524`、Modal の `modal-http`。どれも JSON ではない |
+| 400 | 7 | `unavailable_error` / `code 503` が 2、認証失敗が 3、空が 2 |
+| 500 | 2 | |
+
+ここに欠陥が 2 つ在り、**400 の行が両方を持っている**。
+
+### 1. 250 ミリ秒は、どの復旧より短い
+
+502 は既に retryable の集合に入っていた。つまり 91 件は**全部 retry されて
+いた** —— 1 回だけ、0.25 秒後に、同じゲートウェイへ。Cloudflare の 502 /
+524 も Modal の cold start も秒の単位である。
+
+### 2. 判定が status を読み、本文を読んでいなかった
+
+`HTTP 400 {:message Loading model, :type unavailable_error, :code 503}` と
+答える provider は、いつ戻ってくればよいかを本文に書いている。それを見る
+コードが無かったので、この 2 件は 1 度も retry されていない。
+
+### なぜ「400 は retry する」ではないのか
+
+同じ 400 で来た残り 3 件は `Unauthorized` と `Invalid API Key` だった。
+API キーは 2 回訊いたから有効になるものではない。認証失敗を retry すると、
+1 回の拒否が 3 回になり、しかも相手は rate limiter を持っている。
+
+**status では両者を区別できない。本文では区別できる。**
+
+## Decision
+
+判定と待ち時間を `cloud.itonami.app.provider-retry`（依存ゼロの `.cljc`）に
+置く。`host-bounds` と同じ理由 —— 本番で間違えてきたのは判断の側で、
+`bin/test-portable-cljs` は `src` と `test` 以外の classpath を与えない。
+
+1. **本文が自分を permanent と名乗ったら permanent**（`authentication_error`
+   `permission_error` `invalid_request_error` `not_found_error`）。他に何が
+   書いてあっても優先する —— そうしないと、両方を名乗る本文が通り抜ける。
+2. **次に、本文が自分を transient と名乗ったら transient**（`unavailable_error`
+   `overloaded_error` `rate_limit_error` `server_error`、または本文の `code`
+   が retryable な status）。status が何と言おうと。これが 400 / `Loading
+   model` の経路。
+3. **どちらでもなければ status が決める**（従来どおり `#{429 500 502 503 504}`）。
+   本文が JSON ですらない 91 件はここを通る。
+4. **待ち時間は 2s / 4s / 8s、上限 3 attempt。**
+
+### 方針は fleet のものを使う
+
+`network-awai/local-murakumo` の `kotoba/grok_bot_runtime_core.kotoba` が
+resident bot の retry 方針を既に持っている —— `retry-admitted` は 3 回まで、
+`retry-due-at` は 2s / 4s / 8s。同じ形にした。「bot は不安定な model を
+どれだけ待つべきか」に 2 つ目の答えを作れば、保つべき真実が 2 つになる。
+
+## The cost, named
+
+resident workforce は capacity 1 なので、backoff する request はその枠を
+最悪 14 秒握る。**失敗した turn は tick 丸ごとと requeue を払う**ので、
+そちらの方がはるかに高い。12 日で 91 件起きている。
+
+`:max-transient-retries` の provider ごとの override は既に在り、そのまま残る。
+
+## What this does not claim
+
+- **retry が実際に助かるかは測っていない。** 主張しているのは
+  「0.25 秒はここで測ったどの復旧より短い」ことと「本文が transient と
+  名乗っている応答を 1 度も retry していなかった」ことだけである。
+  次の測定は `http-error` の件数が減ったかどうかで答えが出る。
+- **`provider/timeout` は retry しない。** 既存のコメントが理由を持っている
+  —— timeout の壁は 1 スロットの実測スループットから決まっており、timeout を
+  retry するのは容量問題に負荷を足すことになる。当日 8 件で最多だが、
+  これは別の決定で、別の証拠が要る。
+- **`invalid-tool-arguments`（当日 6 件、通算 137 件）はここでは触らない。**
+  `#166` が既に補正経路を入れており、それが今日の 6 件を覆っているかは未測定。
+
+## Verification
+
+- `clojure -M:test`: 1,989 tests / 11,710 assertions / 0 failures
+  （この変更前は 1,981 / 11,684 / 0）。
+- `bin/test-portable-cljs`: 57 tests / 230 assertions / 0 failures。
+  判断は JVM と ClojureScript の両方で実行される。
+- 判別性を両方向で確認した。**別々のテストが落ちる**:
+  - status のみに戻す → `a-loading-model-is-retried-even-though-the-status-says-400`
+  - permanent guard を外す → `an-authentication-failure-is-never-retried`
+"}]
