@@ -2746,6 +2746,7 @@
      :followup-count (:turn/followup-count turn 0)
      :provider (:turn/provider turn)
      :model (:turn/model turn)
+     :requested-model (:turn/requested-model turn)
      :usage (:turn/usage turn)
      :cost {:status "not-calculated"
             :reason "provider usage does not include a billed amount"}
@@ -2843,6 +2844,23 @@
              :turn/followup-count (:followup-count run 0)
              :turn/provider (:provider run)
              :turn/model (:model run)
+             ;; What was ASKED for, kept separately from what answered.
+             ;;
+             ;; `:turn/model` is the model in the RESPONSE, so a turn that
+             ;; failed before any response has none -- and that is every
+             ;; provider failure, which is most failures. Measured 2026-08-27
+             ;; over the three preceding days: 119 of 411 turns recorded no
+             ;; model, 116 of those 119 failed, and the reasons were
+             ;; `invalid-tool-arguments` (48), HTTP 502 from the fleet (35) and
+             ;; `model-mismatch` (25). Every one of them named a model on the
+             ;; way out; none of them could be attributed to one afterwards.
+             ;;
+             ;; So the question "which model or endpoint is failing" had no
+             ;; answer in turn history, which is the surface anyone opens. It
+             ;; is not a fallback into `:turn/model`: a failed request did not
+             ;; get an answer from a model, and recording one as though it had
+             ;; would be a different, worse kind of wrong.
+             :turn/requested-model (:requested-model run)
              :turn/usage (:usage run)}
             attrs))))
 

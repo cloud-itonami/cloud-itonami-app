@@ -3201,6 +3201,47 @@
                                :turn/error-type :internal-error
                                :turn/error-message "request timed out"})))))))
 
+(deftest a-failed-turn-says-which-model-was-asked
+  ;; `:turn/model` is the model in the RESPONSE, so a turn that failed before
+  ;; any response carries none -- and that is every provider failure.
+  ;;
+  ;; Measured 2026-08-27 over the three preceding days: 119 of 411 turns
+  ;; recorded no model and 116 of those 119 failed, at `invalid-tool-arguments`
+  ;; (48), HTTP 502 from the fleet (35) and `model-mismatch` (25). Each one
+  ;; named a model on the way out. None could be attributed to one afterwards,
+  ;; so "which model is failing" had no answer in the surface anyone opens.
+  (let [finish (ns-resolve 'cloud.itonami.app.bots 'finish-visible!)
+        public (ns-resolve 'cloud.itonami.app.bots 'public-turn)
+        captured (atom nil)]
+    (testing "a failure before any response still names what was asked for"
+      ((deref finish) #(reset! captured %)
+                      {:context-id "c1" :requested-model "murakumo-main"}
+                      :failed {:turn/error-type :provider/http-error})
+      (is (= "murakumo-main" (:turn/requested-model @captured)))
+      (is (nil? (:turn/model @captured))
+          "and does NOT claim a model answered, because none did"))
+
+    (testing "a turn that did get a response keeps both, and they can differ"
+      ;; `:provider/model-mismatch` -- 25 of the measured failures -- is
+      ;; precisely the case where the two disagree, and it is unreportable
+      ;; while only one of them is kept.
+      ((deref finish) #(reset! captured %)
+                      {:context-id "c1" :requested-model "murakumo-main"
+                       :model "Qwen3.8-27B-Q4_K_M.gguf" :provider "murakumo"}
+                      :completed {})
+      (is (= "murakumo-main" (:turn/requested-model @captured)))
+      (is (= "Qwen3.8-27B-Q4_K_M.gguf" (:turn/model @captured))))
+
+    (testing "the projection surfaces it"
+      (is (= "murakumo-main"
+             (:requested-model ((deref public)
+                                {:turn/id "t1" :turn/state :failed
+                                 :turn/phase :failed
+                                 :turn/started-at "2026-08-27T07:00:00.000Z"
+                                 :turn/finished-at "2026-08-27T07:00:08.000Z"
+                                 :turn/error-type :provider/http-error
+                                 :turn/requested-model "murakumo-main"})))))))
+
 ;; ── an unclassified failure has to be identifiable ──────────────────────
 
 (deftest a-failure-records-what-threw-even-when-it-says-nothing

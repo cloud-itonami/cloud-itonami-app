@@ -29,10 +29,20 @@
   Nothing untrusted has ever gone through this path: `write-atomic!` has
   exactly one caller, and it is the store.
 
-  Still bounded, because unbounded is not the alternative to wrong. But this
-  number does not fix the growth -- 670 runs are retained with full goals and
-  never pruned, so the file will reach any ceiling eventually. Retention is the
-  actual gap; this only stops the ceiling from being the wrong one."
+  Still bounded, because unbounded is not the alternative to wrong.
+
+  This paragraph used to end 'Retention is the actual gap', and that sentence
+  outlived the gap. `gc` (ADR-0072) now compacts terminal goal-jobs after two
+  days, drops them after fourteen, and keeps fifty per Bot. Measured 2026-08-27
+  on the resident store: 1,663 of 1,985 goal-jobs compacted, the uncompacted
+  remainder all inside the two-day window, sweep receipts every few hours.
+  Nothing was overdue.
+
+  It is left here as a correction rather than deleted, because the stale
+  sentence did real work: on 2026-08-27 it was read as current and a store
+  behaving exactly as designed was reported as unbounded growth. A standing
+  claim about another namespace's behaviour is a claim that has to be re-measured
+  or removed, and this one is now dated."
   (* 256 1024 1024))
 
 (defn require-cap!
@@ -108,6 +118,59 @@
   pressure: the write is then the better witness."
   [usable size]
   (and (pos? usable) (< usable (+ size disk-headroom-bytes))))
+
+(def journal-max-bytes
+  "Bound for the write-ahead journal beside the store snapshot.
+
+  Much smaller than `store-max-bytes` on purpose. The journal exists so an
+  ordinary transaction does not rewrite a 30 MB snapshot; letting it grow to
+  the snapshot's own bound would give back the amplification it was added to
+  remove, and would make the startup replay itself the slow part."
+  (* 4 1024 1024))
+
+(def journal-max-entries
+  "Records appended before a checkpoint folds them into the snapshot.
+
+  A count as well as a size because the two failures differ: many tiny records
+  make replay slow without ever approaching the byte bound."
+  256)
+
+(defn checkpoint-due?
+  "Should the journal be folded into the snapshot now?"
+  [entries journal-bytes]
+  (or (>= entries journal-max-entries)
+      (>= journal-bytes journal-max-bytes)))
+
+(defn append-exceeds-bound?
+  "Would appending ADD-BYTES to a file already CURRENT-BYTES long pass MAX?"
+  [current-bytes add-bytes max-bytes]
+  (> (+ current-bytes add-bytes) max-bytes))
+
+(defn journal-belongs-to-snapshot?
+  "Is this journal an increment of THIS snapshot?
+
+  A journal records the byte length of the snapshot it was opened against, and
+  that length cannot move while the journal is live: only a checkpoint rewrites
+  the snapshot, and a checkpoint truncates the journal in the same step. So a
+  disagreement means something ELSE wrote the snapshot -- and the ops in the
+  journal are then increments of a state that no longer exists.
+
+  Measured 2026-08-27, which is why this function exists. A resident server
+  running a build with journalling was replaced by an auto-update built from a
+  branch without it. The new server read the snapshot, could not see the
+  journal, and rewrote the snapshot from its own memory for an hour. The
+  journal survived on disk holding 2,057 operations, and every one of them
+  disagreed with the newer snapshot -- turn counts, token totals and whole
+  message vectors, all of them older. Replaying that journal, which is exactly
+  what the next journalling process would have done, was a silent hour-long
+  rollback presented as a normal start.
+
+  NIL base-bytes is a journal written before this check existed. It cannot be
+  vouched for, so it does not belong."
+  [base-bytes snapshot-bytes]
+  (and (some? base-bytes)
+       (some? snapshot-bytes)
+       (= base-bytes snapshot-bytes)))
 
 (defn merge-output
   "stdout and stderr as one stream, matching the legacy ProcessBuilder callers

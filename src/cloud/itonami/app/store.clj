@@ -1,12 +1,15 @@
 (ns cloud.itonami.app.store
   (:require [clojure.edn :as edn]
             [clojure.java.io :as io]
+            [clojure.set :as set]
+            [clojure.string :as str]
             [cloud.itonami.app.config :as config]
             [cloud.itonami.app.store-core :as core]
             [kotoba.kgraph :as kgraph]
             [cloud.itonami.app.work-partition-store :as work-partitions]
             [langchain.edn-persist :as edn-persist]
-            [cloud.itonami.app.host :as host])
+            [cloud.itonami.app.host :as host]
+            [cloud.itonami.app.host-bounds :as host-bounds])
   (:import [java.time Instant]))
 
 ;; The schema string and the shape of a fresh state live in `store-core`, which
@@ -29,20 +32,154 @@
 (defn- repository-mode? []
   (boolean (not-empty (*environment* "KOTOBA_REPOSITORY_STATE_FILE"))))
 
+(def journal-schema "cloud.itonami.app.state-journal.v1")
+
+(defn journal-file
+  "The write-ahead journal beside the snapshot: `state.edn` -> `state.journal.edn`."
+  []
+  (let [file (state-file)
+        name (.getName file)
+        stem (if (str/ends-with? name ".edn")
+               (subs name 0 (- (count name) 4))
+               name)]
+    (io/file (.getParentFile file) (str stem ".journal.edn"))))
+
+(defonce ^:private journal-entry-count (atom 0))
+
+(defn- snapshot-bytes [] (host/file-size (.getPath (state-file))))
+
+(defn- apply-op [state {:keys [op path value]}]
+  (case op
+    :assoc (if (seq path) (assoc-in state path value) value)
+    :dissoc (if (= 1 (count path))
+              (dissoc state (first path))
+              (update-in state (pop path) dissoc (peek path)))
+    (throw (ex-info "Unknown state journal operation"
+                    {:type :store/invalid-journal-operation :op op}))))
+
+(defn state-delta
+  "Idempotent path operations turning BEFORE into AFTER.
+
+  Persistent Clojure updates keep object identity for untouched branches, so
+  this walks only what actually changed. Vectors and scalar leaves are replaced
+  whole, which is what makes replay idempotent: applying a record twice has the
+  same result as applying it once, so a crash between the snapshot write and
+  the journal truncation is harmless."
+  [before after]
+  (letfn [(walk [path a b]
+            (cond
+              (identical? a b) []
+              (and (map? a) (map? b))
+              (mapcat (fn [k]
+                        (cond
+                          (not (contains? b k)) [{:op :dissoc :path (conj path k)}]
+                          (not (contains? a k)) [{:op :assoc :path (conj path k)
+                                                  :value (get b k)}]
+                          :else (walk (conj path k) (get a k) (get b k))))
+                      (set/union (set (keys a)) (set (keys b))))
+              (= a b) []
+              :else [{:op :assoc :path path :value b}]))]
+    (vec (walk [] before after))))
+
+(defn- journal-records
+  "Parsed records, and whether the file ended on a record boundary.
+
+  `append-durable!` fsyncs whole lines, so only the FINAL line can be torn by a
+  power loss. Any earlier unreadable record is a real integrity failure."
+  [file]
+  (if (.isFile file)
+    (let [content (slurp file)
+          lines (vec (remove str/blank? (str/split-lines content)))
+          terminated? (or (empty? content) (str/ends-with? content "\n"))]
+      {:lines lines :terminated? terminated?})
+    {:lines [] :terminated? true}))
+
+(defn- archive-orphan-journal!
+  "Move a journal that does not belong to this snapshot aside, and say so.
+
+  Not deleted: it is the only remaining copy of whatever the previous build
+  recorded, and a person may want it. Not replayed either -- see
+  `host-bounds/journal-belongs-to-snapshot?` for the hour-long silent rollback
+  that is."
+  [file base-bytes actual-bytes]
+  (let [target (io/file (.getParentFile file)
+                        (str (.getName file) ".orphan-"
+                             (str/replace (str (Instant/now)) #"[:.]" "")))]
+    (binding [*out* *err*]
+      (println (str "WARNING state journal does not belong to this snapshot -- "
+                    "NOT replaying it. The journal "
+                    (if base-bytes
+                      (str "was opened against a " base-bytes "-byte snapshot")
+                      "records no base snapshot size (written before this check existed)")
+                    "; the snapshot on disk is " actual-bytes " bytes. "
+                    "Something without journalling wrote it. Replaying would "
+                    "roll the snapshot back. Moved to " (.getName target) ".")))
+    (try (.renameTo file target) (catch Exception _ nil))
+    nil))
+
+(defn replay-journal
+  "BASE with every journal record applied, or BASE alone when the journal does
+  not belong to it.
+
+  Takes FILE and SNAPSHOT-BYTES rather than reaching for them, so the decision
+  this function exists to make can be exercised without a store, a data
+  directory, or a process that has already loaded one. `journal-entry-count` is
+  set as a side effect because the checkpoint counter has to survive the load
+  that produced it."
+  [base file snapshot-bytes]
+  (let [{:keys [lines terminated?]} (journal-records file)]
+    (if (empty? lines)
+      (do (reset! journal-entry-count 0) base)
+      (let [head (try (edn/read-string (first lines)) (catch Exception _ nil))]
+        (if-not (host-bounds/journal-belongs-to-snapshot?
+                 (:base-bytes head) snapshot-bytes)
+          (do (archive-orphan-journal! file (:base-bytes head) snapshot-bytes)
+              (reset! journal-entry-count 0)
+              base)
+          (let [last-index (dec (count lines))]
+            (loop [value base index 0 applied 0]
+              (if (= index (count lines))
+                (do (reset! journal-entry-count applied) value)
+                (let [line (nth lines index)
+                      {:keys [record error]}
+                      (try {:record (edn/read-string line)}
+                           (catch Exception error {:error error}))]
+                  (if-not error
+                    (do
+                      (when-not (= journal-schema (:schema record))
+                        (throw (ex-info "Unknown state journal schema"
+                                        {:type :store/invalid-journal-schema
+                                         :schema (:schema record)})))
+                      (recur (reduce apply-op value (:ops record))
+                             (inc index) (inc applied)))
+                    (if (and (= index last-index) (not terminated?))
+                      (do (binding [*out* *err*]
+                            (println "WARNING ignored incomplete final state journal record"))
+                          (reset! journal-entry-count applied)
+                          value)
+                      (throw (ex-info "Invalid state journal record"
+                                      {:type :store/invalid-journal
+                                       :file (.getPath file)
+                                       :line (inc index)}
+                                      error)))))))))))))
+
 (defn- load-state []
-  (let [file (state-file)]
-    (let [main (if (.isFile file)
-                 (merge (initial-state) (edn/read-string (slurp file)))
-                 (initial-state))]
-      (if-let [work (work-partitions/load-ledger (:work-governance main))]
-        (assoc main :work-governance work)
-        main))))
+  (let [file (state-file)
+        base (if (.isFile file)
+               (merge (initial-state) (edn/read-string (slurp file)))
+               (initial-state))
+        main (if (repository-mode?)
+               base
+               (replay-journal base (journal-file) (snapshot-bytes)))]
+    (if-let [work (work-partitions/load-ledger (:work-governance main))]
+      (assoc main :work-governance work)
+      main)))
 
 (defonce state (atom (load-state)))
 
 (defn snapshot [] @state)
 
-(defn- persist! [value]
+(defn- persist-snapshot! [value]
   (let [file (state-file)
         work (:work-governance value)]
     (.mkdirs (.getParentFile file))
@@ -52,9 +189,58 @@
     (when work (work-partitions/persist-ledger! work))
     ;; Confined write under the state file's parent (kotoba-lang/fs), then
     ;; same-directory atomic rename. No ambient spit of the durable bytes.
-    (host/write-atomic! file (pr-str (dissoc value :work-governance))
+    (host/write-atomic! (.getPath file) (pr-str (dissoc value :work-governance))
                         host/store-max-bytes))
   value)
+
+(defn- checkpoint!
+  "Fold the journal into the snapshot and empty it, in that order.
+
+  Order matters and is the reason replay is idempotent: a crash between the two
+  leaves records that are already in the snapshot, and applying them again
+  changes nothing."
+  [value]
+  (persist-snapshot! value)
+  (host/write-atomic! (.getPath (journal-file)) "" host/store-max-bytes)
+  (reset! journal-entry-count 0)
+  value)
+
+(defn- persist-delta!
+  "Append what changed, and checkpoint when the journal has earned it."
+  [before after]
+  (when-let [work (:work-governance after)]
+    (work-partitions/persist-ledger! work))
+  (let [ops (state-delta (dissoc before :work-governance)
+                         (dissoc after :work-governance))]
+    (when (seq ops)
+      (let [file (journal-file)
+            record (str (pr-str {:schema journal-schema
+                                 :at (str (Instant/now))
+                                 :base-bytes (snapshot-bytes)
+                                 :ops ops})
+                        "\n")]
+        (.mkdirs (.getParentFile file))
+        (host/append-durable! (.getPath file) record host/journal-max-bytes)
+        (let [entries (swap! journal-entry-count inc)]
+          (when (host-bounds/checkpoint-due? entries (host/file-size (.getPath file)))
+            (checkpoint! after))))))
+  after)
+
+(defn fold-journal!
+  "Fold any replayed journal into the snapshot, once, at startup.
+
+  Without this a journal outlives the process that wrote it, and that is the
+  whole hazard: the next build to read this directory may not understand
+  journals, will rewrite the snapshot without folding, and will leave records
+  on disk that are increments of a state nobody holds any more. Folding at
+  start bounds a journal's life to one process.
+
+  A no-op when the journal is already empty, so it costs a `stat` on a normal
+  start."
+  []
+  (when (and (not (repository-mode?)) (pos? @journal-entry-count))
+    (locking state (checkpoint! @state))
+    true))
 
 (defn transact! [f & args]
   (if (repository-mode?)
@@ -64,10 +250,13 @@
        (locking state
          (let [next-value (apply f (load-state) args)]
            (reset! state next-value)
-           (persist! next-value)))))
+           (persist-snapshot! next-value)))))
     (locking state
-      (let [next-value (apply swap! state f args)]
-        (persist! next-value)))))
+      (let [before @state
+            next-value (apply f before args)]
+        (persist-delta! before next-value)
+        (reset! state next-value)
+        next-value))))
 
 (defn update-agent-control!
   "Atomically update the durable Agent Control partition.
