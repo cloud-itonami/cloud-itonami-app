@@ -111,7 +111,7 @@
    {:origin "https://itonami.cloud"
     :authorityDid "did:web:itonami.cloud"
     :role "human-organization-operator"
-    :identityEndpoint "https://itonami.cloud/api/identity"}))
+    :identityEndpoint "https://itonami.cloud/.well-known/did.json"}))
 
 (defn- read-json [^HttpExchange exchange]
   (let [body (slurp (.getRequestBody exchange))]
