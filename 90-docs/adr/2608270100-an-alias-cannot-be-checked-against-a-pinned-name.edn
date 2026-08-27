@@ -1,0 +1,87 @@
+[{:db/id -1
+ :adr/id "adr-2608270100-an-alias-cannot-be-checked-against-a-pinned-name"
+ :adr/title "An alias cannot be checked against a pinned name"
+ :adr/status "accepted"
+ :adr/date "2026-08-27"
+ :adr/body
+  "## The report
+
+Bots はほとんどの実行に失敗していた。CLI と server は正常に見えていた。
+
+## What was measured, 2026-08-27
+
+`cloud.itonami.app.bot-slo.v1` as-of 05:33Z, `status: \"fail\"`.
+
+| window | turns | completed | failed | completion |
+|---|---|---|---|---|
+| 24h | 150 | 56 | 94 | **37.3%** |
+| 7d | 1233 | 693 | 533 | 56.2% |
+
+直近 50 runs の内訳は `model-mismatch 25` / `http-error 8` / `failed 2` /
+`completed 10` / `no-op 5`。24h の `provider-timeout` と `tool-budget` は
+どちらも 0 なので、当日の支配的な原因は 1 本に絞れた。
+
+`murakumo-main` について、3 つの出所が同時に食い違っていた。
+
+    POST api.murakumo.cloud/v1/chat/completions  model=murakumo-main
+      -> HTTP 200, response .model = \"qwen3.8-27b-throughput-b70\"   (5 回連続で同一)
+    GET  api.murakumo.cloud/infer/models/murakumo-main
+      -> alias-for = \"qwen3.8-27b\"        verified_at 2026-08-24, status \"serving\"
+    GET  api.murakumo.cloud/infer/models
+      -> どちらの名前も載っていない
+         (gemma-4-12b-it / murakumo-main / qwen-agentworld-35b-a3b /
+          qwen3.6-35b-a3b / qwen3.6-35b-a3b-xavier-cuda)
+
+app が受理する集合は 1 つだけだった。
+
+    :accepted-response-models {\"murakumo-main\" #{\"murakumo-main\" \"Qwen3.8-27B-Q4_K_M.gguf\"}}
+
+`assert-response-model!` は集合の完全一致しか見ないので、
+`\"qwen3.8-27b-throughput-b70\"` は弾かれる。
+
+## Why it read as a model outage
+
+**推論は成功していた。** ゲートウェイは HTTP 200 を返し、本文も正常だった。
+捨てていたのは admission である。同じ会話に両方向が残っている。
+
+    [05:37:23Z] bot: 実行に失敗しました。依頼は記録されています。   修正前
+    [05:41:24Z] bot: OK                                          修正後
+
+失敗が `provider/*` という名前で記録されるため、fleet 側の障害に見えた。
+実際にはこちら側の受理集合が古かった。
+
+## The decision
+
+短期の床として `~/.cloud-itonami/data/config.edn` の provider override に
+実測した名前を列挙し、shipped default も同日の実測に合わせる。
+
+**列挙は床であって修正ではない。** `-b70` を動かす redeploy が来れば同じ形で
+再発する。alias は定義上「fleet が今指している先」なので、その名前を手元に
+literal で固定すること自体が alias の契約と矛盾している。
+
+## Why the durable fix is not landed here
+
+素直な直し方は「受理集合を呼び出し時に alias から導出する」だが、
+**今日それをやっても直らない** —— 上の実測のとおり
+`alias-for` が返す `\"qwen3.8-27b\"` は、実際に serve している
+`\"qwen3.8-27b-throughput-b70\"` と一致していない。fleet 側の registry が
+先に正しくなる必要がある。
+
+guard を alias に対して単に無効化する案は採らない。この guard が守っている
+のは名前ではなく `:context-window-tokens` で、alias が窓の狭いモデルへ
+張り替わったときに over-budget を防ぐのはこの経路しかない。
+
+したがって直すべき順序は次のとおりで、どれも別の決定である。
+
+1. fleet の registry を実態に合わせる（`alias-for` と `/infer/models` の両方）
+2. app が alias の識別子と context window を呼び出し時に解決する
+3. その後で literal の列挙を落とす
+
+## What this ADR does not claim
+
+- 7d には別の失敗モードが在る（provider-timeout 212 = 17.2%、
+  tool-budget 枯渇 60 = 4.9%）。当日は 0 だが、消えた証拠は無い。
+- `workforce_status` の `next-run-at` が 2026-08-23T14:13 を指したままである。
+  これは全 job の最小値なので、遅延した job が 1 本あることは判るが、
+  原因は**未測定**。この ADR は触れていない。
+"}]
