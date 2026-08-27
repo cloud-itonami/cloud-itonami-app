@@ -39,6 +39,27 @@ app が受理する集合は 1 つだけだった。
 `assert-response-model!` は集合の完全一致しか見ないので、
 `\"qwen3.8-27b-throughput-b70\"` は弾かれる。
 
+## The alias has two slots, and they label differently
+
+**この節は当初の記述を訂正する。** 最初の測定では 5 回連続で
+`qwen3.8-27b-throughput-b70` が返ったので「安定した 1 つの名前」と書いた。誤りだった。
+
+    06:01Z  1 秒間隔で 3 回 -> murakumo-main / murakumo-main / qwen3.8-27b-throughput-b70
+    06:05Z  5 回           -> 両方の名前
+    06:07Z  5 回           -> qwen3.8-27b-throughput-b70 のみ
+
+alias は `parallel: 2` を報告する。**2 つのスロットが応答に別々の名前を付けている** ——
+片方は要求された alias をそのまま返し、もう片方は自分の deployment id を返す。
+
+これは 24h の完了率が **0% ではなく 37.3%** だったことを説明する。alias を echo する
+スロットに当たった turn は admit され、もう片方に当たった turn は拒否されていた。
+おおよそトラフィックの分割比である。
+
+**したがって 1 回の probe ではこの問いに答えられない。** 半分の確率で clean を報告し、
+その間 production の半分が捨てられている。検出器
+（superproject の `scripts/verify-model-alias-admission.cljs`）が 5 回引いて
+観測した名前の**集合**を検査するのはこのため。
+
 ## Why it read as a model outage
 
 **推論は成功していた。** ゲートウェイは HTTP 200 を返し、本文も正常だった。
