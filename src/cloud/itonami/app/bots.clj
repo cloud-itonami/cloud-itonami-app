@@ -1076,7 +1076,7 @@
                      :bot/model (or (get-in configuration
                                              [:bots :workforce :model])
                                     (get-in entry [:profile :profile/model])
-                                    "qwen3.8-27b-fastmtp-aggressive")
+                                    "murakumo-main")
                      :bot/email (mailbox-address configuration id)
                      :bot/tools #{} :bot/accounts #{}
                      :bot/writes? false :bot/browser? false
