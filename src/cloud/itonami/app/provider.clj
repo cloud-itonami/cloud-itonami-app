@@ -1,7 +1,8 @@
 (ns cloud.itonami.app.provider
   (:require [clojure.data.json :as json]
             [clojure.string :as str]
-            [cloud.itonami.app.config :as config])
+            [cloud.itonami.app.config :as config]
+            [cloud.itonami.app.provider-retry :as retry])
   (:import [java.io BufferedReader InputStreamReader]
            [java.net URI]
            [java.net.http HttpClient HttpRequest HttpRequest$BodyPublishers
@@ -13,9 +14,11 @@
       (.connectTimeout (Duration/ofSeconds 4))
       .build))
 
-(def ^:private retryable-http-statuses #{429 500 502 503 504})
-(def ^:private max-transient-retries 1)
-(def ^:private transient-retry-delay-ms 250)
+;; The decision and the delay live in `provider-retry`, which depends on
+;; nothing, so both can be exercised without a socket. What is retried and how
+;; long it waits had been wrong in two different ways at once -- see that
+;; namespace for the measurement.
+(def ^:private max-transient-retries (dec retry/max-attempts))
 
 (def request-timeout-seconds
   "How long one model request may take before it is abandoned.
@@ -128,12 +131,15 @@
          (<= 200 status 299) parsed
 
          (and (< attempt transient-retries)
-              (contains? retryable-http-statuses status))
+              (retry/transient-response? status parsed))
          (do
            ;; Generation has no external effect until a returned tool call is
-           ;; admitted. One retry absorbs a transient gateway failure without
-           ;; monopolizing the capacity-one resident workforce indefinitely.
-           (Thread/sleep transient-retry-delay-ms)
+           ;; admitted, so re-sending one costs capacity and nothing else.
+           ;; The resident workforce IS capacity one, so the bound matters and
+           ;; is named in `provider-retry/max-attempts`: at worst this holds
+           ;; the slot 14 seconds, against a failed turn that costs the whole
+           ;; tick and a requeue.
+           (Thread/sleep (long (retry/retry-delay-ms attempt)))
            (recur (inc attempt)))
 
          :else
