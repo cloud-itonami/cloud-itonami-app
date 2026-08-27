@@ -303,3 +303,44 @@
         (doseq [f (.listFiles dir) :when (str/ends-with? (.getName f) ".edn")]
           (is (map? (edn/read-string (slurp f)))
               (str (.getName f) " must read as an EDN map")))))))
+
+;; ---------------------------------------------------------------------------
+;; provider overrides arrive from two layers, and one of them used to be lost
+;; ---------------------------------------------------------------------------
+
+(deftest a-profile-can-override-a-provider
+  (testing "load-config collected provider overrides from config.edn only and then
+            assoc'd the result over the merged map, so a profile's :providers were
+            computed into the intermediate value and discarded one form later.
+            Measured 2026-08-27 against the real loader: a profile setting murakumo
+            :enabled? true :reviewed? true left it false/false, while a non-provider
+            key in the same file applied. A deployment profile that turned a provider
+            on read as correct and did nothing.
+
+            This is exercised through overlay-providers rather than through
+            load-config because a JVM cannot set CLOUD_ITONAMI_PROFILE for itself —
+            the same limitation this namespace's header states about data-dir."
+    (let [catalog [{:id "murakumo" :enabled? false :reviewed? false :max-output-tokens 512}
+                   {:id "ollama" :enabled? true :reviewed? true}]
+          out (config/overlay-providers catalog [[{:id "murakumo" :enabled? true :reviewed? true}] nil])
+          murakumo (first (filter #(= "murakumo" (:id %)) out))]
+      (is (true? (:enabled? murakumo)))
+      (is (true? (:reviewed? murakumo)))
+      (is (= 512 (:max-output-tokens murakumo))
+          "an override replaces the keys it names and leaves the rest of the entry")
+      (is (= 2 (count out)) "the catalog keeps its shape")))
+
+  (testing "the store's config.edn is applied after the profile, so an operator's own
+            file still has the last word"
+    (let [catalog [{:id "openrouter" :enabled? false}]
+          out (config/overlay-providers catalog [[{:id "openrouter" :enabled? true}]
+                                                 [{:id "openrouter" :enabled? false}]])]
+      (is (false? (:enabled? (first out))))))
+
+  (testing "an override naming a provider that is not in the catalog throws rather
+            than being dropped — a typo would otherwise leave the operator reading a
+            config that says the thing is on"
+    (is (thrown-with-msg? clojure.lang.ExceptionInfo
+                          #"names no configured provider"
+                          (config/overlay-providers [{:id "ollama"}]
+                                                    [[{:id "olama" :enabled? true}]])))))

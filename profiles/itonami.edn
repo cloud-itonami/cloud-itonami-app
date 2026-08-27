@@ -29,12 +29,51 @@
 ;; an existing User must sign in first and explicitly link the provider.
 ;; Payment, signature, federation and outward-authority approval continue to
 ;; use their explicit Passkey ceremonies.
+;; ---------------------------------------------------------------------------
+;; Bots run on OpenRouter's free plan (owner instruction, 2026-08-27).
+;;
+;; This is the operator's act of reviewing, which is the only place it can
+;; happen: `resources/cloud-itonami-app.defaults.edn` ships every destination
+;; that leaves the machine as `:reviewed? false :enabled? false`, because a
+;; tenant-neutral distribution cannot consent to sending somebody's Bot
+;; transcript anywhere. This deployment can, and does, for itself.
+;;
+;; What is being consented to, stated plainly because the second half is easy
+;; to miss: the transcript goes to OpenRouter, AND onward to whichever third
+;; party serves the free endpoint that minute — a different company on
+;; different turns. Which endpoints are offered at all is decided by this
+;; account's data policy at openrouter.ai/settings/privacy, not here.
+;;
+;; `openrouter/free` is a router, not a model. Measured 2026-08-27 it answered
+;; a tool-call request with HTTP 200 and .model =
+;; "nvidia/nemotron-3.5-lightning:free". Pinning a free model id instead would
+;; be ADR-2608270100's failure one tier down, on the fastest-moving set of ids
+;; this workspace touches — see root ADR-2608272100.
+;;
+;; The fleet stays in the catalog and stays reviewable. It is not the default
+;; any more; it is what an operator picks explicitly.
+;;
+;;   OPENROUTER_API_KEY=<key> CLOUD_ITONAMI_PROFILE=itonami clojure -M:server
+;;
+;; The key is read from the environment by `config/env-secret` at call time and
+;; never persisted. On the owner's machine it lives in the login Keychain as
+;; `gftd.openrouter`; `provider-allowed?` derives "authenticated" from the
+;; variable actually being set, so a deployment that forgets to export it gets
+;; a refused provider rather than a silent fallback.
 {:auth {:allow-signup? true
         :sso-providers [:google :microsoft :github]}
  :cloud-relay {:base-url "https://hooks.itonami.cloud"
                :access-token-env "CLOUD_ITONAMI_RELAY_ACCESS_TOKEN"}
- :bots {:mail-domain "mail.itonami.cloud"}
+ ;; The Bots' unattended workforce turns run on the router too, not on a
+ ;; pinned free id. `:workforce :model` is what a scheduled Bot asks for; the
+ ;; provider above is what serves it.
+ :bots {:mail-domain "mail.itonami.cloud"
+        :workforce {:model "openrouter/free"}}
  :email-login
  {:enabled? true
   :delivery-endpoint "https://itonami.cloud/api/auth/magic-link/deliver"
-  :access-token-env "CLOUD_ITONAMI_EMAIL_LOGIN_TOKEN"}}
+  :access-token-env "CLOUD_ITONAMI_EMAIL_LOGIN_TOKEN"}
+ :providers [{:id "openrouter" :enabled? true :reviewed? true}]
+ :routing {:default-provider "openrouter"
+           :default-model "openrouter/free"
+           :cloud-enabled? true}}
