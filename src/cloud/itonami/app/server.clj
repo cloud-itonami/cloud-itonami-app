@@ -6570,6 +6570,14 @@
   ([configuration]
    (when @server
      (throw (ex-info "server already running" {})))
+   ;; Before anything writes. A journal read at load and left on disk is one
+   ;; the NEXT build may not understand -- and the next build rewrites the
+   ;; snapshot without folding it, which turns those records into increments of
+   ;; a state nobody holds. Folding here bounds a journal's life to the process
+   ;; that wrote it. Measured 2026-08-27: an auto-update to a build without
+   ;; journalling left 2,057 orphaned operations, every one of them older than
+   ;; the snapshot beside it.
+   (store/fold-journal!)
    (reset! active-config configuration)
    (identity/configure! configuration)
    ;; Bring existing organizations onto did:webvh (ADR-0068). Idempotent, and

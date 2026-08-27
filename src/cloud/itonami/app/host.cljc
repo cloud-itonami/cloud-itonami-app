@@ -18,11 +18,12 @@
   namespace was the `.clj` on top of them, and it is what
   `cloud.itonami.app.store` reaches for its durable write.
 
-  Three host operations remain, and they are the only reader-conditional code
-  here: make a directory, rename atomically, ask how much disk is left. Every
-  DECISION -- whether a write is near its bound, whether the disk is too full
-  to start, what the warning says -- is a pure function above them, and is
-  tested on both runtimes."
+  Five host operations remain, and they are the only reader-conditional code
+  here: make a directory, rename atomically, ask how much disk is left, ask how
+  long a file is, append-and-fsync. Every DECISION -- whether a write is near
+  its bound, whether the disk is too full to start, whether a journal belongs
+  to the snapshot beside it, what the warning says -- is a pure function above
+  them, and is tested on both runtimes."
   (:require [clojure.string :as str]
             [cloud.itonami.app.host-bounds :as host-bounds]
             [kotoba.lang.fs :as fs]
@@ -37,6 +38,8 @@
 (def store-max-bytes host-bounds/store-max-bytes)
 (def approaching-bound-fraction host-bounds/approaching-bound-fraction)
 (def disk-headroom-bytes host-bounds/disk-headroom-bytes)
+(def journal-max-bytes host-bounds/journal-max-bytes)
+(def journal-max-entries host-bounds/journal-max-entries)
 
 ;; The decisions live in `host-bounds`, which depends on NOTHING -- not on this
 ;; namespace's filesystem libraries, not on a host. That is what lets
@@ -107,6 +110,41 @@
                0))
     (catch #?(:clj Exception :cljs :default) _ 0)))
 
+(defn file-size
+  "Bytes on disk at PATH, or 0 when it does not exist.
+
+  Journalling needs this per append, and reading the file to count it would
+  make every small transaction pay for the whole journal -- the amplification
+  the journal exists to remove."
+  [path]
+  (try
+    #?(:clj (let [f (java.io.File. ^String (str path))]
+              (if (.isFile f) (.length f) 0))
+       :cljs (if (node-fs/existsSync (str path))
+               (.-size (node-fs/statSync (str path)))
+               0))
+    (catch #?(:clj Exception :cljs :default) _ 0)))
+
+(defn append-sync!
+  "Append UTF-8 CONTENT to PATH and fsync before returning.
+
+  A journal needs a different primitive from a snapshot. `write-atomic!`
+  replaces a whole file, which is what a journal is there to avoid; and a
+  buffered append without an fsync acknowledges state that a power loss never
+  recorded. So this is the fourth host operation, and like the other three it
+  is one call on each runtime with every decision made above it."
+  [path content]
+  #?(:clj (with-open [stream (java.io.FileOutputStream. ^String (str path) true)]
+            (.write stream (.getBytes ^String (str content) "UTF-8"))
+            (.flush stream)
+            (.sync (.getFD stream)))
+     :cljs (let [fd (node-fs/openSync (str path) "a")]
+             (try
+               (node-fs/writeSync fd (str content))
+               (node-fs/fsyncSync fd)
+               (finally (node-fs/closeSync fd)))))
+  nil)
+
 (defn filesystem-at
   "IFilesystem confined to an existing absolute directory root."
   ([root] (filesystem-at root default-max-bytes))
@@ -167,6 +205,37 @@
      (fs/write handle tmp body)
      (atomic-rename! (fs/join root tmp) (fs/join root name))
      nil)))
+
+(defn append-durable!
+  "Append one record to an app-owned journal, bounded and fsynced.
+
+  Same two preflights as `write-atomic!` -- the file's own bound and the disk's
+  free space -- decided by the same pure functions, so a journal cannot be the
+  one write path that grows without a ceiling."
+  [path content max-bytes]
+  (require-cap! :fs/write)
+  (let [path (str path)
+        parent (or (not-empty (fs/dirname path)) ".")
+        name (fs/basename path)
+        root (ensure-directory! parent)
+        body (str content)
+        current (file-size path)]
+    (when (host-bounds/append-exceeds-bound? current (count body) max-bytes)
+      (throw (ex-info (str "append exceeds durable file bound: " name)
+                      {:type :fs/content-too-large
+                       :file path
+                       :bytes (+ current (count body))
+                       :max-bytes max-bytes})))
+    (let [usable (usable-space root)]
+      (when (disk-pressure? usable (count body))
+        (throw (ex-info (str "disk pressure: refusing append to " name)
+                        {:type :fs/disk-pressure
+                         :file path
+                         :usable-bytes usable
+                         :needed-bytes (+ (count body) disk-headroom-bytes)}))))
+    (warn-approaching-bound! path name (+ current (count body)) max-bytes)
+    (append-sync! path body)
+    nil))
 
 (defn process
   "IProcess with an explicit basename→absolute-path binary map. No PATH."

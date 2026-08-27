@@ -1,0 +1,121 @@
+[{:db/id -1
+  :adr/id "adr-2608272300-a-journal-is-an-increment-of-one-snapshot"
+  :adr/title "A journal is an increment of ONE snapshot, and says which"
+  :adr/status "accepted"
+  :adr/date "2026-08-27"
+  :adr/body
+  "## The report
+
+スクリーンショットと一緒に「まだちゃんと bots が永続化していない?」。
+
+## What was measured, 2026-08-27
+
+Bot の記録は永続化されていた。`~/.cloud-itonami/data/state.edn`（31.8 MB、
+測定中も書き込み継続）に bot 105 件、会話 98 件（1 会話あたり 2〜199
+メッセージ）、turn 履歴 95 bot / 1,899 turn。会話だけあって bot 記録が無い
+ものは 0 件。
+
+壊れていたのは、どう永続化するかだった。
+
+`releases/` 18 個のうち journal 実装を持つのは `6d4152e` の 1 つだけで、
+それは `origin/main` に無い未 push の local commit だった。残り 17 個と
+`origin/main` は全部フルスナップショット方式。launchd は毎回の自動更新で
+最新の release を指すよう書き換わるので、19:47 と 19:59 の 2 回の更新で、
+journal を持つ server が journal を持たない server に置き換わった。
+
+新しい server は snapshot だけを読み、隣にあった 462 KB の journal を
+見なかった。そのまま 1 時間、自分のメモリからフルスナップショットを
+書き続けた。journal は disk に残り、2,057 個の操作を保持したまま孤児に
+なった。
+
+その 2,057 個を現在の snapshot と突き合わせた結果:
+
+| | 件数 |
+|---|---|
+| 一致（replay が no-op） | 0 |
+| 食い違い（新しい値を上書きする） | 2,057 |
+
+つまり 100%。具体例として `network isekai · Engineer` の run は、journal が
+turn-count 5 / 47,590 token、snapshot が 7 / 69,968 token。`:messages` は
+古い配列で丸ごと置き換わる。2,043 件は `:mail` で、同期時刻が約 1 時間
+巻き戻る。
+
+**次に journal を理解するプロセスが起動したら、この 2,057 件はそのまま
+replay される。** 1 時間の静かなロールバックが、正常な起動として現れる。
+古いコードにはそれに気づく手段が無かった。journal は、そこに在るという
+理由で replay されていた。
+
+## Decision
+
+**journal は「ある 1 つの snapshot の増分」であり、自分がどの snapshot に
+対して開かれたかを記録する。**
+
+1. journal の各レコードは `:base-bytes` を持つ。これは、その journal が開かれた
+   時点の snapshot のバイト長。journal が生きている間この値は動かない ——
+   snapshot を書き換えるのは checkpoint だけで、checkpoint は同じ手順で
+   journal を空にするから。
+2. 起動時、journal の `:base-bytes` が disk 上の snapshot と一致しなければ
+   **replay しない**。journal は削除せず `.orphan-<timestamp>` へ退避し、
+   両方の数値を添えて stderr に報告する。それは前のビルドが記録したものの
+   唯一の残りだから。
+3. `:base-bytes` を持たない journal（この検査より前に書かれたもの）は
+   保証できないので、belongs しないものとして扱う。
+4. **起動時に必ず畳む。** `store/fold-journal!` を `server/start!` の
+   先頭、何かが書く前に呼ぶ。journal の寿命を 1 プロセスに閉じる。これが
+   無いと journal は書いたプロセスより長生きし、次のビルドがそれを理解
+   しない場合に、誰も持っていない状態への増分が disk に残る。
+5. 判断は `host-bounds` に置く（依存ゼロ、両ランタイムでテスト可能）。
+   host 操作は `file-size` と `append-sync!` の 2 つだけ増やす。
+
+## Three things this report got wrong before it got them right
+
+最初の報告は 5 つの欠陥を挙げた。実測すると 3 つは欠陥では無かった。
+記録しておく価値があるのは、3 つとも同じ形の誤りだからである ——
+**全履歴を集計して、修正済みのものを現行として提示した。**
+
+1. **error provenance は既に直っていた。** `:internal-error` 203 件のうち
+   202 件が message を持たないのは事実だが、200 件は 8/15〜8/19 のもので、
+   8/19 の修正以降は 3 件しかない。message 欠落率は 8/19 の 42/83 から
+   8/27 の **0/46** へ単調に減っている。
+2. **retention は設計どおり動いていた。** goal-job 1,985 件のうち 1,663 件が
+   compact 済みで、未 compact は全て 2 日窓の中。drop が 0 なのは最古が
+   12 日前で retention が 14 日だから。bot あたり最大 45 件で上限 50。
+   何一つ期限が来ていない。
+3. **nil-model の 97.5% 失敗は独立した失敗モードでは無かった。**
+   `:turn/model` は応答に入っていた model なので、応答前に落ちた turn が
+   持たないのは同語反復である。119 件すべてが provider 起因だった。
+
+(1) の誤読は自分の集計のせい。(2) の誤読には外因があり、それは直した ——
+`host-bounds/store-max-bytes` の docstring が「Retention is the actual gap」
+と書き続けていた。gc（ADR-0072）が着地した後もその一文が残り、現行の主張
+として読まれた。**他の namespace の挙動についての standing な主張は、
+測り直すか消すかしかない。**
+
+(3) からは本物の欠陥が 1 つ出た。失敗した turn からは「どの model /
+endpoint が落ちたのか」が辿れない。要求した model は分かっているのに
+記録していなかった。`:turn/requested-model` を足す。応答した model
+(`:turn/model`) とは別のフィールドにする —— 失敗した要求は model から
+答えを貰っていないので、貰ったかのように記録するのは別種の、より悪い
+誤りになる。`:provider/model-mismatch`（測定期間で 25 件）は、まさに
+2 つが食い違う場合であり、片方しか持たない限り報告できない。
+
+## Consequences
+
+- 通常の transaction が 31.8 MB を書き換えなくなる。append 1 本と fsync。
+- 版ずれは静かに巻き戻る代わりに、両方のバイト数を添えて報告される。
+- **これは版を戻す方向を守らない。** この検査を持たない古い release へ
+  戻せば、それは今までどおり journal を無視する。守れるのは、この変更
+  以降のビルドが読む場合だけ。
+- 実際に起きた孤児 journal（462 KB / 2,057 op）は、この決定の前に手で
+  `.orphan-20260827-195124` へ退避済み。replay されていない。
+
+## Verification
+
+- `clojure -M:test`: 1,980 tests / 11,679 assertions / 0 failures
+  （journal テスト 10 本を含む。変更前のベースラインは 1,970 / 11,661 / 0）。
+- guard は positive control と negative control の両方を持つ:
+  同じ journal・同じ base に対して snapshot のバイト長を 1 だけ動かすと、
+  replay される側と拒否される側に分かれる。結果だけを assert する負テストは
+  別の理由で落ちた実行を数えてしまうので、1 つの値だけを動かす。
+- guard を `true` を返すよう壊すと、その 2 本が実際に赤くなることを確認した。
+"}]
