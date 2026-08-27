@@ -195,6 +195,30 @@
       (finally
         (reset! store/state previous)))))
 
+(deftest central-auth-keeps-principal-controller-and-account-coordinate-separate
+  (let [previous @store/state
+        principal "urn:kotoba:principal:018f4d6c-29bf-7f80-9a21-111111111111"
+        account "did:key:zAccountCompatibility"
+        controller "did:key:zActivePasskey"]
+    (try
+      (reset! store/state (store/initial-state))
+      (identity/configure! {})
+      (identity/start-central-authentication! nil "http://localhost:1338")
+      (let [finished (finish-central!
+                      principal
+                      {:acr "phishing-resistant" :amr ["webauthn"]
+                       :account_did account :active_did controller})
+            state (get-in (store/snapshot) [:identity])
+            user (get-in state [:users (:user-id finished)])
+            session (identity/session (:token finished))]
+        (is (= principal (:principal-id user)))
+        (is (= account (:did user))
+            "a Principal URN is not mislabeled as a DID")
+        (is (= controller (:active-did session)))
+        (is (= principal (identity/user-principal-id state (:id user)))))
+      (finally
+        (reset! store/state previous)))))
+
 (deftest an-authenticated-callback-browser-links-the-native-handoff
   ;; The native window has no local cookie. The system browser does: it is
   ;; already signed in to the existing User visible on the Settings page.
