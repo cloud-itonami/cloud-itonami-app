@@ -206,7 +206,36 @@
   value)
 
 (defn- persist-delta!
-  "Append what changed, and checkpoint when the journal has earned it."
+  "Append what changed, checkpointing whenever the journal has no room for it.
+
+  ## The bound is a TRIGGER, not a wall
+
+  The first version of this appended and THEN asked whether the journal had
+  earned a checkpoint. Measured in production 2026-08-27, nine hours after it
+  was deployed: the journal stopped 218 bytes below its 4 MiB bound and stayed
+  there. Every record after that was larger than the gap, so `append-durable!`
+  refused it -- and the refusal happened BEFORE the line that would have
+  relieved it. The store recorded nothing for eight and a half hours, five runs
+  sat in `:running` that could never finish, and the only outward sign was
+  `content-too-large` appearing among the turn outcomes.
+
+  `host-bounds/store-max-bytes` had already written this failure down for the
+  snapshot -- writes succeed at 99% of a bound and the process dies at 101% --
+  and this reproduced it one file over. A ceiling with no relief valve is not a
+  bound, it is a deadline.
+
+  So the room is checked BEFORE the append, and a record that does not fit
+  triggers the checkpoint that makes room. `before` is what gets snapshotted,
+  not `after`: every record already in the journal produced `before`, and this
+  record is the increment from there.
+
+  ## A record can also be bigger than the whole budget
+
+  Then no amount of checkpointing helps, and the journal is the wrong shape for
+  this write. It is written as a snapshot instead. That is not a fallback into
+  the old behaviour -- it is the correct answer: a delta larger than the delta
+  budget saves nothing, and one mail-sync transaction has already been measured
+  at 393 KB across 2,041 operations."
   [before after]
   (when-let [work (:work-governance after)]
     (work-partitions/persist-ledger! work))
@@ -214,16 +243,30 @@
                          (dissoc after :work-governance))]
     (when (seq ops)
       (let [file (journal-file)
-            record (str (pr-str {:schema journal-schema
-                                 :at (str (Instant/now))
-                                 :base-bytes (snapshot-bytes)
-                                 :ops ops})
-                        "\n")]
+            path (.getPath file)
+            build (fn [] (str (pr-str {:schema journal-schema
+                                       :at (str (Instant/now))
+                                       :base-bytes (snapshot-bytes)
+                                       :ops ops})
+                              "\n"))]
         (.mkdirs (.getParentFile file))
-        (host/append-durable! (.getPath file) record host/journal-max-bytes)
-        (let [entries (swap! journal-entry-count inc)]
-          (when (host-bounds/checkpoint-due? entries (host/file-size (.getPath file)))
-            (checkpoint! after))))))
+        (let [record (build)]
+          (if (host-bounds/record-needs-its-own-snapshot?
+               (count record) host/journal-max-bytes)
+            (checkpoint! after)
+            (do
+              (when (host-bounds/append-exceeds-bound?
+                     (host/file-size path) (count record) host/journal-max-bytes)
+                (checkpoint! before))
+              ;; Rebuilt, because a checkpoint moved the snapshot this record
+              ;; declares itself an increment of. Recording the old length here
+              ;; would make `journal-belongs-to-snapshot?` reject a journal that
+              ;; is in fact correct.
+              (let [record (build)]
+                (host/append-durable! path record host/journal-max-bytes)
+                (let [entries (swap! journal-entry-count inc)]
+                  (when (host-bounds/checkpoint-due? entries (host/file-size path))
+                    (checkpoint! after))))))))))
   after)
 
 (defn fold-journal!

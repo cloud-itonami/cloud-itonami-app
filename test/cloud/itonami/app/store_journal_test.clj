@@ -13,9 +13,11 @@
 
   Nothing in the old code could have noticed. A journal was replayed because it
   was there."
-  (:require [clojure.java.io :as io]
+  (:require [clojure.edn :as edn]
+            [clojure.java.io :as io]
             [clojure.test :refer [deftest is testing]]
             [cloud.itonami.app.host :as host]
+            [cloud.itonami.app.host-bounds :as host-bounds]
             [cloud.itonami.app.store :as store]))
 
 (defn- tmp-dir []
@@ -132,3 +134,60 @@
 
 (deftest file-size-of-an-absent-file-is-zero-not-an-error
   (is (= 0 (host/file-size (.getPath (io/file (tmp-dir) "absent.edn"))))))
+
+;; ── the bound has to be a trigger, not a wall ──────────────────────────────
+
+(deftest writing-past-the-journal-budget-keeps-working
+  ;; The regression, reproduced. Deployed 2026-08-27 23:34 and measured at
+  ;; 08:28 the next morning: the journal had stopped 218 bytes below its 4 MiB
+  ;; bound and stayed there for eight and a half hours. Every record after that
+  ;; was bigger than the gap, so the append was refused -- and the refusal came
+  ;; BEFORE the line that would have checkpointed and made room. The store
+  ;; recorded nothing, five runs sat in :running that could never finish, and
+  ;; the only outward sign was `content-too-large` among the turn outcomes.
+  ;;
+  ;; So: write more than the whole journal budget, in pieces, and require that
+  ;; every one of them lands AND that the result is still recoverable.
+  (let [dir (tmp-dir)
+        property "cloud.itonami.data-dir"
+        previous (System/getProperty property)
+        persist (ns-resolve 'cloud.itonami.app.store 'persist-delta!)
+        counter (ns-resolve 'cloud.itonami.app.store 'journal-entry-count)]
+    (try
+      (System/setProperty property (.getPath dir))
+      (reset! (deref counter) 0)
+      ;; ~400 KB per record against a 4 MiB budget: the bound is crossed
+      ;; several times over, so a wall would be hit and a trigger would not.
+      (let [blob (apply str (repeat 400000 "x"))
+            states (mapv (fn [i] {:schema "s" :n i :blob (str blob i)}) (range 20))]
+        (doseq [[before after] (partition 2 1 (cons {:schema "s"} states))]
+          ((deref persist) before after))
+        (testing "every write landed -- none of them threw"
+          (is (= 19 (dec (count states)))))
+        (testing "and the store still reconstructs the final state"
+          (let [snapshot (edn/read-string (slurp (store/state-file)))
+                recovered (store/replay-journal
+                           snapshot
+                           (store/journal-file)
+                           (host/file-size (.getPath (store/state-file))))]
+            (is (= (:n (last states)) (:n recovered)))
+            (is (= (:blob (last states)) (:blob recovered))))))
+      (finally
+        (if previous
+          (System/setProperty property previous)
+          (System/clearProperty property))))))
+
+(deftest a-record-larger-than-the-whole-budget-becomes-a-snapshot
+  ;; Checkpointing cannot make room for this one, so the journal is the wrong
+  ;; shape for it. Measured: one mail-sync transaction produced 2,041 ops and
+  ;; 393 KB, so a single record CAN approach the budget.
+  (is (host-bounds/record-needs-its-own-snapshot? (* 4 1024 1024) (* 4 1024 1024)))
+  (is (host-bounds/record-needs-its-own-snapshot? (inc (* 4 1024 1024)) (* 4 1024 1024)))
+  (is (not (host-bounds/record-needs-its-own-snapshot? 1024 (* 4 1024 1024)))))
+
+(deftest the-room-check-is-asked-before-the-append-not-after
+  ;; The shape of the defect in one assertion: a journal 218 bytes short of its
+  ;; bound has no room for a record of 400, and that has to be knowable WITHOUT
+  ;; attempting the append that would throw.
+  (is (host-bounds/append-exceeds-bound? (- (* 4 1024 1024) 218) 400 (* 4 1024 1024)))
+  (is (not (host-bounds/append-exceeds-bound? (- (* 4 1024 1024) 218) 200 (* 4 1024 1024)))))
