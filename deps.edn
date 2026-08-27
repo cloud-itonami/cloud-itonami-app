@@ -446,9 +446,28 @@
    :git/sha "38697760c91951d3f81a0f06169ae7058d4afd39"}
   ;; Local Datomic-shaped query/materialized view for the Agent. Persistence
   ;; remains an injected append/read port; queries never move to the remote.
+  ;; 3578f28 makes `langchain.edn-persist` `.cljc`: policy plus an injected
+  ;; IStateStore, with the filesystem host behind a reader conditional. It was
+  ;; the last `.clj` in that library's runtime surface and the external reason
+  ;; `cloud.itonami.app.store` could not be portable.
   io.github.kotoba-lang/langchain
   {:git/url "https://github.com/kotoba-lang/langchain.git"
-   :git/sha "7038bb80ce030cc5a279785512c0e92d09f323e0"}
+   :git/sha "3578f28bec7cc9c9cacc8da2efdf087257ffd0ca"}
+  ;; NOT added: io.github.kotoba-lang/kgraph.
+  ;;
+  ;; `kotoba.kgraph` was extracted out of `kotoba` into its own repo, where it
+  ;; is `.cljc` with zero JVM interop -- so depending on it looks like the way
+  ;; to make the datom assertions reachable from a portable namespace. It is
+  ;; not, yet. Measured 2026-08-27: with both on the classpath,
+  ;; `kotoba/kgraph.clj` from the `kotoba` pin below still wins, because it
+  ;; comes first. The dependency resolved, the require succeeded, and NOTHING
+  ;; CHANGED -- a no-op that reads like a fix, and two copies of one namespace
+  ;; whose winner is decided by classpath order.
+  ;;
+  ;; The real move is bumping the `kotoba` pin, which no longer ships kgraph at
+  ;; all (404 on main). That pin is 320 commits behind and this application
+  ;; requires around forty `kotoba.*` namespaces, so it is its own change with
+  ;; its own verification -- not a line added beside another one.
   ;; Transaction and signed-head CAS registry. Encrypted payload blocks remain
   ;; in DataLad and are verified there before this head advances.
   io.github.kotoba-lang/kotobase
