@@ -17,6 +17,7 @@
   ;; Set true in the private production override only after the matching
   ;; did.json documents are live and continuously monitored.
   :publish-did-web? false}
- :cloud-relay
- {:base-url "https://relay.gftd.ai"
-  :access-token-env "GFTD_CLOUD_ACCESS_TOKEN"}}
+ ;; The retired gftd.ai relay is intentionally not a fallback. A private
+ ;; deployment that still provides relay mail must set :cloud-relay in its
+ ;; production override with an explicit canonical URL and token env.
+ :cloud-relay {}}
