@@ -2,32 +2,25 @@
   (:require [clojure.edn :as edn]
             [clojure.java.io :as io]
             [cloud.itonami.app.config :as config]
-            [cloud.itonami.app.work-partition-store :as work-partitions]
+            [cloud.itonami.app.store-core :as core]
             [kotoba.kgraph :as kgraph]
+            [cloud.itonami.app.work-partition-store :as work-partitions]
             [langchain.edn-persist :as edn-persist]
             [cloud.itonami.app.host :as host])
-  (:import [java.time Instant]
-           [java.util UUID]))
+  (:import [java.time Instant]))
 
-(def schema "cloud.itonami.app.state.v1")
+;; The schema string and the shape of a fresh state live in `store-core`, which
+;; is `.cljc`. Re-exported here so the fifty-odd callers that say `store/schema`
+;; and `store/initial-state` keep working: this namespace is the one they know,
+;; and moving the definition should not move the name.
+(def schema core/schema)
 
 (def ^:dynamic *environment*
   "Environment lookup seam. Repository deployments inject the same canonical
   state file used by actors; ordinary desktop runs keep the legacy data dir."
   #(System/getenv %))
 
-(defn initial-state []
-  {:schema schema
-   :agents [{:id "local" :name "Local" :system-prompt
-             "You are a private, local-first assistant. Be concise and useful."}]
-   :sessions {}
-   ;; One `drive.workspace` per principal — the tree, the ACL, the quota and
-   ;; the version history. The bytes those versions point at are not in here;
-   ;; they are in an object store. See `cloud.itonami.app.documents`.
-   :drive {:workspaces {}}
-   :datoms []
-   :events []
-   :last-response nil})
+(defn initial-state [] (core/initial-state))
 
 (defn state-file []
   (io/file (or (not-empty (*environment* "KOTOBA_REPOSITORY_STATE_FILE"))
@@ -95,8 +88,7 @@
      (assoc s :agent-control
             (apply f (or (:agent-control s) {}) args)))))
 
-(defn new-id [prefix]
-  (str prefix "-" (UUID/randomUUID)))
+(defn new-id [prefix] (core/new-id prefix))
 
 (def ^:private instant-format
   "ISO-8601 with exactly six fractional digits, always.
@@ -152,53 +144,38 @@
                         candidate))))))
 
 (defn session-messages [session-id]
-  (get-in @state [:sessions session-id :messages] []))
+  (core/session-messages @state session-id))
 
 (defn session-context-refs [session-id]
-  (vec (get-in @state [:sessions session-id :context-refs] [])))
+  (core/session-context-refs @state session-id))
 
 (defn set-session-context-refs! [session-id refs]
-  (transact!
-   (fn [s]
-     (-> s
-         (update-in [:sessions session-id]
-                    #(merge {:id session-id :messages []} (or % {})
-                            {:updated-at (now) :context-refs (vec refs)})))))
+  (let [at (now)]
+    (transact! #(core/set-context-refs % session-id refs at)))
   (session-context-refs session-id))
 
 (defn append-message!
   [session-id {:keys [role content] :as message} max-messages]
   (let [message-id (or (:id message) (new-id "msg"))
         recorded (assoc message :id message-id :at (or (:at message) (now)))]
-    (transact!
-     (fn [s]
-       (let [messages (conj (vec (get-in s [:sessions session-id :messages] []))
-                            recorded)
-             kept (vec (take-last max-messages messages))
-             datoms (-> (:datoms s)
-                        (kgraph/assert-datom [message-id :message/session session-id])
-                        (kgraph/assert-datom [message-id :message/role role])
-                        (kgraph/assert-datom [message-id :message/content content]))]
-         (-> s
-             ;; Context belongs to the conversation, not to one message.
-             ;; Preserve all session fields while appending the transcript.
-             (update-in [:sessions session-id]
-                        #(merge {:id session-id} (or % {})
-                                {:updated-at (now) :messages kept}))
-             (assoc :datoms datoms)))))
+    ;; The id and the timestamp are minted HERE and handed down. `store-core`
+    ;; has no clock and no id generator, which is what lets a test assert on
+    ;; the exact transcript a known message produces.
+;; The transcript window is `store-core`'s; the datoms are not, because
+    ;; `kotoba.kgraph` is `.clj` in an external library and a portable
+    ;; namespace cannot reach it. Both halves stay in one transaction.
+    (transact! (fn [s]
+                 (-> (core/append-message s session-id recorded max-messages)
+                     (update :datoms
+                             #(-> %
+                                  (kgraph/assert-datom [message-id :message/session session-id])
+                                  (kgraph/assert-datom [message-id :message/role role])
+                                  (kgraph/assert-datom [message-id :message/content content]))))))
     recorded))
 
 (defn record-response! [response]
-  (transact!
-   (fn [s]
-     (-> s
-         (assoc :last-response response)
-         (update :events #(vec (take-last 100
-                                         (conj (or % [])
-                                               {:type :chat/completed
-                                                :at (now)
-                                                :provider (:provider response)
-                                                :model (:model response)}))))))))
+  (let [at (now)]
+    (transact! #(core/record-response % response at))))
 
 (defn clear-session! [session-id]
-  (transact! update :sessions dissoc session-id))
+  (transact! #(core/clear-session % session-id)))

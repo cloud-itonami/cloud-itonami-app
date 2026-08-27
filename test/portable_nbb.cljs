@@ -18,6 +18,7 @@
             [cloud.itonami.app.issue-comment-test]
             [cloud.itonami.app.mail-authentication-test]
             [cloud.itonami.app.mail-domain-records-test]
+            [cloud.itonami.app.store-core-test]
             [cloud.itonami.app.tls-binding-test]))
 
 (defmethod t/report [::t/default :end-run-tests] [m]
@@ -31,4 +32,5 @@
              'cloud.itonami.app.issue-comment-test
              'cloud.itonami.app.mail-authentication-test
              'cloud.itonami.app.mail-domain-records-test
+             'cloud.itonami.app.store-core-test
              'cloud.itonami.app.tls-binding-test)
