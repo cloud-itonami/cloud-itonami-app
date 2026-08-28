@@ -137,10 +137,14 @@ CLOUD_ITONAMI_ERC4337_SEPOLIA_PAYMASTER_URL=https://…   # optional
 
 最初のhosted adapterとしては、Pimlico v2の同じchain endpointをbundlerとpaymasterに
 指定できます。Pimlico固有のidentity、wallet SDK、秘密鍵は採用せず、標準
-`eth_*UserOperation`とv0.6 `pm_sponsorUserOperation`だけを呼びます。したがってAlto等の
-self-hosted bundlerや別providerへURLを差し替えても、Principal、Passkey、Smart Account
-addressは変わりません。API keyはURLの一部になるためsecret storeまたはLaunchAgent環境へ
-のみ置き、設定ファイルやログへcommitしません。
+`eth_*UserOperation`とv0.6 `pm_sponsorUserOperation`を境界にします。gas価格だけは、
+Pimlicoが要求する`pimlico_getUserOperationGasPrice`の`fast` tierを署名対象へ入れます。
+これはnodeの`eth_gasPrice`がbundlerの最低値を下回ることと、取得からTouch IDまでに
+時間差があるためです。このoptional methodがJSON-RPC `-32601`なら`eth_gasPrice`へ
+戻るので、Alto等のself-hosted bundlerや別providerへURLを差し替えても、Principal、
+Passkey、Smart Account addressは変わりません。それ以外のgas oracleエラーは古い値で
+送信せずfail closedにします。API keyはURLの一部になるためsecret storeまたは
+LaunchAgent環境へのみ置き、設定ファイルやログへcommitしません。
 
 ```text
 https://api.pimlico.io/v2/sepolia/rpc?apikey=<secret>

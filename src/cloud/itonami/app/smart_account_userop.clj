@@ -38,7 +38,8 @@
   {:node #{"eth_chainId" "eth_getCode" "eth_call" "eth_gasPrice"}
    :bundler #{"eth_chainId" "eth_supportedEntryPoints"
               "eth_estimateUserOperationGas" "eth_sendUserOperation"
-              "eth_getUserOperationReceipt"}
+              "eth_getUserOperationReceipt"
+              "pimlico_getUserOperationGasPrice"}
    :paymaster #{"pm_sponsorUserOperation"}})
 
 (def ^:dynamic *environment* #(System/getenv %))
@@ -274,6 +275,45 @@
               op))
           operation [:callGasLimit :verificationGasLimit :preVerificationGas]))
 
+(defn- gas-price-pair!
+  [value source]
+  (let [max-fee (quantity! (or (:maxFeePerGas value)
+                               (get value "maxFeePerGas")))
+        max-priority (quantity! (or (:maxPriorityFeePerGas value)
+                                    (get value "maxPriorityFeePerGas")))]
+    (when (pos? (.compareTo max-priority max-fee))
+      (refuse :wallet/user-operation-rpc-error
+              (str source " のmaxPriorityFeePerGasがmaxFeePerGasを超えています。")))
+    {:maxFeePerGas (quantity max-fee)
+     :maxPriorityFeePerGas (quantity max-priority)}))
+
+(defn- method-not-found? [error]
+  (= "-32601" (str (or (get-in (ex-data error) [:rpc-error :code])
+                         (get-in (ex-data error) [:rpc-error "code"])))))
+
+(defn- user-operation-gas-prices!
+  "Prefer the bundler's current UserOperation prices. Pimlico requires these
+  rather than a node's eth_gasPrice and exposes slow/standard/fast tiers. The
+  fast tier leaves room for the human WebAuthn ceremony between preparation
+  and submission. A provider that does not implement the optional method may
+  fall back to eth_gasPrice; every other RPC failure remains fail-closed."
+  [chain]
+  (try
+    (let [prices (rpc! (:bundler-endpoint chain) :bundler
+                       "pimlico_getUserOperationGasPrice" [])
+          fast (or (:fast prices) (get prices "fast"))]
+      (when-not (map? fast)
+        (refuse :wallet/user-operation-rpc-error
+                "pimlico_getUserOperationGasPrice がfast tierを返しませんでした。"))
+      (gas-price-pair! fast "Pimlico fast gas price"))
+    (catch clojure.lang.ExceptionInfo error
+      (if (method-not-found? error)
+        (let [gas-price (quantity
+                         (quantity! (rpc! (:node-endpoint chain) :node
+                                         "eth_gasPrice" [])))]
+          {:maxFeePerGas gas-price :maxPriorityFeePerGas gas-price})
+        (throw error)))))
+
 (defn- sponsor! [chain operation entry-point]
   (if-let [endpoint (:paymaster-endpoint chain)]
     (let [result (rpc! endpoint :paymaster "pm_sponsorUserOperation"
@@ -305,7 +345,7 @@
                               ["address" "uint192"]
                               [account (str smart-account/replayable-nonce-key)]))
         nonce (quantity (BigInteger. (decode-one "uint256" nonce-result)))
-        gas-price (quantity (quantity! (rpc! node :node "eth_gasPrice" [])))
+        gas-prices (user-operation-gas-prices! chain)
         plan (smart-account/owner-addition-plan
               configuration descriptor candidate-credential)
         base {:sender account
@@ -317,8 +357,8 @@
               :callGasLimit "0x0"
               :verificationGasLimit "0x0"
               :preVerificationGas "0x0"
-              :maxFeePerGas gas-price
-              :maxPriorityFeePerGas gas-price
+              :maxFeePerGas (:maxFeePerGas gas-prices)
+              :maxPriorityFeePerGas (:maxPriorityFeePerGas gas-prices)
               :paymasterAndData "0x"
               :signature (dummy-signature)}
         ;; Pimlico stopped injecting a balance override into gas estimation.
