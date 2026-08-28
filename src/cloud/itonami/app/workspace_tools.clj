@@ -18,10 +18,14 @@
 (def tool-definitions
   [{:name "workspace_list"
     :description "List one directory inside the selected local Git repository."
-    :parameters {:type "object" :properties {:path {:type "string"}}}}
+    :parameters {:type "object"
+                 :properties {:path {:type "string"
+                                     :description "Relative to the repository root, e.g. \"src\" or \".\" for the root. An absolute path is refused."}}}}
    {:name "workspace_read"
     :description "Read one UTF-8 text file inside the selected local Git repository."
-    :parameters {:type "object" :properties {:path {:type "string"}}
+    :parameters {:type "object"
+                 :properties {:path {:type "string"
+                                     :description "Relative to the repository root, e.g. \"src/core.clj\". An absolute path is refused."}}
                  :required ["path"]}}
    {:name "workspace_search"
     :description "Search text files in the selected local Git repository for a literal string."
@@ -31,14 +35,18 @@
    {:name "workspace_write_file"
     :description "Replace one UTF-8 text file inside the selected repository. Requires approval. (write)"
     :parameters {:type "object"
-                 :properties {:path {:type "string"} :content {:type "string"}}
+                 :properties {:path {:type "string"
+                                     :description "Relative to the repository root, e.g. \"src/core.clj\". An absolute path is refused."}
+                              :content {:type "string"}}
                  :required ["path" "content"]}}
    {:name "git_status"
     :description "Read local Git status for the selected repository."
     :parameters {:type "object" :properties {}}}
    {:name "git_diff"
     :description "Read the unstaged Git diff, optionally for one path."
-    :parameters {:type "object" :properties {:path {:type "string"}}}}
+    :parameters {:type "object"
+                 :properties {:path {:type "string"
+                                     :description "Relative to the repository root, e.g. \"src/core.clj\". An absolute path is refused."}}}}
    {:name "git_log"
     :description "Read recent local Git commits."
     :parameters {:type "object" :properties {:limit {:type "integer"}}}}
