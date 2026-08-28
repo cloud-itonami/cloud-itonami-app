@@ -164,8 +164,35 @@
         ;;
         ;; Still bounded and still one line, as the docstring requires: this
         ;; rides in a record the UI reads.
+        ;;
+        ;; `:error` is a MAP for every OpenAI-shaped provider (OpenRouter
+        ;; included) -- `{:message ... :code ... :metadata {:raw ...}}`, the
+        ;; same shape `provider-retry/body-error-type` already reads via
+        ;; `(get-in parsed [:error :type])`. `(str (:error response))` printed
+        ;; that whole map instead of its `:message`, so "Provider returned
+        ;; error" (OpenRouter's own wrapper text) crowded out the 120-char
+        ;; budget and every recorded HTTP 400 read the same regardless of
+        ;; cause. Measured 2026-08-28, first hours on the OpenRouter free
+        ;; plan: this was the shape of every stored 400.
+        ;;
+        ;; OpenRouter also nests the upstream backend's own error a second
+        ;; time, as a JSON STRING at `:error :metadata :raw` (it proxies many
+        ;; backends and does not reshape what they said). That string is
+        ;; parsed only if it decodes; a raw body that is not JSON -- a
+        ;; Cloudflare or Modal error page, same as `provider-retry`'s own
+        ;; measurement -- falls through to the wrapper message instead.
+        error-map (:error response)
+        raw-message (when (map? error-map)
+                      (let [raw (get-in error-map [:metadata :raw])]
+                        (when (string? raw)
+                          (try (:message (:error (json/read-str raw :key-fn keyword)))
+                               (catch Exception _ nil)))))
         body (when response
-               (let [t (-> (str (or (:error response) (:message response) response))
+               (let [source (cond
+                              raw-message raw-message
+                              (map? error-map) (or (:message error-map) error-map)
+                              :else (or error-map (:message response) response))
+                     t (-> (str source)
                            (str/replace #"\s+" " ")
                            str/trim)]
                  (not-empty (subs t 0 (min 120 (count t))))))
