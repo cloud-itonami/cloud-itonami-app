@@ -221,11 +221,11 @@ rebase, and west pin changes; those remain release operations outside the Bot.
 
 ## Sign-in and sign-up
 
-The single Settings surface supports Passkey, one-time Email links, and
-minimal-scope Google, Microsoft, and GitHub SSO. The `itonami` deployment
-profile allows a verified Email or provider subject to create a personal User;
-tenant-neutral defaults keep sign-up and Email delivery disabled until the
-operator chooses their delivery and OAuth clients.
+The product entrance is Passkey/WebAuthn through `auth.itonami.cloud`, with a
+device-local Passkey recovery path and optional one-time Email links. Provider
+SSO is not exposed by the default or `itonami` profile. The backend retains an
+explicit compatibility option for a deployment that deliberately supplies an
+SSO provider list and OAuth clients.
 
 SSO authentication scopes are separate from delegated service connections:
 signing in never grants mailbox, Drive, or repository access. A provider
@@ -236,12 +236,12 @@ federation, and outward-authority approval retain their dedicated Passkey
 ceremonies as step-up authentication.
 
 The Settings page also lists this User's active sessions, can revoke another
-device, clears the current HttpOnly cookie on sign-out, and can unlink an Email
-or SSO identity only while another login root remains. Session responses never
-contain token digests or CSRF values.
+device, clears the current HttpOnly cookie on sign-out, and can unlink a legacy
+Email or SSO identity only while another login root remains. Session responses
+never contain token digests or CSRF values.
 
-For an installed-app registration, Google and Microsoft can be configured
-without distributing a secret:
+For a compatibility deployment, Google and Microsoft can be configured without
+distributing a secret:
 
 ```edn
 {:auth {:sso-providers [:google :microsoft :github]

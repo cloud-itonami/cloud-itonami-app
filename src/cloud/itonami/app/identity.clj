@@ -65,7 +65,10 @@
    :root-did-method :webvh})
 (def default-auth-profile
   {:allow-signup? false
-   :sso-providers [:google :microsoft :github]
+   ;; Passkey/WebAuthn is the product entrance. Provider SSO remains an
+   ;; explicit compatibility capability for deployments that opt back in, but
+   ;; a fresh Cloud Itonami process must not advertise or start it.
+   :sso-providers []
    :central {:enabled? true
              :issuer "https://auth.itonami.cloud"
              :client-id "cloud-itonami-app-native"

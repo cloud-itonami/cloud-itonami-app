@@ -174,6 +174,10 @@
           (is (true? (:bot/peers? created)))
           (is (true? (:bot/coding? created)))
           (is (false? (:bot/virtual-shell? created)))
+          (is (true? (:bot/goal? created)))
+          (is (true? (:goal? (first (:bots (bots/overview {} alice))))))
+          (bots/update! {} alice (:bot/id created) {:goal? false})
+          (is (false? (:goal? (first (:bots (bots/overview {} alice))))))
           (is (empty? (:bot/tools created))
               "autonomy does not silently grant an external connector"))))))
 
@@ -187,6 +191,15 @@
         (is (= "/chosen/repo"
                (:default-workspace
                 (bots/overview {:bots {:default-workspace "/chosen/repo"}} alice))))))))
+
+(deftest legacy-coding-bots-retain-the-former-goal-default
+  (with-store
+    (fn []
+      (let [created (make-bot alice {:coding? false})
+            bot-id (:bot/id created)]
+        (swap! store/state update-in [:bots :bots bot-id]
+               #(-> % (assoc :bot/coding? true) (dissoc :bot/goal?)))
+        (is (true? (:goal? (first (:bots (bots/overview {} alice))))))))))
 
 (deftest coding-bots-are-instructed-to-use-local-evidence-first
   (with-redefs [workspace-tools/orientation (constantly nil)]

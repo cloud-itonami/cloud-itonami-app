@@ -344,6 +344,8 @@
   (identity/configure! {})
   (let [methods (identity/public-auth-methods)]
     (is (true? (get-in methods [:central :configured?])))
+    (is (empty? (:sso methods))
+        "provider SSO is opt-in; Passkey is the default product entrance")
     (is (= "https://auth.itonami.cloud" (get-in methods [:central :issuer])))
     ;; The /ja/ route: itonami.cloud is English-default multilingual and this
     ;; app's UI is Japanese, so the ceremony must not switch language mid-way.
