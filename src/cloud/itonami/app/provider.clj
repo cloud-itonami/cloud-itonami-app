@@ -363,13 +363,77 @@
                                                         (count (str value))))}
                           error)))))))
 
-(defn- normalize-tool-calls [calls]
-  (mapv (fn [index call]
-          {:id (or (:id call) (str "tool-call-" index))
-           :name (get-in call [:function :name])
-           :input (parse-arguments (get-in call [:function :name])
-                                   (get-in call [:function :arguments]))})
-        (range) (or calls [])))
+(defn output-budget-exhausted?
+  "Did the model stop because it reached its output-token cap?
+
+  `finish_reason` alone does not answer this. Measured against
+  api.murakumo.cloud on 2026-08-28, six streamed `decision_frame` calls cut at
+  exactly `max_tokens`: two said `length` and four said `tool_calls`. A server
+  that has emitted a tool call reports having emitted a tool call, and whether
+  it also mentions the cap is a detail of its parser -- so the reason is taken
+  as sufficient evidence when present, never as necessary.
+
+  The count is the reliable half. `completion_tokens` reaching the cap the
+  request set is the cap being reached; there is no other way to arrive there.
+  Both halves are optional because a provider may report neither, and then this
+  answers false: an unexhausted budget is the safe assumption, since the caller
+  only uses this to make an error MORE specific."
+  [finish-reason completion-tokens max-output-tokens]
+  (boolean
+   (or (= "length" finish-reason)
+       (and (number? completion-tokens)
+            (number? max-output-tokens)
+            (>= (long completion-tokens) (long max-output-tokens))))))
+
+(defn- budget-exhausted-error
+  "`error` renamed to the thing that actually went wrong, when the budget ran out.
+
+  A tool call whose arguments were cut off mid-JSON is unparseable, and
+  `parse-arguments` is right that it cannot run. But `invalid-tool-arguments`
+  says the model authored something malformed, and an operator reading that
+  goes looking at the model. Measured 2026-08-28 on the resident fleet: this
+  was the single most common live failure (20 of 45 failed turns), and every
+  reproduction of it came from `:max-output-tokens 1024` against a
+  `decision_frame` whose frames need 1350-1676 tokens. Three runs at 1024 were
+  unparseable; three each at 2048, 3072 and 4096 were complete. The model was
+  never the problem -- a configured number was, and the name hid it.
+
+  Only a call that already failed to parse reaches this, and only when the
+  budget was in fact exhausted. Everything the original error carried is kept:
+  the tool name and the offending string are the point of that error, and this
+  renames the failure rather than replacing it."
+  [error max-output-tokens]
+  (let [{:keys [type finish-reason completion-tokens] :as data} (ex-data error)]
+    (if (and (= :provider/invalid-tool-arguments type)
+             (output-budget-exhausted? finish-reason completion-tokens
+                                       max-output-tokens))
+      (ex-info (str "モデルの出力トークン上限に達し、tool の引数が途中で切れました"
+                    (when max-output-tokens
+                      (str "（max-output-tokens " max-output-tokens "）")))
+               (assoc data
+                      :type :provider/output-budget-exhausted
+                      :max-output-tokens max-output-tokens)
+               error)
+      error)))
+
+(defn- normalize-tool-calls
+  ([calls] (normalize-tool-calls calls nil nil nil))
+  ([calls finish-reason completion-tokens max-output-tokens]
+   (mapv (fn [index call]
+           {:id (or (:id call) (str "tool-call-" index))
+            :name (get-in call [:function :name])
+            :input (try
+                     (parse-arguments (get-in call [:function :name])
+                                      (get-in call [:function :arguments]))
+                     (catch clojure.lang.ExceptionInfo error
+                       (throw (budget-exhausted-error
+                               (ex-info (.getMessage error)
+                                        (assoc (ex-data error)
+                                               :finish-reason finish-reason
+                                               :completion-tokens completion-tokens)
+                                        error)
+                               max-output-tokens))))})
+         (range) (or calls []))))
 
 (def ^:private default-agent-max-tokens
   ;; api.murakumo.cloud routes murakumo-main to a reasoning model. When this is
@@ -378,6 +442,19 @@
   ;; then appears to accept the person's message without answering. 2048 is the
   ;; gateway's documented public ceiling and leaves room for the visible reply.
   2048)
+
+(defn- requested-max-tokens
+  "The output cap this request will actually carry.
+
+  One function because two places need the same answer and they must not drift:
+  `agent-request-body` puts it on the wire, and `agent-result` compares
+  `completion_tokens` against it to tell a truncated tool call from a malformed
+  one. A second copy of this `or` chain would make that comparison silently
+  wrong the first time either default moved."
+  [provider request]
+  (or (:max-output-tokens request)
+      (:max-output-tokens provider)
+      default-agent-max-tokens))
 
 (defonce ^:private active-agent-streams (atom {}))
 
@@ -400,14 +477,13 @@
 
 (defn- agent-request-body
   [provider {:keys [model messages tools temperature reasoning-effort
-                    max-output-tokens disable-thinking? text-only?]}]
+                    disable-thinking? text-only?]
+             :as request}]
   (cond-> {:model model
            :messages (mapv provider-message messages)
            :stream false
            :temperature (or temperature 0.2)
-           :max_tokens (or max-output-tokens
-                           (:max-output-tokens provider)
-                           default-agent-max-tokens)}
+           :max_tokens (requested-max-tokens provider request)}
     (and (not text-only?) (seq tools))
     (assoc :tools (mapv tool-definition tools))
 
@@ -443,10 +519,16 @@
                                 "medium"))))
 
 (defn- agent-result
-  ([message finish-reason] (agent-result message finish-reason nil))
-  ([message finish-reason usage]
+  ([message finish-reason] (agent-result message finish-reason nil nil))
+  ([message finish-reason usage] (agent-result message finish-reason usage nil))
+  ;; `max-output-tokens` is the cap the REQUEST carried, which is the only
+  ;; number `completion_tokens` can be compared against. It is threaded here
+  ;; rather than read from the response because no provider reports it back.
+  ([message finish-reason usage max-output-tokens]
   (let [result (cond-> {:content (:content message)
-                        :tool-calls (normalize-tool-calls (:tool_calls message))}
+                        :tool-calls (normalize-tool-calls
+                                     (:tool_calls message) finish-reason
+                                     (:completion_tokens usage) max-output-tokens)}
                  usage (assoc :usage usage))]
     (when (and (str/blank? (:content result))
                (empty? (:tool-calls result)))
@@ -458,9 +540,7 @@
 
 (defn- ollama-agent-options [provider request]
   (cond-> {:temperature (or (:temperature request) 0.2)
-           :num_predict (or (:max-output-tokens request)
-                            (:max-output-tokens provider)
-                            default-agent-max-tokens)}
+           :num_predict (requested-max-tokens provider request)}
     (:context-window-tokens request)
     (assoc :num_ctx (:context-window-tokens request))))
 
@@ -583,7 +663,8 @@
         _ (assert-response-model! provider model result)
         message (get-in result [:choices 0 :message])]
     (assoc (agent-result message (get-in result [:choices 0 :finish_reason])
-                         (:usage result))
+                         (:usage result)
+                         (requested-max-tokens provider request))
            :served-model (:model result))))
 
 (defn agent-turn
@@ -603,7 +684,8 @@
                       {:prompt_tokens (get result :prompt_eval_count 0)
                        :completion_tokens (get result :eval_count 0)
                        :total_tokens (+ (get result :prompt_eval_count 0)
-                                        (get result :eval_count 0))}))
+                                        (get result :eval_count 0))}
+                      (requested-max-tokens provider request)))
 
       (openai-shaped? provider)
       (with-model-fallback provider (:model request)
@@ -783,7 +865,8 @@
         (assert-response-model! provider model {:model @served-model}))
       (assoc (agent-result {:content (.toString content)
                             :tool_calls (mapv val (sort-by key @calls))}
-                           @finish-reason @usage)
+                           @finish-reason @usage
+                           (requested-max-tokens provider request))
              :served-model @served-model)
       (catch Exception error
         (throw (ex-info (.getMessage error)
@@ -828,7 +911,8 @@
                                            (get chunk :eval_count 0))}))))))
       (agent-result {:content (.toString content)
                      :tool_calls (mapv val (sort-by key @calls))}
-                    @finish-reason @usage))
+                    @finish-reason @usage
+                    (requested-max-tokens provider request)))
 
     (openai-shaped? provider)
     (with-model-fallback provider (:model request)

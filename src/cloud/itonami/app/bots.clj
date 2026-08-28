@@ -152,7 +152,8 @@
   unbounded text. `nil` when there is nothing to say, so a reader can tell
   'no message' from an empty one."
   [error]
-  (let [{:keys [status response tool-name arguments-kind arguments-sample]}
+  (let [{:keys [status response tool-name arguments-kind arguments-sample
+                max-output-tokens completion-tokens]}
         (ex-data error)
         ;; The provider layer throws with :status, :url and :response, and this
         ;; kept only (.getMessage), so every HTTP failure was stored as the same
@@ -187,6 +188,14 @@
                             (when tool-name (str "tool " tool-name))
                             (when arguments-kind
                               (str "arguments were a " arguments-kind))
+                            ;; The two numbers that decide whether a truncated
+                            ;; tool call is the model's fault or a cap's. Kept
+                            ;; here so the turn record answers that without a
+                            ;; re-run: `:provider/output-budget-exhausted`
+                            ;; names the cause, these say which number to move.
+                            (when max-output-tokens
+                              (str "budget " (or completion-tokens "?")
+                                   "/" max-output-tokens " output tokens"))
                             (when-let [sample (one-line arguments-sample 160)]
                               (str "arguments: " sample))])
         detail (when (seq parts) (str/join " " parts))]
@@ -2941,7 +2950,7 @@
             attrs))))
 
 (defn- visible-failure-message [error]
-  (let [{:keys [type status timeout-seconds]} (ex-data error)]
+  (let [{:keys [type status timeout-seconds max-output-tokens]} (ex-data error)]
     (case type
       :bot/cancelled nil
       :provider/empty-response
@@ -2963,6 +2972,16 @@
       ;; long look the same to somebody told only that execution failed.
       (:provider/network-error :provider/unreachable)
       "モデルへの通信が途切れました。依頼は記録されています。もう一度送ると再試行できます。"
+      ;; Says which knob, because retrying changes nothing here. The other
+      ;; provider failures above are transient and "もう一度送ると" is honest
+      ;; advice for them; a budget that could not hold the answer will not hold
+      ;; it on the next attempt either, and telling somebody to retry into the
+      ;; same cap wastes their time and a run slot.
+      :provider/output-budget-exhausted
+      (str "モデルの出力が上限に達し、回答が途中で切れました"
+           (when max-output-tokens
+             (str "（max-output-tokens " max-output-tokens "）"))
+           "。依頼を分割するか、出力トークンの上限を上げてください。")
       "実行に失敗しました。依頼は記録されています。もう一度送ると再試行できます。")))
 
 (defn- goal-event! [kind data]
