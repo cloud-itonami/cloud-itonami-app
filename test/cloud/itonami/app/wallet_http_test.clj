@@ -92,6 +92,45 @@
                           :chain-id 1}
                          false))))))))
 
+(deftest owner-plan-is-human-csrf-gated-and-does-not-claim-submission-readiness
+  (with-server
+    (fn []
+      (store/transact!
+       (fn [state]
+         (-> state
+             (assoc-in [:identity :users "alice"]
+                       {:id "alice" :principal-id "urn:kotoba:principal:alice"})
+             (assoc-in [:identity :passkeys "cred-initial"]
+                       {:id "cred-initial" :credential-id "cred-initial"
+                        :user-id "alice"
+                        :public-key-b64
+                        "BGsX0fLhLEJH-Lzm5WOkQPJ3A32BLeszoPShOUXYmMKWT-NC4v4af5uO5-tKfA-eFivOM1drMV7Oy7ZAaDe_UfU"
+                        :user-verified? true :rp-id "localhost"
+                        :registration-origin origin
+                        :created-at "2026-08-28T00:00:00Z"})
+             (assoc-in [:identity :passkeys "cred-kotobase"]
+                       {:id "cred-kotobase" :credential-id "cred-kotobase"
+                        :user-id "alice"
+                        :public-key-b64
+                        "BHzyexiNA09-ilI4AwS1GsPAiWnid_IbNaYLSPxHZpl4B3dVENuO0EApPZrGn3Qw27p9reY86YIpngS3nSJ4c9E"
+                        :user-verified? true :rp-id "kotobase.net"
+                        :registration-origin "https://auth.kotobase.net"
+                        :created-at "2026-08-28T00:01:00Z"}))))
+      (is (= 403 (:status
+                  (call :post "/api/wallet/owners/plan"
+                        {:credential-id "cred-kotobase"} false))))
+      (let [response (call :post "/api/wallet/owners/plan"
+                           {:credential-id "cred-kotobase"} true)]
+        (is (= 200 (:status response)))
+        (is (= "kotobase.net"
+               (get-in response [:body :candidate-owner :rp-id])))
+        (is (= "awaiting-current-owner-authorization"
+               (get-in response [:body :status])))
+        (is (false? (get-in response [:body :user-operation-ready?])))
+        (is (.startsWith ^String
+                         (get-in response [:body :contract-call :calldata])
+                         "0x2c2abd1e"))))))
+
 (deftest agent-sessions-cannot-manage-wallets
   (with-server
     (fn []

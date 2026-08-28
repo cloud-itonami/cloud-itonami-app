@@ -195,6 +195,7 @@
             [cloud.itonami.app.oauth-did-binding-test]
             [cloud.itonami.app.worker-http-test]
             [cloud.itonami.app.wallet-test]
+            [cloud.itonami.app.smart-account-owner-test]
             [cloud.itonami.app.wallet-http-test]
             [cloud.itonami.app.wallet-send-test]
             [cloud.itonami.app.commerce-test]
@@ -385,6 +386,7 @@
     cloud.itonami.app.oauth-did-binding-test
     cloud.itonami.app.worker-http-test
     cloud.itonami.app.wallet-test
+    cloud.itonami.app.smart-account-owner-test
     cloud.itonami.app.wallet-http-test
     cloud.itonami.app.wallet-send-test
     cloud.itonami.app.commerce-test

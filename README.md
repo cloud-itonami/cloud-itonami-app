@@ -36,14 +36,20 @@ Data Integrity proof.
 
 Wallet creation is Passkey-first: the first verified P-256 public key names a
 deterministic ERC-4337 counterfactual account, so no injected wallet extension
-is required to receive. Sending, account deployment, owner addition/removal and
-loss recovery are not yet UserOperation-ready. `itonami.cloud`,
+is required to receive. A Passkey remains scoped to its WebAuthn RP ID; the
+stable Principal and Smart Account are the domain-independent layer. Verified
+credentials now retain their RP provenance, the Wallet exposes which keys are
+active or still require `addOwner`, and it can build the unsigned replay-safe
+Smart Wallet 1.1 owner-addition call. Signing, bundler submission, receipts,
+owner removal and loss recovery are not yet UserOperation-ready. `itonami.cloud`,
 `murakumo.cloud` and `kotobase.net` also do not currently expose one raw
 Passkey from all three origins. See
 [Passkey Smart Account: ドメイン共有・別端末・復旧](docs/passkey-smart-account.md)
-for the current domain matrix and new-device procedure, and
+for the current domain matrix and new-device procedure,
 [ADR-0080](docs/adr/0080-passkey-smart-account-is-the-default-wallet.md) for
-the architecture decision.
+the Wallet decision, and
+[ADR-0082](docs/adr/0082-webauthn-credentials-are-rp-scoped-smart-account-controllers.md)
+for the domain-portability decision.
 
 The open interoperability stack assigns one responsibility to each protocol:
 MCP for tools and data is implemented. The opt-in A2A v1 text-task adapter

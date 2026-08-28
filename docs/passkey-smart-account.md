@@ -12,8 +12,9 @@ counterfactual address を作れます。
    秘密鍵。WebAuthn RP ID に束縛され、サービスへ秘密鍵を渡しません。
 2. **Principal** — 人を表す安定した主体。ログイン方法や Passkey を追加・失効しても
    同じであるべき識別子です。
-3. **Smart Account owner** — on-chain account が署名を受理する公開鍵。現在の
-   descriptor は最初に検証した1個の Passkey 公開鍵を固定します。
+3. **Smart Account owner** — on-chain account が署名を受理する公開鍵。最初の
+   Passkey が address を固定し、別RPの公開鍵は明示的な owner 追加で同じ account
+   に参加します。
 
 同じ Principal として federation できることは、同じ WebAuthn 秘密鍵を各サイトへ
 公開することでも、別の Passkey が既存 Smart Account の owner になることでも
@@ -47,32 +48,41 @@ distinct-signer quorum の別境界を維持します。
 
 ## 採用するドメイン連携方針
 
-3つの apex domain に raw WebAuthn ceremony を複製するのではなく、
-`auth.itonami.cloud` を Passkey ceremony の入口にして federation します。
+WebAuthn credential 自体をドメイン非依存にはしません。credential はフィッシング
+耐性のため必ずRP IDに束縛されます。ドメイン非依存にするのは Principal と Smart
+Account であり、各製品のRP-scoped Passkeyを同じ owner setへ明示的に追加します。
 
 ```text
-murakumo.cloud ─┐
-kotobase.net ───┼─ Authorization Code + PKCE / audience-bound assertion
-resident ───────┘                 │
-                                  ▼
-                         auth.itonami.cloud
-                         RP ID: itonami.cloud
-                                  │
-                                  ▼
-                         credential manager
+itonami.cloud Passkey  ──┐
+murakumo.cloud Passkey ──┼─ explicit addOwner ── Smart Account / Principal
+kotobase.net Passkey  ───┤                         (domain-independent root)
+localhost Passkey ───────┘
 ```
 
-各 consumer は issuer、audience、resource、期限、nonce、authentication assurance を
-検証します。cookie を apex 間で共有せず、Passkey 公開鍵や秘密鍵もコピーしません。
-Smart Account の UserOperation を承認するときは、consumer が operation digest を
-中央 ceremony へ渡し、`auth.itonami.cloud` で Passkey を使って署名し、結果を
-要求元へ戻す構成にします。
+`auth.itonami.cloud` の Authorization Code + PKCE と audience-bound assertion は、
+同じ Principal へ到達するための便利な経路として維持します。しかし、その issuer
+やRP IDを唯一の identity root にはしません。各 consumer は issuer、audience、
+resource、期限、nonce、authentication assurance を検証し、on-chain authority は
+Smart Account owner set と receipt で検証します。cookie と秘密鍵は apex 間で
+共有しません。
 
 WebAuthn Related Origin Requests は代替手段ですが、現時点の既定にはしません。
 採用すると `itonami.cloud/.well-known/webauthn` に他の apex origin を列挙し、
 全 ceremony で共通 RP ID を要求し、server verifier の exact origin allowlist も
-広げる必要があります。これは Passkey を呼び出せる origin を増やすため、中央認証で
-足りる限り避けます。
+広げる必要があります。これは Passkey を呼び出せる origin を増やし、なお共通RP
+domainへの依存は残すため、identity portability の既定にはしません。
+
+### 実装済みの owner 追加準備
+
+検証済み Passkey record は `rp-id` と registration origin を保持します。Wallet API は
+各 credential を `initial-owner` または `requires-add-owner-user-operation` として表示し、
+`POST /api/wallet/owners/plan` は Smart Wallet 1.1 の
+`addOwnerPublicKey(bytes32,bytes32)` を
+`executeWithoutChainIdValidation(bytes[])` で包んだ unsigned calldata を返します。
+
+この endpoint は Human session、same-origin、CSRFを要求しますが、計画を返すだけです。
+現在ownerのWebAuthn署名、EntryPoint nonce、bundler送信、各chain receipt確認が揃うまで
+`user-operation-ready?` は false のままです。
 
 ## 別端末から使う
 
@@ -99,9 +109,10 @@ PC へコピーしません。サインインはできますが、PC に新し�
 
 ### 3. 別の credential manager／device-bound Passkey を追加したい場合
 
-現在の account model は複数の login Passkey を保存できますが、Smart Account
-descriptor は最初の owner を固定します。別の端末で新規作成した別公開鍵を既存 Wallet へ
-追加する on-chain `addOwner` UserOperation は未実装です。
+現在の account model は複数の login Passkey を保存し、RP ID と origin を記録します。
+Smart Account descriptor は最初の owner と address を固定します。別の端末で作った
+別公開鍵について、owner-addition calldata の生成までは実装済みですが、on-chain
+UserOperation の署名・送信・receipt確認は未実装です。
 
 安全な完成形は次の順序です。
 
@@ -136,16 +147,20 @@ Email や SSO は Principal への回復経路になり得ますが、現在は 
 - 同じ factory がある EVM chain で同じ address を参照する
 - 同期済み Passkey または nearby-device WebAuthn で中央認証へサインインする
 - ローカル Passkey session から Kotobase read/session assertion を発行する
+- 複数RPの credentialを同じ Principal の owner候補として区別する
+- replay-safeな `addOwnerPublicKey` unsigned calldataを生成する
 
 まだできないこと:
 
 - 1個の `itonami.cloud` Passkey で3つの apex siteから直接 WebAuthn を実行する
 - Murakumo が `auth.itonami.cloud` の Principal を受理する
-- 中央 Passkey 公開鍵を新しい resident の既存 Wallet descriptor へ安全に復元する
-- 新しい Passkey を既存 Smart Account owner set へ追加・削除する
+- 新しい Passkey owner追加を現在ownerで署名し、bundlerへ送ってreceiptを確認する
+- 既存 Smart Account ownerを削除・復旧する
 - Passkey 署名の ERC-4337 UserOperation を submit/deploy する
 
 設計判断は [ADR-0080](adr/0080-passkey-smart-account-is-the-default-wallet.md)、
+RP-scoped controller と domain-independent identity の境界は
+[ADR-0082](adr/0082-webauthn-credentials-are-rp-scoped-smart-account-controllers.md)、
 Kotobase の短命交換境界は
 [ADR-0015](adr/0015-kotobase-passkey-federation.md) を参照してください。
 
