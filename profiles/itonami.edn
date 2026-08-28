@@ -61,6 +61,7 @@
 ;; variable actually being set, so a deployment that forgets to export it gets
 ;; a refused provider rather than a silent fallback.
 {:auth {:allow-signup? true
+        :sso-enabled? false
         :sso-providers []}
  :cloud-relay {:base-url "https://hooks.itonami.cloud"
                :access-token-env "CLOUD_ITONAMI_RELAY_ACCESS_TOKEN"}
