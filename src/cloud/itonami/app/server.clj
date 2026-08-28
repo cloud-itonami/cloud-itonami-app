@@ -50,6 +50,7 @@
             [cloud.itonami.app.identity :as identity]
             [cloud.itonami.app.fax :as fax]
             [cloud.itonami.app.lawfirm :as lawfirm]
+            [cloud.itonami.app.lifecycle :as lifecycle]
             [cloud.itonami.app.kotobase-federation :as kotobase-federation]
             [cloud.itonami.app.loopback-origin :as loopback-origin]
             [cloud.itonami.app.loops :as loops]
@@ -6868,7 +6869,21 @@
   (reset! active-config nil))
 
 (defn -main [& _]
-  (let [{:keys [host port]} (start!)]
-    (println (str "cloud-itonami-app listening on http://" host ":" port))
-    (.addShutdownHook (Runtime/getRuntime) (Thread. stop!))
+  (let [{:keys [host port]} (start!)
+        started-ms (System/currentTimeMillis)
+        release (System/getProperty "user.dir")]
+    (println (lifecycle/started-line started-ms release
+                                    (str "http://" host ":" port)))
+    (.addShutdownHook
+     (Runtime/getRuntime)
+     (Thread.
+      (fn []
+        ;; Printed BEFORE `stop!`, because `stop!` closes the surfaces this
+        ;; process was serving and a hook that dies part-way through would
+        ;; otherwise leave no record that a stop was ever asked for. A stop
+        ;; line with no matching exit is still evidence; a missing one is not.
+        (println (lifecycle/stopping-line (System/currentTimeMillis)
+                                          started-ms release))
+        (flush)
+        (stop!))))
     @(promise)))
