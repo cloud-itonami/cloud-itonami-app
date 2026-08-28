@@ -3242,6 +3242,58 @@
                                  :turn/error-type :provider/http-error
                                  :turn/requested-model "murakumo-main"})))))))
 
+(deftest a-goal-that-timed-out-says-which-model-and-how-far
+  ;; The gap the previous fix did not close. `:turn/requested-model` was added
+  ;; to `finish-visible!`, which is the INTERACTIVE path -- and every one of the
+  ;; 273 turns that failed at :provider/timeout was a Goal, which fails through
+  ;; a catch block that never read the run beside it.
+  ;;
+  ;; Measured 2026-08-28: of those 273, :turn/model was nil for all of them and
+  ;; :turn/turn-count was nil for 268. The run was never missing -- nothing
+  ;; clears it on the way out, `clear-run!` is only called on completion paths.
+  ;; Nothing read it.
+  (let [run {:id "run-1" :provider "murakumo" :requested-model "murakumo-main"
+             :model "qwen3.8-27b-throughput-b70" :turn-count 6 :tool-count 2
+             :usage {:total_tokens 47590}}
+        turn (bots/failed-goal-turn run {:error-type :provider/timeout
+                                         :error-status nil
+                                         :error-message "model provider request timed out"
+                                         :at "2026-08-28T00:10:00.000000Z"})]
+    (testing "the failure itself"
+      (is (= :failed (:turn/state turn)))
+      (is (= :provider/timeout (:turn/error-type turn)))
+      (is (= "model provider request timed out" (:turn/error-message turn))))
+    (testing "which model, asked and answering"
+      (is (= "murakumo" (:turn/provider turn)))
+      (is (= "murakumo-main" (:turn/requested-model turn)))
+      (is (= "qwen3.8-27b-throughput-b70" (:turn/model turn))))
+    (testing "and how far it got, which is what separates one slow request from twenty"
+      (is (= 6 (:turn/turn-count turn)))
+      (is (= 2 (:turn/tool-count turn)))
+      (is (= {:total_tokens 47590} (:turn/usage turn))))))
+
+(deftest a-run-with-nothing-to-say-writes-nothing
+  ;; The control. `record-turn!` merges these over whatever the turn already
+  ;; holds, so writing nils would ERASE attribution an earlier write got right.
+  (let [turn (bots/failed-goal-turn nil {:error-type :provider/timeout
+                                         :error-status nil
+                                         :error-message nil
+                                         :at "2026-08-28T00:10:00.000000Z"})]
+    (is (= :provider/timeout (:turn/error-type turn)))
+    (doseq [absent [:turn/provider :turn/model :turn/requested-model
+                    :turn/turn-count :turn/tool-count :turn/usage]]
+      (is (not (contains? turn absent))
+          (str absent " must be absent, not nil, so a merge cannot erase it"))))
+  (testing "and a partially-known run contributes only what it knows"
+    (let [turn (bots/failed-goal-turn {:requested-model "murakumo-main"}
+                                      {:error-type :provider/http-error
+                                       :error-status 502
+                                       :error-message "unreachable"
+                                       :at "2026-08-28T00:10:00.000000Z"})]
+      (is (= "murakumo-main" (:turn/requested-model turn)))
+      (is (not (contains? turn :turn/model))
+          "no model answered, and saying one did is the worse kind of wrong"))))
+
 ;; ── an unclassified failure has to be identifiable ──────────────────────
 
 (deftest a-failure-records-what-threw-even-when-it-says-nothing
