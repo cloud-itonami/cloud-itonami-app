@@ -3287,6 +3287,34 @@
       (is (= 2 (:turn/tool-count turn)))
       (is (= {:total_tokens 47590} (:turn/usage turn))))))
 
+(deftest a-goal-turn-records-what-it-asked-before-the-provider-can-refuse
+  ;; `a-goal-that-timed-out-says-which-model-and-how-far` proved
+  ;; `run-attribution`/`failed-goal-turn` already read :provider and
+  ;; :requested-model off `run` when present. The gap was one level up:
+  ;; `advance!` only ever wrote them onto `run` AFTER `provider/agent-turn`
+  ;; returned -- which is exactly the branch a :provider/http-error never
+  ;; reaches. `provider-choice!` resolves both BEFORE the call; this asserts
+  ;; they land in the store before the risky call, not only after it
+  ;; succeeds, so a failed goal turn is not the one case that stays unlabeled.
+  (with-store
+    (fn []
+      (let [b (make-bot alice {})
+            bot-id (:bot/id b)
+            advance! (ns-resolve 'cloud.itonami.app.bots 'advance!)]
+        (with-redefs [policy/select-provider
+                      (fn [_ _] {:id "openrouter" :default-model "openrouter/free"})
+                      provider/agent-turn
+                      (fn [_ _]
+                        (throw (ex-info "model provider request failed"
+                                        {:type :provider/http-error :status 400})))]
+          (is (thrown? clojure.lang.ExceptionInfo
+                       ((deref advance!) {} b {:id "goal-run-record-1" :goal? true
+                                               :messages [] :tools [] :turn-count 0})))
+          (let [run (get-in @store/state [:bots :runs bot-id])]
+            (is (= "openrouter" (:provider run)))
+            (is (= "openrouter/free" (:requested-model run))
+                "known before the call was ever made, so the failure does not erase it")))))))
+
 (deftest a-run-with-nothing-to-say-writes-nothing
   ;; The control. `record-turn!` merges these over whatever the turn already
   ;; holds, so writing nils would ERASE attribution an earlier write got right.
