@@ -6,6 +6,14 @@ Cloud Itonami is a **security-first** (緑十字) AI workspace built with
 mail, projects, drive, calendar, Passkey identity, and delegated service
 connections while keeping authority boundaries explicit.
 
+In the public domain model, **itonami.cloud is the agent-work plane**. “Work”
+here means work performed and coordinated by agents—workspaces, goals, tools,
+approvals, conversations, and resumable runs—not a generic human-work suite.
+[`kotoba.cloud`](https://kotoba.cloud) supplies Kotoba identity and deploy
+discovery, [`kotobase.net`](https://kotobase.net) supplies durable storage,
+and [`murakumo.cloud`](https://murakumo.cloud) supplies CPU/GPU execution.
+Itonami composes those capabilities without inheriting their authority.
+
 Security is the principle; keeping data local is one instrument for it, and no
 longer the one that grants permission. Every provider must have been reviewed —
 including one running on this machine, because a process listening on
