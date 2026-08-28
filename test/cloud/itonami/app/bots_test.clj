@@ -3826,6 +3826,21 @@
                               :profile/model "murakumo-main"})]))
           (let [b (first (:bots (bots/overview {} alice)))]
             (is (= "qwen3.8-27b-fastmtp-aggressive" (:model b)))))
+        (testing "an operator can move every workforce Bot onto a reviewed provider"
+          ;; Measured 2026-08-28: an instance whose `:providers` held only
+          ;; "openrouter" (no "murakumo" entry at all) provisioned every Bot
+          ;; onto "murakumo" anyway, because only the sibling `:model`
+          ;; override existed here. `select-provider` never matches a
+          ;; provider id absent from `:providers`, so every resident tick was
+          ;; denied before a turn started -- with `:bot/model` already
+          ;; correctly reading "openrouter/free".
+          (bots/provision-workforce!
+           {:bots {:workforce {:provider "openrouter" :model "openrouter/free"}}}
+           alice
+           (workforce-catalog [(engineer-entry)]))
+          (let [b (first (:bots (bots/overview {} alice)))]
+            (is (= "openrouter" (:provider-id b)))
+            (is (= "openrouter/free" (:model b)))))
         (testing "a profile cannot widen what the role may do"
           ;; The registry refuses authority-shaped profile keys at the source.
           ;; Even if one reached here, provisioning reads exactly two keys, so

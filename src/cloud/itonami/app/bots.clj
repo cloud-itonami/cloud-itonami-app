@@ -1099,7 +1099,18 @@
                      ;; A profile says how a role RUNS. It cannot say what it
                      ;; may do: only these keys are read, and the registry
                      ;; refuses an authority-shaped one at the source.
-                     :bot/provider-id (or (get-in entry [:profile :profile/provider])
+                     ;;
+                     ;; The operator override reads first, same as
+                     ;; `:bot/model` below -- an instance that reviewed and
+                     ;; enabled only "openrouter" (no "murakumo" in its
+                     ;; `:providers` at all) still provisioned every Bot onto
+                     ;; "murakumo" here, so every resident tick was denied at
+                     ;; `provider-choice!` before a turn ever started. The
+                     ;; sibling model override existed and this one did not,
+                     ;; which is why only the model half of that switch moved.
+                     :bot/provider-id (or (get-in configuration
+                                                  [:bots :workforce :provider])
+                                          (get-in entry [:profile :profile/provider])
                                           "murakumo")
                      ;; An operator may move the whole resident workforce away
                      ;; from a degraded model without rewriting role profiles.
