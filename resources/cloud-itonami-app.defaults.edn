@@ -63,6 +63,26 @@
         #_{:google {:client-id "..." :public-client? true}
            :microsoft {:client-id "..." :public-client? true}}
         {}}
+ ;; Passkey Smart Account owner operations. Endpoints are operator inputs, not
+ ;; Coinbase authority: any ERC-4337 v0.6 bundler serving the allowlisted chain
+ ;; may be used. Full URLs live in environment variables because provider URLs
+ ;; commonly contain an API key. With them absent the receive address still
+ ;; works, while owner submission fails closed as not configured.
+ :wallet
+ {:smart-account
+  {:factory-address "0xBA5ED110eFDBa3D005bfC882d75358ACBbB85842"
+   :implementation-address "0x00000110dCdEdC9581cb5eCB8467282f2926534d"
+   :entry-point-address "0x5FF137D4b0FDCD49DcA30c7CF57E578a026d2789"
+   :entry-point-version "0.6"
+   :factory-family "coinbase-smart-wallet"
+   :owner-management-abi "coinbase-smart-wallet-v1"}
+  :chains
+  [{:chain-id 1 :name "Ethereum"
+    :rpc-url-env "CLOUD_ITONAMI_EVM_RPC_URL"
+    :bundler-url-env "CLOUD_ITONAMI_ERC4337_BUNDLER_URL"
+    ;; Optional ERC-4337 v0.6 sponsorship endpoint. When absent the Smart
+    ;; Account pays its own gas from its deterministic address.
+    :paymaster-url-env "CLOUD_ITONAMI_ERC4337_PAYMASTER_URL"}]}
  ;; SECURITY FIRST (ADR-2608130100). `:cloud-enabled?` is the deployment-wide
  ;; egress switch: with it false, no provider that leaves this machine is
  ;; admitted no matter what it declares. It does NOT admit anything on its own —

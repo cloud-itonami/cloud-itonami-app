@@ -23,7 +23,9 @@
   never replaces the Passkey Smart Account."
   (:require [clojure.string :as str]
             [cloud.itonami.app.identity :as identity]
+            [cloud.itonami.app.passkey :as passkey]
             [cloud.itonami.app.smart-account :as smart-account]
+            [cloud.itonami.app.smart-account-userop :as owner-userop]
             [cloud.itonami.app.store :as store]
             [wallet.chain :as wchain]
             [wallet.siwe :as siwe])
@@ -91,12 +93,21 @@
            :initial-owner (smart-account/owner-binding configuration credential))
     descriptor))
 
-(defn- supported-chains [configuration]
+(defn- configured-chains [configuration]
   (or (seq (get-in configuration [:wallet :chains]))
       [{:chain-id 1 :name "Ethereum"}]))
 
+(defn- supported-chains [configuration]
+  ;; Endpoint URLs can contain provider credentials and therefore never belong
+  ;; in /api/wallet. Only capability state crosses the public projection.
+  (mapv (fn [chain]
+          (assoc (select-keys chain [:chain-id :name :network])
+                 :owner-user-operation-ready?
+                 (owner-userop/configured-chain? chain)))
+        (configured-chains configuration)))
+
 (defn- primary-chain [configuration]
-  (or (:chain-id (first (supported-chains configuration))) 1))
+  (or (:chain-id (first (configured-chains configuration))) 1))
 
 (defn- account-view [configuration descriptor]
   (let [chain-id (primary-chain configuration)]
@@ -500,13 +511,32 @@
   A second RP-scoped credential belongs to the same Principal but is not
   silently promoted to Smart Account authority."
   [configuration session descriptor]
-  (let [active-fingerprint (:owner-public-key-sha256 descriptor)]
+  (let [active-fingerprint (:owner-public-key-sha256 descriptor)
+        chain-id (primary-chain configuration)
+        chain-ids (map :chain-id (configured-chains configuration))]
     (mapv (fn [credential]
-            (let [binding (smart-account/owner-binding configuration credential)]
-              (assoc binding :owner-state
-                     (if (= active-fingerprint (:public-key-sha256 binding))
-                       :initial-owner
-                       :requires-add-owner-user-operation))))
+            (let [binding (smart-account/owner-binding configuration credential)
+                  fingerprint (:public-key-sha256 binding)
+                  chain-states
+                  (into {}
+                        (map (fn [id]
+                               [id (cond
+                                     (= active-fingerprint fingerprint)
+                                     :initial-owner
+
+                                     (= :active
+                                        (get-in descriptor
+                                                [:owners-by-chain id fingerprint
+                                                 :state]))
+                                     :active-on-chain
+
+                                     :else
+                                     :requires-add-owner-user-operation)]))
+                        chain-ids)]
+              (assoc binding
+                     :owner-state (get chain-states chain-id)
+                     :chain-states chain-states
+                     :chain-id chain-id)))
           (verified-passkeys (store/snapshot) (:user-id session)))))
 
 (defn plan-owner-addition
@@ -523,6 +553,152 @@
               "追加対象の検証済みPasskeyが見つかりません。"))
     (smart-account/owner-addition-plan configuration account credential)))
 
+(defn- owner-operation [session operation-id]
+  (let [operation (get-in (wallet-state) [:owner-operations operation-id])]
+    (when-not (and operation
+                   (= (:user-id session) (:user-id operation))
+                   (= (:organization-id session) (:organization-id operation)))
+      (refuse :wallet/owner-operation-not-found
+              "Passkey owner追加操作が見つかりません。"))
+    operation))
+
+(defn- current-owner-ceremony!
+  [configuration credential rp-id origin]
+  (let [binding (smart-account/owner-binding configuration credential)]
+    (when-not (and (= rp-id (:rp-id binding))
+                   (some #{origin} (:origins binding)))
+      (refuse :wallet/current-owner-rp-required
+              (str "現在ownerのPasskeyは " (:rp-id binding)
+                   " に束縛されています。その認証面からowner追加を開始してください。")))
+    binding))
+
+(defn start-owner-addition!
+  "Fix one chain's UserOperation, then ask only the current owner Passkey to
+  sign its cross-chain hash. No external wallet is involved."
+  [configuration session {:keys [credential-id chain-id]} rp-id origin]
+  (let [state (store/snapshot)
+        account (ensure-principal-account! configuration session)
+        candidate (get-in state [:identity :passkeys credential-id])
+        initial (get-in state [:identity :passkeys
+                               (:initial-owner-credential-id account)])]
+    (when-not account
+      (refuse :wallet/passkey-required "Smart Accountの初期Passkeyがありません。"))
+    (when-not (and candidate
+                   (= (:user-id session) (:user-id candidate))
+                   (= true (:user-verified? candidate)))
+      (refuse :wallet/owner-candidate-not-found
+              "追加対象の検証済みPasskeyが見つかりません。"))
+    (when-not initial
+      (refuse :wallet/passkey-required "現在ownerのPasskey recordがありません。"))
+    (current-owner-ceremony! configuration initial rp-id origin)
+    (let [prepared (-> (owner-userop/prepare-owner-addition!
+                        configuration account initial candidate chain-id)
+                       (update :user-operation dissoc :signature))
+          operation-id (str "owner-userop-" (UUID/randomUUID))
+          started (passkey/start-signing!
+                   (:user-id session)
+                   (owner-userop/signing-challenge prepared)
+                   {:wallet-owner-operation-id operation-id
+                    :signing-hash (:signing-hash prepared)
+                    :chain-id (:chain-id prepared)}
+                   rp-id origin [(:credential-id initial)])
+          operation (assoc prepared
+                           :id operation-id
+                           :user-id (:user-id session)
+                           :organization-id (:organization-id session)
+                           :principal-id (:principal-id account)
+                           :authorization-transaction-id
+                           (:transaction-id started)
+                           :ceremony-rp-id rp-id
+                           :ceremony-origin origin
+                           :created-at (store/now))]
+      (store/transact! assoc-in [:wallet :owner-operations operation-id]
+                       operation)
+      (merge (owner-userop/public-view operation)
+             (select-keys started [:transaction-id :options :expires-at])))))
+
+(defn- advance-sign-count!
+  [credential observed-count]
+  (let [previous (long (or (:signature-count credential) 0))
+        observed (long (or observed-count 0))]
+    (when-not (or (and (zero? previous) (zero? observed))
+                  (> observed previous))
+      (refuse :wallet/passkey-counter-regression
+              "Passkey signature counterが前回値より進んでいません。別端末同期を確認してください。"))
+    (store/transact!
+     (fn [state]
+       (-> state
+           (assoc-in [:identity :passkeys (:credential-id credential)
+                      :signature-count] observed)
+           (assoc-in [:identity :passkeys (:credential-id credential)
+                      :last-used-at] (store/now)))))))
+
+(defn finish-owner-addition!
+  "Verify the current owner assertion, submit the signed UserOperation, and
+  persist only its hash (never the WebAuthn signature)."
+  [configuration session {:keys [transaction-id credential]}]
+  (let [transaction (passkey/consume-signing-transaction! transaction-id)
+        context (:authorization-context transaction)
+        operation (owner-operation session
+                                   (:wallet-owner-operation-id context))]
+    (when-not (and (= (:user-id session) (:expected-user-id transaction))
+                   (= transaction-id (:authorization-transaction-id operation))
+                   (= (:signing-hash operation) (:signing-hash context))
+                   (= :awaiting-current-owner-authorization (:status operation)))
+      (refuse :wallet/invalid-owner-operation
+              "Passkey ceremonyとowner追加UserOperationが一致しません。"))
+    (let [initial (get-in (store/snapshot)
+                          [:identity :passkeys
+                           (:current-owner-credential-id operation)])
+          {:keys [signature sign-count]}
+          (owner-userop/encode-passkey-signature
+           operation initial credential (:ceremony-rp-id operation)
+           (:ceremony-origin operation))
+          _ (advance-sign-count! initial sign-count)
+          submitted (owner-userop/submit! configuration operation signature)
+          persisted (-> operation
+                        (merge submitted)
+                        (assoc :submitted-at (store/now)))]
+      (store/transact! assoc-in [:wallet :owner-operations (:id operation)]
+                       persisted)
+      (owner-userop/public-view persisted))))
+
+(defn verify-owner-addition-receipt!
+  "Poll a submitted operation and activate the candidate only after both the
+  receipt and the on-chain owner-set postcondition succeed."
+  [configuration session operation-id]
+  (let [operation (owner-operation session operation-id)]
+    (when-not (contains? #{:submitted :pending} (:status operation))
+      (refuse :wallet/invalid-owner-operation
+              "このowner追加操作はreceipt確認待ちではありません。"))
+    (let [result (owner-userop/verify-receipt! configuration operation)
+          now (store/now)
+          updated (merge operation result
+                         (if (= :confirmed (:status result))
+                           {:confirmed-at now} {:last-checked-at now}))]
+      (store/transact!
+       (fn [state]
+         (let [state (assoc-in state
+                               [:wallet :owner-operations operation-id]
+                               updated)]
+           (if (= :confirmed (:status result))
+             (-> state
+                 (assoc-in
+                  [:wallet :principal-smart-accounts (:principal-id operation)
+                   :owners-by-chain (:chain-id operation)
+                   (:candidate-public-key-sha256 operation)]
+                  {:state :active
+                   :credential-id (:candidate-credential-id operation)
+                   :rp-id (:candidate-rp-id operation)
+                   :user-operation-hash (:user-operation-hash operation)
+                   :transaction-hash (:transaction-hash result)
+                   :confirmed-at now})
+                 (assoc-in
+                  [:wallet :principal-smart-accounts (:principal-id operation)
+                   :deployment-state] :deployed))
+             state))))
+      (owner-userop/public-view updated))))
+
 (defn snapshot [configuration session bots]
   (let [{:keys [principal-account]}
         (ensure-smart-accounts! configuration session bots)
@@ -537,7 +713,15 @@
                                      (contains? bot-ids (:bot-id %))))
                        (sort-by :created-at)
                        reverse
-                       vec)]
+                       vec)
+        owner-operations
+        (->> (vals (get-in (wallet-state) [:owner-operations] {}))
+             (filter #(and (= (:organization-id session) (:organization-id %))
+                           (= (:user-id session) (:user-id %))))
+             (sort-by :created-at)
+             reverse
+             (take 50)
+             (mapv owner-userop/public-view))]
     {:schema schema
      :custody :passkey-smart-account
      :private-keys-stored? false
@@ -549,6 +733,7 @@
                                  (owner-candidates configuration session
                                                    principal-account)))
      :accounts mine
+     :owner-operations owner-operations
      :bots (mapv (fn [bot]
                    (let [assignment (get assignments (:id bot))
                          container (get containers (:id bot))]

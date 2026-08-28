@@ -49,7 +49,7 @@ credential root and widen the origins able to invoke it.
 
 ## Landed slice
 
-This change lands the non-custodial preparation layer:
+This change lands the non-custodial owner-addition layer:
 
 - Passkey binding can persist server-verified RP ID and origin provenance.
 - Smart Account descriptors declare the multi-RP controller model.
@@ -58,6 +58,15 @@ This change lands the non-custodial preparation layer:
 - `POST /api/wallet/owners/plan` returns exact unsigned Smart Wallet 1.1
   replay-safe owner-addition calldata behind Human session, origin and CSRF
   checks.
+- `/api/wallet/owners/authorize/start` fixes one chain's EntryPoint nonce, gas,
+  deployment initCode and optional paymaster only after RPC/bundler/factory
+  preflight; it restricts WebAuthn to the current owner credential.
+- `/api/wallet/owners/authorize/finish` verifies the raw assertion again,
+  low-S encodes `WebAuthnAuth` inside `SignatureWrapper`, submits it and refuses
+  a bundler hash that differs from the locally computed EntryPoint hash.
+- `/api/wallet/owners/operations/{id}/receipt` accepts success only when the
+  ERC-7769 receipt coordinates match and `isOwnerPublicKey` independently
+  observes the candidate. Assertion bytes and provider URLs are not persisted.
 - Cloud Itonami issues a 120-second, target-bound assertion only to the
   allowlisted Kotobase or Murakumo authentication origin.
 - `auth.kotobase.net` and `auth.murakumo.cloud` run distinct WebAuthn RPs over
@@ -67,10 +76,10 @@ This change lands the non-custodial preparation layer:
 - Anonymous registration at the secondary Murakumo RP fails closed so it
   cannot silently create a second Principal during a controller-link flow.
 
-The endpoint does not sign or submit. Its result remains
-`:user-operation-ready? false` until EntryPoint nonce acquisition, current
-owner WebAuthn signing, bundler submission and per-chain receipt verification
-are implemented.
+General transfer readiness remains false; owner addition is a narrower,
+implemented UserOperation. Each chain is prepared, signed, submitted and
+confirmed independently because nonce, gas and receipt are chain state even
+when `executeWithoutChainIdValidation` omits chain ID from the signing hash.
 
 The federation handoff likewise proves account linkage, not on-chain owner
 membership. A newly linked product Passkey remains an owner candidate until

@@ -6304,6 +6304,34 @@
                (wallet/plan-owner-addition config session
                                            (:credential-id body))))
 
+      (and (= method "POST") (= path "/api/wallet/owners/authorize/start"))
+      (let [body (read-json exchange)]
+        (require-human-session! exchange)
+        (require-origin! exchange config)
+        (require-csrf! exchange session)
+        (send! exchange 200
+               (wallet/start-owner-addition! config session body
+                                             (rp-id config) (origin config))))
+
+      (and (= method "POST") (= path "/api/wallet/owners/authorize/finish"))
+      (let [body (read-json exchange)]
+        (require-human-session! exchange)
+        (require-origin! exchange config)
+        (require-csrf! exchange session)
+        (send! exchange 200
+               (wallet/finish-owner-addition! config session body)))
+
+      (and (= method "POST")
+           (bot-id-from path #"/api/wallet/owners/operations/([^/]+)/receipt"))
+      (let [operation-id
+            (bot-id-from path #"/api/wallet/owners/operations/([^/]+)/receipt")]
+        (require-human-session! exchange)
+        (require-origin! exchange config)
+        (require-csrf! exchange session)
+        (send! exchange 200
+               (wallet/verify-owner-addition-receipt!
+                config session operation-id)))
+
       (and (= method "POST") (= path "/api/wallet/connect/finish"))
       (do (require-human-session! exchange)
           (require-origin! exchange config)
@@ -6396,6 +6424,33 @@
                      :wallet/inactive 409
                      :wallet/passkey-required 409
                      :wallet/owner-candidate-not-found 404
+                     :wallet/owner-operation-not-found 404
+                     :wallet/current-owner-rp-required 409
+                     :wallet/invalid-owner-operation 409
+                     :wallet/user-operation-not-configured 503
+                     :wallet/unsupported-chain 422
+                     :wallet/invalid-user-operation-endpoint 422
+                     :wallet/user-operation-rpc-method-not-allowed 500
+                     :wallet/user-operation-rpc-error 502
+                     :wallet/user-operation-chain-mismatch 502
+                     :wallet/user-operation-entry-point-unsupported 409
+                     :wallet/user-operation-contract-unavailable 409
+                     :wallet/user-operation-factory-mismatch 409
+                     :wallet/user-operation-address-mismatch 409
+                     :wallet/user-operation-account-implementation-mismatch 409
+                     :wallet/user-operation-current-owner-mismatch 409
+                     :wallet/user-operation-wrong-passkey 403
+                     :wallet/user-operation-invalid-assertion 422
+                     :wallet/user-operation-origin-mismatch 403
+                     :wallet/user-operation-challenge-mismatch 403
+                     :wallet/user-operation-rp-mismatch 403
+                     :wallet/user-operation-user-verification-required 403
+                     :wallet/user-operation-invalid-signature 403
+                     :wallet/passkey-counter-regression 409
+                     :wallet/user-operation-hash-mismatch 502
+                     :wallet/user-operation-receipt-mismatch 502
+                     :wallet/user-operation-execution-failed 409
+                     :wallet/user-operation-postcondition-failed 409
                      :smart-account/owner-already-active 409
                      :smart-account/unsupported-owner-management-abi 409
                      :wallet/transfer-state 409

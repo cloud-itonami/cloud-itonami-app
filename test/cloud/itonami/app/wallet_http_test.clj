@@ -19,6 +19,7 @@
    :routing {:default-provider "ollama" :default-model "test-model"
              :cloud-enabled? false}
    :privacy {:allow-cloud-without-review? false :bind-loopback-only? true}
+   :wallet {:chains [{:chain-id 1 :name "Ethereum"}]}
    :memory {:max-session-messages 10 :max-context-messages 10}
    :providers [{:id "ollama" :kind :ollama :local? true
                 :base-url "http://127.0.0.1:11434"
@@ -129,7 +130,21 @@
         (is (false? (get-in response [:body :user-operation-ready?])))
         (is (.startsWith ^String
                          (get-in response [:body :contract-call :calldata])
-                         "0x2c2abd1e"))))))
+                         "0x2c2abd1e")))
+      (testing "the state-changing path has its own CSRF gate"
+        (is (= 403 (:status
+                    (call :post "/api/wallet/owners/authorize/start"
+                          {:credential-id "cred-kotobase" :chain-id 1}
+                          false))))
+        (is (= 503 (:status
+                    (call :post "/api/wallet/owners/authorize/start"
+                          {:credential-id "cred-kotobase" :chain-id 1}
+                          true))))
+        (is (= "user-operation-not-configured"
+               (get-in (call :post "/api/wallet/owners/authorize/start"
+                             {:credential-id "cred-kotobase" :chain-id 1}
+                             true)
+                       [:body :error :type])))))))
 
 (deftest agent-sessions-cannot-manage-wallets
   (with-server

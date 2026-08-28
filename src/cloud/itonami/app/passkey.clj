@@ -95,7 +95,8 @@
                       (map #(bit-and % 0xff) challenge))
                      challenge)
          opts (options/request-options
-               {:rp-id rp-id :challenge challenge})
+               {:rp-id rp-id :challenge challenge
+                :allow-credentials (:allow-credentials transaction-data)})
          transaction-id (str "webauthn-" (UUID/randomUUID))
          expires-at (str (.plusSeconds (Instant/now) transaction-seconds))]
      (store/transact!
@@ -125,15 +126,27 @@
   (cljs-verify-required!))
 
 (defn start-signing!
-  [user-id challenge context rp-id origin]
-  (when-not (and (bytes? challenge) (= 32 (alength ^bytes challenge)))
-    (throw (ex-info "署名 challenge は commitment の SHA-256 (32 byte) です。"
-                    {:type :esign/invalid-challenge
-                     :byte-count (when (bytes? challenge) (alength ^bytes challenge))})))
-  (start-assertion! :esign
-                    {:expected-user-id user-id
-                     :authorization-context context}
-                    rp-id origin challenge))
+  ([user-id challenge context rp-id origin]
+   (start-signing! user-id challenge context rp-id origin nil))
+  ([user-id challenge context rp-id origin allow-credentials]
+   (when-not (and (bytes? challenge) (= 32 (alength ^bytes challenge)))
+     (throw (ex-info "署名 challenge は commitment の SHA-256 (32 byte) です。"
+                     {:type :esign/invalid-challenge
+                      :byte-count (when (bytes? challenge) (alength ^bytes challenge))})))
+   (start-assertion! :esign
+                     {:expected-user-id user-id
+                      :authorization-context context
+                      :allow-credentials (vec (or allow-credentials []))}
+                     rp-id origin challenge)))
+
+(defn consume-signing-transaction!
+  "Consume and return a server-owned signing request without verifying it.
+
+  This is only for a caller that performs the full WebAuthn verification
+  itself. Smart Account signing needs the raw assertion fields after that
+  verification because the contract verifies the same assertion on-chain."
+  [transaction-id]
+  (active-transaction! transaction-id :esign))
 
 (defn finish-signing! [transaction-id credential-response]
   (finish-assertion! transaction-id credential-response :esign))

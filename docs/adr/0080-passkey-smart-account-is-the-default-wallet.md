@@ -88,9 +88,13 @@ copying its private key. A separately created Passkey has a new public key and
 requires an explicit `addOwner` UserOperation before it can control an existing
 Smart Account. The current implementation records RP provenance, exposes owner
 candidates, and builds the exact unsigned replay-safe
-`addOwnerPublicKey(bytes32,bytes32)` call. Current-owner WebAuthn signing,
-bundler submission, receipt verification, owner removal, guardians and delayed
-recovery are not implemented in this slice. Email or SSO can
+`addOwnerPublicKey(bytes32,bytes32)` call. The current owner can authorize a
+complete EntryPoint v0.6 UserOperation with WebAuthn; the app checks the chain,
+factory, implementation, counterfactual address, nonce and owner index before
+signing, submits through a configured bundler, compares the returned hash, and
+marks the new key active only after receipt plus `isOwnerPublicKey` verification.
+Owner removal, general Passkey transfers, guardians and delayed recovery remain
+separate work. Email or SSO can
 recover a Principal session but cannot by itself recover the on-chain signing
 authority.
 
@@ -108,12 +112,14 @@ the selected chain changes the CAIP-10 view but not the EVM address, that Bot
 scopes are distinct, and that an optional external link cannot replace the Bot
 account.
 
-This slice does **not** deploy an account, sponsor gas, submit an ERC-4337
-UserOperation or claim that every chain contains the factory. Descriptors say
-`:counterfactual`, `:not-yet-deployed` and `:user-operation-ready? false`.
-Receiving and copying the address are enabled; sending remains visibly disabled
-until the Passkey assertion, WebAuthn signature encoding, bundler/paymaster,
-deployment receipt and chain-specific factory-availability checks are landed.
+Owner addition may deploy the counterfactual account through factory `initCode`
+and may use an explicitly configured paymaster. It does not claim that every
+chain contains the factory: start fails before WebAuthn unless the chosen RPC
+and bundler report the expected chain, EntryPoint, factory implementation and
+address. `:user-operation-ready? false` still describes the general transfer
+path; owner management has a separate per-chain readiness flag. Provider URLs
+may contain credentials, so they remain environment/config inputs and are never
+projected through `/api/wallet` or persisted with an operation.
 
 ## Consequences
 

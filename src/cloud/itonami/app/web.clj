@@ -1785,6 +1785,18 @@
      [:option {:value ""} "Walletを検出中…"]]]
    [:span {:class "state-chip" :id "wallet-account-state"} "準備中"]])
 
+(defn- wallet-owner-panel []
+  [:section {:class "wallet-drawer" :id "wallet-owner-panel"}
+   [:div {:class "wallet-drawer__header"}
+    (dds/heading 2 "別端末のPasskey" {:size "24"})
+    [:select {:id "wallet-owner-chain" :aria-label "ownerを追加するchain"}]]
+   [:p {:class "form-help"}
+    "同期済みPasskeyなら追加は不要です。別の公開鍵を作った場合は、現在のowner Passkeyをこの端末またはQRで確認し、chain上のownerへ追加します。"]
+   [:ul {:class "data-list" :id "wallet-owner-list"}
+    [:li {:class "skeleton"}]]
+   [:p {:class "form-help" :id "wallet-owner-status"
+        :role "status" :aria-live "polite"}]])
+
 (defn page-html [configuration]
   (let [cloud? (get-in configuration [:routing :cloud-enabled?])
         provider (get-in configuration [:routing :default-provider])
@@ -2281,6 +2293,7 @@
                      :aria-labelledby "wallet-activity-tab" :hidden true}
            [:ul {:class "data-list" :id "wallet-transfer-list"}
             [:li {:class "skeleton"}]]]
+          (wallet-owner-panel)
           [:section {:class "wallet-drawer" :id "wallet-send-drawer" :hidden true}
            [:div {:class "wallet-drawer__header"}
             (dds/heading 2 "送る" {:size "24"})
