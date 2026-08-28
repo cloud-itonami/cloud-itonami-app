@@ -558,7 +558,7 @@
 ;; part of a Bot's turn that is not prose because prose cannot be acted on:
 ;; a connector to authorize, a choice to make, an approval to give.
 
-(def card-kinds #{:connection :choice :approval})
+(def card-kinds #{:connection :choice :approval :artifact})
 
 (def connection-states
   "`:offered` — the Bot needs it and nobody has started.
@@ -706,6 +706,46 @@
    :card/action action
    :card/direction (or direction 0)
    :card/decision decision})
+
+(def artifact-kinds
+  "What a Bot can have LEFT BEHIND that outlives the sentence describing it.
+
+  `:file` — a path in the admitted workspace, and how many bytes were written.
+  `:commit` — a local revision, its message, and the paths it named.
+
+  Only these two, because only two tools write: `workspace_write_file` and
+  `git_commit`. There is deliberately no `:pull-request` -- `git_commit` never
+  pushes, so a Bot on this surface cannot open one, and a kind nothing can
+  produce is a promise the screen would keep making and never keep."
+  #{:file :commit})
+
+(defn artifact-card
+  "Something the Bot made, recorded as a value rather than described in prose.
+
+  A card is the part of a turn that is not prose because prose cannot be acted
+  on -- and until now that meant only things asking the PERSON to act. This is
+  the other half: what the Bot already did. `workspace_write_file` answered
+  `\"wrote src/foo.clj (1234 bytes)\"` and `git_commit` answered
+  `\"committed <sha>\"`, so the path, the byte count and the revision existed
+  at the moment of the call and were spent on a sentence. Reading them back out
+  of that sentence would be parsing our own print format, which is the same
+  mistake `run-tool!` names about `pr-str`.
+
+  Every field is what the tool already knew. Nothing here is derived from the
+  model's summary, so a card cannot claim work that did not happen: a Bot that
+  says it committed and did not has no receipt, and therefore no card."
+  [{:keys [id kind path bytes revision message paths]}]
+  (when-not (contains? artifact-kinds kind)
+    (throw (ex-info "unknown artifact kind"
+                    {:type :bot/invalid-card :card id :artifact-kind kind})))
+  (cond-> {:card/id (required! id :card/id)
+           :card/kind :artifact
+           :card/artifact-kind kind}
+    path (assoc :card/path path)
+    (number? bytes) (assoc :card/bytes (long bytes))
+    revision (assoc :card/revision revision)
+    message (assoc :card/message message)
+    (seq paths) (assoc :card/paths (vec paths))))
 
 (defn message
   "One turn. `:message/role` is `:person` or `:bot` — not `:user`/`:assistant`,

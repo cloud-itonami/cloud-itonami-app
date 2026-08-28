@@ -75,6 +75,7 @@
             [cloud.itonami.app.policy :as policy]
             [cloud.itonami.app.wallet :as wallet]
             [cloud.itonami.app.provider :as provider]
+            [cloud.itonami.app.provider-retry :as retry]
             [cloud.itonami.app.relay :as relay]
             [cloud.itonami.app.routine :as routine]
             [cloud.itonami.app.store :as store]
@@ -128,6 +129,7 @@
 (def max-tool-output-chars 6000)
 (def max-trace 60)
 (def max-routines 40)
+(def max-artifact-cards 8)
 (def max-turn-history 40)
 (def max-turn-followups 20)
 (def max-contexts 120)
@@ -152,9 +154,14 @@
   unbounded text. `nil` when there is nothing to say, so a reader can tell
   'no message' from an empty one."
   [error]
+  ;; `status` and `response` are NOT destructured here: `main` moved them to
+  ;; explicit bindings below that also consult the cause's ex-data, because a
+  ;; fallback failure carries the outer types and the inner response. The two
+  ;; budget keys join that list rather than reinstating the old shape.
   (let [{:keys [tool-name arguments-kind arguments-sample
                 requested-model fallback-model
-                primary-error-type fallback-error-type]}
+                primary-error-type fallback-error-type
+                max-output-tokens completion-tokens]}
         (ex-data error)
         ;; `:provider/fallback-failed` (`with-model-fallback`) names both
         ;; models and both error TYPES in its own ex-data, but the response
@@ -232,6 +239,14 @@
                             (when tool-name (str "tool " tool-name))
                             (when arguments-kind
                               (str "arguments were a " arguments-kind))
+                            ;; The two numbers that decide whether a truncated
+                            ;; tool call is the model's fault or a cap's. Kept
+                            ;; here so the turn record answers that without a
+                            ;; re-run: `:provider/output-budget-exhausted`
+                            ;; names the cause, these say which number to move.
+                            (when max-output-tokens
+                              (str "budget " (or completion-tokens "?")
+                                   "/" max-output-tokens " output tokens"))
                             (when-let [sample (one-line arguments-sample 160)]
                               (str "arguments: " sample))
                             ;; The FULL namespaced type, the same way
@@ -550,6 +565,47 @@
 
 (defn- action-receipts [run-id]
   (filter #(= :action/finished (:event/kind %)) (:job/events (goal-job run-id))))
+
+(defn- artifact-cards
+  "What this run LEFT BEHIND, as cards on the turn that reports it.
+
+  Built from the receipts, never from the summary. A card that came from the
+  model's own prose would be the model asserting its work rather than the host
+  recording it -- and a Bot that says it committed and did not would get a card
+  saying so. A receipt is written by the tool that ran; if there is no receipt
+  there is no card.
+
+  De-duplicated because a run may write the same path more than once and the
+  last write is the state the file is in. Bounded, because a card list is a
+  screen and a 200-file run would be a wall rather than a report; the receipts
+  keep the complete record either way."
+  [run-id]
+  (->> (action-receipts run-id)
+       (mapcat #(get-in % [:event/data :artifacts]))
+       ;; Ordered de-duplication, keeping the LAST write of a path -- that is
+       ;; the state the file is in -- at the position of that last write.
+       ;; Sorting by kind and path instead meant `take` dropped whatever sorted
+       ;; late, so a run that wrote ten files showed the alphabetically first
+       ;; eight rather than the eight it finished with.
+       (reduce (fn [ordered artifact]
+                 (let [k [(:artifact/kind artifact)
+                          (or (:artifact/path artifact)
+                              (:artifact/revision artifact))]]
+                   (conj (vec (remove #(= k (first %)) ordered)) [k artifact])))
+               [])
+       (mapv second)
+       (take-last max-artifact-cards)
+       (map-indexed (fn [index artifact]
+                      (bot/artifact-card
+                       {:id (str "artifact-" index "-" (hash artifact))
+                        :kind (:artifact/kind artifact)
+                        :path (:artifact/path artifact)
+                        :bytes (:artifact/bytes artifact)
+                        :revision (:artifact/revision artifact)
+                        :message (:artifact/message artifact)
+                        :paths (:artifact/paths artifact)})))
+       vec
+       not-empty))
 
 (defn- plan-complete? [run-id]
   (let [plan (:job/plan (goal-job run-id))]
@@ -2260,13 +2316,26 @@
                        (invoke/call registry tool-name args
                                     {:http (http-port)
                                      :tokens (tokens-port configuration selection)})))
-        text (if (string? structured) structured (pr-str structured))
+        ;; A tool that has a sentence for the model says so with `:tool/text`,
+        ;; and then the model reads exactly what it read before this key
+        ;; existed. Without it a structured result reaches the model as
+        ;; `pr-str` of a map -- correct for `computer_screenshot`, which has no
+        ;; sentence, and wrong for a write tool whose whole answer is one.
+        text (cond
+               (string? structured) structured
+               (string? (:tool/text structured)) (:tool/text structured)
+               :else (pr-str structured))
         result {:text (if (> (count text) limit)
                         (str (subs text 0 limit)
                              "\n[tool output truncated for model context; full output is represented by the host receipt hash]")
                         text)
                 :images (when (map? structured)
-                          (vec (keep identity [(image-attachment structured)])))}]
+                          (vec (keep identity [(image-attachment structured)])))
+                ;; What the tool LEFT BEHIND, carried out as data for the same
+                ;; reason the image is: re-deriving it from the printed map
+                ;; would couple the caller to a print format nobody promised.
+                :artifacts (when (map? structured)
+                             (vec (:tool/artifacts structured)))}]
     ;; Chronicle is an enrichment plane, not part of tool execution. A full or
     ;; damaged memory partition must never turn a completed Bot action into a
     ;; failed action. remember-tool! applies the user's Settings switches and
@@ -3004,7 +3073,7 @@
             attrs))))
 
 (defn- visible-failure-message [error]
-  (let [{:keys [type status timeout-seconds]} (ex-data error)]
+  (let [{:keys [type status timeout-seconds max-output-tokens]} (ex-data error)]
     (case type
       :bot/cancelled nil
       :provider/empty-response
@@ -3026,6 +3095,16 @@
       ;; long look the same to somebody told only that execution failed.
       (:provider/network-error :provider/unreachable)
       "モデルへの通信が途切れました。依頼は記録されています。もう一度送ると再試行できます。"
+      ;; Says which knob, because retrying changes nothing here. The other
+      ;; provider failures above are transient and "もう一度送ると" is honest
+      ;; advice for them; a budget that could not hold the answer will not hold
+      ;; it on the next attempt either, and telling somebody to retry into the
+      ;; same cap wastes their time and a run slot.
+      :provider/output-budget-exhausted
+      (str "モデルの出力が上限に達し、回答が途中で切れました"
+           (when max-output-tokens
+             (str "（max-output-tokens " max-output-tokens "）"))
+           "。依頼を分割するか、出力トークンの上限を上げてください。")
       "実行に失敗しました。依頼は記録されています。もう一度送ると再試行できます。")))
 
 (defn- goal-event! [kind data]
@@ -3065,10 +3144,17 @@
       (let [started (now-ms)]
         (try
           (let [output (run-tool! configuration b (:selection run) name input)
-                receipt {:action/id (:id call) :child-run-id child-id :tool name
-                         :step-id (current-plan-step-id run)
-                         :duration-ms (- (now-ms) started)
-                         :output-sha256 (receipt-sha256 (:text output))}]
+                receipt (cond-> {:action/id (:id call) :child-run-id child-id
+                                 :tool name
+                                 :step-id (current-plan-step-id run)
+                                 :duration-ms (- (now-ms) started)
+                                 :output-sha256 (receipt-sha256 (:text output))}
+                          ;; The receipt already proved an action HAPPENED, by
+                          ;; hashing what it printed. What it MADE was in the
+                          ;; same call and was not kept, so the transcript could
+                          ;; say a Bot wrote a file and no record named which.
+                          (seq (:artifacts output))
+                          (assoc :artifacts (vec (:artifacts output))))]
             (trace! configuration (:bot/id b) name)
             (update-goal-job! (:id run) update-in [:job/children child-id]
                               agent-run/transition :succeeded (now-ms)
@@ -3267,9 +3353,16 @@
         (into head (subvec tail start))))))
 
 (defn- agent-request [configuration provider b run model]
-  (let [output-tokens (or (when (:goal? run)
-                            (get-in configuration [:bots :goal :max-output-tokens]))
-                          (:max-output-tokens provider)
+  (let [;; Through `model-scoped`, because `:max-output-tokens` may be a map by
+        ;; model -- the shape `requested-max-tokens` documents and this copy of
+        ;; the resolution did not know about. `(long {...})` throws
+        ;; ClassCastException, so an operator following that docstring killed
+        ;; every turn before a request was made.
+        output-tokens (or (when (:goal? run)
+                            (retry/model-scoped
+                             (get-in configuration [:bots :goal :max-output-tokens])
+                             model))
+                          (retry/model-scoped (:max-output-tokens provider) model)
                           2048)
         context-window (provider/model-context-window provider model)
         prompt-budget (when context-window
@@ -3727,7 +3820,7 @@
                     (when on-event (on-event {:type "phase" :phase "verifying"}))
                     (finish-visible! on-finish run :completed
                                      {:turn/result summary :turn/evidence evidence})
-                    (say (:bot/id b) summary nil))
+                    (say (:bot/id b) summary (artifact-cards (:id run))))
                   (recur (update run :messages conj
                                  {:role "tool" :tool-call-id (:id call)
                                   :name name
@@ -3836,7 +3929,18 @@
                                                 :message (error-message tool-error))
                                          (not tool-error)
                                          (assoc :output-sha256
-                                                (receipt-sha256 (:text output)))))
+                                                (receipt-sha256 (:text output)))
+                                         ;; THIS is the site that runs a write
+                                         ;; tool. `execute-read-call!` refuses
+                                         ;; one by construction, so recording
+                                         ;; artifacts only there made the whole
+                                         ;; feature dead for a delegated Bot --
+                                         ;; the screen showed nothing and no
+                                         ;; error said why.
+                                         (and (not tool-error)
+                                              (seq (:artifacts output)))
+                                         (assoc :artifacts
+                                                (vec (:artifacts output)))))
                         run (-> run
                                 (update :tool-count (fnil inc 0))
                                 (update :messages into
@@ -3880,7 +3984,11 @@
                                             :message (error-message tool-error))
                                      (not tool-error)
                                      (assoc :output-sha256
-                                            (receipt-sha256 (:text output)))))
+                                            (receipt-sha256 (:text output)))
+                                     (and (not tool-error)
+                                          (seq (:artifacts output)))
+                                     (assoc :artifacts
+                                            (vec (:artifacts output)))))
                     run (-> run
                             (update :tool-count (fnil inc 0))
                             (update :messages into
@@ -5172,10 +5280,14 @@
                          (let [output (run-tool! configuration b (:selection run)
                                                  (:name call) (:input call))]
                            (goal-event! :action/finished
-                                        {:action/id (:id call) :tool (:name call)
-                                         :step-id (current-plan-step-id run)
-                                         :duration-ms (- (now-ms) started)
-                                         :output-sha256 (receipt-sha256 (:text output))})
+                                        (cond-> {:action/id (:id call)
+                                                 :tool (:name call)
+                                                 :step-id (current-plan-step-id run)
+                                                 :duration-ms (- (now-ms) started)
+                                                 :output-sha256 (receipt-sha256
+                                                                 (:text output))}
+                                          (seq (:artifacts output))
+                                          (assoc :artifacts (vec (:artifacts output)))))
                            output))
               output (if goal?
                        (binding [*goal-event!*

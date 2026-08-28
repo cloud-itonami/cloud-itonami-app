@@ -523,6 +523,116 @@
       (is (= {:city "Osaka"} (parse "some_tool" "{\"city\":\"Osaka\"}")))
       (is (= {:city "Osaka"} (parse "some_tool" {:city "Osaka"})))
       (is (= {} (parse "some_tool" ""))))))
+
+;; ── a cut-off tool call and a malformed one are different problems ─────
+;;
+;; Measured 2026-08-28 on the resident fleet: `:provider/invalid-tool-arguments`
+;; was the most common live failure, 20 of 45 failed turns. Every reproduction
+;; came from `:max-output-tokens 1024` against `decision_frame`, whose frames
+;; need 1350-1676 tokens -- three streamed runs at 1024 were unparseable, three
+;; each at 2048/3072/4096 were complete. The model authored nothing malformed;
+;; a configured number cut it in half, and the error name sent operators to
+;; look at the model.
+
+(deftest a-truncated-json-argument-is-marked-as-having-ended-early
+  ;; The signal that needs no agreement with the server about token counts.
+  ;; api.murakumo.cloud caps output at 2048 whatever is requested, so an app
+  ;; configured at 8192 can never see `completion_tokens` reach its own cap.
+  (let [parse (private-fn 'parse-arguments)
+        ended-early? (fn [v] (:json-ended-early?
+                              (ex-data (try (parse "decision_frame" v)
+                                            (catch clojure.lang.ExceptionInfo e e)))))]
+    (testing "input that simply ran out"
+      (is (true? (ended-early? "{\"scope\": \"club shinshi\", \"facts\": [{\"id")))
+      (is (true? (ended-early? "{\"scope\": [1,2,"))))
+    (testing "a genuine syntax error is not truncation"
+      (is (false? (ended-early? "{\"scope\": tru3}")))
+      (is (false? (ended-early? "{\"a\": 1,, \"b\": 2}"))))
+    (testing "not every truncation looks like one, and that is why it is not the only signal"
+      ;; A cut landing between a key and its colon reads as an ordinary syntax
+      ;; error. The token-count and finish_reason signals cover this shape.
+      (is (false? (ended-early? "{\"a\": 1, \"b\": [{\"c\""))))))
+
+(deftest a-tool-call-cut-off-by-the-budget-says-so
+  (let [normalize (private-fn 'agent-result)
+        cut {:id "call-1"
+             :function {:name "decision_frame"
+                        :arguments "{\"scope\": \"club shinshi\", \"facts\": [{\"id\": \"f1"}}]
+    (testing "the failure is named for the budget, not the model"
+      (let [error (try (normalize {:content "" :tool_calls [cut]}
+                                  "tool_calls"
+                                  {:completion_tokens 1024} 1024)
+                       (catch clojure.lang.ExceptionInfo e e))]
+        (is (= :provider/output-budget-exhausted (:type (ex-data error))))
+        (is (= 1024 (:max-output-tokens (ex-data error))))
+        (is (= 1024 (:completion-tokens (ex-data error))))))
+
+    (testing "and everything the original error carried survives the rename"
+      ;; The tool name and the offending string are the whole point of
+      ;; `parse-arguments` keeping them; renaming the failure must not drop
+      ;; them, or this trades one blind error for another.
+      (let [error (try (normalize {:content "" :tool_calls [cut]}
+                                  "length" {:completion_tokens 1024} 1024)
+                       (catch clojure.lang.ExceptionInfo e e))]
+        (is (= "decision_frame" (:tool-name (ex-data error))))
+        (is (str/starts-with? (:arguments-sample (ex-data error)) "{\"scope\""))))
+
+    (testing "a call the SERVER cut below our own cap is still the budget"
+      ;; The case that made the count unreliable. api.murakumo.cloud enforces a
+      ;; 2048-token ceiling of its own: measured 2026-08-28, requests for 3072,
+      ;; 4096, 8192 and 16384 all returned completion_tokens 2048. An app
+      ;; configured at 8192 therefore never sees its own cap reached, and if
+      ;; the provider also words the stop as `tool_calls` -- four of six
+      ;; measured streamed calls did -- both count and reason go quiet.
+      (let [error (try (normalize {:content "" :tool_calls [cut]}
+                                  "tool_calls"
+                                  {:completion_tokens 2048} 8192)
+                       (catch clojure.lang.ExceptionInfo e e))]
+        (is (= :provider/output-budget-exhausted (:type (ex-data error)))
+            "2048 of a requested 8192 is a server ceiling, not a model defect")
+        (is (= 2048 (:completion-tokens (ex-data error)))
+            "the spent count is reported, since it is not the requested one")))
+
+    (testing "a malformed call inside its budget stays the model's problem"
+      (let [malformed {:id "call-2"
+                       :function {:name "decision_frame"
+                                  :arguments "{\"scope\": tru3}"}}
+            error (try (normalize {:content "" :tool_calls [malformed]}
+                                  "tool_calls"
+                                  {:completion_tokens 40} 2048)
+                       (catch clojure.lang.ExceptionInfo e e))]
+        (is (= :provider/invalid-tool-arguments (:type (ex-data error)))
+            "40 of 2048 tokens with intact JSON framing is the model, not a cap")))
+
+    (testing "an exhausted budget does not invent a failure for a call that parsed"
+      ;; Running out of room after a COMPLETE tool call is not an error; the
+      ;; reclassification must only ever rename one that already failed.
+      (is (= {:path "README.md"}
+             (get-in (normalize {:content ""
+                                 :tool_calls
+                                 [{:id "c" :function {:name "workspace_read"
+                                                      :arguments "{\"path\":\"README.md\"}"}}]}
+                                "length" {:completion_tokens 1024} 1024)
+                     [:tool-calls 0 :input]))))))
+
+(deftest the-request-cap-is-computed-once-for-wire-and-verdict
+  ;; `agent-request-body` puts this on the wire and `agent-result` compares
+  ;; `completion_tokens` against it. Two copies of the `or` chain would make the
+  ;; comparison silently wrong the first time either default moved.
+  (let [requested (private-fn 'requested-max-tokens)
+        body (private-fn 'agent-request-body)]
+    (is (= 1024 (requested {:id "p" :max-output-tokens 512}
+                           {:max-output-tokens 1024})))
+    (is (= 512 (requested {:id "p" :max-output-tokens 512} {}))
+        "the provider default applies when the request names none")
+    (is (= 2048 (requested {:id "p"} {}))
+        "and the shipped default when neither does")
+    (is (= (requested {:id "p" :kind :openai-compatible :max-output-tokens 512}
+                      {:model "m" :messages []})
+           (:max_tokens (body {:id "p" :kind :openai-compatible
+                               :max-output-tokens 512}
+                              {:model "m" :messages []})))
+        "the wire and the verdict read the same number")))
 ;; ── a slow model and a broken host are different problems ───────────────
 ;;
 ;; `java.net.http` throws `HttpTimeoutException` with no ex-data, so every
@@ -614,3 +724,30 @@
       (let [original (IllegalStateException. "a bug here")
             e (thrown original)]
         (is (identical? original e))))))
+
+(deftest a-fallback-resolves-the-cap-for-the-model-it-actually-used
+  ;; `with-model-fallback` calls the turn with a DIFFERENT model than the
+  ;; request named, and every input to the resolution is model-scoped. Reading
+  ;; the original model for the verdict compares `completion_tokens` against a
+  ;; cap that was never on the wire -- and the misclassification this whole
+  ;; branch removes comes straight back.
+  (let [requested (private-fn 'requested-max-tokens)
+        provider {:id "p" :kind :openai-compatible
+                  :max-output-tokens {"big" 8192 "small" 2048}}
+        request {:model "big" :messages [] :tools []}]
+    (is (= 8192 (requested provider request)))
+    (is (= 2048 (requested provider (assoc request :model "small")))
+        "the fallback model's own cap, which is what the body carried")))
+
+(deftest a-per-model-cap-map-does-not-reach-arithmetic-as-a-map
+  ;; `:max-output-tokens` may be a map by model. Every place that treats it as
+  ;; a number has to resolve first, or `(long {...})` throws before a request
+  ;; is even made.
+  (let [body (private-fn 'agent-request-body)]
+    (is (= 2048 (:max_tokens (body {:id "p" :kind :openai-compatible
+                                    :max-output-tokens {"murakumo-main" 2048}}
+                                   {:model "murakumo-main" :messages []}))))
+    (is (= 2048 (:max_tokens (body {:id "p" :kind :openai-compatible
+                                    :max-output-tokens {"other" 4096}}
+                                   {:model "murakumo-main" :messages []})))
+        "an unnamed model falls to the shipped default, not to a sibling's cap")))

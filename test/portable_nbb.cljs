@@ -18,6 +18,7 @@
             [cloud.itonami.app.config-policy-test]
             [cloud.itonami.app.host-bounds-test]
             [cloud.itonami.app.issue-comment-test]
+            [cloud.itonami.app.lifecycle-test]
             [cloud.itonami.app.mail-authentication-test]
             [cloud.itonami.app.mail-domain-records-test]
             [cloud.itonami.app.provider-retry-test]
@@ -35,6 +36,7 @@
              'cloud.itonami.app.config-policy-test
              'cloud.itonami.app.host-bounds-test
              'cloud.itonami.app.issue-comment-test
+             'cloud.itonami.app.lifecycle-test
              'cloud.itonami.app.mail-authentication-test
              'cloud.itonami.app.mail-domain-records-test
              'cloud.itonami.app.provider-retry-test
