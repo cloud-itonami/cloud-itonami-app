@@ -3503,6 +3503,18 @@
 
       :else
       (let [{:keys [provider model]} (provider-choice! configuration b)
+            ;; `:provider`/`:requested-model` below (after `result`) only ever
+            ;; runs when `provider/agent-turn` returns -- the very thing that
+            ;; throws on every :provider/http-error, :timeout and the rest.
+            ;; `run-attribution`/`failed-goal-turn` (ADR-2608280300, landed
+            ;; the same day) already read both off `run` when present; the gap
+            ;; was never in that projection, it was that a FAILED call never
+            ;; got this far to write them. Saving what was ASKED before the
+            ;; risky call closes it without duplicating that landed fix --
+            ;; the catch block downstream reads this same store entry.
+            _ (save-run! (:bot/id b)
+                         (assoc run :provider (some-> (:id provider) name)
+                                    :requested-model model))
             request (agent-request configuration provider b run model)
             _ (when on-event
                 (on-event (merge {:type "phase" :phase "model"}
