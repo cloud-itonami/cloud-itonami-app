@@ -113,3 +113,41 @@
   [attempt status parsed]
   (and (< (inc attempt) max-attempts)
        (transient-response? status parsed)))
+
+;; ── an answer that was cut off is not an answer that was wrong ─────────
+
+(defn output-budget-exhausted?
+  "Did the model stop because it ran out of room, rather than finish badly?
+
+  Three independent signals, any one of which is sufficient. None is necessary,
+  because each has a measured way of being absent.
+
+  **The provider saying `length`.** Measured 2026-08-28 against
+  api.murakumo.cloud: of six streamed `decision_frame` calls cut at exactly
+  `max_tokens`, two said `length` and four said `tool_calls`. A server that has
+  emitted a tool call reports having emitted one, and whether it also mentions
+  the cap is a detail of its parser.
+
+  **The count reaching the cap the request set.** Reliable when the request's
+  cap is the one that actually applied -- and that is exactly the assumption
+  that failed. api.murakumo.cloud enforces its OWN ceiling of 2048 output
+  tokens: requests for 3072, 4096, 8192 and 16384 all returned
+  `completion_tokens` 2048. So an application configured above 2048 gets cut at
+  2048 while believing its budget is 8192, `2048 >= 8192` is false, and this
+  signal goes quiet in precisely the deployment that needs it most.
+
+  **The JSON ending early.** The one signal that needs no agreement with the
+  server about numbers at all: a tool call's arguments that fail to parse
+  because the input RAN OUT were cut off, whoever cut them. Not every truncation
+  looks like this -- a cut landing between a key and its colon reads as an
+  ordinary syntax error -- so it is one signal among three, not a replacement.
+
+  A false answer here only leaves the original, less specific classification in
+  place, so absent telemetry answers false rather than guessing."
+  [finish-reason completion-tokens max-output-tokens json-ended-early?]
+  (boolean
+   (or (= "length" finish-reason)
+       (true? json-ended-early?)
+       (and (number? completion-tokens)
+            (number? max-output-tokens)
+            (>= (long completion-tokens) (long max-output-tokens))))))

@@ -534,26 +534,24 @@
 ;; a configured number cut it in half, and the error name sent operators to
 ;; look at the model.
 
-(deftest an-exhausted-output-budget-is-detected-from-either-signal
-  (let [exhausted? (private-fn 'output-budget-exhausted?)]
-    (testing "the provider saying so is enough"
-      (is (exhausted? "length" nil nil))
-      (is (exhausted? "length" 10 4096)))
-    (testing "so is the count reaching the cap the request set"
-      ;; Four of six streamed calls cut at exactly max_tokens still reported
-      ;; `tool_calls`, because a server that emitted a tool call says it did.
-      ;; The count is the half that cannot be worded away.
-      (is (exhausted? "tool_calls" 1024 1024))
-      (is (exhausted? "tool_calls" 1025 1024) "a cap can be reported as passed"))
-    (testing "an unexhausted budget is not one"
-      (is (not (exhausted? "tool_calls" 1023 1024)))
-      (is (not (exhausted? "stop" 40 2048))))
-    (testing "missing telemetry answers false rather than guessing"
-      ;; This only ever makes an error MORE specific, so the safe default is to
-      ;; leave the original classification alone.
-      (is (not (exhausted? nil nil nil)))
-      (is (not (exhausted? "tool_calls" 1024 nil)))
-      (is (not (exhausted? "tool_calls" nil 1024))))))
+(deftest a-truncated-json-argument-is-marked-as-having-ended-early
+  ;; The signal that needs no agreement with the server about token counts.
+  ;; api.murakumo.cloud caps output at 2048 whatever is requested, so an app
+  ;; configured at 8192 can never see `completion_tokens` reach its own cap.
+  (let [parse (private-fn 'parse-arguments)
+        ended-early? (fn [v] (:json-ended-early?
+                              (ex-data (try (parse "decision_frame" v)
+                                            (catch clojure.lang.ExceptionInfo e e)))))]
+    (testing "input that simply ran out"
+      (is (true? (ended-early? "{\"scope\": \"club shinshi\", \"facts\": [{\"id")))
+      (is (true? (ended-early? "{\"scope\": [1,2,"))))
+    (testing "a genuine syntax error is not truncation"
+      (is (false? (ended-early? "{\"scope\": tru3}")))
+      (is (false? (ended-early? "{\"a\": 1,, \"b\": 2}"))))
+    (testing "not every truncation looks like one, and that is why it is not the only signal"
+      ;; A cut landing between a key and its colon reads as an ordinary syntax
+      ;; error. The token-count and finish_reason signals cover this shape.
+      (is (false? (ended-early? "{\"a\": 1, \"b\": [{\"c\""))))))
 
 (deftest a-tool-call-cut-off-by-the-budget-says-so
   (let [normalize (private-fn 'agent-result)
@@ -579,13 +577,32 @@
         (is (= "decision_frame" (:tool-name (ex-data error))))
         (is (str/starts-with? (:arguments-sample (ex-data error)) "{\"scope\""))))
 
-    (testing "a malformed call inside its budget stays the model's problem"
+    (testing "a call the SERVER cut below our own cap is still the budget"
+      ;; The case that made the count unreliable. api.murakumo.cloud enforces a
+      ;; 2048-token ceiling of its own: measured 2026-08-28, requests for 3072,
+      ;; 4096, 8192 and 16384 all returned completion_tokens 2048. An app
+      ;; configured at 8192 therefore never sees its own cap reached, and if
+      ;; the provider also words the stop as `tool_calls` -- four of six
+      ;; measured streamed calls did -- both count and reason go quiet.
       (let [error (try (normalize {:content "" :tool_calls [cut]}
+                                  "tool_calls"
+                                  {:completion_tokens 2048} 8192)
+                       (catch clojure.lang.ExceptionInfo e e))]
+        (is (= :provider/output-budget-exhausted (:type (ex-data error)))
+            "2048 of a requested 8192 is a server ceiling, not a model defect")
+        (is (= 2048 (:completion-tokens (ex-data error)))
+            "the spent count is reported, since it is not the requested one")))
+
+    (testing "a malformed call inside its budget stays the model's problem"
+      (let [malformed {:id "call-2"
+                       :function {:name "decision_frame"
+                                  :arguments "{\"scope\": tru3}"}}
+            error (try (normalize {:content "" :tool_calls [malformed]}
                                   "tool_calls"
                                   {:completion_tokens 40} 2048)
                        (catch clojure.lang.ExceptionInfo e e))]
         (is (= :provider/invalid-tool-arguments (:type (ex-data error)))
-            "40 of 2048 tokens is not a cap being reached")))
+            "40 of 2048 tokens with intact JSON framing is the model, not a cap")))
 
     (testing "an exhausted budget does not invent a failure for a call that parsed"
       ;; Running out of room after a COMPLETE tool call is not an error; the

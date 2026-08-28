@@ -354,6 +354,13 @@
           (throw (ex-info "model returned invalid tool arguments"
                           {:type :provider/invalid-tool-arguments
                            :tool-name tool-name
+                           ;; Whether the reader ran out of INPUT, as opposed to
+                           ;; meeting something it could not accept. The only
+                           ;; truncation signal that needs no agreement with the
+                           ;; server about token counts -- see
+                           ;; `provider-retry/output-budget-exhausted?` for why
+                           ;; the counts cannot be relied on alone.
+                           :json-ended-early? (instance? java.io.EOFException error)
                            :arguments-length (count (str value))
                            ;; Truncated: these are model-authored and can be
                            ;; long. Enough to see the malformation, not the
@@ -362,28 +369,6 @@
                                                    (min max-reported-arguments
                                                         (count (str value))))}
                           error)))))))
-
-(defn output-budget-exhausted?
-  "Did the model stop because it reached its output-token cap?
-
-  `finish_reason` alone does not answer this. Measured against
-  api.murakumo.cloud on 2026-08-28, six streamed `decision_frame` calls cut at
-  exactly `max_tokens`: two said `length` and four said `tool_calls`. A server
-  that has emitted a tool call reports having emitted a tool call, and whether
-  it also mentions the cap is a detail of its parser -- so the reason is taken
-  as sufficient evidence when present, never as necessary.
-
-  The count is the reliable half. `completion_tokens` reaching the cap the
-  request set is the cap being reached; there is no other way to arrive there.
-  Both halves are optional because a provider may report neither, and then this
-  answers false: an unexhausted budget is the safe assumption, since the caller
-  only uses this to make an error MORE specific."
-  [finish-reason completion-tokens max-output-tokens]
-  (boolean
-   (or (= "length" finish-reason)
-       (and (number? completion-tokens)
-            (number? max-output-tokens)
-            (>= (long completion-tokens) (long max-output-tokens))))))
 
 (defn- budget-exhausted-error
   "`error` renamed to the thing that actually went wrong, when the budget ran out.
@@ -398,18 +383,27 @@
   unparseable; three each at 2048, 3072 and 4096 were complete. The model was
   never the problem -- a configured number was, and the name hid it.
 
+  The message reports what was SPENT as well as what was asked for, because
+  those differ: api.murakumo.cloud enforces a 2048-token ceiling of its own and
+  requests for 3072, 4096, 8192 and 16384 all came back at 2048. An operator
+  told only `max-output-tokens 8192` would go looking for a budget that was
+  never the one that applied.
+
   Only a call that already failed to parse reaches this, and only when the
   budget was in fact exhausted. Everything the original error carried is kept:
   the tool name and the offending string are the point of that error, and this
   renames the failure rather than replacing it."
   [error max-output-tokens]
-  (let [{:keys [type finish-reason completion-tokens] :as data} (ex-data error)]
+  (let [{:keys [type finish-reason completion-tokens json-ended-early?] :as data}
+        (ex-data error)]
     (if (and (= :provider/invalid-tool-arguments type)
-             (output-budget-exhausted? finish-reason completion-tokens
-                                       max-output-tokens))
+             (retry/output-budget-exhausted? finish-reason completion-tokens
+                                             max-output-tokens
+                                             json-ended-early?))
       (ex-info (str "モデルの出力トークン上限に達し、tool の引数が途中で切れました"
-                    (when max-output-tokens
-                      (str "（max-output-tokens " max-output-tokens "）")))
+                    (when (or completion-tokens max-output-tokens)
+                      (str "（" (or completion-tokens "?") "/"
+                           (or max-output-tokens "?") " tokens）")))
                (assoc data
                       :type :provider/output-budget-exhausted
                       :max-output-tokens max-output-tokens)

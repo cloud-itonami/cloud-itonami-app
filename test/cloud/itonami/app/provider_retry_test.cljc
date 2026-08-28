@@ -76,3 +76,44 @@
   ;; a bound nobody states is a bound nobody checks.
   (is (= 6000 (reduce + (map retry/retry-delay-ms (range (dec retry/max-attempts)))))
       "two retries at 2s and 4s"))
+
+;; ── an answer that was cut off is not an answer that was wrong ─────────
+;;
+;; `:provider/invalid-tool-arguments` was the most common live failure on the
+;; resident fleet on 2026-08-28 -- 20 of 45 failed turns -- and every
+;; reproduction was `:max-output-tokens 1024` cutting a `decision_frame` whose
+;; frames need 1350-1676 tokens. The model authored nothing malformed.
+
+(deftest an-exhausted-output-budget-is-detected-from-any-of-three-signals
+  (let [exhausted? retry/output-budget-exhausted?]
+    (testing "the provider saying `length`"
+      (is (exhausted? "length" nil nil nil))
+      (is (exhausted? "length" 10 4096 false)))
+
+    (testing "the count reaching the cap the request set"
+      ;; Four of six measured streamed calls cut at exactly max_tokens still
+      ;; said `tool_calls`: a server that emitted a tool call reports one.
+      (is (exhausted? "tool_calls" 1024 1024 false))
+      (is (exhausted? "tool_calls" 1025 1024 false) "a cap can be reported as passed"))
+
+    (testing "the JSON having ended early"
+      ;; The signal that needs no agreement about numbers. api.murakumo.cloud
+      ;; enforces its OWN 2048 ceiling -- requests for 3072, 4096, 8192 and
+      ;; 16384 all returned completion_tokens 2048 -- so an app configured
+      ;; above 2048 never sees its own cap reached and the count goes quiet in
+      ;; exactly the deployment that needs it most.
+      (is (exhausted? "tool_calls" 2048 8192 true))
+      (is (not (exhausted? "tool_calls" 2048 8192 false))
+          "without the third signal this deployment is the blind spot"))
+
+    (testing "an unexhausted budget is not one"
+      (is (not (exhausted? "tool_calls" 1023 1024 false)))
+      (is (not (exhausted? "stop" 40 2048 false))))
+
+    (testing "missing telemetry answers false rather than guessing"
+      ;; A false answer only leaves the original, less specific classification
+      ;; in place; a true one would blame a cap for a model's mistake.
+      (is (not (exhausted? nil nil nil nil)))
+      (is (not (exhausted? "tool_calls" 1024 nil nil)))
+      (is (not (exhausted? "tool_calls" nil 1024 nil)))
+      (is (not (exhausted? "tool_calls" 40 2048 nil))))))
