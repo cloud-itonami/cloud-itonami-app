@@ -69,9 +69,14 @@ This change lands the non-custodial owner-addition layer:
   observes the candidate. Assertion bytes and provider URLs are not persisted.
 - Ethereum Sepolia is a separate allowlisted rehearsal chain with independently
   injected RPC, bundler and optional paymaster endpoints. Hosted infrastructure
-  is an adapter: the initial Pimlico v2 path uses only ERC-4337 JSON-RPC and can
-  be replaced by Alto or another conforming provider without changing the
-  Principal, Passkey records or deterministic Smart Account address.
+  is an adapter. The initial Pimlico v2 path obtains the `fast` tier from
+  `pimlico_getUserOperationGasPrice` before fixing the WebAuthn challenge,
+  because node `eth_gasPrice` can be below the bundler minimum. A bundler that
+  reports JSON-RPC `-32601` for this optional method falls back to
+  `eth_gasPrice`; every other gas-oracle failure is fail-closed. This adapter
+  can therefore be replaced by Alto or another conforming provider without
+  changing the Principal, Passkey records or deterministic Smart Account
+  address.
 - Cloud Itonami issues a 120-second, target-bound assertion only to the
   allowlisted Kotobase or Murakumo authentication origin.
 - `auth.kotobase.net` and `auth.murakumo.cloud` run distinct WebAuthn RPs over
