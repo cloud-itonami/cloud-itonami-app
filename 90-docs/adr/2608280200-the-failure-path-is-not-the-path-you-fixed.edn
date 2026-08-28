@@ -1,0 +1,73 @@
+[{:db/id -1
+  :adr/id "adr-2608280200-the-failure-path-is-not-the-path-you-fixed"
+  :adr/title "The failure path is not the path you fixed"
+  :adr/status "accepted"
+  :adr/date "2026-08-28"
+  :adr/body
+  "## The report
+
+品質向上の続き。timeout が失敗原因の最多になったので、何が起きているかを
+測ろうとした。
+
+## What was measured, 2026-08-28
+
+    :provider/timeout          273 turns
+      goal?                    273 / 273   (全部 resident job)
+      :turn/model              nil / 273
+      :turn/provider           nil / 273
+      :turn/turn-count         nil / 268
+
+    経過時間                    min 124.1s / median 283.0s / max 9,258.2s
+
+**「どの model が timeout したのか」「turn の何回目で落ちたのか」に、
+どこを見ても答えが無い。**失敗原因の最多に対して、である。
+
+経過時間の中央値が 283 秒で最大が 2.5 時間ということは、これらは
+「1 本の遅い request」ではなく「複数 request を重ねた run」を含む。
+だが turn-count が無いので、その 2 つを分けられない。
+
+## The defect, and why the previous fix missed it
+
+前日 `:turn/requested-model` を足したとき、直したのは `finish-visible!`
+だった。それは **interactive path** である。
+
+Goal は違う経路で失敗する —— `run-goal-job!` の catch 節が
+`record-turn!` を直接呼び、そこには model も provider も turn-count も
+入っていなかった。**273 件は全部そちら側だった。**
+
+run が消えていたわけではない。`clear-run!` は完了パスからしか呼ばれず、
+`finally` は無いので、provider 例外は run をそのまま store に残して上がる。
+**誰も読んでいなかっただけである。**
+
+## Decision
+
+`run-attribution`（run → turn の属性）と `failed-goal-turn`
+（run + 失敗内容 → turn レコード）を純関数として切り出し、Goal の catch
+から使う。
+
+`cond->` で組む —— 何も言えない run は**何も書かない**。`record-turn!` は
+attrs を既存の turn に merge するので、nil を書くと**先に正しく記録された
+属性を消す**ことになる。
+
+## The general shape
+
+**「直した」と言えるのは、直した経路が実際に失敗している経路であるとき
+だけである。** 前日の修正はテストが緑で、projection にも出ていて、
+それでも実測 273 件のどれ 1 つにも効いていなかった。
+
+同じ問いを次に足す検査にも当てる: *その検査は、実際に落ちている経路の
+上に在るか。*
+
+## What this does not fix
+
+timeout そのものは減らない。**分かるようになるだけである。**
+wall を上げるべきか、1 turn の仕事を減らすべきか、throughput を上げるべきかは、
+どの model が何回目で落ちているかを 1 日ぶん測ってから決める —— いまは
+その測定ができるようになった状態。
+
+## Verification
+
+- `clojure -M:test`: 1,994 tests / 11,734 assertions / 0 failures
+  （この変更前は 1,992 / 11,716 / 0）。
+- attribution の merge を外すと両方のテストが赤くなることを確認した。
+"}]

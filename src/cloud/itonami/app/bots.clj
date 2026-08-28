@@ -2466,6 +2466,47 @@
 
 ;; ── visible turn lifecycle ─────────────────────────────────────────────
 
+(defn run-attribution
+  "What a run can say about itself, as turn fields, omitting what it cannot.
+
+  Measured 2026-08-28 over 273 turns that failed at `:provider/timeout` --
+  every one of them a Goal: `:turn/model` nil, `:turn/provider` nil, and
+  `:turn/turn-count` nil for 268 of them. So for the failure mode that accounts
+  for most failures, `which model timed out, and how far into the turn` had no
+  answer anywhere a reader looks.
+
+  The run was never missing. `finish-visible!` is handed one and carries all of
+  this; the Goal path is a catch block that had only the bot id and never read
+  the run beside it. There is no `finally` clearing runs -- `clear-run!` is
+  called on completion paths -- so a provider exception leaves the run exactly
+  where it was.
+
+  `cond->` rather than a fixed map, so a run with nothing to say contributes
+  nothing instead of writing nils over a turn that already knew better."
+  [run]
+  (cond-> {}
+    (:provider run) (assoc :turn/provider (:provider run))
+    (:model run) (assoc :turn/model (:model run))
+    (:requested-model run) (assoc :turn/requested-model (:requested-model run))
+    (:turn-count run) (assoc :turn/turn-count (:turn-count run))
+    (:tool-count run) (assoc :turn/tool-count (:tool-count run))
+    (:usage run) (assoc :turn/usage (:usage run))))
+
+(defn failed-goal-turn
+  "The turn record for a Goal whose worker threw.
+
+  Pure, and separate from the catch block it is used in, because what a failure
+  RECORDS is the part that has been wrong -- and a catch block needs a provider,
+  a model and a running fleet before anyone can look at it."
+  [run {:keys [error-type error-status error-message at]}]
+  (merge (run-attribution run)
+         {:turn/state :failed
+          :turn/phase :failed
+          :turn/finished-at at
+          :turn/error-type error-type
+          :turn/error-status error-status
+          :turn/error-message error-message}))
+
 (defn- record-turn!
   "Upsert one bounded, durable lifecycle record for a visible Bot turn.
 
@@ -4533,11 +4574,12 @@
             ;; leaving Bots UI permanently at running/resuming after the
             ;; worker had already stopped. Close both in the same catch path.
             (record-turn! bot run-id
-                          {:turn/state :failed :turn/phase :failed
-                           :turn/finished-at (store/now)
-                           :turn/error-type error-type
-                           :turn/error-status error-status
-                           :turn/error-message (error-message error)}))
+                          (failed-goal-turn
+                           (get-in (snapshot) [:runs bot])
+                           {:error-type error-type
+                            :error-status error-status
+                            :error-message (error-message error)
+                            :at (store/now)})))
           (append-goal-event! run-id :run/failed
                               {:error-type (or (:type (ex-data error)) :internal-error)
                                :error-status (:status (ex-data error))
