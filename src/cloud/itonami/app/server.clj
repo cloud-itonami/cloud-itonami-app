@@ -6259,8 +6259,18 @@
   a Passkey-authenticated human session."
   [config exchange method path]
   (let [session (require-human-session! exchange)
-        overview #(wallet/snapshot config session
-                                   (:bots (bots/overview config session)))]
+        overview #(let [visible (:bots (bots/overview config session))
+                        ;; `bots/overview` deliberately omits owner/tenant from
+                        ;; its wire projection. Wallet migration must not infer
+                        ;; those authority fields from a visible row, so resolve
+                        ;; each through the same owned! gate as explicit Wallet
+                        ;; writes before handing it to provision-bot!.
+                        principals (mapv (fn [bot]
+                                           (merge bot
+                                                  (bots/wallet-principal
+                                                   session (:id bot))))
+                                         visible)]
+                    (wallet/snapshot config session principals))]
     (cond
       (and (= method "GET") (= path "/api/wallet"))
       (do (require-human-session! exchange)

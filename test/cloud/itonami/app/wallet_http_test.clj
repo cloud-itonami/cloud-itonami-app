@@ -1,6 +1,7 @@
 (ns cloud.itonami.app.wallet-http-test
   (:require [clojure.data.json :as json]
             [clojure.test :refer [deftest is testing]]
+            [cloud.itonami.app.bots :as bots]
             [cloud.itonami.app.config :as config-loader]
             [cloud.itonami.app.identity :as identity]
             [cloud.itonami.app.server :as server]
@@ -69,6 +70,17 @@
         (is (= "EIP-6963 / EIP-1193 (optional)"
                (get-in response [:body :external-wallet-provider])))
         (is (false? (get-in response [:body :private-keys-stored?])))))))
+
+(deftest wallet-snapshot-resolves-public-bots-through-the-owner-gate
+  (with-server
+    (fn []
+      (let [created (bots/create! config @current-session
+                                  {:name "owned-wallet-bot" :connectors []})
+            response (call :get "/api/wallet" nil false)]
+        (is (= 200 (:status response)))
+        (is (= (:bot/id created) (get-in response [:body :bots 0 :id])))
+        (is (= "passkey-required"
+               (get-in response [:body :bots 0 :wallet :status])))))))
 
 (deftest wallet-writes-require-csrf
   (with-server
