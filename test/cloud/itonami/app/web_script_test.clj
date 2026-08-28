@@ -153,8 +153,10 @@
                (web/page-html config))
         js (slurp (io/file "resources/cloud/itonami/app/interaction.js"))]
     (doseq [id ["bots-workspace" "bots-cancel"
-                "bots-goal" "bots-run"]]
+                "bots-run"]]
       (is (str/includes? html (str "id=\"" id "\"")) id))
+    (is (not (str/includes? html "id=\"bots-goal\""))
+        "Goal is a per-Bot setting, not a composer checkbox")
     (is (not (str/includes? html "id=\"bots-coding\"")))
     (is (str/includes? html "ファイル変更・local commitを自律実行"))
     (is (str/includes? js "messages/stream"))
@@ -165,6 +167,8 @@
     (is (str/includes? js "activeRuns:new Map()"))
     (is (str/includes? js "通常より時間がかかっています…"))
     (is (str/includes? js "'goal?':goal"))
+    (is (str/includes? js "'goal?':goalBox.checked"))
+    (is (str/includes? js "Boolean(selectedBot?.['goal?'])"))
     (is (str/includes? js "provider の請求額が未提供のため未算出"))
     (is (str/includes? js "HTTP ${turn['error-status']}"))
     (is (str/includes? js "renderBotsRun(botsState.latestTurn)"))
@@ -300,7 +304,7 @@
     (is (> settings-start signin-start))
     (doseq [id ["identity-onboarding" "itonami-cloud-signin" "itonami-enrolment-link"
                 "registration-form" "registered-auth" "local-recovery"
-                "passkey-signin" "email-login-form" "sso-signin-list"
+                "passkey-signin" "email-login-form"
                 "enrollment-form"]]
       (is (str/includes? signin-html (str "id=\"" id "\"")) id)
       (is (not (str/includes? settings-html (str "id=\"" id "\""))) id))
@@ -336,7 +340,7 @@
     (is (not (str/includes? signin-html "auth.itonami.cloud でサインイン"))
         "the hostname is not the verb; the hosted page's copy is")))
 
-(deftest the-signin-gate-describes-this-deployment-and-not-a-general-one
+(deftest the-signin-gate-is-passkey-first-and-does-not-offer-provider-sso
   ;; The screen a person meets when the owner ceremony was interrupted:
   ;; `/api/identity/register` created the account and the Passkey never
   ;; arrived, so `registered?` is true and `passkey-required?` is true. Measured
@@ -351,16 +355,13 @@
         js (slurp (io/file "resources/cloud/itonami/app/interaction.js"))
         signin-start (.indexOf html "data-view-panel=\"signin\"")
         signin-html (subs html signin-start (.indexOf html "data-view-panel=\"settings\""))]
-    (doseq [id ["signin-gate-headline" "signin-gate-note" "sso-signin-card"]]
+    (doseq [id ["signin-gate-headline" "signin-gate-note"]]
       (is (str/includes? signin-html (str "id=\"" id "\"")) id))
-    ;; The SSO card ships hidden: a card of disabled buttons is not an entrance,
-    ;; and the client reveals it only once a provider is configured.
-    (is (str/includes? signin-html "id=\"sso-signin-card\" hidden"))
+    (is (not (str/includes? signin-html "id=\"sso-signin-card\"")))
+    (is (not (str/includes? signin-html "SSOで続ける")))
     (is (str/includes? js "const otherSigninMethods = (data) => ["))
-    (is (str/includes? js "$('#sso-signin-card').hidden = !providers.length;"))
-    (is (str/includes? js
-                       "(methods.sso || []).filter((p) => p['configured?'])")
-        "the sign-in list must hold only providers that can actually start")
+    (is (not (str/includes? js "startSso")))
+    (is (not (str/includes? js "/api/auth/sso/")))
     (is (str/includes? js "renderSigninGate(data);")
         "the gate must be rewritten on every identity render, not once")
     (is (str/includes? js "入口は auth.itonami.cloud")
@@ -372,6 +373,14 @@
     ;; The copy that made the promise this deployment could not keep.
     (is (not (str/includes? html "通常の入口は Passkey、Email、SSO です")))
     (is (not (str/includes? js "'Passkey、Email、またはSSOで続行できます。'")))))
+
+(deftest central-passkey-callback-is-one-shot-and-provider-sso-results-are-ignored
+  (let [js (slurp (io/file "resources/cloud/itonami/app/interaction.js"))]
+    (is (str/includes? js "provider === 'itonami-cloud'"))
+    (is (str/includes? js "authResult === 'itonami-cloud'"))
+    (is (str/includes? js "cleaned.searchParams.delete('auth')"))
+    (is (str/includes? js "cleaned.searchParams.delete('provider')"))
+    (is (not (str/includes? js "provider || 'SSO'")))))
 
 (deftest domain-ownership-ui-uses-the-human-session-api
   (let [html (with-redefs [store/snapshot (constantly (store/initial-state))]

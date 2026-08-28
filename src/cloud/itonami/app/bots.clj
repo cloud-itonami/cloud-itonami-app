@@ -802,7 +802,7 @@
   separate capabilities and the Bot settings screen may narrow any default."
   [configuration session {:keys [name avatar brief connectors tools accounts
                                  writes? browser? computer? peers? coding? virtual-shell?
-                                 omakase? workspace provider-id model]
+                                 goal? omakase? workspace provider-id model]
                           :as attrs}]
   (let [writes? (if (contains? attrs :writes?) (boolean writes?) true)
         omakase? (if (contains? attrs :omakase?) (boolean omakase?) true)
@@ -810,6 +810,9 @@
         coding? (if (contains? attrs :coding?)
                   (boolean coding?)
                   (boolean (some-> workspace str str/trim not-empty)))
+        goal? (if (contains? attrs :goal?)
+                (boolean goal?)
+                (boolean (or coding? virtual-shell?)))
         browser? (if (contains? attrs :browser?) (boolean browser?) true)
         computer? (if (contains? attrs :computer?) (boolean computer?) true)]
   (validate-provider-choice! configuration provider-id model)
@@ -838,6 +841,7 @@
                     :bot/peers? peers?
                     :bot/coding? coding?
                     :bot/virtual-shell? virtual-shell?
+                    :bot/goal? goal?
                     :bot/omakase? omakase?
                     :bot/workspace workspace
                     :bot/created-at now
@@ -948,6 +952,7 @@
                  (contains? attrs :browser?) (assoc :bot/browser? (:browser? attrs))
                  (contains? attrs :computer?) (assoc :bot/computer? (:computer? attrs))
                  (contains? attrs :peers?) (assoc :bot/peers? (:peers? attrs))
+                 (contains? attrs :goal?) (assoc :bot/goal? (:goal? attrs))
                  (contains? attrs :omakase?) (assoc :bot/omakase? (:omakase? attrs))
                  (or (contains? attrs :coding?)
                      (contains? attrs :virtual-shell?)
@@ -1580,6 +1585,11 @@
                                     (agent-control/computer-ready? configuration)))
      :coding? (:bot/coding? b)
      :virtual-shell? (:bot/virtual-shell? b)
+     ;; Persisted Bots from before this setting lived on the record must keep
+     ;; the composer's former default until they are saved once.
+     :goal? (if (contains? b :bot/goal?)
+              (boolean (:bot/goal? b))
+              (boolean (or (:bot/coding? b) (:bot/virtual-shell? b))))
      :omakase? (boolean (:bot/omakase? b))
      :virtual-shell-ready? (boolean (and (:bot/virtual-shell? b)
                                          (virtual-shell/available?)))
