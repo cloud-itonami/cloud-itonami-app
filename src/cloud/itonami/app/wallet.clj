@@ -1,23 +1,29 @@
 (ns cloud.itonami.app.wallet
-  "Non-custodial EVM wallets for people and Bots.
+  "Passkey-first, non-custodial EVM Smart Accounts for people and Bots.
 
-  The app stores ownership proofs, assignments, and transfer receipts. It does
-  not store or derive private keys. Signers come in two custodies
-  (ADR-2608241100 decision 6):
+  A verified WebAuthn P-256 credential is the initial owner of a deterministic
+  ERC-4337 account. Cloud Itonami stores only its public counterfactual
+  descriptor; the authenticator's private key never leaves the device. Every
+  Principal receives one account and every Bot receives a distinct account.
 
-    :custody :external-wallet  an injected wallet (MetaMask, Coinbase Wallet,
-                               etc.) signs in the browser — the original shape.
+  External accounts are optional links, not the source of identity and not a
+  prerequisite for receiving funds:
+
+    :custody :passkey-smart-account  the default account owned by WebAuthn.
+    :custody :external-wallet        an optional injected wallet (MetaMask,
+                                     Coinbase Wallet, etc.).
     :custody :kagi             the org's self-custodied signer
                                (wallet.signer/Signer, production:
                                kagi.chain-signer/vault-signer — the seed never
                                leaves the kagi vault, every signature is
                                governed and ledgered there).
 
-  Both walk the SAME one-use SIWE challenge/verify path; the proof recorded is
-  the same EIP-4361 signature either way, so this module still never stores or
-  derives a private key."
+  External and kagi accounts walk the same one-use SIWE link path. They remain
+  useful for legacy assets, funding, recovery and co-signing, but linking one
+  never replaces the Passkey Smart Account."
   (:require [clojure.string :as str]
             [cloud.itonami.app.identity :as identity]
+            [cloud.itonami.app.smart-account :as smart-account]
             [cloud.itonami.app.store :as store]
             [wallet.chain :as wchain]
             [wallet.siwe :as siwe])
@@ -25,8 +31,8 @@
            [java.time Instant]
            [java.util UUID]))
 
-(def schema "cloud.itonami.app.wallet.v1")
-(def bot-wallet-schema "cloud.itonami.app.bot-wallet.v1")
+(def schema "cloud.itonami.app.wallet.v2")
+(def bot-wallet-schema "cloud.itonami.app.bot-wallet.v2")
 (def transaction-seconds 600)
 
 (def ^:private address-pattern #"(?i)^0x[0-9a-f]{40}$")
@@ -53,39 +59,138 @@
 (defn- links-path [user-id] [:wallet :links user-id])
 (defn- link-path [user-id link-id] [:wallet :links user-id link-id])
 (defn- bot-wallet-path [bot-id] [:wallet :bot-wallets bot-id])
+(defn- principal-wallet-path [principal-id]
+  [:wallet :principal-smart-accounts principal-id])
 
 (defn- bot-field [bot public-key internal-key]
   (or (get bot public-key) (get bot internal-key)))
 
-(defn provision-bot!
-  "Create the durable Wallet container that every Bot owns from birth.
+(defn- initial-passkey [state user-id]
+  (->> (vals (get-in state [:identity :passkeys] {}))
+       (filter #(and (= user-id (:user-id %))
+                     (= true (:user-verified? %))
+                     (or (:public-key-b64 %) (:public-key-cose %))))
+       (sort-by (juxt #(or (:created-at %) "") :credential-id))
+       first))
 
-  This creates identity and policy state, never a private key. An external
-  signer is attached later with SIWE, so Bot creation cannot silently obtain
-  authority to move funds. The operation is idempotent for retries."
-  [session bot]
+(defn- supported-chains [configuration]
+  (or (seq (get-in configuration [:wallet :chains]))
+      [{:chain-id 1 :name "Ethereum"}]))
+
+(defn- primary-chain [configuration]
+  (or (:chain-id (first (supported-chains configuration))) 1))
+
+(defn- account-view [configuration descriptor]
+  (let [chain-id (primary-chain configuration)]
+    (cond-> (assoc descriptor :chain-id chain-id)
+      (:address descriptor)
+      (assoc :account (str "eip155:" chain-id ":"
+                           (str/lower-case (:address descriptor)))
+             :accounts (mapv (fn [{:keys [chain-id name]}]
+                               {:namespace "eip155" :chain-id chain-id :name name
+                                :address (:address descriptor)
+                                :account (str "eip155:" chain-id ":"
+                                              (str/lower-case (:address descriptor)))})
+                             (supported-chains configuration))))))
+
+(defn ensure-principal-account!
+  "Persist the Principal's counterfactual Passkey Smart Account, idempotently.
+
+  Returns nil only for a pre-Passkey/legacy session whose public credential is
+  not present yet. Adding another Passkey never changes the stored address: the
+  first verified P-256 owner is pinned in the account descriptor."
+  [configuration session]
+  (let [state (store/snapshot)
+        principal-id (identity/session-principal-id session)
+        path (when principal-id (principal-wallet-path principal-id))
+        existing (when path (get-in state path))
+        credential (initial-passkey state (:user-id session))]
+    (cond
+      existing (account-view configuration existing)
+      (or (nil? principal-id) (nil? credential)) nil
+      :else
+      (let [record (assoc (smart-account/descriptor
+                           configuration principal-id credential :principal principal-id)
+                          :id (str "smart-account-principal-" principal-id)
+                          :user-id (:user-id session)
+                          :organization-id (:organization-id session)
+                          :capabilities ["receive" "propose-send"]
+                          :created-at (store/now))]
+        (store/transact!
+         (fn [current]
+           (if (get-in current path) current (assoc-in current path record))))
+        (account-view configuration (get-in (store/snapshot) path))))))
+
+(defn- bot-smart-record [configuration session bot credential principal-id]
   (let [bot-id (bot-field bot :id :bot/id)
-        owner-id (bot-field bot :owner-id :bot/owner)
-        organization-id (bot-field bot :organization-id :bot/organization)]
-    (when-not (and bot-id
-                   (= (:user-id session) owner-id)
-                   (= (:organization-id session) organization-id))
-      (refuse :wallet/bot-forbidden "このBotのWalletを作成する権限がありません。"))
-    (or (get-in (store/snapshot) (bot-wallet-path bot-id))
-        (let [record {:schema bot-wallet-schema
-                      :id (str "wallet-" (UUID/randomUUID))
-                      :bot-id bot-id
-                      :bot-did (or (bot-field bot :did :bot/did)
-                                   (str "urn:cloud-itonami:bot:" bot-id))
-                      :bot-name (bot-field bot :name :bot/name)
-                      :user-id owner-id
-                      :organization-id organization-id
-                      :status :awaiting-signer
-                      :custody :external-wallet
-                      :capabilities ["receive" "propose-send"]
-                      :created-at (store/now)}]
-          (store/transact! assoc-in (bot-wallet-path bot-id) record)
-          record))))
+        descriptor (account-view
+                    configuration
+                    (smart-account/descriptor
+                     configuration principal-id credential :bot bot-id))]
+    (assoc descriptor
+           :schema bot-wallet-schema
+           :smart-account-schema smart-account/schema
+           :id (str "smart-account-bot-" bot-id)
+           :bot-id bot-id
+           :bot-did (or (bot-field bot :did :bot/did)
+                        (str "urn:cloud-itonami:bot:" bot-id))
+           :bot-name (bot-field bot :name :bot/name)
+           :user-id (:user-id session)
+           :organization-id (:organization-id session)
+           :capabilities ["receive" "propose-send"]
+           :created-at (store/now))))
+
+(defn provision-bot!
+  "Create or migrate the durable Passkey Smart Account every Bot owns.
+
+  The operation only derives public counterfactual state. If a legacy caller
+  reaches Bot creation before its Passkey record is present, the container is
+  retained as :passkey-required and upgraded on the first Wallet read."
+  ([session bot] (provision-bot! {} session bot))
+  ([configuration session bot]
+   (let [bot-id (bot-field bot :id :bot/id)
+         owner-id (bot-field bot :owner-id :bot/owner)
+         organization-id (bot-field bot :organization-id :bot/organization)]
+     (when-not (and bot-id
+                    (= (:user-id session) owner-id)
+                    (= (:organization-id session) organization-id))
+       (refuse :wallet/bot-forbidden "このBotのWalletを作成する権限がありません。"))
+     (let [state (store/snapshot)
+           existing (get-in state (bot-wallet-path bot-id))
+           principal-id (identity/session-principal-id session)
+           credential (initial-passkey state (:user-id session))
+           record (if (and principal-id credential)
+                    (merge (bot-smart-record configuration session bot credential
+                                             principal-id)
+                           (select-keys existing [:id :created-at]))
+                    (merge existing
+                           {:schema bot-wallet-schema
+                            :id (or (:id existing) (str "wallet-" (UUID/randomUUID)))
+                            :bot-id bot-id
+                            :bot-did (or (bot-field bot :did :bot/did)
+                                         (str "urn:cloud-itonami:bot:" bot-id))
+                            :bot-name (bot-field bot :name :bot/name)
+                            :user-id owner-id
+                            :organization-id organization-id
+                            :status :passkey-required
+                            :custody :passkey-smart-account
+                            :capabilities ["receive" "propose-send"]
+                            :created-at (or (:created-at existing) (store/now))}))]
+       (if (and existing (= smart-account/schema (:smart-account-schema existing)))
+         (account-view configuration existing)
+         (do (store/transact! assoc-in (bot-wallet-path bot-id) record)
+             (account-view configuration record)))))))
+
+(declare bot-wallet)
+
+(defn ensure-smart-accounts!
+  "Ensure the Principal and all visible Bots have their Passkey accounts."
+  [configuration session bots]
+  (let [principal (ensure-principal-account! configuration session)]
+    (doseq [bot bots]
+      (provision-bot! configuration session bot))
+    {:principal-account principal
+     :bot-accounts (mapv #(bot-wallet (:id %)) bots)}))
 
 (defn bot-wallet
   "Return a Bot's durable Wallet container, without signer secrets."
@@ -228,9 +333,11 @@
                         domain)))
 
 (defn assign!
-  "Assign one verified chain account to one owned Bot. `bot` is already
-  ownership-checked by the caller. One link cannot silently become two Bots'
-  wallet."
+  "Optionally link one verified legacy chain account to one owned Bot.
+
+  This does not replace the Bot's Passkey Smart Account. It is retained for
+  legacy assets, funding, recovery and integrations which still address an
+  EOA directly."
   [session bot link-id]
   (let [link (owned-link! session link-id)
         bot-id (:id bot)]
@@ -259,12 +366,7 @@
                       :assigned-at (store/now)}]
       (store/transact!
        (fn [state]
-         (-> state
-             (assoc-in [:wallet :assignments bot-id] assignment)
-             (assoc-in (conj (bot-wallet-path bot-id) :status) :active)
-             (assoc-in (conj (bot-wallet-path bot-id) :activated-at) (store/now))
-             (assoc-in (conj (bot-wallet-path bot-id) :custody) custody)
-             (assoc-in (conj (bot-wallet-path bot-id) :signer-link-id) link-id))))
+         (assoc-in state [:wallet :assignments bot-id] assignment)))
       (assoc assignment :wallet-id (:id container)))))
 
 (defn unassign! [session bot-id]
@@ -274,13 +376,7 @@
                    (= (:organization-id session) (:organization-id assignment)))
       (refuse :wallet/assignment-not-found "BotのWallet割り当てが見つかりません。"))
     (store/transact!
-     (fn [state]
-       (-> state
-           (update-in [:wallet :assignments] dissoc bot-id)
-           (assoc-in (conj (bot-wallet-path bot-id) :status) :awaiting-signer)
-           ;; back to the birth default — the next signer decides the custody
-           (assoc-in (conj (bot-wallet-path bot-id) :custody) :external-wallet)
-           (update-in (bot-wallet-path bot-id) dissoc :signer-link-id :activated-at))))
+     update-in [:wallet :assignments] dissoc bot-id)
     {:bot-id bot-id :unassigned? true}))
 
 (defn revoke! [session link-id]
@@ -299,18 +395,20 @@
 (defn assignment [bot-id]
   (get-in (wallet-state) [:assignments bot-id]))
 
-(defn- assigned! [bot-id]
-  (or (assignment bot-id)
-      (refuse :wallet/assignment-not-found "このBotにはWalletがありません。")))
+(defn- primary-wallet [bot-id]
+  (let [smart (bot-wallet bot-id)]
+    (or (when (:address smart) smart)
+        (assignment bot-id)
+        (refuse :wallet/assignment-not-found "このBotにはWalletがありません。"))))
 
 (defn bot-tool-definitions [bot-id]
-  (when (assignment bot-id)
+  (when (:address (bot-wallet bot-id))
     [{:name "wallet_receive_address"
-      :description "Read this Bot's verified EVM receive address and chain."
+      :description "Read this Bot's deterministic Passkey Smart Account receive address and chain."
       :parameters {:type "object" :properties {}}}
      {:name "wallet_propose_send"
       :description (str "Propose an EVM transfer from this Bot's wallet. "
-                        "The human's external wallet must still sign and submit it. (write)")
+                        "The owning Passkey must authorize its UserOperation. (write)")
       :parameters {:type "object"
                    :properties {:to {:type "string"}
                                 :value_wei {:type "string"}}
@@ -328,27 +426,30 @@
 
 (defn create-transfer!
   [bot-id {:keys [to value-wei value_wei]} proposed-by]
-  (let [assignment (assignment bot-id)]
-    (when-not assignment
-      (refuse :wallet/assignment-not-found "このBotにはWalletがありません。"))
+  (let [account (primary-wallet bot-id)]
     (let [id (str (UUID/randomUUID))
           transfer {:schema "cloud.itonami.app.wallet.transfer.v1"
-                    :id id :bot-id bot-id :bot-did (:bot-did assignment)
-                    :user-id (:user-id assignment)
-                    :organization-id (:organization-id assignment)
-                    :link-id (:link-id assignment)
-                    :chain-id (:chain-id assignment)
-                    :from (:address assignment) :to (address! to "送金先")
+                    :id id :bot-id bot-id :bot-did (:bot-did account)
+                    :user-id (:user-id account)
+                    :organization-id (:organization-id account)
+                    :link-id (:link-id account)
+                    :chain-id (:chain-id account)
+                    :from (:address account) :to (address! to "送金先")
                     :value-wei (value-wei! (or value-wei value_wei))
-                    :status :awaiting-wallet :proposed-by proposed-by
+                    :status (if (= :passkey-smart-account (:custody account))
+                              :awaiting-passkey-user-operation
+                              :awaiting-wallet)
+                    :custody (:custody account)
+                    :proposed-by proposed-by
                     :created-at (store/now)}]
       (store/transact! assoc-in [:wallet :transfers id] transfer)
       transfer)))
 
 (defn call-tool! [bot-id name input]
   (case (str name)
-    "wallet_receive_address" (select-keys (assigned! bot-id)
+    "wallet_receive_address" (select-keys (primary-wallet bot-id)
                                            [:bot-id :bot-did :address :chain-id
+                                            :account-kind :deployment-state
                                             :capabilities])
     "wallet_propose_send" (create-transfer! bot-id input :bot)
     (refuse :wallet/unknown-tool "未知のWallet toolです。")))
@@ -370,21 +471,9 @@
       submitted)))
 
 (defn snapshot [configuration session bots]
-  (let [containers (into {}
-                         (map (fn [bot]
-                                [(:id bot) (or (bot-wallet (:id bot))
-                                               {:schema bot-wallet-schema
-                                                :id (str "wallet-for-" (:id bot))
-                                                :bot-id (:id bot)
-                                                :bot-did (:did bot)
-                                                :bot-name (:name bot)
-                                                :user-id (:user-id session)
-                                                :organization-id (:organization-id session)
-                                                :status :awaiting-signer
-                                                :custody :external-wallet
-                                                :capabilities ["receive" "propose-send"]
-                                                :created-at (:created-at bot)})]))
-                         bots)
+  (let [{:keys [principal-account]}
+        (ensure-smart-accounts! configuration session bots)
+        containers (into {} (map (fn [bot] [(:id bot) (bot-wallet (:id bot))])) bots)
         mine (links session)
         assignments (get-in (wallet-state) [:assignments] {})
         bot-ids (set (map :id bots))
@@ -397,19 +486,24 @@
                        reverse
                        vec)]
     {:schema schema
-     :custody :external-wallet
+     :custody :passkey-smart-account
      :private-keys-stored? false
-     :wallet-provider "EIP-1193"
+     :wallet-provider "WebAuthn P-256 / ERC-4337"
+     :external-wallet-provider "EIP-6963 / EIP-1193 (optional)"
+     :principal-account principal-account
      :accounts mine
      :bots (mapv (fn [bot]
-                   (let [assignment (get assignments (:id bot))]
+                   (let [assignment (get assignments (:id bot))
+                         container (get containers (:id bot))]
                      (assoc (select-keys bot [:id :did :name :avatar])
-                            :wallet (cond-> (get containers (:id bot))
-                                      assignment (merge assignment)
-                                      true (assoc :signer-connected? (boolean assignment))))))
+                            :wallet (cond-> container
+                                      true (assoc :signer-connected?
+                                                  (boolean (:address container))
+                                                  :external-account-linked?
+                                                  (boolean assignment))
+                                      assignment (assoc :linked-account assignment)))))
                  bots)
      :transfers transfers
      :capabilities {:receive true :propose-send true
-                    :sign-and-submit :external-wallet}
-     :supported-chains (or (get-in configuration [:wallet :chains])
-                           [{:chain-id 1 :name "Ethereum"}])}))
+                    :sign-and-submit :passkey-user-operation-pending}
+     :supported-chains (vec (supported-chains configuration))}))

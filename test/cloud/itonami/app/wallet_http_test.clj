@@ -65,7 +65,9 @@
     (fn []
       (let [response (call :get "/api/wallet" nil false)]
         (is (= 200 (:status response)))
-        (is (= "external-wallet" (get-in response [:body :custody])))
+        (is (= "passkey-smart-account" (get-in response [:body :custody])))
+        (is (= "EIP-6963 / EIP-1193 (optional)"
+               (get-in response [:body :external-wallet-provider])))
         (is (false? (get-in response [:body :private-keys-stored?])))))))
 
 (deftest wallet-writes-require-csrf

@@ -1777,11 +1777,11 @@
 
 (defn- wallet-accountbar []
   [:div {:class "wallet-accountbar"}
-   [:label {:class "visually-hidden" :for "wallet-bot-select"} "表示するBot Wallet"]
-   [:select {:id "wallet-bot-select" :aria-label "表示するBot Wallet"}]
+   [:label {:class "visually-hidden" :for "wallet-bot-select"} "表示するWallet"]
+   [:select {:id "wallet-bot-select" :aria-label "表示するWallet"}]
    [:label {:class "wallet-provider-picker" :for "wallet-provider-select"}
-    [:span "署名Wallet"]
-    [:select {:id "wallet-provider-select" :aria-label "署名に使うWallet"}
+    [:span "他のWallet（任意）"]
+    [:select {:id "wallet-provider-select" :aria-label "任意でリンクする他のWallet"}
      [:option {:value ""} "Walletを検出中…"]]]
    [:span {:class "state-chip" :id "wallet-account-state"} "準備中"]])
 
@@ -2243,7 +2243,7 @@
            [:div {:class "storefront-order" :id "storefront-order" :hidden true}]]]]
         [:section {:class "view" :data-view-panel "wallet" :hidden true}
          (view-header "Wallet"
-                      "Botを作ると専用Walletも自動で生まれます。受取・送金提案・履歴をBot単位で管理します。")
+                      "Passkeyを作ると自分のSmart Accountが、Botを作ると専用Walletが自動で生まれます。外部Walletは不要です。")
          [:div {:class "wallet-workspace"}
           (wallet-accountbar)
           [:article {:class "wallet-hero" :id "wallet-hero" :aria-live "polite"}
@@ -2253,14 +2253,14 @@
              [:p {:class "wallet-network" :id "wallet-network"} "Ethereum"]]]
            [:p {:class "wallet-balance" :id "wallet-balance"} "— ETH"]
            [:button {:class "wallet-address-button wallet-address" :id "wallet-address"
-                     :type "button" :disabled true} "署名Walletを接続してください"]
+                     :type "button" :disabled true} "Passkey Walletを準備中"]
            [:div {:class "wallet-actions" :aria-label "Wallet操作"}
             [:button {:class "wallet-action" :id "wallet-receive" :type "button" :disabled true}
              [:span {:class "wallet-action__icon" :aria-hidden "true"} "↓"] [:span "受け取る"]]
             [:button {:class "wallet-action" :id "wallet-send" :type "button" :disabled true}
              [:span {:class "wallet-action__icon" :aria-hidden "true"} "↗"] [:span "送る"]]
             [:button {:class "wallet-action" :id "wallet-connect" :type "button"}
-             [:span {:class "wallet-action__icon" :aria-hidden "true"} "✓"] [:span "署名接続"]]]]
+             [:span {:class "wallet-action__icon" :aria-hidden "true"} "+"] [:span "他のWallet"]]]]
           [:p {:class "form-help" :id "wallet-connect-status"
                :role "status" :aria-live "polite"}]
           [:div {:class "wallet-tabs" :role "tablist" :aria-label "Wallet内容"}
@@ -2276,7 +2276,7 @@
              [:div [:p [:strong "Ethereum"]] [:p {:class "form-help"} "ETH"]]]
             [:div {:class "wallet-token__amount"}
              [:p {:id "wallet-asset-balance"} "— ETH"]
-             [:p {:class "form-help"} "残高は接続中のWalletから取得"]]]]
+             [:p {:class "form-help"} "対応するchain providerがあれば残高を取得"]]]]
           [:section {:class "wallet-panel" :id "wallet-activity-panel" :role "tabpanel"
                      :aria-labelledby "wallet-activity-tab" :hidden true}
            [:ul {:class "data-list" :id "wallet-transfer-list"}
@@ -2300,7 +2300,7 @@
           [:div {:class "wallet-safety"}
            [:span {:aria-hidden "true"} "🔒"]
            [:p [:strong "秘密鍵はCloud Itonamiに保存しません。"]
-            " Botは送金内容を提案し、最終署名はMetaMaskやCoinbase Walletなどの外部Walletで確認します。"]]
+            " PasskeyがSmart Accountを所有し、Botは送金内容を提案します。最終UserOperationはPasskeyで確認します。MetaMaskやCoinbase Walletは任意です。"]]
           [:p {:class "source-note"} [:span {:class "source-dot"}]
            [:span {:id "wallet-source"} "Walletを確認中…"]]
           [:ul {:class "visually-hidden" :id "wallet-account-list"}]

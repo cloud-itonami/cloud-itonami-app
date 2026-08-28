@@ -153,8 +153,9 @@
             bot-id (:bot/id created)
             bot-wallet (get-in (store/snapshot) [:wallet :bot-wallets bot-id])]
         (is (= bot-id (:bot-id bot-wallet)))
-        (is (= :awaiting-signer (:status bot-wallet)))
-        (is (= :external-wallet (:custody bot-wallet)))
+        (is (= :passkey-required (:status bot-wallet))
+            "a legacy test session without public credential fails closed")
+        (is (= :passkey-smart-account (:custody bot-wallet)))
         (is (nil? (:private-key bot-wallet)))))))
 
 (deftest a-new-bot-defaults-to-bounded-autonomy
