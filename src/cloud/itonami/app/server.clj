@@ -357,7 +357,10 @@
       ;; string in the page become an image, which is a larger permission for
       ;; no gain here.
       (.set "Content-Security-Policy"
-            "default-src 'none'; img-src 'self'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'self'; form-action 'self'; base-uri 'none'")
+            (str "default-src 'none'; img-src 'self'; style-src 'unsafe-inline'; "
+                 "script-src 'unsafe-inline'; connect-src 'self'; "
+                 "form-action 'self' https://auth.kotobase.net "
+                 "https://auth.murakumo.cloud; base-uri 'none'"))
       (.set "Permissions-Policy"
             "publickey-credentials-create=(self), publickey-credentials-get=(self)"))
     (.sendResponseHeaders exchange 200 (alength bytes))
@@ -519,10 +522,11 @@
     (require-csrf-header! exchange session)))
 
 (defn- route-kotobase-federation! [exchange config]
-  (let [session (require-human-session! exchange)]
+  (let [session (require-human-session! exchange)
+        {:keys [target]} (read-json exchange)]
     (require-origin! exchange config)
     (require-csrf! exchange session)
-    (send! exchange 200 (kotobase-federation/mint-assertion session))))
+    (send! exchange 200 (kotobase-federation/mint-assertion session target))))
 
 (defn- send-empty! [^HttpExchange exchange status headers]
   (doseq [[header value] headers]

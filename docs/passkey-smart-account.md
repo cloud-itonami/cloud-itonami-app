@@ -26,8 +26,8 @@ counterfactual address を作れます。
 |---|---|---:|---|
 | `itonami.cloud` / `auth.itonami.cloud` / `app.itonami.cloud` | RP ID `itonami.cloud` の WebAuthn | Yes | Yes |
 | Cloud Itonami resident (`http://localhost:1338`) | RP ID `localhost` のローカル WebAuthn、または `auth.itonami.cloud` OAuth | No。ローカル credential は別物 | Hosted auth では可能。ただし中央 credential の公開鍵はローカル Wallet owner record へ未投影 |
-| `murakumo.cloud` | 現在の browser login は SIWE/EIP-4361 | No | `auth.itonami.cloud` client は未接続 |
-| `kotobase.net` / `auth.kotobase.net` | 独立 Passkey、SIWE、DID/CACAO 等 | No | Cloud Itonami のローカル Passkey session から120秒の federation assertion を発行する経路はある |
+| `murakumo.cloud` / `auth.murakumo.cloud` | RP ID `auth.murakumo.cloud` の独立 Passkey | No | Cloud Itonami の Passkey-rooted session から120秒の target-bound assertion で同じ Principal へ接続 |
+| `kotobase.net` / `auth.kotobase.net` | RP ID `auth.kotobase.net` の独立 Passkey、SIWE、DID/CACAO 等 | No | 同じ target-bound assertion で同じ Principal へ接続 |
 
 2026-08-28 の公開面では `itonami.cloud`、`murakumo.cloud`、`kotobase.net` の
 `/.well-known/webauthn` はすべて 404 です。したがって、WebAuthn Level 3 の
@@ -35,16 +35,28 @@ Related Origin Requests で3つの apex domain が1個の RP ID を共有して�
 扱いません。`auth.itonami.cloud` が RP ID `itonami.cloud` を使えるのは通常の
 registrable-suffix 規則によるもので、Related Origins は不要です。
 
-Kotobase federation は raw Passkey を Kotobase へ渡しません。Cloud Itonami が
-human Passkey session を確認した後、audience と capability を限定した一回限り・
-120秒の assertion を発行します。現在の capability は `session`、
+製品RPへの federation は raw Passkey を接続先へ渡しません。Cloud Itonami が
+human Passkey session を確認した後、Kotobase または Murakumo の exact audience と
+capability を限定した一回限り・120秒の assertion を発行します。現在の capability は `session`、
 `datomic-query`、`git-read` です。Git write は Nekko signature、delegation、
 distinct-signer quorum の別境界を維持します。
 
-また、現在の assertion 発行条件はローカルの `:kind :passkey` session です。
-`auth.itonami.cloud` から返った phishing-resistant な federated session を同じ条件で
-受け入れる変更はまだ入っていません。したがって「itonami の中央 Passkey で入り、
-そのまま Kotobase へ交換する」は未完成です。
+assertion 発行条件はローカルの `:kind :passkey` session、または
+`auth.itonami.cloud` が検証した phishing-resistant WebAuthn sessionです。通常の
+Email/SSO/agent session は受理しません。対象RPでは assertion を first-party sessionへ
+交換したあと、そのドメイン用の別Passkeyを登録します。この登録は同じPrincipalへ
+linkしますが、on-chain owner追加はまだ別途必要です。
+
+### 3ドメインを接続する手順
+
+1. Cloud ItonamiへPasskeyでサインインします。
+2. 設定の「同じ Principal を使う」で `kotobase.net` または
+   `murakumo.cloud` を選びます。
+3. 開いた認証画面で、そのドメイン用のPasskeyを作成します。
+4. 同じ手順でもう一方も接続します。
+
+秘密鍵、cookie、raw credentialはドメイン間を移動しません。同じになるのはPrincipalと
+Smart Account座標で、Passkey公開鍵は各RPごとに別controllerとして記録されます。
 
 ## 採用するドメイン連携方針
 
@@ -146,14 +158,15 @@ Email や SSO は Principal への回復経路になり得ますが、現在は 
 - Passkey 公開鍵から、拡張Walletなしで deterministic receive address を作る
 - 同じ factory がある EVM chain で同じ address を参照する
 - 同期済み Passkey または nearby-device WebAuthn で中央認証へサインインする
-- ローカル Passkey session から Kotobase read/session assertion を発行する
+- ローカルまたは中央の Passkey-rooted session から Kotobase／Murakumo向けの
+  target-bound assertion を発行する
+- KotobaseとMurakumoの別RP Passkeyを同じPrincipalへlinkする
 - 複数RPの credentialを同じ Principal の owner候補として区別する
 - replay-safeな `addOwnerPublicKey` unsigned calldataを生成する
 
 まだできないこと:
 
 - 1個の `itonami.cloud` Passkey で3つの apex siteから直接 WebAuthn を実行する
-- Murakumo が `auth.itonami.cloud` の Principal を受理する
 - 新しい Passkey owner追加を現在ownerで署名し、bundlerへ送ってreceiptを確認する
 - 既存 Smart Account ownerを削除・復旧する
 - Passkey 署名の ERC-4337 UserOperation を submit/deploy する
