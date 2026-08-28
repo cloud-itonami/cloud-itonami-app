@@ -11325,6 +11325,8 @@
     let walletState = null;
     let walletBalances = new Map();
     let selectedWalletBotId = null;
+    const announcedWalletProviders = new Map();
+    let selectedWalletProviderId = '';
     const shortAddress = (address) => address
       ? `${address.slice(0, 8)}…${address.slice(-6)}` : '未割り当て';
     const weiToEth = (value) => {
@@ -11341,27 +11343,86 @@
       if (result <= 0n) throw new Error('0より大きい数量を入力してください。');
       return String(result);
     };
-    const requireInjectedWallet = () => {
-      if (!window.ethereum?.request) {
-        throw new Error('MetaMaskなどのEIP-1193 Walletが見つかりません。');
-      }
-      return window.ethereum;
+    const legacyInjectedWallet = () => window.ethereum?.request ? window.ethereum : null;
+    const selectedInjectedWallet = () => {
+      const announced = announcedWalletProviders.get(selectedWalletProviderId);
+      if (announced?.provider?.request) return announced.provider;
+      if (selectedWalletProviderId === 'legacy') return legacyInjectedWallet();
+      return announcedWalletProviders.values().next().value?.provider
+        || legacyInjectedWallet();
     };
+    const requireInjectedWallet = () => {
+      const provider = selectedInjectedWallet();
+      if (!provider?.request) {
+        throw new Error('MetaMaskやCoinbase WalletなどのEIP-1193 Walletが見つかりません。');
+      }
+      return provider;
+    };
+    const walletProviderOptions = () => {
+      const announced = Array.from(announcedWalletProviders.values()).map(({info}) => ({
+        id:info.uuid, name:info.name
+      }));
+      if (announced.length) return announced;
+      return legacyInjectedWallet() ? [{id:'legacy', name:'Browser Wallet'}] : [];
+    };
+    const renderWalletProviders = () => {
+      const selector = $('#wallet-provider-select');
+      if (!selector) return;
+      const options = walletProviderOptions();
+      if (!options.some(({id}) => id === selectedWalletProviderId)) {
+        selectedWalletProviderId = options[0]?.id || '';
+      }
+      selector.replaceChildren();
+      if (!options.length) {
+        const option = document.createElement('option'); option.value = '';
+        option.textContent = '外部Walletなし'; selector.append(option); selector.disabled = true;
+        return;
+      }
+      selector.disabled = false;
+      options.forEach(({id, name}) => {
+        const option = document.createElement('option'); option.value = id;
+        option.textContent = name; option.selected = id === selectedWalletProviderId;
+        selector.append(option);
+      });
+    };
+    window.addEventListener('eip6963:announceProvider', async (event) => {
+      const {info, provider} = event.detail || {};
+      if (!info || typeof info.uuid !== 'string' || !info.uuid
+          || typeof info.name !== 'string' || !info.name
+          || typeof provider?.request !== 'function'
+          || announcedWalletProviders.has(info.uuid)) return;
+      // The self-attested icon and rdns are never treated as HTML or authority.
+      announcedWalletProviders.set(info.uuid, {
+        info:{uuid:info.uuid, name:info.name}, provider
+      });
+      if (!selectedWalletProviderId || selectedWalletProviderId === 'legacy') {
+        selectedWalletProviderId = info.uuid;
+      }
+      renderWalletProviders();
+      queueMicrotask(async () => {
+        await refreshWalletBalances();
+        if (walletState) renderWallet(walletState);
+      });
+    });
+    window.dispatchEvent(new Event('eip6963:requestProvider'));
     const walletAccountById = (id) =>
       walletState?.accounts?.find((account) => account.id === id);
     const selectedWalletBot = () => walletState?.bots?.find((bot) =>
       bot.id === selectedWalletBotId);
     const refreshWalletBalances = async () => {
-      if (!window.ethereum?.request || !walletState?.accounts?.length) return;
+      const provider = selectedInjectedWallet();
+      if (!provider?.request || !walletState?.accounts?.length) {
+        walletBalances = new Map(); return;
+      }
       try {
-        const available = (await window.ethereum.request({method:'eth_accounts'}))
+        const available = (await provider.request({method:'eth_accounts'}))
           .map((address) => address.toLowerCase());
-        const chainId = Number(BigInt(await window.ethereum.request({method:'eth_chainId'})));
+        const chainId = Number(BigInt(await provider.request({method:'eth_chainId'})));
         const pairs = await Promise.all(walletState.accounts
           .filter((account) => account.status === 'active'
             && account['chain-id'] === chainId
             && available.includes(account.address.toLowerCase()))
-          .map(async (account) => [account.id, await window.ethereum.request({
+          .map(async (account) => [account.id, await provider.request({
             method:'eth_getBalance', params:[account.address, 'latest']
           })]));
         walletBalances = new Map(pairs);
@@ -11429,7 +11490,7 @@
             ? `送信済み · ${shortAddress(transfer['tx-hash'])}` : '外部Walletの署名待ち'));
         row.append(body);
         if (transfer.status === 'awaiting-wallet') {
-          const submit = make('button', 'primary-action', 'MetaMaskで確認'); submit.type = 'button';
+          const submit = make('button', 'primary-action', '外部Walletで確認'); submit.type = 'button';
           submit.addEventListener('click', () => submitWalletTransfer(transfer, submit));
           row.append(submit);
         }
@@ -11450,6 +11511,12 @@
       $('#wallet-send-drawer').hidden = true;
       renderWallet(walletState);
     });
+    $('#wallet-provider-select').addEventListener('change', async (event) => {
+      selectedWalletProviderId = event.currentTarget.value || '';
+      await refreshWalletBalances();
+      if (walletState) renderWallet(walletState);
+    });
+    renderWalletProviders();
     const copySelectedWalletAddress = async () => {
       const address = selectedWalletBot()?.wallet?.address;
       if (!address) return;
@@ -11480,7 +11547,7 @@
         const provider = requireInjectedWallet();
         const accounts = await provider.request({method:'eth_requestAccounts'});
         if (!accounts.some((address) => address.toLowerCase() === transfer.from.toLowerCase())) {
-          throw new Error(`MetaMaskで送信元 ${shortAddress(transfer.from)} を選択してください。`);
+          throw new Error(`選択したWalletで送信元 ${shortAddress(transfer.from)} を選択してください。`);
         }
         const chainId = Number(BigInt(await provider.request({method:'eth_chainId'})));
         if (chainId !== transfer['chain-id']) {
@@ -11502,7 +11569,7 @@
       if (!botId) { status.textContent = '先にBotを作成してください。'; return; }
       button.disabled = true; status.textContent = 'Walletへ接続しています…';
       try {
-        if (!window.ethereum?.request) {
+        if (!selectedInjectedWallet()?.request) {
           const opened = await postJSON('/api/wallet/open', {}, true);
           status.textContent = opened['opened-externally?']
             ? 'Wallet拡張のある既定ブラウザでWallet画面を開きました。'
@@ -11561,12 +11628,12 @@
     const erc20TransferData = (to, value) =>
       `0xa9059cbb${to.toLowerCase().replace(/^0x/, '').padStart(64, '0')}${hex32(value)}`;
     const sleep = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
-    const waitForBaseConfirmations = async (transaction, status) => {
+    const waitForBaseConfirmations = async (provider, transaction, status) => {
       for (let attempt = 0; attempt < 60; attempt += 1) {
-        const receipt = await ethereum.request({method:'eth_getTransactionReceipt', params:[transaction]});
+        const receipt = await provider.request({method:'eth_getTransactionReceipt', params:[transaction]});
         if (receipt) {
           if (receipt.status !== '0x1') throw new Error('USDC送金がrevertされました。');
-          const head = BigInt(await ethereum.request({method:'eth_blockNumber'}));
+          const head = BigInt(await provider.request({method:'eth_blockNumber'}));
           if (head - BigInt(receipt.blockNumber) + 1n >= 3n) return;
         }
         status.textContent = '送金済みです。Baseの3 confirmationを待っています…';
@@ -11575,7 +11642,7 @@
       throw new Error('確認待ちがタイムアウトしました。transaction hashを保存して再確認してください。');
     };
     const payStorefrontOrder = async (order, card, status, button) => {
-      if (!window.ethereum) throw new Error('Base対応の外部Walletが見つかりません。');
+      const provider = requireInjectedWallet();
       const requirements = order['payment-request'].requirements;
       let transaction = button.dataset.transaction || '';
       let from = button.dataset.payer || '';
@@ -11583,25 +11650,25 @@
       try {
         if (!transaction) {
           status.textContent = 'Base Walletへの接続を確認しています…';
-          const accounts = await ethereum.request({method:'eth_requestAccounts'});
-          let chain = await ethereum.request({method:'eth_chainId'});
+          const accounts = await provider.request({method:'eth_requestAccounts'});
+          let chain = await provider.request({method:'eth_chainId'});
           if (chain !== '0x2105') {
             try {
-              await ethereum.request({method:'wallet_switchEthereumChain', params:[{chainId:'0x2105'}]});
+              await provider.request({method:'wallet_switchEthereumChain', params:[{chainId:'0x2105'}]});
             } catch (error) {
               if (error.code !== 4902) throw error;
-              await ethereum.request({method:'wallet_addEthereumChain', params:[{
+              await provider.request({method:'wallet_addEthereumChain', params:[{
                 chainId:'0x2105', chainName:'Base',
                 nativeCurrency:{name:'Ether', symbol:'ETH', decimals:18},
                 rpcUrls:['https://mainnet.base.org'], blockExplorerUrls:['https://basescan.org']
               }]});
             }
-            chain = await ethereum.request({method:'eth_chainId'});
+            chain = await provider.request({method:'eth_chainId'});
             if (chain !== '0x2105') throw new Error('WalletをBaseへ切り替えられませんでした。');
           }
           from = accounts[0];
           status.textContent = `${order['amount-usdc']} USDCの送金をWalletで確認してください。`;
-          transaction = await ethereum.request({method:'eth_sendTransaction', params:[{
+          transaction = await provider.request({method:'eth_sendTransaction', params:[{
             from, to:requirements.asset,
             data:erc20TransferData(requirements.payTo, BigInt(requirements.maxAmountRequired)),
             value:'0x0'
@@ -11614,7 +11681,7 @@
         } else {
           status.textContent = `送金済み ${transaction} を再確認しています…`;
         }
-        await waitForBaseConfirmations(transaction, status);
+        await waitForBaseConfirmations(provider, transaction, status);
         status.textContent = 'x402.nexusでオンチェーン決済を検証しています…';
         let paid;
         for (let attempt = 0; attempt < 5; attempt += 1) {

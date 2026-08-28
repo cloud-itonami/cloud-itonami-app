@@ -5,8 +5,8 @@
   not store or derive private keys. Signers come in two custodies
   (ADR-2608241100 decision 6):
 
-    :custody :external-wallet  an injected wallet (MetaMask etc.) signs in the
-                               browser — the original shape.
+    :custody :external-wallet  an injected wallet (MetaMask, Coinbase Wallet,
+                               etc.) signs in the browser — the original shape.
     :custody :kagi             the org's self-custodied signer
                                (wallet.signer/Signer, production:
                                kagi.chain-signer/vault-signer — the seed never
@@ -112,25 +112,29 @@
   [session {:keys [address chain-id custody derivation-path]} domain origin]
   (let [address (address! address "接続元")
         chain-id (chain-id! (or chain-id 1))
-        subject-did (identity/session-did session)]
-    (when-not subject-did
-      (refuse :wallet/subject-required "Passkey DIDが発行されていません。"))
+        principal-id (identity/session-principal-id session)
+        account-did (identity/session-did session)]
+    (when-not principal-id
+      (refuse :wallet/subject-required "Principalが発行されていません。"))
     (let [transaction-id (str (UUID/randomUUID))
           link-id (str (UUID/randomUUID))
           nonce (str/replace (str (UUID/randomUUID)) #"-" "")
           now (Instant/now)
           expires-at (str (.plusSeconds now transaction-seconds))
-          resource (str "urn:cloud-itonami:wallet:" subject-did ":" link-id)
+          resource (str "urn:cloud-itonami:wallet-link:" link-id)
           message (siwe/message
                    {:domain domain :address address
-                    :statement "Connect this wallet to Cloud Itonami."
+                    :statement (str "Connect this wallet to Cloud Itonami Principal "
+                                    principal-id ".")
                     :uri origin :version "1" :chain-id chain-id :nonce nonce
                     :issued-at (str now) :expiration-time expires-at
                     :request-id link-id :resources [resource]})
           transaction (cond-> {:id transaction-id :link-id link-id
                                :user-id (:user-id session)
                                :organization-id (:organization-id session)
-                               :subject-did subject-did :address address
+                               :principal-id principal-id
+                               :account-did account-did
+                               :address address
                                :chain-id chain-id :domain domain :origin origin
                                :nonce nonce :resource resource :message message
                                :expires-at expires-at :used? false}
@@ -168,15 +172,20 @@
       (when-not (:ok? verified)
         (refuse :wallet/verification-failed "Wallet所有署名を検証できませんでした。"))
       (let [address (str/lower-case (:address transaction))
+            chain-id (:chain-id transaction)
             duplicate? (some #(and (= :active (:status %))
+                                   (= "eip155" (:namespace %))
+                                   (= chain-id (:chain-id %))
                                    (= address (str/lower-case (:address %))))
                              (mapcat vals (vals (get-in (wallet-state) [:links] {}))))]
         (when duplicate?
-          (refuse :wallet/already-bound "このWalletは既に接続済みです。"))
-        (let [link (cond-> {:schema "cloud.itonami.app.wallet.link.v1"
+          (refuse :wallet/already-bound "このchain accountは既に接続済みです。"))
+        (let [link (cond-> {:schema "cloud.itonami.app.wallet.link.v2"
                             :id (:link-id transaction) :user-id (:user-id session)
                             :organization-id (:organization-id session)
-                            :subject-did (:subject-did transaction)
+                            :identity-role :linked-chain-account
+                            :principal-id (:principal-id transaction)
+                            :account-did (:account-did transaction)
                             :namespace "eip155" :chain-id (:chain-id transaction)
                             :address (:address transaction)
                             :account (str "eip155:" (:chain-id transaction) ":" address)
@@ -219,8 +228,9 @@
                         domain)))
 
 (defn assign!
-  "Assign one verified address to one owned Bot. `bot` is already ownership-
-  checked by the caller. One address cannot silently become two Bots' wallet."
+  "Assign one verified chain account to one owned Bot. `bot` is already
+  ownership-checked by the caller. One link cannot silently become two Bots'
+  wallet."
   [session bot link-id]
   (let [link (owned-link! session link-id)
         bot-id (:id bot)]

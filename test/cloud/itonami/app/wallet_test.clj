@@ -1,5 +1,6 @@
 (ns cloud.itonami.app.wallet-test
   (:require [clojure.test :refer [deftest is]]
+            [clojure.string :as str]
             [btc-crypto.bip32 :as bip32]
             [btc-crypto.bip39 :as bip39]
             [cloud.itonami.app.config :as config]
@@ -26,8 +27,10 @@
         previous @store/state]
     (try
       (reset! store/state
-              (assoc-in (store/initial-state) [:identity :users "alice" :did]
-                        "did:key:alice"))
+              (-> (store/initial-state)
+                  (assoc-in [:identity :users "alice" :did] "did:key:alice")
+                  (assoc-in [:identity :users "alice" :principal-id]
+                            "urn:kotoba:principal:alice")))
       (with-redefs [config/data-dir (fn [] (.toFile temporary))] (f))
       (finally (reset! store/state previous)))))
 
@@ -45,6 +48,11 @@
       (let [link (connect!)
             persisted (get-in (store/snapshot) [:wallet :links "alice" (:id link)])]
         (is (= address (:address link)))
+        (is (= "cloud.itonami.app.wallet.link.v2" (:schema link)))
+        (is (= :linked-chain-account (:identity-role link)))
+        (is (= "urn:kotoba:principal:alice" (:principal-id link)))
+        (is (= "did:key:alice" (:account-did link)))
+        (is (nil? (:subject-did link)) "a linked account is not the Principal")
         (is (= "eip4361" (:proof-type link)))
         (is (= ["receive" "propose-send"] (:capabilities link)))
         (is (nil? (:private-key persisted)))
@@ -57,6 +65,44 @@
                  (refuses #(wallet/finish-connection!
                             alice {:transaction-id (:id again)
                                    :signature signature}
+                            "localhost")))))))))
+
+(deftest a-wallet-proof-is-bound-to-the-stable-principal
+  (with-wallet-store
+    (fn []
+      (let [challenge (wallet/start-connection!
+                       alice {:address address :chain-id 8453}
+                       "localhost" "http://localhost:1338")
+            transaction (get-in (store/snapshot)
+                                [:wallet :connection-transactions (:id challenge)])]
+        (is (str/includes? (:message challenge)
+                           "Cloud Itonami Principal urn:kotoba:principal:alice"))
+        (is (= "urn:kotoba:principal:alice" (:principal-id transaction)))
+        (is (= "did:key:alice" (:account-did transaction)))
+        (is (nil? (:subject-did transaction)))))))
+
+(deftest the-same-evm-address-is-a-distinct-account-on-each-chain
+  (with-wallet-store
+    (fn []
+      (let [ethereum (connect!)
+            base-challenge (wallet/start-connection!
+                            alice {:address address :chain-id 8453}
+                            "localhost" "http://localhost:1338")
+            base (wallet/finish-connection!
+                  alice
+                  {:transaction-id (:id base-challenge)
+                   :signature (siwe/sign-message (:message base-challenge) private-key)}
+                  "localhost")]
+        (is (= (str "eip155:1:" (str/lower-case address)) (:account ethereum)))
+        (is (= (str "eip155:8453:" (str/lower-case address)) (:account base)))
+        (let [duplicate (wallet/start-connection!
+                         alice {:address address :chain-id 8453}
+                         "localhost" "http://localhost:1338")]
+          (is (= :wallet/already-bound
+                 (refuses #(wallet/finish-connection!
+                            alice
+                            {:transaction-id (:id duplicate)
+                             :signature (siwe/sign-message (:message duplicate) private-key)}
                             "localhost")))))))))
 
 (deftest kagi-custody-walks-the-same-siwe-path

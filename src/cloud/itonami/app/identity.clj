@@ -3354,6 +3354,16 @@
   (when session
     (user-did (identity-state (store/snapshot)) (:user-id session))))
 
+(defn session-principal-id
+  "The stable logical Principal a session belongs to.
+
+  A controller, account DID, or Passkey may be replaced without changing this
+  identifier. Legacy local Users have no separate Principal field, so their
+  already-issued DID remains the stable answer."
+  [session]
+  (when session
+    (user-principal-id (identity-state (store/snapshot)) (:user-id session))))
+
 (defn connected-providers
   "The providers a connection exists for, optionally for one person only.
 
