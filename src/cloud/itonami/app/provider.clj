@@ -200,20 +200,43 @@
   [(:id provider) (:base-url provider) model])
 
 (defn- note-output-ceiling!
-  "Record what a response revealed about this endpoint's own output cap."
+  "Record what a response revealed about this endpoint's own output cap.
+
+  CORROBORATED, not inferred from one reply. `finish_reason length` below the
+  requested cap does not prove a server-side ceiling: a prompt bigger than
+  `agent-request`'s ESTIMATE leaves less room in the window than the arithmetic
+  reserved, and a reasoning model can spend the allowance on thinking that
+  `completion_tokens` does not count -- this file already documents that exact
+  behaviour at `default-agent-max-tokens`. One such reply against a requested
+  8192 could stop at 300, and a bound taken from it would cap every later
+  request on that endpoint at 300, truncating all of them, with no way back
+  inside the process.
+
+  A number seen ONCE is an event; the same number twice is a limit. So the
+  first observation is held and only a second, equal one takes effect. A
+  different number replaces the held candidate rather than lowering a bound --
+  a run of unequal truncations is what the noisy causes above look like, and it
+  must not ratchet."
   [provider model finish-reason usage requested]
   (when-let [ceiling (retry/served-output-ceiling
                       finish-reason (:completion_tokens usage) requested)]
     (swap! model-output-ceiling
            (fn [seen]
-             (let [key (endpoint-key provider model)]
-               ;; The LOWEST observation wins within a process. Two replies can
-               ;; both stop at `length` below the request while a queue drains,
-               ;; and taking the latest would let one generous reply raise a
-               ;; bound the next request is then cut against again.
-               (if-let [previous (get seen key)]
-                 (assoc seen key (min (long previous) ceiling))
-                 (assoc seen key ceiling)))))))
+             (let [key (endpoint-key provider model)
+                   {:keys [candidate confirmed]} (get seen key)]
+               (assoc seen key
+                      (cond
+                        ;; Confirmed twice at this number, or lower than what is
+                        ;; already confirmed and seen twice: take it.
+                        (= candidate ceiling)
+                        {:candidate ceiling
+                         :confirmed (if confirmed
+                                      (min (long confirmed) ceiling)
+                                      ceiling)}
+                        :else {:candidate ceiling :confirmed confirmed})))))))
+
+(defn- confirmed-output-ceiling [provider model]
+  (:confirmed (get @model-output-ceiling (endpoint-key provider model))))
 
 (defn- context-window-from-model-info
   "Read the context limit from provider model metadata without assuming a
@@ -295,7 +318,7 @@
                       (cond-> {:model candidate :messages messages :stream false
                                :temperature (or temperature 0.7)}
                         (= :xai (:kind provider))
-                        (assoc :max_tokens (or (:max-output-tokens provider) 8192)
+                        (assoc :max_tokens (or (retry/model-scoped (:max-output-tokens provider) model) 8192)
                                :reasoning_effort (or (:reasoning-effort request)
                                                      (:reasoning-effort provider)
                                                      "medium")))
@@ -444,7 +467,6 @@
       error)))
 
 (defn- normalize-tool-calls
-  ([calls] (normalize-tool-calls calls nil nil nil))
   ([calls finish-reason completion-tokens max-output-tokens]
    (mapv (fn [index call]
            {:id (or (:id call) (str "tool-call-" index))
@@ -491,7 +513,7 @@
      {:requested (:max-output-tokens request)
       :configured (:max-output-tokens provider)
       :default default-agent-max-tokens
-      :observed-ceiling (get @model-output-ceiling (endpoint-key provider model))
+      :observed-ceiling (confirmed-output-ceiling provider model)
       :context-window (model-context-window provider model)}
      model)))
 
@@ -702,7 +724,15 @@
         _ (assert-response-model! provider model result)
         message (get-in result [:choices 0 :message])
         finish-reason (get-in result [:choices 0 :finish_reason])
-        max-tokens (requested-max-tokens provider request)]
+        ;; `(assoc request :model model)`, exactly as the body was built four
+        ;; lines up. `with-model-fallback` calls this with a DIFFERENT model
+        ;; than the request named, and every input to the resolution is
+        ;; model-scoped -- the per-model `:max-output-tokens` map and the
+        ;; per-endpoint observed ceiling. Reading the original model here
+        ;; compares `completion_tokens` against a cap that was never on the
+        ;; wire, and teaches `note-output-ceiling!` a ceiling for one model
+        ;; from another model's budget.
+        max-tokens (requested-max-tokens provider (assoc request :model model))]
     ;; Before `agent-result`, which throws on a tool call this very reply may
     ;; have truncated. The observation is what stops the NEXT request asking
     ;; for a budget this endpoint does not serve, so it must survive the throw.
@@ -783,7 +813,7 @@
                       :stream_options {:include_usage true}
                       :temperature (or (:temperature request) 0.7)}
                (= :xai (:kind provider))
-               (assoc :max_tokens (or (:max-output-tokens provider) 8192)
+               (assoc :max_tokens (or (retry/model-scoped (:max-output-tokens provider) model) 8192)
                       :reasoning_effort (or (:reasoning-effort request)
                                             (:reasoning-effort provider)
                                             "medium")))
@@ -908,7 +938,10 @@
                   (vreset! usage chunk-usage)))))))
       (when (:assert-response-model? provider)
         (assert-response-model! provider model {:model @served-model}))
-      (let [max-tokens (requested-max-tokens provider request)]
+      ;; `(assoc request :model model)` for the same reason as the non-streaming
+      ;; path: this runs under `with-model-fallback` and `model` may not be the
+      ;; one the request named.
+      (let [max-tokens (requested-max-tokens provider (assoc request :model model))]
         ;; Before `agent-result`, which throws on a tool call this stream may
         ;; have truncated. This is the path that produced the finding: four of
         ;; six streamed calls cut at the cap reported `tool_calls`, so the

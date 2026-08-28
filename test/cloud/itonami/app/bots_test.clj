@@ -4025,11 +4025,30 @@
       (let [cards (collect "run-1")]
         (is (= 2 (count cards)) "one file and one commit, the repeat folded")
         (is (= #{:artifact} (set (map :card/kind cards))))
-        (is (= [:commit :file] (mapv :card/artifact-kind cards))
-            "a stable order, so the same run does not reshuffle between reads")
+        (is (= [:file :commit] (mapv :card/artifact-kind cards))
+            "the order the run made them in -- the commit came last, so it reads
+             last. Sorting by kind and path instead put the newest work wherever
+             the alphabet happened to place it, and `take` then dropped it.")
         (is (= 40 (:card/bytes (first (filter #(= :file (:card/artifact-kind %))
                                               cards))))
             "the last write is the one that describes the file now")))
+
+    (testing "and the cards kept are the LAST ones, not the alphabetically first"
+      ;; A run that writes more files than the card bound must show the ones it
+      ;; finished with. The bound is 8.
+      (with-redefs [cloud.itonami.app.bots/goal-job
+                    (fn [_] {:job/events
+                             (events (mapv (fn [i]
+                                             {:tool "workspace_write_file"
+                                              :artifacts [{:artifact/kind :file
+                                                           :artifact/path (str "src/" i ".clj")
+                                                           :artifact/bytes i}]})
+                                           (range 10)))})]
+        (let [cards (collect "run-3")]
+          (is (= 8 (count cards)))
+          (is (= ["src/2.clj" "src/9.clj"]
+                 [(:card/path (first cards)) (:card/path (last cards))])
+              "the first two writes are the ones dropped"))))
 
     (testing "a run that made nothing carries no cards at all"
       ;; `say` takes nil for no cards; an empty vector would render an empty

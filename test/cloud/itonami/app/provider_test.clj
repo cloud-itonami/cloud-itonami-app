@@ -724,3 +724,30 @@
       (let [original (IllegalStateException. "a bug here")
             e (thrown original)]
         (is (identical? original e))))))
+
+(deftest a-fallback-resolves-the-cap-for-the-model-it-actually-used
+  ;; `with-model-fallback` calls the turn with a DIFFERENT model than the
+  ;; request named, and every input to the resolution is model-scoped. Reading
+  ;; the original model for the verdict compares `completion_tokens` against a
+  ;; cap that was never on the wire -- and the misclassification this whole
+  ;; branch removes comes straight back.
+  (let [requested (private-fn 'requested-max-tokens)
+        provider {:id "p" :kind :openai-compatible
+                  :max-output-tokens {"big" 8192 "small" 2048}}
+        request {:model "big" :messages [] :tools []}]
+    (is (= 8192 (requested provider request)))
+    (is (= 2048 (requested provider (assoc request :model "small")))
+        "the fallback model's own cap, which is what the body carried")))
+
+(deftest a-per-model-cap-map-does-not-reach-arithmetic-as-a-map
+  ;; `:max-output-tokens` may be a map by model. Every place that treats it as
+  ;; a number has to resolve first, or `(long {...})` throws before a request
+  ;; is even made.
+  (let [body (private-fn 'agent-request-body)]
+    (is (= 2048 (:max_tokens (body {:id "p" :kind :openai-compatible
+                                    :max-output-tokens {"murakumo-main" 2048}}
+                                   {:model "murakumo-main" :messages []}))))
+    (is (= 2048 (:max_tokens (body {:id "p" :kind :openai-compatible
+                                    :max-output-tokens {"other" 4096}}
+                                   {:model "murakumo-main" :messages []})))
+        "an unnamed model falls to the shipped default, not to a sibling's cap")))

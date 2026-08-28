@@ -188,3 +188,20 @@
 
     (testing "no number anywhere is no budget, not a made-up one"
       (is (nil? (budget {:configured nil :default nil} "m"))))))
+
+(deftest a-ceiling-is-a-number-seen-twice-not-a-single-truncation
+  ;; `finish_reason length` below the requested cap does not prove a server
+  ;; ceiling: a prompt bigger than the ESTIMATE leaves less window than the
+  ;; arithmetic reserved, and a reasoning model can spend the allowance on
+  ;; thinking that `completion_tokens` does not count. One such reply against a
+  ;; requested 8192 could stop at 300 -- and a bound taken from it would cap
+  ;; every later request at 300, truncating all of them.
+  ;;
+  ;; The reading is still correct; what the caller does with ONE reading is the
+  ;; part that had to change, so this states the contract the caller relies on.
+  (testing "the reading itself is per-reply and says nothing about repetition"
+    (is (= 300 (retry/served-output-ceiling "length" 300 8192)))
+    (is (= 2048 (retry/served-output-ceiling "length" 2048 8192))))
+  (testing "and a budget bounded by a ceiling is bounded by exactly that number"
+    (is (= 300 (retry/output-token-budget
+                {:configured 8192 :default 512 :observed-ceiling 300} "m")))))

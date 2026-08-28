@@ -75,6 +75,7 @@
             [cloud.itonami.app.policy :as policy]
             [cloud.itonami.app.wallet :as wallet]
             [cloud.itonami.app.provider :as provider]
+            [cloud.itonami.app.provider-retry :as retry]
             [cloud.itonami.app.relay :as relay]
             [cloud.itonami.app.routine :as routine]
             [cloud.itonami.app.store :as store]
@@ -551,16 +552,19 @@
   [run-id]
   (->> (action-receipts run-id)
        (mapcat #(get-in % [:event/data :artifacts]))
-       (reduce (fn [seen artifact]
-                 (assoc seen [(:artifact/kind artifact)
-                              (or (:artifact/path artifact)
-                                  (:artifact/revision artifact))]
-                        artifact))
-               {})
-       vals
-       (sort-by (juxt #(name (:artifact/kind %))
-                      #(or (:artifact/path %) (:artifact/revision %))))
-       (take max-artifact-cards)
+       ;; Ordered de-duplication, keeping the LAST write of a path -- that is
+       ;; the state the file is in -- at the position of that last write.
+       ;; Sorting by kind and path instead meant `take` dropped whatever sorted
+       ;; late, so a run that wrote ten files showed the alphabetically first
+       ;; eight rather than the eight it finished with.
+       (reduce (fn [ordered artifact]
+                 (let [k [(:artifact/kind artifact)
+                          (or (:artifact/path artifact)
+                              (:artifact/revision artifact))]]
+                   (conj (vec (remove #(= k (first %)) ordered)) [k artifact])))
+               [])
+       (mapv second)
+       (take-last max-artifact-cards)
        (map-indexed (fn [index artifact]
                       (bot/artifact-card
                        {:id (str "artifact-" index "-" (hash artifact))
@@ -3319,9 +3323,16 @@
         (into head (subvec tail start))))))
 
 (defn- agent-request [configuration provider b run model]
-  (let [output-tokens (or (when (:goal? run)
-                            (get-in configuration [:bots :goal :max-output-tokens]))
-                          (:max-output-tokens provider)
+  (let [;; Through `model-scoped`, because `:max-output-tokens` may be a map by
+        ;; model -- the shape `requested-max-tokens` documents and this copy of
+        ;; the resolution did not know about. `(long {...})` throws
+        ;; ClassCastException, so an operator following that docstring killed
+        ;; every turn before a request was made.
+        output-tokens (or (when (:goal? run)
+                            (retry/model-scoped
+                             (get-in configuration [:bots :goal :max-output-tokens])
+                             model))
+                          (retry/model-scoped (:max-output-tokens provider) model)
                           2048)
         context-window (provider/model-context-window provider model)
         prompt-budget (when context-window
@@ -3888,7 +3899,18 @@
                                                 :message (error-message tool-error))
                                          (not tool-error)
                                          (assoc :output-sha256
-                                                (receipt-sha256 (:text output)))))
+                                                (receipt-sha256 (:text output)))
+                                         ;; THIS is the site that runs a write
+                                         ;; tool. `execute-read-call!` refuses
+                                         ;; one by construction, so recording
+                                         ;; artifacts only there made the whole
+                                         ;; feature dead for a delegated Bot --
+                                         ;; the screen showed nothing and no
+                                         ;; error said why.
+                                         (and (not tool-error)
+                                              (seq (:artifacts output)))
+                                         (assoc :artifacts
+                                                (vec (:artifacts output)))))
                         run (-> run
                                 (update :tool-count (fnil inc 0))
                                 (update :messages into
@@ -3932,7 +3954,11 @@
                                             :message (error-message tool-error))
                                      (not tool-error)
                                      (assoc :output-sha256
-                                            (receipt-sha256 (:text output)))))
+                                            (receipt-sha256 (:text output)))
+                                     (and (not tool-error)
+                                          (seq (:artifacts output)))
+                                     (assoc :artifacts
+                                            (vec (:artifacts output)))))
                     run (-> run
                             (update :tool-count (fnil inc 0))
                             (update :messages into
