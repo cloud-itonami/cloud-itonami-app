@@ -315,11 +315,15 @@
             encoded (userop/encode-passkey-signature
                      prepared initial assertion "localhost"
                      "http://localhost:1338")
-            [owner-index signature-data]
-            (abi/decode ["uint256" "bytes"] (:signature encoded))
-            [_auth _client challenge-index type-index _r s]
-            (abi/decode ["bytes" "string" "uint256" "uint256"
-                         "uint256" "uint256"] signature-data)]
+            [[owner-index signature-data]]
+            (abi/decode ["(uint256,bytes)"] (:signature encoded))
+            [[_auth _client challenge-index type-index _r s]]
+            (abi/decode ["(bytes,string,uint256,uint256,uint256,uint256)"]
+                        signature-data)]
+        (is (= "32" (first (abi/decode ["uint256"] (:signature encoded))))
+            "SignatureWrapper is one dynamic tuple, not two top-level fields")
+        (is (= "32" (first (abi/decode ["uint256"] signature-data)))
+            "WebAuthnAuth is one dynamic tuple, not six top-level fields")
         (is (= "0" owner-index))
         (is (= "23" challenge-index))
         (is (= "1" type-index))

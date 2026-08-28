@@ -11386,6 +11386,7 @@
     let walletState = null;
     let walletBalances = new Map();
     let selectedWalletBotId = null;
+    let walletOwnerAuthorizationBusy = false;
     const announcedWalletProviders = new Map();
     let selectedWalletProviderId = '';
     const shortAddress = (address) => address
@@ -11597,10 +11598,13 @@
       candidates.forEach((candidate) => {
         const row = make('li', 'data-list__item');
         const body = make('div');
+        const ownerFingerprint = candidate['public-key-sha256'];
+        const ownerLabel = `${candidate['rp-id'] || 'Passkey'}${ownerFingerprint
+          ? ` · ${ownerFingerprint.slice(0, 8)}…` : ''}`;
         const state = candidate['chain-states']?.[String(chain?.['chain-id'])]
           || candidate['owner-state'];
         body.append(
-          make('p', 'data-list__title', candidate['rp-id'] || 'Passkey'),
+          make('p', 'data-list__title', ownerLabel),
           make('p', 'data-list__meta', state === 'initial-owner'
             ? '最初のowner'
             : state === 'active-on-chain' ? `Chain ${chain?.['chain-id']} のowner`
@@ -11629,10 +11633,14 @@
             row.append(receipt);
           } else {
             const add = make('button', 'primary-action', 'Passkeyでownerに追加');
-            add.type = 'button'; add.disabled = !chain?.['owner-user-operation-ready?'];
-            add.title = add.disabled ? 'RPCとERC-4337 bundlerの設定が必要です' : '';
+            add.type = 'button';
+            add.disabled = walletOwnerAuthorizationBusy
+              || !chain?.['owner-user-operation-ready?'];
+            add.title = walletOwnerAuthorizationBusy
+              ? '別のowner追加を処理中です'
+              : add.disabled ? 'RPCとERC-4337 bundlerの設定が必要です' : '';
             add.addEventListener('click', () => authorizeWalletOwner(
-              candidate, Number(selector.value), add));
+              candidate, Number(selector.value)));
             row.append(add);
           }
         }
@@ -11651,9 +11659,12 @@
       }
       throw new Error('UserOperationは送信済みです。receipt確認を再開してください。');
     };
-    const authorizeWalletOwner = async (candidate, chainId, button) => {
+    const authorizeWalletOwner = async (candidate, chainId) => {
+      if (walletOwnerAuthorizationBusy) return;
+      walletOwnerAuthorizationBusy = true;
       const status = $('#wallet-owner-status');
-      button.disabled = true;
+      document.querySelectorAll('#wallet-owner-list button')
+        .forEach((ownerButton) => { ownerButton.disabled = true; });
       try {
         requireWebAuthn();
         status.textContent = 'nonce・gas・factoryをchain上で確認しています…';
@@ -11672,7 +11683,9 @@
         await loadWallet();
       } catch (error) {
         status.textContent = error.message;
-        button.disabled = false;
+      } finally {
+        walletOwnerAuthorizationBusy = false;
+        if (walletState) renderWallet(walletState);
       }
     };
     const loadWallet = async () => {
