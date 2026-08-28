@@ -46,6 +46,7 @@
             [cloud.itonami.app.did-web :as did-web]
             [cloud.itonami.app.org-root-did :as org-root-did]
             [cloud.itonami.app.health :as health]
+            [cloud.itonami.app.humanity-trust :as humanity-trust]
             [cloud.itonami.app.identity :as identity]
             [cloud.itonami.app.fax :as fax]
             [cloud.itonami.app.lawfirm :as lawfirm]
@@ -6544,6 +6545,45 @@
             (send! exchange 500 {:error {:type "internal_error"
                                          :message (.getMessage error)}})))))))
 
+(defn- human-passport-handler [configuration]
+  (reify HttpHandler
+    (handle [_ exchange]
+      (let [method (.getRequestMethod exchange)
+            path (.getPath (.getRequestURI exchange))]
+        (try
+          (if (and (= method "POST")
+                   (= path "/api/v1/trust/human-passport/verify"))
+            (let [session (require-human-session! exchange)
+                  body (read-json-limited exchange 4096 keyword)]
+              (require-origin! exchange configuration)
+              (require-csrf! exchange session)
+              (send! exchange 200
+                     (humanity-trust/verify!
+                      configuration session
+                      (or (:attestation-uid body) (:attestationUid body)))
+                     {"Cache-Control" "no-store"}))
+            (send! exchange 404 {:error {:type "not_found"}}))
+          (catch clojure.lang.ExceptionInfo error
+            (let [data (ex-data error)
+                  type (:type data)
+                  status (cond
+                           (= :identity/unauthenticated type) 401
+                           (contains? #{:identity/invalid-origin
+                                        :identity/invalid-csrf
+                                        :identity/agent-session-forbidden} type) 403
+                           (= :trust/rpc-unconfigured type) 503
+                           (:identity.evm/problem data) 502
+                           :else 422)]
+              (send! exchange status
+                     {:error {:type (name (or type :trust/evidence-refused))
+                              :message (.getMessage error)}}
+                     {"Cache-Control" "no-store"})))
+          (catch Exception _
+            (send! exchange 502
+                   {:error {:type "trust_upstream_unavailable"
+                            :message "Human Passport verification is unavailable."}}
+                   {"Cache-Control" "no-store"})))))))
+
 (defn- update-handler [configuration]
   (reify HttpHandler
     (handle [_ exchange]
@@ -6684,6 +6724,8 @@
                      (bots-handler configuration))
      (.createContext instance "/api/wallet"
                      (wallet-handler configuration))
+     (.createContext instance "/api/v1/trust/human-passport"
+                     (human-passport-handler configuration))
      (.createContext instance "/api/agent-bots"
                      (agent-bots-handler configuration))
      (.createContext instance "/api/update"
