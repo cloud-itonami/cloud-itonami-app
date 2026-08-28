@@ -244,7 +244,8 @@ For a compatibility deployment, Google and Microsoft can be configured without
 distributing a secret:
 
 ```edn
-{:auth {:sso-providers [:google :microsoft :github]
+{:auth {:sso-enabled? true
+        :sso-providers [:google :microsoft :github]
         :sso-clients
         {:google {:client-id "PUBLIC-DESKTOP-CLIENT-ID"
                   :public-client? true}

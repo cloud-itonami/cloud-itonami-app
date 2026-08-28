@@ -6,6 +6,7 @@
 
 (def ^:private configuration
   {:auth {:allow-signup? true
+          :sso-enabled? true
           :sso-providers [:google :microsoft :github]}
    :email-login {:enabled? false}})
 
