@@ -113,4 +113,44 @@ resolution and it is left where it was found.
   routing decision and was not made here.
 - The account's OpenRouter data policy was not read programmatically. That free
   endpoints served at all is evidence the account permits them; it is not the
-  same as having read the setting."}]
+  same as having read the setting.
+
+## 改訂履歴
+
+**2026-08-28, owner instruction: pin a specific free model instead of the
+router, because a pinned model performs better than the router's random
+draw for this workload.** This reverses the router-not-pinned-name decision
+above, on the same measured risk the original decision named (the
+`stealth/ox-alpha` four-day disappearance) -- it is not that the risk turned
+out to be smaller, it is that it is now bounded two ways it was not before:
+
+1. `data/config.edn`'s `:providers` entry for `openrouter` now sets
+   `:default-model \"nvidia/nemotron-3.5-lightning:free\"` and
+   `:model-fallbacks {\"nvidia/nemotron-3.5-lightning:free\" \"openrouter/free\"}`.
+   The pin is this operator's local, gitignored override, per this file's own
+   header (\"the store's own file still has the last word\") -- not a change to
+   the shipped default in `resources/cloud-itonami-app.defaults.edn`, which
+   keeps naming the router. `provider/with-model-fallback` already retries a
+   refused request against `:model-fallbacks` in the same turn whenever the
+   error type is one of `:provider/timeout`, `:provider/unreachable`,
+   `:provider/network-error`, `:provider/http-error`,
+   `:provider/model-mismatch`, `:provider/empty-response`, or
+   `:provider/model-unready` -- so a pinned model that starts refusing falls
+   back to the router within the failing turn, not on the next resident tick.
+2. `eaa1334` (`fix/record-requested-model-before-provider-call`, same day)
+   closed the gap that would have made this pin's own failures invisible:
+   `advance!` only wrote `:provider`/`:requested-model` onto the run AFTER a
+   successful response, so every failed turn -- pinned model or router alike
+   -- recorded the same unlabeled non-answer. Whichever model is asked now
+   survives the call's own failure into the turn record, which is what makes
+   \"is the pin still serving\" an answerable, observable question rather
+   than one this repository would have to remeasure from scratch the way it
+   did for `stealth/ox-alpha`.
+
+The pin was chosen from live data, not a blog ranking: `nvidia/nemotron-3.5-
+lightning:free` is verified (2026-08-28, against
+`https://openrouter.ai/api/v1/models`) to be currently listed, 1M context,
+`tools`/`tool_choice` in `:supported_parameters` -- and it is the exact model
+this ADR's own \"The provider\" section already measured serving a tool-call
+turn on this app. If it disappears from the catalog, the fallback keeps bots
+on the router until `data/config.edn` is updated or the pin is removed."}]
