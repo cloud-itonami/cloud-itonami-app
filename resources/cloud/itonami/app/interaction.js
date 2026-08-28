@@ -7983,6 +7983,67 @@
       await loadIdentity();
       $('#identity-status').textContent = 'Passkey を登録しました。';
     };
+    const controllerLinkTargets = Object.freeze({
+      kotobase:'https://auth.kotobase.net/v1/federation/session',
+      murakumo:'https://auth.murakumo.cloud/v1/federation/session'
+    });
+    const startControllerLink = async (target, button) => {
+      const exchangeURL = controllerLinkTargets[target];
+      if (!exchangeURL) throw new Error('この接続先は許可されていません。');
+      const originalLabel = button.textContent;
+      const windowName = `itonami-${target}-passkey`;
+      const targetWindow = window.open('about:blank', windowName);
+      button.disabled = true;
+      button.textContent = '接続を準備中…';
+      try {
+        const handoff = await postJSON('/api/integrations/kotobase/assertion',
+          {target}, true);
+        if (handoff.exchange_url !== exchangeURL) {
+          throw new Error('接続先の検証に失敗しました。');
+        }
+        const form = document.createElement('form');
+        form.method = 'POST';
+        form.action = exchangeURL;
+        form.target = targetWindow ? windowName : '_self';
+        [['cacao_b64', handoff.cacao_b64], ['return_to', handoff.return_to]]
+          .forEach(([name, value]) => {
+            const field = document.createElement('input');
+            field.type = 'hidden'; field.name = name; field.value = value;
+            form.append(field);
+          });
+        document.body.append(form);
+        form.submit();
+        form.remove();
+        const domain = target === 'murakumo' ? 'murakumo.cloud' : 'kotobase.net';
+        $('#identity-status').textContent =
+          `開いた認証画面で ${domain} 用の Passkey を作成してください。`;
+      } catch (error) {
+        if (targetWindow) targetWindow.close();
+        $('#identity-status').textContent = error.message;
+      } finally {
+        button.disabled = false;
+        button.textContent = originalLabel;
+      }
+    };
+    const installControllerLinkCard = () => {
+      const registerCard = $('#passkey-register')?.closest('.local-card');
+      if (!registerCard || document.querySelector('[data-controller-links]')) return;
+      const card = make('div', 'local-card'); card.dataset.controllerLinks = 'true';
+      const heading = make('h2', null, '同じ Principal を使う');
+      const explanation = make('p', 'view-lead',
+        '各ドメインでは別の Passkey を作り、同じ Principal と Passkey Smart Account へ接続します。秘密鍵は移送しません。');
+      const actions = make('div', 'button-row');
+      const kotobase = make('button', 'primary-action', 'kotobase.net に接続');
+      kotobase.type = 'button';
+      const murakumo = make('button', 'primary-action', 'murakumo.cloud に接続');
+      murakumo.type = 'button';
+      kotobase.addEventListener('click', () => startControllerLink('kotobase', kotobase));
+      murakumo.addEventListener('click', () => startControllerLink('murakumo', murakumo));
+      actions.append(kotobase, murakumo);
+      card.append(heading, explanation, actions);
+      registerCard.after(card);
+    };
+    installControllerLinkCard();
     const renderMembers = (organization) => {
       const list = $('#member-list'); list.replaceChildren();
       (organization?.users || []).forEach((user) => {

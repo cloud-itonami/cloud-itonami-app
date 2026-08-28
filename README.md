@@ -838,26 +838,31 @@ output would rewrite the whole state file on every token. Output is capped at
 16,000 characters per run. Cancellation takes effect at the next streamed
 chunk, so a stalled provider request can stay open until it times out.
 
-## Kotobase Passkey federation
+## Kotobase / Murakumo Passkey federation
 
-Passkey で成立した browser session から、短命・一回限りの Kotobase 交換証明を
-発行できます。
+Passkey で成立した browser session から、短命・一回限り・接続先固定の交換証明を
+KotobaseまたはMurakumoへ発行できます。
 
 ```text
 POST /api/integrations/kotobase/assertion
 Origin: <this app origin>
 X-CLOUD-ITONAMI-CSRF: <session csrf>
 Cookie: cloud_itonami_identity=...
+
+{"target":"kotobase"} or {"target":"murakumo"}
 ```
 
 response の `cacao_b64` を `exchange_url` へ top-level form POST すると通常の
-Kotobase session が成立します。Datomic query と Git bundle read はその session
-を共有し、Git write は引き続き Nekko署名・委任・quorumを要求します。
+対象apexのfirst-party sessionが成立します。その画面で対象ドメイン用のPasskeyを
+登録すると、raw credentialを共有せず同じPrincipalへlinkします。Kotobaseの
+Datomic query と Git bundle read はその sessionを共有し、Git write は引き続き
+Nekko署名・委任・quorumを要求します。
 
 これは同じ Principal を渡す federation であり、`itonami.cloud` の raw WebAuthn
-credential を Kotobase origin から使う仕組みではありません。また現在の issuer は
-resident が直接検証した `:kind :passkey` session だけを受理し、Hosted auth の
-`:kind :federated` session は未接続です。詳しい current/target 境界は
+credential を別RPから使う仕組みではありません。issuerはresidentが直接検証した
+Passkey sessionに加え、Hosted authが検証した
+`phishing-resistant + webauthn` sessionだけを受理します。Email、通常のSSO、agentは
+Passkey proofへ昇格しません。詳しいcurrent/target境界は
 [Passkey Smart Account guide](docs/passkey-smart-account.md) を参照してください。
 
 ## Identity and organizations

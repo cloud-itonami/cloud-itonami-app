@@ -58,11 +58,23 @@ This change lands the non-custodial preparation layer:
 - `POST /api/wallet/owners/plan` returns exact unsigned Smart Wallet 1.1
   replay-safe owner-addition calldata behind Human session, origin and CSRF
   checks.
+- Cloud Itonami issues a 120-second, target-bound assertion only to the
+  allowlisted Kotobase or Murakumo authentication origin.
+- `auth.kotobase.net` and `auth.murakumo.cloud` run distinct WebAuthn RPs over
+  the same stable account store. A federated high-assurance session reaches the
+  existing Principal, then registration creates a separate RP-scoped Passkey
+  linked to that Principal.
+- Anonymous registration at the secondary Murakumo RP fails closed so it
+  cannot silently create a second Principal during a controller-link flow.
 
 The endpoint does not sign or submit. Its result remains
 `:user-operation-ready? false` until EntryPoint nonce acquisition, current
 owner WebAuthn signing, bundler submission and per-chain receipt verification
 are implemented.
+
+The federation handoff likewise proves account linkage, not on-chain owner
+membership. A newly linked product Passkey remains an owner candidate until
+that UserOperation is signed, submitted and confirmed on each target chain.
 
 ## Consequences
 
