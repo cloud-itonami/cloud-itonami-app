@@ -6,6 +6,7 @@
   — `advance!` and `run-tool!` — are behind the connection gate, and every test
   that would cross it redefines the seam instead."
   (:require [agent.run :as agent-run]
+            [clojure.data.json :as json]
             [clojure.java.io :as io]
             [clojure.string :as str]
             [clojure.test :refer [deftest is testing]]
@@ -3887,7 +3888,39 @@
     (testing "a timeout is untouched -- it has no body to report"
       (let [m (err (ex-info "model provider timed out"
                             {:type :provider/timeout :timeout-seconds 120}))]
-        (is (= "model provider timed out" m))))))
+        (is (= "model provider timed out" m))))
+    (testing "an OpenAI-shaped :error map records its own message, not the whole map"
+      ;; Measured 2026-08-28, first hours on the OpenRouter free plan: every
+      ;; stored 400 read "... {:message \"Provider returned error\", :code
+      ;; 400, :metadata {:raw \"...\"" -- (str (:error response)) printing the
+      ;; whole map instead of reading :message out of it, same shape
+      ;; `provider-retry/body-error-type` already reads via
+      ;; `(get-in parsed [:error :type])`.
+      (let [m (err (ex-info "model provider request failed"
+                            {:type :provider/http-error :status 400
+                             :response {:error {:message "Provider returned error"
+                                                :code 400
+                                                :metadata {:raw "not json"}}}}))]
+        (is (re-find #"Provider returned error" m))
+        (is (not (re-find #":metadata" m))
+            "the printed map form does not leak through")))
+    (testing "a parseable :metadata :raw reaches past OpenRouter's own wrapper text"
+      ;; OpenRouter proxies many backends and nests the upstream backend's
+      ;; own error a second time, as a JSON STRING. That is the actionable
+      ;; detail -- "Provider returned error" says nothing a person can act on.
+      (let [raw (json/write-str {:error {:message "Backend request failed with status 502"}})
+            m (err (ex-info "model provider request failed"
+                            {:type :provider/http-error :status 400
+                             :response {:error {:message "Provider returned error"
+                                                :code 400
+                                                :metadata {:raw raw}}}}))]
+        (is (re-find #"Backend request failed with status 502" m))))
+    (testing "an unparseable :metadata :raw falls back to the wrapper message"
+      (let [m (err (ex-info "model provider request failed"
+                            {:type :provider/http-error :status 502
+                             :response {:error {:message "Bad gateway"
+                                                :metadata {:raw "<html>502</html>"}}}}))]
+        (is (re-find #"Bad gateway" m))))))
 
 (deftest ordinary-turns-are-serialized-per-bot
   ;; A2A and the ordinary CLI endpoint both call `send!`, not `send-stream!`.
