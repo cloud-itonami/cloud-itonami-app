@@ -78,4 +78,3 @@ deployment receipt and chain-specific factory-availability checks are landed.
   deployment and from send readiness.
 - A legacy session with no verified public Passkey record fails closed as
   `:passkey-required`; it does not fall back to generating a server-held EOA.
-
