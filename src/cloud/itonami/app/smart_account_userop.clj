@@ -322,18 +322,18 @@
               :maxPriorityFeePerGas gas-price
               :paymasterAndData "0x"
               :signature (dummy-signature)}
-        estimated (merge-gas
-                   base
-                   (rpc! (:bundler-endpoint chain) :bundler
-                         "eth_estimateUserOperationGas" [base entry-point]))
-        sponsored (sponsor! chain estimated entry-point)
-        final-estimate (if (:paymaster-endpoint chain)
-                         (merge-gas
-                          sponsored
-                          (rpc! (:bundler-endpoint chain) :bundler
-                                "eth_estimateUserOperationGas"
-                                [sponsored entry-point]))
-                         sponsored)
+        ;; Pimlico stopped injecting a balance override into gas estimation.
+        ;; An unfunded counterfactual account therefore fails with AA21 when
+        ;; an unsponsored estimate is attempted first.  The v0.6
+        ;; pm_sponsorUserOperation contract accepts zero gas fields and returns
+        ;; both paymasterAndData and estimates, so establish sponsorship before
+        ;; the bundler simulation whenever a paymaster is configured.
+        sponsored (sponsor! chain base entry-point)
+        final-estimate
+        (merge-gas
+         sponsored
+         (rpc! (:bundler-endpoint chain) :bundler
+               "eth_estimateUserOperationGas" [sponsored entry-point]))
         operation (assoc final-estimate :signature "0x")
         signing-hash (smart-account/cross-chain-user-operation-hash
                       operation entry-point)

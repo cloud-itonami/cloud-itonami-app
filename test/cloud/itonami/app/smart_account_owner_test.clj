@@ -188,6 +188,71 @@
                 :authenticatorData (b64u auth-data)
                 :signature (b64u (.sign signer))}}))
 
+(deftest an-unfunded-counterfactual-account-is-sponsored-before-estimation
+  (let [{initial :credential}
+        (p256-credential "initial" "localhost" "http://localhost:1338")
+        {candidate :credential}
+        (p256-credential "candidate" "kotobase.net"
+                         "https://auth.kotobase.net")
+        config {:server {:webauthn-rp-id "localhost"
+                         :public-origin "http://localhost:1338"}
+                :wallet {:chains [{:chain-id 1 :name "Ethereum"
+                                   :rpc-url "http://127.0.0.1:8545"
+                                   :bundler-url "http://127.0.0.1:4337"
+                                   :paymaster-url "http://127.0.0.1:4337"}]}}
+        descriptor (smart-account/descriptor
+                    config "urn:kotoba:principal:alice" initial
+                    :principal "urn:kotoba:principal:alice")
+        calls (atom [])
+        transport
+        (fn [endpoint request]
+          (let [method (:method request)
+                params (:params request)
+                operation (first params)
+                data (:data operation)
+                selector (some-> data eth/strip0x
+                                 (subs 0 (min 8 (count (eth/strip0x data)))))]
+            (swap! calls conj {:endpoint endpoint :method method
+                               :paymaster-and-data (:paymasterAndData operation)})
+            {:jsonrpc "2.0" :id 1
+             :result
+             (case method
+               "eth_chainId" "0x1"
+               "eth_supportedEntryPoints" [smart-account/canonical-entry-point]
+               "eth_getCode" (if (= (first params) (:address descriptor))
+                               "0x" "0x60016000")
+               "eth_gasPrice" "0x3b9aca00"
+               "pm_sponsorUserOperation"
+               {:paymasterAndData "0x1234"
+                :callGasLimit "0x186a0" :verificationGasLimit "0x30d40"
+                :preVerificationGas "0xc350"}
+               "eth_estimateUserOperationGas"
+               (do
+                 (is (= "0x1234" (:paymasterAndData operation))
+                     "the first bundler simulation is already sponsored")
+                 {:callGasLimit "0x186a1" :verificationGasLimit "0x30d41"
+                  :preVerificationGas "0xc351"})
+               "eth_call"
+               (case selector
+                 "5c60da1b" (abi/encode-hex
+                              ["address"]
+                              [smart-account/canonical-implementation])
+                 "250b1b41" (abi/encode-hex ["address"]
+                                             [(:address descriptor)])
+                 "35567e1a" (abi/encode-hex ["uint256"] ["0"])
+                 (throw (ex-info "unexpected eth_call"
+                                 {:selector selector}))))}))]
+    (binding [userop/*transport* transport]
+      (let [prepared (userop/prepare-owner-addition!
+                      config descriptor initial candidate 1)
+            methods (mapv :method @calls)]
+        (is (= :awaiting-current-owner-authorization (:status prepared)))
+        (is (= "0x1234"
+               (get-in prepared [:user-operation :paymasterAndData])))
+        (is (< (.indexOf methods "pm_sponsorUserOperation")
+               (.indexOf methods "eth_estimateUserOperationGas")))
+        (is (= 1 (count (filter #{"eth_estimateUserOperationGas"} methods))))))))
+
 (deftest a-current-owner-assertion-is-submitted-and-confirmed-on-chain
   (let [{initial :credential initial-private :private-key}
         (p256-credential "initial" "localhost" "http://localhost:1338")
