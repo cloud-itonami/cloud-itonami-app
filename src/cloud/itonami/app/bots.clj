@@ -128,6 +128,7 @@
 (def max-tool-output-chars 6000)
 (def max-trace 60)
 (def max-routines 40)
+(def max-artifact-cards 8)
 (def max-turn-history 40)
 (def max-turn-followups 20)
 (def max-contexts 120)
@@ -506,6 +507,44 @@
 
 (defn- action-receipts [run-id]
   (filter #(= :action/finished (:event/kind %)) (:job/events (goal-job run-id))))
+
+(defn- artifact-cards
+  "What this run LEFT BEHIND, as cards on the turn that reports it.
+
+  Built from the receipts, never from the summary. A card that came from the
+  model's own prose would be the model asserting its work rather than the host
+  recording it -- and a Bot that says it committed and did not would get a card
+  saying so. A receipt is written by the tool that ran; if there is no receipt
+  there is no card.
+
+  De-duplicated because a run may write the same path more than once and the
+  last write is the state the file is in. Bounded, because a card list is a
+  screen and a 200-file run would be a wall rather than a report; the receipts
+  keep the complete record either way."
+  [run-id]
+  (->> (action-receipts run-id)
+       (mapcat #(get-in % [:event/data :artifacts]))
+       (reduce (fn [seen artifact]
+                 (assoc seen [(:artifact/kind artifact)
+                              (or (:artifact/path artifact)
+                                  (:artifact/revision artifact))]
+                        artifact))
+               {})
+       vals
+       (sort-by (juxt #(name (:artifact/kind %))
+                      #(or (:artifact/path %) (:artifact/revision %))))
+       (take max-artifact-cards)
+       (map-indexed (fn [index artifact]
+                      (bot/artifact-card
+                       {:id (str "artifact-" index "-" (hash artifact))
+                        :kind (:artifact/kind artifact)
+                        :path (:artifact/path artifact)
+                        :bytes (:artifact/bytes artifact)
+                        :revision (:artifact/revision artifact)
+                        :message (:artifact/message artifact)
+                        :paths (:artifact/paths artifact)})))
+       vec
+       not-empty))
 
 (defn- plan-complete? [run-id]
   (let [plan (:job/plan (goal-job run-id))]
@@ -2206,13 +2245,26 @@
                        (invoke/call registry tool-name args
                                     {:http (http-port)
                                      :tokens (tokens-port configuration selection)})))
-        text (if (string? structured) structured (pr-str structured))
+        ;; A tool that has a sentence for the model says so with `:tool/text`,
+        ;; and then the model reads exactly what it read before this key
+        ;; existed. Without it a structured result reaches the model as
+        ;; `pr-str` of a map -- correct for `computer_screenshot`, which has no
+        ;; sentence, and wrong for a write tool whose whole answer is one.
+        text (cond
+               (string? structured) structured
+               (string? (:tool/text structured)) (:tool/text structured)
+               :else (pr-str structured))
         result {:text (if (> (count text) limit)
                         (str (subs text 0 limit)
                              "\n[tool output truncated for model context; full output is represented by the host receipt hash]")
                         text)
                 :images (when (map? structured)
-                          (vec (keep identity [(image-attachment structured)])))}]
+                          (vec (keep identity [(image-attachment structured)])))
+                ;; What the tool LEFT BEHIND, carried out as data for the same
+                ;; reason the image is: re-deriving it from the printed map
+                ;; would couple the caller to a print format nobody promised.
+                :artifacts (when (map? structured)
+                             (vec (:tool/artifacts structured)))}]
     ;; Chronicle is an enrichment plane, not part of tool execution. A full or
     ;; damaged memory partition must never turn a completed Bot action into a
     ;; failed action. remember-tool! applies the user's Settings switches and
@@ -3021,10 +3073,17 @@
       (let [started (now-ms)]
         (try
           (let [output (run-tool! configuration b (:selection run) name input)
-                receipt {:action/id (:id call) :child-run-id child-id :tool name
-                         :step-id (current-plan-step-id run)
-                         :duration-ms (- (now-ms) started)
-                         :output-sha256 (receipt-sha256 (:text output))}]
+                receipt (cond-> {:action/id (:id call) :child-run-id child-id
+                                 :tool name
+                                 :step-id (current-plan-step-id run)
+                                 :duration-ms (- (now-ms) started)
+                                 :output-sha256 (receipt-sha256 (:text output))}
+                          ;; The receipt already proved an action HAPPENED, by
+                          ;; hashing what it printed. What it MADE was in the
+                          ;; same call and was not kept, so the transcript could
+                          ;; say a Bot wrote a file and no record named which.
+                          (seq (:artifacts output))
+                          (assoc :artifacts (vec (:artifacts output))))]
             (trace! configuration (:bot/id b) name)
             (update-goal-job! (:id run) update-in [:job/children child-id]
                               agent-run/transition :succeeded (now-ms)
@@ -3671,7 +3730,7 @@
                     (when on-event (on-event {:type "phase" :phase "verifying"}))
                     (finish-visible! on-finish run :completed
                                      {:turn/result summary :turn/evidence evidence})
-                    (say (:bot/id b) summary nil))
+                    (say (:bot/id b) summary (artifact-cards (:id run))))
                   (recur (update run :messages conj
                                  {:role "tool" :tool-call-id (:id call)
                                   :name name
@@ -5116,10 +5175,14 @@
                          (let [output (run-tool! configuration b (:selection run)
                                                  (:name call) (:input call))]
                            (goal-event! :action/finished
-                                        {:action/id (:id call) :tool (:name call)
-                                         :step-id (current-plan-step-id run)
-                                         :duration-ms (- (now-ms) started)
-                                         :output-sha256 (receipt-sha256 (:text output))})
+                                        (cond-> {:action/id (:id call)
+                                                 :tool (:name call)
+                                                 :step-id (current-plan-step-id run)
+                                                 :duration-ms (- (now-ms) started)
+                                                 :output-sha256 (receipt-sha256
+                                                                 (:text output))}
+                                          (seq (:artifacts output))
+                                          (assoc :artifacts (vec (:artifacts output)))))
                            output))
               output (if goal?
                        (binding [*goal-event!*

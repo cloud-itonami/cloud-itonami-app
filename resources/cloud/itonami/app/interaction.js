@@ -10011,9 +10011,7 @@
         item.type = 'button';
         item.setAttribute('aria-current', String(bot.id === botsState.selected));
         const statusSummary = botsStatusSummary(bot);
-        const preview = bot['last-message']?.source === 'resident'
-          ? `自動確認 · ${residentResultState(bot['last-message']?.text)}`
-          : (bot['last-message']?.text || statusSummary);
+        const preview = botsRailPreview(bot, statusSummary);
         item.setAttribute('aria-label',
           `${bot.name}、${statusSummary}、${preview}`);
         const avatar = botAvatar(make('span', 'bot-avatar'), bot.avatar, bot.status);
@@ -10247,6 +10245,53 @@
       node.append(row);
       return node;
     };
+    const botsArtifactCard = (card) => {
+      // What the Bot LEFT BEHIND. Every other card asks the person to act; this
+      // one reports that the Bot already did, and it is built from the host's
+      // receipts rather than the Bot's prose -- so a summary claiming a commit
+      // that never happened produces no card.
+      const node = make('div', 'bots-card');
+      node.dataset.artifact = card['artifact-kind'];
+      if (card['artifact-kind'] === 'commit') {
+        node.append(make('div', 'bots-card__title', card.message || 'コミット'));
+        const meta = make('div', 'bots-card__meta');
+        // Short form: a full sha is 40 characters of noise in a column this
+        // narrow, and the whole value stays on the element as its title.
+        const revision = make('code', 'bots-card__revision',
+                              String(card.revision || '').slice(0, 12));
+        revision.title = card.revision || '';
+        meta.append(revision);
+        const paths = card.paths || [];
+        if (paths.length) {
+          meta.append(make('span', 'bots-card__count', `${paths.length}件のファイル`));
+        }
+        node.append(meta);
+        paths.forEach((path) => node.append(make('code', 'bots-card__path', path)));
+        return node;
+      }
+      node.append(make('div', 'bots-card__title', '書き込み'));
+      const meta = make('div', 'bots-card__meta');
+      meta.append(make('code', 'bots-card__path', card.path || ''));
+      if (Number.isFinite(card.bytes)) {
+        meta.append(make('span', 'bots-card__count', `${card.bytes} bytes`));
+      }
+      node.append(meta);
+      return node;
+    };
+    const appendBotsCards = (entry, messages, botId) => {
+      // One dispatch, called from both the run path and the single-message
+      // path. It was written out twice, and a third kind of card would have had
+      // to be added to both -- the one that got missed being the one nobody
+      // notices, because the card simply does not appear.
+      messages.forEach((message) => {
+        (message.cards || []).forEach((card) => {
+          if (card.kind === 'connection') entry.append(botsConnectionCard(card, botId));
+          else if (card.kind === 'choice') entry.append(botsChoiceCard(card, botId));
+          else if (card.kind === 'approval') entry.append(botsApprovalCard(card, botId));
+          else if (card.kind === 'artifact') entry.append(botsArtifactCard(card));
+        });
+      });
+    };
     const botsChoiceCard = (card, botId) => {
       const node = make('div', 'bots-card');
       node.append(make('div', 'bots-card__title', card.prompt));
@@ -10364,11 +10409,140 @@
         .replace(/\s+/g, ' ').trim();
       return value.length > limit ? `${value.slice(0, limit - 1)}…` : value;
     };
+    const botsAttentionStatuses = new Set(['waiting-approval', 'waiting-connection',
+                                           'blocked']);
+    const botsRailPreview = (bot, statusSummary) => {
+      // What this row says the Bot last did -- its OWN sentence, which is what
+      // makes a list of Bots scannable.
+      //
+      // This used to render `自動確認 · ${residentResultState(...)}` for every
+      // resident message: the classification instead of the sentence, out of
+      // four possible values. Observed 2026-08-28 with nine Bots on screen, six
+      // consecutive rows read `自動確認 · 変更なし` and the list carried no
+      // information at all -- the reader had to open each Bot to learn which
+      // one had news. The state was never lost by removing it: the dot at the
+      // end of the same row already carries `bot.status`, with the full summary
+      // as its title.
+      //
+      // A Bot that needs the PERSON is the exception, because then the need is
+      // the news and it has to lead. It reads `承認待ち：<what it asked>`.
+      const said = residentResultPreview(bot?.['last-message']?.text, 80);
+      if (botsAttentionStatuses.has(bot?.status)) {
+        const need = botsStatusText[bot.status] || statusSummary;
+        // Not when the sentence already opens with the same word. The Bot
+        // writes its own state into its first clause often enough that the
+        // naive prefix produced `前提待ち：前提待ち: Either…` on screen.
+        if (!said) return need;
+        return said.startsWith(need) ? said : `${need}：${said}`;
+      }
+      return said || statusSummary;
+    };
+    const residentResultKey = (message) =>
+      (message.text && message.source === 'resident' && message.role === 'bot')
+        // Keyed on the STATE alone. Keying on the preview too looked stricter
+        // and grouped nothing: two ticks of the same no-op differ by a word
+        // ("Fresh execution receipts …" against "receipts: …") and every run
+        // was a run of one. Nothing is lost by the looser key -- the run body
+        // still renders every message in full.
+        ? residentResultState(message.text)
+        : null;
+    const residentInstruction = (message) =>
+      Boolean(message.text && message.source === 'resident' && message.role === 'person');
+    const botsMessageRuns = (messages) =>
+      // Consecutive identical auto-check results are ONE event, not six.
+      //
+      // A resident Bot with nothing to do says so every tick, and this thread
+      // rendered one card per tick. Observed 2026-08-28: six cards in a row,
+      // every one of them `変更なし / Resident tick completed as a safe no-op`,
+      // separated by six collapsed `自動確認の内部指示`. None of that column was
+      // news, and the one card that WAS -- a 失敗 -- sat in the middle of it
+      // looking exactly like its neighbours.
+      //
+      // Runs are grouped, never dropped: the body still lists every message in
+      // order with its own time, so nothing becomes unreadable, and the reader
+      // gets one row to skip instead of six.
+      (() => {
+        const runs = [];
+        let held = [];
+        const flushHeld = () => {
+          held.forEach((message) => runs.push({ key: null, messages: [message] }));
+          held = [];
+        };
+        (messages || []).forEach((message) => {
+          const key = residentResultKey(message);
+          if (!key) {
+            if (residentInstruction(message)) held.push(message);
+            else { flushHeld(); runs.push({ key: null, messages: [message] }); }
+            return;
+          }
+          const previous = runs[runs.length - 1];
+          if (previous && previous.key === key) {
+            previous.messages.push(...held, message);
+            held = [];
+          } else {
+            flushHeld();
+            runs.push({ key, messages: [message] });
+          }
+        });
+        flushHeld();
+        return runs;
+      })();
+    const renderBotsResidentRun = (run) => {
+      const entry = make('li', 'bots-msg');
+      entry.dataset.role = 'resident-result';
+      const results = run.messages.filter((message) => residentResultKey(message));
+      // The LATEST result heads the card. A run is read top-down as one item,
+      // and the newest tick is the one the reader came for; leading with the
+      // oldest would put the stalest sentence in the only line always visible.
+      const latest = results[results.length - 1];
+      const repeats = results.length;
+      const detail = make('details', 'bots-msg__resident-result');
+      const summary = make('summary');
+      summary.append(
+        make('strong', null, '自動確認の結果'),
+        make('span', 'bots-msg__resident-state',
+             repeats > 1 ? `${residentResultState(latest.text)} ×${repeats}`
+                         : residentResultState(latest.text)),
+        make('span', 'bots-msg__resident-preview', residentResultPreview(latest.text)),
+        make('span', 'bots-msg__resident-open', '全文を見る'));
+      const body = make('div', 'bots-msg__resident-body');
+      run.messages.forEach((message) => {
+        // Times only in a real run: they are what tells the copies apart, and
+        // a single result needs none -- the thread's order already says when.
+        if (repeats > 1) {
+          const at = botsCompactTime(message.at);
+          if (at) body.append(make('p', 'bots-msg__resident-at', at));
+        }
+        if (residentInstruction(message)) {
+          // The objective that produced the next result. Absorbed into the run
+          // rather than dropped, and still one click from the audit trail it
+          // was when it had the thread to itself.
+          const nested = make('details', 'bots-msg__resident');
+          nested.append(make('summary', null, '自動確認の内部指示'),
+                        make('p', null, message.text));
+          body.append(nested);
+          return;
+        }
+        const part = make('div');
+        renderMarkdown(part, message.text);
+        body.append(part);
+      });
+      detail.append(summary, body);
+      entry.append(detail);
+      return entry;
+    };
     const renderBotsMessages = (bot, options = {}) => {
       const holder = $('#bots-messages');
       holder.replaceChildren();
       if (!bot) return;
-      botsState.messages.forEach((message) => {
+      botsMessageRuns(botsState.messages).forEach((run) => {
+        if (run.key) {
+          const entry = renderBotsResidentRun(run);
+          appendBotsCards(entry, run.messages, bot.id);
+          holder.append(entry);
+          return;
+        }
+        const message = run.messages[0];
         const entry = make('li', 'bots-msg');
         entry.dataset.role = message.role;
         if (message.text && message.source === 'resident' && message.role === 'person') {
@@ -10381,29 +10555,17 @@
           detail.append(make('summary', null, '自動確認の内部指示'),
                         make('p', null, message.text));
           entry.append(detail);
-        } else if (message.text && message.source === 'resident' && message.role === 'bot') {
-          entry.dataset.role = 'resident-result';
-          const detail = make('details', 'bots-msg__resident-result');
-          const summary = make('summary');
-          summary.append(make('strong', null, '自動確認の結果'),
-                         make('span', 'bots-msg__resident-state', residentResultState(message.text)),
-                         make('span', 'bots-msg__resident-preview', residentResultPreview(message.text)),
-                         make('span', 'bots-msg__resident-open', '全文を見る'));
-          const body = make('div', 'bots-msg__resident-body');
-          renderMarkdown(body, message.text);
-          detail.append(summary, body);
-          entry.append(detail);
         } else if (message.text) {
+          // A resident RESULT never reaches here: `residentResultKey` matches
+          // every one of them, so `renderBotsResidentRun` renders it -- a run of
+          // one included. Two implementations of that card would drift, and the
+          // one reached less often would be the one nobody noticed drifting.
           const bubble = make('div', 'bots-msg__bubble');
           if (message.role === 'bot') renderMarkdown(bubble, message.text);
           else bubble.textContent = message.text;
           entry.append(bubble);
         }
-        (message.cards || []).forEach((card) => {
-          if (card.kind === 'connection') entry.append(botsConnectionCard(card, bot.id));
-          else if (card.kind === 'choice') entry.append(botsChoiceCard(card, bot.id));
-          else if (card.kind === 'approval') entry.append(botsApprovalCard(card, bot.id));
-        });
+        appendBotsCards(entry, [message], bot.id);
         holder.append(entry);
       });
       requestAnimationFrame(() => {

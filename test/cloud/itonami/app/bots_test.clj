@@ -3920,3 +3920,47 @@
           (is (= 1 @first-turn))
           (is (= 2 @second-turn))
           (is (= 1 @maximum)))))))
+
+;; ── the run's artifacts come from receipts, never from the summary ───────
+
+(deftest artifact-cards-are-built-from-receipts-not-from-what-the-bot-said
+  (let [collect (private-fn 'artifact-cards)
+        events (fn [receipts]
+                 (mapv (fn [r] {:event/kind :action/finished :event/data r}) receipts))]
+    (with-redefs [cloud.itonami.app.bots/goal-job
+                  (fn [_] {:job/events
+                           (events
+                            [{:tool "workspace_write_file"
+                              :artifacts [{:artifact/kind :file
+                                           :artifact/path "src/a.clj"
+                                           :artifact/bytes 10}]}
+                             ;; The same file written twice in one run: the last
+                             ;; write is the state the file is in, and two cards
+                             ;; would report one file as two pieces of work.
+                             {:tool "workspace_write_file"
+                              :artifacts [{:artifact/kind :file
+                                           :artifact/path "src/a.clj"
+                                           :artifact/bytes 40}]}
+                             {:tool "git_commit"
+                              :artifacts [{:artifact/kind :commit
+                                           :artifact/revision "abc123"
+                                           :artifact/message "m"
+                                           :artifact/paths ["src/a.clj"]}]}
+                             ;; A read tool leaves nothing behind.
+                             {:tool "workspace_read"}])})]
+      (let [cards (collect "run-1")]
+        (is (= 2 (count cards)) "one file and one commit, the repeat folded")
+        (is (= #{:artifact} (set (map :card/kind cards))))
+        (is (= [:commit :file] (mapv :card/artifact-kind cards))
+            "a stable order, so the same run does not reshuffle between reads")
+        (is (= 40 (:card/bytes (first (filter #(= :file (:card/artifact-kind %))
+                                              cards))))
+            "the last write is the one that describes the file now")))
+
+    (testing "a run that made nothing carries no cards at all"
+      ;; `say` takes nil for no cards; an empty vector would render an empty
+      ;; region under every no-op tick, which is the noise this whole change is
+      ;; about removing.
+      (with-redefs [cloud.itonami.app.bots/goal-job
+                    (fn [_] {:job/events (events [{:tool "workspace_read"}])})]
+        (is (nil? (collect "run-2")))))))

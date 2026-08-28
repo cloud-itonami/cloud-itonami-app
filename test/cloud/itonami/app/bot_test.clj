@@ -281,3 +281,51 @@
     (is (not (contains? (set (map :template/id (bot/suggestions ["com.google.gmail"])))
                         :repo-watch)))
     (is (empty? (bot/suggestions [])))))
+
+;; ── what the Bot left behind ────────────────────────────────────────────
+;;
+;; Every other card asks the PERSON to act. This one reports that the Bot
+;; already did, and it exists because both write tools spent their structured
+;; facts on a sentence: `workspace_write_file` answered "wrote src/foo.clj
+;; (1234 bytes)" and `git_commit` answered "committed <sha>". Reading the path
+;; and the revision back out of those would be parsing our own print format.
+
+(deftest an-artifact-card-records-what-the-tool-already-knew
+  (testing "a file write"
+    (let [card (bot/artifact-card {:id "a-1" :kind :file
+                                   :path "src/cloud/itonami/app/core.clj"
+                                   :bytes 1234})]
+      (is (= :artifact (:card/kind card)))
+      (is (= :file (:card/artifact-kind card)))
+      (is (= "src/cloud/itonami/app/core.clj" (:card/path card)))
+      (is (= 1234 (:card/bytes card)))
+      (is (not (contains? card :card/revision))
+          "a file write has no revision, and an absent field must stay absent")))
+
+  (testing "a commit"
+    (let [card (bot/artifact-card {:id "a-2" :kind :commit
+                                   :revision "0f1e2d3c4b5a"
+                                   :message "Add the binding"
+                                   :paths ["a.clj" "b.clj"]})]
+      (is (= :commit (:card/artifact-kind card)))
+      (is (= "0f1e2d3c4b5a" (:card/revision card)))
+      (is (= ["a.clj" "b.clj"] (:card/paths card)))
+      (is (not (contains? card :card/bytes)))))
+
+  (testing "an empty path list is absent rather than empty"
+    ;; `git_commit` stages named paths and reports what it actually staged; a
+    ;; commit that staged nothing never gets here, and a card carrying `[]`
+    ;; would render an empty file list under a heading.
+    (is (not (contains? (bot/artifact-card {:id "a" :kind :commit :revision "x"})
+                        :card/paths))))
+
+  (testing "a kind nothing can produce is refused"
+    ;; `git_commit` never pushes, so no Bot on this surface can open a pull
+    ;; request. Accepting the kind would let a screen promise what no tool can
+    ;; deliver.
+    (doseq [kind [:pull-request :deploy nil "file"]]
+      (is (thrown? clojure.lang.ExceptionInfo
+                   (bot/artifact-card {:id "a" :kind kind :path "p"})))))
+
+  (testing "an artifact is a card kind like the others"
+    (is (contains? bot/card-kinds :artifact))))

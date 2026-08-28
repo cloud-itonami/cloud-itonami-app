@@ -596,6 +596,20 @@
   .bots-msg__resident-result[open] .bots-msg__resident-preview{display:none}
   .bots-msg__resident-body{padding:.25rem .875rem .875rem;
     border-top:1px solid var(--color-neutral-solid-gray-100)}
+  /* Only rendered inside a RUN of identical results, where it is the one thing
+     that tells the copies apart. A single result keeps its own card and needs
+     no timestamp inside it -- the thread's order already says when. */
+  .bots-msg__resident-at{margin:.5rem 0 .125rem;font-size:.75rem;
+    color:var(--color-neutral-solid-gray-600)}
+  /* What the Bot left behind. Same card frame as the ones that ask the person
+     for something, because it belongs to the same turn -- the difference is
+     that this one is a report, so it carries no control. */
+  .bots-card__meta{display:flex;flex-wrap:wrap;align-items:center;gap:.5rem;
+    margin-top:.25rem}
+  .bots-card__revision,.bots-card__path{font-size:.75rem;word-break:break-all;
+    color:var(--color-neutral-solid-gray-700)}
+  .bots-card__path{display:block;margin-top:.125rem}
+  .bots-card__count{font-size:.75rem;color:var(--color-neutral-solid-gray-600)}
   .bots-card{border:1px solid var(--color-neutral-solid-gray-200);
     border-radius:.75rem;padding:.875rem;background:var(--color-neutral-white);
     display:grid;gap:.5rem;width:100%}

@@ -451,6 +451,25 @@
   (is (str/includes? web/app-css ".bots-msg__resident-result")
       "the outcome row has a bounded visual treatment"))
 
+(deftest a-run-of-identical-auto-checks-is-one-row-and-what-it-made-is-a-card
+  ;; Observed on the resident fleet 2026-08-28: ten consecutive `変更なし`
+  ;; cards, and the one 失敗 among them looked exactly like its neighbours.
+  ;; The Bot list had the same problem one pane over -- every row read
+  ;; `自動確認 · 変更なし`, because the preview showed the classification
+  ;; instead of the sentence the Bot wrote.
+  (is (str/includes? web/interaction-js "botsMessageRuns")
+      "repeated identical results collapse into one row")
+  (is (str/includes? web/interaction-js "residentInstruction")
+      "the internal instruction between two results must not break the run")
+  (is (str/includes? web/interaction-js "botsRailPreview")
+      "a list row says what the Bot said, or what it needs")
+  (is (str/includes? web/interaction-js "botsArtifactCard")
+      "what a run left behind is a card, not a sentence to parse")
+  (is (str/includes? web/interaction-js "card.kind === 'artifact'")
+      "the artifact card is reachable from the one card dispatch")
+  (is (str/includes? web/app-css ".bots-card__revision")
+      "the artifact card has a bounded visual treatment"))
+
 (deftest bots-remain-a-single-viewport-pane-in-the-phone-layout
   (is (str/includes? web/app-css
                      ".bots-view{max-width:none;padding:0;height:calc(100dvh - 5rem);overflow:hidden}"))
