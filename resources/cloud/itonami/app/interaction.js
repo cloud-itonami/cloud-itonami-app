@@ -11321,14 +11321,14 @@
     $('#bots-conversations-close').addEventListener('click', () =>
       setBotConversationsOpen(false));
 
-    // ── Wallet: verified external accounts, one assignment per Bot ──────
+    // ── Wallet: Passkey-owned Smart Accounts; external links optional ───
     let walletState = null;
     let walletBalances = new Map();
     let selectedWalletBotId = null;
     const announcedWalletProviders = new Map();
     let selectedWalletProviderId = '';
     const shortAddress = (address) => address
-      ? `${address.slice(0, 8)}…${address.slice(-6)}` : '未割り当て';
+      ? `${address.slice(0, 8)}…${address.slice(-6)}` : '準備中';
     const weiToEth = (value) => {
       const wei = BigInt(value || '0');
       const whole = wei / (10n ** 18n);
@@ -11405,24 +11405,29 @@
       });
     });
     window.dispatchEvent(new Event('eip6963:requestProvider'));
-    const walletAccountById = (id) =>
-      walletState?.accounts?.find((account) => account.id === id);
-    const selectedWalletBot = () => walletState?.bots?.find((bot) =>
-      bot.id === selectedWalletBotId);
+    const walletEntries = () => {
+      const principal = walletState?.['principal-account'];
+      return [
+        ...(principal?.address ? [{
+          id:'__principal__', name:'自分のPasskey Wallet', avatar:{}, wallet:principal,
+          principal:true
+        }] : []),
+        ...(walletState?.bots || []).map((bot) => ({...bot, principal:false}))
+      ];
+    };
+    const selectedWalletEntry = () => walletEntries().find((entry) =>
+      entry.id === selectedWalletBotId);
     const refreshWalletBalances = async () => {
       const provider = selectedInjectedWallet();
-      if (!provider?.request || !walletState?.accounts?.length) {
+      if (!provider?.request || !walletEntries().length) {
         walletBalances = new Map(); return;
       }
       try {
-        const available = (await provider.request({method:'eth_accounts'}))
-          .map((address) => address.toLowerCase());
         const chainId = Number(BigInt(await provider.request({method:'eth_chainId'})));
-        const pairs = await Promise.all(walletState.accounts
-          .filter((account) => account.status === 'active'
-            && account['chain-id'] === chainId
-            && available.includes(account.address.toLowerCase()))
-          .map(async (account) => [account.id, await provider.request({
+        const accounts = walletEntries().map((entry) => entry.wallet)
+          .filter((account) => account?.address && account['chain-id'] === chainId);
+        const pairs = await Promise.all(accounts
+          .map(async (account) => [account.address.toLowerCase(), await provider.request({
             method:'eth_getBalance', params:[account.address, 'latest']
           })]));
         walletBalances = new Map(pairs);
@@ -11434,49 +11439,55 @@
       const bots = data.bots || [];
       const transfers = data.transfers || [];
       const activeAccounts = accounts.filter((account) => account.status === 'active');
-      const assignedBots = bots.filter((bot) => bot.wallet?.['signer-connected?']);
-      const waiting = transfers.filter((transfer) => transfer.status === 'awaiting-wallet');
-      $('#wallet-count').textContent = assignedBots.length || '';
+      const passkeyWallets = walletEntries().filter((entry) => entry.wallet?.address);
+      const waiting = transfers.filter((transfer) =>
+        ['awaiting-wallet', 'awaiting-passkey-user-operation'].includes(transfer.status));
+      $('#wallet-count').textContent = passkeyWallets.length || '';
       $('#wallet-source').textContent = data['private-keys-stored?']
-        ? '秘密鍵を保存しています' : `${bots.length}個のBot Wallet · 外部署名`;
+        ? '秘密鍵を保存しています' : `${passkeyWallets.length}個のPasskey Smart Account`;
       $('#wallet-summary').replaceChildren(
-        make('span', null, String(bots.length)),
+        make('span', null, String(passkeyWallets.length)),
         make('span', null, String(activeAccounts.length)),
         make('span', null, String(waiting.length)));
 
-      if (!bots.some((bot) => bot.id === selectedWalletBotId)) {
-        selectedWalletBotId = bots[0]?.id || null;
+      const entries = walletEntries();
+      if (!entries.some((entry) => entry.id === selectedWalletBotId)) {
+        selectedWalletBotId = entries[0]?.id || null;
       }
       const selector = $('#wallet-bot-select'); selector.replaceChildren();
-      if (!bots.length) {
+      if (!entries.length) {
         const option = document.createElement('option'); option.value = '';
-        option.textContent = '先にBotを作成してください'; selector.append(option);
-      } else bots.forEach((bot) => {
-        const option = document.createElement('option'); option.value = bot.id;
-        option.textContent = bot.name; option.selected = bot.id === selectedWalletBotId;
+        option.textContent = 'Passkey Walletを準備中'; selector.append(option);
+      } else entries.forEach((entry) => {
+        const option = document.createElement('option'); option.value = entry.id;
+        option.textContent = entry.name; option.selected = entry.id === selectedWalletBotId;
         selector.append(option);
       });
 
-      const selected = selectedWalletBot();
-      const connected = Boolean(selected?.wallet?.['signer-connected?']);
-      const balanceHex = connected ? walletBalances.get(selected.wallet['link-id']) : null;
+      const selected = selectedWalletEntry();
+      const connected = Boolean(selected?.wallet?.address);
+      const sendReady = Boolean(!selected?.principal && selected?.wallet?.['user-operation-ready?']);
+      const balanceHex = connected
+        ? walletBalances.get(selected.wallet.address.toLowerCase()) : null;
       const balance = balanceHex ? `${weiToEth(BigInt(balanceHex))} ETH` : '— ETH';
-      $('#wallet-account-state').textContent = connected ? '署名接続済み' : '署名を接続';
+      $('#wallet-account-state').textContent = connected ? 'Passkey Wallet' : 'Passkeyが必要';
       $('#wallet-account-state').dataset.state = connected ? 'ready' : 'waiting';
-      $('#wallet-bot-name').textContent = selected?.name || 'Bot Wallet';
+      $('#wallet-bot-name').textContent = selected?.name || 'Passkey Wallet';
       botAvatar($('#wallet-bot-avatar'), selected?.avatar || {});
       $('#wallet-network').textContent = connected
-        ? `Chain ${selected.wallet['chain-id']}` : 'Ethereum';
+        ? `Chain ${selected.wallet['chain-id']} · ${selected.wallet['deployment-state'] === 'not-yet-deployed' ? '未展開' : '展開済み'}`
+        : 'Ethereum';
       $('#wallet-balance').textContent = balance;
       $('#wallet-asset-balance').textContent = balance;
       const addressButton = $('#wallet-address');
       addressButton.textContent = connected ? shortAddress(selected.wallet.address)
-        : '署名Walletを接続してください';
+        : 'Passkey Walletを準備中';
       addressButton.disabled = !connected;
       $('#wallet-receive').disabled = !connected;
-      $('#wallet-send').disabled = !connected;
-      $('#wallet-connect').querySelector('span:last-child').textContent = connected ? '署名変更' : '署名接続';
-      $('#wallet-send-bot').value = selected?.id || '';
+      $('#wallet-send').disabled = !sendReady;
+      $('#wallet-send').title = sendReady ? '' : 'Passkey UserOperation対応は次の段階です';
+      $('#wallet-connect').querySelector('span:last-child').textContent = '他のWallet';
+      $('#wallet-send-bot').value = selected?.principal ? '' : (selected?.id || '');
 
       const transferList = $('#wallet-transfer-list'); transferList.replaceChildren();
       const selectedTransfers = transfers.filter((transfer) => transfer['bot-id'] === selected?.id);
@@ -11487,7 +11498,9 @@
         body.append(make('p', 'data-list__title', `${weiToEth(transfer['value-wei'])} ETH`),
           make('p', 'data-list__meta wallet-address', `${shortAddress(transfer.from)} → ${shortAddress(transfer.to)}`),
           make('p', 'data-list__meta', transfer.status === 'submitted'
-            ? `送信済み · ${shortAddress(transfer['tx-hash'])}` : '外部Walletの署名待ち'));
+            ? `送信済み · ${shortAddress(transfer['tx-hash'])}`
+            : transfer.status === 'awaiting-passkey-user-operation'
+              ? 'Passkey UserOperation対応待ち' : '外部Walletの署名待ち'));
         row.append(body);
         if (transfer.status === 'awaiting-wallet') {
           const submit = make('button', 'primary-action', '外部Walletで確認'); submit.type = 'button';
@@ -11518,7 +11531,7 @@
     });
     renderWalletProviders();
     const copySelectedWalletAddress = async () => {
-      const address = selectedWalletBot()?.wallet?.address;
+      const address = selectedWalletEntry()?.wallet?.address;
       if (!address) return;
       await navigator.clipboard.writeText(address);
       $('#wallet-connect-status').textContent = '受取アドレスをコピーしました。';
@@ -11565,15 +11578,17 @@
     };
     $('#wallet-connect').addEventListener('click', async () => {
       const button = $('#wallet-connect'); const status = $('#wallet-connect-status');
-      const botId = selectedWalletBotId;
-      if (!botId) { status.textContent = '先にBotを作成してください。'; return; }
-      button.disabled = true; status.textContent = 'Walletへ接続しています…';
+      button.disabled = true; status.textContent = '任意の外部WalletをPrincipalへリンクしています…';
       try {
         if (!selectedInjectedWallet()?.request) {
-          const opened = await postJSON('/api/wallet/open', {}, true);
-          status.textContent = opened['opened-externally?']
-            ? 'Wallet拡張のある既定ブラウザでWallet画面を開きました。'
-            : `既定ブラウザで ${opened.url} を開いてください。`;
+          if (nativeSurface()) {
+            const opened = await postJSON('/api/wallet/open', {}, true);
+            status.textContent = opened['opened-externally?']
+              ? 'Wallet拡張のある既定ブラウザでWallet画面を開きました。'
+              : `既定ブラウザで ${opened.url} を開いてください。`;
+          } else {
+            status.textContent = 'このブラウザに外部Wallet拡張はありません。Passkey Walletはそのまま利用できます。';
+          }
           return;
         }
         const provider = requireInjectedWallet();
@@ -11591,9 +11606,7 @@
           link = await postJSON('/api/wallet/connect/finish',
             {'transaction-id':challenge.id, signature}, true);
         }
-        await postJSON(`/api/wallet/bots/${encodeURIComponent(botId)}/assign`,
-          {'link-id':link.id}, true);
-        status.textContent = '所有証明を確認し、このBot Walletへ署名権限を接続しました。';
+        status.textContent = '所有証明を確認し、外部WalletをPrincipalへ任意リンクしました。';
         await loadWallet();
       } catch (error) { status.textContent = error.message; }
       finally { button.disabled = false; }
@@ -11605,7 +11618,7 @@
         await postJSON('/api/wallet/transfers', {
           'bot-id':fields['bot-id'], to:fields.to, 'value-wei':ethToWei(fields.amount)
         }, true);
-        status.textContent = '送金提案を記録しました。内容を確認して外部Walletで署名してください。';
+        status.textContent = '送金提案を記録しました。Passkey UserOperation対応後に確認できます。';
         event.currentTarget.reset(); $('#wallet-send-drawer').hidden = true;
         selectWalletTab('activity'); await loadWallet();
       } catch (error) { status.textContent = error.message; }

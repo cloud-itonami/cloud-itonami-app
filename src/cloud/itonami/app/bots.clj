@@ -822,9 +822,9 @@
     (bot/->performer b)
     (store-bot! b)
     ;; A Wallet is part of Bot identity, not an optional account chosen later.
-    ;; This provisions only the durable container; an external signer still
-    ;; requires the person's explicit SIWE connection before funds can move.
-    (wallet/provision-bot! session b)
+    ;; Its public address is derived from the owner's Passkey immediately;
+    ;; external wallets are optional Principal links and never replace it.
+    (wallet/provision-bot! configuration session b)
     ;; Provisioning is deliberately best-effort at creation. The durable Bot
     ;; and its address do not disappear because a laptop is offline; overview
     ;; reports whether the relay has a concrete destination yet.

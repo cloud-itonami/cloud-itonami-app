@@ -3951,9 +3951,13 @@
                   request (read-json exchange)]
               (require-origin! exchange config)
               (require-csrf! exchange session)
-              (send! exchange 201
-                     (identity/finish-passkey-registration!
-                      session (:transaction-id request) (:credential request))))
+              (let [result (identity/finish-passkey-registration!
+                            session (:transaction-id request) (:credential request))]
+                ;; Registration yields both the login credential and its
+                ;; Passkey-owned counterfactual Wallet. No injected wallet is
+                ;; required for this account creation step.
+                (wallet/ensure-principal-account! config session)
+                (send! exchange 201 result)))
 
             (and (= method "POST") (= path "/api/passkeys/enroll/start"))
             (let [request (read-json exchange)]
@@ -3968,7 +3972,9 @@
                   result (do
                            (require-origin! exchange config)
                            (identity/finish-enrollment!
-                            (:transaction-id request) (:credential request)))]
+                            (:transaction-id request) (:credential request)))
+                  enrolled-session (identity/session (:token result))]
+              (wallet/ensure-principal-account! config enrolled-session)
               (send! exchange 201
                      (identity/public-state (:token result))
                      {"Set-Cookie" (session-cookie (:token result))}))
@@ -6248,12 +6254,23 @@
 
 (defn- handle-wallet!
   "The human-controlled Wallet surface. Bots can propose through their local
-  tools, but connecting an account, assigning it, and recording the external
-  Wallet's transaction hash remain on a Passkey browser session."
+  tools. The Passkey owns the default Smart Accounts; linking an external
+  chain account and legacy transaction receipts remain optional operations on
+  a Passkey-authenticated human session."
   [config exchange method path]
   (let [session (require-human-session! exchange)
-        overview #(wallet/snapshot config session
-                                   (:bots (bots/overview config session)))]
+        overview #(let [visible (:bots (bots/overview config session))
+                        ;; `bots/overview` deliberately omits owner/tenant from
+                        ;; its wire projection. Wallet migration must not infer
+                        ;; those authority fields from a visible row, so resolve
+                        ;; each through the same owned! gate as explicit Wallet
+                        ;; writes before handing it to provision-bot!.
+                        principals (mapv (fn [bot]
+                                           (merge bot
+                                                  (bots/wallet-principal
+                                                   session (:id bot))))
+                                         visible)]
+                    (wallet/snapshot config session principals))]
     (cond
       (and (= method "GET") (= path "/api/wallet"))
       (do (require-human-session! exchange)
