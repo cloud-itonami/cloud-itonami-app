@@ -3294,6 +3294,66 @@
       (is (not (contains? turn :turn/model))
           "no model answered, and saying one did is the worse kind of wrong"))))
 
+(deftest an-invalid-tool-call-says-which-tool-and-what-it-sent
+  ;; `parse-arguments` keeps the offending string on purpose -- its docstring
+  ;; names the defect it exists for: status kept, body discarded. Then
+  ;; `error-message` dropped it again one layer up, destructuring :response and
+  ;; nothing else.
+  ;;
+  ;; Measured 2026-08-28: :provider/invalid-tool-arguments was every failed turn
+  ;; in the window after the attribution deploy, and 138 all told. Not one
+  ;; recorded which tool was mis-called or what the arguments were. Both had
+  ;; been in the ex-data the whole time.
+  (let [extract (ns-resolve 'cloud.itonami.app.bots 'error-message)]
+    (testing "the tool and the arguments both reach the message"
+      (let [m ((deref extract)
+               (ex-info "model returned invalid tool arguments"
+                        {:type :provider/invalid-tool-arguments
+                         :tool-name "workspace_write_file"
+                         :arguments-length 61
+                         :arguments-sample "{\"path\": \"a.txt\", \"content\": unquoted}"}))]
+        (is (str/includes? m "model returned invalid tool arguments"))
+        (is (str/includes? m "tool workspace_write_file")
+            "which tool the model mis-called")
+        (is (str/includes? m "unquoted")
+            "and what it actually sent, which is the part a probe could not reproduce")))
+
+    (testing "valid JSON of the wrong shape says what shape"
+      (let [m ((deref extract)
+               (ex-info "model returned tool arguments that are not an object"
+                        {:type :provider/invalid-tool-arguments
+                         :tool-name "goal_plan"
+                         :arguments-kind "array"
+                         :arguments-sample "[1, 2, 3]"}))]
+        (is (str/includes? m "tool goal_plan"))
+        (is (str/includes? m "arguments were a array"))))
+
+    (testing "the sample is bounded and single-line, like every other detail here"
+      (let [m ((deref extract)
+               (ex-info "model returned invalid tool arguments"
+                        {:type :provider/invalid-tool-arguments
+                         :tool-name "t"
+                         :arguments-sample (str "{\n" (apply str (repeat 900 "x")) "}")}))]
+        (is (<= (count m) 300) "the whole message stays inside its bound")
+        (is (not (str/includes? m "\n")) "one line, because a record the UI reads")))
+
+    (testing "an error with none of this is unchanged"
+      (is (= "boom" ((deref extract) (ex-info "boom" {:type :provider/timeout})))))))
+
+(deftest a-failed-goal-turn-names-the-tool-when-there-is-one
+  (let [turn (bots/failed-goal-turn {:model "qwen3.8-27b-throughput-b70"}
+                                    {:error-type :provider/invalid-tool-arguments
+                                     :error-message "model returned invalid tool arguments"
+                                     :tool "workspace_write_file"
+                                     :at "2026-08-28T01:00:00.000000Z"})]
+    (is (= "workspace_write_file" (:turn/tool turn)))
+    (is (= "qwen3.8-27b-throughput-b70" (:turn/model turn))))
+  (testing "and leaves :turn/tool absent when the failure was not a tool call"
+    (let [turn (bots/failed-goal-turn {} {:error-type :provider/timeout
+                                          :at "2026-08-28T01:00:00.000000Z"})]
+      (is (not (contains? turn :turn/tool))
+          "absent, not nil -- record-turn! merges and a nil would erase"))))
+
 ;; ── an unclassified failure has to be identifiable ──────────────────────
 
 (deftest a-failure-records-what-threw-even-when-it-says-nothing

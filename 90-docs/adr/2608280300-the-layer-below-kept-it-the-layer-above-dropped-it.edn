@@ -1,0 +1,84 @@
+[{:db/id -1
+  :adr/id "adr-2608280300-the-layer-below-kept-it-the-layer-above-dropped-it"
+  :adr/title "The layer below kept it; the layer above dropped it again"
+  :adr/status "accepted"
+  :adr/date "2026-08-28"
+  :adr/body
+  "## What the attribution deploy immediately showed
+
+ADR-2608280200 で Goal 失敗に model / turn-count を載せた。deploy 後
+最初の 13 turn で、それまで見えなかったものが出た。
+
+| model | turns | 結果 |
+|---|---|---|
+| `qwen3.8-27b-throughput-b70` | 8 | **5 failed（全部 invalid-tool-arguments）** / 2 completed / 1 blocked |
+| `murakumo-main`（alias が自分を返すスロット） | 2 | 2 completed |
+
+失敗した 5 件は**全件が model・requested-model・turn-count を持っていた**
+（修正前は 273 件中 0 件）。attribution は本番で効いている。
+
+同じ窓で **timeout も http-error も 0 件**だった。因果は主張しない ——
+13 turn は小さすぎるし、fleet が健康なだけかもしれない。
+
+## A correction to yesterday
+
+私は `invalid-tool-arguments` を「現行の主要原因ではない」と読んだ。
+8/26 が 1 件、8/27 が 7 件だったからである。**間違いだった。**
+deploy 後の窓では失敗 5 件中 5 件がこれで、いま最も多い失敗である。
+
+日別の集計は、その日がどれだけ動いたかに依存する。**率で見るべき
+ところを件数で見た。**
+
+## The defect
+
+`provider/parse-arguments` は壊れた引数文字列を**意図的に保存している**。
+docstring がその理由と、直した欠陥の名前まで書いている ——
+*status kept, body discarded*。
+
+`bots/error-message` は、それを**1 層上でもう一度捨てていた。**
+`{:keys [status response]}` しか destructure していないので、
+`:arguments-sample` も `:arguments-length` も `:arguments-kind` も落ちる。
+
+さらに `:turn/tool` は turn の語彙に**既に在る**のに、138 件すべてで nil
+だった。`normalize-tool-calls` は tool 名を持っているが、
+`parse-arguments` はそれを受け取っていなかった。
+
+結果: **どの tool を、どう間違えて呼んだのか**が、いま最も多い失敗に
+ついてどこにも無い。
+
+## Decision
+
+1. `parse-arguments` は tool 名を受け取り、両方の throw 地点で
+   `:tool-name` を ex-data に載せる。**arity を増やさない** ——
+   1 引数版を残すと、次の呼び出し元が名前を落としても静かに通る。
+2. `error-message` は `tool <name>` / `arguments were a <kind>` /
+   `arguments: <sample>` を足す。既存の HTTP body と同じく**有界で 1 行**。
+3. `failed-goal-turn` は `:turn/tool` を載せる。tool 呼び出しでない失敗では
+   **キーごと出さない**（`record-turn!` は merge なので nil は上書きになる）。
+
+## What this deliberately does NOT do
+
+**引数の修復はしない。** `#166` / `unfenced` の立場は変えない ——
+曖昧さの無い malformation（markdown コードフェンス）だけ回復し、
+それ以外は失敗させる。理由は provider の docstring が持っている:
+*repairing a call the model got wrong is how a tool runs with something
+nobody asked for*。これらの引数はファイルを書き、commit を作れる。
+
+修復するかどうかは、**何が壊れているかを 1 日ぶん見てから**決める。
+いまはそれが見えるようになった状態であって、決定はまだ無い。
+
+## A lead, not a conclusion
+
+alias の 2 つのスロットで tool 呼び出しの成否が偏っている可能性がある
+（b70 側 8 turn 中 5 失敗、echo 側 2 turn 中 0 失敗）。**8 対 2 で結論は
+出ない。** `:turn/model` が入ったので、次はこれを日単位で数えられる。
+
+## Verification
+
+- `clojure -M:test`: 1,998 tests / 11,768 assertions / 0 failures。
+- `error-message` から 3 つの detail を外すと、新テストの 4 assertion が
+  赤くなることを確認した。
+- `parse-arguments` の arity 変更で既存テストが 1 本落ちたので、新しい
+  arity に更新し、tool 名が**両方の throw 地点**で ex-data に届くことを
+  そこで assert した。
+"}]

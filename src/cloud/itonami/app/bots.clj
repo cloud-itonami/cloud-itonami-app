@@ -152,7 +152,8 @@
   unbounded text. `nil` when there is nothing to say, so a reader can tell
   'no message' from an empty one."
   [error]
-  (let [{:keys [status response]} (ex-data error)
+  (let [{:keys [status response tool-name arguments-kind arguments-sample]}
+        (ex-data error)
         ;; The provider layer throws with :status, :url and :response, and this
         ;; kept only (.getMessage), so every HTTP failure was stored as the same
         ;; nine words -- "model provider request failed" -- while the answer sat
@@ -168,7 +169,26 @@
                            (str/replace #"\s+" " ")
                            str/trim)]
                  (not-empty (subs t 0 (min 120 (count t))))))
-        parts (remove nil? [(when status (str "HTTP " status)) body])
+        ;; `parse-arguments` goes to some trouble to KEEP the offending string
+        ;; -- its docstring says why, and names the defect: status kept, body
+        ;; discarded. Then this function dropped it again, one layer up,
+        ;; because it destructured `:response` and nothing else.
+        ;;
+        ;; Measured 2026-08-28: `:provider/invalid-tool-arguments` is the most
+        ;; common live failure -- every failed turn in the window after the
+        ;; attribution deploy, and 138 all told -- and not one recorded WHICH
+        ;; tool was mis-called or WHAT the arguments were. Both were in the
+        ;; ex-data the whole time.
+        one-line (fn [v limit]
+                   (let [t (-> (str v) (str/replace #"\s+" " ") str/trim)]
+                     (not-empty (subs t 0 (min limit (count t))))))
+        parts (remove nil? [(when status (str "HTTP " status))
+                            body
+                            (when tool-name (str "tool " tool-name))
+                            (when arguments-kind
+                              (str "arguments were a " arguments-kind))
+                            (when-let [sample (one-line arguments-sample 160)]
+                              (str "arguments: " sample))])
         detail (when (seq parts) (str/join " " parts))]
     (some-> (.getMessage ^Exception error)
             str/split-lines
@@ -2498,14 +2518,18 @@
   Pure, and separate from the catch block it is used in, because what a failure
   RECORDS is the part that has been wrong -- and a catch block needs a provider,
   a model and a running fleet before anyone can look at it."
-  [run {:keys [error-type error-status error-message at]}]
-  (merge (run-attribution run)
-         {:turn/state :failed
-          :turn/phase :failed
-          :turn/finished-at at
-          :turn/error-type error-type
-          :turn/error-status error-status
-          :turn/error-message error-message}))
+  [run {:keys [error-type error-status error-message tool at]}]
+  (cond-> (merge (run-attribution run)
+                 {:turn/state :failed
+                  :turn/phase :failed
+                  :turn/finished-at at
+                  :turn/error-type error-type
+                  :turn/error-status error-status
+                  :turn/error-message error-message})
+    ;; `:turn/tool` is already in this record's vocabulary and was nil for
+    ;; every one of the 138 invalid-argument failures. The name is in the
+    ;; error; nothing carried it across.
+    tool (assoc :turn/tool tool)))
 
 (defn- record-turn!
   "Upsert one bounded, durable lifecycle record for a visible Bot turn.
@@ -4579,6 +4603,7 @@
                            {:error-type error-type
                             :error-status error-status
                             :error-message (error-message error)
+                            :tool (:tool-name (ex-data error))
                             :at (store/now)})))
           (append-goal-event! run-id :run/failed
                               {:error-type (or (:type (ex-data error)) :internal-error)

@@ -487,30 +487,42 @@
   ;; failures. The reason was in the value the error dropped.
   (let [parse (private-fn 'parse-arguments)]
     (testing "the offending string survives into ex-data"
-      (let [error (try (parse "{\"path\":\"REA")
+      (let [error (try (parse "workspace_write_file" "{\"path\":\"REA")
                        (catch clojure.lang.ExceptionInfo e e))]
         (is (= :provider/invalid-tool-arguments (:type (ex-data error))))
         (is (= "{\"path\":\"REA" (:arguments-sample (ex-data error))))
         (is (= 12 (:arguments-length (ex-data error))))))
 
+    (testing "and so does the name of the tool that was mis-called"
+      ;; Measured 2026-08-28: this became the most common live failure, and
+      ;; `:turn/tool` was nil for all 138 of them. The caller knew the name;
+      ;; this function had not asked for it.
+      (let [error (try (parse "workspace_write_file" "{\"path\":\"REA")
+                       (catch clojure.lang.ExceptionInfo e e))]
+        (is (= "workspace_write_file" (:tool-name (ex-data error)))))
+      (let [error (try (parse "goal_plan" "[\"Osaka\"]")
+                       (catch clojure.lang.ExceptionInfo e e))]
+        (is (= "goal_plan" (:tool-name (ex-data error)))
+            "on the wrong-shape path too, which is a different throw site")))
+
     (testing "valid JSON of the wrong shape is refused, not silently emptied"
       ;; A bare array parsed fine before and became the tool's arguments, so
       ;; every (:key args) lookup answered nil and the tool ran with none.
       (doseq [value ["[\"Osaka\"]" "\"Osaka\"" "42"]]
-        (let [error (try (parse value)
+        (let [error (try (parse "some_tool" value)
                          (catch clojure.lang.ExceptionInfo e e))]
           (is (= :provider/invalid-tool-arguments (:type (ex-data error)))
               (str value " must be refused"))
           (is (= value (:arguments-sample (ex-data error)))))))
 
     (testing "a markdown fence is decoration, not malformation"
-      (is (= {:city "Kyoto"} (parse "```json\n{\"city\":\"Kyoto\"}\n```")))
-      (is (= {:city "Nara"} (parse "```\n{\"city\":\"Nara\"}\n```"))))
+      (is (= {:city "Kyoto"} (parse "some_tool" "```json\n{\"city\":\"Kyoto\"}\n```")))
+      (is (= {:city "Nara"} (parse "some_tool" "```\n{\"city\":\"Nara\"}\n```"))))
 
     (testing "what already worked keeps working"
-      (is (= {:city "Osaka"} (parse "{\"city\":\"Osaka\"}")))
-      (is (= {:city "Osaka"} (parse {:city "Osaka"})))
-      (is (= {} (parse ""))))))
+      (is (= {:city "Osaka"} (parse "some_tool" "{\"city\":\"Osaka\"}")))
+      (is (= {:city "Osaka"} (parse "some_tool" {:city "Osaka"})))
+      (is (= {} (parse "some_tool" ""))))))
 ;; ── a slow model and a broken host are different problems ───────────────
 ;;
 ;; `java.net.http` throws `HttpTimeoutException` with no ex-data, so every
