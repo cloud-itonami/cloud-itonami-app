@@ -213,12 +213,16 @@
   .local-card+.local-card{margin-top:1rem}
   .wallet-workspace{max-width:46rem;display:grid;gap:1rem}
   .wallet-accountbar{display:flex;align-items:center;justify-content:space-between;gap:.75rem;
+    flex-wrap:wrap;
     padding:.75rem 1rem;border:1px solid var(--color-neutral-solid-gray-200);border-radius:.75rem;
     background:var(--color-neutral-white)}
   .wallet-accountbar select{min-width:0;flex:1;border:0;background:transparent;font:inherit;
     font-weight:700;color:var(--color-neutral-solid-gray-900)}
   .wallet-accountbar select:focus-visible{outline:4px solid var(--color-primitive-yellow-300);
     outline-offset:2px;border-radius:.25rem}
+  .wallet-provider-picker{display:flex;align-items:center;gap:.5rem;min-width:min(100%,16rem);
+    color:var(--color-neutral-solid-gray-600);font-size:.75rem;white-space:nowrap}
+  .wallet-provider-picker select{color:var(--color-neutral-solid-gray-900);font-size:.875rem}
   .wallet-hero{display:grid;justify-items:center;gap:.75rem;padding:2rem 1.25rem;
     border:1px solid var(--color-neutral-solid-gray-200);border-radius:1rem;
     background:var(--color-neutral-white);text-align:center}
@@ -1771,6 +1775,16 @@
         [:button {:class "primary-action" :id "comment-send" :type "submit"}
          "Bot に送る"]]]])
 
+(defn- wallet-accountbar []
+  [:div {:class "wallet-accountbar"}
+   [:label {:class "visually-hidden" :for "wallet-bot-select"} "表示するBot Wallet"]
+   [:select {:id "wallet-bot-select" :aria-label "表示するBot Wallet"}]
+   [:label {:class "wallet-provider-picker" :for "wallet-provider-select"}
+    [:span "署名Wallet"]
+    [:select {:id "wallet-provider-select" :aria-label "署名に使うWallet"}
+     [:option {:value ""} "Walletを検出中…"]]]
+   [:span {:class "state-chip" :id "wallet-account-state"} "準備中"]])
+
 (defn page-html [configuration]
   (let [cloud? (get-in configuration [:routing :cloud-enabled?])
         provider (get-in configuration [:routing :default-provider])
@@ -2231,10 +2245,7 @@
          (view-header "Wallet"
                       "Botを作ると専用Walletも自動で生まれます。受取・送金提案・履歴をBot単位で管理します。")
          [:div {:class "wallet-workspace"}
-          [:div {:class "wallet-accountbar"}
-           [:label {:class "visually-hidden" :for "wallet-bot-select"} "表示するBot Wallet"]
-           [:select {:id "wallet-bot-select" :aria-label "表示するBot Wallet"}]
-           [:span {:class "state-chip" :id "wallet-account-state"} "準備中"]]
+          (wallet-accountbar)
           [:article {:class "wallet-hero" :id "wallet-hero" :aria-live "polite"}
            [:div {:class "wallet-hero__identity"}
             [:span {:class "bot-avatar" :id "wallet-bot-avatar" :aria-hidden "true"}]
@@ -2289,7 +2300,7 @@
           [:div {:class "wallet-safety"}
            [:span {:aria-hidden "true"} "🔒"]
            [:p [:strong "秘密鍵はCloud Itonamiに保存しません。"]
-            " Botは送金内容を提案し、最終署名はMetaMaskなどの外部Walletで確認します。"]]
+            " Botは送金内容を提案し、最終署名はMetaMaskやCoinbase Walletなどの外部Walletで確認します。"]]
           [:p {:class "source-note"} [:span {:class "source-dot"}]
            [:span {:id "wallet-source"} "Walletを確認中…"]]
           [:ul {:class "visually-hidden" :id "wallet-account-list"}]
