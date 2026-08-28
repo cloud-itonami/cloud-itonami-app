@@ -24,6 +24,12 @@
 (def p256-public-key-b64
   (.encodeToString (.withoutPadding (Base64/getUrlEncoder))
                    (eth/hex->bytes (str "04" p256-owner-hex))))
+(def second-p256-owner-hex
+  (str "7cf27b188d034f7e8a52380304b51ac3c08969e277f21b35a60b48fc47669978"
+       "07775510db8ed040293d9ac69f7430dbba7dade63ce982299e04b79d227873d1"))
+(def second-p256-public-key-b64
+  (.encodeToString (.withoutPadding (Base64/getUrlEncoder))
+                   (eth/hex->bytes (str "04" second-p256-owner-hex))))
 
 (defn- refuses [f]
   (try (f) nil (catch clojure.lang.ExceptionInfo error (:type (ex-data error)))))
@@ -76,6 +82,34 @@
         (is (= :counterfactual (:status ethereum)))
         (is (false? (:private-key-stored? ethereum)))
         (is (false? (:user-operation-ready? ethereum)))))))
+
+(deftest rp-scoped-passkeys-share-a-principal-without-silently-sharing-authority
+  (with-wallet-store
+    (fn []
+      (let [configuration {:server {:webauthn-rp-id "localhost"
+                                    :public-origin "http://localhost:1338"}}
+            initial (wallet/ensure-principal-account! configuration alice)
+            address-before (:address initial)]
+        (store/transact!
+         assoc-in [:identity :passkeys "cred-kotobase"]
+         {:id "cred-kotobase" :credential-id "cred-kotobase"
+          :user-id "alice" :public-key-b64 second-p256-public-key-b64
+          :user-verified? true :rp-id "kotobase.net"
+          :registration-origin "https://auth.kotobase.net"
+          :created-at "2026-08-28T00:01:00Z"})
+        (let [snapshot (wallet/snapshot configuration alice [])
+              account (:principal-account snapshot)
+              candidates (:owner-candidates account)
+              plan (wallet/plan-owner-addition
+                    configuration alice "cred-kotobase")]
+          (is (= address-before (:address account))
+              "registering a second RP controller never moves the account")
+          (is (= [:initial-owner :requires-add-owner-user-operation]
+                 (mapv :owner-state candidates)))
+          (is (= ["localhost" "kotobase.net"] (mapv :rp-id candidates)))
+          (is (= :awaiting-current-owner-authorization (:status plan)))
+          (is (= "kotobase.net" (get-in plan [:candidate-owner :rp-id])))
+          (is (false? (:user-operation-ready? plan))))))))
 
 (deftest siwe-connects-a-public-account-without-custody
   (with-wallet-store

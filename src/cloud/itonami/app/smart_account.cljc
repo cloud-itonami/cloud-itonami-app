@@ -20,9 +20,13 @@
                    [java.security MessageDigest])))
 
 (def schema "cloud.itonami.app.smart-account.v1")
+(def owner-binding-schema "cloud.itonami.app.smart-account.owner-binding.v1")
+(def owner-change-schema "cloud.itonami.app.smart-account.owner-change.v1")
 (def canonical-factory "0xBA5ED110eFDBa3D005bfC882d75358ACBbB85842")
 (def canonical-implementation "0x00000110dCdEdC9581cb5eCB8467282f2926534d")
 (def factory-version "1.1")
+(def add-owner-public-key-selector "29565e3b")
+(def execute-without-chain-id-validation-selector "2c2abd1e")
 
 (def ^:private erc1967-prefix "603d3d8160223d3973")
 (def ^:private erc1967-suffix
@@ -152,11 +156,62 @@
    #?(:clj (.digest (MessageDigest/getInstance "SHA-256") bytes)
       :cljs (sha256/digest bytes))))
 
+(defn owner-binding
+  "Describe one RP-scoped Passkey controller without exposing a secret.
+
+  A WebAuthn key is never domain-independent: `rp-id` is part of its security
+  boundary. The Principal and Smart Account remain independent of that RP,
+  while this binding records where the controller can actually be exercised.
+  Legacy records may not carry RP provenance; the current host configuration
+  is used only as an explicit migration fallback and is marked as inferred."
+  [configuration credential]
+  (let [stored-rp-id (some-> (:rp-id credential) str not-empty)
+        fallback-rp-id (some-> (get-in configuration [:server :webauthn-rp-id])
+                               str not-empty)
+        rp-id (or stored-rp-id fallback-rp-id)
+        stored-origins (->> (concat (or (:origins credential) [])
+                                    [(:registration-origin credential)
+                                     (:origin credential)])
+                            (keep #(some-> % str not-empty))
+                            distinct
+                            vec)
+        fallback-origin (some-> (get-in configuration [:server :public-origin])
+                                str not-empty)
+        origins (if (seq stored-origins)
+                  stored-origins
+                  (cond-> [] fallback-origin (conj fallback-origin)))
+        public-key (owner-public-key credential)]
+    {:schema owner-binding-schema
+     :kind :webauthn-p256
+     :credential-id (:credential-id credential)
+     :public-key-sha256 (sha256-hex public-key)
+     :rp-id rp-id
+     :origins origins
+     :rp-binding :required
+     :rp-provenance (if stored-rp-id :recorded :host-inferred)
+     :private-key-stored? false}))
+
+(defn add-owner-public-key-calldata
+  "ABI calldata for MultiOwnable.addOwnerPublicKey(bytes32,bytes32)."
+  [credential]
+  (let [owner (vec (owner-public-key credential))
+        x (str "0x" (eth/bytes->hex (bytes-of (take 32 owner))))
+        y (str "0x" (eth/bytes->hex (bytes-of (drop 32 owner))))]
+    (abi/encode-call-hex add-owner-public-key-selector
+                         ["bytes32" "bytes32"] [x y])))
+
+(defn cross-chain-owner-update-calldata
+  "Wrap one owner-management call in the Smart Wallet 1.1 replay-safe entry."
+  [inner-calldata]
+  (abi/encode-call-hex execute-without-chain-id-validation-selector
+                       ["bytes[]"] [[inner-calldata]]))
+
 (defn settings [configuration]
   (merge {:factory-address canonical-factory
           :implementation-address canonical-implementation
           :factory-version factory-version
           :factory-family "coinbase-smart-wallet"
+          :owner-management-abi "coinbase-smart-wallet-v1"
           :entry-point-version "0.6"}
          (get-in configuration [:wallet :smart-account])))
 
@@ -164,8 +219,10 @@
   "Build the durable, secret-free descriptor for one Principal wallet scope."
   [configuration principal-id credential scope scope-id]
   (let [{:keys [factory-address implementation-address factory-version
-                factory-family entry-point-version]} (settings configuration)
+                factory-family owner-management-abi entry-point-version]}
+        (settings configuration)
         owner (owner-public-key credential)
+        binding (owner-binding configuration credential)
         nonce (account-nonce principal-id scope scope-id)
         address (counterfactual-address
                  {:factory-address factory-address
@@ -185,13 +242,59 @@
      :scope scope
      :scope-id (str scope-id)
      :owner-kind :webauthn-p256
+     :owner-model :multi-rp-controller-set
+     :identity-root :principal-smart-account
      :initial-owner-credential-id (:credential-id credential)
      :owner-public-key-sha256 (sha256-hex owner)
+     :initial-owner binding
      :factory-address factory-address
      :implementation-address implementation-address
      :factory-version factory-version
      :factory-family factory-family
+     :owner-management-abi owner-management-abi
      :entry-point-version entry-point-version
      :nonce (str nonce)
      :private-key-stored? false
      :user-operation-ready? false}))
+
+(defn owner-addition-plan
+  "Build the unsigned cross-chain call for adding an RP-scoped Passkey owner.
+
+  The call is executable only after the current on-chain owner signs a complete
+  ERC-4337 UserOperation. This function neither mutates the descriptor nor
+  claims submission readiness."
+  [configuration descriptor credential]
+  (let [candidate (owner-binding configuration credential)
+        current-fingerprint (:owner-public-key-sha256 descriptor)
+        candidate-fingerprint (:public-key-sha256 candidate)
+        management-abi (or (:owner-management-abi descriptor)
+                           (:owner-management-abi (settings configuration)))]
+    (when-not (= "coinbase-smart-wallet-v1" management-abi)
+      (throw (ex-info "Configured Smart Account owner ABI is unsupported."
+                      {:type :smart-account/unsupported-owner-management-abi
+                       :owner-management-abi management-abi})))
+    (when (= current-fingerprint candidate-fingerprint)
+      (throw (ex-info "This Passkey is already the initial Smart Account owner."
+                      {:type :smart-account/owner-already-active
+                       :credential-id (:credential-id credential)})))
+    (let [inner (add-owner-public-key-calldata credential)
+          call-data (cross-chain-owner-update-calldata inner)]
+      {:schema owner-change-schema
+       :operation :add-webauthn-owner
+       :status :awaiting-current-owner-authorization
+       :principal-id (:principal-id descriptor)
+       :account (:address descriptor)
+       :candidate-owner candidate
+       :contract-call {:target (:address descriptor)
+                       :value "0"
+                       :function "executeWithoutChainIdValidation(bytes[])"
+                       :calldata call-data
+                       :inner-function "addOwnerPublicKey(bytes32,bytes32)"
+                       :inner-calldata inner}
+       :cross-chain-replayable? true
+       :current-owner-signature-required? true
+       :user-operation-ready? false
+       :blocked-by [:entry-point-nonce
+                    :current-owner-webauthn-signature
+                    :bundler-submission
+                    :chain-receipt-verification]})))

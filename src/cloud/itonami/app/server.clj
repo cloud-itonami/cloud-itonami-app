@@ -6291,6 +6291,15 @@
                  (wallet/start-connection! session (read-json exchange)
                                            (rp-id config) (origin config))))
 
+      (and (= method "POST") (= path "/api/wallet/owners/plan"))
+      (let [body (read-json exchange)]
+        (require-human-session! exchange)
+        (require-origin! exchange config)
+        (require-csrf! exchange session)
+        (send! exchange 200
+               (wallet/plan-owner-addition config session
+                                           (:credential-id body))))
+
       (and (= method "POST") (= path "/api/wallet/connect/finish"))
       (do (require-human-session! exchange)
           (require-origin! exchange config)
@@ -6381,6 +6390,10 @@
                      :wallet/already-assigned 409
                      :wallet/assigned 409
                      :wallet/inactive 409
+                     :wallet/passkey-required 409
+                     :wallet/owner-candidate-not-found 404
+                     :smart-account/owner-already-active 409
+                     :smart-account/unsupported-owner-management-abi 409
                      :wallet/transfer-state 409
                      400)
                    {:error {:type (name (or (:type (ex-data error))

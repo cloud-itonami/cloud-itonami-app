@@ -65,32 +65,39 @@ admits the explicit origins `itonami.cloud`, `auth.itonami.cloud` and
 RP ID `itonami.cloud`; the three apex `/.well-known/webauthn` endpoints return
 404 as of this decision update.
 
-Cross-product identity therefore uses centralized federation, not a wider
-WebAuthn origin set. Murakumo, Kotobase and the resident should redirect a
-human to `auth.itonami.cloud` with Authorization Code + PKCE, or consume a
-short-lived audience- and resource-bound assertion. A Smart Account operation
-digest that needs the owner signature returns to that central WebAuthn
-ceremony. Cookies, private keys and credential records are not copied between
-apex domains.
+Cross-product identity is the stable Principal plus its Smart Account, not the
+`itonami.cloud` credential. `auth.itonami.cloud` remains a convenient OAuth and
+step-up provider, but it is not the only identity root. Murakumo, Kotobase and
+the resident may register their own RP-scoped Passkeys and, after an existing
+owner authorizes it, add those public keys to the same Smart Account. Losing or
+moving one product domain therefore need not rename the Principal or account.
+Cookies, private keys and credential records are not copied between apex
+domains.
 
 WebAuthn Level 3 Related Origin Requests remain an explicit alternative, not
 the selected default. They would require `itonami.cloud/.well-known/webauthn`,
 one common RP ID in every ceremony and matching exact-origin verification on
 the server. That expands the set of sites able to invoke the credential; it is
-not justified while federation provides the same-Principal property with a
-smaller Passkey surface.
+not justified merely to make the Principal portable: the multi-RP owner set
+provides that property without choosing one product domain as the permanent
+root.
 
 A synced multi-device Passkey may present the exact same public key from a new
 device. Nearby-device/QR authentication may also use the old device without
 copying its private key. A separately created Passkey has a new public key and
 requires an explicit `addOwner` UserOperation before it can control an existing
-Smart Account. That owner-add/remove path, its receipt verification, guardians
-and delayed recovery are not implemented in this slice. Email or SSO can
+Smart Account. The current implementation records RP provenance, exposes owner
+candidates, and builds the exact unsigned replay-safe
+`addOwnerPublicKey(bytes32,bytes32)` call. Current-owner WebAuthn signing,
+bundler submission, receipt verification, owner removal, guardians and delayed
+recovery are not implemented in this slice. Email or SSO can
 recover a Principal session but cannot by itself recover the on-chain signing
 authority.
 
 The user and operator procedure, including the current per-domain matrix, is
 documented in [Passkey Smart Account: ドメイン共有・別端末・復旧](../passkey-smart-account.md).
+The portability boundary is normative in
+[ADR-0082](0082-webauthn-credentials-are-rp-scoped-smart-account-controllers.md).
 
 ## Current proof and boundary
 
@@ -114,10 +121,12 @@ deployment receipt and chain-specific factory-availability checks are landed.
 - A Bot has a receive/proposal account because it belongs to a Passkey
   Principal, not because an EOA was assigned later.
 - Account recovery is not implied by adding a login Passkey. Before on-chain
-  use, owner addition/removal and loss recovery must be implemented and tested
-  as explicit Smart Account operations.
+  use, owner-addition plans must progress through current-owner authorization,
+  submission and receipt verification; removal and loss recovery remain
+  explicit Smart Account operations.
 - The same Principal across products does not imply the same raw credential is
-  callable from every product origin. Federation is the default boundary.
+  callable from every product origin. RP-scoped controllers converge at the
+  Smart Account owner set; federation is an optional convenience.
 - A synced copy of the original credential preserves the owner key; a newly
   created credential does not.
 - The UI distinguishes a valid counterfactual receive address from an on-chain

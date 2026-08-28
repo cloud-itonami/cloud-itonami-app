@@ -65,13 +65,31 @@
 (defn- bot-field [bot public-key internal-key]
   (or (get bot public-key) (get bot internal-key)))
 
-(defn- initial-passkey [state user-id]
+(defn- verified-passkeys [state user-id]
   (->> (vals (get-in state [:identity :passkeys] {}))
        (filter #(and (= user-id (:user-id %))
                      (= true (:user-verified? %))
                      (or (:public-key-b64 %) (:public-key-cose %))))
        (sort-by (juxt #(or (:created-at %) "") :credential-id))
-       first))
+       vec))
+
+(defn- initial-passkey [state user-id]
+  (first (verified-passkeys state user-id)))
+
+(defn- descriptor-passkey [state user-id descriptor]
+  (or (get-in state [:identity :passkeys
+                     (:initial-owner-credential-id descriptor)])
+      (initial-passkey state user-id)))
+
+(defn- with-owner-provenance [configuration descriptor credential]
+  (if (and descriptor credential (nil? (:initial-owner descriptor)))
+    (assoc descriptor
+           :owner-model :multi-rp-controller-set
+           :identity-root :principal-smart-account
+           :owner-management-abi (or (:owner-management-abi descriptor)
+                                     "coinbase-smart-wallet-v1")
+           :initial-owner (smart-account/owner-binding configuration credential))
+    descriptor))
 
 (defn- supported-chains [configuration]
   (or (seq (get-in configuration [:wallet :chains]))
@@ -104,9 +122,15 @@
         principal-id (identity/session-principal-id session)
         path (when principal-id (principal-wallet-path principal-id))
         existing (when path (get-in state path))
-        credential (initial-passkey state (:user-id session))]
+        credential (if existing
+                     (descriptor-passkey state (:user-id session) existing)
+                     (initial-passkey state (:user-id session)))]
     (cond
-      existing (account-view configuration existing)
+      existing
+      (let [enriched (with-owner-provenance configuration existing credential)]
+        (when (not= existing enriched)
+          (store/transact! assoc-in path enriched))
+        (account-view configuration enriched))
       (or (nil? principal-id) (nil? credential)) nil
       :else
       (let [record (assoc (smart-account/descriptor
@@ -470,6 +494,35 @@
       (store/transact! assoc-in [:wallet :transfers transfer-id] submitted)
       submitted)))
 
+(defn owner-candidates
+  "Return every verified login Passkey and its on-chain owner state.
+
+  A second RP-scoped credential belongs to the same Principal but is not
+  silently promoted to Smart Account authority."
+  [configuration session descriptor]
+  (let [active-fingerprint (:owner-public-key-sha256 descriptor)]
+    (mapv (fn [credential]
+            (let [binding (smart-account/owner-binding configuration credential)]
+              (assoc binding :owner-state
+                     (if (= active-fingerprint (:public-key-sha256 binding))
+                       :initial-owner
+                       :requires-add-owner-user-operation))))
+          (verified-passkeys (store/snapshot) (:user-id session)))))
+
+(defn plan-owner-addition
+  "Return an unsigned add-owner call for a verified Passkey of this Principal."
+  [configuration session credential-id]
+  (let [account (ensure-principal-account! configuration session)
+        credential (get-in (store/snapshot) [:identity :passkeys credential-id])]
+    (when-not account
+      (refuse :wallet/passkey-required "Smart Accountの初期Passkeyがありません。"))
+    (when-not (and credential
+                   (= (:user-id session) (:user-id credential))
+                   (= true (:user-verified? credential)))
+      (refuse :wallet/owner-candidate-not-found
+              "追加対象の検証済みPasskeyが見つかりません。"))
+    (smart-account/owner-addition-plan configuration account credential)))
+
 (defn snapshot [configuration session bots]
   (let [{:keys [principal-account]}
         (ensure-smart-accounts! configuration session bots)
@@ -490,7 +543,11 @@
      :private-keys-stored? false
      :wallet-provider "WebAuthn P-256 / ERC-4337"
      :external-wallet-provider "EIP-6963 / EIP-1193 (optional)"
-     :principal-account principal-account
+     :principal-account (cond-> principal-account
+                          principal-account
+                          (assoc :owner-candidates
+                                 (owner-candidates configuration session
+                                                   principal-account)))
      :accounts mine
      :bots (mapv (fn [bot]
                    (let [assignment (get assignments (:id bot))
@@ -505,5 +562,6 @@
                  bots)
      :transfers transfers
      :capabilities {:receive true :propose-send true
-                    :sign-and-submit :passkey-user-operation-pending}
+                    :sign-and-submit :passkey-user-operation-pending
+                    :add-owner :current-owner-user-operation-pending}
      :supported-chains (vec (supported-chains configuration))}))
