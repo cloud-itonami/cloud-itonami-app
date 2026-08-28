@@ -53,6 +53,39 @@
            :rpc-url-env "CLOUD_ITONAMI_EVM_SEPOLIA_RPC_URL"
            :bundler-url-env "CLOUD_ITONAMI_ERC4337_SEPOLIA_BUNDLER_URL"})))))
 
+(deftest a-non-pimlico-bundler-falls-back-only-when-the-method-is-absent
+  (let [calls (atom [])
+        transport (fn [_endpoint request]
+                    (swap! calls conj (:method request))
+                    (if (= "pimlico_getUserOperationGasPrice"
+                           (:method request))
+                      {:jsonrpc "2.0" :id 1
+                       :error {:code -32601 :message "Method not found"}}
+                      {:jsonrpc "2.0" :id 1 :result "0x2a"}))
+        gas-fn (ns-resolve 'cloud.itonami.app.smart-account-userop
+                           'user-operation-gas-prices!)]
+    (binding [userop/*transport* transport]
+      (is (= {:maxFeePerGas "0x2a" :maxPriorityFeePerGas "0x2a"}
+             (gas-fn {:bundler-endpoint "http://127.0.0.1:4337"
+                      :node-endpoint "http://127.0.0.1:8545"})))
+      (is (= ["pimlico_getUserOperationGasPrice" "eth_gasPrice"] @calls)))))
+
+(deftest a-pimlico-gas-price-failure-does-not-silently-use-a-stale-node-price
+  (let [gas-fn (ns-resolve 'cloud.itonami.app.smart-account-userop
+                           'user-operation-gas-prices!)]
+    (binding [userop/*transport*
+              (fn [_endpoint request]
+                {:jsonrpc "2.0" :id 1
+                 :error {:code -32000 :message "gas oracle unavailable"
+                         :method (:method request)}})]
+      (try
+        (gas-fn {:bundler-endpoint "http://127.0.0.1:4337"
+                 :node-endpoint "http://127.0.0.1:8545"})
+        (is false "non-method-not-found failures must remain fail-closed")
+        (catch clojure.lang.ExceptionInfo error
+          (is (= :wallet/user-operation-rpc-error
+                 (:type (ex-data error)))))))))
+
 (deftest an-owner-record-keeps-the-rp-boundary-visible
   (let [binding (smart-account/owner-binding configuration candidate-credential)]
     (is (= :webauthn-p256 (:kind binding)))
@@ -221,6 +254,10 @@
                "eth_supportedEntryPoints" [smart-account/canonical-entry-point]
                "eth_getCode" (if (= (first params) (:address descriptor))
                                "0x" "0x60016000")
+               "pimlico_getUserOperationGasPrice"
+               {:slow {:maxFeePerGas "0x64" :maxPriorityFeePerGas "0x5"}
+                :standard {:maxFeePerGas "0x96" :maxPriorityFeePerGas "0x6"}
+                :fast {:maxFeePerGas "0xc8" :maxPriorityFeePerGas "0x7"}}
                "eth_gasPrice" "0x3b9aca00"
                "pm_sponsorUserOperation"
                {:paymasterAndData "0x1234"
@@ -249,6 +286,11 @@
         (is (= :awaiting-current-owner-authorization (:status prepared)))
         (is (= "0x1234"
                (get-in prepared [:user-operation :paymasterAndData])))
+        (is (= "0xc8" (get-in prepared [:user-operation :maxFeePerGas])))
+        (is (= "0x7"
+               (get-in prepared [:user-operation :maxPriorityFeePerGas])))
+        (is (not-any? #{"eth_gasPrice"} methods)
+            "Pimlico's current fast tier, not the node gas price, is signed")
         (is (< (.indexOf methods "pm_sponsorUserOperation")
                (.indexOf methods "eth_estimateUserOperationGas")))
         (is (= 1 (count (filter #{"eth_estimateUserOperationGas"} methods))))))))
@@ -283,6 +325,9 @@
                "eth_chainId" "0x1"
                "eth_supportedEntryPoints" [smart-account/canonical-entry-point]
                "eth_getCode" "0x60016000"
+               "pimlico_getUserOperationGasPrice"
+               {:fast {:maxFeePerGas "0x4f790d8a"
+                       :maxPriorityFeePerGas "0x12a05f2"}}
                "eth_gasPrice" "0x3b9aca00"
                "eth_estimateUserOperationGas"
                {:callGasLimit "0x186a0" :verificationGasLimit "0x30d40"
