@@ -263,10 +263,9 @@
   (let [auth-data (str "0x" (apply str (repeat 37 "00")))
         client-data "{\"type\":\"webauthn.get\",\"challenge\":\"AA\",\"origin\":\"https://invalid.example\"}"
         signature-data
-        (abi/encode-hex ["bytes" "string" "uint256" "uint256"
-                         "uint256" "uint256"]
-                        [auth-data client-data "23" "1" "1" "1"])]
-    (abi/encode-hex ["uint256" "bytes"] ["0" signature-data])))
+        (abi/encode-hex ["(bytes,string,uint256,uint256,uint256,uint256)"]
+                        [[auth-data client-data "23" "1" "1" "1"]])]
+    (abi/encode-hex ["(uint256,bytes)"] [["0" signature-data]])))
 
 (defn- merge-gas [operation estimate]
   (reduce (fn [op field]
@@ -465,13 +464,13 @@
               "clientDataJSONのtype/challenge位置を確認できません。"))
     (let [signature-data
           (abi/encode-hex
-           ["bytes" "string" "uint256" "uint256" "uint256" "uint256"]
-           [(str "0x" (eth/bytes->hex authenticator-data))
-            client-data-json (str challenge-index) (str type-index)
-            (str r) (str s)])]
+           ["(bytes,string,uint256,uint256,uint256,uint256)"]
+           [[(str "0x" (eth/bytes->hex authenticator-data))
+             client-data-json (str challenge-index) (str type-index)
+             (str r) (str s)]])]
       {:signature
-       (abi/encode-hex ["uint256" "bytes"]
-                       [(str (:current-owner-index operation)) signature-data])
+       (abi/encode-hex ["(uint256,bytes)"]
+                       [[(str (:current-owner-index operation)) signature-data]])
        :sign-count sign-count})))
 
 (defn submit!

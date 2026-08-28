@@ -74,6 +74,16 @@
         (is (zero? exit) (str source " does not parse under node " version ":\n" err))))
     (println "web-script-test: node is not on PATH, so the interaction layer was not parsed.")))
 
+(deftest passkey-owner-addition-is-distinguishable-and-single-flight
+  (let [js (slurp (io/file "resources/cloud/itonami/app/interaction.js"))]
+    (is (str/includes? js "candidate['public-key-sha256']")
+        "same-RP Passkeys have a visible fingerprint")
+    (is (str/includes? js "if (walletOwnerAuthorizationBusy) return;")
+        "a second owner ceremony cannot start while the first is active")
+    (is (str/includes? js
+                       "document.querySelectorAll('#wallet-owner-list button')")
+        "starting one ceremony disables every owner action")))
+
 (deftest encrypted-share-links-keep-the-one-time-key-in-the-url-fragment
   (let [js (slurp (io/file "resources/cloud/itonami/app/interaction.js"))]
     (is (str/includes? js "sessionStorage.setItem(fragmentStorageKey(data.token)"))
