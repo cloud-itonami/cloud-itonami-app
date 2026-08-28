@@ -154,9 +154,31 @@
   unbounded text. `nil` when there is nothing to say, so a reader can tell
   'no message' from an empty one."
   [error]
-  (let [{:keys [status response tool-name arguments-kind arguments-sample
+  ;; `status` and `response` are NOT destructured here: `main` moved them to
+  ;; explicit bindings below that also consult the cause's ex-data, because a
+  ;; fallback failure carries the outer types and the inner response. The two
+  ;; budget keys join that list rather than reinstating the old shape.
+  (let [{:keys [tool-name arguments-kind arguments-sample
+                requested-model fallback-model
+                primary-error-type fallback-error-type
                 max-output-tokens completion-tokens]}
         (ex-data error)
+        ;; `:provider/fallback-failed` (`with-model-fallback`) names both
+        ;; models and both error TYPES in its own ex-data, but the response
+        ;; BODY that says why the fallback also refused sits one level
+        ;; further down -- on the secondary exception it wraps as its cause
+        ;; (`ex-info`'s third argument, which `ex-data` does not reach).
+        ;; Falling back to the cause's own :status/:response when the outer
+        ;; exception has none lets the exact same extraction below answer
+        ;; both shapes. Measured 2026-08-28, first hours pinning a specific
+        ;; free model: every stored `:provider/fallback-failed` read the
+        ;; same nine words regardless of whether the fallback hit a rate
+        ;; limit, a context-window refusal, or something else -- the one
+        ;; failure this record exists to tell apart from "the pin mostly
+        ;; works."
+        cause-data (some-> (ex-cause error) ex-data)
+        status (or (:status (ex-data error)) (:status cause-data))
+        response (or (:response (ex-data error)) (:response cause-data))
         ;; The provider layer throws with :status, :url and :response, and this
         ;; kept only (.getMessage), so every HTTP failure was stored as the same
         ;; nine words -- "model provider request failed" -- while the answer sat
@@ -226,7 +248,15 @@
                               (str "budget " (or completion-tokens "?")
                                    "/" max-output-tokens " output tokens"))
                             (when-let [sample (one-line arguments-sample 160)]
-                              (str "arguments: " sample))])
+                              (str "arguments: " sample))
+                            ;; The FULL namespaced type, the same way
+                            ;; `resident-outcomes` keeps `:provider/timeout`
+                            ;; distinguishable from any other namespace's
+                            ;; timeout -- `name` alone would drop `provider/`
+                            ;; and reintroduce that exact defect here.
+                            (when fallback-model
+                              (str requested-model " (" (subs (str primary-error-type) 1)
+                                   ") -> " fallback-model " (" (subs (str fallback-error-type) 1) ")"))])
         detail (when (seq parts) (str/join " " parts))]
     (some-> (.getMessage ^Exception error)
             str/split-lines

@@ -3961,7 +3961,30 @@
                             {:type :provider/http-error :status 502
                              :response {:error {:message "Bad gateway"
                                                 :metadata {:raw "<html>502</html>"}}}}))]
-        (is (re-find #"Bad gateway" m))))))
+        (is (re-find #"Bad gateway" m))))
+    (testing "a fallback failure names both models and reads the SECOND response, not just the first"
+      ;; `with-model-fallback` puts :requested-model/:fallback-model/
+      ;; :primary-error-type/:fallback-error-type in its OWN ex-data, but the
+      ;; response body that says why the fallback ALSO refused is on the
+      ;; secondary exception it wraps as its cause -- ex-info's third
+      ;; argument, which ex-data does not reach. Measured 2026-08-28, first
+      ;; hours pinning a specific free model: every stored
+      ;; :provider/fallback-failed read the same nine words regardless of
+      ;; whether the fallback hit a rate limit or something else.
+      (let [secondary (ex-info "model provider request failed"
+                               {:type :provider/http-error :status 429
+                                :response {:error {:message "Rate limit exceeded"}}})
+            m (err (ex-info "model provider and explicit fallback both failed"
+                            {:type :provider/fallback-failed
+                             :requested-model "pinned/model:free"
+                             :fallback-model "openrouter/free"
+                             :primary-error-type :provider/http-error
+                             :fallback-error-type :provider/http-error}
+                            secondary))]
+        (is (re-find #"HTTP 429" m) "the SECONDARY response's status, not the primary's absent one")
+        (is (re-find #"Rate limit exceeded" m))
+        (is (re-find #"pinned/model:free \(provider/http-error\) -> openrouter/free \(provider/http-error\)" m)
+            "which model was asked, which one it fell back to, and why each refused")))))
 
 (deftest ordinary-turns-are-serialized-per-bot
   ;; A2A and the ordinary CLI endpoint both call `send!`, not `send-stream!`.
