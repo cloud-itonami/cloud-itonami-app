@@ -82,7 +82,14 @@
     :bundler-url-env "CLOUD_ITONAMI_ERC4337_BUNDLER_URL"
     ;; Optional ERC-4337 v0.6 sponsorship endpoint. When absent the Smart
     ;; Account pays its own gas from its deterministic address.
-    :paymaster-url-env "CLOUD_ITONAMI_ERC4337_PAYMASTER_URL"}]}
+    :paymaster-url-env "CLOUD_ITONAMI_ERC4337_PAYMASTER_URL"}
+   ;; Public-chain rehearsal before mainnet. The Coinbase Smart Wallet v1.1
+   ;; factory/implementation and EntryPoint v0.6 use the same deterministic
+   ;; addresses on Sepolia, but endpoints remain independently replaceable.
+   {:chain-id 11155111 :name "Ethereum Sepolia" :network "testnet"
+    :rpc-url-env "CLOUD_ITONAMI_EVM_SEPOLIA_RPC_URL"
+    :bundler-url-env "CLOUD_ITONAMI_ERC4337_SEPOLIA_BUNDLER_URL"
+    :paymaster-url-env "CLOUD_ITONAMI_ERC4337_SEPOLIA_PAYMASTER_URL"}]}
  ;; SECURITY FIRST (ADR-2608130100). `:cloud-enabled?` is the deployment-wide
  ;; egress switch: with it false, no provider that leaves this machine is
  ;; admitted no matter what it declares. It does NOT admit anything on its own —

@@ -36,6 +36,23 @@
   {:credential-id "cred-kotobase" :public-key-b64 (b64-point second-key)
    :rp-id "kotobase.net" :registration-origin "https://auth.kotobase.net"})
 
+(deftest chain-readiness-is-endpoint-based-not-provider-based
+  (binding [userop/*environment*
+            {"CLOUD_ITONAMI_EVM_SEPOLIA_RPC_URL" "https://rpc.example"
+             "CLOUD_ITONAMI_ERC4337_SEPOLIA_BUNDLER_URL"
+             "https://bundler.example"}]
+    (is (true?
+         (userop/configured-chain?
+          {:chain-id 11155111
+           :rpc-url-env "CLOUD_ITONAMI_EVM_SEPOLIA_RPC_URL"
+           :bundler-url-env "CLOUD_ITONAMI_ERC4337_SEPOLIA_BUNDLER_URL"}))))
+  (binding [userop/*environment* (constantly nil)]
+    (is (false?
+         (userop/configured-chain?
+          {:chain-id 11155111
+           :rpc-url-env "CLOUD_ITONAMI_EVM_SEPOLIA_RPC_URL"
+           :bundler-url-env "CLOUD_ITONAMI_ERC4337_SEPOLIA_BUNDLER_URL"})))))
+
 (deftest an-owner-record-keeps-the-rp-boundary-visible
   (let [binding (smart-account/owner-binding configuration candidate-credential)]
     (is (= :webauthn-p256 (:kind binding)))

@@ -67,6 +67,11 @@ This change lands the non-custodial owner-addition layer:
 - `/api/wallet/owners/operations/{id}/receipt` accepts success only when the
   ERC-7769 receipt coordinates match and `isOwnerPublicKey` independently
   observes the candidate. Assertion bytes and provider URLs are not persisted.
+- Ethereum Sepolia is a separate allowlisted rehearsal chain with independently
+  injected RPC, bundler and optional paymaster endpoints. Hosted infrastructure
+  is an adapter: the initial Pimlico v2 path uses only ERC-4337 JSON-RPC and can
+  be replaced by Alto or another conforming provider without changing the
+  Principal, Passkey records or deterministic Smart Account address.
 - Cloud Itonami issues a 120-second, target-bound assertion only to the
   allowlisted Kotobase or Murakumo authentication origin.
 - `auth.kotobase.net` and `auth.murakumo.cloud` run distinct WebAuthn RPs over
@@ -97,6 +102,10 @@ that UserOperation is signed, submitted and confirmed on each target chain.
 - A lost last owner remains unrecoverable until guardian or delayed recovery
   is implemented. Domain portability must not be presented as completed asset
   recovery before that gate lands.
+- EntryPoint v0.6 remains a compatibility boundary of Coinbase Smart Wallet
+  v1.1, not a permanent protocol choice. Provider support and a future account
+  migration to v0.7/v0.8 are tracked separately so infrastructure churn cannot
+  silently redefine identity.
 
 ## References
 
@@ -104,3 +113,6 @@ that UserOperation is signed, submitted and confirmed on each target chain.
 - [WebAuthn Level 3: related origins](https://www.w3.org/TR/webauthn-3/#sctn-related-origins)
 - [Coinbase Smart Wallet MultiOwnable](https://github.com/coinbase/smart-wallet/blob/main/src/MultiOwnable.sol)
 - [Coinbase Smart Wallet replay-safe owner updates](https://github.com/coinbase/smart-wallet/blob/main/src/CoinbaseSmartWallet.sol)
+- [Pimlico v2 bundler and paymaster reference](https://docs.pimlico.io/references/paymaster)
+- [Alchemy bundler EntryPoint support](https://www.alchemy.com/docs/wallets/reference/bundler-faqs)
+- [Coinbase CDP Paymaster network boundary](https://docs.cdp.coinbase.com/paymaster/faqs)
