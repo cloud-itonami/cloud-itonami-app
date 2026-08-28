@@ -252,6 +252,14 @@
      :bot/peers? (boolean (:bot/peers? value))
      :bot/coding? (boolean (:bot/coding? value))
      :bot/virtual-shell? (boolean (:bot/virtual-shell? value))
+     ;; Whether a new direct request should keep working until completion or a
+     ;; concrete blocker is recorded. This belongs to the Bot, not to the chat
+     ;; composer: changing threads must not silently change its work contract.
+     ;; Legacy coding Bots retain the old composer default on first load.
+     :bot/goal? (if (contains? value :bot/goal?)
+                  (boolean (:bot/goal? value))
+                  (boolean (or (:bot/coding? value)
+                               (:bot/virtual-shell? value))))
      ;; Standing delegation, intentionally independent of writes/tool reach.
      ;; It changes WHEN an already-admitted write runs, never WHAT is admitted.
      :bot/omakase? (boolean (:bot/omakase? value))

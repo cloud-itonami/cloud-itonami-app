@@ -45,7 +45,8 @@
                   {:provider provider :name "Google" :client-id nil
                    :client-secret nil :configured? false})]
     (identity/configure!
-     {:auth {:sso-providers [:google]
+     {:auth {:sso-enabled? true
+             :sso-providers [:google]
              :sso-clients {:google {:client-id "desktop-public-client"
                                     :public-client? true}}}})
     (let [config (identity/sso-provider-config :google)]
@@ -64,7 +65,8 @@
                   {:provider provider :name "GitHub" :client-id nil
                    :client-secret nil :configured? false})]
     (identity/configure!
-     {:auth {:sso-providers [:github]
+     {:auth {:sso-enabled? true
+             :sso-providers [:github]
              :sso-clients {:github {:client-id "public-looking-client"
                                     :public-client? true}}}})
     (is (false? (:configured? (identity/sso-provider-config :github))))))
@@ -344,8 +346,20 @@
   (identity/configure! {})
   (let [methods (identity/public-auth-methods)]
     (is (true? (get-in methods [:central :configured?])))
+    (is (empty? (:sso methods))
+        "provider SSO is opt-in; Passkey is the default product entrance")
     (is (= "https://auth.itonami.cloud" (get-in methods [:central :issuer])))
     ;; The /ja/ route: itonami.cloud is English-default multilingual and this
     ;; app's UI is Japanese, so the ceremony must not switch language mid-way.
     (is (= "https://itonami.cloud/ja/signin/"
            (get-in methods [:central :enrolment-url])))))
+
+(deftest provider-sso-needs-an-explicit-feature-switch
+  (testing "an older resident provider list cannot revive SSO by itself"
+    (identity/configure! {:auth {:sso-providers [:google]}})
+    (is (empty? (:sso (identity/public-auth-methods)))))
+  (testing "compatibility deployments must opt in independently"
+    (identity/configure! {:auth {:sso-enabled? true
+                                 :sso-providers [:google]}})
+    (is (= ["google"]
+           (mapv :id (:sso (identity/public-auth-methods)))))))

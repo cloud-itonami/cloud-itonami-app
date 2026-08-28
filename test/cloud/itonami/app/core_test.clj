@@ -330,7 +330,7 @@
       (is (re-find #"id=\"registration-form\"" html))
       (is (re-find #"id=\"passkey-gate-notice\"" html))
       (is (re-find #"パスキーでサインインしてください" html))
-      (is (re-find #"id=\"sso-signin-list\"" html))
+      (is (not (re-find #"id=\"sso-signin-list\"" html)))
       (is (re-find #"id=\"auth-methods-card\"" html))
       (is (re-find #"現在のOrganization" html))
       (is (re-find #"aria-label=\"Organization切替\"" html))

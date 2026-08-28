@@ -1,6 +1,6 @@
 # ADR-0045: the desktop sign-in ceremony matches app-auth
 
-**Status:** accepted — 2026-08-14
+**Status:** accepted — 2026-08-14, refined 2026-08-28
 
 ## Context
 
@@ -25,7 +25,7 @@ This desktop app addressed views as `#signin`. The hosted ceremony is an HTTPS W
 ## Decision
 
 1. **Ceremony UI authority is `app-auth`.** The unauthenticated desktop panel uses the same verbs and order: 「パスキーでサインイン」 (GET `/api/auth/itonami/start`, ADR-0042) and 「パスキーを作る」 (`https://itonami.cloud/signin/`). The hostname is not the verb.
-2. **Device-local Passkey, Email, SSO, and this-device register are recovery.** They live in a closed DADS accordion. An interrupted owner ceremony (`passkey-required?`) opens it. Organization invite stays a separate local flow — it is not hosted identity.
+2. **Device-local Passkey, Email, and this-device register are recovery.** They live in a closed DADS accordion. Provider SSO is not exposed by the default or `itonami` profile; its backend is compatibility-only and requires both `:sso-enabled? true` and an explicit provider list. The independent switch prevents an older resident provider list from reviving SSO after an upgrade. An interrupted owner ceremony (`passkey-required?`) opens the recovery accordion. Organization invite stays a separate local flow — it is not hosted identity.
 3. **Views are addressed as `#/name`.** Nav items are real links (`href="#/signin"`, `#/settings`, `#/chat`, …). `hashchange` applies them; `showView` writes the slash form. The legacy `#signin` form still resolves so old bookmarks and `/#bots` keep working. This is the kotoba-lang SPA fragment (kami-app-nle, ADR-2608080100), not a content hash — `kotoba.protocol.ref` refuses fragments as identity (ADR-2608145100).
 4. **Do not create `cloud-itonami-auth`.** Do not enrol on `app-auth`.
 5. **CID / IPNS identity of the auth and app *bundles* is not this slice.** `auth.itonami.cloud` and this desktop document remain HTTPS embed-urls (`:verifiable? false` in `kotoba.protocol.app/resolve-embed-url`). Workspace facts already go through kgraph. Publishing those two surfaces as `:kotoba.app/bundle-cid` is a later slice, on the repos that actually ship the bytes.

@@ -6,6 +6,7 @@
   — `advance!` and `run-tool!` — are behind the connection gate, and every test
   that would cross it redefines the seam instead."
   (:require [agent.run :as agent-run]
+            [clojure.data.json :as json]
             [clojure.java.io :as io]
             [clojure.string :as str]
             [clojure.test :refer [deftest is testing]]
@@ -173,6 +174,10 @@
           (is (true? (:bot/peers? created)))
           (is (true? (:bot/coding? created)))
           (is (false? (:bot/virtual-shell? created)))
+          (is (true? (:bot/goal? created)))
+          (is (true? (:goal? (first (:bots (bots/overview {} alice))))))
+          (bots/update! {} alice (:bot/id created) {:goal? false})
+          (is (false? (:goal? (first (:bots (bots/overview {} alice))))))
           (is (empty? (:bot/tools created))
               "autonomy does not silently grant an external connector"))))))
 
@@ -186,6 +191,15 @@
         (is (= "/chosen/repo"
                (:default-workspace
                 (bots/overview {:bots {:default-workspace "/chosen/repo"}} alice))))))))
+
+(deftest legacy-coding-bots-retain-the-former-goal-default
+  (with-store
+    (fn []
+      (let [created (make-bot alice {:coding? false})
+            bot-id (:bot/id created)]
+        (swap! store/state update-in [:bots :bots bot-id]
+               #(-> % (assoc :bot/coding? true) (dissoc :bot/goal?)))
+        (is (true? (:goal? (first (:bots (bots/overview {} alice))))))))))
 
 (deftest coding-bots-are-instructed-to-use-local-evidence-first
   (with-redefs [workspace-tools/orientation (constantly nil)]
@@ -3273,6 +3287,34 @@
       (is (= 2 (:turn/tool-count turn)))
       (is (= {:total_tokens 47590} (:turn/usage turn))))))
 
+(deftest a-goal-turn-records-what-it-asked-before-the-provider-can-refuse
+  ;; `a-goal-that-timed-out-says-which-model-and-how-far` proved
+  ;; `run-attribution`/`failed-goal-turn` already read :provider and
+  ;; :requested-model off `run` when present. The gap was one level up:
+  ;; `advance!` only ever wrote them onto `run` AFTER `provider/agent-turn`
+  ;; returned -- which is exactly the branch a :provider/http-error never
+  ;; reaches. `provider-choice!` resolves both BEFORE the call; this asserts
+  ;; they land in the store before the risky call, not only after it
+  ;; succeeds, so a failed goal turn is not the one case that stays unlabeled.
+  (with-store
+    (fn []
+      (let [b (make-bot alice {})
+            bot-id (:bot/id b)
+            advance! (ns-resolve 'cloud.itonami.app.bots 'advance!)]
+        (with-redefs [policy/select-provider
+                      (fn [_ _] {:id "openrouter" :default-model "openrouter/free"})
+                      provider/agent-turn
+                      (fn [_ _]
+                        (throw (ex-info "model provider request failed"
+                                        {:type :provider/http-error :status 400})))]
+          (is (thrown? clojure.lang.ExceptionInfo
+                       ((deref advance!) {} b {:id "goal-run-record-1" :goal? true
+                                               :messages [] :tools [] :turn-count 0})))
+          (let [run (get-in @store/state [:bots :runs bot-id])]
+            (is (= "openrouter" (:provider run)))
+            (is (= "openrouter/free" (:requested-model run))
+                "known before the call was ever made, so the failure does not erase it")))))))
+
 (deftest a-run-with-nothing-to-say-writes-nothing
   ;; The control. `record-turn!` merges these over whatever the turn already
   ;; holds, so writing nils would ERASE attribution an earlier write got right.
@@ -3887,7 +3929,39 @@
     (testing "a timeout is untouched -- it has no body to report"
       (let [m (err (ex-info "model provider timed out"
                             {:type :provider/timeout :timeout-seconds 120}))]
-        (is (= "model provider timed out" m))))))
+        (is (= "model provider timed out" m))))
+    (testing "an OpenAI-shaped :error map records its own message, not the whole map"
+      ;; Measured 2026-08-28, first hours on the OpenRouter free plan: every
+      ;; stored 400 read "... {:message \"Provider returned error\", :code
+      ;; 400, :metadata {:raw \"...\"" -- (str (:error response)) printing the
+      ;; whole map instead of reading :message out of it, same shape
+      ;; `provider-retry/body-error-type` already reads via
+      ;; `(get-in parsed [:error :type])`.
+      (let [m (err (ex-info "model provider request failed"
+                            {:type :provider/http-error :status 400
+                             :response {:error {:message "Provider returned error"
+                                                :code 400
+                                                :metadata {:raw "not json"}}}}))]
+        (is (re-find #"Provider returned error" m))
+        (is (not (re-find #":metadata" m))
+            "the printed map form does not leak through")))
+    (testing "a parseable :metadata :raw reaches past OpenRouter's own wrapper text"
+      ;; OpenRouter proxies many backends and nests the upstream backend's
+      ;; own error a second time, as a JSON STRING. That is the actionable
+      ;; detail -- "Provider returned error" says nothing a person can act on.
+      (let [raw (json/write-str {:error {:message "Backend request failed with status 502"}})
+            m (err (ex-info "model provider request failed"
+                            {:type :provider/http-error :status 400
+                             :response {:error {:message "Provider returned error"
+                                                :code 400
+                                                :metadata {:raw raw}}}}))]
+        (is (re-find #"Backend request failed with status 502" m))))
+    (testing "an unparseable :metadata :raw falls back to the wrapper message"
+      (let [m (err (ex-info "model provider request failed"
+                            {:type :provider/http-error :status 502
+                             :response {:error {:message "Bad gateway"
+                                                :metadata {:raw "<html>502</html>"}}}}))]
+        (is (re-find #"Bad gateway" m))))))
 
 (deftest ordinary-turns-are-serialized-per-bot
   ;; A2A and the ordinary CLI endpoint both call `send!`, not `send-stream!`.

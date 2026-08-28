@@ -642,7 +642,6 @@
     background:var(--color-neutral-solid-gray-100)}
   .bots-composer{display:flex;flex-wrap:wrap;gap:.5rem;align-items:flex-end;padding:.75rem 1rem;
     border-top:1px solid var(--color-neutral-solid-gray-200)}
-  .bots-composer__goal{flex:1 0 100%;font-size:.8125rem}
   .bots-composer textarea{flex:1;resize:none;padding:.625rem .75rem;
     border-radius:.75rem;border:1px solid var(--color-neutral-solid-gray-300);
     max-height:12rem;font:inherit}
@@ -2140,9 +2139,6 @@
              [:div {:class "bots-run" :id "bots-run" :hidden true}]
              [:ol {:class "bots-thread__messages" :id "bots-messages"}]]
             [:form {:class "bots-composer" :id "bots-form"}
-             [:label {:class "bots-permission bots-composer__goal"}
-              [:input {:id "bots-goal" :type "checkbox"}]
-              [:span "Goal — 完了または具体的な阻害まで進める"]]
              [:textarea {:id "bots-input" :rows "1" :maxlength "8000"
                          :placeholder "この Bot に頼む" :autocomplete "off"}]
              [:button {:class "primary-action" :id "bots-send" :type "submit"
@@ -3397,7 +3393,7 @@
           [:div {:class "view-header__copy"}
            (dds/heading 1 "サインイン" {:size "36" :id "registration-title"})
            [:p {:class "view-lead" :id "registration-lead"}
-            "パスキーでサインインします。Email や SSO を連携済みなら、それでも入れます。"]]]
+            "Web3 の本人確認を、パスキーで安全に始めます。"]]]
          [:div {:class "security-callout" :id "passkey-gate-notice"
                 :role "status" :aria-live "polite"}
           [:strong {:id "signin-gate-headline"} "パスキーでサインインしてください。"]
@@ -3419,7 +3415,7 @@
            [:p {:class "form-help"}
             "鍵は 1Password / Bitwarden / iCloud キーチェーン / Google パスワードマネージャー のいずれかに保存してください。登録は itonami.cloud で行います。"]]
           ;; Everything below is the exception, not the entrance: device-local
-          ;; recovery, email, SSO, and joining by invitation. One fold, so
+          ;; recovery, email, and joining by invitation. One fold, so
           ;; the screen shows one decision until someone asks for more. The
           ;; invited-user form lives inside #registered-auth on purpose — it
           ;; is pre-auth-only exactly like the rest, and one container means
@@ -3449,11 +3445,6 @@
                        :required true :autocomplete "email"}]]
              [:button {:class "tool-button" :id "email-login-submit"
                        :type "submit"} "ログインリンクを送る"]]
-            [:div {:class "settings-form" :id "sso-signin-card" :hidden true}
-             (dds/heading 3 "SSOで続ける" {:size "20"})
-             [:p {:class "form-help"}
-              "Google、Microsoft、GitHubの認証だけを使います。メールやリポジトリへのアクセス権は要求しません。"]
-             [:div {:class "button-row" :id "sso-signin-list"}]]
             [:div {:class "settings-form"}
              (dds/heading 3 "招待された User" {:size "20"})
              [:p {:class "form-help"}
@@ -3502,8 +3493,7 @@
             "同じEmailでも自動統合しません。既存Userへサインインした状態で接続してください。"]
            [:div {:class "button-row"}
             [:button {:class "primary-action" :id "itonami-cloud-link"
-                      :type "button"} "auth.itonami.cloud を接続"]
-            [:span {:id "sso-link-list"}]]]
+                      :type "button"} "auth.itonami.cloud を接続"]]]
           [:div {:class "local-card" :id "session-management-card"}
            (dds/heading 2 "ログイン中の端末" {:size "24"})
            [:p {:class "view-lead"}

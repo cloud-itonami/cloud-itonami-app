@@ -230,7 +230,6 @@
     (p/let [_ (.waitForTimeout page 1200)
             body @streamed
             composer (.inputValue page "#bots-input")
-            goal (.isChecked page "#bots-goal")
             view (.evaluate page "document.body.dataset.currentView")]
       ;; `showView` refuses a gated view without a session
       ;; (`if (!appUnlocked && !publicViews.has(name)) name = 'signin'`), so on
@@ -241,7 +240,7 @@
       (check! "comment mode does not walk past the view gate" (= "signin" view))
       (check! (str "the streaming run was opened"
                    (when-not body (str " [composer: " (pr-str composer)
-                                       ", goal: " goal "]")))
+                                       "]")))
               (some? body))
       (when body
         (check! "it carries the composed Goal, not the raw comment"

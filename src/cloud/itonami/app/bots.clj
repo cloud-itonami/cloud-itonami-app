@@ -166,8 +166,35 @@
         ;;
         ;; Still bounded and still one line, as the docstring requires: this
         ;; rides in a record the UI reads.
+        ;;
+        ;; `:error` is a MAP for every OpenAI-shaped provider (OpenRouter
+        ;; included) -- `{:message ... :code ... :metadata {:raw ...}}`, the
+        ;; same shape `provider-retry/body-error-type` already reads via
+        ;; `(get-in parsed [:error :type])`. `(str (:error response))` printed
+        ;; that whole map instead of its `:message`, so "Provider returned
+        ;; error" (OpenRouter's own wrapper text) crowded out the 120-char
+        ;; budget and every recorded HTTP 400 read the same regardless of
+        ;; cause. Measured 2026-08-28, first hours on the OpenRouter free
+        ;; plan: this was the shape of every stored 400.
+        ;;
+        ;; OpenRouter also nests the upstream backend's own error a second
+        ;; time, as a JSON STRING at `:error :metadata :raw` (it proxies many
+        ;; backends and does not reshape what they said). That string is
+        ;; parsed only if it decodes; a raw body that is not JSON -- a
+        ;; Cloudflare or Modal error page, same as `provider-retry`'s own
+        ;; measurement -- falls through to the wrapper message instead.
+        error-map (:error response)
+        raw-message (when (map? error-map)
+                      (let [raw (get-in error-map [:metadata :raw])]
+                        (when (string? raw)
+                          (try (:message (:error (json/read-str raw :key-fn keyword)))
+                               (catch Exception _ nil)))))
         body (when response
-               (let [t (-> (str (or (:error response) (:message response) response))
+               (let [source (cond
+                              raw-message raw-message
+                              (map? error-map) (or (:message error-map) error-map)
+                              :else (or error-map (:message response) response))
+                     t (-> (str source)
                            (str/replace #"\s+" " ")
                            str/trim)]
                  (not-empty (subs t 0 (min 120 (count t))))))
@@ -823,7 +850,7 @@
   separate capabilities and the Bot settings screen may narrow any default."
   [configuration session {:keys [name avatar brief connectors tools accounts
                                  writes? browser? computer? peers? coding? virtual-shell?
-                                 omakase? workspace provider-id model]
+                                 goal? omakase? workspace provider-id model]
                           :as attrs}]
   (let [writes? (if (contains? attrs :writes?) (boolean writes?) true)
         omakase? (if (contains? attrs :omakase?) (boolean omakase?) true)
@@ -831,6 +858,9 @@
         coding? (if (contains? attrs :coding?)
                   (boolean coding?)
                   (boolean (some-> workspace str str/trim not-empty)))
+        goal? (if (contains? attrs :goal?)
+                (boolean goal?)
+                (boolean (or coding? virtual-shell?)))
         browser? (if (contains? attrs :browser?) (boolean browser?) true)
         computer? (if (contains? attrs :computer?) (boolean computer?) true)]
   (validate-provider-choice! configuration provider-id model)
@@ -859,6 +889,7 @@
                     :bot/peers? peers?
                     :bot/coding? coding?
                     :bot/virtual-shell? virtual-shell?
+                    :bot/goal? goal?
                     :bot/omakase? omakase?
                     :bot/workspace workspace
                     :bot/created-at now
@@ -969,6 +1000,7 @@
                  (contains? attrs :browser?) (assoc :bot/browser? (:browser? attrs))
                  (contains? attrs :computer?) (assoc :bot/computer? (:computer? attrs))
                  (contains? attrs :peers?) (assoc :bot/peers? (:peers? attrs))
+                 (contains? attrs :goal?) (assoc :bot/goal? (:goal? attrs))
                  (contains? attrs :omakase?) (assoc :bot/omakase? (:omakase? attrs))
                  (or (contains? attrs :coding?)
                      (contains? attrs :virtual-shell?)
@@ -1601,6 +1633,11 @@
                                     (agent-control/computer-ready? configuration)))
      :coding? (:bot/coding? b)
      :virtual-shell? (:bot/virtual-shell? b)
+     ;; Persisted Bots from before this setting lived on the record must keep
+     ;; the composer's former default until they are saved once.
+     :goal? (if (contains? b :bot/goal?)
+              (boolean (:bot/goal? b))
+              (boolean (or (:bot/coding? b) (:bot/virtual-shell? b))))
      :omakase? (boolean (:bot/omakase? b))
      :virtual-shell-ready? (boolean (and (:bot/virtual-shell? b)
                                          (virtual-shell/available?)))
@@ -3544,6 +3581,18 @@
 
       :else
       (let [{:keys [provider model]} (provider-choice! configuration b)
+            ;; `:provider`/`:requested-model` below (after `result`) only ever
+            ;; runs when `provider/agent-turn` returns -- the very thing that
+            ;; throws on every :provider/http-error, :timeout and the rest.
+            ;; `run-attribution`/`failed-goal-turn` (ADR-2608280300, landed
+            ;; the same day) already read both off `run` when present; the gap
+            ;; was never in that projection, it was that a FAILED call never
+            ;; got this far to write them. Saving what was ASKED before the
+            ;; risky call closes it without duplicating that landed fix --
+            ;; the catch block downstream reads this same store entry.
+            _ (save-run! (:bot/id b)
+                         (assoc run :provider (some-> (:id provider) name)
+                                    :requested-model model))
             request (agent-request configuration provider b run model)
             _ (when on-event
                 (on-event (merge {:type "phase" :phase "model"}

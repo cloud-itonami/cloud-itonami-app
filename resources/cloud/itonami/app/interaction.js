@@ -8157,32 +8157,8 @@
         $('#identity-status').textContent = error.message;
       }
     };
-    const startSso = async (provider, mode, button) => {
-      button.disabled = true;
-      const previous = button.textContent;
-      button.textContent = '準備中…';
-      try {
-        const headers = mode === 'link'
-          ? identityHeaders() : {'Content-Type':'application/json'};
-        const request = await fetch(`/api/auth/sso/${provider}/start`, {
-          method:'POST', headers, body:JSON.stringify({mode})
-        });
-        const result = await request.json();
-        if (!request.ok) throw new Error(result?.error?.message || 'SSOを開始できませんでした。');
-        location.assign(result.url);
-      } catch (error) {
-        button.disabled = false;
-        button.textContent = previous;
-        $('#identity-status').textContent = error.message;
-      }
-    };
     const renderAuthMethods = (data) => {
       const methods = data['auth-methods'] || {};
-      // Only providers this deployment can actually start. An unconfigured
-      // provider is not an entrance, and drawing it as a disabled button said
-      // so only in a `title` tooltip — invisible on a touch screen, and
-      // announced as a button by a screen reader.
-      const providers = (methods.sso || []).filter((p) => p['configured?']);
       const centralConfigured = Boolean(methods.central?.['configured?']);
       $('#itonami-cloud-signin-card').hidden = !centralConfigured;
       const enrol = $('#itonami-enrolment-link');
@@ -8191,16 +8167,6 @@
         if (url) enrol.setAttribute('href', url);
         enrol.hidden = !url || Boolean(data['authenticated?']);
       }
-      const signin = $('#sso-signin-list');
-      signin.replaceChildren();
-      providers.forEach((provider) => {
-        const label = provider.name || authProviderLabels[provider.id] || provider.id;
-        const button = make('button', 'tool-button', `${label}で続ける`);
-        button.type = 'button';
-        button.addEventListener('click', () => startSso(provider.id, 'authenticate', button));
-        signin.append(button);
-      });
-      $('#sso-signin-card').hidden = !providers.length;
       if (!data['authenticated?']) return;
       const session = data.session || {};
       const provider = session['authn-provider'];
@@ -8214,7 +8180,7 @@
       linked.replaceChildren();
       const identities = data['login-identities'] || [];
       if (!identities.length) {
-        linked.append(make('li', null, '接続済みSSO / Emailはありません。'));
+        linked.append(make('li', null, '接続済みの追加認証はありません。'));
       } else {
         identities.forEach((identity) => {
           const label = authProviderLabels[identity.provider] ||
@@ -8245,16 +8211,6 @@
       const linkedProviders = new Set(identities.map((identity) => identity.provider));
       $('#itonami-cloud-link').hidden = !centralConfigured ||
         linkedProviders.has('itonami-cloud');
-      const links = $('#sso-link-list');
-      links.replaceChildren();
-      providers.filter((item) => item['configured?'] && !linkedProviders.has(item.id))
-        .forEach((item) => {
-          const label = item.name || authProviderLabels[item.id] || item.id;
-          const button = make('button', 'tool-button', `${label}を接続`);
-          button.type = 'button';
-          button.addEventListener('click', () => startSso(item.id, 'link', button));
-          links.append(button);
-        });
     };
     const renderSessions = async () => {
       const list = $('#auth-session-list');
@@ -8359,8 +8315,7 @@
     // reading, so the notice, the lead and the cards cannot disagree.
     const otherSigninMethods = (data) => [
       data['auth-methods']?.central?.['configured?'] ? 'auth.itonami.cloud' : null,
-      data['email-login-configured?'] ? 'Email' : null,
-      (data['auth-methods']?.sso || []).some((p) => p['configured?']) ? 'SSO' : null
+      data['email-login-configured?'] ? 'Email' : null
     ].filter(Boolean);
     // What this screen actually offers, said on every load.
     //
@@ -9576,6 +9531,7 @@
       browserAvailable:false, computerAvailable:false,
       controller:null, runId:null, shellBusy:false,
       activeRuns:new Map(),
+      nextGoalOverride:null,
       latestTurn:null, threadVersion:null, syncTimer:null, syncing:false,
       slo:null, routines:[], routinesLoading:false
     };
@@ -10774,6 +10730,38 @@
       });
       modelEditor.append(providerSelect, modelInput, saveModel);
       panel.append(modelEditor);
+      const goalEditor = make('div', 'bots-card');
+      goalEditor.append(make('strong', null, 'Goal'));
+      const goalBox = make('input');
+      goalBox.type = 'checkbox';
+      goalBox.checked = Boolean(bot['goal?']);
+      goalBox.setAttribute('aria-label', '完了または具体的な阻害まで進める');
+      const goalOption = make('label', 'bots-permission');
+      const goalCopy = make('span', 'bots-permission__copy');
+      goalCopy.append(
+        make('span', null, '完了または具体的な阻害まで進める'),
+        make('span', 'bots-permission__help',
+          'この Bot への新しい依頼を Goal として開始します。会話画面では毎回確認しません。'));
+      goalOption.append(goalBox, goalCopy);
+      const saveGoal = make('button', 'tool-button', 'Goal 設定を保存');
+      saveGoal.type = 'button';
+      saveGoal.addEventListener('click', async () => {
+        saveGoal.disabled = true;
+        try {
+          const data = await postJSON(`/api/bots/${bot.id}`, {
+            'goal?':goalBox.checked
+          }, true);
+          botsState.bots = data.bots || [];
+          renderBotsRail();
+          renderBotsThread();
+          botsSetStatus('この Bot の Goal 設定を保存しました。');
+        } catch (error) {
+          saveGoal.disabled = false;
+          botsSetStatus(error.message);
+        }
+      });
+      goalEditor.append(goalOption, saveGoal);
+      panel.append(goalEditor);
       const authorityEditor = make('details', 'bots-card');
       const normalCapabilities = [bot['writes?'], bot['omakase?'], bot['browser?'],
         bot['computer?'], bot['peers?']].filter(Boolean).length;
@@ -10954,7 +10942,6 @@
       botsState.routines = [];
       const selectedBot = botsState.bots.find((bot) => bot.id === botId);
       botsState.latestTurn = selectedBot?.['last-turn'] || null;
-      $('#bots-goal').checked = Boolean(selectedBot?.['coding?'] || selectedBot?.['virtual-shell?']);
       renderBotsRail();
       showBotsPane();
       syncBotsContextButton();
@@ -11197,7 +11184,6 @@
       const active = selectedBotsRun();
       $('#bots-send').disabled = !botsInput.value.trim() || botsState.shellBusy;
       $('#bots-send').textContent = active ? '追加で伝える' : '送る';
-      $('#bots-goal').disabled = Boolean(active);
       botsCancel.hidden = !(active || botsState.shellBusy);
     };
     botsInput.addEventListener('input', resizeBotsInput);
@@ -11336,7 +11322,10 @@
         return;
       }
       const runId = crypto.randomUUID();
-      const goal = $('#bots-goal').checked;
+      const selectedBot = botsState.bots.find((bot) => bot.id === botId);
+      const goal = typeof botsState.nextGoalOverride === 'boolean'
+        ? botsState.nextGoalOverride : Boolean(selectedBot?.['goal?']);
+      botsState.nextGoalOverride = null;
       const startedAt = Date.now();
       const progress = {phase:'accepted', tool:null};
       const turn = {
@@ -11548,6 +11537,7 @@
     let walletState = null;
     let walletBalances = new Map();
     let selectedWalletBotId = null;
+    let walletOwnerAuthorizationBusy = false;
     const announcedWalletProviders = new Map();
     let selectedWalletProviderId = '';
     const shortAddress = (address) => address
@@ -11759,10 +11749,13 @@
       candidates.forEach((candidate) => {
         const row = make('li', 'data-list__item');
         const body = make('div');
+        const ownerFingerprint = candidate['public-key-sha256'];
+        const ownerLabel = `${candidate['rp-id'] || 'Passkey'}${ownerFingerprint
+          ? ` · ${ownerFingerprint.slice(0, 8)}…` : ''}`;
         const state = candidate['chain-states']?.[String(chain?.['chain-id'])]
           || candidate['owner-state'];
         body.append(
-          make('p', 'data-list__title', candidate['rp-id'] || 'Passkey'),
+          make('p', 'data-list__title', ownerLabel),
           make('p', 'data-list__meta', state === 'initial-owner'
             ? '最初のowner'
             : state === 'active-on-chain' ? `Chain ${chain?.['chain-id']} のowner`
@@ -11791,10 +11784,14 @@
             row.append(receipt);
           } else {
             const add = make('button', 'primary-action', 'Passkeyでownerに追加');
-            add.type = 'button'; add.disabled = !chain?.['owner-user-operation-ready?'];
-            add.title = add.disabled ? 'RPCとERC-4337 bundlerの設定が必要です' : '';
+            add.type = 'button';
+            add.disabled = walletOwnerAuthorizationBusy
+              || !chain?.['owner-user-operation-ready?'];
+            add.title = walletOwnerAuthorizationBusy
+              ? '別のowner追加を処理中です'
+              : add.disabled ? 'RPCとERC-4337 bundlerの設定が必要です' : '';
             add.addEventListener('click', () => authorizeWalletOwner(
-              candidate, Number(selector.value), add));
+              candidate, Number(selector.value)));
             row.append(add);
           }
         }
@@ -11813,9 +11810,12 @@
       }
       throw new Error('UserOperationは送信済みです。receipt確認を再開してください。');
     };
-    const authorizeWalletOwner = async (candidate, chainId, button) => {
+    const authorizeWalletOwner = async (candidate, chainId) => {
+      if (walletOwnerAuthorizationBusy) return;
+      walletOwnerAuthorizationBusy = true;
       const status = $('#wallet-owner-status');
-      button.disabled = true;
+      document.querySelectorAll('#wallet-owner-list button')
+        .forEach((ownerButton) => { ownerButton.disabled = true; });
       try {
         requireWebAuthn();
         status.textContent = 'nonce・gas・factoryをchain上で確認しています…';
@@ -11834,7 +11834,9 @@
         await loadWallet();
       } catch (error) {
         status.textContent = error.message;
-        button.disabled = false;
+      } finally {
+        walletOwnerAuthorizationBusy = false;
+        if (walletState) renderWallet(walletState);
       }
     };
     const loadWallet = async () => {
@@ -12296,11 +12298,19 @@
     }
     if (initialParams.get('auth')) {
       const provider = initialParams.get('provider');
-      const ok = initialParams.get('auth') === 'sso';
-      const label = authProviderLabels[provider] || provider || 'SSO';
-      $('#identity-status').textContent = ok
-        ? `${label}でサインインしました。`
-        : `${label}のサインインを完了できませんでした。もう一度お試しください。`;
+      const authResult = initialParams.get('auth');
+      // Provider SSO is not an app entrance. Only the Passkey-first central
+      // callback is surfaced, and its one-shot result is removed so a reload
+      // cannot repeat yesterday's notification forever.
+      if (provider === 'itonami-cloud') {
+        $('#identity-status').textContent = authResult === 'itonami-cloud'
+          ? 'パスキーでサインインしました。'
+          : 'パスキーのサインインを完了できませんでした。もう一度お試しください。';
+      }
+      const cleaned = new URL(location.href);
+      cleaned.searchParams.delete('auth');
+      cleaned.searchParams.delete('provider');
+      history.replaceState(null, '', `${cleaned.pathname}${cleaned.search}${cleaned.hash}`);
     }
     const finishEmailLoginFromLink = async () => {
       const token = emailLoginToken;
@@ -12684,7 +12694,7 @@
           // dispatch path in the client instead of two.
           await selectBot(recorded['bot-id']);
           showView('bots');
-          $('#bots-goal').checked = true;
+          botsState.nextGoalOverride = true;
           botsInput.value = recorded.text;
           $('#bots-form').requestSubmit();
           announce('画面コメントを Goal として送りました。');

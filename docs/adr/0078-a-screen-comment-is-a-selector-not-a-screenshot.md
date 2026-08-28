@@ -42,7 +42,7 @@ Goal already is.
 **The POST records; it does not run the turn.** `POST /api/bots/comments`
 validates the request, checks the session owns the named Bot, stores the crop,
 and answers with the composed Goal text. The client then fills the Bots
-composer with that text, ticks Goal, and submits it — so the run opens through
+composer with that text, applies a one-run Goal override, and submits it — so the run opens through
 `#bots-form` and the existing streaming path. A Goal is minutes long (a resident
 tick on this deployment has been measured at ninety-five), so dispatching from
 the POST would have held an HTTP request open for the length of the run and left

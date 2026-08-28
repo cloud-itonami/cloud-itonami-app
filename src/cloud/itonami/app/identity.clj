@@ -65,7 +65,12 @@
    :root-did-method :webvh})
 (def default-auth-profile
   {:allow-signup? false
-   :sso-providers [:google :microsoft :github]
+   ;; Passkey/WebAuthn is the product entrance. Provider SSO remains an
+   ;; explicit compatibility capability for deployments that opt back in with
+   ;; BOTH the feature switch and a provider list. The separate switch keeps an
+   ;; older resident profile from silently reviving SSO after an upgrade.
+   :sso-enabled? false
+   :sso-providers []
    :central {:enabled? true
              :issuer "https://auth.itonami.cloud"
              :client-id "cloud-itonami-app-native"
@@ -98,10 +103,13 @@
 (defn configure!
   "Install the distribution/tenant profile for this process."
   [configuration]
-  (reset! runtime-identity-profile
-          (merge default-identity-profile (:identity configuration)))
-  (reset! runtime-auth-profile
-          (merge default-auth-profile (:auth configuration)))
+  (let [auth-profile (merge default-auth-profile (:auth configuration))]
+    (reset! runtime-identity-profile
+            (merge default-identity-profile (:identity configuration)))
+    (reset! runtime-auth-profile
+            (cond-> auth-profile
+              (not (true? (:sso-enabled? auth-profile)))
+              (assoc :sso-providers []))))
   (reset! runtime-email-login-configured?
           (email-login/configured? configuration))
   (reset! runtime-oauth-clients (or (:oauth-clients configuration) {})))

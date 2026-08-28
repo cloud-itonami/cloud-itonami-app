@@ -68,9 +68,6 @@
                   (println "created the pending account")))
             data (identity-state)
             email? (aget data "email-login-configured?")
-            sso (or (some-> (aget data "auth-methods") (aget "sso")) #js [])
-            configured-sso (filter #(aget % "configured?") sso)
-
             browser (.launch (.-chromium pw)
                              #js {:headless true
                                   :executablePath
@@ -99,7 +96,6 @@
                      (.textContent (.locator page "#signin-gate-note")) "")
               passkey-visible (.isVisible page "#passkey-signin")
               passkey-disabled (.isDisabled page "#passkey-signin")
-              sso-card (.isVisible page "#sso-signin-card")
               email-card (.isVisible page "#email-login-form")
               ;; Playwright reads a string argument as an EXPRESSION, so an
               ;; arrow function passed here would evaluate to a function object
@@ -124,10 +120,10 @@
         (println "\n── the copy names only entrances this deployment has ──")
         (check! "Email is named only when it is configured"
                 (= (boolean email?) (str/includes? note "Email")))
-        (check! "SSO is named only when a provider is configured"
-                (= (boolean (seq configured-sso)) (str/includes? note "SSO")))
-        (check! "the SSO card is shown only when a provider is configured"
-                (= (boolean (seq configured-sso)) sso-card))
+        (check! "provider SSO is not named as an entrance"
+                (not (str/includes? note "SSO")))
+        (check! "provider SSO has no card"
+                (zero? (.count (.locator page "#sso-signin-card"))))
         (check! "the Email card is shown only when Email is configured"
                 (= (boolean email?) email-card))
 
