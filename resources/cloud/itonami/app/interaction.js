@@ -11550,6 +11550,11 @@
       $('#wallet-connect').querySelector('span:last-child').textContent = '他のWallet';
       $('#wallet-send-bot').value = selected?.principal ? '' : (selected?.id || '');
 
+      const ownerPanel = $('#wallet-owner-panel');
+      ownerPanel.hidden = !selected?.principal;
+      if (selected?.principal) renderWalletOwners(
+        selected.wallet, data['supported-chains'] || [], data['owner-operations'] || []);
+
       const transferList = $('#wallet-transfer-list'); transferList.replaceChildren();
       const selectedTransfers = transfers.filter((transfer) => transfer['bot-id'] === selected?.id);
       if (!selectedTransfers.length) transferList.append(make('li', 'empty-state', 'アクティビティはまだありません。'));
@@ -11571,6 +11576,105 @@
         transferList.append(row);
       });
     };
+    const renderWalletOwners = (account, chains, operations) => {
+      const selector = $('#wallet-owner-chain');
+      const selectedChain = Number(selector.value || chains[0]?.['chain-id'] || 0);
+      selector.replaceChildren();
+      chains.forEach((chain) => {
+        const option = document.createElement('option');
+        option.value = String(chain['chain-id']);
+        option.textContent = `${chain.name || `Chain ${chain['chain-id']}`}${chain['owner-user-operation-ready?'] ? '' : '（未設定）'}`;
+        option.selected = chain['chain-id'] === selectedChain;
+        selector.append(option);
+      });
+      const chain = chains.find((entry) => entry['chain-id'] === Number(selector.value));
+      const list = $('#wallet-owner-list'); list.replaceChildren();
+      const candidates = account?.['owner-candidates'] || [];
+      if (!candidates.length) {
+        list.append(make('li', 'empty-state', 'Passkeyを確認中です。'));
+        return;
+      }
+      candidates.forEach((candidate) => {
+        const row = make('li', 'data-list__item');
+        const body = make('div');
+        const state = candidate['chain-states']?.[String(chain?.['chain-id'])]
+          || candidate['owner-state'];
+        body.append(
+          make('p', 'data-list__title', candidate['rp-id'] || 'Passkey'),
+          make('p', 'data-list__meta', state === 'initial-owner'
+            ? '最初のowner'
+            : state === 'active-on-chain' ? `Chain ${chain?.['chain-id']} のowner`
+              : 'ログイン用Passkey（on-chain owner未追加）'));
+        row.append(body);
+        if (state === 'requires-add-owner-user-operation') {
+          const pending = operations.find((operation) =>
+            operation['candidate-credential-id'] === candidate['credential-id']
+              && operation['chain-id'] === Number(selector.value)
+              && ['submitted', 'pending'].includes(operation.status));
+          if (pending) {
+            const receipt = make('button', 'primary-action', 'receiptを確認');
+            receipt.type = 'button';
+            receipt.addEventListener('click', async () => {
+              receipt.disabled = true;
+              try {
+                const confirmed = await pollWalletOwnerReceipt(pending.id);
+                $('#wallet-owner-status').textContent =
+                  `owner追加をchain上で確認しました: ${shortAddress(confirmed['transaction-hash'])}`;
+                await loadWallet();
+              } catch (error) {
+                $('#wallet-owner-status').textContent = error.message;
+                receipt.disabled = false;
+              }
+            });
+            row.append(receipt);
+          } else {
+            const add = make('button', 'primary-action', 'Passkeyでownerに追加');
+            add.type = 'button'; add.disabled = !chain?.['owner-user-operation-ready?'];
+            add.title = add.disabled ? 'RPCとERC-4337 bundlerの設定が必要です' : '';
+            add.addEventListener('click', () => authorizeWalletOwner(
+              candidate, Number(selector.value), add));
+            row.append(add);
+          }
+        }
+        list.append(row);
+      });
+    };
+    const pollWalletOwnerReceipt = async (operationId) => {
+      for (let attempt = 0; attempt < 30; attempt += 1) {
+        const result = await postJSON(
+          `/api/wallet/owners/operations/${encodeURIComponent(operationId)}/receipt`,
+          {}, true);
+        if (result.status === 'confirmed') return result;
+        $('#wallet-owner-status').textContent =
+          `送信済みです。chain receiptを確認中… (${attempt + 1}/30)`;
+        await new Promise((resolve) => setTimeout(resolve, 2000));
+      }
+      throw new Error('UserOperationは送信済みです。receipt確認を再開してください。');
+    };
+    const authorizeWalletOwner = async (candidate, chainId, button) => {
+      const status = $('#wallet-owner-status');
+      button.disabled = true;
+      try {
+        requireWebAuthn();
+        status.textContent = 'nonce・gas・factoryをchain上で確認しています…';
+        const started = await postJSON('/api/wallet/owners/authorize/start', {
+          'credential-id':candidate['credential-id'], 'chain-id':chainId
+        }, true);
+        status.textContent = '現在のowner Passkeyで確認してください。別端末を使う場合はQRを選べます。';
+        const assertion = await navigator.credentials.get(assertionOptions(started));
+        const submitted = await postJSON('/api/wallet/owners/authorize/finish', {
+          'transaction-id':started['transaction-id'],
+          credential:credentialJSON(assertion)
+        }, true);
+        status.textContent = 'UserOperationを送信しました。receiptを確認しています…';
+        const receipt = await pollWalletOwnerReceipt(submitted.id);
+        status.textContent = `owner追加をchain上で確認しました: ${shortAddress(receipt['transaction-hash'])}`;
+        await loadWallet();
+      } catch (error) {
+        status.textContent = error.message;
+        button.disabled = false;
+      }
+    };
     const loadWallet = async () => {
       const request = await fetch('/api/wallet', {cache:'no-store'});
       const data = await request.json();
@@ -11588,6 +11692,9 @@
     $('#wallet-provider-select').addEventListener('change', async (event) => {
       selectedWalletProviderId = event.currentTarget.value || '';
       await refreshWalletBalances();
+      if (walletState) renderWallet(walletState);
+    });
+    $('#wallet-owner-chain').addEventListener('change', () => {
       if (walletState) renderWallet(walletState);
     });
     renderWalletProviders();

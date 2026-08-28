@@ -62,10 +62,15 @@
      :userVerification "required"}}})
 
 (defn request-options
-  [{:keys [rp-id challenge timeout user-verification]
+  [{:keys [rp-id challenge timeout user-verification allow-credentials]
     :or {timeout 120000 user-verification "required"}}]
   {:publicKey
-   {:challenge challenge
-    :rpId rp-id
-    :timeout timeout
-    :userVerification user-verification}})
+   (cond-> {:challenge challenge
+            :rpId rp-id
+            :timeout timeout
+            :userVerification user-verification}
+     (seq allow-credentials)
+     (assoc :allowCredentials
+            (mapv (fn [credential-id]
+                    {:type "public-key" :id credential-id})
+                  allow-credentials)))})

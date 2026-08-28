@@ -24,7 +24,9 @@
 (def owner-change-schema "cloud.itonami.app.smart-account.owner-change.v1")
 (def canonical-factory "0xBA5ED110eFDBa3D005bfC882d75358ACBbB85842")
 (def canonical-implementation "0x00000110dCdEdC9581cb5eCB8467282f2926534d")
+(def canonical-entry-point "0x5FF137D4b0FDCD49DcA30c7CF57E578a026d2789")
 (def factory-version "1.1")
+(def replayable-nonce-key 8453)
 (def add-owner-public-key-selector "29565e3b")
 (def execute-without-chain-id-validation-selector "2c2abd1e")
 
@@ -41,6 +43,11 @@
 
 (defn- concat-bytes [& values]
   (bytes-of (mapcat seq values)))
+
+(defn function-selector
+  "The first four bytes of keccak256(canonical Solidity signature)."
+  [signature]
+  (subs (eth/bytes->hex (eth/keccak256 (eth/utf8 signature))) 0 8))
 
 (defn- decode-public-key [public-key-b64]
   (when-let [encoded (not-empty (str public-key-b64))]
@@ -200,6 +207,28 @@
     (abi/encode-call-hex add-owner-public-key-selector
                          ["bytes32" "bytes32"] [x y])))
 
+(defn owner-coordinates
+  "The candidate's P-256 coordinates in ABI-ready bytes32 form."
+  [credential]
+  (let [owner (vec (owner-public-key credential))]
+    [(str "0x" (eth/bytes->hex (bytes-of (take 32 owner))))
+     (str "0x" (eth/bytes->hex (bytes-of (drop 32 owner))))]))
+
+(defn create-account-calldata
+  "Factory createAccount calldata for a counterfactual descriptor."
+  [descriptor initial-credential]
+  (let [owner (str "0x" (eth/bytes->hex
+                          (owner-public-key initial-credential)))]
+    (abi/encode-call-hex
+     (function-selector "createAccount(bytes[],uint256)")
+     ["bytes[]" "uint256"] [[owner] (:nonce descriptor)])))
+
+(defn account-init-code
+  "ERC-4337 v0.6 initCode: factory address followed by createAccount calldata."
+  [descriptor initial-credential]
+  (str "0x" (hex20 (:factory-address descriptor) "factory-address")
+       (eth/strip0x (create-account-calldata descriptor initial-credential))))
+
 (defn cross-chain-owner-update-calldata
   "Wrap one owner-management call in the Smart Wallet 1.1 replay-safe entry."
   [inner-calldata]
@@ -212,14 +241,81 @@
           :factory-version factory-version
           :factory-family "coinbase-smart-wallet"
           :owner-management-abi "coinbase-smart-wallet-v1"
-          :entry-point-version "0.6"}
+          :entry-point-version "0.6"
+          :entry-point-address canonical-entry-point}
          (get-in configuration [:wallet :smart-account])))
+
+(def ^:private user-operation-types
+  ["address" "uint256" "bytes32" "bytes32" "uint256" "uint256"
+   "uint256" "uint256" "uint256" "bytes32"])
+
+(defn- quantity-decimal [value]
+  (let [value (str value)]
+    (cond
+      (re-matches #"0x[0-9a-fA-F]+" value)
+      #?(:clj (str (BigInteger. (subs value 2) 16))
+         :cljs (str (js/BigInt value)))
+
+      (re-matches #"[0-9]+" value) value
+      :else (throw (ex-info "UserOperation quantity is invalid"
+                            {:type :smart-account/invalid-user-operation
+                             :value value})))))
+
+(defn user-operation-pack-hash
+  "Coinbase Smart Wallet v1.1 / EntryPoint v0.6 UserOperationLib.hash.
+
+  The signature is intentionally absent: ERC-4337 hashes every other field."
+  [user-operation]
+  (eth/keccak256
+   (bytes-of
+    (abi/encode
+     user-operation-types
+     [(:sender user-operation)
+      (quantity-decimal (:nonce user-operation))
+      (str "0x" (eth/bytes->hex
+                   (eth/keccak256 (eth/hex->bytes (:initCode user-operation)))))
+      (str "0x" (eth/bytes->hex
+                   (eth/keccak256 (eth/hex->bytes (:callData user-operation)))))
+      (quantity-decimal (:callGasLimit user-operation))
+      (quantity-decimal (:verificationGasLimit user-operation))
+      (quantity-decimal (:preVerificationGas user-operation))
+      (quantity-decimal (:maxFeePerGas user-operation))
+      (quantity-decimal (:maxPriorityFeePerGas user-operation))
+      (str "0x" (eth/bytes->hex
+                   (eth/keccak256
+                    (eth/hex->bytes (:paymasterAndData user-operation)))))]))))
+
+(defn cross-chain-user-operation-hash
+  "Hash signed by executeWithoutChainIdValidation UserOperations.
+
+  This deliberately omits chain id, exactly like Smart Wallet v1.1's
+  getUserOpHashWithoutChainId. Gas and nonce are still part of the hash."
+  ([user-operation]
+   (cross-chain-user-operation-hash user-operation canonical-entry-point))
+  ([user-operation entry-point]
+   (eth/keccak256
+    (bytes-of
+     (abi/encode ["bytes32" "address"]
+                 [(str "0x" (eth/bytes->hex
+                              (user-operation-pack-hash user-operation)))
+                  entry-point])))))
+
+(defn entry-point-user-operation-hash
+  "The hash an EntryPoint v0.6 bundler must return from eth_sendUserOperation."
+  [user-operation entry-point chain-id]
+  (eth/keccak256
+   (bytes-of
+    (abi/encode ["bytes32" "address" "uint256"]
+                [(str "0x" (eth/bytes->hex
+                             (user-operation-pack-hash user-operation)))
+                 entry-point (quantity-decimal chain-id)]))))
 
 (defn descriptor
   "Build the durable, secret-free descriptor for one Principal wallet scope."
   [configuration principal-id credential scope scope-id]
   (let [{:keys [factory-address implementation-address factory-version
-                factory-family owner-management-abi entry-point-version]}
+                factory-family owner-management-abi entry-point-version
+                entry-point-address]}
         (settings configuration)
         owner (owner-public-key credential)
         binding (owner-binding configuration credential)
@@ -253,6 +349,7 @@
      :factory-family factory-family
      :owner-management-abi owner-management-abi
      :entry-point-version entry-point-version
+     :entry-point-address entry-point-address
      :nonce (str nonce)
      :private-key-stored? false
      :user-operation-ready? false}))

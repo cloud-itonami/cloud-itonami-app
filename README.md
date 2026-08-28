@@ -40,8 +40,11 @@ is required to receive. A Passkey remains scoped to its WebAuthn RP ID; the
 stable Principal and Smart Account are the domain-independent layer. Verified
 credentials now retain their RP provenance, the Wallet exposes which keys are
 active or still require `addOwner`, and it can build the unsigned replay-safe
-Smart Wallet 1.1 owner-addition call. Signing, bundler submission, receipts,
-owner removal and loss recovery are not yet UserOperation-ready. `itonami.cloud`,
+Smart Wallet 1.1 owner-addition call. The current owner can now authorize that
+call with WebAuthn, submit the complete ERC-4337 v0.6 UserOperation to a
+configured bundler, and activate the candidate only after receipt and on-chain
+owner-set verification. General transfers, owner removal and loss recovery are
+still separate gates. `itonami.cloud`,
 `murakumo.cloud` and `kotobase.net` also do not currently expose one raw
 Passkey from all three origins. See
 [Passkey Smart Account: ドメイン共有・別端末・復旧](docs/passkey-smart-account.md)

@@ -5,6 +5,7 @@
             [btc-crypto.bip39 :as bip39]
             [cloud.itonami.app.config :as config]
             [cloud.itonami.app.smart-account :as smart-account]
+            [cloud.itonami.app.smart-account-userop :as owner-userop]
             [cloud.itonami.app.store :as store]
             [cloud.itonami.app.wallet :as wallet]
             [eth-crypto.core :as eth]
@@ -110,6 +111,94 @@
           (is (= :awaiting-current-owner-authorization (:status plan)))
           (is (= "kotobase.net" (get-in plan [:candidate-owner :rp-id])))
           (is (false? (:user-operation-ready? plan))))))))
+
+(deftest owner-authorization-persists-hashes-and-receipts-but-not-the-signature
+  (with-wallet-store
+    (fn []
+      (let [configuration {:server {:webauthn-rp-id "localhost"
+                                    :public-origin "http://localhost:1338"}
+                           :wallet {:chains [{:chain-id 1 :name "Ethereum"
+                                              :rpc-url "http://127.0.0.1:8545"
+                                              :bundler-url "http://127.0.0.1:4337"}]}}
+            account (wallet/ensure-principal-account! configuration alice)
+            fingerprint "candidate-fingerprint"
+            submitted-signature (atom nil)]
+        (store/transact!
+         assoc-in [:identity :passkeys "cred-kotobase"]
+         {:id "cred-kotobase" :credential-id "cred-kotobase"
+          :user-id "alice" :public-key-b64 second-p256-public-key-b64
+          :user-verified? true :rp-id "kotobase.net"
+          :registration-origin "https://auth.kotobase.net"
+          :created-at "2026-08-28T00:01:00Z"})
+        (with-redefs
+          [owner-userop/prepare-owner-addition!
+           (fn [_ _ _ candidate _]
+             {:schema owner-userop/schema
+              :status :awaiting-current-owner-authorization
+              :chain-id 1 :chain-name "Ethereum" :account (:address account)
+              :entry-point smart-account/canonical-entry-point
+              :entry-point-version "0.6" :current-owner-index 0
+              :current-owner-credential-id "cred-alice"
+              :candidate-credential-id (:credential-id candidate)
+              :candidate-public-key-b64 (:public-key-b64 candidate)
+              :candidate-public-key-sha256 fingerprint
+              :candidate-rp-id (:rp-id candidate)
+              :user-operation {:nonce "0x21050000000000000000"}
+              :signing-hash (str "0x" (apply str (repeat 64 "1")))
+              :expected-user-operation-hash
+              (str "0x" (apply str (repeat 64 "2")))})
+           owner-userop/encode-passkey-signature
+           (fn [& _] {:signature "0xsecret-webauthn-assertion"
+                      :sign-count 0})
+           owner-userop/submit!
+           (fn [_ operation signature]
+             (reset! submitted-signature signature)
+             {:status :submitted
+              :user-operation-hash
+              (:expected-user-operation-hash operation)})]
+          (let [started (wallet/start-owner-addition!
+                         configuration alice
+                         {:credential-id "cred-kotobase" :chain-id 1}
+                         "localhost" "http://localhost:1338")
+                submitted (wallet/finish-owner-addition!
+                           configuration alice
+                           {:transaction-id (:transaction-id started)
+                            :credential {:id "cred-alice"}})
+                operation-id (:id submitted)
+                persisted (get-in (store/snapshot)
+                                  [:wallet :owner-operations operation-id])]
+            (is (= "0xsecret-webauthn-assertion" @submitted-signature))
+            (is (= :submitted (:status persisted)))
+            (is (nil? (:signature persisted)))
+            (is (nil? (get-in persisted [:user-operation :signature])))
+            (with-redefs
+              [owner-userop/verify-receipt!
+               (fn [_ _]
+                 {:status :confirmed
+                  :user-operation-hash (:user-operation-hash persisted)
+                  :transaction-hash (str "0x" (apply str (repeat 64 "a")))
+                  :block-number "0x2"})]
+              (let [confirmed (wallet/verify-owner-addition-receipt!
+                               configuration alice operation-id)
+                    state (store/snapshot)]
+                (is (= :confirmed (:status confirmed)))
+                (is (= :active
+                       (get-in state
+                               [:wallet :principal-smart-accounts
+                                "urn:kotoba:principal:alice"
+                                :owners-by-chain 1 fingerprint :state])))
+                (is (= :deployed
+                       (get-in state
+                               [:wallet :principal-smart-accounts
+                                "urn:kotoba:principal:alice"
+                                :deployment-state])))
+                (let [public (wallet/snapshot configuration alice [])]
+                  (is (nil? (get-in public [:supported-chains 0 :rpc-url])))
+                  (is (nil? (get-in public [:supported-chains 0 :bundler-url])))
+                  (is (nil? (get-in public [:owner-operations 0
+                                            :candidate-public-key-b64])))
+                  (is (nil? (get-in public [:owner-operations 0
+                                            :user-operation]))))))))))))
 
 (deftest siwe-connects-a-public-account-without-custody
   (with-wallet-store

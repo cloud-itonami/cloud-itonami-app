@@ -84,7 +84,7 @@ WebAuthn Related Origin Requests は代替手段ですが、現時点の既定�
 広げる必要があります。これは Passkey を呼び出せる origin を増やし、なお共通RP
 domainへの依存は残すため、identity portability の既定にはしません。
 
-### 実装済みの owner 追加準備
+### 実装済みの owner 追加
 
 検証済み Passkey record は `rp-id` と registration origin を保持します。Wallet API は
 各 credential を `initial-owner` または `requires-add-owner-user-operation` として表示し、
@@ -92,9 +92,36 @@ domainへの依存は残すため、identity portability の既定にはしま�
 `addOwnerPublicKey(bytes32,bytes32)` を
 `executeWithoutChainIdValidation(bytes[])` で包んだ unsigned calldata を返します。
 
-この endpoint は Human session、same-origin、CSRFを要求しますが、計画を返すだけです。
-現在ownerのWebAuthn署名、EntryPoint nonce、bundler送信、各chain receipt確認が揃うまで
-`user-operation-ready?` は false のままです。
+実行経路は次の3 endpointです。すべて Human session、same-origin、CSRFを要求します。
+
+- `POST /api/wallet/owners/authorize/start` — allowlist済みchainについて、RPCとbundlerの
+  chain ID、EntryPoint v0.6、factory code、implementation、factoryが返すaddress、現在owner
+  indexを照合し、予約nonce key `8453`、gas、任意paymasterを含むUserOperationを固定します。
+- `POST /api/wallet/owners/authorize/finish` — 固定したhashを現在owner Passkeyで署名します。
+  serverはcredential ID、challenge、RP ID hash、exact origin、UP/UV、signature counter、
+  P-256署名を再検証し、Smart Wallet 1.1の`SignatureWrapper`へlow-Sで符号化します。
+- `POST /api/wallet/owners/operations/{id}/receipt` — bundlerのUserOperation hashが
+  ローカル計算値と一致した送信だけを追跡し、成功receipt、sender、nonce、EntryPoint、
+  transaction status、account code、`isOwnerPublicKey(x,y)`を再照会します。
+
+WebAuthn assertionそのものは保存しません。保存するのはoperation hash、transaction hash、
+chain IDと確認時刻です。異なるchainではnonce・gas・receiptが別なので、owner追加はchainごとに
+実行して確認します。`executeWithoutChainIdValidation`はchain IDを署名hashから外しますが、
+別chainへの無条件な自動broadcastを意味しません。
+
+### Bundler設定
+
+既定設定は特定のBase/Coinbaseサービスへ依存しません。任意のERC-4337 v0.6 providerを、
+chain allowlistと環境変数で指定します。
+
+```text
+CLOUD_ITONAMI_EVM_RPC_URL=https://…
+CLOUD_ITONAMI_ERC4337_BUNDLER_URL=https://…
+CLOUD_ITONAMI_ERC4337_PAYMASTER_URL=https://…   # optional
+```
+
+paymasterを設定しない場合は、deterministic Smart Account addressがgasを支払える必要があります。
+URLに含まれるprovider keyを`/api/wallet`へ返したり、operation recordへ保存したりしません。
 
 ## 別端末から使う
 
@@ -123,19 +150,19 @@ PC へコピーしません。サインインはできますが、PC に新し�
 
 現在の account model は複数の login Passkey を保存し、RP ID と origin を記録します。
 Smart Account descriptor は最初の owner と address を固定します。別の端末で作った
-別公開鍵について、owner-addition calldata の生成までは実装済みですが、on-chain
-UserOperation の署名・送信・receipt確認は未実装です。
+別公開鍵は、次の操作でon-chain ownerへ追加できます。
 
 安全な完成形は次の順序です。
 
 1. 既存 owner Passkey で phishing-resistant に再認証する。
 2. 新端末で新しい Passkey を登録する。
 3. 既存 owner が `addOwner(new P-256 public key)` UserOperation を承認する。
-4. receipt と owner set を確認してから、新端末だけで署名できることを検証する。
-5. 必要なら旧 owner を別の明示的 UserOperation で失効する。
+4. appがreceipt と owner setを独立に確認し、初めてそのchainで`active-on-chain`と表示する。
+5. 新端末だけで別の明示的UserOperationを署名できることを検証する。
+6. 必要なら旧 owner を別の明示的 UserOperation で失効する。
 
-この一連が実装されるまでは、新しい Passkey の登録を「既存 Wallet の復旧」と表示しては
-いけません。
+owner追加は実装済みですが、旧ownerの失効とguardian/delayed recoveryは未実装です。
+したがって新しいPasskey登録だけを「既存Walletの復旧」と表示してはいけません。
 
 ### 4. すべての端末／Passkeyを失った場合
 
@@ -163,13 +190,16 @@ Email や SSO は Principal への回復経路になり得ますが、現在は 
 - KotobaseとMurakumoの別RP Passkeyを同じPrincipalへlinkする
 - 複数RPの credentialを同じ Principal の owner候補として区別する
 - replay-safeな `addOwnerPublicKey` unsigned calldataを生成する
+- 現在owner Passkeyで完全なERC-4337 v0.6 UserOperationを署名する
+- configured bundlerへ送信し、返されたhashをローカル計算値と照合する
+- receiptと`isOwnerPublicKey`後条件を確認してchain別owner状態へ反映する
 
 まだできないこと:
 
 - 1個の `itonami.cloud` Passkey で3つの apex siteから直接 WebAuthn を実行する
-- 新しい Passkey owner追加を現在ownerで署名し、bundlerへ送ってreceiptを確認する
 - 既存 Smart Account ownerを削除・復旧する
-- Passkey 署名の ERC-4337 UserOperation を submit/deploy する
+- 一般送金をPasskey UserOperationとして署名・送信する
+- bundler/RPC/paymasterを未設定のinstallでon-chain操作する
 
 設計判断は [ADR-0080](adr/0080-passkey-smart-account-is-the-default-wallet.md)、
 RP-scoped controller と domain-independent identity の境界は
