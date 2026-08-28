@@ -50,6 +50,48 @@ one never overwrites a Principal or Bot Smart Account. The existing per-Bot
 assignment API is retained for compatibility but is no longer the primary
 receive or proposal account.
 
+## Domain and device portability
+
+The WebAuthn credential, the stable Principal and the Smart Account owner are
+three different things. Federation may prove the same Principal without giving
+another origin the Passkey. Registering another login Passkey does not make its
+different public key an owner of an existing on-chain account.
+
+The shared WebAuthn RP is `itonami.cloud`. Its ordinary domain-suffix boundary
+admits the explicit origins `itonami.cloud`, `auth.itonami.cloud` and
+`app.itonami.cloud`. The resident's local recovery ceremony uses RP ID
+`localhost`, so that credential is separate. `murakumo.cloud` and
+`kotobase.net` are unrelated registrable domains and do not currently request
+RP ID `itonami.cloud`; the three apex `/.well-known/webauthn` endpoints return
+404 as of this decision update.
+
+Cross-product identity therefore uses centralized federation, not a wider
+WebAuthn origin set. Murakumo, Kotobase and the resident should redirect a
+human to `auth.itonami.cloud` with Authorization Code + PKCE, or consume a
+short-lived audience- and resource-bound assertion. A Smart Account operation
+digest that needs the owner signature returns to that central WebAuthn
+ceremony. Cookies, private keys and credential records are not copied between
+apex domains.
+
+WebAuthn Level 3 Related Origin Requests remain an explicit alternative, not
+the selected default. They would require `itonami.cloud/.well-known/webauthn`,
+one common RP ID in every ceremony and matching exact-origin verification on
+the server. That expands the set of sites able to invoke the credential; it is
+not justified while federation provides the same-Principal property with a
+smaller Passkey surface.
+
+A synced multi-device Passkey may present the exact same public key from a new
+device. Nearby-device/QR authentication may also use the old device without
+copying its private key. A separately created Passkey has a new public key and
+requires an explicit `addOwner` UserOperation before it can control an existing
+Smart Account. That owner-add/remove path, its receipt verification, guardians
+and delayed recovery are not implemented in this slice. Email or SSO can
+recover a Principal session but cannot by itself recover the on-chain signing
+authority.
+
+The user and operator procedure, including the current per-domain matrix, is
+documented in [Passkey Smart Account: ドメイン共有・別端末・復旧](../passkey-smart-account.md).
+
 ## Current proof and boundary
 
 The local calculation is pinned to a read-only canonical-factory vector:
@@ -74,6 +116,10 @@ deployment receipt and chain-specific factory-availability checks are landed.
 - Account recovery is not implied by adding a login Passkey. Before on-chain
   use, owner addition/removal and loss recovery must be implemented and tested
   as explicit Smart Account operations.
+- The same Principal across products does not imply the same raw credential is
+  callable from every product origin. Federation is the default boundary.
+- A synced copy of the original credential preserves the owner key; a newly
+  created credential does not.
 - The UI distinguishes a valid counterfactual receive address from an on-chain
   deployment and from send readiness.
 - A legacy session with no verified public Passkey record fails closed as

@@ -34,6 +34,17 @@ responsibilities — the presentation gap is structural, not unfinished work: a
 Passkey signs its own `authenticatorData || clientDataHash` and cannot produce a
 Data Integrity proof.
 
+Wallet creation is Passkey-first: the first verified P-256 public key names a
+deterministic ERC-4337 counterfactual account, so no injected wallet extension
+is required to receive. Sending, account deployment, owner addition/removal and
+loss recovery are not yet UserOperation-ready. `itonami.cloud`,
+`murakumo.cloud` and `kotobase.net` also do not currently expose one raw
+Passkey from all three origins. See
+[Passkey Smart Account: ドメイン共有・別端末・復旧](docs/passkey-smart-account.md)
+for the current domain matrix and new-device procedure, and
+[ADR-0080](docs/adr/0080-passkey-smart-account-is-the-default-wallet.md) for
+the architecture decision.
+
 The open interoperability stack assigns one responsibility to each protocol:
 MCP for tools and data is implemented. The opt-in A2A v1 text-task adapter
 serves an Agent Card plus authenticated `SendMessage` and `GetTask`. AGNTCY
@@ -823,7 +834,6 @@ chunk, so a stalled provider request can stay open until it times out.
 
 ## Kotobase Passkey federation
 
-Passkey browser session から、短命・一回限りの Kotobase 交換証明を発行します。
 Passkey で成立した browser session から、短命・一回限りの Kotobase 交換証明を
 発行できます。
 
@@ -837,15 +847,20 @@ Cookie: cloud_itonami_identity=...
 response の `cacao_b64` を `exchange_url` へ top-level form POST すると通常の
 Kotobase session が成立します。Datomic query と Git bundle read はその session
 を共有し、Git write は引き続き Nekko署名・委任・quorumを要求します。
-response の `cacao_b64` を `exchange_url` へ top-level form POST すると、
-Kotobase の通常 session が成立します。Datomic query と Git bundle read はその
-session を共有します。Git write は引き続き Nekko 署名・委任・quorum が必要です。
+
+これは同じ Principal を渡す federation であり、`itonami.cloud` の raw WebAuthn
+credential を Kotobase origin から使う仕組みではありません。また現在の issuer は
+resident が直接検証した `:kind :passkey` session だけを受理し、Hosted auth の
+`:kind :federated` session は未接続です。詳しい current/target 境界は
+[Passkey Smart Account guide](docs/passkey-smart-account.md) を参照してください。
 
 ## Identity and organizations
 
-First launch requires only a Passkey. The verified ES256/P-256 public key is
-encoded as the stable User `did:key`; the private key remains in the
-authenticator. Organization information can be entered later.
+The User/Principal identity is stable across authentication methods. A Passkey
+record separately names its active ES256/P-256 credential/controller, whose
+private key remains in the authenticator. Legacy records may have filled a
+blank User DID from a Passkey, but adding or revoking a Passkey must not rename
+an established Principal. Organization information can be entered later.
 
 Returning active Users may also sign in through a ten-minute, single-use email
 magic link when `:email-login` delivery is configured. Email proves control of
@@ -870,7 +885,7 @@ override both identity domains before inviting production users.
 Identity concepts remain separate:
 
 - Installation: one local application state
-- User: Passkey-rooted person with a stable `did:key`
+- User: stable person/Principal with one or more explicitly bound authenticators
 - Tenant: internal immutable organization/workspace ID
 - Organization ID: human-readable, immutable slug
 - Domain: managed or independently verified DNS name
