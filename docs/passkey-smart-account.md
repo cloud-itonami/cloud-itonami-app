@@ -123,6 +123,34 @@ CLOUD_ITONAMI_ERC4337_PAYMASTER_URL=https://…   # optional
 paymasterを設定しない場合は、deterministic Smart Account addressがgasを支払える必要があります。
 URLに含まれるprovider keyを`/api/wallet`へ返したり、operation recordへ保存したりしません。
 
+mainnetで初回の権限変更を行う前に、chain ID `11155111` のEthereum Sepoliaを使えます。
+2026-08-28に公開Sepolia RPCへread-only照会し、Smart Wallet v1.1 factory
+`0xBA5E…5842`、implementation `0x0000…534d`、EntryPoint v0.6 `0x5FF1…2789`
+のcodeとfactoryの`implementation()`一致を確認しました。Sepoliaのendpointはmainnetと
+別の環境変数で設定します。
+
+```text
+CLOUD_ITONAMI_EVM_SEPOLIA_RPC_URL=https://…
+CLOUD_ITONAMI_ERC4337_SEPOLIA_BUNDLER_URL=https://…
+CLOUD_ITONAMI_ERC4337_SEPOLIA_PAYMASTER_URL=https://…   # optional
+```
+
+最初のhosted adapterとしては、Pimlico v2の同じchain endpointをbundlerとpaymasterに
+指定できます。Pimlico固有のidentity、wallet SDK、秘密鍵は採用せず、標準
+`eth_*UserOperation`とv0.6 `pm_sponsorUserOperation`だけを呼びます。したがってAlto等の
+self-hosted bundlerや別providerへURLを差し替えても、Principal、Passkey、Smart Account
+addressは変わりません。API keyはURLの一部になるためsecret storeまたはLaunchAgent環境へ
+のみ置き、設定ファイルやログへcommitしません。
+
+```text
+https://api.pimlico.io/v2/sepolia/rpc?apikey=<secret>
+```
+
+Pimlicoのtestnet sponsorshipは無料ですがAPI keyが必要です。mainnet sponsorshipは
+off-chain残高または登録済み支払手段を消費するため、Sepolia receiptを確認するまでは
+有効化しません。Coinbase CDP PaymasterはBase Mainnet / Base Sepolia専用なので、
+portable defaultにはしません。
+
 ## 別端末から使う
 
 ### 1. 同じ credential manager に同期されている場合
