@@ -321,8 +321,13 @@
   and not ONE recorded what they were -- and a probe with the real tool
   schemas could not reproduce it afterwards (15 attempts, 0 failures). The
   reason was in the value we dropped. Same defect this codebase keeps finding
-  elsewhere: status kept, body discarded."
-  [value]
+  elsewhere: status kept, body discarded.
+
+  TAKES THE TOOL NAME for the same reason. Measured 2026-08-28, this is the
+  most common live failure -- and `:turn/tool` was nil for all 138 of them,
+  so `which tool did the model mis-call` had no answer either. The caller
+  knows the name; this did not ask for it."
+  [tool-name value]
   (cond
     (map? value) value
     (str/blank? (str value)) {}
@@ -337,6 +342,7 @@
             ;; down and the tool would run with no arguments at all.
             (throw (ex-info "model returned tool arguments that are not an object"
                             {:type :provider/invalid-tool-arguments
+                             :tool-name tool-name
                              :arguments-kind (cond (sequential? parsed) "array"
                                                    (string? parsed) "string"
                                                    :else (str (type parsed)))
@@ -347,6 +353,7 @@
         (catch Exception error
           (throw (ex-info "model returned invalid tool arguments"
                           {:type :provider/invalid-tool-arguments
+                           :tool-name tool-name
                            :arguments-length (count (str value))
                            ;; Truncated: these are model-authored and can be
                            ;; long. Enough to see the malformation, not the
@@ -360,7 +367,8 @@
   (mapv (fn [index call]
           {:id (or (:id call) (str "tool-call-" index))
            :name (get-in call [:function :name])
-           :input (parse-arguments (get-in call [:function :arguments]))})
+           :input (parse-arguments (get-in call [:function :name])
+                                   (get-in call [:function :arguments]))})
         (range) (or calls [])))
 
 (def ^:private default-agent-max-tokens
