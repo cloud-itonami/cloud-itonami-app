@@ -117,3 +117,74 @@
       (is (not (exhausted? "tool_calls" 1024 nil nil)))
       (is (not (exhausted? "tool_calls" nil 1024 nil)))
       (is (not (exhausted? "tool_calls" 40 2048 nil))))))
+
+;; ── how many output tokens a model will actually give ──────────────────
+;;
+;; `/infer/models` declares `context: 262144` for murakumo-main and NO output
+;; limit at all. Measured 2026-08-28, one request each with a prompt written to
+;; run long: max_tokens 3072, 4096, 8192 and 16384 every one returned
+;; completion_tokens 2048, finish_reason length. Two other selectors on the
+;; same fleet answered the same 2048. The number exists nowhere but in the
+;; shape of a reply.
+
+(deftest a-limit-may-be-one-number-or-one-per-model
+  (testing "a scalar applies to every model, as it always did"
+    (is (= 2048 (retry/model-scoped 2048 "murakumo-main")))
+    (is (= 2048 (retry/model-scoped 2048 "anything-else"))))
+  (testing "a map applies per model, the shape :context-window-tokens uses"
+    (is (= 2048 (retry/model-scoped {"murakumo-main" 2048 "big" 32768} "murakumo-main")))
+    (is (= 32768 (retry/model-scoped {"murakumo-main" 2048 "big" 32768} "big"))))
+  (testing "a model the map does not name is unconfigured, not defaulted to a sibling"
+    ;; A limit measured on one deployment is evidence about that deployment.
+    (is (nil? (retry/model-scoped {"murakumo-main" 2048} "some-other-model"))))
+  (is (nil? (retry/model-scoped nil "m")))
+  (is (nil? (retry/model-scoped "2048" "m")) "a string is not a token count"))
+
+(deftest a-reply-that-stopped-short-of-our-cap-reveals-the-servers-own
+  (testing "the measured case"
+    (is (= 2048 (retry/served-output-ceiling "length" 2048 8192)))
+    (is (= 2048 (retry/served-output-ceiling "length" 2048 16384))))
+  (testing "reaching the cap WE set reveals nothing about theirs"
+    (is (nil? (retry/served-output-ceiling "length" 2048 2048))))
+  (testing "stopping for any other reason means the model finished"
+    (is (nil? (retry/served-output-ceiling "stop" 300 8192)))
+    (is (nil? (retry/served-output-ceiling "tool_calls" 300 8192))))
+  (testing "nothing is inferred from absent or empty telemetry"
+    (is (nil? (retry/served-output-ceiling "length" nil 8192)))
+    (is (nil? (retry/served-output-ceiling "length" 2048 nil)))
+    (is (nil? (retry/served-output-ceiling "length" 0 8192))
+        "zero tokens is a failure to generate, not a ceiling of zero")))
+
+(deftest the-output-budget-follows-the-model-and-then-what-it-will-give
+  (let [budget (fn [m model] (retry/output-token-budget m model))]
+    (testing "resolution runs most specific first"
+      (is (= 1024 (budget {:requested 1024 :configured 2048 :default 512} "m")))
+      (is (= 2048 (budget {:configured 2048 :default 512} "m")))
+      (is (= 512 (budget {:default 512} "m"))))
+
+    (testing "per-model configuration resolves per model"
+      (is (= 32768 (budget {:configured {"m" 2048 "big" 32768} :default 512} "big")))
+      (is (= 512 (budget {:configured {"m" 2048} :default 512} "unnamed"))
+          "an unnamed model falls through to the default, not to a sibling's cap"))
+
+    (testing "an observed ceiling bounds it, because asking for more gets the same reply"
+      ;; This is the measured murakumo case: configured 8192, served 2048.
+      (is (= 2048 (budget {:configured 8192 :default 512 :observed-ceiling 2048} "m")))
+      (is (= 1024 (budget {:configured 1024 :default 512 :observed-ceiling 2048} "m"))
+          "a ceiling above our own number does not raise it"))
+
+    (testing "the context window bounds it, since unfittable output was never available"
+      (is (= 4096 (budget {:configured 32768 :default 512 :context-window 4096} "m")))
+      (is (= 2048 (budget {:configured 32768 :default 512
+                           :observed-ceiling 2048 :context-window 4096} "m"))
+          "the lowest bound that is known wins"))
+
+    (testing "an unknown bound is not a bound of zero"
+      (is (= 8192 (budget {:configured 8192 :default 512
+                           :observed-ceiling nil :context-window nil} "m"))))
+
+    (testing "the result is never zero or negative"
+      (is (= 1 (budget {:configured 8192 :default 512 :observed-ceiling 0} "m"))))
+
+    (testing "no number anywhere is no budget, not a made-up one"
+      (is (nil? (budget {:configured nil :default nil} "m"))))))

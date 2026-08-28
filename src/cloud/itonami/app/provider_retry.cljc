@@ -151,3 +151,71 @@
        (and (number? completion-tokens)
             (number? max-output-tokens)
             (>= (long completion-tokens) (long max-output-tokens))))))
+
+;; ── how many output tokens a model will actually give ──────────────────
+
+(defn model-scoped
+  "VALUE for MODEL, where VALUE is one number for every model or a map of them.
+
+  The same shape `:context-window-tokens` already uses, so an operator who has
+  configured one knows how to configure the other. A map missing MODEL answers
+  nil rather than falling back to some other model's number: a limit configured
+  for one deployment is evidence about that deployment only."
+  [value model]
+  (cond
+    (map? value) (get value model)
+    (number? value) value))
+
+(defn served-output-ceiling
+  "The server's OWN output cap, when a response has just revealed it.
+
+  A response that stopped at `length` having produced FEWER tokens than were
+  asked for was stopped by a limit that is not ours. That count is the limit.
+
+  Measured 2026-08-28 against api.murakumo.cloud, one request each with a
+  prompt written to run long: `max_tokens` 3072, 4096, 8192 and 16384 all
+  returned `completion_tokens` 2048 with `finish_reason` `length`. Two other
+  selectors on the same fleet answered the same 2048. Nothing in
+  `/infer/models` declares it -- the registry states `context: 262144` and no
+  output limit at all -- so this number exists nowhere except in the shape of a
+  reply, and an application that does not read it back is configured against a
+  limit it has never seen.
+
+  nil when the response reveals nothing: stopping for any other reason says the
+  model finished, and reaching the cap we asked for says only that OUR number
+  applied."
+  [finish-reason completion-tokens requested]
+  (when (and (= "length" finish-reason)
+             (number? completion-tokens)
+             (number? requested)
+             (pos? (long completion-tokens))
+             (< (long completion-tokens) (long requested)))
+    (long completion-tokens)))
+
+(defn output-token-budget
+  "How many output tokens to ask MODEL for.
+
+  Resolution order, most specific first: what the caller asked for, what the
+  operator configured for this provider (per-model or one number), then the
+  shipped DEFAULT. Then two bounds that are not preferences:
+
+  - the ceiling this endpoint has been OBSERVED to enforce, because asking for
+    more than a server gives does not get more -- it gets the same answer while
+    the application believes a budget it does not have, and every check written
+    against the requested number goes quiet;
+
+  - the model's context window, since output that cannot fit in the window was
+    never available to spend.
+
+  Bounds are applied only when known. An unobserved ceiling is not a ceiling of
+  zero, and a provider that does not publish a window does not thereby have a
+  small one."
+  [{:keys [requested configured default observed-ceiling context-window]} model]
+  (let [chosen (or (model-scoped requested model)
+                   (model-scoped configured model)
+                   default)]
+    (when (number? chosen)
+      (->> [observed-ceiling context-window]
+           (filter number?)
+           (reduce (fn [value bound] (min value (long bound))) (long chosen))
+           (max 1)))))
