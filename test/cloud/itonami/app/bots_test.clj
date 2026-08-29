@@ -1110,6 +1110,71 @@
               (is (some #{"verifier/step-passed"} kinds))
               (is (some #{"verifier/goal-passed"} kinds)))))))))
 
+(deftest policy-violating-parallel-batch-returns-to-the-model-instead-of-failing-the-turn
+  ;; Requests carry `parallel_tool_calls false` and llama.cpp-hosted models
+  ;; emit parallel batches anyway. Measured over the window ending 2026-08-29:
+  ;; 10 turns dead at :agent/parallel-tool-limit, 12 at
+  ;; :agent/unsafe-parallel-tools. The violation is the model's to fix, so it
+  ;; must arrive as tool-message content the model reads, not a dead tick.
+  (with-store
+    (fn []
+      (let [root (git-workspace)
+            b (make-bot alice {:coding? true :workspace (.getPath root)})
+            calls (atom 0)
+            seen (atom [])
+            run-id "goal-parallel-violation-1"
+            read-call (fn [id name] {:id id :name name :input {}})]
+        (with-redefs
+          [policy/select-provider (fn [_ _] {:id :local})
+           provider/agent-turn
+           (fn [_ request]
+             (swap! seen conj (mapv #(select-keys % [:role :content])
+                                    (filter #(= "tool" (:role %))
+                                            (:messages request))))
+             (case (swap! calls inc)
+               1 {:content "" :tool-calls
+                  [{:id "plan" :name "goal_plan"
+                    :input {:steps [{:id "inspect" :title "Inspect repository"}]}}]}
+               ;; Four reads: over the limit of three.
+               2 {:content "" :tool-calls (mapv #(read-call (str "r" %) "git_status")
+                                                (range 4))}
+               ;; A write inside a parallel batch: not independent read-only.
+               3 {:content "" :tool-calls
+                  [(read-call "s" "git_status")
+                   {:id "w" :name "workspace_write_file"
+                    :input {:path "x.txt" :content "x"}}]}
+               ;; A lawful batch still executes.
+               4 {:content "" :tool-calls [(read-call "ok1" "git_status")
+                                           (read-call "ok2" "git_diff")]}
+               5 {:content "" :tool-calls
+                  [{:id "frame" :name "decision_frame"
+                    :input decision-frame-input}]}
+               6 {:content "" :tool-calls
+                  [{:id "verify-step" :name "goal_step_complete"
+                    :input {:step_id "inspect" :summary "repository inspected"
+                            :evidence ["status and diff receipts"]}}]}
+               {:content "" :tool-calls
+                [{:id "finish" :name "goal_complete"
+                  :input {:summary "done" :evidence ["receipts"]}}]}))]
+          (bots/submit-goal! nil alice (:bot/id b) "Inspect" run-id)
+          (loop [remaining 200]
+            (let [turn (bots/latest-turn alice (:bot/id b))]
+              (when (and (pos? remaining) (= "running" (:state turn)))
+                (Thread/sleep 25)
+                (recur (dec remaining)))))
+          (let [turn (bots/latest-turn alice (:bot/id b))
+                all-tool-content (mapcat #(map :content %) @seen)]
+            (is (= "completed" (:state turn))
+                "neither violating batch may kill the turn")
+            (is (some #(re-find #"parallel tool limit is three" (str %))
+                      all-tool-content)
+                "the over-limit batch is explained to the model")
+            (is (some #(re-find #"workspace_write_file is not" (str %))
+                      all-tool-content)
+                "the unsafe batch names the offending tool")
+            (is (= 2 (count (get-in turn [:job :children] {})))
+                "only the lawful batch produced child runs")))))))
+
 (deftest restart-checkpoints-a-running-goal-instead-of-marking-it-interrupted
   (with-store
     (fn []
