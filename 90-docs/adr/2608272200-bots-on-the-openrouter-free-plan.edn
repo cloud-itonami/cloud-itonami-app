@@ -153,4 +153,39 @@ lightning:free` is verified (2026-08-28, against
 `tools`/`tool_choice` in `:supported_parameters` -- and it is the exact model
 this ADR's own \"The provider\" section already measured serving a tool-call
 turn on this app. If it disappears from the catalog, the fallback keeps bots
-on the router until `data/config.edn` is updated or the pin is removed."}]
+on the router until `data/config.edn` is updated or the pin is removed.
+
+### The bound worked. The risk happened anyway, within about a day.
+
+By the evening of 2026-08-28 the workforce's failure window was 88%
+`:provider/fallback-failed` (44 of 50). Direct `curl` against
+`https://openrouter.ai/api/v1/chat/completions` isolated it in three
+requests: `nvidia/nemotron-3.5-lightning:free` alone, bare
+`{\"role\":\"user\",\"content\":\"say hi\"}`, no tools -- **HTTP 404
+\"Provider returned error\"**. `openrouter/free` alone, same request --
+HTTP 200, served by `nvidia/nemotron-3-super-120b-a12b:free`. So the
+pinned model was simply gone (`stealth/ox-alpha` again, faster than the
+four days that name took), and the router underneath it was fine -- the
+`:model-fallbacks` entry was firing exactly as designed, and the fallback
+attempt was ALSO failing on most turns, with the identical \"HTTP 400
+Backend request failed with status 400\" for every one measured. The
+likely reading, not confirmed: the request built for the (now-gone)
+pinned model's continuation turn was replayed verbatim against the
+fallback rather than rebuilt for whatever the router landed on, and that
+whatever also rejected it. This was not investigated further because the
+model being gone was sufficient explanation to act on immediately.
+
+**Owner instruction, same day: `minimax/minimax-m3:free`.** Verified live
+before pinning, with a direct `curl`, including the specific shape that
+had just broken on nemotron -- a tool call, then a continuation turn
+replaying the tool result back with its `tool_call_id` -- HTTP 200 both
+times.
+
+**The operational lesson, not just the model swap:** a `curl` against a
+model directly (bare request, no tools) tells you if the CATALOG entry is
+gone. A `curl` reproducing the CONTINUATION shape (tool call, then tool
+result replayed back) is what actually caught the fallback's own failure
+mode here and is now the standing verification step for any future pin,
+named in the header comment above. `data/config.edn`'s own age is not
+evidence the pin is still good -- the previous entry read as verified and
+current for less than a day."}]
