@@ -55,7 +55,7 @@
            (options {:max-output-tokens 2048}
                     {:max-output-tokens 512
                      :context-window-tokens 131072})))
-    (is (= {:temperature 0.2 :num_predict 2048}
+    (is (= {:temperature 0.2 :num_predict 16384}
            (options {} {}))
         "unknown model metadata does not invent a local allocation")))
 
@@ -95,7 +95,7 @@
               {:model "murakumo-main"
                :messages [{:role "user" :content "hello"}]
                :tools []})]
-    (is (= 2048 (:max_tokens body)))
+    (is (= 16384 (:max_tokens body)))
     (is (false? (:stream body)))
     (testing "the ordinary provider fields are preserved"
       (is (= "murakumo-main" (:model body)))
@@ -625,7 +625,7 @@
                            {:max-output-tokens 1024})))
     (is (= 512 (requested {:id "p" :max-output-tokens 512} {}))
         "the provider default applies when the request names none")
-    (is (= 2048 (requested {:id "p"} {}))
+    (is (= 16384 (requested {:id "p"} {}))
         "and the shipped default when neither does")
     (is (= (requested {:id "p" :kind :openai-compatible :max-output-tokens 512}
                       {:model "m" :messages []})
@@ -747,7 +747,7 @@
     (is (= 2048 (:max_tokens (body {:id "p" :kind :openai-compatible
                                     :max-output-tokens {"murakumo-main" 2048}}
                                    {:model "murakumo-main" :messages []}))))
-    (is (= 2048 (:max_tokens (body {:id "p" :kind :openai-compatible
-                                    :max-output-tokens {"other" 4096}}
-                                   {:model "murakumo-main" :messages []})))
+    (is (= 16384 (:max_tokens (body {:id "p" :kind :openai-compatible
+                                     :max-output-tokens {"other" 4096}}
+                                    {:model "murakumo-main" :messages []})))
         "an unnamed model falls to the shipped default, not to a sibling's cap")))

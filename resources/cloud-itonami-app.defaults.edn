@@ -199,11 +199,15 @@
    :context-window-tokens {"murakumo-main" 262144
                            "qwen3.8-27b-throughput-5090" 65536
                            "qwen3.8-27b-fastmtp-aggressive" 32768}
-   ;; Keep unattended turns concise even though the 5090 route has higher
-   ;; throughput: context and output budgets are product bounds, not a reason
-   ;; to fill the wider cold-start wall with prose. 512 leaves room for a
-   ;; role/tool decision while preserving capacity for other Bots.
-   :max-output-tokens 512
+   ;; 2026-08-29 owner instruction: raise output budgets toward the model
+   ;; maximum. The previous 512 (kept "concise" for capacity) truncated real
+   ;; work -- measured that day: a resident decision_frame tool call cut at
+   ;; its budget, filed :provider/output-budget-exhausted. 16384 matches the
+   ;; gateway's raised public cap; at b70's measured 53 tok/s it is ~5
+   ;; minutes of decode, inside the gateway's ten-minute ceiling, and the
+   ;; observed-ceiling mechanism still clamps to whatever an endpoint
+   ;; actually serves.
+   :max-output-tokens 16384
    :api-key-env "MURAKUMO_API_KEY"
    :local? false
    ;; Shipped off and unreviewed. The distribution is tenant-neutral: it cannot

@@ -216,7 +216,7 @@
 (deftest murakumo-runpod-route-has-a-cold-start-safe-client-bound
   (let [provider (some #(when (= "murakumo" (:id %)) %)
                        (:providers (config/load-config)))]
-    (is (= 512 (:max-output-tokens provider)))
+    (is (= 16384 (:max-output-tokens provider)))
     (is (= "murakumo-main" (:default-model provider)))
     (is (= ["murakumo-main" "qwen3.8-27b-throughput-5090"
             "qwen3.8-27b-fastmtp-aggressive"]
