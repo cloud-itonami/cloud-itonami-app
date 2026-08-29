@@ -48,12 +48,55 @@
 
 (defn- snapshot-bytes [] (host/file-size (.getPath (state-file))))
 
-(defn- apply-op [state {:keys [op path value]}]
+(defn- sha256-hex
+  "Hex SHA-256 of the UTF-8 bytes of S -- the same bytes `write-atomic!` puts
+  on disk, so hashing the in-memory string at write time identifies the file
+  without ever reading it back."
+  [^String s]
+  (let [digest (.digest (java.security.MessageDigest/getInstance "SHA-256")
+                        (.getBytes s java.nio.charset.StandardCharsets/UTF_8))]
+    (apply str (map #(format "%02x" %) digest))))
+
+(defonce ^:private snapshot-digest
+  ;; SHA-256 of the snapshot this process last wrote or loaded, or nil before
+  ;; either. Journal records carry it as `:base-sha256` so `replay-journal`
+  ;; can tell two snapshots apart even when they are coincidentally the same
+  ;; LENGTH -- the one case the `:base-bytes` check cannot see
+  ;; (ADR-2608291500 Phase 0).
+  (atom nil))
+
+(defn- apply-op [state {:keys [op path value from]}]
   (case op
     :assoc (if (seq path) (assoc-in state path value) value)
     :dissoc (if (= 1 (count path))
               (dissoc state (first path))
               (update-in state (pop path) dissoc (peek path)))
+    ;; The grow-only-vector op (ADR-2608291500 Phase 1). Not a blind `into`:
+    ;; replay must stay idempotent across a crash between the snapshot write
+    ;; and the journal truncation, and an unconditional append would duplicate
+    ;; the tail on that path. So the CURRENT length decides -- exactly `from`
+    ;; means this record has not been applied; long enough AND carrying this
+    ;; very tail means it already has; anything else means this journal is not
+    ;; an increment of this state, and pretending otherwise corrupts it.
+    :append
+    (let [current (if (seq path) (get-in state path) state)]
+      (cond
+        (and (vector? current) (= (count current) from))
+        (if (seq path)
+          (update-in state path into value)
+          (into current value))
+
+        (and (vector? current)
+             (>= (count current) (+ from (count value)))
+             (= value (subvec current from (+ from (count value)))))
+        state
+
+        :else
+        (throw (ex-info "state journal append does not fit this state"
+                        {:type :store/invalid-journal-append
+                         :path path :from from
+                         :found (if (vector? current) (count current)
+                                    (some-> current class str))}))))
     (throw (ex-info "Unknown state journal operation"
                     {:type :store/invalid-journal-operation :op op}))))
 
@@ -61,10 +104,18 @@
   "Idempotent path operations turning BEFORE into AFTER.
 
   Persistent Clojure updates keep object identity for untouched branches, so
-  this walks only what actually changed. Vectors and scalar leaves are replaced
-  whole, which is what makes replay idempotent: applying a record twice has the
-  same result as applying it once, so a crash between the snapshot write and
-  the journal truncation is harmless."
+  this walks only what actually changed. Scalar leaves are replaced whole; a
+  vector that merely GREW at the end becomes an `:append` of its tail, and any
+  other vector change is replaced whole. Both shapes keep replay idempotent --
+  whole `:assoc` trivially, `:append` through the length-and-content guard in
+  `apply-op` -- so a crash between the snapshot write and the journal
+  truncation stays harmless.
+
+  The append case is why this function exists in its current form: measured
+  2026-08-29 (ADR-2608291500), 95% of journal bytes were whole-vector rewrites
+  of `:messages` and `:job/events` vectors that had only grown, O(n²) over a
+  run's life. The prefix test is cheap for the same reason the map walk is:
+  structural sharing lets `=` win by identity on the shared prefix."
   [before after]
   (letfn [(walk [path a b]
             (cond
@@ -78,6 +129,11 @@
                           :else (walk (conj path k) (get a k) (get b k))))
                       (set/union (set (keys a)) (set (keys b))))
               (= a b) []
+              (and (vector? a) (vector? b)
+                   (< (count a) (count b))
+                   (= a (subvec b 0 (count a))))
+              [{:op :append :path path :from (count a)
+                :value (vec (subvec b (count a)))}]
               :else [{:op :assoc :path path :value b}]))]
     (vec (walk [] before after))))
 
@@ -126,13 +182,16 @@
   directory, or a process that has already loaded one. `journal-entry-count` is
   set as a side effect because the checkpoint counter has to survive the load
   that produced it."
-  [base file snapshot-bytes]
+  ([base file snapshot-bytes]
+   (replay-journal base file snapshot-bytes nil))
+  ([base file snapshot-bytes snapshot-sha]
   (let [{:keys [lines terminated?]} (journal-records file)]
     (if (empty? lines)
       (do (reset! journal-entry-count 0) base)
       (let [head (try (edn/read-string (first lines)) (catch Exception _ nil))]
         (if-not (host-bounds/journal-belongs-to-snapshot?
-                 (:base-bytes head) snapshot-bytes)
+                 (:base-bytes head) snapshot-bytes
+                 (:base-sha256 head) snapshot-sha)
           (do (archive-orphan-journal! file (:base-bytes head) snapshot-bytes)
               (reset! journal-entry-count 0)
               base)
@@ -161,16 +220,23 @@
                                       {:type :store/invalid-journal
                                        :file (.getPath file)
                                        :line (inc index)}
-                                      error)))))))))))))
+                                      error))))))))))))))
 
 (defn- load-state []
   (let [file (state-file)
-        base (if (.isFile file)
-               (merge (initial-state) (edn/read-string (slurp file)))
+        content (when (.isFile file) (slurp file))
+        base (if content
+               (merge (initial-state) (edn/read-string content))
                (initial-state))
+        ;; The digest of what is actually on disk, taken from the string just
+        ;; read rather than a second file read. Nil when no snapshot exists --
+        ;; journal records then carry no `:base-sha256` and the belongs check
+        ;; falls back to byte length alone, which is also how journals written
+        ;; before this field existed keep replaying.
+        sha (when content (reset! snapshot-digest (sha256-hex content)))
         main (if (repository-mode?)
                base
-               (replay-journal base (journal-file) (snapshot-bytes)))]
+               (replay-journal base (journal-file) (snapshot-bytes) sha))]
     (if-let [work (work-partitions/load-ledger (:work-governance main))]
       (assoc main :work-governance work)
       main)))
@@ -189,8 +255,11 @@
     (when work (work-partitions/persist-ledger! work))
     ;; Confined write under the state file's parent (kotoba-lang/fs), then
     ;; same-directory atomic rename. No ambient spit of the durable bytes.
-    (host/write-atomic! (.getPath file) (pr-str (dissoc value :work-governance))
-                        host/store-max-bytes))
+    ;; The digest is taken from the very string being written -- identifying
+    ;; the snapshot costs a hash of bytes already in memory, never a re-read.
+    (let [serialized (pr-str (dissoc value :work-governance))]
+      (host/write-atomic! (.getPath file) serialized host/store-max-bytes)
+      (reset! snapshot-digest (sha256-hex serialized))))
   value)
 
 (defn- checkpoint!
@@ -244,10 +313,12 @@
     (when (seq ops)
       (let [file (journal-file)
             path (.getPath file)
-            build (fn [] (str (pr-str {:schema journal-schema
-                                       :at (str (Instant/now))
-                                       :base-bytes (snapshot-bytes)
-                                       :ops ops})
+            build (fn [] (str (pr-str (cond-> {:schema journal-schema
+                                               :at (str (Instant/now))
+                                               :base-bytes (snapshot-bytes)
+                                               :ops ops}
+                                        @snapshot-digest
+                                        (assoc :base-sha256 @snapshot-digest)))
                               "\n"))]
         (.mkdirs (.getParentFile file))
         (let [record (build)]
