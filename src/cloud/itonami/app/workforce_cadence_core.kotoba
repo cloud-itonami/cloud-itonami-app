@@ -1,0 +1,76 @@
+;; HOW OFTEN A RESIDENT BOT ASKS AGAIN — decided from what its last run found.
+;;
+;; Sibling of `routine_core.kotoba` (when a recorded workflow may run again),
+;; not a second scheduler. The clock, the queue and the writing down stay in
+;; `bots.clj`; the only judgement here is the length of the next gap.
+;;
+;; ## Why a fixed cadence was wrong in both directions
+;;
+;; Until 2026-08-29 `bots.clj` computed `next-run-at` as `now + cadence`, with
+;; `cadence` a constant per role in loop-yakuwari's `workforce.edn`. Measured
+;; that day: resident runs took p50 174s against `max-active 2`, so the fleet
+;; can serve roughly 993 runs a day, while 126 Bots on a 15-minute cadence ask
+;; for 12,096. Twelve times over, the number in the table stops describing
+;; anything -- the queue decides, and every Bot waits the same ~3 hours whether
+;; it had work or not.
+;;
+;; The scarce thing is not the interval. It is the two slots. A Bot that found
+;; nothing and a Bot that changed something are asking for the same slot at the
+;; same rate, so the one with work waits behind the one without.
+;;
+;; ## The three answers, and why the third is not the second
+;;
+;;   produced-change  the run changed something -> ask again at the floor.
+;;                    There is work here; stay as fast as the operator allows.
+;;
+;;   no-op            the run completed and found nothing to do -> double,
+;;                    up to `ceiling`. This is EVIDENCE about the work, and
+;;                    backing off hands the slot to a Bot that has some.
+;;
+;;   anything else    the run did not finish -- provider 503, timeout, a code
+;;                    this file does not know -> double, but only up to
+;;                    `retry-ceiling`, which the host sets far below `ceiling`.
+;;
+;; The third case exists because a run that could not execute MEASURED NOTHING
+;; about whether there was work. Folding it into `no-op` would let one hour of
+;; provider outage push every Bot to a daily interval, and they would still be
+;; slow a day after the provider came back. That is the same failure this
+;; workspace keeps finding elsewhere: a check that could not run returning the
+;; value of a check that ran and found nothing.
+;;
+;; An unrecognised code takes the third branch on purpose. `no-op` is the only
+;; input that earns the long back-off, and it has to be said explicitly.
+;;
+;; ## Shape
+;;
+;; Five `:i64` in, one `:i64` out: native-crossable, no records, no strings.
+;; Clamping rather than refusing, because there is no sane way to fail a
+;; schedule -- a Bot with an unusable interval must still get a next time, and
+;; the clamp is visible in the returned number.
+
+(ns cloud.itonami.app.workforce-cadence
+  (:export [outcome-produced-change outcome-no-op outcome-unavailable
+            next-interval-minutes]))
+
+(defn outcome-produced-change [] :i64 0)
+(defn outcome-no-op [] :i64 1)
+(defn outcome-unavailable [] :i64 2)
+
+(defn at-least [a :i64 b :i64] :i64
+  (if (< a b) b a))
+
+(defn at-most [a :i64 b :i64] :i64
+  (if (> a b) b a))
+
+(defn next-interval-minutes
+  [floor :i64 ceiling :i64 retry-ceiling :i64 current :i64 outcome :i64] :i64
+  (let [f (at-least floor 1)
+        c (at-least ceiling f)
+        rc (at-least (at-most retry-ceiling c) f)
+        cur (at-least (at-most current c) f)
+        doubled (* cur 2)]
+    (if (= outcome 0)
+      f
+      (if (= outcome 1)
+        (at-most doubled c)
+        (at-most doubled rc)))))

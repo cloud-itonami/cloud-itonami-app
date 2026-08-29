@@ -809,6 +809,67 @@
      :args [(oracle/i64 3) (oracle/i64 10)] :expect 0 :read oracle/i64-value}
     {:oracle :store-core :export 'retention-drop-count
      :args [(oracle/i64 15) (oracle/i64 10)] :expect 5 :read oracle/i64-value}
+
+    ;; The hysteresis variant shipped without a case, so `uncovered` had been
+    ;; red on main and could no longer tell anyone's NEXT missing export from
+    ;; this one. Cases read off the core's own rule: evict nothing until the
+    ;; collection has grown `slack` past `cap`, then evict all the way to `cap`.
+    {:oracle :store-core :export 'retention-drop-count-hysteresis
+     :args [(oracle/i64 12) (oracle/i64 10) (oracle/i64 5)]
+     :expect 0 :read oracle/i64-value}
+    {:oracle :store-core :export 'retention-drop-count-hysteresis
+     :args [(oracle/i64 16) (oracle/i64 10) (oracle/i64 5)]
+     :expect 6 :read oracle/i64-value}
+    ;; "Non-positive slack is the old behaviour exactly" -- same answer as the
+    ;; sibling case two lines above, which is what makes that sentence checkable.
+    {:oracle :store-core :export 'retention-drop-count-hysteresis
+     :args [(oracle/i64 15) (oracle/i64 10) (oracle/i64 0)]
+     :expect 5 :read oracle/i64-value}
+    {:oracle :store-core :export 'retention-drop-count-hysteresis
+     :args [(oracle/i64 3) (oracle/i64 10) (oracle/i64 5)]
+     :expect 0 :read oracle/i64-value}
+
+    ;; ── workforce-cadence ───────────────────────────────────────────
+    ;; How long until this Bot asks again, decided from what its last run
+    ;; found. Five `:i64` in, one `:i64` out.
+    ;;
+    ;; The three outcome codes are exported as functions rather than written
+    ;; as literals here, so a host that drifts from the core is caught by the
+    ;; first three cases instead of by a wrong schedule in production.
+    {:oracle :workforce-cadence :export 'outcome-produced-change
+     :args [] :expect 0 :read oracle/i64-value}
+    {:oracle :workforce-cadence :export 'outcome-no-op
+     :args [] :expect 1 :read oracle/i64-value}
+    {:oracle :workforce-cadence :export 'outcome-unavailable
+     :args [] :expect 2 :read oracle/i64-value}
+
+    ;; changed something -> back to the floor, however far it had backed off
+    {:oracle :workforce-cadence :export 'next-interval-minutes
+     :args [(oracle/i64 15) (oracle/i64 1440) (oracle/i64 60)
+            (oracle/i64 1440) (oracle/i64 0)]
+     :expect 15 :read oracle/i64-value}
+    ;; found nothing -> double, up to the long ceiling
+    {:oracle :workforce-cadence :export 'next-interval-minutes
+     :args [(oracle/i64 15) (oracle/i64 1440) (oracle/i64 60)
+            (oracle/i64 960) (oracle/i64 1)]
+     :expect 1440 :read oracle/i64-value}
+    ;; THE CASE THIS CORE EXISTS FOR: same current interval, different answer.
+    ;; A run that could not execute measured nothing about whether there was
+    ;; work, so it backs off only to the retry ceiling.
+    {:oracle :workforce-cadence :export 'next-interval-minutes
+     :args [(oracle/i64 15) (oracle/i64 1440) (oracle/i64 60)
+            (oracle/i64 60) (oracle/i64 1)]
+     :expect 120 :read oracle/i64-value}
+    {:oracle :workforce-cadence :export 'next-interval-minutes
+     :args [(oracle/i64 15) (oracle/i64 1440) (oracle/i64 60)
+            (oracle/i64 60) (oracle/i64 2)]
+     :expect 60 :read oracle/i64-value}
+    ;; an outcome code the core does not know takes the retry branch, never
+    ;; the long back-off that only `no-op` earns
+    {:oracle :workforce-cadence :export 'next-interval-minutes
+     :args [(oracle/i64 15) (oracle/i64 1440) (oracle/i64 60)
+            (oracle/i64 45) (oracle/i64 9)]
+     :expect 60 :read oracle/i64-value}
 ]))
 
 (defn run-case

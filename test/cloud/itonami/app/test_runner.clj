@@ -46,6 +46,7 @@
             [cloud.itonami.app.policy-kotoba-parity-test]
             [cloud.itonami.app.native-canary-test]
             [cloud.itonami.app.health-kotoba-parity-test]
+            [cloud.itonami.app.workforce-cadence-kotoba-parity-test]
             [cloud.itonami.app.health-http-test]
             [cloud.itonami.app.store-core-test]
             [cloud.itonami.app.store-core-kotoba-parity-test]
@@ -242,6 +243,7 @@
     cloud.itonami.app.policy-kotoba-parity-test
     cloud.itonami.app.native-canary-test
     cloud.itonami.app.health-kotoba-parity-test
+    cloud.itonami.app.workforce-cadence-kotoba-parity-test
     cloud.itonami.app.health-http-test
     cloud.itonami.app.store-core-test
     cloud.itonami.app.store-core-kotoba-parity-test

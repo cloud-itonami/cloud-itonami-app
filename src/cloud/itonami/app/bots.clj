@@ -60,6 +60,7 @@
             [cloud.itonami.app.bot :as bot]
             [cloud.itonami.app.bot-authority :as bot-authority]
             [cloud.itonami.app.bot-identity :as bot-identity]
+            [cloud.itonami.app.kotoba-oracle :as oracle]
             [cloud.itonami.app.bot-slo :as bot-slo]
             [cloud.itonami.app.connectors :as connectors]
             [cloud.itonami.app.chronicle :as chronicle]
@@ -1427,6 +1428,74 @@
        :counts (->> runs
                     (map (comp #(subs (str %) 1) resident-outcome))
                     frequencies)})))
+
+(def ^:private cadence-ceiling-minutes
+  "How far a Bot that keeps finding nothing may back off. A day: past that the
+  interval stops being a schedule and becomes a decision to stop."
+  1440)
+
+(def ^:private cadence-retry-ceiling-minutes
+  "How far a Bot whose run never executed may back off. Deliberately far below
+  `cadence-ceiling-minutes`: an hour of provider outage must not leave the
+  whole workforce on a daily interval the day after it recovers."
+  60)
+
+(defn- workforce-outcome-code
+  "The last run's outcome, as the three codes `workforce_cadence_core.kotoba`
+  decides from.
+
+  `resident-outcome` already draws the line this needs -- `:no-op` is a tick
+  that looked and found nothing, `:completed` is one that changed something,
+  and a failure keeps the provider's own name. Everything that is not one of
+  the first two is the third code, INCLUDING statuses this function has never
+  seen: a run whose outcome we cannot read did not measure whether there was
+  work, and must not earn the back-off that only evidence earns."
+  [job]
+  (let [outcome (resident-outcome job)]
+    (cond
+      (= :completed outcome) (oracle/call :workforce-cadence 'outcome-produced-change [])
+      (= :no-op outcome) (oracle/call :workforce-cadence 'outcome-no-op [])
+      :else (oracle/call :workforce-cadence 'outcome-unavailable []))))
+
+(defn adjust-workforce-cadence!
+  "Recompute this Bot's next resident gap from what the run it just finished found.
+
+  Until 2026-08-29 `next-run-at` was set at SUBMIT time as `now + cadence`, a
+  constant per role. Measured that day: `max-active 2` and p50 174s serve about
+  993 runs a day while 126 Bots on a 15-minute cadence ask for 12,096. Twelve
+  times over, the constant describes nothing -- the queue decides, and a Bot
+  that found nothing and a Bot that changed something wait the same ~3 hours
+  for the same two slots.
+
+  The scarce thing is the slot, so the Bot without work is the one that should
+  yield it. `floor` stays whatever the operator configured; this only ever
+  lengthens the gap, and one productive run returns it to the floor.
+
+  Returns the interval it wrote, or nil when there was nothing to adjust."
+  [run-id]
+  (let [job (goal-job run-id)
+        bot-id (:job/bot job)]
+    (when (and (:job/resident-workforce? job) bot-id)
+      (when-let [wjob (get-in (snapshot) [:workforce-jobs bot-id])]
+      (let [floor (long (or (:workforce.job/cadence-minutes wjob) 15))
+            current (long (or (:workforce.job/interval-minutes wjob) floor))
+            code (workforce-outcome-code job)
+            minutes (long (oracle/call :workforce-cadence 'next-interval-minutes
+                                       [floor cadence-ceiling-minutes
+                                        cadence-retry-ceiling-minutes
+                                        current code]))
+            now (store/now)]
+        (transact! update-in [:workforce-jobs bot-id] merge
+                   {:workforce.job/interval-minutes minutes
+                    :workforce.job/next-run-at
+                    (str (.plusSeconds (java.time.Instant/parse now) (* 60 minutes)))
+                    ;; Why it moved, next to what it moved to. "Backed off
+                    ;; because there was nothing to do" and "backed off because
+                    ;; the provider was down" are different facts and the
+                    ;; interval alone cannot tell them apart.
+                      :workforce.job/interval-reason (resident-outcome job)
+                      :workforce.job/updated-at now})
+          minutes)))))
 
 (defn workforce-status [session]
   (let [partition (snapshot)
@@ -4829,6 +4898,9 @@
         (transition-goal-run! run-id :succeeded
                               {:agent.run/result :safe-no-op
                                :agent.run/finished-at (now-ms)})
+        ;; The tick looked and found nothing. That is evidence about the work,
+        ;; so this Bot yields its share of the two slots to one that has some.
+        (adjust-workforce-cadence! run-id)
         (transact!
          (fn [partition]
            (if (get-in partition [:workforce-jobs bot])
@@ -4888,9 +4960,13 @@
                         configuration run-id
                         {:reason :blocked
                          :detail (first (:evidence (latest-turn session bot)))}))
-            (transition-goal-run! run-id (goal-run-status state resident?)
-                                  {:agent.run/result state
-                                   :agent.run/finished-at (now-ms)}))))
+            (do (transition-goal-run! run-id (goal-run-status state resident?)
+                                      {:agent.run/result state
+                                       :agent.run/finished-at (now-ms)})
+                ;; Terminal either way: a run that changed something returns to
+                ;; the floor, one that never executed backs off only to the
+                ;; retry ceiling. The core, not this call site, knows which.
+                (adjust-workforce-cadence! run-id)))))
       (catch Exception error
         ;; `:provider/timeout` is deliberately NOT here. The other two mean the
         ;; provider answered and had nothing to add, so the host's own receipts
