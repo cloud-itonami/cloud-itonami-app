@@ -18,7 +18,8 @@
             [clojure.test :refer [deftest is testing]]
             [cloud.itonami.app.host :as host]
             [cloud.itonami.app.host-bounds :as host-bounds]
-            [cloud.itonami.app.store :as store]))
+            [cloud.itonami.app.store :as store]
+            [cloud.itonami.app.store-core :as store-core]))
 
 (defn- tmp-dir []
   (doto (io/file (System/getProperty "java.io.tmpdir")
@@ -266,3 +267,24 @@
   ;; attempting the append that would throw.
   (is (host-bounds/append-exceeds-bound? (- (* 4 1024 1024) 218) 400 (* 4 1024 1024)))
   (is (not (host-bounds/append-exceeds-bound? (- (* 4 1024 1024) 218) 200 (* 4 1024 1024)))))
+
+(deftest a-bounded-window-at-its-cap-journals-an-append-not-a-rewrite
+  ;; The end of the chain this file is about: `store-core/append-bounded` keeps
+  ;; the prefix, so `state-delta` can say `:append`. Measured 2026-08-29
+  ;; (ADR-2608291500): evicting on every append made a 60-entry tool-trace
+  ;; window 271 KB and 48% of the journal all by itself.
+  (let [cap 60
+        at-cap {:traces {"bot" (vec (range cap))}}
+        grown (update-in at-cap [:traces "bot"]
+                         #(store-core/append-bounded % :new cap))
+        ops (store/state-delta at-cap grown)]
+    (is (= [{:op :append :path [:traces "bot"] :from cap :value [:new]}] ops)
+        "one tail item, not sixty-one")
+    (is (< (count (pr-str ops)) 100)
+        "and the record is bytes, not the window")
+    (testing "the trim, when it finally comes, is still a whole rewrite -- once every slack+1"
+      (let [full (update-in at-cap [:traces "bot"]
+                            (fn [v] (vec (concat v (range 100 (+ 100 (store-core/window-slack cap)))))))
+            trimmed (update-in full [:traces "bot"]
+                               #(store-core/append-bounded % :new cap))]
+        (is (= [:assoc] (mapv :op (store/state-delta full trimmed))))))))

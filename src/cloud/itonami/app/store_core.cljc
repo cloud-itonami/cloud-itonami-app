@@ -106,6 +106,42 @@
                             [(oracle/i64 (count items)) (oracle/i64 cap)]))]
     (vec (drop drop-n items))))
 
+(def window-slack-floor
+  "The smallest hysteresis any journalled window gets, whatever its cap.
+
+  A proportional slack alone would give a 40-entry window four, so one append
+  in five would still rewrite it. Eight makes that one in nine at the smallest
+  caps in use here, and larger caps take the proportion instead."
+  8)
+
+(defn window-slack
+  "How far past `cap` a journalled window may run before it is trimmed back."
+  [cap]
+  (max window-slack-floor (quot (long cap) 10)))
+
+(defn append-bounded
+  "ITEMS with ITEM appended, trimmed back to CAP only once it has run
+  `window-slack` past it.
+
+  For any window whose every append is written to the store journal, which is
+  every window in the bots partition. `retain-window` -- eviction on every
+  append -- keeps the collection exactly at `cap`, and there its first element
+  moves with every write, so `store/state-delta` cannot journal the change as
+  an `:append` of the tail and rewrites the whole window instead
+  (ADR-2608291500).
+
+  The decision is `store_core.kotoba`'s `retention-drop-count-hysteresis`, so
+  the eviction boundary here and the one in `retain-window` are the same rule
+  with and without slack, not two rules that must be kept agreeing."
+  ([items item cap] (append-bounded items item cap (window-slack cap)))
+  ([items item cap slack]
+   (let [items (conj (vec items) item)
+         drop-n (oracle/i64-value
+                 (oracle/call :store-core 'retention-drop-count-hysteresis
+                              [(oracle/i64 (count items)) (oracle/i64 cap)
+                               (oracle/i64 slack)]))]
+     (if (zero? drop-n) items (vec (drop drop-n items))))))
+
 (defn append-message
   "Add one recorded message to a session's transcript.
 
