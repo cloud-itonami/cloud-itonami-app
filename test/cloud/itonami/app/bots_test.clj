@@ -1212,6 +1212,24 @@
             (is (= 2 (count (get-in turn [:job :children] {})))
                 "only the lawful batch produced child runs")))))))
 
+(deftest goal-event-window-evicts-with-hysteresis-not-on-every-append
+  ;; Trimming on every append made the ledger at its cap a sliding window --
+  ;; its prefix moved each transact, the journal could never say :append, and
+  ;; 87% of journal bytes were whole rewrites of this one vector (measured
+  ;; 2026-08-29, ADR-2608291500).
+  (with-store
+    (fn []
+      (let [append! (deref (ns-resolve 'cloud.itonami.app.bots 'append-goal-event!))
+            goal-job (deref (ns-resolve 'cloud.itonami.app.bots 'goal-job))]
+        (dotimes [_ 220] (append! "run-hysteresis" :test/event {}))
+        (is (= 220 (count (:job/events (goal-job "run-hysteresis"))))
+            "the window runs to the hysteresis ceiling without trimming")
+        (append! "run-hysteresis" :test/event {})
+        (is (= 200 (count (:job/events (goal-job "run-hysteresis"))))
+            "one append past the ceiling trims back to the cap")
+        (is (= :test/event (:event/kind (peek (:job/events (goal-job "run-hysteresis")))))
+            "and the newest event survives the trim")))))
+
 (deftest restart-checkpoints-a-running-goal-instead-of-marking-it-interrupted
   (with-store
     (fn []
