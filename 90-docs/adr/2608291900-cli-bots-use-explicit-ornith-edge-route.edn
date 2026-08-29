@@ -69,14 +69,45 @@ The post-change inventory was 99 enabled Murakumo Bots, 99 on
 exact `ORNITH_RELEASE_67041AF_OK` in 31.35 s. The public registry still reported
 ten of ten Ornith workers live/ready/fresh with all ten slots free afterwards.
 
+## Stabilization integration, 2026-08-29
+
+Two real resident goal runs then exposed a different boundary: generation was
+healthy, but Ornith kept describing completion in prose for 11/13 turns and
+never called the host's completion tool. A direct request to the same live
+worker with OpenAI `tool_choice: required` returned an exact
+`goal_complete({summary, evidence})` tool call. The app therefore uses the
+wire-level required-tool contract for tool-bearing `murakumo-edge` goals and
+fails the turn immediately as `:provider/required-tool-missing` if a provider
+violates it. This replaces an unproductive 24-turn prose loop; it does not mark
+the goal successful without evidence.
+
+Prefix reuse is integrated as a soft placement contract across the three
+components rather than an application result cache:
+
+1. Cloud Itonami hashes the conversation id and sends only the 64-hex digest as
+   `x-murakumo-affinity-key`; the raw Bot/conversation identity does not cross
+   the provider boundary.
+2. local-murakumo chooses a stable live Ornith worker for that digest and gives
+   it an eight-second exclusive preference. This is deliberately distinct from
+   AIUEOS `target-did`: a hard physical-device target never falls back, while a
+   cache preference expires so a busy or dead Mac cannot pin the request.
+3. Each Murakumo poll worker includes its DID when listing queue work, while
+   claim remains the authoritative atomic check.
+
+The bounded edge response now preserves measured llama.cpp
+`prompt_tokens_details.cached_tokens` and bounded timing fields, and adds the
+serving worker DID. Cloud Itonami accumulates cached tokens without turning an
+unmeasured value into zero and projects the serving DID on the public turn.
+This makes same-worker cache reuse and fallback observable per task.
+
 ## Qualification boundary
 
-This establishes a clean short sequential soak and post-soak memory headroom.
-It does **not** prove that every one of the ten requests ran on a different
-node: the public response and registry do not expose per-request worker
-attribution. It also does not yet establish a 24-hour SLO for Ornith; the
-existing rolling window is dominated by the previous `murakumo-main` route.
-The honest production gate remains the existing Bot SLO after enough new
-Ornith turns enter its window: completion >=90%, provider timeout <2%, stale
-runs 0, with the model recorded as `murakumo-edge`.
+The original sequential soak established short-generation health and memory
+headroom, but did not prove per-request worker attribution or goal completion.
+The integrated fields now make attribution measurable, but a
+post-release goal/tool run and repeated-prefix cache observation are still
+required before calling the stabilization live. The honest production gate
+remains the existing Bot SLO after enough new Ornith turns enter its window:
+completion >=90%, provider timeout <2%, stale runs 0, with the model recorded
+as `murakumo-edge`.
 "}]

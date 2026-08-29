@@ -416,6 +416,21 @@
     (is (nil? ((private-fn 'xai-headers)
                {:kind :openai-compatible} {:conversation-id "bot-123"})))))
 
+(deftest murakumo-affinity-header-is-stable-and-opaque
+  (let [headers (private-fn 'provider-headers)
+        first-value (get (headers {:id :murakumo :kind :openai-compatible}
+                                  {:conversation-id "bot-123"})
+                         "x-murakumo-affinity-key")]
+    (is (re-matches #"[0-9a-f]{64}" first-value))
+    (is (not (str/includes? first-value "bot-123")))
+    (is (= first-value
+           (get (headers {:id :murakumo :kind :openai-compatible}
+                         {:conversation-id "bot-123"})
+                "x-murakumo-affinity-key")))
+    (is (nil? (get (headers {:id :other :kind :openai-compatible}
+                            {:conversation-id "bot-123"})
+                   "x-murakumo-affinity-key")))))
+
 (deftest openai-compatible-agent-turn-keeps-one-tool-continuation
   (let [body ((private-fn 'agent-request-body)
               {:kind :openai-compatible :max-output-tokens 512}
@@ -428,6 +443,16 @@
     (is (= 512 (:max_tokens body)))
     (is (nil? (:reasoning_effort body))
         "xAI-specific reasoning policy is not sent to Murakumo")))
+
+(deftest required-tool-choice-is-explicit-not-a-prompt-hope
+  (let [body ((private-fn 'agent-request-body)
+              {:kind :openai-compatible :max-output-tokens 512}
+              {:model "murakumo-edge" :require-tool? true
+               :messages [{:role "user" :content "complete"}]
+               :tools [{:name "goal_complete" :description "Complete"
+                        :parameters {:type "object"}}]})]
+    (is (= "required" (:tool_choice body)))
+    (is (= "goal_complete" (get-in body [:tools 0 :function :name])))))
 
 (deftest text-only-agent-turn-omits-the-tool-protocol-entirely
   (let [body ((private-fn 'agent-request-body)
