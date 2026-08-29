@@ -218,7 +218,8 @@
                        (:providers (config/load-config)))]
     (is (= 16384 (:max-output-tokens provider)))
     (is (= "murakumo-main" (:default-model provider)))
-    (is (= ["murakumo-main" "qwen3.8-27b-throughput-5090"
+    (is (= ["murakumo-main" "murakumo-edge"
+            "qwen3.8-27b-throughput-5090"
             "qwen3.8-27b-fastmtp-aggressive"]
            (:models provider)))
     (is (= {"qwen3.8-27b-throughput-5090" 420}
@@ -249,6 +250,9 @@
     (is (= 65536
            (get-in providers ["murakumo" :context-window-tokens
                               "qwen3.8-27b-throughput-5090"])))
+    (is (= 65536
+           (get-in providers ["murakumo" :context-window-tokens
+                              "murakumo-edge"])))
     (is (= 32768
            (get-in providers ["murakumo" :context-window-tokens
                               "qwen3.8-27b-fastmtp-aggressive"])))))
