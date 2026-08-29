@@ -446,6 +446,66 @@
                         (.plusNanos ^Instant previous 1000)
                         candidate))))))
 
+
+(def archive-schema "cloud.itonami.app.state-archive.v1")
+
+(defn archive-file
+  "The append-only cold archive beside the snapshot:
+  `state.edn` -> `state-archive.edn`.
+
+  ADR-2608291500 Phase 2. The snapshot is rewritten whole at every journal
+  fold, so terminal work parked inside it is paid for again on every fold --
+  measured 2026-08-29, ~65% of the snapshot was terminal goal-jobs and
+  finished runs. This file is where that history goes instead: one record per
+  line, appended and fsynced, never rewritten. It is also the durable answer
+  to `what happened before the current SLO window` -- the journal compacts
+  and the hot store forgets, this file does neither."
+  []
+  (let [file (state-file)
+        name (.getName file)
+        stem (if (str/ends-with? name ".edn")
+               (subs name 0 (- (count name) 4))
+               name)]
+    (io/file (.getParentFile file) (str stem "-archive.edn"))))
+
+(def ^:private archive-rotate-bytes
+  "When the live archive file reaches this, it is renamed aside and a fresh
+  one starts. Rotation by rename keeps the append path append-only: nothing
+  ever rewrites an archive file, closed ones are just files."
+  (* 64 1024 1024))
+
+(defn archive-append!
+  "Durably append cold RECORDS -- maps carrying at least :kind, :id and
+  :value -- before their hot copies are dropped. Returns how many were
+  written.
+
+  Throws on any failure, and the contract with callers is exactly that: a
+  caller that could not archive MUST NOT drop the hot copy. Losing a sweep is
+  a delay; dropping unarchived history is a deletion."
+  [records]
+  (if (empty? records)
+    0
+    (let [file (archive-file)
+          path (.getPath file)]
+      (.mkdirs (.getParentFile file))
+      (when (>= (host/file-size path) archive-rotate-bytes)
+        (let [aside (io/file (.getParentFile file)
+                             (str (.getName file) ".closed-"
+                                  (System/currentTimeMillis)))]
+          (when-not (.renameTo file aside)
+            (throw (ex-info "archive rotation failed"
+                            {:type :store/archive-rotate-failed
+                             :file path :aside (.getPath aside)})))))
+      (let [at (now)
+            body (apply str (map #(str (pr-str (assoc % :schema archive-schema
+                                                      :at at))
+                                       "
+")
+                               records))]
+        (host/append-durable! path body
+                              (+ archive-rotate-bytes (* 16 1024 1024)))
+        (count records)))))
+
 (defn session-messages [session-id]
   (core/session-messages @state session-id))
 
