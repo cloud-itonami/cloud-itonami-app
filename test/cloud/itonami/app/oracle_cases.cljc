@@ -800,6 +800,15 @@
      :args [true true] :expect true}
     {:oracle :identity :export 'may-backfill-legacy-user-did?
      :args [true false] :expect false}
+
+    ;; ── store-core ──────────────────────────────────────────────────
+    ;; The window-eviction arithmetic `append-message` and `record-response`
+    ;; both call. Two plain `:i64` args in, one `:i64` out — the exact shape
+    ;; `oracle_cljs_parity_test` exists to catch a BigInt mismatch on.
+    {:oracle :store-core :export 'retention-drop-count
+     :args [(oracle/i64 3) (oracle/i64 10)] :expect 0 :read oracle/i64-value}
+    {:oracle :store-core :export 'retention-drop-count
+     :args [(oracle/i64 15) (oracle/i64 10)] :expect 5 :read oracle/i64-value}
 ]))
 
 (defn run-case

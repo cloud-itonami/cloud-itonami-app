@@ -88,7 +88,8 @@
    :oauth-resource "cloud/itonami/app/oauth_resource_core.kotoba"
    :did-web "cloud/itonami/app/did_web_core.kotoba"
    :domain-binding "cloud/itonami/app/domain_binding_core.kotoba"
-   :identity "cloud/itonami/app/identity_core.kotoba"})
+   :identity "cloud/itonami/app/identity_core.kotoba"
+   :store-core "cloud/itonami/app/store_core.kotoba"})
 
 (defn resource-path [id]
   (str "cloud/itonami/app/oracle/" (name id) ".kir.edn"))
