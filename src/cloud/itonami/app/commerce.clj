@@ -5,7 +5,34 @@
   fulfillment configuration, public ordering, payment proof, inventory, and a
   one-way shipping state machine into durable aggregates. Wallet signing stays
   an explicit buyer action, and inventory is captured only after an on-chain
-  payment verifier accepts the proof."
+  payment verifier accepts the proof.
+
+  ## Two fulfillment kinds
+
+  A store declares `:fulfillment-kind` once, and it decides which of two
+  mutually exclusive halves of this namespace applies:
+
+    :physical  ship-from and return addresses are required, payment leaves the
+               order at :ready-to-pack for a human, and the shipment state
+               machine (packed -> label-ready -> shipped -> delivered) runs.
+    :digital   there is no shipment. A delivery method is required instead of
+               addresses, each product carries the reference the buyer receives,
+               and a verified payment delivers the order in the same
+               transaction -- :delivered, effect boundary :none.
+
+  Digital exists because the readiness gate used to demand a shipping origin
+  from every store, including one selling per-query API access that will never
+  post a parcel. The answer to `what is this address for` was, for those
+  stores, nothing: `:legal-address` is stored and deliberately never published
+  (see `storefront`), and `:ship-from` is read in exactly one place, when a
+  physical shipment is prepared. Requiring it anyway taught operators to type
+  something -- and a shipping origin nobody ships from is worse than no field,
+  because it reads afterwards like a fact somebody checked.
+
+  `:legal-address` stays required for BOTH kinds. It is the merchant's own
+  registered address, not a shipping fact, and a store with no address behind
+  it is not a merchant. It is the shipping half, and only that half, that
+  digital removes."
   (:require [clojure.data.json :as json]
             [clojure.string :as str]
             [cloud.itonami.app.identity :as identity]
@@ -77,6 +104,22 @@
     (refuse :commerce/business-kind
             "business_kind は corporation または sole_proprietor です。")))
 
+(defn- fulfillment-kind!
+  "How buyers receive what they bought. Absent means :physical -- every store
+   written before this key existed shipped things, and a default that silently
+   dropped their shipping gate would be a downgrade nobody asked for."
+  [value]
+  (if (nil? value)
+    :physical
+    (case (some-> value name (str/replace "_" "-") str/lower-case keyword)
+      :digital :digital
+      :physical :physical
+      (refuse :commerce/fulfillment-kind
+              "fulfillment_kind は digital または physical です。"))))
+
+(defn- digital? [record]
+  (= :digital (:fulfillment-kind record :physical)))
+
 (defn- address!
   [value field]
   (when-not (map? value)
@@ -125,8 +168,18 @@
                  :label "事業者住所"}
                 {:id :x402 :ready? (= :configured (get-in record [:payment :status]))
                  :label "x402受取設定"}
-                {:id :shipping :ready? (= :configured (get-in record [:shipping :status]))
-                 :label "発送元・返品先"}]
+                ;; The fifth check is whichever one this store can actually
+                ;; answer. A digital store is not "missing shipping" -- shipping
+                ;; is not a question it has. It is asked the question it does
+                ;; have instead, so the count of gates stays five and a kind is
+                ;; never a way to be ready with less.
+                (if (digital? record)
+                  {:id :delivery
+                   :ready? (= :configured (get-in record [:delivery :status]))
+                   :label "デジタル納品設定"}
+                  {:id :shipping
+                   :ready? (= :configured (get-in record [:shipping :status]))
+                   :label "発送元・返品先"})]
         missing (mapv :id (remove :ready? checks))]
     {:ready? (empty? missing) :checks checks :missing missing}))
 
@@ -137,10 +190,12 @@
         state (readiness record)]
     {:schema schema
      :status (name (or (:status record) :not-configured))
+     :fulfillment-kind (when record (name (:fulfillment-kind record :physical)))
      :store (when record
               (-> record
                   (dissoc :events)
-                  (update :business-kind name)))
+                  (update :business-kind name)
+                  (update :fulfillment-kind #(name (or % :physical)))))
      :readiness (update state :checks
                         #(mapv (fn [check] (update check :id name)) %))
      :publication (or (:publication record)
@@ -155,6 +210,20 @@
         _ (when (and existing (not= kind (:business-kind existing)))
             (refuse :commerce/identity-axis-immutable
                     "開設後に法人と個人事業主を切り替えることはできません。"))
+        ;; Given wins; otherwise keep what the store already is; a brand new
+        ;; store with nothing said is physical, as every store was before.
+        fulfillment (let [given (present input :fulfillment-kind :fulfillment_kind)]
+                      (cond
+                        (some? given) (fulfillment-kind! given)
+                        existing (:fulfillment-kind existing :physical)
+                        :else :physical))
+        ;; Changing the kind changes which fields a product must carry, so it
+        ;; may only move while no product has been written under the old one.
+        _ (when (and existing
+                     (not= fulfillment (:fulfillment-kind existing :physical))
+                     (seq (:products existing)))
+            (refuse :commerce/fulfillment-axis-immutable
+                    "商品を登録した後に digital と physical を切り替えることはできません。"))
         did (merchant-did! session kind)
         now (store/now)
         record (merge existing
@@ -162,6 +231,7 @@
                        :tenant-id (:organization-id session)
                        :owner-id (:user-id session)
                        :business-kind kind
+                       :fulfillment-kind fulfillment
                        :merchant-did did
                        :display-name (text! (present input :display-name :display_name)
                                             "ショップ表示名" 120)
@@ -204,8 +274,11 @@
 
 (defn configure-shipping!
   [session input]
-  (when-not (stored session)
-    (refuse :commerce/store-required "先に事業者情報を設定してください。"))
+  (let [record (or (stored session)
+                   (refuse :commerce/store-required "先に事業者情報を設定してください。"))]
+    (when (digital? record)
+      (refuse :commerce/digital-store
+              "デジタル納品のショップに発送元・返品先は設定できません。commerce_delivery_configure を使ってください。")))
   (let [shipping {:status :configured
                   :ship-from (address! (present input :ship-from :ship_from) "発送元")
                   :return-address (address! (present input :return-address :return_address)
@@ -222,6 +295,41 @@
     (store/transact! update-in (store-path session)
                      assoc :shipping shipping :updated-at (store/now))
     (overview session)))
+
+(defn- delivery-method! [value]
+  (case (some-> value name (str/replace "_" "-") str/lower-case keyword)
+    :download-url :download-url
+    :license-key :license-key
+    :api-credential :api-credential
+    :content-address :content-address
+    (refuse :commerce/delivery-method
+            (str "delivery_method は download_url, license_key, api_credential, "
+                 "content_address のいずれかです。"))))
+
+(defn configure-delivery!
+  "The digital twin of `configure-shipping!`. Records HOW a buyer receives what
+   they bought; WHAT they receive is per product (`:delivery-ref`).
+
+   No addresses. That is the whole point of the split -- see the namespace
+   docstring."
+  [session input]
+  (let [record (or (stored session)
+                   (refuse :commerce/store-required "先に事業者情報を設定してください。"))]
+    (when-not (digital? record)
+      (refuse :commerce/physical-store
+              "発送を伴うショップにデジタル納品は設定できません。commerce_shipping_configure を使ってください。"))
+    (let [delivery {:status :configured
+                    :method (delivery-method! (present input :delivery-method :delivery_method))
+                    :instructions (text! (present input :instructions) "納品案内" 1000)
+                    :support-contact (some-> (present input :support-contact :support_contact)
+                                             str str/trim not-empty)
+                    :effect-boundary :released-on-payment
+                    :note (str "支払いが検証された時点で、注文に商品の納品参照が付与されます。"
+                               "配送は発生しません。")
+                    :configured-at (store/now)}]
+      (store/transact! update-in (store-path session)
+                       assoc :delivery delivery :updated-at (store/now))
+      (overview session))))
 
 (defn finalize!
   [session]
@@ -269,15 +377,24 @@
                    (refuse :commerce/store-required
                            "先に事業者情報を設定してください。"))
         sku (sku! (present input :sku))
+        given-ref (present input :delivery-ref :delivery_ref)
+        _ (when (and (not (digital? record)) (some? given-ref))
+            (refuse :commerce/physical-store
+                    "発送を伴う商品に delivery_ref は設定できません。"))
         now (store/now)
-        product {:sku sku
-                 :name (text! (present input :name) "商品名" 160)
-                 :description (text! (present input :description) "商品説明" 1000)
-                 :price-usdc (price! (present input :price-usdc :price_usdc))
-                 :inventory (inventory! (present input :inventory))
-                 :status :active
-                 :updated-at now
-                 :created-at (or (get-in record [:products sku :created-at]) now)}]
+        product (cond-> {:sku sku
+                         :name (text! (present input :name) "商品名" 160)
+                         :description (text! (present input :description) "商品説明" 1000)
+                         :price-usdc (price! (present input :price-usdc :price_usdc))
+                         :inventory (inventory! (present input :inventory))
+                         :status :active
+                         :updated-at now
+                         :created-at (or (get-in record [:products sku :created-at]) now)}
+                  ;; Required, not optional. A digital product with nothing to
+                  ;; hand over is a paid order that delivers silence, and the
+                  ;; order would still say :delivered.
+                  (digital? record)
+                  (assoc :delivery-ref (text! given-ref "納品参照" 2000)))]
     (store/transact! update-in (store-path session)
                      (fn [current]
                        (-> current
@@ -358,8 +475,15 @@
                      (active-products record))
      :payment (select-keys (:payment record)
                            [:protocol :version :facilitator :network :chain-id :asset :pay-to])
-     :shipping {:carrier (get-in record [:shipping :carrier])
-                :effect-boundary "checkout-plan-only"}
+     ;; `safe-product` is an allowlist, so `:delivery-ref` -- the thing the
+     ;; buyer is paying for -- cannot reach here. Only the method does.
+     :fulfillment-kind (name (:fulfillment-kind record :physical))
+     :delivery (when (digital? record)
+                 {:method (some-> (get-in record [:delivery :method]) name)
+                  :effect-boundary "released-on-payment"})
+     :shipping (when-not (digital? record)
+                 {:carrier (get-in record [:shipping :carrier])
+                  :effect-boundary "checkout-plan-only"})
      :checkout {:status "available"
                 :requires "Passkey session and external Wallet signature"}}))
 
@@ -447,13 +571,23 @@
         order-id (str (java.util.UUID/randomUUID))
         now (store/now)
         expires-at (str (.plusSeconds (*instant*) reservation-seconds))
-        delivery (address! (present input :delivery-address :delivery_address) "配送先")
         created (atom nil)]
     (store/transact!
      (fn [state]
        (let [[tenant record] (or (storefront-record state slug)
                                  (refuse :commerce/storefront-not-found
                                          "公開storefrontが見つかりません。"))
+             ;; Resolved here rather than with the other inputs above, because
+             ;; whether a shipping address is a required field or a refused one
+             ;; is a property of the store, and the store is not known until the
+             ;; storefront resolves. Asking a buyer of a per-query credential
+             ;; where to post it was the shape this whole split exists to remove.
+             given-address (present input :delivery-address :delivery_address)
+             delivery (if (digital? record)
+                        (when (some? given-address)
+                          (refuse :commerce/digital-store
+                                  "デジタル納品の注文に配送先は指定できません。"))
+                        (address! given-address "配送先"))
              lines (mapv
                     (fn [line]
                       (let [sku (sku! (:sku line))
@@ -501,6 +635,28 @@
     (when-not (= (:user-id session) (:buyer-user-id found))
       (refuse :commerce/order-forbidden "この注文を読む権限がありません。"))
     (public-order found)))
+
+(defn- fulfillment-on-payment
+  "What a paid order becomes.
+
+   Physical stops at :ready-to-pack and waits for a person, because a parcel is
+   an act outside this system. Digital has no such act: the reference already
+   exists on the product, so the same transaction that captures the payment
+   hands it over. There is no state between paid and delivered to sit in, and
+   inventing one would only mean an order that was paid for, deliverable, and
+   waiting for nobody."
+  [state tenant order now]
+  (let [record (get-in state [:commerce :stores tenant])]
+    (if-not (digital? record)
+      {:status :ready-to-pack :effect-boundary :merchant-action-required}
+      {:status :delivered
+       :effect-boundary :none
+       :delivered-at now
+       :method (some-> (get-in record [:delivery :method]) name)
+       :items (mapv (fn [{:keys [sku quantity]}]
+                      {:sku sku :quantity quantity
+                       :delivery-ref (get-in record [:products sku :delivery-ref])})
+                    (:lines order))})))
 
 (defn- transaction-hash! [value]
   (let [value (some-> value str str/trim str/lower-case)]
@@ -574,8 +730,8 @@
                                                          :network payment-network
                                                          :verified-at paid-at})
                                         (assoc-in [:reservation :status] :captured)
-                                        (assoc :fulfillment {:status :ready-to-pack
-                                                             :effect-boundary :merchant-action-required}))
+                                        (assoc :fulfillment (fulfillment-on-payment
+                                                             current tenant latest paid-at)))
                          next-state (reduce
                                      (fn [s {:keys [sku quantity]}]
                                        (let [on-hand (get-in s [:commerce :stores tenant :products sku :inventory])]
@@ -618,6 +774,9 @@
   may only be recorded against this exact manifest, so Chat cannot silently
   claim that packing details which were never fixed were sent to a carrier."
   [session input]
+  (when (digital? (get-in (store/snapshot) [:commerce :stores (:organization-id session)]))
+    (refuse :commerce/digital-store
+            "デジタル納品の注文に配送手続きはありません。支払い検証の時点で納品済みです。"))
   (let [tenant (:organization-id session)
         order-id (text! (present input :order-id :order_id) "注文ID" 100)
         parcel {:weight-kg (positive-decimal!
@@ -681,6 +840,9 @@
   Explicit references are required so a plain fulfillment-status reply cannot
   silently turn an order into label-ready."
   [session input]
+  (when (digital? (get-in (store/snapshot) [:commerce :stores (:organization-id session)]))
+    (refuse :commerce/digital-store
+            "デジタル納品の注文に配送手続きはありません。支払い検証の時点で納品済みです。"))
   (let [tenant (:organization-id session)
         order-id (text! (present input :order-id :order_id) "注文ID" 100)
         carrier (text! (present input :carrier) "配送会社" 120)
@@ -732,6 +894,9 @@
 
 (defn advance-fulfillment!
   [session input]
+  (when (digital? (get-in (store/snapshot) [:commerce :stores (:organization-id session)]))
+    (refuse :commerce/digital-store
+            "デジタル納品の注文に配送状態はありません。支払い検証の時点で納品済みです。"))
   (let [tenant (:organization-id session)
         order-id (text! (present input :order-id :order_id) "注文ID" 100)
         next-status (some-> (present input :status) name keyword)
@@ -765,9 +930,20 @@
     :description "Configure a corporation or sole proprietor shop and bind it to the correct DID. (write)"
     :parameters {:type "object"
                  :properties {:business_kind {:type "string" :enum ["corporation" "sole_proprietor"]}
+                              :fulfillment_kind
+                              {:type "string" :enum ["physical" "digital"]
+                               :description
+                               (str "physical (default) requires ship-from and return addresses and runs the "
+                                    "shipment state machine. digital requires a delivery method instead, and a "
+                                    "verified payment delivers the order in the same transaction. "
+                                    "Immutable once a product exists.")}
                               :display_name {:type "string"}
                               :legal_name {:type "string"}
-                              :legal_address {:type "object"}}
+                              :legal_address
+                              {:type "object"
+                               :description
+                               (str "The merchant's own registered address. Required for both kinds and never "
+                                    "published (the public storefront redacts it); it is not a shipping fact.")}}
                  :required ["business_kind" "display_name" "legal_name" "legal_address"]}}
    {:name "commerce_payment_configure_x402"
     :description (str "Bind this Bot's verified external Base wallet as the shop's x402 USDC payTo. "
@@ -782,6 +958,17 @@
                               :return_address {:type "object"}
                               :carrier {:type "string"}}
                  :required ["ship_from" "return_address"]}}
+   {:name "commerce_delivery_configure"
+    :description (str "Configure how a DIGITAL shop hands over what was bought. No addresses. "
+                      "The per-product delivery_ref is what the buyer receives; this is the method "
+                      "and the instructions shown with it. Refused on a physical shop. (write)")
+    :parameters {:type "object"
+                 :properties {:delivery_method
+                              {:type "string"
+                               :enum ["download_url" "license_key" "api_credential" "content_address"]}
+                              :instructions {:type "string"}
+                              :support_contact {:type "string"}}
+                 :required ["delivery_method" "instructions"]}}
    {:name "commerce_store_finalize"
     :description (str "Validate the joined commerce setup and mark it ready for publication. "
                       "This does not deploy or claim a public storefront. (write)")
@@ -792,7 +979,13 @@
                  :properties {:sku {:type "string"} :name {:type "string"}
                               :description {:type "string"}
                               :price_usdc {:type "string"}
-                              :inventory {:type "integer"}}
+                              :inventory {:type "integer"}
+                              :delivery_ref
+                              {:type "string"
+                               :description
+                               (str "What the buyer receives on a verified payment: a URL, licence key, "
+                                    "credential or content address. REQUIRED on a digital shop and refused "
+                                    "on a physical one. Never appears in the public storefront.")}}
                  :required ["sku" "name" "description" "price_usdc" "inventory"]}}
    {:name "commerce_store_publish"
     :description (str "Publish the ready catalog on this Cloud Itonami deployment. "
@@ -851,8 +1044,10 @@
     "このBotのBase Walletをx402/USDC受取先として記録します。秘密鍵や署名は扱いません。"
     "commerce_shipping_configure"
     "発送元・返品先を設定します。fulfillment actor候補は記録しますが、注文ID互換化までは接続済みと扱いません。"
+    "commerce_delivery_configure"
+    "デジタル納品の方法と案内を設定します。住所は扱いません。支払い検証の時点で納品参照が引き渡されます。"
     "commerce_store_finalize"
-    "DID・法的表示・x402・発送設定を検査し、公開準備完了として記録します。公開は実行しません。"
+    "DID・法的表示・x402・発送設定（デジタルなら納品設定）を検査し、公開準備完了として記録します。公開は実行しません。"
     "commerce_product_upsert"
     (str (or (:sku input) "商品") "の商品名・USDC価格・在庫を公開カタログ候補へ記録します。")
     "commerce_store_publish"
@@ -878,6 +1073,7 @@
       "commerce_store_configure" (configure-store! session input)
       "commerce_payment_configure_x402" (configure-x402! session (:bot/id bot))
       "commerce_shipping_configure" (configure-shipping! session input)
+      "commerce_delivery_configure" (configure-delivery! session input)
       "commerce_store_finalize" (finalize! session)
       "commerce_product_upsert" (upsert-product! session input)
       "commerce_store_publish" (publish-storefront! session input)
