@@ -1236,8 +1236,27 @@
                                     "murakumo-main")
                      :bot/email (mailbox-address configuration id)
                      :bot/tools #{} :bot/accounts #{}
-                     :bot/writes? false :bot/browser? false
-                     :bot/coding? true :bot/virtual-shell? false
+                     ;; The same "operator's own config.edn, applied at
+                     ;; provisioning, never taken away" contract omakase
+                     ;; already has (standing-omakase?, ADR-0070), extended to
+                     ;; the grants that gate whether a write/browser/peer TOOL
+                     ;; is even offered before omakase ever gets asked to
+                     ;; decide a card for one. Each still defaults to false --
+                     ;; an instance that never sets `[:bots :workforce ...]`
+                     ;; provisions exactly as before.
+                     :bot/writes? (boolean (or (:bot/writes? existing)
+                                               (get-in configuration
+                                                       [:bots :workforce :writes?])))
+                     :bot/browser? (boolean (or (:bot/browser? existing)
+                                                (get-in configuration
+                                                        [:bots :workforce :browser?])))
+                     :bot/coding? true
+                     :bot/virtual-shell? (boolean (or (:bot/virtual-shell? existing)
+                                                      (get-in configuration
+                                                              [:bots :workforce :virtual-shell?])))
+                     :bot/peers? (boolean (or (:bot/peers? existing)
+                                              (get-in configuration
+                                                      [:bots :workforce :peers?])))
                      :bot/omakase? (boolean (or (:bot/omakase? existing)
                                                 (standing-omakase? configuration key)))
                      :bot/workspace (workforce-workspace entry)
