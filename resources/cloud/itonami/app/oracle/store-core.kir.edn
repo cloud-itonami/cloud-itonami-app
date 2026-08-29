@@ -5,10 +5,18 @@
    :params [size cap],
    :result :i64,
    :effects #{},
-   :body (if (> size cap) (- size cap) 0)}],
+   :body (if (> size cap) (- size cap) 0)}
+  {:name retention-drop-count-hysteresis,
+   :params [size cap slack],
+   :result :i64,
+   :effects #{},
+   :body
+   (let
+    [threshold (if (> slack 0) (+ cap slack) cap)]
+    (if (> size threshold) (- size cap) 0))}],
  :oracle-value nil,
  :schema-identities nil,
- :exports [retention-drop-count],
+ :exports [retention-drop-count retention-drop-count-hysteresis],
  :schemas nil,
  :effects #{},
  :blocks [],

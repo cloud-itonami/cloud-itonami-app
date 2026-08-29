@@ -52,7 +52,7 @@
 ;; Parity: test/cloud/itonami/app/store_core_kotoba_parity_test.clj
 
 (ns store-core
-  (:export [retention-drop-count]))
+  (:export [retention-drop-count retention-drop-count-hysteresis]))
 
 ;; `size` is the collection's length AFTER the new item would be appended;
 ;; `cap` is `max-messages` (a `store`-call argument) or `max-events` (the
@@ -63,3 +63,22 @@
 ;; of a keep-count so it is one `:i64` in, one `:i64` out at this seam.
 (defn retention-drop-count [size :i64 cap :i64] :i64
   (if (> size cap) (- size cap) 0))
+
+;; The same question asked with HYSTERESIS, for a window whose every append
+;; is journalled.
+;;
+;; Evicting on every append keeps the collection exactly at `cap`, and at that
+;; point its first element changes with every write -- so the store journal
+;; cannot express the change as an append of the tail and rewrites the whole
+;; window instead. Measured 2026-08-29 (ADR-2608291500): one 200-entry event
+;; ledger did that 52 times in thirteen minutes for 2.7 MB, 87% of the
+;; journal; with that fixed, a 60-entry tool-trace window took its place at
+;; 271 KB and 48% of what remained.
+;;
+;; So: evict nothing until the collection has grown `slack` past `cap`, then
+;; evict all the way back to `cap`. The window is at most `cap + slack` and
+;; `slack` of every `slack + 1` appends leave the prefix alone. Non-positive
+;; slack is the old behaviour exactly, so one rule serves both callers.
+(defn retention-drop-count-hysteresis [size :i64 cap :i64 slack :i64] :i64
+  (let [threshold (if (> slack 0) (+ cap slack) cap)]
+    (if (> size threshold) (- size cap) 0)))

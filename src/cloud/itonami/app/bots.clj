@@ -79,6 +79,7 @@
             [cloud.itonami.app.relay :as relay]
             [cloud.itonami.app.routine :as routine]
             [cloud.itonami.app.store :as store]
+            [cloud.itonami.app.store-core :as store-core]
             [cloud.itonami.app.virtual-shell :as virtual-shell]
             [cloud.itonami.app.workspace-tools :as workspace-tools]
             [connector.invoke :as invoke]
@@ -479,11 +480,7 @@
                       (fn [job]
                         (-> job
                             (update :job/events
-                                    (fn [events]
-                                      (let [events (conj (vec events) event)]
-                                        (if (> (count events) 220)
-                                          (vec (take-last 200 events))
-                                          events))))
+                                    #(store-core/append-bounded % event 200))
                             (assoc :job/updated-at (:event/at event)))))
     event))
 
@@ -1446,8 +1443,7 @@
 
 (defn- append! [bot-id message]
   (transact! update-in [:conversations bot-id]
-             (fn [messages]
-               (vec (take-last max-conversation (conj (vec messages) message)))))
+             #(store-core/append-bounded % message max-conversation))
   message)
 
 (defn- context-message
@@ -2725,9 +2721,12 @@
                                :turn/phase :accepted
                                :turn/started-at at}
                               previous attrs {:turn/updated-at at})]
-         (vec (take-last max-turn-history
-                         (conj (filterv #(not= run-id (:turn/id %)) turns)
-                               next-turn))))))
+         ;; `filterv` first: updating a turn already in the ledger moves it
+         ;; to the end, which is a rewrite either way. What hysteresis buys is
+         ;; the NEW-turn case, which is a pure tail append until the window
+         ;; runs past its slack.
+         (store-core/append-bounded (filterv #(not= run-id (:turn/id %)) turns)
+                                    next-turn max-turn-history))))
     nil))
 
 (defn- queued-followups [run-id]
@@ -3036,13 +3035,12 @@
   a person pointing at 'what you just did' means the last few minutes."
   [configuration bot-id tool-name]
   (transact! update-in [:traces bot-id]
-             (fn [entries]
-               (vec (take-last max-trace
-                               (conj (vec entries)
-                                     {:trace/tool tool-name
-                                      :trace/effect (if (write-tool? configuration tool-name)
-                                                      :write :read)
-                                      :trace/at (store/now)}))))))
+             #(store-core/append-bounded
+               % {:trace/tool tool-name
+                  :trace/effect (if (write-tool? configuration tool-name)
+                                  :write :read)
+                  :trace/at (store/now)}
+               max-trace)))
 
 (defn- trace-of [bot-id]
   (vec (get-in (snapshot) [:traces bot-id] [])))
@@ -3578,9 +3576,8 @@
                       p (if existing
                           p
                           (update-in p [:conversations target-id]
-                                     (fn [messages]
-                                       (vec (take-last max-conversation
-                                                       (conj (vec messages) message))))))]
+                                     #(store-core/append-bounded
+                                       % message max-conversation)))]
                   ;; A routed incident is work now, not at the role's next
                   ;; ordinary cadence.  The global active/slot gate still
                   ;; decides when it may actually start.
@@ -4294,7 +4291,7 @@
 
 (defn- append-group! [group-id message]
   (transact! update-in [:group-conversations group-id]
-             (fn [ms] (vec (take-last max-conversation (conj (vec ms) message))))))
+             #(store-core/append-bounded % message max-conversation)))
 
 (defn- group-prompt [b g others]
   (str "You are " (:bot/name b) ", in a room called \"" (:group/name g)
@@ -5669,12 +5666,12 @@
      (-> state
          (assoc-in [:routines routine-id :routine/last-run-at] started-at)
          (update-in [:routines routine-id :routine/runs]
-                    #(vec (take-last max-routine-runs
-                                     (conj (vec %)
-                                           {:routine.run/id run-id
-                                            :routine.run/source source
-                                            :routine.run/state :running
-                                            :routine.run/started-at started-at})))))))
+                    #(store-core/append-bounded
+                      % {:routine.run/id run-id
+                         :routine.run/source source
+                         :routine.run/state :running
+                         :routine.run/started-at started-at}
+                      max-routine-runs)))))
   (append! (:bot/id b) (bot/message {:id (new-id "msg") :bot (:bot/id b)
                                      :role :person
                                      :text (routine-prompt r)
@@ -5816,7 +5813,7 @@
                         :handoff-id handoff-id :from-bot from-bot-id})
           started-at (store/now)]
       (transact! update-in [:handoffs to-bot-id]
-                 (fn [entries] (vec (take-last max-trace (conj (vec entries) h)))))
+                 #(store-core/append-bounded % h max-trace))
       (transact! assoc-in [:handoff-runs run-id]
                  {:handoff.run/id run-id :handoff.run/handoff handoff-id
                   :handoff.run/from from-bot-id :handoff.run/to to-bot-id
