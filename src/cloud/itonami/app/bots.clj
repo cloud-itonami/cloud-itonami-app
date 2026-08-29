@@ -1246,7 +1246,7 @@
                      :bot/model (or (get-in configuration
                                              [:bots :workforce :model])
                                     (get-in entry [:profile :profile/model])
-                                    "murakumo-main")
+                                    "murakumo-edge")
                      :bot/email (mailbox-address configuration id)
                      :bot/tools #{} :bot/accounts #{}
                      ;; The same "operator's own config.edn, applied at

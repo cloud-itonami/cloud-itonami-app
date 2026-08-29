@@ -154,6 +154,7 @@
    ;; the response before output is admitted; a failed bounded request is
    ;; retried explicitly as murakumo-main and remains labelled as that model.
    :models ["murakumo-main"
+            "murakumo-edge"
             "qwen3.8-27b-throughput-5090"
             "qwen3.8-27b-fastmtp-aggressive"]
    :model-request-timeout-seconds
@@ -197,6 +198,12 @@
                       "qwen3.8-27b"
                       "qwen3.8-27b-throughput-b70"}}
    :context-window-tokens {"murakumo-main" 262144
+                           ;; Live /v1/models and a real CLI Bot generation,
+                           ;; measured 2026-08-29. This is the Ornith Q4 route
+                           ;; resident on the 16 GB Mac mini fleet. Keep it
+                           ;; literal: falling back to murakumo-main would make
+                           ;; an edge stability check report the wrong machine.
+                           "murakumo-edge" 65536
                            "qwen3.8-27b-throughput-5090" 65536
                            "qwen3.8-27b-fastmtp-aggressive" 32768}
    ;; 2026-08-29 owner instruction: raise output budgets toward the model
@@ -366,7 +373,10 @@
                     ;; into a red "tool budget" failure after four reads.
                     :max-tool-calls 8
                     :max-tool-output-chars 1600
-                    :model "murakumo-main"
+                    ;; The resident workforce is the edge workload: use the
+                    ;; explicit Ornith route so its SLO measures the 16 GB Mac
+                    ;; fleet, not whatever murakumo-main aliases to later.
+                    :model "murakumo-edge"
                     ;; Standing delegation, deliberately ABSENT here: `:all`
                     ;; or a set of workforce keys ("business/kind") an
                     ;; operator writes into their own config.edn. A

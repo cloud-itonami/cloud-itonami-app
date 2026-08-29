@@ -1,0 +1,67 @@
+[{:db/id -1
+  :adr/id "adr-2608291900-cli-bots-use-explicit-ornith-edge-route"
+  :adr/title "CLI Bots use the explicit Ornith edge route"
+  :adr/status "accepted"
+  :adr/date "2026-08-29"
+  :adr/body
+  "## The request
+
+`itonami` CLI の Bots を `murakumo.cloud` の Ornith model に接続し、16 GB
+Mac mini で安定運用できるかを実生成で検証する。
+
+## Before
+
+The resident installation was admitted to the Murakumo provider, but its
+workforce override and every observed Bot still selected `murakumo-main`.
+The 24-hour Bot SLO at 08:46Z was failing: 167 turns, 18 completed, 146 failed,
+10.8% completion, 70.1% provider timeouts, p50 214 s and p90 1,203 s. This is a
+historical window over `murakumo-main`; it is the baseline, not an Ornith result.
+
+## Decision
+
+Resident workforce Bots select the literal `murakumo-edge` route. It is added
+to the shipped Murakumo catalog with the 65,536-token window advertised by the
+live `/v1/models` endpoint. There is deliberately no fallback from
+`murakumo-edge` to `murakumo-main`: a fallback could make an edge stability
+test succeed on GAD or B70 and therefore answer the wrong question.
+
+The provider-wide default stays `murakumo-main`. This decision changes Bots,
+not unrelated interactive model calls. A per-Bot `itonami bots model` choice
+still wins, and provisioning can still read an explicit role profile or an
+operator workforce override.
+
+## Live verification, 2026-08-29 08:47-09:05Z
+
+The path under test was the real one:
+
+    itonami CLI -> resident server -> api.murakumo.cloud -> murakumo-edge
+
+The shell held no `MURAKUMO_API_KEY`; the resident process retained the
+credential boundary. A dedicated Bot was changed with `itonami bots model`,
+then asked for nonce-only answers without tools or external effects.
+
+- First generation: exact `ORNITH_EDGE_OK_20260829`; model
+  `murakumo-edge`; inference turn 32.6 s; fresh CLI process end-to-end 49.4 s.
+- Sequential soak in one CLI process: 10/10 exact answers, 0 timeout, 0 HTTP
+  error and 0 model mismatch. End-to-end p50 34.84 s, p95/max 37.51 s.
+- Before the soak, the public inference registry reported ten
+  `murakumo-edge` workers; 10/10 were enrolled, live, ready and fresh.
+- After the soak, the same ten were still enrolled/live/ready/fresh with ten
+  free slots. Fleet telemetry reported ten 16 GiB macOS workers, all online
+  and reachable. Memory in use was 4.34-13.48 GiB (median 10.65 GiB); the
+  newest telemetry sample was under 10 s old.
+
+The application suite after the configuration change ran 2,064 tests / 12,144
+assertions with 0 failures and 0 errors.
+
+## Qualification boundary
+
+This establishes a clean short sequential soak and post-soak memory headroom.
+It does **not** prove that every one of the ten requests ran on a different
+node: the public response and registry do not expose per-request worker
+attribution. It also does not yet establish a 24-hour SLO for Ornith; the
+existing rolling window is dominated by the previous `murakumo-main` route.
+The honest production gate remains the existing Bot SLO after enough new
+Ornith turns enter its window: completion >=90%, provider timeout <2%, stale
+runs 0, with the model recorded as `murakumo-edge`.
+"}]

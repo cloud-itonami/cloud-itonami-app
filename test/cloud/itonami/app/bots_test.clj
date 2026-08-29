@@ -3966,7 +3966,7 @@
           (bots/provision-workforce! {} alice (workforce-catalog [(engineer-entry)]))
           (let [b (first (:bots (bots/overview {} alice)))]
             (is (= "murakumo" (:provider-id b)))
-            (is (= "murakumo-main" (:model b)))))
+            (is (= "murakumo-edge" (:model b)))))
         (testing "a profile chooses where the role runs"
           (bots/provision-workforce!
            {} alice (workforce-catalog
