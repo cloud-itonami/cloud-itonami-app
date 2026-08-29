@@ -58,7 +58,9 @@
   "Policy when the deployment says nothing. Overridable under `[:gc …]` in the
   configuration map, key for key."
   {:sweep-minutes 360
-   :goal-job-compact-days 2
+   :goal-job-compact-days 1
+   :turn-retention-days 8
+   :turns-keep-per-bot 50
    :goal-job-retention-days 14
    :goal-jobs-keep-per-bot 50
    :mail-body-retention-days 30
@@ -190,13 +192,27 @@
                           (< finished compact-cutoff))))
         dropped (filter drop? goal-jobs)
         kept (remove drop? goal-jobs)
-        compacted (filter compact? kept)]
+        compacted (filter compact? kept)
+        ;; What leaves the hot store goes to the cold archive FIRST
+        ;; (ADR-2608291500 Phase 2). The full value is archived at the moment
+        ;; of compaction -- that is when the events, the plan and the goal
+        ;; text stop existing anywhere hot -- and a job dropped without ever
+        ;; being compacted is archived whole on its way out. A job that was
+        ;; already compacted was already archived; its skeleton adds nothing.
+        archive (into (mapv (fn [[run-id job]]
+                              {:kind :goal-job :id run-id :value job})
+                            compacted)
+                      (keep (fn [[run-id job]]
+                              (when-not (:job/compacted? job)
+                                {:kind :goal-job :id run-id :value job}))
+                            dropped))]
     {:goal-jobs (into {}
                       (map (fn [[run-id job :as entry]]
                              (if (compact? entry)
                                [run-id (compact-goal-job job)]
                                entry)))
                       kept)
+     :archive archive
      :dropped (count dropped)
      :dropped-bytes (reduce + 0 (map #(count (pr-str (val %))) dropped))
      :compacted (count compacted)
@@ -204,6 +220,77 @@
                               (map #(- (count (pr-str (val %)))
                                        (count (pr-str (compact-goal-job (val %)))))
                                    compacted))}))
+
+(defn plan-runs
+  "Drop saved runs that nothing can consume any more, archiving them first.
+
+  A `[:bots :runs]` entry is the durable Goal checkpoint `resume-goal-turn!`
+  reads, so it is LIVE while its goal-job can still resume -- any non-terminal
+  status, `:checkpointed` and `:held` included. It is dead the moment its job
+  is terminal or gone: resumption requires `(= run-id (:id saved))` against a
+  job that will never run again. Measured 2026-08-29: 74 saved runs, 1.77 MB
+  -- 25% of the snapshot -- almost all of them full transcripts of finished
+  work, rewritten at every fold.
+
+  Kept unconditionally: runs holding a `:pending-call` (an approval card is
+  waiting on a person -- `decide-card!` consumes exactly this entry) and
+  non-Goal runs (interactive turns clear their own entry; a leftover one is
+  not this planner's to age)."
+  [runs goal-jobs]
+  (let [droppable?
+        (fn [[_ run]]
+          (and (:goal? run)
+               (nil? (:pending-call run))
+               (let [job (get goal-jobs (:id run))]
+                 (or (nil? job)
+                     (contains? agent-run/terminal-statuses
+                                (get-in job [:job/run :agent.run/status]))))))
+        dropped (filter droppable? runs)]
+    {:runs (into {} (remove droppable? runs))
+     :archive (mapv (fn [[bot-id run]]
+                      {:kind :run :id (:id run) :bot bot-id :value run})
+                    dropped)
+     :dropped (count dropped)
+     :dropped-bytes (reduce + 0 (map #(count (pr-str (val %))) dropped))}))
+
+(defn plan-turn-history
+  "Trim each Bot's turn ledger to what its readers still consult,
+  archiving the rest.
+
+  The SLO evaluates 24-hour and 7-day windows over `:turn/started-at`
+  (`bot_slo/window`), so a turn older than `:turn-retention-days` (default 8
+  -- the 7-day window plus a day of slack) is outside every question the hot
+  store answers. `:turns-keep-per-bot` newest are kept regardless of age so a
+  Bot that has been quiet for a month still shows its history. A turn with no
+  `:turn/started-at` cannot be aged and is kept.
+
+  Order within each vector is preserved, so on the sweep cadence this is one
+  whole-vector journal write every few hours, not a sliding window."
+  [turn-history now-ms {:keys [turn-retention-days turns-keep-per-bot]}]
+  (let [cutoff (- (long now-ms) (* (long turn-retention-days) 86400000))
+        results
+        (map (fn [[bot-id turns]]
+               (let [turns (vec turns)
+                     newest (into #{}
+                                  (take (long turns-keep-per-bot))
+                                  (sort-by #(- (or (epoch-ms (:turn/started-at %)) 0))
+                                           turns))
+                     keep? (fn [turn]
+                             (or (contains? newest turn)
+                                 (let [at (epoch-ms (:turn/started-at turn))]
+                                   (or (nil? at) (>= at cutoff)))))
+                     removed (remove keep? turns)]
+                 {:entry [bot-id (filterv keep? turns)]
+                  :archive (mapv (fn [turn]
+                                   {:kind :turn :id (:turn/id turn)
+                                    :bot bot-id :value turn})
+                                 removed)
+                  :removed-bytes (reduce + 0 (map #(count (pr-str %)) removed))}))
+             turn-history)]
+    {:turn-history (into {} (map :entry) results)
+     :archive (into [] (mapcat :archive) results)
+     :archived (reduce + 0 (map (comp count :archive) results))
+     :archived-bytes (reduce + 0 (map :removed-bytes results))}))
 
 (defn plan-mail-bodies
   "Evict `:body` from messages that are old enough AND whose archive file the
@@ -241,15 +328,29 @@
   "One retention pass over the whole state. Pure given `archived?`."
   [state now-ms pol archived?]
   (let [gj (plan-goal-jobs (get-in state [:bots :goal-jobs] {}) now-ms pol)
+        ;; Runs are planned against the goal-jobs BEFORE this sweep's own
+        ;; drops: a run whose job this very sweep removes must still be
+        ;; archived through its own plan, not silently orphaned by ordering.
+        runs (plan-runs (get-in state [:bots :runs] {})
+                        (get-in state [:bots :goal-jobs] {}))
+        turns (plan-turn-history (get-in state [:bots :turn-history] {})
+                                 now-ms pol)
         mail (plan-mail-bodies (get-in state [:mail :messages] {}) now-ms
                                pol archived?)]
     {:state (-> state
                 (assoc-in [:bots :goal-jobs] (:goal-jobs gj))
+                (assoc-in [:bots :runs] (:runs runs))
+                (assoc-in [:bots :turn-history] (:turn-history turns))
                 (assoc-in [:mail :messages] (:messages mail)))
+     :archive (into [] cat [(:archive gj) (:archive runs) (:archive turns)])
      :receipt {:goal-jobs-dropped (:dropped gj)
                :goal-jobs-dropped-bytes (:dropped-bytes gj)
                :goal-jobs-compacted (:compacted gj)
                :goal-jobs-compacted-bytes (:compacted-bytes gj)
+               :runs-dropped (:dropped runs)
+               :runs-dropped-bytes (:dropped-bytes runs)
+               :turns-archived (:archived turns)
+               :turns-archived-bytes (:archived-bytes turns)
                :mail-bodies-evicted (:evicted mail)
                :mail-bodies-evicted-bytes (:evicted-bytes mail)}}))
 
@@ -316,8 +417,15 @@
         receipt-box (volatile! nil)]
     (store/transact!
      (fn [state]
-       (let [{:keys [state receipt]} (plan state now-ms pol archived?)
+       (let [{:keys [state receipt archive]} (plan state now-ms pol archived?)
+             ;; Cold copies are written and fsynced BEFORE the hot drops
+             ;; commit. A throw here aborts the whole transaction: the store
+             ;; is unchanged, nothing was lost, the sweep just runs again
+             ;; later (ADR-2608291500 Phase 2 -- losing a sweep is a delay,
+             ;; dropping unarchived history is a deletion).
+             archived-count (store/archive-append! archive)
              receipt (merge receipt
+                            {:archived-records archived-count}
                             {:at (store/now)
                              :pressure (:level pressure-before)
                              :usable-bytes (:usable-bytes pressure-before)
@@ -328,14 +436,20 @@
     (let [receipt @receipt-box]
       (binding [*out* *err*]
         (println (format (str "gc: pressure=%s goal-jobs dropped=%d "
-                              "compacted=%d mail-bodies-evicted=%d "
+                              "compacted=%d runs-dropped=%d turns-archived=%d "
+                              "archived-records=%d mail-bodies-evicted=%d "
                               "(~%.1f MiB) config-backups-deleted=%d")
                          (name (or (:pressure receipt) :unknown))
                          (long (:goal-jobs-dropped receipt 0))
                          (long (:goal-jobs-compacted receipt 0))
+                         (long (:runs-dropped receipt 0))
+                         (long (:turns-archived receipt 0))
+                         (long (:archived-records receipt 0))
                          (long (:mail-bodies-evicted receipt 0))
                          (/ (double (+ (:goal-jobs-dropped-bytes receipt 0)
                                        (:goal-jobs-compacted-bytes receipt 0)
+                                       (:runs-dropped-bytes receipt 0)
+                                       (:turns-archived-bytes receipt 0)
                                        (:mail-bodies-evicted-bytes receipt 0)))
                             1048576.0)
                          (long (:config-backups-deleted receipt 0)))))
