@@ -176,11 +176,23 @@
   rollback presented as a normal start.
 
   NIL base-bytes is a journal written before this check existed. It cannot be
-  vouched for, so it does not belong."
-  [base-bytes snapshot-bytes]
-  (and (some? base-bytes)
-       (some? snapshot-bytes)
-       (= base-bytes snapshot-bytes)))
+  vouched for, so it does not belong.
+
+  The 4-arity adds digest identity (ADR-2608291500 Phase 0): byte LENGTH is a
+  weak name -- two different snapshots of coincidentally equal size would pass
+  the 2-arity check and replay a stale journal silently. When both sides carry
+  a SHA-256 the digests decide; when either side lacks one -- a journal
+  written before the field existed, or a process that has not hashed its
+  snapshot -- the byte comparison remains the answer, so old journals keep
+  replaying exactly as before."
+  ([base-bytes snapshot-bytes]
+   (journal-belongs-to-snapshot? base-bytes snapshot-bytes nil nil))
+  ([base-bytes snapshot-bytes base-sha snapshot-sha]
+   (and (some? base-bytes)
+        (some? snapshot-bytes)
+        (if (and (some? base-sha) (some? snapshot-sha))
+          (= base-sha snapshot-sha)
+          (= base-bytes snapshot-bytes)))))
 
 (defn merge-output
   "stdout and stderr as one stream, matching the legacy ProcessBuilder callers

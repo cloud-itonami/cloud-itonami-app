@@ -25,12 +25,15 @@
                  (str "store-journal-" (System/nanoTime)))
     (.mkdirs)))
 
-(defn- record [base-bytes ops]
-  (str (pr-str {:schema "cloud.itonami.app.state-journal.v1"
-                :at "2026-08-27T10:50:13.944805Z"
-                :base-bytes base-bytes
-                :ops ops})
-       "\n"))
+(defn- record
+  ([base-bytes ops] (record base-bytes nil ops))
+  ([base-bytes base-sha ops]
+   (str (pr-str (cond-> {:schema "cloud.itonami.app.state-journal.v1"
+                         :at "2026-08-27T10:50:13.944805Z"
+                         :base-bytes base-bytes
+                         :ops ops}
+                  base-sha (assoc :base-sha256 base-sha)))
+        "\n")))
 
 ;; ── the delta ──────────────────────────────────────────────────────────────
 
@@ -47,14 +50,57 @@
 
 (deftest replaying-a-record-twice-is-replaying-it-once
   ;; Why a crash between the snapshot write and the journal truncation is
-  ;; harmless: leaves are replaced whole rather than accumulated.
-  (let [before {:runs {:x {:messages [1 2]}}}
-        after  {:runs {:x {:messages [1 2 3]}}}
+  ;; harmless: leaves are replaced whole, and an append refuses to run twice
+  ;; through its length-and-content guard.
+  (let [apply-op (deref (ns-resolve 'cloud.itonami.app.store 'apply-op))
+        before {:runs {:x {:messages [1 2] :turn-count 1}}}
+        after  {:runs {:x {:messages [1 2 3] :turn-count 2}}}
         ops    (store/state-delta before after)
-        once   (reduce #(assoc-in %1 (:path %2) (:value %2)) before ops)
-        twice  (reduce #(assoc-in %1 (:path %2) (:value %2)) once ops)]
+        once   (reduce apply-op before ops)
+        twice  (reduce apply-op once ops)]
     (is (= after once))
     (is (= once twice))))
+
+;; ── the append op (ADR-2608291500 Phase 1) ─────────────────────────────────
+
+(deftest a-vector-that-only-grew-journals-only-its-tail
+  ;; The measured waste this exists to remove: 95% of journal bytes were
+  ;; whole-vector rewrites of :messages and :job/events vectors that had only
+  ;; grown at the end (2026-08-29, live resident store).
+  (let [before {:runs {:x {:messages [:a :b]}}}
+        after  {:runs {:x {:messages [:a :b :c :d]}}}]
+    (is (= [{:op :append :path [:runs :x :messages] :from 2 :value [:c :d]}]
+           (store/state-delta before after))))
+  (testing "any change that is not a pure tail growth is replaced whole"
+    (is (= [{:op :assoc :path [:runs :x :messages] :value [:z :b :c]}]
+           (store/state-delta {:runs {:x {:messages [:a :b]}}}
+                              {:runs {:x {:messages [:z :b :c]}}}))
+        "a mutated element disqualifies the append")
+    (is (= [{:op :assoc :path [:runs :x :messages] :value [:a]}]
+           (store/state-delta {:runs {:x {:messages [:a :b]}}}
+                              {:runs {:x {:messages [:a]}}}))
+        "so does shrinking")))
+
+(deftest an-append-that-does-not-fit-refuses-for-the-reason-it-names
+  ;; A blind `into` would silently duplicate the tail after a crash-window
+  ;; refold, and a silent skip would hide a journal that belongs to some other
+  ;; state. Both wrong states must be told apart from the two right ones.
+  (let [apply-op (deref (ns-resolve 'cloud.itonami.app.store 'apply-op))
+        op {:op :append :path [:runs :x :messages] :from 2 :value [:c :d]}]
+    (testing "exactly at :from -- applies"
+      (is (= {:runs {:x {:messages [:a :b :c :d]}}}
+             (apply-op {:runs {:x {:messages [:a :b]}}} op))))
+    (testing "already folded -- the very tail is present -- no-op"
+      (let [folded {:runs {:x {:messages [:a :b :c :d]}}}]
+        (is (= folded (apply-op folded op)))))
+    (testing "shorter than :from -- refused by name"
+      (is (= :store/invalid-journal-append
+             (try (apply-op {:runs {:x {:messages [:a]}}} op)
+                  (catch clojure.lang.ExceptionInfo e (:type (ex-data e)))))))
+    (testing "long enough but carrying a DIFFERENT tail -- refused by name"
+      (is (= :store/invalid-journal-append
+             (try (apply-op {:runs {:x {:messages [:a :b :x :y]}}} op)
+                  (catch clojure.lang.ExceptionInfo e (:type (ex-data e)))))))))
 
 ;; ── the guard ──────────────────────────────────────────────────────────────
 
@@ -112,6 +158,35 @@
     (is (= 5 (:v (store/replay-journal base file 4096))) "matching base: replayed")
     (write!)
     (is (= 7 (:v (store/replay-journal base file 4097))) "one byte apart: refused")))
+
+;; ── digest identity (ADR-2608291500 Phase 0) ───────────────────────────────
+
+(deftest equal-length-is-not-identity-when-both-sides-carry-a-digest
+  ;; The one case the byte check cannot see: two different snapshots of
+  ;; coincidentally equal LENGTH. Hold the byte count equal and move only the
+  ;; digest -- if this replays, size is being read as identity again.
+  (let [dir (tmp-dir)
+        file (io/file dir "state.journal.edn")
+        base {:v 7}
+        ops [{:op :assoc :path [:v] :value 5}]
+        sha-a (apply str (repeat 64 "a"))
+        sha-b (apply str (repeat 64 "b"))]
+    (spit file (record 4096 sha-a ops))
+    (is (= 5 (:v (store/replay-journal base file 4096 sha-a)))
+        "matching digest: replayed")
+    (spit file (record 4096 sha-a ops))
+    (is (= 7 (:v (store/replay-journal base file 4096 sha-b)))
+        "same byte count, different digest: refused")))
+
+(deftest a-journal-without-a-digest-still-replays-on-matching-bytes
+  ;; Written by a build before the field existed. The byte comparison remains
+  ;; the answer for it -- the upgrade must not orphan every existing journal.
+  (let [dir (tmp-dir)
+        file (io/file dir "state.journal.edn")
+        base {:v 7}]
+    (spit file (record 4096 [{:op :assoc :path [:v] :value 5}]))
+    (is (= 5 (:v (store/replay-journal base file 4096
+                                       (apply str (repeat 64 "a"))))))))
 
 ;; ── the amplification the journal exists to remove ─────────────────────────
 
