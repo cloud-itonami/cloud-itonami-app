@@ -488,9 +488,11 @@
   ;; api.murakumo.cloud routes murakumo-main to a reasoning model. When this is
   ;; omitted the public gateway supplies 512, and the model can spend the whole
   ;; allowance on reasoning: HTTP 200, finish_reason=length, content="". A Bot
-  ;; then appears to accept the person's message without answering. 2048 is the
-  ;; gateway's documented public ceiling and leaves room for the visible reply.
-  2048)
+  ;; then appears to accept the person's message without answering. 16384 is
+  ;; the gateway's public ceiling since 2026-08-29 (raised from 2048 on owner
+  ;; instruction to move output budgets toward the model maximum); endpoints
+  ;; that serve less are handled by the observed-ceiling bound below.
+  16384)
 
 (defn- requested-max-tokens
   "The output cap this request will actually carry, for THIS model.
