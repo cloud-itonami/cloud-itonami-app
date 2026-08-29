@@ -68,7 +68,7 @@
 (defn- private-fn [name]
   (some-> (ns-resolve 'cloud.itonami.app.bots name) deref))
 
-(deftest resident-goals-have-a-smaller-inference-envelope
+(deftest resident-goals-carry-an-explicit-inference-envelope
   (let [configure (private-fn 'goal-job-configuration)
         request (private-fn 'agent-request)
         resident-config (configure {} {:job/resident-workforce? true})
@@ -76,10 +76,19 @@
         provider {:max-output-tokens 512}
         b {:bot/id "bot-1"}
         run {:goal? true :messages [] :tools []}]
-    (is (= 1024 (get-in resident-config
-                        [:bots :goal :max-output-tokens])))
-    (is (= 1024 (:max-output-tokens
-                 (request resident-config provider b run "murakumo-main"))))
+    ;; 1024 until 2026-08-29, when four of fifteen resident turns died at
+    ;; :provider/output-budget-exhausted with decision_frame arguments cut
+    ;; mid-JSON at exactly 1024/1024. Matched to the provider default rather
+    ;; than a second number of its own; the per-model cap, observed ceiling
+    ;; and context window still bound it downstream.
+    (is (= 16384 (get-in resident-config
+                         [:bots :goal :max-output-tokens])))
+    (is (= 16384 (:max-output-tokens
+                  (request resident-config provider b run "murakumo-main"))))
+    (testing "an operator can still keep resident work shorter than interactive"
+      (is (= 700 (get-in (configure {:bots {:workforce {:max-output-tokens 700}}}
+                                    {:job/resident-workforce? true})
+                         [:bots :goal :max-output-tokens]))))
     (is (nil? (:max-output-tokens
                (request ordinary-config provider b run "murakumo-main")))
         "human-created goals keep the provider's ordinary quality envelope")
