@@ -488,6 +488,43 @@
             (is (false? (bots/standing-omakase? {:bots {:workforce {:omakase true}}} "x/y")))
             (is (false? (bots/standing-omakase? {} "x/y")))))))))
 
+(deftest workforce-writes-browser-peers-and-virtual-shell-follow-the-same-standing-contract-as-omakase
+  ;; The gate that decides whether a write/browser/peer TOOL is even offered
+  ;; had no operator override at all -- provision-workforce! hardcoded all
+  ;; four to false regardless of configuration, so `[:bots :workforce
+  ;; :omakase]` could delegate approval for a card that could never exist.
+  ;; Same contract as standing-omakase? (ADR-0070): the operator's own
+  ;; config.edn, applied at provisioning, never taken away.
+  (with-store
+    (fn []
+      (with-redefs [workspace-tools/admit-root (fn [path] path)]
+        (let [catalog (workforce-catalog [(engineer-entry)])
+              first-bot (fn [] (first (:bots (bots/overview {} alice))))]
+          (bots/provision-workforce! {} alice catalog)
+          ;; no configuration -> nothing new is granted, same as before this change
+          (let [b (first-bot)]
+            (is (false? (:writes? b)))
+            (is (false? (:browser? b)))
+            (is (false? (:peers? b)))
+            (is (false? (:virtual-shell? b))))
+          (testing "the operator's standing grant turns all four on"
+            (bots/provision-workforce!
+             {:bots {:workforce {:writes? true :browser? true
+                                 :peers? true :virtual-shell? true}}}
+             alice catalog)
+            (let [b (first-bot)]
+              (is (true? (:writes? b)))
+              (is (true? (:browser? b)))
+              (is (true? (:peers? b)))
+              (is (true? (:virtual-shell? b)))))
+          (testing "a later provision with no configuration does not take it away"
+            (bots/provision-workforce! {} alice catalog)
+            (let [b (first-bot)]
+              (is (true? (:writes? b)))
+              (is (true? (:browser? b)))
+              (is (true? (:peers? b)))
+              (is (true? (:virtual-shell? b))))))))))
+
 (deftest resident-workforce-starts-at-most-the-configured-number-per-tick
   (with-store
     (fn []
