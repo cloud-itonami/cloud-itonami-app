@@ -3174,6 +3174,35 @@
                                            :message (error-message error)})
             (throw error)))))))
 
+(defn- parallel-batch-violation
+  "Why this parallel batch may not run as issued, or nil.
+
+  A string rather than a throw, because the model is the one who can fix it.
+  Requests already carry `parallel_tool_calls false`; llama.cpp-hosted models
+  emit parallel batches anyway, and failing the turn for that spent a whole
+  resident tick per disobedience -- measured over the window ending
+  2026-08-29: 10 turns dead at :agent/parallel-tool-limit and 12 more at
+  :agent/unsafe-parallel-tools (the latter filed as :internal-error, see
+  `execute-parallel-read-calls!`). The recoverable shape already exists in
+  this file: goal_plan returns its failure as tool-message content and the
+  model retries. Same here."
+  [configuration run calls]
+  (if (> (count calls) 3)
+    (str "parallel tool limit is three; this reply issued " (count calls)
+         ". Re-issue at most three independent read-only calls, or call"
+         " tools one at a time.")
+    (when-let [offender
+               (some (fn [{:keys [name]}]
+                       (when (or (get (:blocked run) (get (:tool-provider run) name))
+                                 (not (contains? (:runnable run) name))
+                                 (contains? goal-tool-names name)
+                                 (write-tool? configuration name))
+                         name))
+               calls)]
+      (str "parallel calls must be admitted independent read-only tools; "
+           offender " is not. Call it on its own, with nothing else in the"
+           " same reply."))))
+
 (defn- execute-parallel-read-calls! [configuration b run calls on-event]
   (when (> (count calls) 3)
     (throw (ex-info "parallel tool limit is three"
@@ -3183,7 +3212,15 @@
                              (bound-fn []
                                (execute-read-call! configuration b run %)))
                     calls)
-        results (mapv #(.get ^Future %) tasks)
+        ;; `Future/.get` wraps whatever the child threw in an
+        ;; ExecutionException whose own ex-data is nil, so every typed child
+        ;; failure was reaching the ledger as :internal-error -- the bucket a
+        ;; reader checks for OUR bugs. Rethrow the cause; it carries the type.
+        results (mapv (fn [^Future task]
+                        (try (.get task)
+                             (catch java.util.concurrent.ExecutionException e
+                               (throw (or (.getCause e) e)))))
+                      tasks)
         next-run (reduce (fn [r {:keys [call output]}]
                            (-> r
                                (update :tool-count (fnil inc 0))
@@ -3705,9 +3742,21 @@
 
           (> (count calls) 1)
           (if (:goal? run)
-            (let [run (execute-parallel-read-calls! configuration b run calls on-event)]
-              (save-run! (:bot/id b) run)
-              (recur run))
+            ;; A policy-violating batch goes back to the model as tool-message
+            ;; content instead of failing the turn: the model is the party
+            ;; that can re-issue the calls, and a failed turn costs the whole
+            ;; tick plus a requeue (`parallel-batch-violation`).
+            (if-let [violation (parallel-batch-violation configuration run calls)]
+              (let [run (reduce (fn [r call]
+                                  (update r :messages conj
+                                          {:role "tool" :tool-call-id (:id call)
+                                           :name (:name call) :content violation}))
+                                run calls)]
+                (save-run! (:bot/id b) run)
+                (recur run))
+              (let [run (execute-parallel-read-calls! configuration b run calls on-event)]
+                (save-run! (:bot/id b) run)
+                (recur run)))
             (throw (ex-info
                     "model provider が複数のツール呼び出しを返したため、安全のため停止しました。"
                     {:type :agent/multiple-tool-calls :count (count calls)})))
