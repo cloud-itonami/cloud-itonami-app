@@ -463,14 +463,27 @@
 
 (defn- append-goal-event!
   "Append one host-observed event. The bounded vector is the action/receipt/
-  verifier ledger shown to the person; provider prose never enters it."
+  verifier ledger shown to the person; provider prose never enters it.
+
+  Eviction runs with hysteresis rather than on every append. Trimming each
+  time turned the vector at its cap into a sliding window whose prefix moved
+  on every transact, so the store journal could never express the change as
+  an `:append` and rewrote all ~200 events whole -- measured 2026-08-29
+  (ADR-2608291500): 87% of journal bytes, 52 KB per rewrite, exactly here.
+  Letting the ledger run to 220 and trimming back to 200 keeps the bound
+  within 10% while 19 of every 20 appends journal only their own tail."
   [run-id kind data]
   (let [event {:event/id (new-id "event") :event/kind kind
                :event/at (store/now) :event/data data}]
     (update-goal-job! run-id
                       (fn [job]
                         (-> job
-                            (update :job/events #(vec (take-last 200 (conj (vec %) event))))
+                            (update :job/events
+                                    (fn [events]
+                                      (let [events (conj (vec events) event)]
+                                        (if (> (count events) 220)
+                                          (vec (take-last 200 events))
+                                          events))))
                             (assoc :job/updated-at (:event/at event)))))
     event))
 
