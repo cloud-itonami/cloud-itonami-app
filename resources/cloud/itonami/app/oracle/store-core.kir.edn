@@ -1,0 +1,15 @@
+{:format :kotoba.kir/v3,
+ :signature nil,
+ :functions
+ [{:name retention-drop-count,
+   :params [size cap],
+   :result :i64,
+   :effects #{},
+   :body (if (> size cap) (- size cap) 0)}],
+ :oracle-value nil,
+ :schema-identities nil,
+ :exports [retention-drop-count],
+ :schemas nil,
+ :effects #{},
+ :blocks [],
+ :entry nil}

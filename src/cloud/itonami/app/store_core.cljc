@@ -36,7 +36,30 @@
   transaction as the transcript update, and it stays there until kgraph is
   portable. This was not foreseen: the first version of this namespace required
   kgraph, and `bin/test-portable-cljs` refused it on the first run. That is the
-  argument for having that runner.")
+  argument for having that runner.
+
+  ## One decision moved further, into `store_core.kotoba`
+
+  `append-message` and `record-response` both trim a collection back to a cap
+  after growing it by one — the message transcript's window and the
+  completion-event ring, respectively. That arithmetic (how many of the
+  oldest items a bounded window must evict) is now `retention-drop-count` in
+  `store_core.kotoba`, run through `kotoba-oracle` rather than kept here as a
+  second copy of `take-last`.
+
+  The rest of this namespace — the map itself, the merge that preserves a
+  session's other fields, the vector append, `dissoc`, the defaults a missing
+  session or event ring reads as — did NOT move. `:sessions` is a map keyed by
+  an arbitrary runtime string (`new-id`'s output, not a compile-time keyword),
+  and no exportable `.kotoba` value today describes it: the legacy map literal
+  admits only keyword keys, the typed `[:map K V]` family requires one uniform
+  value type per entry (a session mixes a message vector, a timestamp string
+  and a context-ref vector), and `:document` — the value shaped for
+  heterogeneous nesting — is bounded to 256 nodes, which a real transcript at
+  `max-messages` crosses on its own. See the `.kotoba` header for the measured
+  detail. This is a backend gap, not a permanent one (ADR-2608650000): revisit
+  when any of those three limits moves."
+  (:require [cloud.itonami.app.kotoba-oracle :as oracle]))
 
 (def schema "cloud.itonami.app.state.v1")
 
@@ -73,6 +96,16 @@
              #(merge {:id session-id :messages []} (or % {})
                      {:updated-at at :context-refs (vec refs)})))
 
+(defn- retain-window
+  "The last `cap` items of `items`, trimmed through `store_core.kotoba`'s
+  `retention-drop-count` rather than `take-last` — the eviction boundary
+  used here is the one that ships, not a parallel copy of it."
+  [items cap]
+  (let [drop-n (oracle/i64-value
+                (oracle/call :store-core 'retention-drop-count
+                            [(oracle/i64 (count items)) (oracle/i64 cap)]))]
+    (vec (drop drop-n items))))
+
 (defn append-message
   "Add one recorded message to a session's transcript.
 
@@ -84,7 +117,7 @@
   [state session-id recorded max-messages]
   (let [messages (conj (vec (get-in state [:sessions session-id :messages] []))
                        recorded)
-        kept (vec (take-last max-messages messages))]
+        kept (retain-window messages max-messages)]
     (-> state
         ;; Preserve all session fields while appending the transcript.
         (update-in [:sessions session-id]
@@ -103,12 +136,13 @@
   [state response at]
   (-> state
       (assoc :last-response response)
-      (update :events #(vec (take-last max-events
-                                       (conj (or % [])
-                                             {:type :chat/completed
-                                              :at at
-                                              :provider (:provider response)
-                                              :model (:model response)}))))))
+      (update :events #(retain-window
+                        (conj (or % [])
+                              {:type :chat/completed
+                               :at at
+                               :provider (:provider response)
+                               :model (:model response)})
+                        max-events))))
 
 (defn clear-session [state session-id]
   (update state :sessions dissoc session-id))
