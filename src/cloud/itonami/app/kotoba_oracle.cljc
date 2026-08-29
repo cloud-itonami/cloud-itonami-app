@@ -89,7 +89,8 @@
    :did-web "cloud/itonami/app/did_web_core.kotoba"
    :domain-binding "cloud/itonami/app/domain_binding_core.kotoba"
    :identity "cloud/itonami/app/identity_core.kotoba"
-   :store-core "cloud/itonami/app/store_core.kotoba"})
+   :store-core "cloud/itonami/app/store_core.kotoba"
+   :workforce-cadence "cloud/itonami/app/workforce_cadence_core.kotoba"})
 
 (defn resource-path [id]
   (str "cloud/itonami/app/oracle/" (name id) ".kir.edn"))
