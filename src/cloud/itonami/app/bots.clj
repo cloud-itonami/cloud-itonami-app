@@ -2643,11 +2643,24 @@
 (defn- usage-value [usage key]
   (long (or (get usage key) (get usage (name key)) 0)))
 
+(defn- cached-usage-value [usage]
+  (or (get-in usage [:prompt_tokens_details :cached_tokens])
+      (get-in usage ["prompt_tokens_details" "cached_tokens"])
+      (get usage :cache_read_input_tokens)
+      (get usage "cache_read_input_tokens")))
+
 (defn- merge-usage [total usage]
   (when (or total usage)
-    (into {}
-          (for [key [:prompt_tokens :completion_tokens :total_tokens]]
-            [key (+ (usage-value total key) (usage-value usage key))]))))
+    (let [base (into {}
+                     (for [key [:prompt_tokens :completion_tokens :total_tokens]]
+                       [key (+ (usage-value total key) (usage-value usage key))]))
+          total-cached (cached-usage-value total)
+          usage-cached (cached-usage-value usage)]
+      (cond-> base
+        (or (number? total-cached) (number? usage-cached))
+        (assoc :prompt_tokens_details
+               {:cached_tokens (+ (long (or total-cached 0))
+                                  (long (or usage-cached 0)))})))))
 
 (defn- save-run! [bot-id run]
   (transact! assoc-in [:runs bot-id] run))
@@ -2679,6 +2692,7 @@
     (:provider run) (assoc :turn/provider (:provider run))
     (:model run) (assoc :turn/model (:model run))
     (:requested-model run) (assoc :turn/requested-model (:requested-model run))
+    (:served-node-did run) (assoc :turn/served-node-did (:served-node-did run))
     (:turn-count run) (assoc :turn/turn-count (:turn-count run))
     (:tool-count run) (assoc :turn/tool-count (:tool-count run))
     (:usage run) (assoc :turn/usage (:usage run))))
@@ -2986,6 +3000,7 @@
      :provider (:turn/provider turn)
      :model (:turn/model turn)
      :requested-model (:turn/requested-model turn)
+     :served-node-did (:turn/served-node-did turn)
      :usage (:turn/usage turn)
      :cost {:status "not-calculated"
             :reason "provider usage does not include a billed amount"}
@@ -3099,6 +3114,7 @@
              ;; get an answer from a model, and recording one as though it had
              ;; would be a different, worse kind of wrong.
              :turn/requested-model (:requested-model run)
+             :turn/served-node-did (:served-node-did run)
              :turn/usage (:usage run)}
             attrs))))
 
@@ -3487,7 +3503,13 @@
            ;; for no answer: the model spends the cap thinking and never reaches
            ;; a text block. See the measurement in provider/agent-request-body.
            ;; These two go together -- do not set one without the other.
-           :disable-thinking? true))))
+           :disable-thinking? true)
+
+    (and (:goal? run) (= "murakumo-edge" model) (seq (:tools run)))
+    ;; Ornith follows llama.cpp's required-tool contract exactly (live direct
+    ;; proof, 2026-08-29). Without this it may write a correct completion in
+    ;; prose forever while the host waits for goal_complete/goal_blocked.
+    (assoc :require-tool? true))))
 
 (def ^:private capability-repair-workforce-keys
   "The two governed roles that close a capability-drift incident.
@@ -3722,6 +3744,7 @@
                            ;; murakumo-main answer as RTX 5090 output.
                            :model (or (:model result) model)
                            :requested-model (or (:requested-model result) model)
+                           :served-node-did (:served-node-did result)
                            :model-fallback? (boolean (:fallback? result))
                            :context (select-keys request
                                                  [:context-window-tokens
@@ -3747,6 +3770,16 @@
             (when (seq (str (:content result)))
               (say (:bot/id b) (:content result) nil))
             (recur (apply-followups! (:bot/id b) run followups on-event)))
+
+          (and (empty? calls) (:goal? run) (:require-tool? request))
+          (do
+            (clear-run! (:bot/id b))
+            (finish-visible! on-finish run :failed
+                             {:turn/error-type :provider/required-tool-missing
+                              :turn/result (:content result)})
+            (say (:bot/id b)
+                 "モデルが必須の完了ツールを返さなかったため、この実行を停止しました。"
+                 nil))
 
           (empty? calls)
           (if (:goal? run)

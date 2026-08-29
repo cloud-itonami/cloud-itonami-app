@@ -94,11 +94,38 @@
     (is (nil? (:disable-thinking?
                (request ordinary-config provider b run "murakumo-main")))
         "uncapped turns keep reasoning -- the fix is scoped to the cap that causes it")
+    (is (true? (:require-tool?
+                (request resident-config provider b
+                         (assoc run :tools [{:name "goal_complete"}])
+                         "murakumo-edge")))
+        "Ornith goals use the wire-level required-tool contract")
+    (is (nil? (:require-tool?
+               (request resident-config provider b
+                        (assoc run :tools [{:name "goal_complete"}])
+                        "murakumo-main")))
+        "the stabilization is model-scoped")
     (testing "an operator can tune the resident ceiling without code"
       (is (= 1536
              (get-in (configure {:bots {:workforce {:max-output-tokens 1536}}}
                                 {:job/resident-workforce? true})
                      [:bots :goal :max-output-tokens]))))))
+
+(deftest bot-usage-retains-measured-prefix-cache-hits
+  (let [merge-usage (private-fn 'merge-usage)]
+    (is (= {:prompt_tokens 30 :completion_tokens 7 :total_tokens 37
+            :prompt_tokens_details {:cached_tokens 18}}
+           (merge-usage
+            {:prompt_tokens 10 :completion_tokens 3 :total_tokens 13
+             :prompt_tokens_details {:cached_tokens 5}}
+            {:prompt_tokens 20 :completion_tokens 4 :total_tokens 24
+             :prompt_tokens_details {:cached_tokens 13}})))
+    (is (= 0 (get-in (merge-usage nil
+                                  {:prompt_tokens 20 :completion_tokens 4 :total_tokens 24
+                                   :prompt_tokens_details {:cached_tokens 0}})
+                         [:prompt_tokens_details :cached_tokens])))
+    (is (nil? (:prompt_tokens_details
+               (merge-usage nil {:prompt_tokens 20 :completion_tokens 4 :total_tokens 24})))
+        "unmeasured is not rewritten as a cache miss")))
 
 (defn- connect!
   "Seed one live external account for alice, the way `complete-oauth!` would:

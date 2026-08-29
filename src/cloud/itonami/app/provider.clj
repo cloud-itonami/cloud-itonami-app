@@ -7,6 +7,8 @@
            [java.net URI]
            [java.net.http HttpClient HttpRequest HttpRequest$BodyPublishers
             HttpResponse$BodyHandlers]
+           [java.nio.charset StandardCharsets]
+           [java.security MessageDigest]
            [java.time Duration]))
 
 (defonce ^HttpClient client
@@ -157,6 +159,22 @@
 (defn- xai-headers [provider request]
   (when (and (= :xai (:kind provider)) (:conversation-id request))
     {"x-grok-conv-id" (:conversation-id request)}))
+
+(defn- sha256-hex [value]
+  (let [bytes (.digest (MessageDigest/getInstance "SHA-256")
+                       (.getBytes (str value) StandardCharsets/UTF_8))]
+    (apply str (map #(format "%02x" (bit-and 0xff %)) bytes))))
+
+(defn- provider-headers
+  "Provider correlation without exposing a Bot id on the wire.
+
+  Murakumo uses the stable digest only as a cache-affinity hint;
+  authorization and model selection remain independent."
+  [provider request]
+  (merge (xai-headers provider request)
+         (when (and (= "murakumo" (some-> (:id provider) name))
+                    (:conversation-id request))
+           {"x-murakumo-affinity-key" (sha256-hex (:conversation-id request))})))
 
 (defn list-models [provider]
   (cond
@@ -323,7 +341,7 @@
                                                      (:reasoning-effort provider)
                                                      "medium")))
                       (config/env-secret provider)
-                      (xai-headers provider request)
+                      (provider-headers provider request)
                       (provider-timeout-seconds provider candidate)
                       (long (or (:max-transient-retries provider)
                                 max-transient-retries)))
@@ -540,7 +558,7 @@
 
 (defn- agent-request-body
   [provider {:keys [model messages tools temperature reasoning-effort
-                    disable-thinking? text-only?]
+                    disable-thinking? text-only? require-tool?]
              :as request}]
   (cond-> {:model model
            :messages (mapv provider-message messages)
@@ -549,6 +567,9 @@
            :max_tokens (requested-max-tokens provider request)}
     (and (not text-only?) (seq tools))
     (assoc :tools (mapv tool-definition tools))
+
+    (and require-tool? (not text-only?) (seq tools))
+    (assoc :tool_choice "required")
 
     ;; llama.cpp vendor extension, passed through by the murakumo bridge. A
     ;; reasoning model spends output tokens on `thinking` BEFORE it emits any
@@ -719,7 +740,7 @@
                 :post
                 (openai-url provider "/chat/completions")
                 body (config/env-secret provider)
-                (xai-headers provider request)
+                (provider-headers provider request)
                 (provider-timeout-seconds provider model)
                 (long (or (:max-transient-retries provider)
                           max-transient-retries)))
@@ -740,7 +761,8 @@
     ;; for a budget this endpoint does not serve, so it must survive the throw.
     (note-output-ceiling! provider model finish-reason (:usage result) max-tokens)
     (assoc (agent-result message finish-reason (:usage result) max-tokens)
-           :served-model (:model result))))
+           :served-model (:model result)
+           :served-node-did (get-in result [:murakumo :worker_did]))))
 
 (defn agent-turn
   "One non-streaming tool-capable model turn, normalized for Agent Control."
@@ -820,7 +842,7 @@
                                             (:reasoning-effort provider)
                                             "medium")))
              (config/env-secret provider)
-             (xai-headers provider request)
+             (provider-headers provider request)
              (provider-timeout-seconds provider model))]
         (with-open [reader (BufferedReader.
                             (InputStreamReader. (.body response)))]
@@ -914,7 +936,7 @@
       (let [response (streaming-response
                       (openai-url provider "/chat/completions") body
                       (config/env-secret provider)
-                      (xai-headers provider request)
+                      (provider-headers provider request)
                       (provider-timeout-seconds provider model))]
         (with-active-agent-reader
           response
