@@ -54,6 +54,21 @@ then asked for nonce-only answers without tools or external effects.
 The application suite after the configuration change ran 2,064 tests / 12,144
 assertions with 0 failures and 0 errors.
 
+## Landed and resident, 2026-08-29 09:09-09:17Z
+
+PR #221 merged as `67041af073329aeea7f7ebf8df451d57036b4b51`. The
+LaunchAgent `dev.cloud-itonami.app` was moved from immutable release `4a2dbb3`
+to the matching `67041af` release; the old directory and the existing store
+were retained for rollback. `/health` returned the resident store fingerprint,
+and the PATH-resolved `itonami status` reported `serves-this-store?: true`.
+
+Re-provisioning moved all 92 workforce Bots through the configuration path.
+Six remaining saved Murakumo Bots were updated through `itonami bots model`.
+The post-change inventory was 99 enabled Murakumo Bots, 99 on
+`murakumo-edge`, zero on another model. A post-release real generation returned
+exact `ORNITH_RELEASE_67041AF_OK` in 31.35 s. The public registry still reported
+ten of ten Ornith workers live/ready/fresh with all ten slots free afterwards.
+
 ## Qualification boundary
 
 This establishes a clean short sequential soak and post-soak memory headroom.
