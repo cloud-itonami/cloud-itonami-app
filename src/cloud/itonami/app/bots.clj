@@ -5341,6 +5341,10 @@
   (boolean
    (some-> job :workforce.job/bot bot-by-id disk-pressure-relief-bot?)))
 
+(defn- domain-steward-job? [job]
+  (boolean
+   (some-> job :workforce.job/bot bot-by-id domain-steward-bot?)))
+
 (defn- compact-disk-maintenance-receipt [receipt]
   (cond-> (select-keys receipt [:schema :action :reason :before :after
                                 :reclaimed-bytes])
@@ -5445,6 +5449,131 @@
                         {:turn/state :failed :turn/phase :failed
                          :turn/goal? true :turn/objective objective
                          :turn/tool "disk_space_cleanup"
+                         :turn/error-type error-type
+                         :turn/error-message (error-message error)
+                         :turn/finished-at finished-at})
+          (throw error))))))
+
+(defn- response-items [response]
+  (let [result (:result response)]
+    (cond
+      (sequential? result) (vec result)
+      (sequential? (:registrations result)) (vec (:registrations result))
+      (sequential? (:domains result)) (vec (:domains result))
+      :else [])))
+
+(defn- auto-renew-off? [registration]
+  (or (false? (:auto_renew registration))
+      (false? (:auto-renew registration))))
+
+(defn- registration-name [registration]
+  (or (:name registration) (:domain registration) (:id registration) "unknown"))
+
+(defn- proposal-status [proposal]
+  (some-> proposal :status name keyword))
+
+(defn- run-domain-steward!
+  "Run the provider-independent minimum Domain operation.
+
+  The fixed cycle observes registrations and proposals, then commits at most
+  one proposal whose durable status is already `:approved`. It never searches,
+  invents a domain, or creates a proposal. `domain_commit` still re-enters
+  authority.api, so Passkey approval and the actor's current provider checks
+  remain the only mutation path."
+  [configuration session b job run-id]
+  (let [objective (workforce-goal b job)
+        at (store/now)
+        started-ms (now-ms)
+        queued (agent-run/agent-run {:id run-id :goal objective} started-ms)
+        stored-job {:job/id run-id
+                    :job/bot (:bot/id b)
+                    :job/session (select-keys session
+                                              [:user-id :organization-id :kind])
+                    :job/objective objective
+                    :job/run queued
+                    :job/plan []
+                    :job/decision-frame nil
+                    :job/events []
+                    :job/resident-workforce? true
+                    :job/attempt 1
+                    :job/created-at at
+                    :job/updated-at at}]
+    (transact! assoc-in [:goal-jobs run-id] stored-job)
+    (transition-goal-run! run-id :leased {})
+    (transition-goal-run! run-id :running {})
+    (append-goal-event! run-id :run/started
+                        {:attempt 1 :execution :deterministic-domain-steward})
+    (record-turn! (:bot/id b) run-id
+                  {:turn/state :running :turn/phase :tool
+                   :turn/goal? true :turn/objective objective
+                   :turn/tool "domain_registrations"})
+    (try
+      (let [registrations-response
+            (domain-tools/call-tool configuration "domain_registrations" {})
+            proposals-response
+            (domain-tools/call-tool configuration "domain_proposals" {})
+            registrations (response-items registrations-response)
+            proposals (vec (:proposals proposals-response))
+            approved (first (filter #(= :approved (proposal-status %))
+                                    proposals))
+            commit (when approved
+                     (domain-tools/call-tool configuration "domain_commit"
+                                            {:proposal_id (:id approved)}))
+            renewal-risk (mapv registration-name
+                               (filter auto-renew-off? registrations))
+            receipt {:schema "cloud.itonami.app.domain-steward.v1"
+                     :registrations-count (count registrations)
+                     :proposal-count (count proposals)
+                     :awaiting-passkey-count
+                     (count (filter #(= :awaiting-passkey (proposal-status %))
+                                    proposals))
+                     :renewal-risk renewal-risk
+                     :committed-proposal (some-> approved :id)
+                     :commit-status (:status commit)}
+            summary (str "Domain Steward completed the provider-independent cycle.\n"
+                         "- registrations observed: " (count registrations) "\n"
+                         "- proposals observed: " (count proposals) "\n"
+                         "- awaiting Passkey: " (:awaiting-passkey-count receipt) "\n"
+                         "- auto-renew off: " (if (seq renewal-risk)
+                                                  (str/join ", " renewal-risk)
+                                                  "none observed") "\n"
+                         "- approved proposal committed: "
+                         (or (:id approved) "none") "\n"
+                         "No domain search or proposal creation ran.")
+            tool-count (if approved 3 2)
+            finished-at (store/now)]
+        (append-goal-event! run-id :domain/steward-cycle receipt)
+        (transition-goal-run! run-id :succeeded
+                              {:agent.run/result receipt
+                               :agent.run/finished-at (now-ms)})
+        (record-turn! (:bot/id b) run-id
+                      {:turn/state :completed :turn/phase :completed
+                       :turn/goal? true :turn/objective objective
+                       :turn/tool (if approved "domain_commit" "domain_proposals")
+                       :turn/tool-count tool-count
+                       :turn/result summary
+                       :turn/evidence
+                       [(str "domain_registrations count=" (count registrations))
+                        (str "domain_proposals count=" (count proposals))
+                        (str "approved-commit=" (or (:id approved) "none"))]
+                       :turn/finished-at finished-at})
+        (binding [*message-source* :resident]
+          (say (:bot/id b) summary nil))
+        receipt)
+      (catch Exception error
+        (let [error-type (or (:type (ex-data error)) :internal-error)
+              finished-at (store/now)]
+          (transition-goal-run! run-id :failed
+                                {:agent.run/error-type error-type
+                                 :agent.run/error-message (error-message error)
+                                 :agent.run/finished-at (now-ms)})
+          (append-goal-event! run-id :run/failed
+                              {:error-type error-type
+                               :message (error-message error)})
+          (record-turn! (:bot/id b) run-id
+                        {:turn/state :failed :turn/phase :failed
+                         :turn/goal? true :turn/objective objective
+                         :turn/tool "domain_registrations"
                          :turn/error-type error-type
                          :turn/error-message (error-message error)
                          :turn/finished-at finished-at})
@@ -5575,25 +5704,31 @@
                          (get by-organization
                               (:workforce.job/organization job))
                          b job run-id)
-                        (submit-goal!
-                         configuration
-                         (get by-organization (:workforce.job/organization job))
-                         bot-id
-                         (workforce-goal b job) run-id
-                         {:max-tool-calls
-                          (max 1 (long (or (get-in configuration
-                                                 [:bots :workforce :max-tool-calls])
-                                           4)))
-                         :max-tool-output-chars
-                          (max 1 (long (or (get-in configuration
-                                                 [:bots :workforce
-                                                  :max-tool-output-chars])
-                                           1600)))
-                          :resident-workforce? true
-                          :parent-context-id
-                          (get-in job [:workforce.job/continuation :context-id])
-                          :continuation-summary
-                          (get-in job [:workforce.job/continuation :summary])}))
+                        (if (domain-steward-job? job)
+                          (run-domain-steward!
+                           configuration
+                           (get by-organization
+                                (:workforce.job/organization job))
+                           b job run-id)
+                          (submit-goal!
+                           configuration
+                           (get by-organization (:workforce.job/organization job))
+                           bot-id
+                           (workforce-goal b job) run-id
+                           {:max-tool-calls
+                            (max 1 (long (or (get-in configuration
+                                                   [:bots :workforce :max-tool-calls])
+                                             4)))
+                           :max-tool-output-chars
+                            (max 1 (long (or (get-in configuration
+                                                   [:bots :workforce
+                                                    :max-tool-output-chars])
+                                             1600)))
+                            :resident-workforce? true
+                            :parent-context-id
+                            (get-in job [:workforce.job/continuation :context-id])
+                            :continuation-summary
+                            (get-in job [:workforce.job/continuation :summary])})))
                       (transact! update-in [:workforce-jobs bot-id]
                                  (fn [stored-job]
                                    (-> stored-job
