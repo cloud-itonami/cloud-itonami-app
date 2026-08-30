@@ -92,8 +92,9 @@
                          :output clipped})))
       {:exit 0 :output clipped :truncated? (> (count body) (count clipped))})))
 
-(defn maintain! []
-  (let [before (status)]
+(defn maintain!
+  ([] (maintain! (status)))
+  ([before]
     (if-not (:pressure? before)
       {:schema "cloud.itonami.app.disk-space-maintenance.v1"
        :action "none"

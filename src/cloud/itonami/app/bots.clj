@@ -3038,6 +3038,36 @@
       ;; restart stampede that starved ordinary Bot turns.
       (when (and configuration (not (:job/resident-workforce? job)))
         (enqueue-goal! configuration run-id)))
+    ;; Disk maintenance no longer crosses a model provider. A resident disk
+    ;; run checkpointed by an upgrade belongs to the old inference path; if it
+    ;; were drained again it could wait behind the same provider outage the
+    ;; deterministic path removes. Close only that exact governed identity and
+    ;; make its cadence due now, preserving a truthful terminal receipt before
+    ;; the first post-restart tick retries it locally.
+    (doseq [[run-id job] (:goal-jobs (snapshot))
+            :let [b (bot-by-id (:job/bot job))
+                  status (get-in job [:job/run :agent.run/status])]
+            :when (and (:job/resident-workforce? job)
+                       (disk-pressure-relief-bot? b)
+                       (contains? #{:queued :leased :running :checkpointed}
+                                  status))]
+      (transition-goal-run! run-id :cancelled
+                            {:agent.run/error-type
+                             :deterministic-maintenance-migration
+                             :agent.run/finished-at (now-ms)})
+      (record-turn! (:job/bot job) run-id
+                    {:turn/state :cancelled :turn/phase :cancelled
+                     :turn/goal? true :turn/objective (:job/objective job)
+                     :turn/finished-at at
+                     :turn/error-type :deterministic-maintenance-migration})
+      (append-goal-event! run-id :run/cancelled
+                          {:reason :deterministic-maintenance-migration})
+      (transact! update-in [:workforce-jobs (:job/bot job)]
+                 (fn [workforce-job]
+                   (when workforce-job
+                     (assoc workforce-job
+                            :workforce.job/next-run-at at
+                            :workforce.job/updated-at at)))))
     ;; A RESIDENT `:held` run with no outstanding approval card is a hold
     ;; nobody can answer. `:held` is not in the requeue set above, `cancel!`
     ;; needs an in-memory turn that this process does not have, and
@@ -5281,6 +5311,115 @@
   (boolean
    (some-> job :workforce.job/bot bot-by-id disk-pressure-relief-bot?)))
 
+(defn- compact-disk-maintenance-receipt [receipt]
+  (cond-> (select-keys receipt [:schema :action :reason :before :after
+                                :reclaimed-bytes])
+    (:helper receipt)
+    (assoc :helper (select-keys (:helper receipt) [:exit :truncated?]))))
+
+(defn- disk-maintenance-summary [receipt]
+  (let [before (get-in receipt [:before :usable-bytes])
+        after (get-in receipt [:after :usable-bytes])
+        reclaimed (long (or (:reclaimed-bytes receipt) 0))]
+    (str "Disk maintenance completed by the bounded resident capability.\n"
+         "- action: " (:action receipt) "\n"
+         "- before usable bytes: " before "\n"
+         "- after usable bytes: " after "\n"
+         "- reclaimed bytes: " reclaimed "\n"
+         "- pressure after: " (boolean (get-in receipt [:after :pressure?])) "\n"
+         "Repositories, worktrees, sessions, user data and other preserved "
+         "classes were not targets.")))
+
+(defn- run-disk-maintenance!
+  "Execute the Disk Maintainer's two reviewed capabilities without inference.
+
+  Disk cleanup is the recovery path for the durable store itself. Routing it
+  through a model provider made provider saturation capable of preventing the
+  recovery indefinitely. The Bot identity, capability gate, cadence, run
+  ledger and transcript remain; only the nondeterministic planner is absent
+  from this fixed status-then-maybe-cleanup contract."
+  [session b job run-id]
+  (let [objective (workforce-goal b job)
+        at (store/now)
+        started-ms (now-ms)
+        queued (agent-run/agent-run {:id run-id :goal objective} started-ms)
+        stored-job {:job/id run-id
+                    :job/bot (:bot/id b)
+                    :job/session (select-keys session
+                                              [:user-id :organization-id :kind])
+                    :job/objective objective
+                    :job/run queued
+                    :job/plan []
+                    :job/decision-frame nil
+                    :job/events []
+                    :job/resident-workforce? true
+                    :job/attempt 1
+                    :job/created-at at
+                    :job/updated-at at}]
+    (transact! assoc-in [:goal-jobs run-id] stored-job)
+    (transition-goal-run! run-id :leased {})
+    (transition-goal-run! run-id :running {})
+    (append-goal-event! run-id :run/started
+                        {:attempt 1 :execution :deterministic-disk-maintenance})
+    (record-turn! (:bot/id b) run-id
+                  {:turn/state :running :turn/phase :tool
+                   :turn/goal? true :turn/objective objective
+                   :turn/tool "disk_space_status"})
+    (try
+      (let [before (disk-space/call! "disk_space_status")
+            receipt (if (:pressure? before)
+                      (disk-space/maintain! before)
+                      {:schema "cloud.itonami.app.disk-space-maintenance.v1"
+                       :action "none"
+                       :reason "above-threshold"
+                       :before before
+                       :after before})
+            compact (compact-disk-maintenance-receipt receipt)
+            cleanup? (= "cleanup" (:action receipt))
+            tool-count (if cleanup? 2 1)
+            summary (disk-maintenance-summary receipt)
+            evidence [(str "disk_space_status usable-bytes="
+                           (:usable-bytes before))
+                      (str (if cleanup? "disk_space_cleanup" "cleanup-skipped")
+                           " action=" (:action receipt)
+                           " reclaimed-bytes=" (long (or (:reclaimed-bytes receipt) 0)))]
+            finished-at (store/now)]
+        (append-goal-event! run-id :disk/maintenance compact)
+        (transition-goal-run! run-id :succeeded
+                              {:agent.run/result compact
+                               :agent.run/finished-at (now-ms)})
+        (record-turn! (:bot/id b) run-id
+                      {:turn/state :completed :turn/phase :completed
+                       :turn/goal? true :turn/objective objective
+                       :turn/tool (if cleanup?
+                                    "disk_space_cleanup"
+                                    "disk_space_status")
+                       :turn/tool-count tool-count
+                       :turn/result summary
+                       :turn/evidence evidence
+                       :turn/finished-at finished-at})
+        (binding [*message-source* :resident]
+          (say (:bot/id b) summary nil))
+        compact)
+      (catch Exception error
+        (let [error-type (or (:type (ex-data error)) :internal-error)
+              finished-at (store/now)]
+          (transition-goal-run! run-id :failed
+                                {:agent.run/error-type error-type
+                                 :agent.run/error-message (error-message error)
+                                 :agent.run/finished-at (now-ms)})
+          (append-goal-event! run-id :run/failed
+                              {:error-type error-type
+                               :message (error-message error)})
+          (record-turn! (:bot/id b) run-id
+                        {:turn/state :failed :turn/phase :failed
+                         :turn/goal? true :turn/objective objective
+                         :turn/tool "disk_space_cleanup"
+                         :turn/error-type error-type
+                         :turn/error-message (error-message error)
+                         :turn/finished-at finished-at})
+          (throw error))))))
+
 (defn fire-due-workforce!
   "Start a bounded number of due startup jobs for one person's live sessions.
   Jobs are staggered when provisioned and fixed-delay after submission, so a
@@ -5401,25 +5540,30 @@
                           cadence (:workforce.job/cadence-minutes job)
                           next-at (str (.plusSeconds (java.time.Instant/parse now)
                                                      (* 60 cadence)))]
-                      (submit-goal!
-                       configuration
-                       (get by-organization (:workforce.job/organization job))
-                       bot-id
-                       (workforce-goal b job) run-id
-                       {:max-tool-calls
-                        (max 1 (long (or (get-in configuration
-                                               [:bots :workforce :max-tool-calls])
-                                         4)))
-                       :max-tool-output-chars
-                        (max 1 (long (or (get-in configuration
-                                               [:bots :workforce
-                                                :max-tool-output-chars])
-                                         1600)))
-                        :resident-workforce? true
-                        :parent-context-id
-                        (get-in job [:workforce.job/continuation :context-id])
-                        :continuation-summary
-                        (get-in job [:workforce.job/continuation :summary])})
+                      (if (disk-pressure-relief-job? job)
+                        (run-disk-maintenance!
+                         (get by-organization
+                              (:workforce.job/organization job))
+                         b job run-id)
+                        (submit-goal!
+                         configuration
+                         (get by-organization (:workforce.job/organization job))
+                         bot-id
+                         (workforce-goal b job) run-id
+                         {:max-tool-calls
+                          (max 1 (long (or (get-in configuration
+                                                 [:bots :workforce :max-tool-calls])
+                                           4)))
+                         :max-tool-output-chars
+                          (max 1 (long (or (get-in configuration
+                                                 [:bots :workforce
+                                                  :max-tool-output-chars])
+                                           1600)))
+                          :resident-workforce? true
+                          :parent-context-id
+                          (get-in job [:workforce.job/continuation :context-id])
+                          :continuation-summary
+                          (get-in job [:workforce.job/continuation :summary])}))
                       (transact! update-in [:workforce-jobs bot-id]
                                  (fn [stored-job]
                                    (-> stored-job
