@@ -216,7 +216,18 @@
   {"workspace_write_file" :patch.create
    "git_commit" :patch.create
    "disk_space_status" :disk.inspect
-   "disk_space_cleanup" :disk.cleanup})
+   "disk_space_cleanup" :disk.cleanup
+   "domain_search" :domain.read
+   "domain_check" :domain.read
+   "domain_registrations" :domain.read
+   "domain_registration_status" :domain.read
+   "domain_dns_records" :domain.read
+   "domain_proposals" :domain.read
+   "domain_registration_review" :domain.proposal.create
+   "domain_auto_renew_review" :domain.proposal.create
+   "domain_dns_change_review" :domain.proposal.create
+   "domain_reject" :domain.proposal.create
+   "domain_commit" :domain.approved-proposal.commit})
 
 (defn covered-tools
   "The tools this gate actually decides. Everything else is unchanged by it."

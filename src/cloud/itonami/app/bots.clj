@@ -68,6 +68,7 @@
             [cloud.itonami.app.conversation-context :as conversation-context]
             [cloud.itonami.app.decision-method :as decision-method]
             [cloud.itonami.app.disk-space :as disk-space]
+            [cloud.itonami.app.domain-tools :as domain-tools]
             [cloud.itonami.app.gc :as gc]
             [cloud.itonami.app.handoff :as handoff]
             [cloud.itonami.app.identity :as identity]
@@ -2155,6 +2156,17 @@
   (and (autonomous-capability? b :disk.inspect)
        (autonomous-capability? b :disk.cleanup)))
 
+(defn- domain-steward-bot? [b]
+  (or (autonomous-capability? b :domain.read)
+      (autonomous-capability? b :domain.proposal.create)
+      (autonomous-capability? b :domain.approved-proposal.commit)))
+
+(defn- domain-tool-definitions [configuration b]
+  (if (and (domain-steward-bot? b)
+           (domain-tools/available? configuration))
+    (vec domain-tools/tools)
+    []))
+
 (defn- local-tool-definitions
   "Built-in tools this Bot may run without an external connector grant.
 
@@ -2164,13 +2176,21 @@
   model and in Settings, but omitted from the set checked immediately before
   execution.  Computer Use and Wallet had the same latent split."
   [configuration b]
-  (if (disk-maintenance-bot? b)
+  (cond
+    (domain-steward-bot? b)
+    ;; Domain work has its own exact Passkey-bound authority. Do not let this
+    ;; operational identity inherit coding, Commerce, Wallet or browser tools.
+    (domain-tool-definitions configuration b)
+
+    (disk-maintenance-bot? b)
     ;; This is a host-maintenance identity, not a coding or commerce identity.
     ;; Workforce provisioning currently marks every role coding-capable and
     ;; the application has global local tools; carrying either into this Bot
     ;; would make its concrete ceiling wider than the two capabilities the
     ;; registry reviewed.
     (vec (disk-space-tools b))
+
+    :else
     (vec (concat commerce/tool-definitions
                  (browser-tools configuration b)
                  (computer-tools configuration b)
@@ -2221,6 +2241,7 @@
       (workspace-tools/write-tool? tool-name)
       (virtual-shell/write-tool? tool-name)
       (disk-space/write-tool? tool-name)
+      (domain-tools/write-tool? tool-name)
       (let [registry (connectors/enabled configuration)]
         (boolean
          (some (fn [d] (when-let [t (cm/tool d tool-name)]
@@ -2253,6 +2274,9 @@
 
     (disk-space/tool? tool-name)
     (disk-space/describe tool-name)
+
+    (domain-tools/tool? tool-name)
+    (domain-tools/describe tool-name args)
 
     (agent-control/browser-tool? tool-name)
     (agent-control/describe-browser-tool tool-name args)
@@ -2450,7 +2474,8 @@
                            (agent-control/computer-tool? tool-name)
                            (workspace-tools/tool? tool-name)
                            (virtual-shell/tool? tool-name)
-                           (disk-space/tool? tool-name))
+                           (disk-space/tool? tool-name)
+                           (domain-tools/tool? tool-name))
                      (cond
                        (commerce/tool? tool-name)
                        (commerce/call-tool! b tool-name args)
@@ -2471,6 +2496,9 @@
 
                        (disk-space/tool? tool-name)
                        (disk-space/call! tool-name)
+
+                       (domain-tools/tool? tool-name)
+                       (domain-tools/call-tool configuration tool-name args)
 
                        (agent-control/computer-tool? tool-name)
                        (agent-control/call-computer-tool!
@@ -3245,6 +3273,8 @@
     "選択した local Git workspace のファイルまたは履歴が変わります。remote へは push しません。"
     (virtual-shell/tool? name)
     "Bot 専用のnetwork-disabled仮想環境内でcommandを実行します。選択したGit workspaceは書き換わる場合があります。"
+    (domain-tools/tool? name)
+    "Domain Authority の proposal 台帳を更新します。購入・更新課金・DNS 変更は、この exact proposal に対する human Passkey 承認が無ければ host が拒否します。"
     :else "接続済みサービスに書き込みます。"))
 
 (defn- approval-request [configuration b run call card-id]
