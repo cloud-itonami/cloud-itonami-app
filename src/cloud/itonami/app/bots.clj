@@ -2147,6 +2147,14 @@
   (or (autonomous-capability? b :disk.inspect)
       (autonomous-capability? b :disk.cleanup)))
 
+(defn- disk-pressure-relief-bot? [b]
+  ;; Pressure admission is narrower than tool confinement: a status-only Bot
+  ;; is still a host-maintenance identity, but it cannot relieve the condition
+  ;; that is stopping every ordinary resident job.  Only the reviewed pair may
+  ;; cross the disk floor.
+  (and (autonomous-capability? b :disk.inspect)
+       (autonomous-capability? b :disk.cleanup)))
+
 (defn- local-tool-definitions
   "Built-in tools this Bot may run without an external connector grant.
 
@@ -5229,21 +5237,36 @@
            "repository-wide search first. Reproduce this exact tool, then repair or verify it."))))
 
 (defn- workforce-goal [b job]
-  (let [{:keys [context-id outcome summary]}
-        (:workforce.job/continuation job)]
+  (if (disk-pressure-relief-bot? b)
     (str "Resident job: " (get-in b [:bot/business :name])
          " / " (get-in b [:bot/role :name]) "\n"
-         "Task: " (:workforce.job/objective job) "\n\n"
+         "Task: maintain the host's bounded regenerable disk space.\n\n"
          "Contract:\n"
-         "- Advance one verified step using admitted repository evidence.\n"
-         "- Reuse recorded evidence; do not repeat discovery.\n"
-         "- Separate observed facts from proposals; external effects require their grant.\n"
-         "- If blocked, name one exact prerequisite once and stop."
-         (capability-repair-context b job)
-         (when context-id
-           (str "\n\nContinuation: {:parent-context \"" context-id
-                "\" :outcome " (pr-str outcome)
-                " :summary " (pr-str (compact-line summary)) "}")))))
+         "- Call disk_space_status exactly once.\n"
+         "- If pressure is true, call disk_space_cleanup exactly once; "
+         "if pressure is false, do not call cleanup.\n"
+         "- Report the observed status and cleanup receipt, including bytes reclaimed.\n"
+         "- Do not inspect or modify repositories, worktrees, user data, or any other surface.\n"
+         "- Stop after this single bounded maintenance decision.")
+    (let [{:keys [context-id outcome summary]}
+          (:workforce.job/continuation job)]
+      (str "Resident job: " (get-in b [:bot/business :name])
+           " / " (get-in b [:bot/role :name]) "\n"
+           "Task: " (:workforce.job/objective job) "\n\n"
+           "Contract:\n"
+           "- Advance one verified step using admitted repository evidence.\n"
+           "- Reuse recorded evidence; do not repeat discovery.\n"
+           "- Separate observed facts from proposals; external effects require their grant.\n"
+           "- If blocked, name one exact prerequisite once and stop."
+           (capability-repair-context b job)
+           (when context-id
+             (str "\n\nContinuation: {:parent-context \"" context-id
+                  "\" :outcome " (pr-str outcome)
+                  " :summary " (pr-str (compact-line summary)) "}"))))))
+
+(defn- disk-pressure-relief-job? [job]
+  (boolean
+   (some-> job :workforce.job/bot bot-by-id disk-pressure-relief-bot?)))
 
 (defn fire-due-workforce!
   "Start a bounded number of due startup jobs for one person's live sessions.
@@ -5292,29 +5315,34 @@
                                                  :max-starts-per-tick])
                                          1)))
         limit (min starts-per-tick available)
-        jobs (->> owned-jobs
-                  (filter #(workforce-job-due? % now))
-                  (map #(assoc % :workforce.job/continuation
-                               (workforce-continuation
-                                workforce-state
-                                (:workforce.job/bot %)
-                                %)))
-                  ;; A repair incident is a current host defect, not another
-                  ;; ordinary cadence.  Sorting only by `next-run-at` left a
-                  ;; freshly woken Engineer/QA pair behind the resident
-                  ;; backlog, so the monitor could report a repair and then
-                  ;; starve it indefinitely.  Priority changes ordering only;
-                  ;; the same owner, tenant, slot and authority gates remain.
-                  (sort-by (juxt #(if (= :capability-repair
-                                         (:workforce.job/trigger %))
-                                   0 1)
-                                 :workforce.job/next-run-at
-                                 :workforce.job/key)))
-        jobs (if disk-pressure [] jobs)]
+        due-jobs (->> owned-jobs
+                      (filter #(workforce-job-due? % now))
+                      (map #(assoc % :workforce.job/continuation
+                                   (workforce-continuation
+                                    workforce-state
+                                    (:workforce.job/bot %)
+                                    %)))
+                      ;; Disk relief must precede even capability repair: at
+                      ;; the hard floor no ordinary turn can durably record a
+                      ;; repair.  Outside pressure this only changes ordering;
+                      ;; the same owner, tenant, slot and authority gates hold.
+                      (sort-by (juxt #(cond
+                                       (disk-pressure-relief-job? %) 0
+                                       (= :capability-repair
+                                          (:workforce.job/trigger %)) 1
+                                       :else 2)
+                                     :workforce.job/next-run-at
+                                     :workforce.job/key)))
+        ;; The disk floor still refuses every ordinary resident job.  The one
+        ;; exception is a due identity carrying BOTH reviewed autonomous disk
+        ;; capabilities; it is the only job able to relieve the refusal.
+        jobs (if disk-pressure
+               (filter disk-pressure-relief-job? due-jobs)
+               due-jobs)]
     (loop [remaining jobs
            result {:started []
                    :skipped (cond
-                              disk-pressure
+                              (and disk-pressure (empty? jobs))
                               [{:reason :disk-pressure
                                 :usable-bytes (:usable-bytes disk-pressure)
                                 :hard-floor-bytes
