@@ -74,6 +74,7 @@
             [cloud.itonami.app.gc :as gc]
             [cloud.itonami.app.handoff :as handoff]
             [cloud.itonami.app.identity :as identity]
+            [cloud.itonami.app.model-routing :as routing]
             [cloud.itonami.app.peer :as peer]
             [cloud.itonami.app.mail-account :as mail-account]
             [cloud.itonami.app.mail-sync :as mail-sync]
@@ -129,6 +130,28 @@
 (def max-goal-turns 24)
 (def max-goal-tool-calls 32)
 (def max-goal-continuations 24)
+
+(def max-empty-turns
+  "How many turns in a row may come back with neither prose nor a tool call
+  before the run is refused rather than asked again.
+
+  One. A model that drops a response usually does not drop the next one, so
+  refusing immediately turns a hiccup into an error somebody has to act on; but
+  a second empty turn is a pattern, and asking a third time spends the same
+  budget the loop would have spent anyway while telling the person less about
+  why it stopped."
+  1)
+
+(def max-identical-calls
+  "How many times running the same tool may be proposed with the same arguments
+  before the run stops.
+
+  Counting the call about to run, so 3 means: propose it, propose it again,
+  propose it a third time and stop. Below 3 a legitimate retry after a
+  transient tool failure would be refused; well above it the tool budget
+  arrives first and reports a budget failure instead, which sends the person to
+  raise a limit that was never the problem."
+  3)
 (def ^:private default-resident-max-output-tokens
   "The output budget an unattended resident turn asks for.
 
@@ -468,6 +491,14 @@
 
 (defn- mailbox-registration [bot-id]
   (get-in (snapshot) [:mailboxes bot-id] {:status :pending}))
+
+(defn- routing-index
+  "The deployment-wide model assignments, indexed by [task scope].
+
+  Per-Bot assignment is NOT here — it is `:bot/provider-id` / `:bot/model` on
+  the Bot's own record, where it has always been. See `model-routing/index`."
+  []
+  (routing/index-in (store/snapshot)))
 
 (defn- transact! [f & args]
   (store/transact!
@@ -884,9 +915,15 @@
   policy as every other model call. A stored id is a preference, never a way
   around review, TLS, credential, or the deployment egress switch."
   [configuration b]
-  (let [requested (:bot/provider-id b)
+  (let [;; The deployment default fills each half the Bot's record leaves
+        ;; empty, and only those. A Bot that names a provider keeps it even
+        ;; when the default names another, because somebody chose it for that
+        ;; Bot; the default is for the ones nobody has chosen for.
+        fallback (routing/resolve-main (routing-index) b)
+        requested (or (:bot/provider-id b) (:provider-id fallback))
         selected (policy/select-provider configuration requested)
         model (or (:bot/model b)
+                  (:model fallback)
                   (:default-model selected)
                   (get-in configuration [:routing :default-model]))]
     (when-not selected
@@ -1732,6 +1769,7 @@
         local-tools (local-tool-definitions configuration b)
         admitted (into (bot/admitted-tools b rows connected)
                        (map :name) local-tools)
+        routed (routing/resolve-main (routing-index) b)
         stored-avatar (:bot/avatar b)
         ;; Earlier wire clients omitted avatar fields, so uncustomised Bots
         ;; were all persisted as the same blue circle. Give only that default
@@ -1775,12 +1813,26 @@
      :brief (:bot/brief b)
      :context-project-id (:bot/context-project-id b)
      :context-refs (bot-context-refs b)
+     ;; What this Bot actually runs on, resolved the way `provider-choice!`
+     ;; resolves it -- including the deployment assignment, which was missing
+     ;; here and would have made the picker name one model while the turn used
+     ;; another.
      :provider-id (or (:bot/provider-id b)
+                      (:provider-id routed)
                       (get-in configuration [:routing :default-provider]))
      :model (or (:bot/model b)
+                (:model routed)
                 (:default-model (policy/select-provider
                                  configuration (:bot/provider-id b)))
                 (get-in configuration [:routing :default-model]))
+     ;; And what this Bot chose FOR ITSELF, which is a different fact. The two
+     ;; above are filled in from three fallbacks, so a screen reading them
+     ;; cannot tell a Bot somebody assigned a model to from one inheriting the
+     ;; deployment default -- and a settings screen whose every row looks
+     ;; assigned is the state where nothing on it is worth reading.
+     :own-provider-id (:bot/provider-id b)
+     :own-model (:bot/model b)
+     :model-scope (name (:scope routed))
      :tools (vec (:bot/tools b))
      :accounts (vec (:bot/accounts b))
      :email (or (:bot/email b) (mailbox-address configuration (:bot/id b)))
@@ -2026,6 +2078,89 @@
          (System/getenv "CLOUD_ITONAMI_WORKSPACE_ROOT")
          (System/getProperty "user.dir")]))
 
+(defn- public-assignment [a]
+  {:task (name (:routing/task a))
+   :scope (:routing/scope a)
+   :provider-id (:routing/provider-id a)
+   :model (:routing/model a)})
+
+(defn model-routing
+  "Which model answers for which task, and what may be assigned.
+
+  `:tasks` is the whole assignable set with `:main?` marking the one that can
+  be scoped to a Bot. `:assignments` is the deployment-wide rows only — a Bot's
+  own pair is on the Bot, and `overview` already ships it there. Two copies of
+  one Bot's model is the state this surface exists to avoid, so it is not
+  reported twice here either."
+  [_session]
+  ;; Authorization is the route's, as it is for `/api/bots/machine`: these are
+  ;; deployment settings rather than one person's Bots, and the handler already
+  ;; requires a human session, a known origin and a CSRF token before calling.
+  {:default-scope routing/default-scope
+   :main-task (name routing/main-task)
+   :tasks (into [{:task (name routing/main-task)
+                  :label "Bot"
+                  :hint "Bot 自身のターン"
+                  :main? true}]
+                (map (fn [t] {:task (name (:task t))
+                              :label (:label t)
+                              :hint (:hint t)
+                              :source (:source t)
+                              :main? false}))
+                routing/auxiliary-tasks)
+   :assignments (mapv public-assignment
+                      (vals (routing/index-in (store/snapshot))))})
+
+(defn assign-model!
+  "Point one task at one provider and model.
+
+  Two destinations, because there are two kinds of assignment and only one of
+  them is new storage:
+
+  - the `:bot` task scoped to a Bot writes that Bot's record, the same fields
+    the Bot picker has always written. It goes through `update!`, so ownership,
+    provider admission and the audit entry are the ones already in place.
+  - everything else is a deployment-wide row.
+
+  `routing/assignment` validates before either happens, so a half-filled pair
+  reaches neither."
+  [configuration session submitted]
+  (let [a (routing/assignment submitted)]
+    (if (and (= routing/main-task (:routing/task a))
+             (not (routing/default-scope? (:routing/scope a))))
+      (update! configuration session (:routing/scope a)
+               {:provider-id (:routing/provider-id a)
+                :model (:routing/model a)})
+      (do
+        ;; Admission is asked here as well as at call time. Not redundant: a
+        ;; provider that cannot be reached now will refuse at call time either
+        ;; way, and finding that out while the screen is open is the difference
+        ;; between a message and a Bot that stops mid-task tomorrow.
+        (when-not (policy/select-provider configuration (:routing/provider-id a))
+          (throw (ex-info "選択した model provider は許可されていません。"
+                          {:type :provider/denied
+                           :provider (:routing/provider-id a)})))
+        (transact! assoc-in [:routing [(:routing/task a) (:routing/scope a)]] a)))
+    (model-routing session)))
+
+(defn clear-model-assignment!
+  "Remove one assignment, returning that task to what it did before.
+
+  For the main task on a Bot that is clearing the Bot's own pair, which drops
+  it back to the deployment default and then to the provider's declared model —
+  the same ladder `provider-choice!` walks. Nothing here can leave a task with
+  no model at all."
+  [configuration session {:keys [task scope]}]
+  (let [t (routing/task task)
+        sc (routing/scope scope)]
+    (when-not t
+      (throw (ex-info "この application にその model task はありません。"
+                      {:type :routing/unknown-task :task task})))
+    (if (and (= routing/main-task t) (not (routing/default-scope? sc)))
+      (update! configuration session sc {:provider-id nil :model nil})
+      (transact! update :routing dissoc [t sc]))
+    (model-routing session)))
+
 (defn overview
   "Everything the Bots screen needs on load: the Bots, and — when there are
   none — what it takes to make the first one."
@@ -2056,6 +2191,7 @@
      (mapv #(select-keys % [:id :name :model :models])
            (filter :allowed? provider-readiness))
      :model-provider-readiness provider-readiness
+     :model-routing (model-routing session)
      :catalog (catalog configuration did)
      :palette {:colors (mapv name bot/avatar-colors)
                :glyphs (mapv name bot/avatar-glyphs)}
@@ -2996,6 +3132,42 @@
              :state "queued"
              :queued (inc (count current))
              :at (:followup/at followup)}))))))
+
+(defn- call-signature
+  "What makes two proposed calls the SAME call.
+
+  The tool name and its arguments, and nothing else -- not the call id, which
+  the provider makes fresh each time and which would therefore make every
+  repetition look like a new action. `pr-str` of a sorted map so that two
+  argument maps built in different orders compare equal: a model that reissues
+  the same call is not obliged to serialise its keys the same way twice, and
+  reading a reordering as a different call is how this guard would quietly
+  never fire."
+  [call]
+  (let [input (:input call)]
+    (pr-str [(:name call)
+             (if (map? input) (into (sorted-map) input) input)])))
+
+(defn- identical-call-count
+  "How many times in a row this exact call has been proposed, counting this one.
+
+  Walks BACKWARDS through the run's assistant turns and stops at the first one
+  that proposed something else, so an interleaved different action resets the
+  count -- a Bot alternating between two tools is making progress, and only an
+  unbroken run of one call is the failure this counts toward."
+  [run call]
+  (let [signature (call-signature call)]
+    (loop [remaining (reverse (:messages run)) seen 1]
+      (let [message (first remaining)]
+        (cond
+          (nil? message) seen
+          ;; Only assistant turns propose calls; tool results and user
+          ;; messages sit between them and are not a break in the pattern.
+          (not= "assistant" (:role message)) (recur (rest remaining) seen)
+          (not= 1 (count (:tool-calls message))) seen
+          (= signature (call-signature (first (:tool-calls message))))
+          (recur (rest remaining) (inc seen))
+          :else seen)))))
 
 (defn- take-followups!
   ([run-id] (take-followups! run-id false))
@@ -4049,11 +4221,45 @@
               (when on-event (on-event {:type "phase" :phase "continuing"}))
               (recur run))
             (let [followups (take-followups! (:id run) true)]
-              (if (seq followups)
+              (cond
+                (seq followups)
                 (do
                   (when (seq (str (:content result)))
                     (say (:bot/id b) (:content result) nil))
                   (recur (apply-followups! (:bot/id b) run followups on-event)))
+
+                ;; Neither prose nor an action. Before this the run was marked
+                ;; COMPLETED and an empty message was appended, so a turn that
+                ;; did nothing and a turn that finished were the same row --
+                ;; in the audit trail, and in the one-line preview the picker
+                ;; shows. One more ask first, because a dropped response is
+                ;; often not repeated; then a refusal that says so.
+                (bot/answer-empty? {:content (:content result)
+                                    :tool-calls 0
+                                    :empty-turns (:empty-turns run 0)
+                                    :nudge-limit max-empty-turns})
+                (if (bot/may-nudge? {:content (:content result)
+                                     :tool-calls 0
+                                     :empty-turns (:empty-turns run 0)
+                                     :nudge-limit max-empty-turns})
+                  (let [run (-> run
+                                (update :empty-turns (fnil inc 0))
+                                (update :messages conj
+                                        {:role "user"
+                                         :content (str "Your last turn returned no text and no tool call. "
+                                                       "Answer the question, or take the next admitted "
+                                                       "tool action.")}))]
+                    (when on-event (on-event {:type "phase" :phase "continuing"}))
+                    (recur run))
+                  (do
+                    (clear-run! (:bot/id b))
+                    (finish-visible! on-finish run :failed
+                                     {:turn/error-type :provider/empty-answer})
+                    (say (:bot/id b)
+                         "model が本文もツール呼び出しも返さなかったため、この実行を止めました。もう一度、何をしてほしいか教えてください。"
+                         nil)))
+
+                :else
                 (do
                   (clear-run! (:bot/id b))
                   (finish-visible! on-finish run :completed
@@ -4080,6 +4286,25 @@
             (throw (ex-info
                     "model provider が複数のツール呼び出しを返したため、安全のため停止しました。"
                     {:type :agent/multiple-tool-calls :count (count calls)})))
+
+          ;; The same action, with the same arguments, proposed over and over.
+          ;; The tool budget already ends such a run -- after spending all of
+          ;; it, and then reporting `:continuation-budget-exhausted`, which
+          ;; sends the person to raise a limit that was never the problem.
+          ;; Stopping here costs the rest of the budget nothing and says what
+          ;; actually happened.
+          (bot/repetition-exhausted?
+           {:identical-consecutive (identical-call-count run (first calls))
+            :limit max-identical-calls})
+          (let [{:keys [name]} (first calls)]
+            (clear-run! (:bot/id b))
+            (finish-visible! on-finish run :failed
+                             {:turn/error-type :provider/repeating
+                              :turn/result (str "同じ操作（" name "）を同じ引数で繰り返したため停止しました。")})
+            (say (:bot/id b)
+                 (str "同じ操作（" name "）を同じ引数で繰り返していたので止めました。"
+                      "うまくいっていないようです。別のやり方を指示してください。")
+                 nil))
 
           :else
           (let [{:keys [name input] :as call} (first calls)
@@ -4646,7 +4871,16 @@
                    (let [others (->> members
                                      (remove #(= (:bot/id %) (:bot/id b)))
                                      (mapv :bot/name))
-                         {:keys [provider model]} (provider-choice! configuration b)
+                         ;; A room round is an auxiliary task: it may be
+                         ;; assigned its own model, and with none it runs on
+                         ;; whatever this Bot's own turn would have used. An
+                         ;; assignment naming a provider this deployment will
+                         ;; not admit raises here rather than quietly billing
+                         ;; the main model -- see `model-routing`.
+                         {:keys [provider model]}
+                         (routing/auxiliary-choice!
+                          configuration (routing-index) :room
+                          (provider-choice! configuration b))
                          messages (into [{:role "system"
                                           :content (group-prompt b g others)}]
                                         (for [m (group-conversation (:group/id g))

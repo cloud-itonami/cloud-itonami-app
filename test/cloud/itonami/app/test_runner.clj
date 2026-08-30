@@ -76,6 +76,9 @@
             [cloud.itonami.app.work-transitions-kotoba-parity-test]
             [cloud.itonami.app.approval-kotoba-parity-test]
             [cloud.itonami.app.routine-kotoba-parity-test]
+            [cloud.itonami.app.model-routing-kotoba-parity-test]
+            [cloud.itonami.app.bot-turn-guards-test]
+            [cloud.itonami.app.model-routing-http-test]
             [cloud.itonami.app.routines-test]
             [cloud.itonami.app.handoff-kotoba-parity-test]
             [cloud.itonami.app.peer-kotoba-parity-test]
@@ -272,6 +275,9 @@
     cloud.itonami.app.work-transitions-kotoba-parity-test
     cloud.itonami.app.approval-kotoba-parity-test
     cloud.itonami.app.routine-kotoba-parity-test
+    cloud.itonami.app.model-routing-kotoba-parity-test
+    cloud.itonami.app.bot-turn-guards-test
+    cloud.itonami.app.model-routing-http-test
     cloud.itonami.app.routines-test
     cloud.itonami.app.handoff-kotoba-parity-test
     cloud.itonami.app.peer-kotoba-parity-test

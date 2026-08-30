@@ -7,6 +7,7 @@
             [cloud.itonami.app.chronicle :as chronicle]
             [cloud.itonami.app.desktop :as desktop]
             [cloud.itonami.app.local-query :as local-query]
+            [cloud.itonami.app.model-routing :as routing]
             [cloud.itonami.app.policy :as policy]
             [cloud.itonami.app.provider :as provider]
             [cloud.itonami.app.store :as store]
@@ -909,10 +910,24 @@
                   (get-in s [:computer :enabled?]))
       (throw (ex-info "browser または computer capability を有効にしてください。"
                       {:type :agent/no-capability})))
-    (let [configuration-provider
-          (or provider (get-in configuration [:routing :default-provider]))
+    (let [;; The machine loop is an auxiliary task: it may be assigned its own
+          ;; model. The caller's explicit choice still wins -- somebody naming
+          ;; a model for THIS run means it, and an assignment is for the runs
+          ;; nobody named one for. Resolved once, HERE, at run creation: the
+          ;; run records what it ran on, and an assignment changed mid-flight
+          ;; must not switch models under a loop already going.
+          assigned (when-not (and provider model)
+                     (routing/auxiliary-choice!
+                      configuration (routing/index-in (store/snapshot)) :machine
+                      {:provider nil :model nil}))
+          configuration-provider
+          (or provider
+              (some-> (:provider assigned) :id)
+              (get-in configuration [:routing :default-provider]))
           configuration-model
-          (or model (get-in configuration [:routing :default-model]))
+          (or model
+              (:model assigned)
+              (get-in configuration [:routing :default-model]))
           capabilities
           (cond-> #{}
             (get-in s [:browser :enabled?]) (conj :browser/use)

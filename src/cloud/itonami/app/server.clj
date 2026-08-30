@@ -5880,6 +5880,26 @@
       (serve-issue-comment-image!
        exchange (bot-id-from path #"/api/bots/comments/([^/]+)/image"))
 
+      ;; Before the `([^/]+)` patterns for the same reason `groups` is: a Bot
+      ;; whose id happened to be "model-routing" must not shadow the route.
+      (and (= method "GET") (= path "/api/bots/model-routing"))
+      (do (require-human-session! exchange)
+          (send! exchange 200 (bots/model-routing session)))
+
+      (and (= method "POST") (= path "/api/bots/model-routing"))
+      (let [body (read-json exchange)]
+        (require-human-session! exchange)
+        (require-origin! exchange config)
+        (require-csrf! exchange session)
+        (send! exchange 200 (bots/assign-model! config session body)))
+
+      (and (= method "POST") (= path "/api/bots/model-routing/clear"))
+      (let [body (read-json exchange)]
+        (require-human-session! exchange)
+        (require-origin! exchange config)
+        (require-csrf! exchange session)
+        (send! exchange 200 (bots/clear-model-assignment! config session body)))
+
       (and (= method "GET") (= path "/api/bots/machine"))
       (send! exchange 200
              {:settings (agent-control/settings config)

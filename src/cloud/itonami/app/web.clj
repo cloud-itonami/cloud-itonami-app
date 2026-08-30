@@ -1552,6 +1552,43 @@
   #comment-shot{margin:0;color:var(--color-neutral-solid-gray-700)}
   #comment-mode-toggle[aria-pressed='true']{background:var(--color-primitive-blue-600);
     color:var(--color-neutral-white);border-color:transparent}
+  /* Model routing. The scope chips are a radiogroup rather than a select
+     because the set is small, the current one has to stay visible while the
+     provider and model beneath it are being chosen, and which Bots already
+     carry their own model is a fact worth reading off the row. */
+  .routing-scopes{display:flex;flex-wrap:wrap;gap:.375rem;margin:.25rem 0 .5rem}
+  .routing-scope{border:1px solid var(--color-neutral-solid-gray-300);
+    border-radius:999px;background:var(--color-neutral-white);
+    padding:.3125rem .75rem;font:inherit;font-size:.8125rem;cursor:pointer;
+    color:var(--color-neutral-solid-gray-800)}
+  .routing-scope:hover{background:var(--color-neutral-solid-gray-50)}
+  .routing-scope:focus-visible{outline:4px solid var(--color-primitive-yellow-300);
+    outline-offset:1px}
+  .routing-scope[aria-checked='true']{background:var(--color-key-50);
+    border-color:var(--color-key-900);color:var(--color-key-900);font-weight:700}
+  /* A scope that already has its own assignment is marked, so choosing one is
+     not a guess about whether it is about to be created or replaced. */
+  .routing-scope__mark{margin-left:.375rem;font-size:.6875rem;
+    color:var(--color-neutral-solid-gray-600)}
+  .routing-scope[aria-checked='true'] .routing-scope__mark{color:var(--color-key-900)}
+  .routing-picker{display:flex;flex-wrap:wrap;gap:.5rem;align-items:flex-end;
+    margin:.5rem 0}
+  .routing-picker .field{flex:1 1 12rem;min-width:0;margin:0}
+  .routing-picker select{width:100%;min-height:2.25rem;padding:.25rem .5rem;
+    border:1px solid var(--color-neutral-solid-gray-300);
+    border-radius:.375rem;font:inherit}
+  .routing-aux{list-style:none;margin:.25rem 0 0;padding:0;display:grid;gap:.25rem}
+  .routing-aux__row{display:flex;flex-wrap:wrap;gap:.5rem;align-items:center;
+    padding:.5rem 0;border-bottom:1px solid var(--color-neutral-solid-gray-200);
+    font-size:.8125rem}
+  .routing-aux__copy{flex:1 1 12rem;min-width:0;display:flex;flex-direction:column}
+  .routing-aux__hint{color:var(--color-neutral-solid-gray-600);font-size:.75rem}
+  /* 'main' and an assigned model must not read alike: one is a decision
+     somebody made and the other is the absence of one. */
+  .routing-aux__state{font-variant-numeric:tabular-nums;
+    color:var(--color-neutral-solid-gray-700)}
+  .routing-aux__state[data-assigned='false']{color:var(--color-neutral-solid-gray-600);
+    font-style:italic}
   @media (prefers-reduced-motion: reduce){
     .typing span{animation:none;opacity:1}
     .skeleton{animation:none;background:var(--color-neutral-solid-gray-100)}
@@ -1687,6 +1724,51 @@
       "今すぐ画面を取得"]]
     [:ul {:class "memory-recent" :id "memory-recent-list"}
      [:li "まだcontextはありません。"]]]])
+
+(defn- model-routing-settings
+  "Which model answers, for which task.
+
+  The layout follows the decision it is editing rather than the storage: a
+  scope row, then a provider and model, then Apply. Auxiliary tasks are a
+  separate block because they are a different question — not \"which Bot\" but
+  \"which kind of work\" — and putting them in one list would invite reading a
+  room round as a Bot that does not exist.
+
+  Everything inside `#model-routing-scopes` and `#model-routing-aux` is built
+  by the client from `/api/bots/model-routing`: the number of Bots and the
+  number of tasks are both unknown until it answers, and the tasks in
+  particular are read from the application rather than written here, so a task
+  that stops being called cannot keep a row on this screen."
+  []
+  [:div {:class "local-card" :id "model-routing-settings"}
+   (dds/heading 2 "Model" {:size "20"})
+   [:p {:class "view-lead"}
+    "どの仕事をどの model に任せるかを決めます。ここでの割り当ては希望であって許可ではありません — 審査・TLS・資格情報・送信許可はこれまでどおり別に判定され、通らない宛先は選んでも拒否されます。"]
+   [:p {:class "form-help"} "適用先"]
+   [:div {:class "routing-scopes" :id "model-routing-scopes" :role "radiogroup"
+          :aria-label "この割り当ての適用先"}]
+   [:p {:class "form-help" :id "model-routing-scope-note"}
+    "「既定」は自分の model を持たない Bot すべてに効きます。Bot を選ぶとその Bot だけを変えます。"]
+   [:div {:class "routing-picker"}
+    [:div {:class "field"}
+     [:label {:for "model-routing-provider"} "Provider"]
+     [:select {:id "model-routing-provider"}]]
+    [:div {:class "field"}
+     [:label {:for "model-routing-model"} "Model"]
+     [:select {:id "model-routing-model"}]]
+    [:button {:class "primary-action" :id "model-routing-apply" :type "button"}
+     "適用"]
+    [:button {:class "tool-button" :id "model-routing-clear" :type "button"}
+     "この割り当てを外す"]]
+   [:p {:class "drive-create__status" :id "model-routing-status"
+        :role "status" :aria-live "polite"}]
+   [:div {:class "section-heading"}
+    (dds/heading 3 "補助タスクの model" {:size "16"})
+    [:button {:class "tool-button" :id "model-routing-reset-aux" :type "button"}
+     "すべて main に戻す"]]
+   [:p {:class "form-help"}
+    "Bot 自身のターン以外の model 呼び出しです。既定では Bot と同じ model で動きます。ここに出ているのはこの application が実際に呼んでいる場所だけで、呼ばなくなった仕事は行ごと消えます。"]
+   [:ul {:class "routing-aux" :id "model-routing-aux"}]])
 
 (defn- agent-machine-settings []
   [:div {:class "local-card" :id "agent-machine-settings"}
@@ -3475,6 +3557,7 @@
         [:section {:class "view" :data-view-panel "settings" :hidden true}
          (view-header "Settings" "サインイン済みのUser、Organization、外部サービス接続を管理します。")
          (context-capture-settings)
+         (model-routing-settings)
          (agent-machine-settings)
          [:div {:class "local-card" :id "desktop-update-card"}
           (dds/heading 2 "Desktop update" {:size "20"})

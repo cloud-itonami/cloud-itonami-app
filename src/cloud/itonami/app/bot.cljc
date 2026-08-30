@@ -449,6 +449,48 @@
                     (oracle/i64 (or (:current request) 0))
                     (boolean (:answered? request))])]))
 
+;; ── when a turn has stopped being a turn ─────────────────────────────
+
+(def ^:private answer-record
+  [:record :bot/answer [[:has-content :bool] [:tool-calls :i64]
+                        [:empty-turns :i64] [:nudge-limit :i64]]])
+
+(def ^:private repetition-record
+  [:record :bot/repetition [[:identical-consecutive :i64] [:limit :i64]]])
+
+(defn- answer-args [{:keys [content tool-calls empty-turns nudge-limit]}]
+  (oracle/record answer-record
+                 [(boolean (and content (not= "" (str/trim (str content)))))
+                  (oracle/i64 (long (or tool-calls 0)))
+                  (oracle/i64 (long (or empty-turns 0)))
+                  (oracle/i64 (long (or nudge-limit 1)))]))
+
+(defn answer-empty?
+  "Did this model turn come back with neither prose nor an action?
+
+  Blank prose is empty prose. A turn whose whole content is whitespace has said
+  nothing, and recording it as something said is how an empty message reaches
+  the conversation and the picker preview."
+  [answer]
+  (oracle/call :bot 'answer-empty? [(answer-args answer)]))
+
+(defn may-nudge?
+  "Is this empty turn worth asking once more, rather than refusing?"
+  [answer]
+  (oracle/call :bot 'may-nudge? [(answer-args answer)]))
+
+(defn repetition-exhausted?
+  "Has the model proposed the same action with the same arguments too often?
+
+  `identical-consecutive` counts the call about to run, so the first proposal
+  of anything is 1 and a limit of 1 would refuse everything. The host keeps the
+  count; this only says when it is too many."
+  [{:keys [identical-consecutive limit]}]
+  (oracle/call :bot 'repetition-exhausted?
+               [(oracle/record repetition-record
+                               [(oracle/i64 (long (or identical-consecutive 1)))
+                                (oracle/i64 (long (or limit 4)))])]))
+
 (defn usable-accounts
   "The accounts a Bot may actually use at one provider: the ones it was bound
   to, or — when it was bound to none — the person's."
