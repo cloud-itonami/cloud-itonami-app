@@ -403,22 +403,27 @@
                         (fn [& _]
                           (throw (ex-info "model path must not run"
                                           {:type :test/model-path-ran})))]
-            (let [result (bots/fire-due-workforce!
-                          {:bots {:workforce {:max-starts-per-tick 1
-                                             :max-active 1}}}
-                          alice now)
-                  bot-id (:workforce.job/bot
-                          (first (vals (get-in @store/state
-                                               [:bots :workforce-jobs]))))
-                  turn (bots/latest-turn alice bot-id)]
-              (is (= ["cloud-itonami/domain-steward"] (:started result)))
-              (is (= [["domain_registrations" {}]
-                      ["domain_proposals" {}]
-                      ["domain_commit" {:proposal_id "proposal-approved"}]]
-                     @calls))
-              (is (= "domain_commit" (:tool turn)))
-              (is (str/includes? (:result turn) "renewal-risk.example"))
-              (is (str/includes? (:result turn) "proposal-approved")))))))))
+            (with-redefs-fn
+              {(ns-resolve 'cloud.itonami.app.bots 'workforce-bot-inferring?)
+               (constantly true)}
+              (fn []
+                (let [result (bots/fire-due-workforce!
+                              {:bots {:workforce {:max-starts-per-tick 1
+                                                 :max-active 1}}}
+                              alice now)
+                      bot-id (:workforce.job/bot
+                              (first (vals (get-in @store/state
+                                                   [:bots :workforce-jobs]))))
+                      turn (bots/latest-turn alice bot-id)]
+                  (is (= ["cloud-itonami/domain-steward"] (:started result))
+                      "a provider-independent cycle has a bounded reserve")
+                  (is (= [["domain_registrations" {}]
+                          ["domain_proposals" {}]
+                          ["domain_commit" {:proposal_id "proposal-approved"}]]
+                         @calls))
+                  (is (= "domain_commit" (:tool turn)))
+                  (is (str/includes? (:result turn) "renewal-risk.example"))
+                  (is (str/includes? (:result turn) "proposal-approved")))))))))))
 
 (deftest workforce-disk-tools-exist-only-behind-the-two-disk-capabilities
   (with-store
