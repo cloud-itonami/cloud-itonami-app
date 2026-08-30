@@ -188,13 +188,21 @@
     (p/let [_ (.waitForTimeout page 300)
             rail-visible (.isVisible page ".bots-rail")
             rail-direction (.evaluate page
-                                      "getComputedStyle(document.querySelector('.bots-rail__list')).display")
+                                      "getComputedStyle(document.querySelector('.bots-rail__list')).flexDirection")
+            stacked (.evaluate page
+                               "(() => {
+                                  const items = [...document.querySelectorAll('.bots-rail__item')];
+                                  if (items.length < 2) return true;
+                                  const a = items[0].getBoundingClientRect();
+                                  const b = items[1].getBoundingClientRect();
+                                  return b.top > a.top && Math.abs(a.left - b.left) < 8;
+                                })()")
             composer-visible (.isVisible page ".bots-composer")
             composer-box (.boundingBox (.locator page ".bots-composer"))
             viewport-height (.evaluate page "window.innerHeight")
             document-height (.evaluate page "document.documentElement.scrollHeight")]
-      (check! "the horizontal Bot picker remains visible at 390px"
-              (and rail-visible (= "flex" rail-direction)))
+      (check! "the Bot picker stacks vertically at 390px"
+              (and rail-visible (= "column" rail-direction) stacked))
       (check! "the composer remains visible without document scrolling"
               (and composer-visible
                    composer-box
