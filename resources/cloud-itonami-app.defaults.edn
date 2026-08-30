@@ -594,9 +594,9 @@
  :lawfirm {:enabled? false}
 
  ;; Agent-first domain lifecycle. Credentials are named, never stored here.
- ;; The MCP tools are absent unless both variables resolve and a real human
- ;; Passkey session is available. Mutations additionally pass through the
- ;; proposal -> Passkey -> commit spine below.
+ ;; The MCP tools are absent unless both variables and a supported agent
+ ;; session resolve. Mutations additionally pass through the proposal -> human
+ ;; Passkey -> commit spine below; the agent session cannot approve them.
  :domain-service {:account-id-env "CLOUDFLARE_ACCOUNT_ID"
                   :api-token-env "CLOUDFLARE_API_TOKEN"
                   :api-base "https://api.cloudflare.com/client/v4"}
