@@ -1,8 +1,9 @@
 (ns cloud.itonami.app.domain-tools
   "Agent-facing Domain API. Reads are direct; every mutation is Passkey-bound."
-  (:require [cloud.itonami.app.authority.api :as authority-api]
+  (:require [cloud.itonami.app.agent-session :as agent-session]
+            [cloud.itonami.app.authority.api :as authority-api]
             [cloud.itonami.app.cloudflare :as cloudflare]
-            [cloud.itonami.app.payment-tools :as payment-tools]
+            [cloud.itonami.app.identity :as identity]
             [yadori.cloudflare :as yadori]))
 
 (def tools
@@ -39,14 +40,22 @@
 (def ^:private names (into #{} (map :name tools)))
 (defn tool? [name] (contains? names name))
 
+(defn- session [configuration]
+  (when-let [token (agent-session/session-token configuration)]
+    (let [resolved (identity/session token)]
+      (when (and resolved
+                 (= :agent (:kind resolved))
+                 (identity/may-act? resolved))
+        resolved))))
+
 (defn available? [configuration]
   (and (cloudflare/available? configuration)
-       (payment-tools/available? configuration)
+       (some? (session configuration))
        (true? (get-in configuration [:authorities :domain :enabled?]))))
 
 (defn- session! [configuration]
-  (or (payment-tools/session configuration)
-      (throw (ex-info "Domain tools require a human Passkey session"
+  (or (session configuration)
+      (throw (ex-info "Domain tools require an authenticated agent session"
                       {:type :domain-service/session-unavailable}))))
 
 (defn- call [configuration request]

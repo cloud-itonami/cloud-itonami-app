@@ -2,10 +2,11 @@
   (:require [clojure.data.json :as json]
             [clojure.string :as str]
             [clojure.test :refer [deftest is]]
+            [cloud.itonami.app.agent-session :as agent-session]
             [cloud.itonami.app.authority.domain :as authority-domain]
             [cloud.itonami.app.cloudflare :as cloudflare]
             [cloud.itonami.app.domain-tools :as tools]
-            [cloud.itonami.app.payment-tools :as payment-tools]
+            [cloud.itonami.app.identity :as identity]
             [yadori.cloudflare :as yadori]))
 
 (def configuration
@@ -32,11 +33,22 @@
 
 (deftest domain-surface-is-dark-without-every-gate
   (with-redefs [cloudflare/available? (constantly true)
-                payment-tools/available? (constantly true)]
+                agent-session/session-token (constantly "agent-token")
+                identity/session (constantly {:kind :agent :user-id "u1"})
+                identity/may-act? (constantly true)]
     (is (false? (tools/available? (assoc-in configuration [:authorities :domain :enabled?] false))))
     (is (true? (tools/available? configuration))))
   (with-redefs [cloudflare/available? (constantly false)
-                payment-tools/available? (constantly true)]
+                agent-session/session-token (constantly "agent-token")
+                identity/session (constantly {:kind :agent :user-id "u1"})
+                identity/may-act? (constantly true)]
+    (is (false? (tools/available? configuration)))))
+
+(deftest domain-surface-refuses-a-browser-session-in-the-agent-token-slot
+  (with-redefs [cloudflare/available? (constantly true)
+                agent-session/session-token (constantly "wrong-kind")
+                identity/session (constantly {:kind :passkey :user-id "u1"})
+                identity/may-act? (constantly true)]
     (is (false? (tools/available? configuration)))))
 
 (deftest server-overwrites-a-client-supplied-registration-quote
