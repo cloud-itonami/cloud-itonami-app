@@ -3258,7 +3258,9 @@
             attrs))))
 
 (defn- visible-failure-message [error]
-  (let [{:keys [type status timeout-seconds max-output-tokens]} (ex-data error)]
+  (let [{:keys [type status timeout-seconds max-output-tokens
+                requested-model fallback-model primary-error-type
+                fallback-error-type]} (ex-data error)]
     (case type
       :bot/cancelled nil
       :provider/empty-response
@@ -3290,6 +3292,17 @@
            (when max-output-tokens
              (str "（max-output-tokens " max-output-tokens "）"))
            "。依頼を分割するか、出力トークンの上限を上げてください。")
+      :provider/fallback-failed
+      (str "主モデルと切替先の両方で実行できませんでした"
+           (when (or requested-model fallback-model)
+             (str "（" (or requested-model "主モデル")
+                  (when primary-error-type
+                    (str ": " (subs (str primary-error-type) 1)))
+                  " → " (or fallback-model "切替先")
+                  (when fallback-error-type
+                    (str ": " (subs (str fallback-error-type) 1)))
+                  "）"))
+           "。依頼は記録されています。実行先の回復後に再試行してください。")
       "実行に失敗しました。依頼は記録されています。もう一度送ると再試行できます。")))
 
 (defn- goal-event! [kind data]

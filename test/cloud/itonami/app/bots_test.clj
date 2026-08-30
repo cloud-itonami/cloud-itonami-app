@@ -3330,6 +3330,22 @@
     (testing "and it says how long it waited"
       (is (str/includes? timed-out "120")))))
 
+(deftest a-double-provider-failure-names-both-routes
+  (let [message (ns-resolve 'cloud.itonami.app.bots 'visible-failure-message)
+        generic (message (ex-info "boom" {:type :some/unclassified-bug}))
+        failed (message
+                (ex-info "both failed"
+                         {:type :provider/fallback-failed
+                          :requested-model "murakumo-edge"
+                          :fallback-model "murakumo-main"
+                          :primary-error-type :provider/http-error
+                          :fallback-error-type :provider/timeout}))]
+    (is (not= generic failed))
+    (is (str/includes? failed "murakumo-edge"))
+    (is (str/includes? failed "provider/http-error"))
+    (is (str/includes? failed "murakumo-main"))
+    (is (str/includes? failed "provider/timeout"))))
+
 ;; ── what the workforce has actually been doing ──────────────────────────
 ;;
 ;; `enabled 70` was the whole answer `workforce-status` gave, and it stayed 70

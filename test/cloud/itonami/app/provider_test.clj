@@ -184,6 +184,48 @@
             "the bounded accelerator request precedes one explicit fallback"))
       (finally (.stop server 0)))))
 
+(deftest a-literal-edge-route-does-not-cascade-into-the-main-pool
+  (let [requested (atom [])
+        server (HttpServer/create (InetSocketAddress. "127.0.0.1" 0) 0)]
+    (.createContext
+     server "/v1/chat/completions"
+     (reify HttpHandler
+       (handle [_ exchange]
+         (let [request (json/read-str (slurp (.getRequestBody exchange))
+                                      :key-fn keyword)
+               model (:model request)
+               _ (swap! requested conj model)
+               [status payload]
+               (if (= "murakumo-edge" model)
+                 [503 {:error "edge unavailable"}]
+                 [200 {:model "murakumo-main"
+                       :choices [{:finish_reason "stop"
+                                  :message {:content "must-not-run"}}]}])
+               bytes (.getBytes (json/write-str payload) "UTF-8")]
+           (.sendResponseHeaders exchange status (alength bytes))
+           (with-open [out (.getResponseBody exchange)] (.write out bytes))))))
+    (.start server)
+    (try
+      (let [provider {:kind :openai-compatible
+                      :base-url (str "http://127.0.0.1:"
+                                     (.getPort (.getAddress server)) "/v1")
+                      :max-transient-retries 0
+                      :assert-response-model? true
+                      ;; Reproduces the stale resident override observed on
+                      ;; 2026-08-30. The deny-list must win over this entry.
+                      :model-fallbacks {"murakumo-edge" "murakumo-main"}
+                      :no-fallback-models #{"murakumo-edge"}}
+            error (try
+                    (provider/agent-turn
+                     provider {:model "murakumo-edge" :messages [] :tools []})
+                    nil
+                    (catch clojure.lang.ExceptionInfo e e))]
+        (is (= :provider/http-error (:type (ex-data error))))
+        (is (= 503 (:status (ex-data error))))
+        (is (= ["murakumo-edge"] @requested)
+            "an edge outage does not consume a main-pool request"))
+      (finally (.stop server 0)))))
+
 (deftest an-unready-5090-falls-back-before-generation
   (let [requested (atom [])
         readiness-auth (atom :unobserved)
