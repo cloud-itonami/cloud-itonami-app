@@ -3999,38 +3999,6 @@
                      (identity/start-passkey-authentication!
                       (rp-id config) (origin config))))
 
-            (and (= method "POST") (= path "/api/email-authenticate/start"))
-            (let [request (read-json exchange)]
-              (require-origin! exchange config)
-              (send! exchange 202
-                     (identity/start-email-authentication!
-                      config (:email request))))
-
-            (and (= method "POST") (= path "/api/email-authenticate/finish"))
-            (let [request (read-json exchange)
-                  result (do
-                           (require-origin! exchange config)
-                           (identity/finish-email-authentication!
-                            (:token request)))]
-              (send! exchange 200
-                     (identity/public-state (:token result))
-                     {"Set-Cookie" (session-cookie (:token result))}))
-
-            (and (= method "POST")
-                 (provider-from-path path #"/api/auth/sso/([^/]+)/start"))
-            (let [provider (provider-from-path
-                            path #"/api/auth/sso/([^/]+)/start")
-                  request (read-json exchange)
-                  link? (= "link" (some-> (:mode request) name))
-                  session (when link? (require-app-session! exchange))]
-              (require-origin! exchange config)
-              (when link? (require-csrf! exchange session))
-              (send! exchange 200
-                     (identity/start-sso-authentication!
-                      provider (origin config)
-                      {:mode (if link? :link :authenticate)
-                       :session session})))
-
             (and (= method "POST") (= path "/api/passkeys/authenticate/finish"))
             (let [request (read-json exchange)
                   result (do
@@ -4065,28 +4033,18 @@
             (let [provider (provider-from-path
                             path #"/api/oauth/([^/]+)/callback")
                   params (query-params exchange)]
-              (if (identity/sso-transaction? provider (:state params))
-                (try
-                  (let [result (identity/complete-sso-authentication!
-                                provider params)]
-                    (redirect! exchange
-                               (str "/?auth=sso&provider=" (name provider)
-                                    "#/settings")
-                               {"Set-Cookie" (session-cookie (:token result))}))
-                  (catch Exception error
-                    (identity/record-auth-failure! provider error)
-                    (redirect! exchange
-                               (str "/?auth=error&provider=" (name provider)
-                                    "#/settings"))))
-                (try
-                  (identity/complete-oauth! provider params)
+              ;; Provider OAuth is a delegated service connection, never an
+              ;; application sign-in. Legacy SSO states therefore cannot mint
+              ;; a session through this shared callback path.
+              (try
+                (identity/complete-oauth! provider params)
+                (redirect! exchange
+                           (str "/?connection=connected&provider="
+                                (name provider) "#/settings"))
+                (catch Exception _
                   (redirect! exchange
-                             (str "/?connection=connected&provider="
-                                  (name provider) "#/settings"))
-                  (catch Exception _
-                    (redirect! exchange
-                               (str "/?connection=error&provider="
-                                    (name provider) "#/settings"))))))
+                             (str "/?connection=error&provider="
+                                  (name provider) "#/settings")))))
 
             (conversation-route? path)
             (handle-conversation! config exchange method path)

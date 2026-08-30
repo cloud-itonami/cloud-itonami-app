@@ -260,6 +260,11 @@
                   (boolean (:bot/goal? value))
                   (boolean (or (:bot/coding? value)
                                (:bot/virtual-shell? value))))
+     ;; Sidebar placement is presentation state, not execution authority.
+     ;; Priority outranks pinning in the client; keeping both flags means a Bot
+     ;; returns to the pinned section when priority is later cleared.
+     :bot/priority? (boolean (:bot/priority? value))
+     :bot/pinned? (boolean (:bot/pinned? value))
      ;; Standing delegation, intentionally independent of writes/tool reach.
      ;; It changes WHEN an already-admitted write runs, never WHAT is admitted.
      :bot/omakase? (boolean (:bot/omakase? value))

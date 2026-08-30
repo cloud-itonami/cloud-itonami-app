@@ -116,10 +116,6 @@
       document.body.dataset.nativeTitlebar = 'overlay';
     }
     const initialFragment = location.hash.slice(1);
-    // Capture the one-time proof before showView() replaces the fragment.
-    // Reading location.hash again near the end of this file loses the token
-    // to the initial view redirect, so a valid link otherwise looks inert.
-    //
     // Views are addressed as `#/name` (kami-app-nle / ADR-2608080100). The
     // legacy `#name` form still resolves so old redirects keep working.
     const viewFromHash = (raw) => {
@@ -130,12 +126,7 @@
       // old bookmarks useful without preserving four competing top-level tabs.
       return ({chat:'bots', rooms:'bots', capture:'bots', memory:'settings'})[path] || path;
     };
-    const emailLoginToken = new URLSearchParams(
-      initialFragment.includes('email-login=')
-        ? (initialFragment.includes('?') ? initialFragment.slice(initialFragment.indexOf('?') + 1) : initialFragment)
-        : ''
-    ).get('email-login');
-    const requestedView = emailLoginToken ? 'settings' : (viewFromHash(initialFragment) || 'bots');
+    const requestedView = viewFromHash(initialFragment) || 'bots';
     let appUnlocked = false;
     let appBootstrapped = false;
     // Views whose data is public, so the Passkey gate would protect nothing.
@@ -8311,12 +8302,8 @@
     // WebAuthn the only entrance on this screen looks live and is not.
     const passkeySupported = () =>
       Boolean(window.PublicKeyCredential && navigator.credentials);
-    // The entrances besides Passkey that this deployment has configured. One
-    // reading, so the notice, the lead and the cards cannot disagree.
-    const otherSigninMethods = (data) => [
-      data['auth-methods']?.central?.['configured?'] ? 'auth.itonami.cloud' : null,
-      data['email-login-configured?'] ? 'Email' : null
-    ].filter(Boolean);
+    const hostedPasskeyConfigured = (data) =>
+      Boolean(data['auth-methods']?.central?.['configured?']);
     // What this screen actually offers, said on every load.
     //
     // The interrupted owner ceremony is the case that needs it. Registration is
@@ -8329,33 +8316,23 @@
     // had asked to resume something. The explanation existed — in a status line
     // written once, which the next reload erased.
     const renderSigninGate = (data) => {
-      const others = otherSigninMethods(data);
       const resuming = Boolean(data['passkey-required?']);
       const supported = passkeySupported();
-      const hosted = others.includes('auth.itonami.cloud');
+      const hosted = hostedPasskeyConfigured(data);
       $('#signin-gate-headline').textContent = resuming
         ? '前回の Passkey 作成が完了していません。'
         : hosted
           ? 'パスキーでサインインしてください。'
-          : 'サインイン方法を選んでください。';
+          : 'この端末の Passkey でサインインしてください。';
       $('#signin-gate-note').textContent = !supported
-        ? (others.length
-          ? ` このブラウザは Passkey / WebAuthn に対応していません。${others.join('、')}で続けられます。`
+        ? (hosted
+          ? ' このブラウザでは Passkey を使えません。auth.itonami.cloud を対応ブラウザで開いてください。'
           : ' このブラウザは Passkey / WebAuthn に対応していません。この端末から入る方法が今はありません。')
         : resuming
-          // Naming the resume without naming the alternatives is the same
-          // defect this function exists to fix: a screen that describes one
-          // way in while another is sitting on it unmentioned.
-          ? ` アカウントはできていて、Passkey だけがありません。下のボタンで続きから作成します。${
-            others.length ? `${others.join('、')}でも入れます。` : ''}`
+          ? ' アカウントはできていて、Passkey だけがありません。下のボタンで続きから作成します。'
           : hosted
-            ? ` 入口は auth.itonami.cloud です。この端末の Passkey は追加確認に使います。${
-              others.filter((name) => name !== 'auth.itonami.cloud').length
-                ? others.filter((name) => name !== 'auth.itonami.cloud').join('、') + 'でも入れます。'
-                : ''}`
-          : others.length
-            ? ` この端末で使える入口は Passkey、${others.join('、')} です。重要操作では Passkey を追加確認します。`
-            : ' この端末で使える入口は Passkey だけです。重要操作では Passkey を追加確認します。';
+            ? ' 入口は auth.itonami.cloud です。この端末の Passkey は追加確認に使います。'
+            : ' この端末で使える入口は Passkey だけです。重要操作でも同じ Passkey を確認します。';
       // The native window is a webview and the ceremony happens in the
       // system browser (RFC 8252) — say so, or the round-trip reads as the
       // window silently losing the person. This overrides the unsupported
@@ -8412,8 +8389,6 @@
         recovery.hidden = Boolean(data['authenticated?']);
         recovery.open = Boolean(data['passkey-required?']);
       }
-      $('#email-login-form').hidden = Boolean(data['authenticated?']) ||
-        !data['email-login-configured?'];
       $('#registration-form').hidden = Boolean(data['registered?']);
       // Gated on a CREDENTIAL existing, not on a User existing. A device with
       // a User and no enrolled Passkey has nothing to authenticate with, and
@@ -8424,12 +8399,9 @@
         $('#registration-title').textContent = pendingPasskey
           ? 'Passkey 登録を再開'
           : 'サインイン';
-        const others = otherSigninMethods(data);
         $('#registration-lead').textContent = pendingPasskey
           ? '仮登録は完了しています。Passkey を作成するとアプリを利用できます。'
-          : others.length
-            ? `Passkey、${others.join('、')}で続行できます。`
-            : 'Passkeyで続行できます。';
+          : 'Passkeyで続行できます。';
         $('#passkey-signin').textContent = pendingPasskey
           ? 'Passkey 登録を再開'
           : 'Passkey でサインイン';
@@ -9130,21 +9102,6 @@
       } catch (error) {
         button.disabled = false;
         $('#identity-status').textContent = error.message;
-      }
-    });
-    $('#email-login-form').addEventListener('submit', async (event) => {
-      event.preventDefault();
-      const button = $('#email-login-submit');
-      const fields = Object.fromEntries(new FormData(event.currentTarget));
-      button.disabled = true; button.textContent = '送信中…';
-      try {
-        await postJSON('/api/email-authenticate/start', fields);
-        $('#identity-status').textContent =
-          '登録済みの場合、ログインリンクを送信しました。メールを確認してください。';
-      } catch (error) {
-        $('#identity-status').textContent = error.message;
-      } finally {
-        button.disabled = false; button.textContent = 'ログインリンクを送る';
       }
     });
     $('#enrollment-form').addEventListener('submit', async (event) => {
@@ -9892,6 +9849,37 @@
     const botsRecentFirst = (bots) => [...bots].sort((a, b) =>
       botsActivityTime(b) - botsActivityTime(a) ||
         a.name.localeCompare(b.name, 'ja'));
+    const botsDateGroup = (bot, now = new Date()) => {
+      const value = bot?.['activity-at'] || bot?.['last-message']?.at || bot?.['updated-at'];
+      const activity = value ? new Date(value) : null;
+      if (!activity || Number.isNaN(activity.getTime())) return '日時なし';
+      const day = new Date(activity.getFullYear(), activity.getMonth(), activity.getDate());
+      const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+      const days = Math.floor((today.getTime() - day.getTime()) / 86400000);
+      if (days <= 0) return '今日';
+      if (days === 1) return '昨日';
+      if (days < 7) return '過去7日間';
+      if (days < 30) return '過去30日間';
+      return new Intl.DateTimeFormat('ja-JP', {
+        year:'numeric', month:'long'
+      }).format(activity);
+    };
+    const botsSidebarGroups = (bots) => {
+      const groups = [];
+      const priority = botsRecentFirst(bots.filter((bot) => bot['priority?']));
+      const pinned = botsRecentFirst(bots.filter((bot) =>
+        !bot['priority?'] && bot['pinned?']));
+      if (priority.length) groups.push({label:'優先度', bots:priority});
+      if (pinned.length) groups.push({label:'ピン留め', bots:pinned});
+      botsRecentFirst(bots.filter((bot) => !bot['priority?'] && !bot['pinned?']))
+        .forEach((bot) => {
+          const label = botsDateGroup(bot);
+          const current = groups.at(-1);
+          if (current?.label === label) current.bots.push(bot);
+          else groups.push({label, bots:[bot]});
+        });
+      return groups;
+    };
     const botsCompactTime = (value) => {
       const parsed = value ? new Date(value) : null;
       if (!parsed || Number.isNaN(parsed.getTime())) return '';
@@ -9961,8 +9949,11 @@
       const empty = $('#bots-rail-empty');
       empty.hidden = visibleBots.length > 0;
       empty.textContent = query ? '一致する Bot がいません' : 'まだ Bot がいません';
-      visibleBots
-        .forEach((bot) => {
+      botsSidebarGroups(visibleBots).forEach((group) => {
+        const heading = make('li', 'bots-rail__group', group.label);
+        heading.setAttribute('aria-hidden', 'true');
+        list.append(heading);
+        group.bots.forEach((bot) => {
         const item = make('button', 'bots-rail__item');
         item.type = 'button';
         item.setAttribute('aria-current', String(bot.id === botsState.selected));
@@ -9985,6 +9976,7 @@
         const entry = make('li');
         entry.append(item);
         list.append(entry);
+        });
       });
       const badge = $('#bots-count');
       if (badge) {
@@ -10762,6 +10754,48 @@
       });
       goalEditor.append(goalOption, saveGoal);
       panel.append(goalEditor);
+      const placementEditor = make('div', 'bots-card');
+      placementEditor.append(make('strong', null, '一覧での位置'));
+      const priorityBox = make('input');
+      priorityBox.type = 'checkbox';
+      priorityBox.checked = Boolean(bot['priority?']);
+      priorityBox.setAttribute('aria-label', '優先度セクションに表示');
+      const pinnedBox = make('input');
+      pinnedBox.type = 'checkbox';
+      pinnedBox.checked = Boolean(bot['pinned?']);
+      pinnedBox.setAttribute('aria-label', 'ピン留めセクションに表示');
+      const placementOption = (box, title, help) => {
+        const label = make('label', 'bots-permission');
+        const copy = make('span', 'bots-permission__copy');
+        copy.append(make('span', null, title), make('span', 'bots-permission__help', help));
+        label.append(box, copy);
+        return label;
+      };
+      const savePlacement = make('button', 'tool-button', '並び順を保存');
+      savePlacement.type = 'button';
+      savePlacement.addEventListener('click', async () => {
+        savePlacement.disabled = true;
+        try {
+          const data = await postJSON(`/api/bots/${bot.id}`, {
+            'priority?':priorityBox.checked,
+            'pinned?':pinnedBox.checked
+          }, true);
+          botsState.bots = data.bots || [];
+          renderBotsRail();
+          renderBotsThread();
+          botsSetStatus('この Bot の並び順を保存しました。');
+        } catch (error) {
+          savePlacement.disabled = false;
+          botsSetStatus(error.message);
+        }
+      });
+      placementEditor.append(
+        placementOption(priorityBox, '優先度',
+          '一覧の先頭に置きます。ピン留めより上に表示されます。'),
+        placementOption(pinnedBox, 'ピン留め',
+          '優先度を外したときも、日時一覧より上に残します。'),
+        savePlacement);
+      panel.append(placementEditor);
       const authorityEditor = make('details', 'bots-card');
       const normalCapabilities = [bot['writes?'], bot['omakase?'], bot['browser?'],
         bot['computer?'], bot['peers?']].filter(Boolean).length;
@@ -12312,20 +12346,6 @@
       cleaned.searchParams.delete('provider');
       history.replaceState(null, '', `${cleaned.pathname}${cleaned.search}${cleaned.hash}`);
     }
-    const finishEmailLoginFromLink = async () => {
-      const token = emailLoginToken;
-      if (!token) return;
-      // Remove the bearer-like token from the address bar before doing any
-      // other work. It remains available in this closure for this one POST.
-      history.replaceState(null, '', `${location.pathname}${location.search}`);
-      try {
-        const data = await postJSON('/api/email-authenticate/finish', {token});
-        renderIdentity(data);
-        $('#identity-status').textContent = 'Email でサインインしました。';
-      } catch (error) {
-        $('#identity-status').textContent = error.message;
-      }
-    };
     // ---- Comment mode -----------------------------------------------------
     // A region of this application's own screen, a sentence about it, and the
     // bounded Goal that sentence becomes.
@@ -12704,7 +12724,7 @@
         }
       });
     }
-    finishEmailLoginFromLink().finally(loadIdentity);
+    loadIdentity();
     // after every const above is defined — calling this next to the initial
     // showView() would hit `Cannot access 'loadFilecoin' before initialization`
     loadFilecoin();

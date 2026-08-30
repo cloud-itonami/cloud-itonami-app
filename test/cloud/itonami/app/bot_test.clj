@@ -112,6 +112,13 @@
   (testing "an absent avatar is still the default — that IS a choice nobody made"
     (is (= bot/default-avatar (:bot/avatar (a-bot {}))))))
 
+(deftest sidebar-placement-is-persisted-as-presentation-state
+  (let [placed (a-bot {:bot/priority? true :bot/pinned? true})]
+    (is (true? (:bot/priority? placed)))
+    (is (true? (:bot/pinned? placed)))
+    (is (false? (:bot/priority? (a-bot {}))))
+    (is (false? (:bot/pinned? (a-bot {}))))))
+
 ;; ── 2. a grant narrows, never widens ────────────────────────────────────
 
 (deftest admission-is-exhausted-over-its-four-facts

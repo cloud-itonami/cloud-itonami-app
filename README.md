@@ -229,43 +229,17 @@ rebase, and west pin changes; those remain release operations outside the Bot.
 
 ## Sign-in and sign-up
 
-The product entrance is Passkey/WebAuthn through `auth.itonami.cloud`, with a
-device-local Passkey recovery path and optional one-time Email links. Provider
-SSO is not exposed by the default or `itonami` profile. The backend retains an
-explicit compatibility option for a deployment that deliberately supplies an
-SSO provider list and OAuth clients.
-
-SSO authentication scopes are separate from delegated service connections:
-signing in never grants mailbox, Drive, or repository access. A provider
-subject is unique to one local User, and a matching Email address never merges
-accounts automatically. To add another provider to an existing User, sign in
-first and use the explicit link controls in Settings. Payment, e-signature,
-federation, and outward-authority approval retain their dedicated Passkey
-ceremonies as step-up authentication.
+The product entrance is Passkey/WebAuthn through `auth.itonami.cloud`, with
+device-local Passkey recovery and invitation enrolment. Email magic links and
+provider SSO do not mint application sessions. Provider OAuth exists only for
+delegated service connections, so connecting mailbox, Drive, or repository
+access cannot become a login ceremony. Payment, e-signature, federation, and
+outward-authority approval retain their dedicated Passkey ceremonies.
 
 The Settings page also lists this User's active sessions, can revoke another
-device, clears the current HttpOnly cookie on sign-out, and can unlink a legacy
-Email or SSO identity only while another login root remains. Session responses
-never contain token digests or CSRF values.
-
-For a compatibility deployment, Google and Microsoft can be configured without
-distributing a secret:
-
-```edn
-{:auth {:sso-enabled? true
-        :sso-providers [:google :microsoft :github]
-        :sso-clients
-        {:google {:client-id "PUBLIC-DESKTOP-CLIENT-ID"
-                  :public-client? true}
-         :microsoft {:client-id "PUBLIC-DESKTOP-CLIENT-ID"
-                     :public-client? true}}}}
-```
-
-The client ID is public configuration; the token exchange still requires the
-per-transaction PKCE verifier. GitHub's browser OAuth exchange requires a
-client secret, so GitHub remains a credential-store/hosted-broker deployment
-until a separate device-flow UX is selected; setting `:public-client? true`
-does not falsely mark it configured.
+device, and clears the current HttpOnly cookie on sign-out. Legacy linked
+identities may remain readable for migration, but they are not login roots.
+Session responses never contain token digests or CSRF values.
 
 ## `itonami` — the command line, without opening the app
 
@@ -885,15 +859,8 @@ private key remains in the authenticator. Legacy records may have filled a
 blank User DID from a Passkey, but adding or revoking a Passkey must not rename
 an established Principal. Organization information can be entered later.
 
-Returning active Users may also sign in through a ten-minute, single-use email
-magic link when `:email-login` delivery is configured. Email proves control of
-the registered address for that session; it does not create a User, replace the
-Passkey-rooted `did:key`, enroll an invited User, or approve a governed action.
-Money, signatures, and outward authorities continue to require their own
-operation-bound WebAuthn assertion.
-
-The session proof model is shared with `kotoba-lang/authentication` (email and
-Passkey factors, decisions, and assurance levels), and its default-deny access
+The session proof model is shared with `kotoba-lang/authentication` (Passkey
+factors, decisions, and assurance levels), and its default-deny access
 decision is evaluated by `kotoba-lang/authorization`. Cloud Itonami retains the
 runtime adapters—Yubico WebAuthn, mail delivery, cookies/CSRF, persistence—and
 the Tenant/Membership and operation-approval policy. See ADR-0012 for the exact
@@ -1316,21 +1283,10 @@ The included gftd profile maps:
 - public addresses to `@gftd.ai`;
 - relay calls to `https://relay.gftd.ai`.
 
-The included itonami profile turns email sign-in on and points it at
-`https://itonami.cloud/api/auth/magic-link/deliver`:
-
-```bash
-CLOUD_ITONAMI_EMAIL_LOGIN_TOKEN=<bearer> CLOUD_ITONAMI_PROFILE=itonami \
-  clojure -M:server
-```
-
-Email sign-in stays off in the shipped defaults, and that is not an oversight.
-ADR-0012 left delivery to "a deployment-owned HTTPS endpoint", and until one
-existed the form was never shown — a complete feature nothing could reach. A
-tenant-neutral install that mailed through somebody else's sending reputation
-would be choosing for the operator, and a bounce would land on a domain they do
-not own. The bearer must match the endpoint's `MAGIC_LINK_DELIVERY_TOKEN`
-secret; it is read from the environment per call and never persisted.
+The included `itonami` profile is also Passkey-only. Older resident files may
+still contain Email or provider SSO configuration, but the public auth contract
+does not advertise it and the server exposes no route that can mint a session
+from it (ADR-0083).
 
 Enabling `:publish-did-web?` is a deployment assertion: the operator must
 actually serve the DID documents over HTTPS.

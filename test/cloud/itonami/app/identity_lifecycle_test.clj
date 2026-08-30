@@ -354,12 +354,11 @@
     (is (= "https://itonami.cloud/ja/signin/"
            (get-in methods [:central :enrolment-url])))))
 
-(deftest provider-sso-needs-an-explicit-feature-switch
+(deftest provider-sso-is-not-an-application-signin-method
   (testing "an older resident provider list cannot revive SSO by itself"
     (identity/configure! {:auth {:sso-providers [:google]}})
     (is (empty? (:sso (identity/public-auth-methods)))))
-  (testing "compatibility deployments must opt in independently"
+  (testing "even an old explicit opt-in is no longer advertised as sign-in"
     (identity/configure! {:auth {:sso-enabled? true
                                  :sso-providers [:google]}})
-    (is (= ["google"]
-           (mapv :id (:sso (identity/public-auth-methods)))))))
+    (is (empty? (:sso (identity/public-auth-methods))))))

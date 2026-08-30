@@ -1,34 +1,9 @@
 ;; itonami.cloud deployment profile.
 ;;
-;; What this profile is FOR is the one thing the tenant-neutral distribution
-;; cannot ship: a working sign-in-link delivery endpoint.
-;;
-;; ADR-0012 designed email sign-in as an alternate session proof and left
-;; delivery to "a deployment-owned HTTPS endpoint". No such endpoint existed
-;; anywhere in the fleet, so `:email-login` stayed `:enabled? false` and the
-;; form was never shown — the feature was complete and unreachable. The
-;; endpoint now exists (`cloud-itonami.edge.email-login/on-request-post-deliver`
-;; on itonami.cloud, backed by that deployment's Resend sender), and this
-;; profile is what points at it.
-;;
-;; It stays out of the shipped defaults on purpose. A tenant-neutral install
-;; that emailed through somebody else's sending reputation would be making a
-;; choice on the operator's behalf, and a bounce or a spam complaint would land
-;; on a domain they do not own.
-;;
-;;   CLOUD_ITONAMI_EMAIL_LOGIN_TOKEN=<bearer>  CLOUD_ITONAMI_PROFILE=itonami \
-;;     clojure -M:server
-;;
-;; The bearer must equal the endpoint's `MAGIC_LINK_DELIVERY_TOKEN` Worker
-;; secret. It is read from the environment at call time and never persisted —
-;; `cloud.itonami.app.email-login/access-token` reads it per request and the
-;; adapter refuses to run without it.
-;;
-;; This deployment allows a verified Email or provider subject to create a
-;; personal User. Matching Email addresses are never used to merge identities:
-;; an existing User must sign in first and explicitly link the provider.
-;; Payment, signature, federation and outward-authority approval continue to
-;; use their explicit Passkey ceremonies.
+;; Application sessions are Passkey-only. Provider OAuth is reserved for
+;; delegated service connections; Email and provider SSO cannot mint an app
+;; session even when an older resident configuration still contains settings
+;; for them.
 ;; ---------------------------------------------------------------------------
 ;; Bots run on OpenRouter's free plan (owner instruction, 2026-08-27).
 ;;
@@ -60,9 +35,7 @@
 ;; `gftd.openrouter`; `provider-allowed?` derives "authenticated" from the
 ;; variable actually being set, so a deployment that forgets to export it gets
 ;; a refused provider rather than a silent fallback.
-{:auth {:allow-signup? true
-        :sso-enabled? false
-        :sso-providers []}
+{:auth {:allow-signup? true}
  :cloud-relay {:base-url "https://hooks.itonami.cloud"
                :access-token-env "CLOUD_ITONAMI_RELAY_ACCESS_TOKEN"}
  ;; The Bots' unattended workforce turns run on the router too, not on a
@@ -70,10 +43,6 @@
  ;; provider above is what serves it.
  :bots {:mail-domain "mail.itonami.cloud"
         :workforce {:model "openrouter/free"}}
- :email-login
- {:enabled? true
-  :delivery-endpoint "https://itonami.cloud/api/auth/magic-link/deliver"
-  :access-token-env "CLOUD_ITONAMI_EMAIL_LOGIN_TOKEN"}
  :providers [{:id "openrouter" :enabled? true :reviewed? true}]
  :routing {:default-provider "openrouter"
            :default-model "openrouter/free"
