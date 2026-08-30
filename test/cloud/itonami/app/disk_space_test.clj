@@ -25,7 +25,22 @@
           (is (= "cleanup" (:action result)))
           (is (= ["apply-extended"] @calls))
           (is (pos? (:reclaimed-bytes result)))
-          (is (false? (get-in result [:after :pressure?]))))))))
+          (is (false? (get-in result [:after :pressure?])))))))
+
+  (testing "a scheduler-supplied status is not measured a second time"
+    (let [usable-calls (atom 0)
+          before {:schema "cloud.itonami.app.disk-space.v1"
+                  :usable-bytes (- disk-space/threshold-bytes 1024)
+                  :threshold-bytes disk-space/threshold-bytes
+                  :pressure? true}]
+      (with-redefs [disk-space/usable-bytes
+                    (fn [] (swap! usable-calls inc)
+                      (+ disk-space/threshold-bytes 2048))
+                    disk-space/run-helper! (constantly {:exit 0 :output "ok"})]
+        (let [result (disk-space/maintain! before)]
+          (is (= 1 @usable-calls) "only the post-cleanup measurement remains")
+          (is (= before (:before result)))
+          (is (= "cleanup" (:action result))))))))
 
 (deftest helper-modes-are-not-an-arbitrary-process-surface
   (is (= :disk-space/invalid-mode

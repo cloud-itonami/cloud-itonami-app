@@ -16,6 +16,7 @@
             [cloud.itonami.app.commerce :as commerce]
             [cloud.itonami.app.config :as config]
             [cloud.itonami.app.desktop :as desktop]
+            [cloud.itonami.app.disk-space :as disk-space]
             [cloud.itonami.app.gc :as gc]
             [cloud.itonami.app.identity :as identity]
             [cloud.itonami.app.policy :as policy]
@@ -641,10 +642,14 @@
       (with-redefs [workspace-tools/admit-root (fn [path] path)]
         (let [catalog (workforce-catalog [(engineer-entry)
                                           (disk-maintainer-entry)])
-              submitted (atom [])
+              maintained (atom nil)
               due "2026-08-15T00:00:00Z"
               now "2026-08-16T00:00:00Z"
               pressure {:usable-bytes 8192 :hard-floor-bytes 16384}
+              disk-before {:schema "cloud.itonami.app.disk-space.v1"
+                           :usable-bytes 8192
+                           :threshold-bytes 16384
+                           :pressure? true}
               inferring? (ns-resolve 'cloud.itonami.app.bots
                                      'workforce-bot-inferring?)]
           (bots/provision-workforce! {} alice catalog)
@@ -657,24 +662,48 @@
             {inferring? (constantly true)}
             (fn []
               (with-redefs [gc/refuse-admission? (constantly pressure)
+                            disk-space/status (constantly disk-before)
+                            disk-space/maintain!
+                            (fn [before]
+                              (reset! maintained before)
+                              {:schema "cloud.itonami.app.disk-space-maintenance.v1"
+                               :action "cleanup"
+                               :before before
+                               :after (assoc before :usable-bytes 12288)
+                               :reclaimed-bytes 4096
+                               :helper {:exit 0 :output "bounded helper log"
+                                        :truncated? false}})
                             bots/submit-goal!
-                            (fn [_ _ bot-id objective run-id options]
-                              (swap! submitted conj
-                                     [bot-id objective run-id options])
-                              {:id run-id})]
+                            (fn [& _]
+                              (throw (ex-info "model path must not run"
+                                              {:type :test/model-path-ran})))]
                 (let [result (bots/fire-due-workforce!
                               {:bots {:workforce {:max-starts-per-tick 2
                                                  :max-active 1}}}
                               alice now)
-                      [bot-id objective _ _] (first @submitted)
-                      submitted-bot (get-in @store/state [:bots :bots bot-id])
                       jobs (vals (get-in @store/state [:bots :workforce-jobs]))
                       engineer-job (some #(when (= "cloud-itonami/engineer"
                                                       (:workforce.job/key %)) %)
-                                         jobs)]
+                                         jobs)
+                      disk-job (some #(when (= "cloud-itonami/disk-maintainer"
+                                                  (:workforce.job/key %)) %)
+                                     jobs)
+                      bot-id (:workforce.job/bot disk-job)
+                      submitted-bot (get-in @store/state [:bots :bots bot-id])
+                      run-id (:workforce.job/last-run-id disk-job)
+                      goal-job (get-in @store/state [:bots :goal-jobs run-id])
+                      turn (bots/latest-turn alice bot-id)
+                      objective (:objective turn)]
                   (is (= ["cloud-itonami/disk-maintainer"] (:started result)))
-                  (is (= 1 (count @submitted))
-                      "one maintenance reserve never admits an ordinary second start")
+                  (is (= disk-before @maintained))
+                  (is (= :succeeded (get-in goal-job [:job/run
+                                                      :agent.run/status])))
+                  (is (= "completed" (:state turn)))
+                  (is (= 2 (:tool-count turn)))
+                  (is (str/includes? (:result turn) "reclaimed bytes: 4096"))
+                  (is (not (str/includes? (pr-str goal-job)
+                                          "bounded helper log"))
+                      "the recurring ledger stores the compact receipt, not helper output")
                   (is (empty? (:skipped result))
                       "pressure is not reported as a failed tick when relief started")
                   (is (= :disk-maintainer (get-in submitted-bot [:bot/role :id])))
@@ -1376,6 +1405,48 @@
           (is (= "resuming" (:phase turn)))
           (is (= "checkpointed" (get-in turn [:job :state]))
               "restart is a resumable checkpoint, not a failed visible turn"))))))
+
+(deftest restart-migrates-an-inference-disk-run-to-the-deterministic-cadence
+  (with-store
+    (fn []
+      (with-redefs [workspace-tools/admit-root (fn [path] path)]
+        (bots/provision-workforce!
+         {} alice (workforce-catalog [(disk-maintainer-entry)]))
+        (let [bot-id (:id (first (:bots (bots/overview {} alice))))
+              run-id "resident-disk-before-deterministic-1"
+              future "2099-08-30T00:00:00Z"
+              queued (agent-run/agent-run {:id run-id :goal "old disk run"} 1)
+              leased (agent-run/transition queued :leased 2 {})
+              running (agent-run/transition leased :running 3 {})]
+          (store/transact!
+           (fn [state]
+             (-> state
+                 (assoc-in [:bots :goal-jobs run-id]
+                           {:job/id run-id :job/bot bot-id :job/session alice
+                            :job/objective "old disk run" :job/run running
+                            :job/plan [] :job/events [] :job/attempt 1
+                            :job/resident-workforce? true})
+                 (assoc-in [:bots :turn-history bot-id]
+                           [{:turn/id run-id :turn/bot bot-id
+                             :turn/state :running :turn/phase :accepted
+                             :turn/goal? true :turn/objective "old disk run"}])
+                 (assoc-in [:bots :workforce-jobs bot-id
+                            :workforce.job/next-run-at]
+                           future))))
+          (bots/recover-interrupted! {})
+          (let [state @store/state
+                run (get-in state [:bots :goal-jobs run-id :job/run])
+                turn (bots/latest-turn alice bot-id)
+                next-at (get-in state [:bots :workforce-jobs bot-id
+                                       :workforce.job/next-run-at])]
+            (is (= :cancelled (:agent.run/status run)))
+            (is (= :deterministic-maintenance-migration
+                   (:agent.run/error-type run)))
+            (is (= "cancelled" (:state turn)))
+            (is (= "deterministic-maintenance-migration"
+                   (:error-type turn)))
+            (is (not= future next-at)
+                "the first deterministic post-restart tick is due now")))))))
 
 (deftest restart-converges-a-stale-running-turn-to-its-terminal-agent-run
   (with-store
