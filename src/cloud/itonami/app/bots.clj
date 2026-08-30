@@ -67,6 +67,7 @@
             [cloud.itonami.app.commerce :as commerce]
             [cloud.itonami.app.conversation-context :as conversation-context]
             [cloud.itonami.app.decision-method :as decision-method]
+            [cloud.itonami.app.disk-space :as disk-space]
             [cloud.itonami.app.gc :as gc]
             [cloud.itonami.app.handoff :as handoff]
             [cloud.itonami.app.identity :as identity]
@@ -2128,6 +2129,20 @@
           virtual-shell/tool-definitions
           [])))
 
+(defn- autonomous-capability? [b capability]
+  (boolean
+   (some (fn [{held :capability decision :decision}]
+           (and (= capability (keyword (name held)))
+                (= :autonomous (keyword (name decision)))))
+         (:bot/capability-policy b))))
+
+(defn- disk-space-tools [b]
+  (let [inspect? (autonomous-capability? b :disk.inspect)
+        cleanup? (autonomous-capability? b :disk.cleanup)]
+    (cond-> []
+      inspect? (conj (first disk-space/tool-definitions))
+      cleanup? (conj (second disk-space/tool-definitions)))))
+
 (defn- local-tool-definitions
   "Built-in tools this Bot may run without an external connector grant.
 
@@ -2142,6 +2157,7 @@
                (computer-tools configuration b)
                (peer-tools b)
                (coding-tools b)
+               (disk-space-tools b)
                (wallet/bot-tool-definitions (:bot/id b)))))
 
 (defn- tool-definitions
@@ -2186,6 +2202,7 @@
       (wallet/write-tool? tool-name)
       (workspace-tools/write-tool? tool-name)
       (virtual-shell/write-tool? tool-name)
+      (disk-space/write-tool? tool-name)
       (let [registry (connectors/enabled configuration)]
         (boolean
          (some (fn [d] (when-let [t (cm/tool d tool-name)]
@@ -2215,6 +2232,9 @@
 
     (virtual-shell/tool? tool-name)
     (virtual-shell/describe tool-name args)
+
+    (disk-space/tool? tool-name)
+    (disk-space/describe tool-name)
 
     (agent-control/browser-tool? tool-name)
     (agent-control/describe-browser-tool tool-name args)
@@ -2411,7 +2431,8 @@
                            (agent-control/browser-tool? tool-name)
                            (agent-control/computer-tool? tool-name)
                            (workspace-tools/tool? tool-name)
-                           (virtual-shell/tool? tool-name))
+                           (virtual-shell/tool? tool-name)
+                           (disk-space/tool? tool-name))
                      (cond
                        (commerce/tool? tool-name)
                        (commerce/call-tool! b tool-name args)
@@ -2429,6 +2450,9 @@
                        (virtual-shell/call! {:bot-id (:bot/id b)
                                              :workspace (:bot/workspace b)}
                                             tool-name args)
+
+                       (disk-space/tool? tool-name)
+                       (disk-space/call! tool-name)
 
                        (agent-control/computer-tool? tool-name)
                        (agent-control/call-computer-tool!

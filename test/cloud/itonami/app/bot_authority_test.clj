@@ -96,7 +96,8 @@
 
 (def ^:private runnable
   #{"workspace_read" "workspace_list" "workspace_search"
-    "git_status" "git_log" "workspace_write_file" "git_commit"})
+    "git_status" "git_log" "workspace_write_file" "git_commit"
+    "disk_space_status" "disk_space_cleanup"})
 
 (deftest the-capability-policy-decides-and-not-only-in-the-prompt
   ;; Before this, a Bot's capability policy reached exactly one place: its
@@ -109,6 +110,15 @@
       (testing "an autonomous capability keeps the tools that exercise it"
         (is (contains? (admit [{:capability :patch.create :decision :autonomous}])
                        "workspace_write_file")))
+
+      (testing "disk inspection and cleanup remain distinct capabilities"
+        (let [inspect-only (admit [{:capability :disk.inspect
+                                    :decision :autonomous}])]
+          (is (contains? inspect-only "disk_space_status"))
+          (is (not (contains? inspect-only "disk_space_cleanup"))))
+        (let [both (admit [{:capability :disk.inspect :decision :autonomous}
+                           {:capability :disk.cleanup :decision :autonomous}])]
+          (is (every? both ["disk_space_status" "disk_space_cleanup"]))))
 
       (testing "a capability a human still decides does NOT authorise the tool"
         (is (not (contains? (admit [{:capability :patch.create :decision :approval-required}])

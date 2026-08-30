@@ -214,7 +214,9 @@
   given`. Mapping them to `:metrics.read` would be a guess, and a guess that
   can remove a Bot's ability to look at the repository it was pointed at."
   {"workspace_write_file" :patch.create
-   "git_commit" :patch.create})
+   "git_commit" :patch.create
+   "disk_space_status" :disk.inspect
+   "disk_space_cleanup" :disk.cleanup})
 
 (defn covered-tools
   "The tools this gate actually decides. Everything else is unchanged by it."
