@@ -89,6 +89,7 @@
   (:require [clojure.data.json :as json]
             [clojure.java.io :as io]
             [clojure.string :as str]
+            [clojure.walk :as walk]
             [cloud.itonami.app.agent-session :as agent-session]
             [cloud.itonami.app.app-client :as client]
             [cloud.itonami.app.commands :as commands]
@@ -708,14 +709,38 @@
       "commands" (list-commands (rest named))
       (run-server-command configuration args flags))))
 
+(defn qualified-names
+  "Every keyword in `value`, carrying the name it actually has.
+
+  `json/write-str` renders a keyword as its `name` alone, so
+  `:provider/http-error` reaches an operator as `http-error` -- which is
+  indistinguishable from another namespace's `http-error` and from a bare one.
+  The server is careful about this: `resident-outcomes` counts under the FULL
+  name for exactly this reason, and sends it as a JSON string. `app-client`
+  then parses the response with `:key-fn keyword`, and this printer wrote it
+  back out with the namespace gone -- undoing the server's care in the one
+  surface an operator and an agent actually read.
+
+  Measured 2026-08-30: `bots workforce` reported `{\"http-error\": 40}` for 40
+  runs whose recorded type was `:provider/http-error`. Deciding whether to look
+  at the model provider or at this application began with a name that could not
+  say which.
+
+  A walk rather than `:key-fn`/`:value-fn`: those two reach map keys and map
+  values, and a keyword inside a VECTOR would still be stripped. A guarantee
+  with a hole in it reads exactly like a whole one."
+  [value]
+  (walk/postwalk #(if (keyword? %) (subs (str %) 1) %) value))
+
 (defn -main [& args]
   (try
     (let [configuration (config/load-config)
           args (vec args)]
       (when (and (seq (words args)) (needs-server? args))
         (ensure-server! configuration))
-      (println (json/write-str (run configuration args)
-                               :escape-unicode false)))
+      (println (json/write-str (qualified-names (run configuration args))
+                               :escape-unicode false
+                               :escape-slash false)))
     (System/exit 0)
     (catch clojure.lang.ExceptionInfo e
       (binding [*out* *err*] (println (ex-message e)))

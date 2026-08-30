@@ -1,5 +1,6 @@
 (ns cloud.itonami.app.cli-test
   (:require [clojure.test :refer [deftest is testing]]
+            [clojure.data.json :as json]
             [cloud.itonami.app.agent-session :as agent-session]
             [cloud.itonami.app.app-client :as client]
             [cloud.itonami.app.bot-tools :as bot-tools]
@@ -150,3 +151,31 @@
       (is (= {:businesses 8 :bots 70 :enabled 70}
              (cli/run {} ["bots" "workforce"])))
       (is (= [:get "/api/agent-bots/workforce"] @seen)))))
+
+(deftest a-failure-reaches-the-operator-under-the-name-it-was-recorded-with
+  ;; Both directions, and the literal is pinned: this assertion exists to fail
+  ;; when `provider/http-error` reaches an operator as `http-error`, which is
+  ;; what it did until 2026-08-30. `bots workforce` reported
+  ;; `{"http-error": 40}` for 40 runs whose recorded type was
+  ;; `:provider/http-error`, and nothing in that answer said whether the model
+  ;; provider or this application had refused.
+  (testing "the namespace survives the printer, as a map key"
+    (is (= "{\"counts\":{\"provider/http-error\":40}}"
+           (json/write-str (cli/qualified-names {:counts {:provider/http-error 40}})
+                           :escape-slash false))))
+  (testing "and as a map value"
+    (is (= "{\"outcome\":\"provider/timeout\"}"
+           (json/write-str (cli/qualified-names {:outcome :provider/timeout})
+                           :escape-slash false))))
+  (testing "and inside a vector, which :key-fn and :value-fn do not reach"
+    (is (= "{\"seen\":[\"provider/timeout\",\"internal-error\"]}"
+           (json/write-str (cli/qualified-names
+                            {:seen [:provider/timeout :internal-error]})
+                           :escape-slash false))))
+  (testing "a keyword with no namespace is unchanged, so this is not a rename"
+    (is (= "{\"window\":50}"
+           (json/write-str (cli/qualified-names {:window 50})))))
+  (testing "the printer without it is the defect, stated so the test can fail"
+    (is (= "{\"counts\":{\"http-error\":40}}"
+           (json/write-str {:counts {:provider/http-error 40}}))
+        "clojure.data.json renders a keyword as its name alone; that is why qualified-names exists")))
