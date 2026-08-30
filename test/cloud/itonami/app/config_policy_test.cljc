@@ -85,3 +85,42 @@
   (is (nil? (policy/secret-env-name {:id "ollama" :api-key-env "   "})))
   (is (= "MURAKUMO_API_KEY"
          (policy/secret-env-name {:id "murakumo" :api-key-env "MURAKUMO_API_KEY"}))))
+
+(deftest the-itonami-profile-routes-bots-through-murakumo-flash
+  ;; 2026-08-30: standing on openrouter/free was 77% fail. Hermes measured
+  ;; z-ai/glm-5.3-flash as the primary that completes. The profile overlay
+  ;; must actually land on the catalog — the 2026-08-27 regression was this
+  ;; exact map being computed and thrown away.
+  (let [catalog [{:id "murakumo"
+                  :enabled? false :reviewed? false
+                  :default-model "murakumo-main"
+                  :api-key-env "MURAKUMO_API_KEY"}
+                 {:id "openrouter"
+                  :enabled? false :reviewed? false
+                  :default-model "openrouter/free"}]
+        profile {:providers [{:id "murakumo"
+                              :enabled? true :reviewed? true
+                              :default-model "z-ai/glm-5.3-flash"
+                              :max-transient-retries 2}
+                             {:id "openrouter" :enabled? false}]
+                 :routing {:default-provider "murakumo"
+                           :default-model "z-ai/glm-5.3-flash"
+                           :cloud-enabled? true}
+                 :bots {:workforce {:model "z-ai/glm-5.3-flash"}}}
+        config (policy/compose {:providers catalog
+                                :routing {:default-provider "ollama"}}
+                               profile
+                               nil)
+        murakumo (first (filter #(= "murakumo" (:id %)) (:providers config)))
+        openrouter (first (filter #(= "openrouter" (:id %)) (:providers config)))]
+    (is (true? (:enabled? murakumo)))
+    (is (true? (:reviewed? murakumo)))
+    (is (false? (:enabled? openrouter))
+        "OpenRouter stays a destination, not the default path")
+    (is (= "z-ai/glm-5.3-flash" (:default-model murakumo)))
+    (is (= 2 (:max-transient-retries murakumo)))
+    (is (= "MURAKUMO_API_KEY" (:api-key-env murakumo))
+        "bots still present the operator shared token, not an OpenRouter key")
+    (is (= "murakumo" (get-in config [:routing :default-provider])))
+    (is (= "z-ai/glm-5.3-flash" (get-in config [:routing :default-model])))
+    (is (= "z-ai/glm-5.3-flash" (get-in config [:bots :workforce :model])))))

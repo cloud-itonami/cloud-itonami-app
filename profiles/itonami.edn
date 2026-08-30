@@ -5,45 +5,39 @@
 ;; session even when an older resident configuration still contains settings
 ;; for them.
 ;; ---------------------------------------------------------------------------
-;; Bots run on OpenRouter's free plan (owner instruction, 2026-08-27).
+;; Bots run on murakumo's OpenRouter-backed flash models (owner instruction
+;; 2026-08-30: stabilize like Grok Bots / Hermes Agent; pay x402 USDC; consume
+;; credits). They talk only to api.murakumo.cloud. They do not hold an
+;; OpenRouter key.
+;;
+;; Grok Bots survive by dereferencing the `murakumo-main` alias. Hermes
+;; measured 2026-08-30 that `z-ai/glm-5.3-flash` is the primary that actually
+;; completes (56 ok / 7 fail) and that the OpenRouter free router is worse.
+;; Standing on `openrouter/free` from this profile (ADR-2608272200) was the
+;; 77% failure mode: pinned free ids die in ~24h.
+;;
+;; Routing, after the gateway is configured:
+;;   z-ai/glm-5.3-flash → qwen/qwen3.8-flash → murakumo-main
+;; Identity is MURAKUMO_API_KEY (shared token). That is the operator rail —
+;; credits debit identified customers, not this token (double-charge vs
+;; OpenRouter, and a zero wallet would 402 Domain Steward).
 ;;
 ;; This is the operator's act of reviewing, which is the only place it can
 ;; happen: `resources/cloud-itonami-app.defaults.edn` ships every destination
-;; that leaves the machine as `:reviewed? false :enabled? false`, because a
-;; tenant-neutral distribution cannot consent to sending somebody's Bot
-;; transcript anywhere. This deployment can, and does, for itself.
+;; that leaves the machine as `:reviewed? false :enabled? false`.
 ;;
-;; What is being consented to, stated plainly because the second half is easy
-;; to miss: the transcript goes to OpenRouter, AND onward to whichever third
-;; party serves the free endpoint that minute — a different company on
-;; different turns. Which endpoints are offered at all is decided by this
-;; account's data policy at openrouter.ai/settings/privacy, not here.
-;;
-;; `openrouter/free` is a router, not a model. Measured 2026-08-27 it answered
-;; a tool-call request with HTTP 200 and .model =
-;; "nvidia/nemotron-3.5-lightning:free". Pinning a free model id instead would
-;; be ADR-2608270100's failure one tier down, on the fastest-moving set of ids
-;; this workspace touches — see root ADR-2608272100.
-;;
-;; The fleet stays in the catalog and stays reviewable. It is not the default
-;; any more; it is what an operator picks explicitly.
-;;
-;;   OPENROUTER_API_KEY=<key> CLOUD_ITONAMI_PROFILE=itonami clojure -M:server
-;;
-;; The key is read from the environment by `config/env-secret` at call time and
-;; never persisted. On the owner's machine it lives in the login Keychain as
-;; `gftd.openrouter`; `provider-allowed?` derives "authenticated" from the
-;; variable actually being set, so a deployment that forgets to export it gets
-;; a refused provider rather than a silent fallback.
+;;   MURAKUMO_API_KEY=<key> CLOUD_ITONAMI_PROFILE=itonami clojure -M:server
 {:auth {:allow-signup? true}
  :cloud-relay {:base-url "https://hooks.itonami.cloud"
                :access-token-env "CLOUD_ITONAMI_RELAY_ACCESS_TOKEN"}
- ;; The Bots' unattended workforce turns run on the router too, not on a
- ;; pinned free id. `:workforce :model` is what a scheduled Bot asks for; the
- ;; provider above is what serves it.
  :bots {:mail-domain "mail.itonami.cloud"
-        :workforce {:model "openrouter/free"}}
- :providers [{:id "openrouter" :enabled? true :reviewed? true}]
- :routing {:default-provider "openrouter"
-           :default-model "openrouter/free"
+        :workforce {:model "z-ai/glm-5.3-flash"}}
+ :providers [{:id "murakumo"
+              :enabled? true
+              :reviewed? true
+              :default-model "z-ai/glm-5.3-flash"
+              :max-transient-retries 2}
+             {:id "openrouter" :enabled? false}]
+ :routing {:default-provider "murakumo"
+           :default-model "z-ai/glm-5.3-flash"
            :cloud-enabled? true}}
