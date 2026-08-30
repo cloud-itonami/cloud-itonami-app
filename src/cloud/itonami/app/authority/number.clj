@@ -77,7 +77,8 @@
   answer cannot change between review and consent."
   [_configuration _session
    {:keys [op msisdn operation subject iccid records blocks now-ms
-           quarantine-days freeze-days donor recipient port-id]
+           quarantine-days freeze-days donor recipient port-id provider quote
+           assignee assignee-kind route capabilities]
     posture' :posture}]
   (when-not (contains? ops op)
     (refuse :number/op-unsupported (str "未対応の op です: " op)))
@@ -103,6 +104,13 @@
         (refuse :number/allocation-refused
                 (str "この番号は今この subject に払い出せません: " (pr-str (issue-keywords issues)))))
       {:op op :msisdn m :subject subject
+       ;; These fields do not decide whether an operator owns the number block;
+       ;; the numbering actor does. They DO decide who receives the line, where
+       ;; inbound events route and what recurring price the owner consented to,
+       ;; so they must survive into the digest material below.
+       :provider provider :quote quote
+       :assignee assignee :assignee-kind assignee-kind :route route
+       :capabilities capabilities
        :plan (mapv (comp name first) (:phone/plan (numbering/plan-allocation
                                                    {:blocks blocks :records records
                                                     :msisdn m :subject subject
@@ -183,12 +191,22 @@
   `:normal` must not be committable after a transfer moved the subject to
   `:restricted`."
   [{:keys [op msisdn subject operation from to donor recipient port-id iccid
-           quarantine-days plan posture]}]
+           quarantine-days plan posture provider quote assignee assignee-kind
+           route capabilities]}]
   (str "number/v1"
        "|op=" op
        "|posture=" posture
        "|msisdn=" msisdn
        "|subject=" subject
+       "|assignee=" assignee
+       "|assignee-kind=" assignee-kind
+       "|route=" route
+       "|capabilities=" (when capabilities (str/join "," (sort (map name capabilities))))
+       "|provider=" provider
+       "|quote=" (when quote
+                    (str (:provider quote) ":" (:upfront quote) ":"
+                         (:monthly quote) ":" (:currency quote) ":"
+                         (:observed-at quote)))
        "|operation=" operation
        "|from=" from
        "|to=" to
@@ -205,11 +223,10 @@
   a pending one. Both are injected rather than hardcoded -- this app holds no
   transport of its own.
 
-  The actor this points at (`cloud-itonami/cloud-itonami-numbering`) IS NOT
-  BUILT (ADR-2608034000). Until it is, an enabled `:number` authority has no
-  endpoint and a consented proposal is recorded as refused with
-  `:endpoint-not-configured` -- which is the honest outcome, and is why the
-  authority ships disabled."
+  The actor this points at is `cloud-itonami/cloud-itonami-numbering`. It owns
+  the second operator gate and the Telnyx actuator; this app remains only the
+  Passkey consent surface. The authority still ships disabled because enabling
+  it is a deployment decision that can acquire a recurring-cost number."
   [commit-fn status-fn]
   {:authority/key authority-key
    :authority/status status-fn

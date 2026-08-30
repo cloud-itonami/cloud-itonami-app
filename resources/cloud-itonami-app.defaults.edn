@@ -613,12 +613,11 @@
          :endpoint nil    ; cloud-itonami/cloud-itonami-esim
          :consent-token-env "ESIM_CONSENT_TOKEN"}
   ;; Numbering: allocation (払い出し), assignment, lifecycle and portability
-  ;; (ADR-2608034000). THE ACTOR DOES NOT EXIST YET -- there is no
-  ;; cloud-itonami-numbering to hand a consented proposal to, so an enabled
-  ;; :number authority with no endpoint records a refusal rather than a commit.
-  ;; That is the honest outcome and it is why this ships off like the others.
+  ;; (ADR-2608034000 + ADR-2608301200). The actor now exists at the loopback
+  ;; consent surface below. It still ships OFF: enabling it can lead, after a
+  ;; separate named-operator decision, to a recurring-cost Telnyx number order.
   :number {:enabled? false
-           :endpoint nil   ; cloud-itonami/cloud-itonami-numbering (not built)
+           :endpoint "http://127.0.0.1:1345" ; cloud-itonami/cloud-itonami-numbering
            :consent-token-env "NUMBER_CONSENT_TOKEN"
            ;; The ranges this operator was assigned. Configuration, not store: a
            ;; block that could arrive in a request would let a caller allocate
