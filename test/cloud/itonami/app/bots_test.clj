@@ -327,6 +327,31 @@
    :workspace "orgs/network-awai/cloud-itonami"
    :cadence-minutes 60})
 
+(defn- disk-maintainer-entry []
+  {:key "cloud-itonami/disk-maintainer"
+   :business {:id :cloud-itonami :name "Cloud Itonami"}
+   :role {:id :disk-maintainer :name "Disk Maintainer" :job :operations}
+   :objective "Observe disk pressure and run the bounded cleanup when needed."
+   :responsibilities ["Never delete source, worktrees or user data"]
+   :capabilities [{:capability :disk.inspect :decision :autonomous}
+                  {:capability :disk.cleanup :decision :autonomous}]
+   :workspace "orgs/cloud-itonami/cloud-itonami-app"
+   :cadence-minutes 15})
+
+(deftest workforce-disk-tools-exist-only-behind-the-two-disk-capabilities
+  (with-store
+    (fn []
+      (with-redefs [workspace-tools/admit-root (fn [path] path)]
+        (bots/provision-workforce! {} alice
+                                   (workforce-catalog [(disk-maintainer-entry)]))
+        (let [b (first (:bots (bots/overview {} alice)))
+              admitted (set (:admitted-tools b))]
+          (is (contains? admitted "disk_space_status"))
+          (is (contains? admitted "disk_space_cleanup"))
+          (is (= [{:capability "disk.inspect" :decision "autonomous" :note nil}
+                  {:capability "disk.cleanup" :decision "autonomous" :note nil}]
+                 (:capability-policy b))))))))
+
 (deftest workforce-provisioning-is-idempotent-owner-isolated-and-narrow
   (with-store
     (fn []
