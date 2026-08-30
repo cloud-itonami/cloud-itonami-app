@@ -61,10 +61,12 @@ before the date groups.
 
 ## Not done
 
-- West pin for `cloud-itonami-app` remains
-  `7b22495c19c4b736495642801587fc72a7111db6`. Default-branch tip is `bb21694`.
-  Fleet nodes still see the old pin until `west-pin-put` advances it.
-- The running LaunchAgent is not a new packaged release. CSS and JS are slurped
-  at namespace load; a restart was required after the patch.
-- A packaged release at tip, and a west pin at tip, are the next concrete
-  commands — not more menu items.
+- West pin for `cloud-itonami-app` is `ff68b230` as of root
+  `859a84094c7d469f896d1733854087584d4cdac4` (2026-08-30). The shared west
+  checkout may still sit on an older SHA until someone runs
+  `west update --fetch smart cloud-itonami-app` (named; not argument-less).
+- The running LaunchAgent is not a new packaged release. Live is a surgical
+  overlay on `81a29545a81ae9054993028f1ca05818c26d6c89`. CSS and JS are slurped
+  at namespace load; a later swap to a clean release without those four files
+  drops the menu until a package is cut from `ff68b230` or later.
+- Next concrete command is a packaged release at tip, not more menu items.
