@@ -34,6 +34,13 @@ The workforce capability token maps Domain tools to three explicit scopes:
 `domain.approved-proposal.commit`. The last name records that autonomy begins
 after, not instead of, the Passkey decision.
 
+The scheduled minimum cycle is host-owned and deterministic: list
+registrations, list proposals, and commit at most the first proposal already in
+`:approved`. It does not call inference, search for names, or create a proposal.
+This keeps renewal observation and approved actuation alive when the model
+provider is unavailable; inference remains available for bounded discovery and
+proposal preparation outside that fixed cycle.
+
 ## Consequences
 
 - Domain portfolio observation and proposal preparation run on the existing

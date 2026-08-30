@@ -368,6 +368,58 @@
           (is (= :domain.approved-proposal.commit
                  (get bot-authority/tool->capability "domain_commit"))))))))
 
+(deftest resident-domain-steward-observes-and-commits-approved-without-a-model
+  (with-store
+    (fn []
+      (with-redefs [workspace-tools/admit-root (fn [path] path)
+                    domain-tools/available? (constantly true)]
+        (bots/provision-workforce! {} alice
+                                   (workforce-catalog [(domain-steward-entry)]))
+        (let [due "2026-08-15T00:00:00Z"
+              now "2026-08-16T00:00:00Z"
+              calls (atom [])]
+          (swap! store/state update-in [:bots :workforce-jobs]
+                 (fn [jobs]
+                   (into {} (map (fn [[id job]]
+                                   [id (assoc job :workforce.job/next-run-at due)]))
+                         jobs)))
+          (with-redefs [gc/refuse-admission? (constantly nil)
+                        domain-tools/call-tool
+                        (fn [_configuration tool input]
+                          (swap! calls conj [tool input])
+                          (case tool
+                            "domain_registrations"
+                            {:success true
+                             :result [{:name "renewal-risk.example"
+                                       :auto_renew false}]}
+                            "domain_proposals"
+                            {:proposals [{:id "proposal-approved"
+                                          :status :approved}
+                                         {:id "proposal-pending"
+                                          :status :awaiting-passkey}]}
+                            "domain_commit"
+                            {:id (:proposal_id input) :status :committed}))
+                        bots/submit-goal!
+                        (fn [& _]
+                          (throw (ex-info "model path must not run"
+                                          {:type :test/model-path-ran})))]
+            (let [result (bots/fire-due-workforce!
+                          {:bots {:workforce {:max-starts-per-tick 1
+                                             :max-active 1}}}
+                          alice now)
+                  bot-id (:workforce.job/bot
+                          (first (vals (get-in @store/state
+                                               [:bots :workforce-jobs]))))
+                  turn (bots/latest-turn alice bot-id)]
+              (is (= ["cloud-itonami/domain-steward"] (:started result)))
+              (is (= [["domain_registrations" {}]
+                      ["domain_proposals" {}]
+                      ["domain_commit" {:proposal_id "proposal-approved"}]]
+                     @calls))
+              (is (= "domain_commit" (:tool turn)))
+              (is (str/includes? (:result turn) "renewal-risk.example"))
+              (is (str/includes? (:result turn) "proposal-approved")))))))))
+
 (deftest workforce-disk-tools-exist-only-behind-the-two-disk-capabilities
   (with-store
     (fn []
