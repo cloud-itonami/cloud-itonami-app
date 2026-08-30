@@ -40,6 +40,21 @@
 (def ^:private names (into #{} (map :name tools)))
 (defn tool? [name] (contains? names name))
 
+(def ^:private writes
+  #{"domain_registration_review" "domain_auto_renew_review"
+    "domain_dns_change_review" "domain_commit" "domain_reject"})
+
+(defn write-tool? [name] (contains? writes (str name)))
+
+(defn describe [tool-name args]
+  (case (str tool-name)
+    "domain_registration_review" (str (:domain args) " の購入提案を現在価格から作成します。購入はまだ行いません。")
+    "domain_auto_renew_review" (str (:domain args) " の自動更新を " (if (:enabled args) "有効" "無効") "にする提案を作成します。")
+    "domain_dns_change_review" (str "zone " (:zone_id args) " の DNS " (:operation args) " 提案を作成します。")
+    "domain_commit" (str "Passkey 承認済み proposal " (:proposal_id args) " だけを実行します。未承認なら拒否されます。")
+    "domain_reject" (str "proposal " (:proposal_id args) " を却下済みとして記録します。")
+    "Cloudflare の Domain / DNS 状態を読みます。"))
+
 (defn- session [configuration]
   (when-let [token (agent-session/session-token configuration)]
     (let [resolved (identity/session token)]

@@ -17,6 +17,7 @@
             [cloud.itonami.app.config :as config]
             [cloud.itonami.app.desktop :as desktop]
             [cloud.itonami.app.disk-space :as disk-space]
+            [cloud.itonami.app.domain-tools :as domain-tools]
             [cloud.itonami.app.gc :as gc]
             [cloud.itonami.app.identity :as identity]
             [cloud.itonami.app.policy :as policy]
@@ -339,6 +340,33 @@
                   {:capability :disk.cleanup :decision :autonomous}]
    :workspace "orgs/cloud-itonami/cloud-itonami-app"
    :cadence-minutes 15})
+
+(defn- domain-steward-entry []
+  {:key "cloud-itonami/domain-steward"
+   :business {:id :cloud-itonami :name "Cloud Itonami"}
+   :role {:id :domain-steward :name "Domain Steward" :job :operations}
+   :objective "Inspect the domain portfolio and advance one exact governed proposal."
+   :responsibilities ["Never bypass Passkey"]
+   :capabilities [{:capability :domain.read :decision :autonomous}
+                  {:capability :domain.proposal.create :decision :autonomous}
+                  {:capability :domain.approved-proposal.commit :decision :autonomous}]
+   :workspace "orgs/cloud-itonami/cloud-itonami-app"
+   :cadence-minutes 15})
+
+(deftest workforce-domain-tools-are-isolated-and-capability-mapped
+  (with-store
+    (fn []
+      (with-redefs [workspace-tools/admit-root (fn [path] path)
+                    domain-tools/available? (constantly true)]
+        (bots/provision-workforce! {} alice
+                                   (workforce-catalog [(domain-steward-entry)]))
+        (let [b (first (:bots (bots/overview {} alice)))
+              admitted (set (:admitted-tools b))]
+          (is (= (set (map :name domain-tools/tools)) admitted))
+          (is (not (contains? admitted "workspace_write_file")))
+          (is (not (contains? admitted "wallet_address")))
+          (is (= :domain.approved-proposal.commit
+                 (get bot-authority/tool->capability "domain_commit"))))))))
 
 (deftest workforce-disk-tools-exist-only-behind-the-two-disk-capabilities
   (with-store

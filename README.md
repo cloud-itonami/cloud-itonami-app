@@ -791,6 +791,13 @@ the eight startup businesses (`cloud-itonami`, `nexus-x402`, `club-shinshi`,
 product manager, engineer, QA, designer, sales, marketer, supporter,
 financial chief, and the explicitly declared kaizen roles where applicable.
 
+Cloud Itonami also provisions a dedicated `Domain Steward`. Its concrete tool
+surface is only the local Domain Authority: catalog/price/registration/DNS
+reads and exact proposal operations. It inherits no repository, Commerce,
+Wallet or browser tools. Standing omakase may let it create proposals and retry
+commits, but the authority host still refuses registration billing, auto-renew
+changes and DNS mutation until a human Passkey approved that exact proposal.
+
 Each Bot carries its responsibility and capability policy, but those fields do
 not grant execution. The concrete grant is deliberately narrower: one admitted
 business Git repository, no connector, browser, virtual shell, or omakase
