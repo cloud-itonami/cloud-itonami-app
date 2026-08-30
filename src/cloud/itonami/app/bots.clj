@@ -2143,6 +2143,10 @@
       inspect? (conj (first disk-space/tool-definitions))
       cleanup? (conj (second disk-space/tool-definitions)))))
 
+(defn- disk-maintenance-bot? [b]
+  (or (autonomous-capability? b :disk.inspect)
+      (autonomous-capability? b :disk.cleanup)))
+
 (defn- local-tool-definitions
   "Built-in tools this Bot may run without an external connector grant.
 
@@ -2152,13 +2156,19 @@
   model and in Settings, but omitted from the set checked immediately before
   execution.  Computer Use and Wallet had the same latent split."
   [configuration b]
-  (vec (concat commerce/tool-definitions
-               (browser-tools configuration b)
-               (computer-tools configuration b)
-               (peer-tools b)
-               (coding-tools b)
-               (disk-space-tools b)
-               (wallet/bot-tool-definitions (:bot/id b)))))
+  (if (disk-maintenance-bot? b)
+    ;; This is a host-maintenance identity, not a coding or commerce identity.
+    ;; Workforce provisioning currently marks every role coding-capable and
+    ;; the application has global local tools; carrying either into this Bot
+    ;; would make its concrete ceiling wider than the two capabilities the
+    ;; registry reviewed.
+    (vec (disk-space-tools b))
+    (vec (concat commerce/tool-definitions
+                 (browser-tools configuration b)
+                 (computer-tools configuration b)
+                 (peer-tools b)
+                 (coding-tools b)
+                 (wallet/bot-tool-definitions (:bot/id b))))))
 
 (defn- tool-definitions
   "The tools the Bot's grant REACHES, as the model sees them.

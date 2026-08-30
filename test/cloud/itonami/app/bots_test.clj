@@ -346,8 +346,8 @@
                                    (workforce-catalog [(disk-maintainer-entry)]))
         (let [b (first (:bots (bots/overview {} alice)))
               admitted (set (:admitted-tools b))]
-          (is (contains? admitted "disk_space_status"))
-          (is (contains? admitted "disk_space_cleanup"))
+          (is (= #{"disk_space_status" "disk_space_cleanup"} admitted)
+              "the host maintainer does not inherit coding, commerce or Wallet tools")
           (is (= [{:capability "disk.inspect" :decision "autonomous" :note nil}
                   {:capability "disk.cleanup" :decision "autonomous" :note nil}]
                  (:capability-policy b))))))))
