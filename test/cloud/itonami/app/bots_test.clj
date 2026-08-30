@@ -721,6 +721,56 @@
                       :continuation-summary "catalog repository is not admitted"}
                      (nth (first @submitted) 3))))))))))
 
+(deftest a-never-submitted-workforce-job-runs-before-an-older-retry
+  ;; Measured 2026-08-30: the queue had ten never-submitted jobs, including
+  ;; all eight Numbering roles, behind a provider-failure backlog.  The retry
+  ;; jobs had older :next-run-at values, so sorting by due time alone could
+  ;; keep a newly installed business unobserved for hours.
+  (with-store
+    (fn []
+      (with-redefs [workspace-tools/admit-root (fn [path] path)]
+        (let [new-role (-> (engineer-entry)
+                           (assoc :key "cloud-itonami/new-role")
+                           (assoc :role {:id :qa :name "New role" :job :qa}))
+              submitted (atom [])
+              now "2026-08-30T11:00:00Z"]
+          (bots/provision-workforce!
+           {} alice (workforce-catalog [(engineer-entry) new-role]))
+          (swap! store/state update-in [:bots :workforce-jobs]
+                 (fn [jobs]
+                   (into {}
+                         (map (fn [[id job]]
+                                [id (if (= "cloud-itonami/engineer"
+                                           (:workforce.job/key job))
+                                      (assoc job
+                                             :workforce.job/next-run-at
+                                             "2026-08-01T00:00:00Z"
+                                             :workforce.job/last-submitted-at
+                                             "2026-08-01T00:00:00Z")
+                                      (assoc job
+                                             :workforce.job/next-run-at
+                                             "2026-08-29T00:00:00Z"))]))
+                         jobs)))
+          (with-redefs [bots/submit-goal!
+                        (fn [_ _ bot-id _ run-id _]
+                          (swap! submitted conj bot-id)
+                          {:id run-id})]
+            (let [result (bots/fire-due-workforce!
+                          {:bots {:workforce {:max-starts-per-tick 1
+                                              :max-active 1}}}
+                          alice now)
+                  started-id (first @submitted)]
+              (is (= ["cloud-itonami/new-role"] (:started result)))
+              (is (= "cloud-itonami/new-role"
+                     (get-in @store/state
+                             [:bots :bots started-id :bot/workforce-key])))
+              (is (= "2026-08-01T00:00:00Z"
+                     (->> (vals (get-in @store/state [:bots :workforce-jobs]))
+                          (some #(when (= "cloud-itonami/engineer"
+                                          (:workforce.job/key %))
+                                   (:workforce.job/next-run-at %)))))
+                  "the older retry remains due for a later tick"))))))))
+
 (deftest disk-pressure-admits-only-the-bounded-disk-relief-job
   (with-store
     (fn []
