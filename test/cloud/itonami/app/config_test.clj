@@ -233,6 +233,8 @@
     (is (= {"qwen3.8-27b-throughput-5090" "murakumo-main"
             "qwen3.8-27b-fastmtp-aggressive" "murakumo-main"}
            (:model-fallbacks provider)))
+    (is (= #{"murakumo-edge"} (:no-fallback-models provider))
+        "the resident edge route stays literal even if an old overlay names a fallback")
     (is (= 65536
            (get-in provider [:context-window-tokens
                              "qwen3.8-27b-throughput-5090"])))

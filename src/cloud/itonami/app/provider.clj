@@ -713,7 +713,15 @@
              :requested-model requested :fallback? false))
     (catch Exception primary
       (let [error-type (:type (ex-data primary))
-            fallback (get (:model-fallbacks provider) requested)]
+            ;; A model can be an intentionally literal operational route. In
+            ;; that case a fallback is not resilience: it turns one failed SLO
+            ;; probe into load on a second plane and makes the result stop
+            ;; measuring the route the caller selected. Keep this check after
+            ;; configuration overlays have merged so an old operator override
+            ;; cannot silently reintroduce the cascading failure.
+            fallback (when-not (contains? (set (:no-fallback-models provider))
+                                          requested)
+                       (get (:model-fallbacks provider) requested))]
         (if (and fallback
                  (contains? fallback-error-types error-type)
                  (not (:stream-emitted? (ex-data primary))))

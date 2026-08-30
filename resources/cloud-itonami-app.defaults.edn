@@ -175,6 +175,12 @@
    ;; retry the alias. The result stays labelled as the model that served.
    :model-fallbacks {"qwen3.8-27b-throughput-5090" "murakumo-main"
                     "qwen3.8-27b-fastmtp-aggressive" "murakumo-main"}
+   ;; The resident workforce is the murakumo-edge SLO workload. Falling it
+   ;; through to murakumo-main converts one unavailable edge into two occupied
+   ;; inference planes, hides which route failed, and can amplify an edge
+   ;; outage into main-pool timeouts. Operator overlays may still carry an old
+   ;; fallback entry; the provider honours this deny-list after overlays merge.
+   :no-fallback-models #{"murakumo-edge"}
    ;; The stable alias currently reports 262,144, the Community RTX 5090 Pod
    ;; reports 65,536, and the FastMTP deployment reports 32,768. Keep this map
    ;; beside the alias: repointing `murakumo-main` must update its model metadata
