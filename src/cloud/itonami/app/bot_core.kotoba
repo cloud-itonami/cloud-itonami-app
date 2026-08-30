@@ -122,14 +122,34 @@
              [:record :bot/request
               [[:asked-at :i64]
                [:current :i64]
-               [:answered :bool]]]})
+               [:answered :bool]]]
+             ;; What one model turn actually came back with.
+             ;;
+             ;; `has-content` is prose the person could read; `tool-calls` is
+             ;; how many actions it proposed. A turn with neither did nothing,
+             ;; and `empty-turns` counts how many times in a row that has
+             ;; happened inside this run.
+             :bot/answer
+             [:record :bot/answer
+              [[:has-content :bool]
+               [:tool-calls :i64]
+               [:empty-turns :i64]
+               [:nudge-limit :i64]]]
+             ;; How many times running the model has proposed the SAME action
+             ;; with the same arguments. `identical-consecutive` counts the
+             ;; current call, so the first proposal of anything is 1.
+             :bot/repetition
+             [:record :bot/repetition
+              [[:identical-consecutive :i64]
+               [:limit :i64]]]})
   (:export [status-disabled status-idle status-working
             status-waiting-connection status-waiting-approval
             account-connect account-use account-ask
             request-open request-answered request-superseded
             write-effect? tool-admitted? may-approve? grant-widens?
             usable-accounts account-disposition status
-            request-standing outstanding? main]))
+            request-standing outstanding?
+            answer-empty? may-nudge? repetition-exhausted? main]))
 
 (defn status-disabled [] :i64 0)
 (defn status-idle [] :i64 1)
@@ -269,6 +289,47 @@
   ;; one question `status` needs, so that a superseded card stops making a Bot
   ;; say `waiting-approval` for the rest of the conversation.
   (= (request-standing r) (request-open)))
+
+;; ── when a turn has stopped being a turn ─────────────────────────────
+;;
+;; Two ways a bounded loop keeps spending without getting anywhere, and the
+;; budget catches neither in a way anybody can act on. Both end the run either
+;; way; what these decide is whether it ends SAYING WHAT HAPPENED.
+
+(defn answer-empty? [a [:ref :bot/answer]] :bool
+  ;; No prose and no action. Without this the host records such a turn as
+  ;; COMPLETED and appends an empty message: a run that did nothing and a run
+  ;; that finished are then the same row, in the audit trail and in the picker
+  ;; preview, and no later reader can separate them.
+  ;;
+  ;; `< 1` rather than `= 0`: a negative count is not something the host can
+  ;; produce, and treating it as "has calls" would turn a host bug into a turn
+  ;; that appears to have acted.
+  (and (not (record-get a :has-content))
+       (< (record-get a :tool-calls) 1)))
+
+(defn may-nudge? [a [:ref :bot/answer]] :bool
+  ;; An empty turn is worth one more ask before it is worth a refusal — a model
+  ;; can drop a response for reasons that do not repeat, and failing on the
+  ;; first one turns a hiccup into a visible error the person has to act on.
+  ;;
+  ;; But only worth the ones the limit allows. Nudging an empty answer forever
+  ;; is the same spend as the budget exhausting, arriving at the same place
+  ;; with a worse story about how.
+  (if (answer-empty? a)
+    (< (record-get a :empty-turns) (record-get a :nudge-limit))
+    false))
+
+(defn repetition-exhausted? [r [:ref :bot/repetition]] :bool
+  ;; The same action, with the same arguments, proposed until something stops
+  ;; it. The tool budget does stop it — after spending the whole budget, and
+  ;; then reporting a budget failure, which sends the person to raise a limit
+  ;; that was never the problem.
+  ;;
+  ;; `not <` rather than `>`: reaching the limit is the limit, and off by one
+  ;; here is a guard that allows exactly one more of the thing it exists to
+  ;; stop.
+  (not (< (record-get r :identical-consecutive) (record-get r :limit))))
 
 (defn main [] :i64
   ;; Sentinel for the wasm host contract, not a battery. The assertions live in

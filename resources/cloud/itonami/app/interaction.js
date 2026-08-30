@@ -7918,6 +7918,216 @@
       permissionDrag.addEventListener('pointerup', stop);
       permissionDrag.addEventListener('pointercancel', stop);
     });
+    // ── Model routing ────────────────────────────────────────────────
+    // Which model answers for which task. Three facts are on the screen at
+    // once because choosing needs all three: the scope, what that scope
+    // currently resolves to, and whether the row is an assignment somebody
+    // made or the absence of one. The last distinction is the reason the
+    // auxiliary rows say 'main' rather than repeating the main model's name:
+    // a row showing the same model as main, with no way to tell whether that
+    // was chosen, is the state this surface exists to end.
+    const routingState = {tasks:[], assignments:[], scope:'default',
+                          task:'bot', defaultScope:'default'};
+    const routingAssignment = (task, scope) =>
+      routingState.assignments.find(
+        (a) => a.task === task && a.scope === scope) || null;
+    // A Bot's own pair is on the Bot, not in `assignments` -- the host keeps
+    // one copy and this reads it from the same place the rail does.
+    const routingBotPair = (botId) => {
+      const bot = botsState.bots.find((b) => b.id === botId);
+      if (!bot) return null;
+      // `own-*`, not `provider-id`/`model`: the latter are what the Bot runs
+      // on after three fallbacks, so reading them here would mark every chip
+      // as assigned and the marks would say nothing.
+      const provider = bot['own-provider-id'] || null;
+      const model = bot['own-model'] || null;
+      return provider && model ? {'provider-id':provider, model} : null;
+    };
+    const routingCurrentPair = () =>
+      routingState.scope === routingState.defaultScope
+        ? routingAssignment('bot', routingState.defaultScope)
+        : routingBotPair(routingState.scope);
+    const renderRoutingScopes = () => {
+      const host = $('#model-routing-scopes');
+      if (!host) return;
+      host.replaceChildren();
+      const rows = [{id:routingState.defaultScope, label:'既定'}].concat(
+        botsRecentFirst(botsState.bots).map((b) => ({id:b.id, label:b.name})));
+      rows.forEach((row) => {
+        const chip = make('button', 'routing-scope');
+        chip.type = 'button';
+        chip.setAttribute('role', 'radio');
+        chip.setAttribute('aria-checked', String(row.id === routingState.scope));
+        chip.append(make('span', null, row.label));
+        const assigned = row.id === routingState.defaultScope
+          ? Boolean(routingAssignment('bot', routingState.defaultScope))
+          : Boolean(routingBotPair(row.id));
+        if (assigned) chip.append(make('span', 'routing-scope__mark', '●'));
+        chip.setAttribute('aria-label',
+          assigned ? `${row.label}（割り当て済み）` : `${row.label}（既定に従う）`);
+        chip.addEventListener('click', () => {
+          routingState.scope = row.id;
+          renderRouting();
+        });
+        host.append(chip);
+      });
+    };
+    const renderRoutingPicker = () => {
+      const providerSelect = $('#model-routing-provider');
+      const modelSelect = $('#model-routing-model');
+      if (!providerSelect || !modelSelect) return;
+      const current = routingCurrentPair();
+      const providers = botsState.modelProviders || [];
+      providerSelect.replaceChildren();
+      providers.forEach((provider) => {
+        const option = make('option', null, provider.name || provider.id);
+        option.value = provider.id;
+        providerSelect.append(option);
+      });
+      if (!providers.length) {
+        const option = make('option', null, '許可された provider がありません');
+        option.value = '';
+        providerSelect.append(option);
+      }
+      if (current && current['provider-id']) {
+        providerSelect.value = current['provider-id'];
+      }
+      const chosen = providers.find((p) => p.id === providerSelect.value)
+        || providers[0];
+      modelSelect.replaceChildren();
+      (chosen?.models || []).forEach((model) => {
+        const option = make('option', null, model);
+        option.value = model;
+        modelSelect.append(option);
+      });
+      if (!(chosen?.models || []).length) {
+        const option = make('option', null, 'model が申告されていません');
+        option.value = '';
+        modelSelect.append(option);
+      }
+      if (current && current.model
+          && (chosen?.models || []).includes(current.model)) {
+        modelSelect.value = current.model;
+      }
+      $('#model-routing-clear').disabled = !current;
+      $('#model-routing-scope-note').textContent = current
+        ? (routingState.scope === routingState.defaultScope
+           ? '自分の model を持たない Bot すべてがこの割り当てに従います。'
+           : 'この Bot だけがこの割り当てに従います。外すと既定に戻ります。')
+        : (routingState.scope === routingState.defaultScope
+           ? 'まだ既定はありません。いまは provider が申告している model で動いています。'
+           : 'この Bot は既定に従っています。');
+    };
+    const renderRoutingAux = () => {
+      const host = $('#model-routing-aux');
+      if (!host) return;
+      host.replaceChildren();
+      const auxiliary = routingState.tasks.filter((t) => !t['main?']);
+      auxiliary.forEach((t) => {
+        const assignment = routingAssignment(t.task, routingState.defaultScope);
+        const row = make('li', 'routing-aux__row');
+        const copy = make('div', 'routing-aux__copy');
+        copy.append(make('span', null, t.label));
+        copy.append(make('span', 'routing-aux__hint', t.hint || ''));
+        const state = make('span', 'routing-aux__state',
+          assignment ? `${assignment['provider-id']} / ${assignment.model}` : 'main と同じ');
+        state.dataset.assigned = String(Boolean(assignment));
+        const assign = make('button', 'tool-button', assignment ? '変更' : '割り当てる');
+        assign.type = 'button';
+        assign.addEventListener('click', () => applyRouting(t.task));
+        row.append(copy, state, assign);
+        if (assignment) {
+          const clear = make('button', 'tool-button', 'main に戻す');
+          clear.type = 'button';
+          clear.addEventListener('click', () => clearRouting(t.task));
+          row.append(clear);
+        }
+        host.append(row);
+      });
+      if (!auxiliary.length) {
+        host.append(make('li', 'routing-aux__row',
+          'この application はいま Bot のターン以外に model を呼んでいません。'));
+      }
+      $('#model-routing-reset-aux').disabled =
+        !auxiliary.some((t) => routingAssignment(t.task, routingState.defaultScope));
+    };
+    const renderRouting = () => {
+      renderRoutingScopes();
+      renderRoutingPicker();
+      renderRoutingAux();
+    };
+    const applyRoutingPayload = (data) => {
+      routingState.tasks = data.tasks || routingState.tasks;
+      routingState.assignments = data.assignments || [];
+      routingState.defaultScope = data['default-scope'] || 'default';
+      renderRouting();
+    };
+    const loadModelRouting = async () => {
+      const response = await fetch('/api/bots/model-routing');
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data?.error?.message || 'model の割り当てを読めませんでした。');
+      }
+      applyRoutingPayload(data);
+      return data;
+    };
+    const applyRouting = async (task) => {
+      const status = $('#model-routing-status');
+      const providerId = $('#model-routing-provider').value;
+      const model = $('#model-routing-model').value;
+      if (!providerId || !model) {
+        status.textContent = 'provider と model の両方を選んでください。';
+        return;
+      }
+      // An auxiliary task is always deployment-wide. Sending the chip's scope
+      // would be sending a row that can never match, and the host refuses it --
+      // better not to build the request than to explain the refusal.
+      const scope = task === 'bot' ? routingState.scope : routingState.defaultScope;
+      const button = $('#model-routing-apply');
+      button.disabled = true;
+      try {
+        applyRoutingPayload(await postJSON('/api/bots/model-routing', {
+          task, scope, 'provider-id':providerId, model
+        }, true));
+        status.textContent = '割り当てました。';
+        await loadBots({keepSelection:true});
+        renderRouting();
+      } catch (error) { status.textContent = error.message; }
+      finally { button.disabled = false; }
+    };
+    const clearRouting = async (task) => {
+      const status = $('#model-routing-status');
+      const scope = task === 'bot' ? routingState.scope : routingState.defaultScope;
+      try {
+        applyRoutingPayload(await postJSON('/api/bots/model-routing/clear',
+                                           {task, scope}, true));
+        status.textContent = '割り当てを外しました。';
+        await loadBots({keepSelection:true});
+        renderRouting();
+      } catch (error) { status.textContent = error.message; }
+    };
+    if ($('#model-routing-apply')) {
+      $('#model-routing-apply').addEventListener(
+        'click', () => applyRouting(routingState.task));
+      $('#model-routing-clear').addEventListener(
+        'click', () => clearRouting(routingState.task));
+      $('#model-routing-provider').addEventListener('change', renderRoutingPicker);
+      $('#model-routing-reset-aux').addEventListener('click', async () => {
+        const button = $('#model-routing-reset-aux');
+        button.disabled = true;
+        try {
+          for (const t of routingState.tasks.filter((x) => !x['main?'])) {
+            if (routingAssignment(t.task, routingState.defaultScope)) {
+              applyRoutingPayload(await postJSON('/api/bots/model-routing/clear',
+                {task:t.task, scope:routingState.defaultScope}, true));
+            }
+          }
+          $('#model-routing-status').textContent =
+            '補助タスクをすべて main に戻しました。';
+        } catch (error) { $('#model-routing-status').textContent = error.message; }
+        finally { renderRouting(); }
+      });
+    }
     const loadAgentMachine = async () => {
       const response = await fetch('/api/bots/machine');
       const data = await response.json();
@@ -11315,6 +11525,7 @@
         botsState.computerAvailable = Boolean(data['computer-available?']);
         botsState.slo = data.slo || null;
         botsState.loaded = true;
+        if (data['model-routing']) applyRoutingPayload(data['model-routing']);
         renderBotsSlo();
         if (!$('#bots-workspace').value && botsState.defaultWorkspace) {
           $('#bots-workspace').value = botsState.defaultWorkspace;
@@ -12513,6 +12724,13 @@
       if (currentView === 'settings') {
         loadChronicle().catch((error) => { $('#memory-status').textContent = error.message; });
         loadAgentMachine().catch((error) => { $('#agent-machine-status').textContent = error.message; });
+        // The scope chips are one row per Bot, so the Bots have to be loaded
+        // before the routing screen can draw itself -- somebody who opens
+        // Settings first would otherwise see 「既定」 alone and read it as the
+        // only scope there is.
+        (botsState.loaded ? Promise.resolve() : loadBots({keepSelection:true}))
+          .then(loadModelRouting)
+          .catch((error) => { $('#model-routing-status').textContent = error.message; });
       }
     };
     $('#worker-form').addEventListener('submit', async (event) => {

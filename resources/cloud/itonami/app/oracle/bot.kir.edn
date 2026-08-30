@@ -342,6 +342,90 @@
    :effects #{},
    :body (= (request-standing r) (request-open)),
    :param-types [[:ref :bot/request]]}
+  {:name answer-empty?,
+   :params [a],
+   :result :bool,
+   :effects #{},
+   :body
+   (let
+    [__kotoba_and_2
+     (if
+      (record-get
+       [:record
+        :bot/answer
+        [[:has-content :bool]
+         [:tool-calls :i64]
+         [:empty-turns :i64]
+         [:nudge-limit :i64]]]
+       a
+       :has-content)
+      false
+      true)]
+    (if
+     __kotoba_and_2
+     (<
+      (record-get
+       [:record
+        :bot/answer
+        [[:has-content :bool]
+         [:tool-calls :i64]
+         [:empty-turns :i64]
+         [:nudge-limit :i64]]]
+       a
+       :tool-calls)
+      1)
+     __kotoba_and_2)),
+   :param-types [[:ref :bot/answer]]}
+  {:name may-nudge?,
+   :params [a],
+   :result :bool,
+   :effects #{},
+   :body
+   (if
+    (answer-empty? a)
+    (<
+     (record-get
+      [:record
+       :bot/answer
+       [[:has-content :bool]
+        [:tool-calls :i64]
+        [:empty-turns :i64]
+        [:nudge-limit :i64]]]
+      a
+      :empty-turns)
+     (record-get
+      [:record
+       :bot/answer
+       [[:has-content :bool]
+        [:tool-calls :i64]
+        [:empty-turns :i64]
+        [:nudge-limit :i64]]]
+      a
+      :nudge-limit))
+    false),
+   :param-types [[:ref :bot/answer]]}
+  {:name repetition-exhausted?,
+   :params [r],
+   :result :bool,
+   :effects #{},
+   :body
+   (if
+    (<
+     (record-get
+      [:record
+       :bot/repetition
+       [[:identical-consecutive :i64] [:limit :i64]]]
+      r
+      :identical-consecutive)
+     (record-get
+      [:record
+       :bot/repetition
+       [[:identical-consecutive :i64] [:limit :i64]]]
+      r
+      :limit))
+    false
+    true),
+   :param-types [[:ref :bot/repetition]]}
   {:name main,
    :params [],
    :result :i64,
@@ -351,15 +435,19 @@
  :oracle-value 0,
  :schema-identities
  #:bot{:accounts
-       "cd1773401a0f1b734117dfc69941ef8d1c075347c92130c79b01ee009f0253c9",
+       "836f47f5774a2f4c168dc332536427424b4fffba54df7aef410fba44b4ce844e",
        :admission
-       "0abb0682aef35cf679811bf17ab46f2321f7bb7d3369b20f8b34cb2b11cb5776",
+       "79ad7dd783b223f807c554ec1bddd0c4818ec0cb26a83669097c830060409f11",
+       :answer
+       "adfa1fb4186a7f8ad17e6936438a1e191e8c5a54d1cbde0b0b3075fda14a4046",
        :decision
-       "36f241d511e60fd44793d81dc64a9d446a137cc9974a17eeefdb32bb88106a8a",
+       "947451bef9d05e38eef9cb51e2247f33507de69a426cebec7a6ba85bfb3383a6",
        :presence
-       "1a47c36c1e673a36205a7ce1279d36d3605484855ff0025355cb462aa82a2782",
+       "9efcd04614892f87c0c0cb977b5127d61d359afa436d535e0278ae994f63404c",
+       :repetition
+       "abbbac25fb06c4c798ca6485d9c2463c54ec7526f7f0e7d11f3f361e9907d8c0",
        :request
-       "f238908b6d4b00c2d62cc58aa0118e8e46cd538b3d25b6539d6232639b12a4bb"},
+       "2876bf2bb5f324d2401452fcce4c0f2492635083286a1c763cf3761d6d0cff56"},
  :exports
  [status-disabled
   status-idle
@@ -381,6 +469,9 @@
   status
   request-standing
   outstanding?
+  answer-empty?
+  may-nudge?
+  repetition-exhausted?
   main],
  :schemas
  #:bot{:admission
@@ -414,7 +505,18 @@
        :request
        [:record
         :bot/request
-        [[:asked-at :i64] [:current :i64] [:answered :bool]]]},
+        [[:asked-at :i64] [:current :i64] [:answered :bool]]],
+       :answer
+       [:record
+        :bot/answer
+        [[:has-content :bool]
+         [:tool-calls :i64]
+         [:empty-turns :i64]
+         [:nudge-limit :i64]]],
+       :repetition
+       [:record
+        :bot/repetition
+        [[:identical-consecutive :i64] [:limit :i64]]]},
  :effects #{},
  :blocks [{:id 0, :instructions [[:const.i64 0] [:return]]}],
  :entry main}

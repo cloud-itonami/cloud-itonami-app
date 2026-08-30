@@ -483,7 +483,7 @@
                      ".bots-rail__list{display:flex;flex-direction:column"))
   (is (not (str/includes? web/app-css
                           ".bots-rail__list{display:flex;gap:.375rem;overflow-x:auto"))
-      "the phone picker must not become a sideways strip"))
+      "the phone picker must not become a sideways strip")
   (is (str/includes? (web/page-html {}) "id=\"bots-filter\""))
   (is (str/includes? (web/page-html {}) "id=\"bots-mobile-context\""))
   (is (not (str/includes? web/app-css ".bots-rail{display:none}")))

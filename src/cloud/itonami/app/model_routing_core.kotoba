@@ -1,0 +1,142 @@
+;; MODEL ROUTING's DECISION CORE — which model answers, and who said so.
+;;
+;; This application calls a model from four places, and they are not the same
+;; work: a Bot's own turn, a room where Bots answer each other, the loop that
+;; drives this machine, and the plain chat surface. Until now all four read one
+;; number out of configuration, so "use the cheap model for the room" was not a
+;; sentence anybody could say. A ROUTING ASSIGNMENT is that sentence: a named
+;; task, a provider, a model, and a scope saying who it applies to.
+;;
+;; ## Two scopes, and why there is no third
+;;
+;; An assignment applies to ONE Bot or to EVERY Bot without one of its own.
+;; There is no group, no tag, no pattern. A pattern would be a fifth place a
+;; model gets chosen from, and the failure it produces is the one this file
+;; exists to prevent: somebody reads the Bot's row, sees the default, and is
+;; wrong, because a rule they were not looking at matched the Bot's name.
+;; Two scopes can be resolved by looking at two things.
+;;
+;; ## The rule that is actually load-bearing
+;;
+;; `auxiliary-route` REFUSES an override whose provider this deployment will
+;; not admit. It does not quietly fall back to the main model, and that is the
+;; whole reason this decision is written down rather than left to an `or`.
+;;
+;; Falling back reads as prudence and is not. Somebody assigns a free model to
+;; the room task precisely BECAUSE it is cheap; if the provider turns out to be
+;; unreviewed, or has no credential, or the deployment forbids egress, then a
+;; silent fallback runs every room round on the main model — the expensive one
+;; — while the screen still says the free one. The bill is real, the belief is
+;; wrong, and nothing in the output distinguishes the two. A refusal is worse
+;; to receive and better to have: it names the provider and stops.
+;;
+;; Note which direction this cuts. An assignment is a PREFERENCE and never a
+;; way around admission — `policy.kotoba` still decides whether a destination
+;; may be reached at all, and it decides first. This file only says what to do
+;; when the preference and the admission disagree, and the answer is never
+;; "pick something else and say nothing".
+;;
+;; ## Half an assignment is not an assignment
+;;
+;; `assignment-complete?` requires both a provider and a model. A screen that
+;; accepted a provider alone would leave the previous model in place under a
+;; new destination — a model id that means one thing at one vendor and nothing,
+;; or something else, at the next. The pair is the unit.
+;;
+;; ## Why it is written this narrowly
+;;
+;; Same native word-typed slice as `bot_core.kotoba` and `routine_core.kotoba`:
+;; `:bool` and `:i64` scalars, sealed all-scalar records, `and`, `if`, `not`.
+;; Facts arrive as records because a bare `:bool` parameter is a backend gap
+;; (compiler ADR-0219).
+;;
+;; Nothing here names a provider, a model, a vendor or a price. Those are the
+;; host's, and they change; the four judgements below do not.
+;;
+;; Parity: test/cloud/itonami/app/model_routing_kotoba_parity_test.clj
+
+(ns model-routing-core
+  (:schemas {;; What the host found when it looked for an assignment covering
+             ;; one Bot for one task.
+             ;;
+             ;; `bot-assigned` is an assignment naming THIS Bot. `default-
+             ;; assigned` is one naming every Bot without its own. Both are
+             ;; already known to be complete — `assignment-complete?` is asked
+             ;; when the assignment is written, not when it is read, so a
+             ;; half-filled row never reaches storage and never reaches here.
+             :routing/scope
+             [:record :routing/scope
+              [[:bot-assigned :bool]
+               [:default-assigned :bool]]]
+             ;; What the host found for one AUXILIARY task — a task that is not
+             ;; the Bot's own turn.
+             ;;
+             ;; `override-admitted` is `policy.kotoba`'s answer about the
+             ;; provider the override names, asked fresh: review can be
+             ;; withdrawn, a credential can be unexported, and egress can be
+             ;; switched off, all without anybody touching the assignment.
+             :routing/auxiliary
+             [:record :routing/auxiliary
+              [[:has-override :bool]
+               [:override-admitted :bool]]]
+             ;; One assignment as a screen submitted it.
+             :routing/submitted
+             [:record :routing/submitted
+              [[:has-provider :bool]
+               [:has-model :bool]]]})
+  (:export [scope-bot scope-default scope-provider
+            aux-override aux-main aux-refused
+            route-scope auxiliary-route assignment-complete? main]))
+
+;; ── where a main-task model came from ────────────────────────────────
+
+(defn scope-bot [] :i64 0)
+(defn scope-default [] :i64 1)
+(defn scope-provider [] :i64 2)
+
+;; ── what an auxiliary task should do ─────────────────────────────────
+
+(defn aux-override [] :i64 0)
+(defn aux-main [] :i64 1)
+(defn aux-refused [] :i64 2)
+
+(defn route-scope [s [:ref :routing/scope]] :i64
+  ;; The Bot's own assignment wins, then the default, then the provider's
+  ;; declared model. The ordering is the decision and it is the ordinary one;
+  ;; what matters is that it is asked ONCE, here, rather than reconstructed at
+  ;; each of the four call sites with a different `or` in each.
+  ;;
+  ;; `scope-provider` is not a failure. A deployment that has never opened this
+  ;; screen has no assignments at all and every Bot lands here, which is what
+  ;; the application did before assignments existed.
+  (if (record-get s :bot-assigned)
+    (scope-bot)
+    (if (record-get s :default-assigned)
+      (scope-default)
+      (scope-provider))))
+
+(defn auxiliary-route [a [:ref :routing/auxiliary]] :i64
+  ;; No override means run on whatever the main task resolved to — the stated
+  ;; default of the screen, and the behaviour of every deployment that never
+  ;; touches it.
+  ;;
+  ;; An override whose provider is not admitted REFUSES. See the header: the
+  ;; alternative is paying main-model prices while the screen names a free one,
+  ;; with nothing in the output telling the two apart.
+  (if (record-get a :has-override)
+    (if (record-get a :override-admitted)
+      (aux-override)
+      (aux-refused))
+    (aux-main)))
+
+(defn assignment-complete? [s [:ref :routing/submitted]] :bool
+  ;; Both halves or neither. A provider without a model would inherit the
+  ;; previous model under a new destination, where the same id means a
+  ;; different model, or no model at all.
+  (and (record-get s :has-provider)
+       (record-get s :has-model)))
+
+(defn main [] :i64
+  ;; Sentinel for the wasm host contract, not a battery. The assertions live in
+  ;; the parity test where they can be compared against the cljc.
+  0)
