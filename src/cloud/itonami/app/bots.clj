@@ -5314,7 +5314,6 @@
                                                 [:bots :workforce
                                                  :max-starts-per-tick])
                                          1)))
-        limit (min starts-per-tick available)
         due-jobs (->> owned-jobs
                       (filter #(workforce-job-due? % now))
                       (map #(assoc % :workforce.job/continuation
@@ -5338,7 +5337,19 @@
         ;; capabilities; it is the only job able to relieve the refusal.
         jobs (if disk-pressure
                (filter disk-pressure-relief-job? due-jobs)
-               due-jobs)]
+               due-jobs)
+        ;; A wedged or recovering ordinary run must not make the condition
+        ;; that threatens its own durable store impossible to relieve.  When
+        ;; the normal budget is completely occupied, reserve exactly one start
+        ;; for the already-confined disk identity.  This never widens an
+        ;; ordinary job, never defeats max-active=0, and never creates more
+        ;; than one maintenance start in this tick.
+        maintenance-reserve?
+        (and (pos? max-active)
+             (zero? available)
+             (some disk-pressure-relief-job? jobs))
+        effective-available (if maintenance-reserve? 1 available)
+        limit (min starts-per-tick effective-available)]
     (loop [remaining jobs
            result {:started []
                    :skipped (cond
@@ -5348,7 +5359,7 @@
                                 :hard-floor-bytes
                                 (:hard-floor-bytes disk-pressure)}]
 
-                              (and (seq jobs) (zero? available))
+                              (and (seq jobs) (zero? effective-available))
                               [{:reason :workforce-capacity
                                 :active active
                                 :limit max-active}]
