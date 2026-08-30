@@ -5827,6 +5827,18 @@
                                        (= :capability-repair
                                           (:workforce.job/trigger %)) 2
                                        :else 3)
+                                     ;; A newly provisioned Bot must get one
+                                     ;; observed turn before failed retries
+                                     ;; consume the queue again.  Measured
+                                     ;; 2026-08-30: ten jobs had never been
+                                     ;; submitted (eight belonged to the new
+                                     ;; Numbering business), while an older
+                                     ;; provider-failure backlog was retried
+                                     ;; ahead of them once per minute.  Sorting
+                                     ;; by due time alone made installing a
+                                     ;; workforce indistinguishable from a
+                                     ;; scheduler that never started it.
+                                     #(if (:workforce.job/last-submitted-at %) 1 0)
                                      :workforce.job/next-run-at
                                      :workforce.job/key)))
         ;; The disk floor still refuses every ordinary resident job.  The one
