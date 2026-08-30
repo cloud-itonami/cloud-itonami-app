@@ -644,39 +644,50 @@
               submitted (atom [])
               due "2026-08-15T00:00:00Z"
               now "2026-08-16T00:00:00Z"
-              pressure {:usable-bytes 8192 :hard-floor-bytes 16384}]
+              pressure {:usable-bytes 8192 :hard-floor-bytes 16384}
+              inferring? (ns-resolve 'cloud.itonami.app.bots
+                                     'workforce-bot-inferring?)]
           (bots/provision-workforce! {} alice catalog)
           (swap! store/state update-in [:bots :workforce-jobs]
                  (fn [jobs]
                    (into {} (map (fn [[id job]]
                                    [id (assoc job :workforce.job/next-run-at due)]))
                          jobs)))
-          (with-redefs [gc/refuse-admission? (constantly pressure)
-                        bots/submit-goal!
-                        (fn [_ _ bot-id objective run-id options]
-                          (swap! submitted conj [bot-id objective run-id options])
-                          {:id run-id})]
-            (let [result (bots/fire-due-workforce!
-                          {:bots {:workforce {:max-starts-per-tick 2
-                                             :max-active 2}}}
-                          alice now)
-                  [bot-id objective _ _] (first @submitted)
-                  submitted-bot (get-in @store/state [:bots :bots bot-id])
-                  jobs (vals (get-in @store/state [:bots :workforce-jobs]))
-                  engineer-job (some #(when (= "cloud-itonami/engineer"
-                                                  (:workforce.job/key %)) %)
-                                     jobs)]
-              (is (= ["cloud-itonami/disk-maintainer"] (:started result)))
-              (is (empty? (:skipped result))
-                  "pressure is not reported as a failed tick when relief started")
-              (is (= :disk-maintainer (get-in submitted-bot [:bot/role :id])))
-              (is (str/includes? objective "Call disk_space_status exactly once"))
-              (is (str/includes? objective "call disk_space_cleanup exactly once"))
-              (is (str/includes? objective "Do not inspect or modify repositories"))
-              (is (not (str/includes? objective "repository evidence")))
-              (is (nil? (:workforce.job/last-submitted-at engineer-job))
-                  "the ordinary due job remains refused under pressure")
-              (is (= due (:workforce.job/next-run-at engineer-job))))))))))
+          (with-redefs-fn
+            {inferring? (constantly true)}
+            (fn []
+              (with-redefs [gc/refuse-admission? (constantly pressure)
+                            bots/submit-goal!
+                            (fn [_ _ bot-id objective run-id options]
+                              (swap! submitted conj
+                                     [bot-id objective run-id options])
+                              {:id run-id})]
+                (let [result (bots/fire-due-workforce!
+                              {:bots {:workforce {:max-starts-per-tick 2
+                                                 :max-active 1}}}
+                              alice now)
+                      [bot-id objective _ _] (first @submitted)
+                      submitted-bot (get-in @store/state [:bots :bots bot-id])
+                      jobs (vals (get-in @store/state [:bots :workforce-jobs]))
+                      engineer-job (some #(when (= "cloud-itonami/engineer"
+                                                      (:workforce.job/key %)) %)
+                                         jobs)]
+                  (is (= ["cloud-itonami/disk-maintainer"] (:started result)))
+                  (is (= 1 (count @submitted))
+                      "one maintenance reserve never admits an ordinary second start")
+                  (is (empty? (:skipped result))
+                      "pressure is not reported as a failed tick when relief started")
+                  (is (= :disk-maintainer (get-in submitted-bot [:bot/role :id])))
+                  (is (str/includes? objective
+                                     "Call disk_space_status exactly once"))
+                  (is (str/includes? objective
+                                     "call disk_space_cleanup exactly once"))
+                  (is (str/includes? objective
+                                     "Do not inspect or modify repositories"))
+                  (is (not (str/includes? objective "repository evidence")))
+                  (is (nil? (:workforce.job/last-submitted-at engineer-job))
+                      "the ordinary due job remains refused under pressure")
+                  (is (= due (:workforce.job/next-run-at engineer-job))))))))))))
 
 (deftest resident-provider-failure-after-read-receipts-becomes-a-safe-no-op
   (with-store
