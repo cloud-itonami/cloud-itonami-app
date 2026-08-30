@@ -5638,9 +5638,10 @@
                       ;; the same owner, tenant, slot and authority gates hold.
                       (sort-by (juxt #(cond
                                        (disk-pressure-relief-job? %) 0
+                                       (domain-steward-job? %) 1
                                        (= :capability-repair
-                                          (:workforce.job/trigger %)) 1
-                                       :else 2)
+                                          (:workforce.job/trigger %)) 2
+                                       :else 3)
                                      :workforce.job/next-run-at
                                      :workforce.job/key)))
         ;; The disk floor still refuses every ordinary resident job.  The one
@@ -5659,7 +5660,18 @@
         (and (pos? max-active)
              (zero? available)
              (some disk-pressure-relief-job? jobs))
-        effective-available (if maintenance-reserve? 1 available)
+        ;; The Domain Steward's fixed cycle never enters inference. A wedged
+        ;; or unavailable model therefore must not consume its capacity. Keep
+        ;; one bounded start for that already-confined identity, just as disk
+        ;; maintenance has a reserve for a different host-owned necessity.
+        domain-steward-reserve?
+        (and (pos? max-active)
+             (zero? available)
+             (some domain-steward-job? jobs))
+        effective-available (if (or maintenance-reserve?
+                                    domain-steward-reserve?)
+                              1
+                              available)
         limit (min starts-per-tick effective-available)]
     (loop [remaining jobs
            result {:started []
