@@ -59,6 +59,7 @@
             [cloud.itonami.app.agent-control :as agent-control]
             [cloud.itonami.app.bot :as bot]
             [cloud.itonami.app.bot-authority :as bot-authority]
+            [cloud.itonami.app.bot-dispatcher :as bot-dispatcher]
             [cloud.itonami.app.bot-identity :as bot-identity]
             [cloud.itonami.app.kotoba-oracle :as oracle]
             [cloud.itonami.app.bot-slo :as bot-slo]
@@ -3979,11 +3980,13 @@
                                                :context-threshold-tokens
                                                :context-estimated-tokens
                                                :context-compacted?]))))
-            result (if on-event
-                     (provider/agent-turn-stream!
-                      provider request
-                      #(on-event {:type "delta" :content %}))
-                     (provider/agent-turn provider request))
+            result (bot-dispatcher/dispatch!
+                    #(if on-event
+                       (provider/agent-turn-stream!
+                        provider request
+                        (fn [delta]
+                          (on-event {:type "delta" :content delta})))
+                       (provider/agent-turn provider request)))
             calls (:tool-calls result)
             run (-> run
                     (update :turn-count (fnil inc 0))
@@ -4648,12 +4651,13 @@
                                            :content (if-let [from (:message/from m)]
                                                       (str from ": " (:message/text m))
                                                       (:message/text m))}))
-                         result (provider/agent-turn
-                                 provider {:model model
-                                           :conversation-id (:group/id g)
-                                           :messages messages
-                                           :tools []
-                                           :temperature 0.2})
+                         result (bot-dispatcher/dispatch!
+                                 #(provider/agent-turn
+                                   provider {:model model
+                                             :conversation-id (:group/id g)
+                                             :messages messages
+                                             :tools []
+                                             :temperature 0.2}))
                          answer (str (:content result))]
                      (if (passed? answer)
                        answered

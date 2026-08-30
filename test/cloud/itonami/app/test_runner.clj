@@ -32,12 +32,14 @@
             [cloud.itonami.app.bot-test]
             [cloud.itonami.app.bot-slo-test]
             [cloud.itonami.app.bot-authority-test]
+            [cloud.itonami.app.bot-dispatcher-test]
             [cloud.itonami.app.bot-identity-test]
             [cloud.itonami.app.bots-test]
             [cloud.itonami.app.virtual-shell-test]
             [cloud.itonami.app.host-grant-test]
             [cloud.itonami.app.host-store-bound-test]
             [cloud.itonami.app.store-journal-test]
+            [cloud.itonami.app.store :as store]
             [cloud.itonami.app.loops-test]
             [cloud.itonami.app.lawfirm-test]
             [cloud.itonami.app.kotobase-federation-test]
@@ -231,6 +233,7 @@
     cloud.itonami.app.bot-test
     cloud.itonami.app.bot-slo-test
     cloud.itonami.app.bot-authority-test
+    cloud.itonami.app.bot-dispatcher-test
     cloud.itonami.app.bot-identity-test
     cloud.itonami.app.bots-test
     cloud.itonami.app.virtual-shell-test
@@ -433,5 +436,7 @@
     (doseq [n missing] (println "  " n))
     (println "Add them to cloud.itonami.app.test-runner, or they do not run.")
     (System/exit 1))
-  (let [{:keys [fail error]} (apply test/run-tests namespaces)]
+  (let [{:keys [fail error]}
+        (binding [store/*reload-before-transaction?* false]
+          (apply test/run-tests namespaces))]
     (System/exit (if (zero? (+ fail error)) 0 1))))

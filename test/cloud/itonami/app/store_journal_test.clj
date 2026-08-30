@@ -19,7 +19,8 @@
             [cloud.itonami.app.host :as host]
             [cloud.itonami.app.host-bounds :as host-bounds]
             [cloud.itonami.app.store :as store]
-            [cloud.itonami.app.store-core :as store-core]))
+            [cloud.itonami.app.store-core :as store-core])
+  (:import [java.util.concurrent CountDownLatch TimeUnit]))
 
 (defn- tmp-dir []
   (doto (io/file (System/getProperty "java.io.tmpdir")
@@ -210,6 +211,87 @@
 
 (deftest file-size-of-an-absent-file-is-zero-not-an-error
   (is (= 0 (host/file-size (.getPath (io/file (tmp-dir) "absent.edn"))))))
+
+(deftest a-stale-second-process-reloads-before-it-appends
+  ;; The live failure reproduced on 2026-08-30. Two CLI/resident JVMs loaded
+  ;; the same vector length. Process A appended, then process B wrote a delta
+  ;; from its stale atom; replay later found `:from 3, :found 2` and the whole
+  ;; store became unreadable. Two atoms model those independent JVM memories.
+  (let [dir (tmp-dir)
+        property "cloud.itonami.data-dir"
+        previous (System/getProperty property)
+        transact-under-lock
+        (deref (ns-resolve 'cloud.itonami.app.store
+                           'transact-under-process-lock!))
+        load-state (deref (ns-resolve 'cloud.itonami.app.store 'load-state))
+        process-a (atom nil)
+        process-b (atom nil)]
+    (try
+      (System/setProperty property (.getPath dir))
+      (spit (store/state-file) (pr-str (store/initial-state)))
+      (spit (store/journal-file) "")
+      (reset! process-a (load-state))
+      (reset! process-b @process-a)
+      (transact-under-lock process-a update
+                           [:events (fnil conj []) {:id :a}])
+      ;; B is intentionally stale. The transaction must ignore that atom as a
+      ;; source of truth and reload A's durable append while holding the lock.
+      (transact-under-lock process-b update
+                           [:events (fnil conj []) {:id :b}])
+      (is (= [:a :b] (mapv :id (:events (load-state)))))
+      (is (= [:a :b] (mapv :id (:events @process-b))))
+      (finally
+        (if previous
+          (System/setProperty property previous)
+          (System/clearProperty property))))))
+
+(deftest independent-process-views-enter-the-transaction-one-at-a-time
+  (let [dir (tmp-dir)
+        property "cloud.itonami.data-dir"
+        previous (System/getProperty property)
+        transact-under-lock
+        (deref (ns-resolve 'cloud.itonami.app.store
+                           'transact-under-process-lock!))
+        load-state (deref (ns-resolve 'cloud.itonami.app.store 'load-state))
+        process-a (atom nil)
+        process-b (atom nil)
+        first-entered (CountDownLatch. 1)
+        release-first (CountDownLatch. 1)
+        second-entered (promise)]
+    (try
+      (System/setProperty property (.getPath dir))
+      (spit (store/state-file) (pr-str (store/initial-state)))
+      (spit (store/journal-file) "")
+      (reset! process-a (load-state))
+      (reset! process-b @process-a)
+      (let [a (future
+                (transact-under-lock
+                 process-a
+                 (fn [state]
+                   (.countDown first-entered)
+                   (.await release-first 2 TimeUnit/SECONDS)
+                   (update state :events (fnil conj []) {:id :a}))
+                 []))]
+        (is (.await first-entered 2 TimeUnit/SECONDS))
+        (let [b (future
+                  (transact-under-lock
+                   process-b
+                   (fn [state]
+                     (deliver second-entered :entered)
+                     (update state :events (fnil conj []) {:id :b}))
+                   []))]
+          (is (= :waiting (deref second-entered 150 :waiting))
+              "the second process cannot compute from A's unfinished state")
+          (.countDown release-first)
+          (is (= :entered (deref second-entered 2000 :timeout)))
+          (is (map? (deref a 2000 :timeout)))
+          (is (map? (deref b 2000 :timeout)))
+          (is (= [:a :b] (mapv :id (:events (load-state)))))))
+      (finally
+        (.countDown release-first)
+        (if previous
+          (System/setProperty property previous)
+          (System/clearProperty property))))))
 
 ;; ── the bound has to be a trigger, not a wall ──────────────────────────────
 

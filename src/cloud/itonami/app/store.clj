@@ -241,7 +241,27 @@
       (assoc main :work-governance work)
       main)))
 
-(defonce state (atom (load-state)))
+(defn- with-store-lock
+  "Run F while holding the one lock shared by every process using this store.
+
+  The journal is a delta against the snapshot, so locking only the final file
+  append is too late: two processes may both compute a valid append from the
+  same old vector length and leave a sequence that neither can replay.  The
+  protected unit is therefore read snapshot+journal -> compute -> persist."
+  [f]
+  (edn-persist/with-state-lock (state-file) f))
+
+(defonce state
+  ;; Loading participates in the same lock as writes. A checkpoint writes the
+  ;; snapshot before truncating the journal; the replay is idempotent, but a
+  ;; reader still needs one coherent view of those two files.
+  (atom (with-store-lock load-state)))
+
+(def ^:dynamic *reload-before-transaction?*
+  "Production is always true. The explicit JVM test runner binds false because
+  its legacy fixtures replace `state` directly with an in-memory scenario;
+  reloading target/test-data would erase the fixture before its first write."
+  true)
 
 (defn snapshot [] @state)
 
@@ -352,23 +372,57 @@
   A no-op when the journal is already empty, so it costs a `stat` on a normal
   start."
   []
-  (when (and (not (repository-mode?)) (pos? @journal-entry-count))
-    (locking state (checkpoint! @state))
-    true))
-
-(defn transact! [f & args]
-  (if (repository-mode?)
-    (edn-persist/with-state-lock
-     (state-file)
+  (if *reload-before-transaction?*
+    (with-store-lock
      (fn []
        (locking state
-         (let [next-value (apply f (load-state) args)]
-           (reset! state next-value)
-           (persist-snapshot! next-value)))))
+         ;; Another cooperating process may have appended after this namespace
+         ;; loaded. Fold that latest state, never this process's stale atom.
+         (let [latest (load-state)]
+           (reset! state latest)
+           (when (and (not (repository-mode?))
+                      (pos? @journal-entry-count))
+             (checkpoint! latest)
+             true)))))
+    ;; The test runner's fixtures intentionally replace the atom without
+    ;; writing a snapshot. Preserve the former fold behavior in that isolated
+    ;; data directory instead of reloading an unrelated previous fixture.
+    (when (and (not (repository-mode?)) (pos? @journal-entry-count))
+      (locking state (checkpoint! @state))
+      true)))
+
+(defn- transact-under-process-lock!
+  "One transaction against the latest durable state.
+
+  STATE-ATOM is an argument so the stale-process regression can use two
+  independent in-memory views of one store. Production passes `state`."
+  [state-atom f args]
+  (with-store-lock
+   (fn []
+     (locking state-atom
+       ;; Reload while holding the process-wide lock. Merely serializing the
+       ;; append preserves corruption: the second process would still compute
+       ;; its delta from the state it loaded at startup.
+       (let [before (load-state)
+             next-value (apply f before args)]
+         (if (repository-mode?)
+           (persist-snapshot! next-value)
+           (persist-delta! before next-value))
+         (reset! state-atom next-value)
+         next-value)))))
+
+(defn transact! [f & args]
+  (if (or *reload-before-transaction?* (repository-mode?))
+    (transact-under-process-lock! state f args)
+    ;; Test-fixture compatibility: this is the former single-process path.
+    ;; It remains durable to the isolated test directory, but deliberately
+    ;; treats the fixture atom as its source of truth.
     (locking state
       (let [before @state
             next-value (apply f before args)]
-        (persist-delta! before next-value)
+        (if (repository-mode?)
+          (persist-snapshot! next-value)
+          (persist-delta! before next-value))
         (reset! state next-value)
         next-value))))
 
