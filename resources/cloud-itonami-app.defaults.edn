@@ -156,7 +156,9 @@
    :models ["murakumo-main"
             "murakumo-edge"
             "qwen3.8-27b-throughput-5090"
-            "qwen3.8-27b-fastmtp-aggressive"]
+            "qwen3.8-27b-fastmtp-aggressive"
+            "z-ai/glm-5.3-flash"
+            "qwen/qwen3.8-flash"]
    :model-request-timeout-seconds
    {"qwen3.8-27b-throughput-5090" 420}
    ;; Do not spend that 420-second cold-start wall when RunPod lacks verified
@@ -174,7 +176,9 @@
    ;; 2026-08-26: HTTP 502 body starting `modal-http`, not JSON) both
    ;; retry the alias. The result stays labelled as the model that served.
    :model-fallbacks {"qwen3.8-27b-throughput-5090" "murakumo-main"
-                    "qwen3.8-27b-fastmtp-aggressive" "murakumo-main"}
+                    "qwen3.8-27b-fastmtp-aggressive" "murakumo-main"
+                    "z-ai/glm-5.3-flash" "qwen/qwen3.8-flash"
+                    "qwen/qwen3.8-flash" "murakumo-main"}
    ;; The resident workforce is the murakumo-edge SLO workload. Falling it
    ;; through to murakumo-main converts one unavailable edge into two occupied
    ;; inference planes, hides which route failed, and can amplify an edge
@@ -202,7 +206,9 @@
    {"murakumo-main" #{"murakumo-main"
                       "Qwen3.8-27B-Q4_K_M.gguf"
                       "qwen3.8-27b"
-                      "qwen3.8-27b-throughput-b70"}}
+                      "qwen3.8-27b-throughput-b70"}
+    "z-ai/glm-5.3-flash" #{"z-ai/glm-5.3-flash"}
+    "qwen/qwen3.8-flash" #{"qwen/qwen3.8-flash"}}
    :context-window-tokens {"murakumo-main" 262144
                            ;; Live /v1/models and a real CLI Bot generation,
                            ;; measured 2026-08-29. This is the Ornith Q4 route
@@ -211,7 +217,14 @@
                            ;; an edge stability check report the wrong machine.
                            "murakumo-edge" 65536
                            "qwen3.8-27b-throughput-5090" 65536
-                           "qwen3.8-27b-fastmtp-aggressive" 32768}
+                           "qwen3.8-27b-fastmtp-aggressive" 32768
+                           ;; OpenRouter lists 1.31M / 1M. This Worker has not
+                           ;; measured those windows through api.murakumo.cloud,
+                           ;; so bots budget a conservative 128k — an unmeasured
+                           ;; number that looks like a measured one is the
+                           ;; defect class CLAUDE.md names.
+                           "z-ai/glm-5.3-flash" 128000
+                           "qwen/qwen3.8-flash" 128000}
    ;; 2026-08-29 owner instruction: raise output budgets toward the model
    ;; maximum. The previous 512 (kept "concise" for capacity) truncated real
    ;; work -- measured that day: a resident decision_frame tool call cut at
