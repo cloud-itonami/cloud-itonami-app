@@ -776,3 +776,80 @@
                                      :max-output-tokens {"other" 4096}}
                                     {:model "murakumo-main" :messages []})))
         "an unnamed model falls to the shipped default, not to a sibling's cap")))
+
+(defn- refusing-server
+  "An HTTP server that refuses with `status` and says `body`, once."
+  [status ^String body]
+  (let [server (HttpServer/create (InetSocketAddress. "127.0.0.1" 0) 0)]
+    (.createContext
+     server "/v1/chat/completions"
+     (reify HttpHandler
+       (handle [_ exchange]
+         (let [bytes (.getBytes body "UTF-8")]
+           (.sendResponseHeaders exchange status (alength bytes))
+           (with-open [out (.getResponseBody exchange)]
+             (.write out bytes))))))
+    (.start server)
+    server))
+
+(deftest a-refused-stream-carries-what-the-provider-said
+  ;; The resident Goal path streams (`send-stream!` -> `agent-turn-stream!`),
+  ;; and this arm threw with `:status` and `:url` and never opened the body --
+  ;; while `error-message`, two layers up, was already written to render the
+  ;; `:response` that the non-streaming arm supplies. So every recorded
+  ;; `:provider/http-error` from the workforce read the same nine words.
+  ;; Measured 2026-08-30: 40 of the last 50 resident runs failed this way and
+  ;; not one of them could say what the provider had answered.
+  (let [streaming-response (private-fn 'streaming-response)]
+    (testing "a JSON refusal arrives in the shape error-message reads"
+      (let [server (refusing-server
+                    503 (json/write-str {:error {:message "upstream is busy"
+                                                 :type "overloaded"}}))
+            url (str "http://127.0.0.1:" (.getPort (.getAddress server))
+                     "/v1/chat/completions")]
+        (try
+          (let [thrown (try (streaming-response url {} nil nil 5)
+                            nil
+                            (catch clojure.lang.ExceptionInfo e e))
+                data (ex-data thrown)]
+            (is (= :provider/http-error (:type data)))
+            (is (= 503 (:status data)))
+            (is (= "upstream is busy" (get-in data [:response :error :message]))
+                "the words the provider actually said, not the nine this application says"))
+          (finally (.stop server 0)))))
+    (testing "a body that is not JSON survives as text rather than as nothing"
+      (let [server (refusing-server 502 "<html>Bad gateway</html>")
+            url (str "http://127.0.0.1:" (.getPort (.getAddress server))
+                     "/v1/chat/completions")]
+        (try
+          (let [data (ex-data (try (streaming-response url {} nil nil 5)
+                                   nil
+                                   (catch clojure.lang.ExceptionInfo e e)))]
+            (is (= 502 (:status data)))
+            (is (str/includes? (get-in data [:response :raw]) "Bad gateway")))
+          (finally (.stop server 0)))))
+    (testing "an empty refusal says nothing rather than saying an empty something"
+      (let [server (refusing-server 429 "")
+            url (str "http://127.0.0.1:" (.getPort (.getAddress server))
+                     "/v1/chat/completions")]
+        (try
+          (let [data (ex-data (try (streaming-response url {} nil nil 5)
+                                   nil
+                                   (catch clojure.lang.ExceptionInfo e e)))]
+            (is (= 429 (:status data)))
+            (is (nil? (:response data))
+                "nil is distinguishable from a body; an empty map would not be"))
+          (finally (.stop server 0)))))
+    (testing "a body larger than the bound is read up to it and no further"
+      (let [huge (apply str (repeat 40000 "x"))
+            server (refusing-server 500 huge)
+            url (str "http://127.0.0.1:" (.getPort (.getAddress server))
+                     "/v1/chat/completions")]
+        (try
+          (let [data (ex-data (try (streaming-response url {} nil nil 5)
+                                   nil
+                                   (catch clojure.lang.ExceptionInfo e e)))
+                raw (get-in data [:response :raw])]
+            (is (= 8192 (count raw))
+                "bounded: a refusal body is an error document, not a generation"))
+          (finally (.stop server 0)))))))

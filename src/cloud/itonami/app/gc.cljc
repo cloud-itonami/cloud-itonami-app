@@ -123,12 +123,23 @@
 
 (def ^:private compact-run-keys
   "The `:job/run` fields the remaining readers of a terminal run consult:
-  `run-outcome` reads status and error-type, `resident-outcomes` and the SLO
+  `run-outcome` reads status and error-type, an operator reads the message, `resident-outcomes` and the SLO
   window read the timestamps, everything else checks `agent-run/active?`
   against the status. The goal text, the lease, the budget and the artifacts
   are for a run somebody is still working with, and a terminal run two days
   old is not one."
   [:agent.run/id :agent.run/status :agent.run/error-type
+   ;; And the WHY. `:agent.run/error-message` was added on 2026-08-21, when a
+   ;; measurement found it populated zero times while `:turn/error-message`
+   ;; had 141 -- "a type alone cannot distinguish a misconfigured provider
+   ;; from an overloaded one." It was never added HERE, so compaction deleted
+   ;; every one of them two days later. Measured 2026-08-30: 1,079 runs
+   ;; carried an error type and 108 still carried its message. The other 971
+   ;; were compacted, and the reason each of them failed is gone.
+   ;;
+   ;; It is bounded to one 120-character line by `error-message` itself, which
+   ;; is what makes it affordable to keep for the life of the run.
+   :agent.run/error-message
    :agent.run/created-at :agent.run/finished-at :agent.run/updated-at])
 
 (defn compact-goal-job

@@ -792,6 +792,39 @@
 
       :else (throw (ex-info "unsupported provider kind" {:provider provider}))))
 
+(def ^:private refusal-body-limit
+  "How much of a refused streaming response to read before giving up on it.
+
+  A refusal body is an error document, not a generation: every provider this
+  application speaks to answers a 4xx or 5xx in well under this. The bound is
+  here because the handler is an InputStream and an unbounded read of a stream
+  a hostile or broken origin controls is not a thing to do inside a `throw`."
+  8192)
+
+(defn- refusal-body
+  "What a refusing provider actually said, in the shape `error-message` reads.
+
+  Mirrors `request-json`: the parsed JSON when it parses, `{:raw text}` when it
+  does not, so one extraction downstream answers both shapes and a Cloudflare
+  or Modal error page survives as text rather than as nothing.
+
+  Measured 2026-08-30 on the resident workforce: 1,079 runs had recorded an
+  error TYPE and the `:provider/http-error` ones all read the same nine words,
+  because this arm threw with `:status` and `:url` and never opened the body —
+  while `error-message` two layers up was already written to render exactly the
+  `:response` this returns. The words existed on the wire and were dropped one
+  frame from the code that wanted them. Same defect the comment in
+  `error-message` records for the non-streaming arm, in the arm the resident
+  Goal path actually takes."
+  [^java.io.InputStream stream]
+  (with-open [in stream]
+    (let [buffer (byte-array refusal-body-limit)
+          read (.readNBytes in buffer 0 refusal-body-limit)]
+      (when (pos? read)
+        (let [text (String. buffer 0 read StandardCharsets/UTF_8)]
+          (try (json/read-str text :key-fn keyword)
+               (catch Exception _ {:raw text})))))))
+
 (defn- streaming-response
   ([url body api-key] (streaming-response url body api-key nil))
   ([url body api-key headers]
@@ -816,7 +849,8 @@
      (when-not (<= 200 (.statusCode response) 299)
        (throw (ex-info "model provider streaming request failed"
                        {:type :provider/http-error
-                        :status (.statusCode response) :url url})))
+                        :status (.statusCode response) :url url
+                        :response (refusal-body (.body response))})))
      response)))
 
 (defn- emit! [on-delta content]

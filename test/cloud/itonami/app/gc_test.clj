@@ -366,3 +366,42 @@
                            (map edn/read-string))]
             (is (= #{:goal-job :run} (into #{} (map :kind) lines)))
             (is (every? #(= store/archive-schema (:schema %)) lines))))))))
+
+(deftest compaction-keeps-why-a-run-failed-and-drops-its-transcript
+  ;; Both directions on one call, as this namespace's docstring requires.
+  ;;
+  ;; `:agent.run/error-message` was added to the failure path on 2026-08-21,
+  ;; when a measurement found it written zero times against 141 for
+  ;; `:turn/error-message`. It was not added to `compact-run-keys`, so the
+  ;; collector deleted every one of them two days later. Measured 2026-08-30
+  ;; on the resident store: 1,079 runs carried an error type and 108 still
+  ;; carried its message.
+  (let [job {:job/id "run-1"
+             :job/bot "bot-1"
+             :job/created-at 1 :job/updated-at 2
+             :job/resident-workforce? true
+             :job/session {:user-id "user-1" :organization-id "org-1"}
+             :job/plan [{:step "s1"}]
+             :job/events [{:event/kind :turn/failed}]
+             :job/run {:agent.run/id "run-1"
+                       :agent.run/status :failed
+                       :agent.run/error-type :provider/http-error
+                       :agent.run/error-message "HTTP 503 from api.example: upstream busy"
+                       :agent.run/result "a long transcript"
+                       :agent.run/goal "the whole objective text"
+                       :agent.run/created-at 1
+                       :agent.run/finished-at 2
+                       :agent.run/updated-at 2}}
+        compacted (gc/compact-goal-job job)
+        run (:job/run compacted)]
+    (testing "the reason survives, because a type alone cannot be acted on"
+      (is (= "HTTP 503 from api.example: upstream busy"
+             (:agent.run/error-message run))))
+    (testing "the type survives beside it"
+      (is (= :provider/http-error (:agent.run/error-type run))))
+    (testing "the transcript and the goal text do not, which is the point of compacting"
+      (is (nil? (:agent.run/result run)))
+      (is (nil? (:agent.run/goal run))))
+    (testing "and the heavy job fields are gone"
+      (is (nil? (:job/plan compacted)))
+      (is (nil? (:job/events compacted))))))
