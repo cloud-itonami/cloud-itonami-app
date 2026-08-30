@@ -58,6 +58,7 @@
   (:require [clojure.data.json :as json]
             [clojure.string :as str]
             [cloud.itonami.app.config :as config]
+            [cloud.itonami.app.domain-tools :as domain-tools]
             [cloud.itonami.app.business-tools :as business-tools]
             [cloud.itonami.app.bot-tools :as bot-tools]
             [cloud.itonami.app.fleet :as fleet]
@@ -103,7 +104,8 @@
     (business-tools/available? configuration) (into business-tools/tools)
     (bot-tools/available? configuration) (into bot-tools/tools)
     (tenant-tools/available? configuration) (into tenant-tools/tools)
-    (payment-tools/available? configuration) (into payment-tools/tools)))
+    (payment-tools/available? configuration) (into payment-tools/tools)
+    (domain-tools/available? configuration) (into domain-tools/tools)))
 
 (defn manifest
   [configuration]
@@ -129,7 +131,8 @@
   [configuration tool-name args]
   (let [input (keywordize args)
         payment-tool? (contains? (into #{} (map :name) payment-tools/tools)
-                                 tool-name)]
+                                 tool-name)
+        domain-tool? (domain-tools/tool? tool-name)]
     (try
       (cond
         ;; Re-checked at call time, not trusted from the manifest: a session can
@@ -137,6 +140,7 @@
         ;; tool list would otherwise keep calling a surface that is no longer
         ;; bound to anyone.
         payment-tool? (payment-tools/call-tool configuration tool-name input)
+        domain-tool? (domain-tools/call-tool configuration tool-name input)
         (bot-tools/tool? tool-name)
         (bot-tools/call-tool configuration tool-name input)
         (business-tools/tool? tool-name)

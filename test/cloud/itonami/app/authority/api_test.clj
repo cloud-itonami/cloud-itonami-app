@@ -175,7 +175,8 @@
 (deftest the-overview-shows-a-disabled-authority-instead-of-refusing
   (reset-proposals!)
   (let [o (api/overview all-off session)]
-    (is (= #{:esim :card :number :payment :voice} (set (keys (:authorities o)))))
+    (is (= #{:domain :esim :card :number :payment :voice}
+           (set (keys (:authorities o)))))
     (doseq [[k v] (:authorities o)]
       (is (false? (:enabled? v)) (str k))
       (is (false? (:endpoint-configured? v)) (str k))
