@@ -593,8 +593,17 @@
  ;; flag decides only whether this app hosts a record at all.
  :lawfirm {:enabled? false}
 
+ ;; Agent-first domain lifecycle. Credentials are named, never stored here.
+ ;; The MCP tools are absent unless both variables resolve and a real human
+ ;; Passkey session is available. Mutations additionally pass through the
+ ;; proposal -> Passkey -> commit spine below.
+ :domain-service {:account-id-env "CLOUDFLARE_ACCOUNT_ID"
+                  :api-token-env "CLOUDFLARE_API_TOKEN"
+                  :api-base "https://api.cloudflare.com/client/v4"}
+
  :authorities
- {:esim {:enabled? false
+ {:domain {:enabled? false}
+  :esim {:enabled? false
          :endpoint nil    ; cloud-itonami/cloud-itonami-esim
          :consent-token-env "ESIM_CONSENT_TOKEN"}
   ;; Numbering: allocation (払い出し), assignment, lifecycle and portability

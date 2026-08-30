@@ -25,6 +25,7 @@
             [cloud.itonami.app.connectors-test]
             [cloud.itonami.app.desktop-test]
             [cloud.itonami.app.decision-method-test]
+            [cloud.itonami.app.domain-tools-test]
             [cloud.itonami.app.bot-test]
             [cloud.itonami.app.bot-slo-test]
             [cloud.itonami.app.bot-authority-test]
@@ -388,6 +389,7 @@
     cloud.itonami.app.updater-test
     cloud.itonami.app.oauth-resource-test
     cloud.itonami.app.org-root-did-test
+    cloud.itonami.app.domain-tools-test
     cloud.itonami.app.did-webvh-http-test
     cloud.itonami.app.oauth-did-binding-test
     cloud.itonami.app.worker-http-test

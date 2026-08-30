@@ -27,6 +27,7 @@
   (:require [clojure.string :as str]
             [cloud.itonami.app.authority :as authority]
             [cloud.itonami.app.authority.card :as card]
+            [cloud.itonami.app.authority.domain :as domain]
             [cloud.itonami.app.authority.esim :as esim]
             [cloud.itonami.app.authority.number :as number]
             [cloud.itonami.app.authority.payment :as payment]
@@ -41,7 +42,8 @@
 
 (def adapters
   "authority key -> the namespace's domain constructor."
-  {:esim    esim/domain
+  {:domain  domain/domain
+   :esim    esim/domain
    :card    card/domain
    :number  number/domain
    :payment payment/domain
@@ -56,7 +58,9 @@
     (when-not ctor
       (throw (ex-info (str "未知の authority です: " authority-key)
                       {:type :authority/unknown-authority})))
-    (ctor (transport/commit-fn authority-key))))
+    (if (= :domain authority-key)
+      (ctor)
+      (ctor (transport/commit-fn authority-key)))))
 
 (defn- require-enabled! [configuration authority-key]
   (when-not (transport/enabled? configuration authority-key)
@@ -194,6 +198,7 @@
     ;; Every payment op is a spend op, so there is no restricted-op subset to
     ;; test against -- the facts are computed for all of them.
     :payment (payment-facts configuration session request)
+    :domain (domain/with-server-facts configuration request)
     ;; Same for numbering: every op reads the subject's records, and the records
     ;; are the thing that must not be caller-supplied.
     :number (number-facts configuration session request)

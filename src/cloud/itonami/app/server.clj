@@ -591,6 +591,13 @@
     (when (= "tools/call" (get request "method"))
       (let [tool (get-in request ["params" "name"])
             required (cond
+                       (contains? #{"domain_search" "domain_check"
+                                    "domain_registrations"
+                                    "domain_registration_status"
+                                    "domain_dns_records"} tool)
+                       "domain:read"
+                       (str/starts-with? (or tool "") "domain_")
+                       "domain:write"
                        (= tool "tenant_repository_read") "repository:read"
                        (contains? #{"tenant_repository_write"
                                     "tenant_repository_publish"} tool)

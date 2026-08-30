@@ -17,7 +17,8 @@
            [java.util Base64]))
 
 (def scopes
-  ["mcp:tools" "tenant:connect" "repository:read" "repository:write"])
+  ["mcp:tools" "tenant:connect" "repository:read" "repository:write"
+   "domain:read" "domain:write"])
 
 (defonce ^:private client
   (-> (HttpClient/newBuilder)

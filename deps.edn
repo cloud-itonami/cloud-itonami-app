@@ -498,6 +498,12 @@
   io.github.kotoba-lang/org-anthropic-mcp
   {:git/url "https://github.com/kotoba-lang/org-anthropic-mcp.git"
    :git/sha "9b343e64139763d66c2a3969669bc03f73b32a46"}
+  ;; Agent-first domain lifecycle. The library owns pure Cloudflare Registrar
+  ;; and DNS request shapes; this app owns credentials, HTTP, Passkey approval,
+  ;; and MCP publication.
+  io.github.cloud-itonami/yadori
+  {:git/url "https://github.com/cloud-itonami/yadori.git"
+   :git/sha "97a0144af55e9d19695561ec5c07a8e124615a6c"}
   io.github.kotoba-lang/oauth
   {:git/url "https://github.com/kotoba-lang/oauth.git"
    :git/sha "e47999a48cbc79e831c0690bac6681bda0b52785"}
