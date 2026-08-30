@@ -75,6 +75,7 @@
 (def max-model 200)
 (def max-context-project-id 80)
 (def max-context-refs 12)
+(def max-section 60)
 
 (defn- context-refs [value legacy-project-id]
   (let [refs (if (contains? value :bot/context-refs)
@@ -265,6 +266,9 @@
      ;; returns to the pinned section when priority is later cleared.
      :bot/priority? (boolean (:bot/priority? value))
      :bot/pinned? (boolean (:bot/pinned? value))
+     :bot/section (optional-name (:bot/section value) :bot/section max-section)
+     :bot/unread? (boolean (:bot/unread? value))
+     :bot/hidden? (boolean (:bot/hidden? value))
      ;; Standing delegation, intentionally independent of writes/tool reach.
      ;; It changes WHEN an already-admitted write runs, never WHAT is admitted.
      :bot/omakase? (boolean (:bot/omakase? value))

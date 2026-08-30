@@ -9871,7 +9871,22 @@
         !bot['priority?'] && bot['pinned?']));
       if (priority.length) groups.push({label:'優先度', bots:priority});
       if (pinned.length) groups.push({label:'ピン留め', bots:pinned});
-      botsRecentFirst(bots.filter((bot) => !bot['priority?'] && !bot['pinned?']))
+      const rest = bots.filter((bot) => !bot['priority?'] && !bot['pinned?']);
+      const sectionOrder = [];
+      const bySection = new Map();
+      rest.forEach((bot) => {
+        const section = String(bot.section || '').trim();
+        if (!section) return;
+        if (!bySection.has(section)) {
+          bySection.set(section, []);
+          sectionOrder.push(section);
+        }
+        bySection.get(section).push(bot);
+      });
+      sectionOrder.forEach((label) => {
+        groups.push({label, bots:botsRecentFirst(bySection.get(label))});
+      });
+      botsRecentFirst(rest.filter((bot) => !String(bot.section || '').trim()))
         .forEach((bot) => {
           const label = botsDateGroup(bot);
           const current = groups.at(-1);
@@ -9941,6 +9956,8 @@
       const query = $('#bots-filter').value.trim().toLocaleLowerCase('ja');
       const visibleBots = botsRecentFirst(botsState.bots)
         .filter((bot) => {
+          if (bot['enabled?'] === false) return false;
+          if (bot['hidden?'] && !query) return false;
           if (!query) return true;
           return [bot.name, bot.business?.name, bot.role?.name,
                   bot['last-message']?.text]
@@ -9961,6 +9978,8 @@
         const preview = botsRailPreview(bot, statusSummary);
         item.setAttribute('aria-label',
           `${bot.name}、${statusSummary}、${preview}`);
+        item.setAttribute('aria-haspopup', 'menu');
+        if (bot['unread?']) item.dataset.unread = 'true';
         const avatar = botAvatar(make('span', 'bot-avatar'), bot.avatar, bot.status);
         const copy = make('div', 'bots-rail__copy');
         const headline = make('span', 'bots-rail__headline');
@@ -9973,6 +9992,17 @@
         dot.title = statusSummary;
         item.append(avatar, copy, dot);
         item.addEventListener('click', () => selectBot(bot.id));
+        item.addEventListener('contextmenu', (event) => {
+          event.preventDefault();
+          openBotsRailMenu(event, bot);
+        });
+        item.addEventListener('keydown', (event) => {
+          if (event.key === 'ContextMenu' ||
+              (event.shiftKey && event.key === 'F10')) {
+            event.preventDefault();
+            openBotsRailMenu(event, bot);
+          }
+        });
         const entry = make('li');
         entry.append(item);
         list.append(entry);
@@ -10979,6 +11009,12 @@
       renderBotsRail();
       showBotsPane();
       syncBotsContextButton();
+      if (selectedBot?.['unread?']) {
+        postJSON(`/api/bots/${botId}`, {'unread?':false}, true).then((data) => {
+          botsState.bots = data.bots || botsState.bots;
+          renderBotsRail();
+        }).catch(() => {});
+      }
       try {
         const request = await fetch(`/api/bots/${botId}/messages`);
         const data = await request.json();
@@ -10990,6 +11026,216 @@
       } catch (error) { botsSetStatus(error.message); }
       finally { if (typeof resizeBotsInput === 'function') resizeBotsInput(); }
     };
+    const botsRailMenuIcon = (path) => {
+      const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+      svg.setAttribute('viewBox', '0 0 24 24');
+      svg.setAttribute('aria-hidden', 'true');
+      svg.setAttribute('class', 'bots-rail-menu__icon');
+      const el = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+      el.setAttribute('d', path);
+      el.setAttribute('fill', 'none');
+      el.setAttribute('stroke', 'currentColor');
+      el.setAttribute('stroke-width', '1.75');
+      el.setAttribute('stroke-linecap', 'round');
+      el.setAttribute('stroke-linejoin', 'round');
+      svg.append(el);
+      return svg;
+    };
+    const botsCopyText = async (value) => {
+      const text = String(value || '');
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(text);
+        return;
+      }
+      const field = make('textarea');
+      field.value = text;
+      field.setAttribute('aria-hidden', 'true');
+      document.body.append(field);
+      field.select();
+      document.execCommand('copy');
+      field.remove();
+    };
+    const applyBotsOverview = (data) => {
+      botsState.bots = data.bots || [];
+      if (data.catalog) botsState.catalog = data.catalog;
+      renderBotsRail();
+      renderBotsThread();
+    };
+    const closeBotsRailMenu = () => {
+      const menu = $('#bots-rail-menu');
+      if (menu) menu.hidden = true;
+    };
+    const openBotsRailMenu = (event, bot) => {
+      closeBotsRailMenu();
+      let menu = $('#bots-rail-menu');
+      if (!menu) {
+        menu = make('ul', 'bots-rail-menu');
+        menu.id = 'bots-rail-menu';
+        menu.setAttribute('role', 'menu');
+        menu.setAttribute('aria-label', 'Botの操作');
+        document.body.append(menu);
+      }
+      const item = (label, path, action, danger = false) => {
+        const button = make('button',
+          danger ? 'bots-rail-menu__item bots-rail-menu__item--danger'
+                 : 'bots-rail-menu__item',
+          null);
+        button.type = 'button';
+        button.setAttribute('role', 'menuitem');
+        button.append(botsRailMenuIcon(path), document.createTextNode(label));
+        button.addEventListener('click', async (click) => {
+          click.stopPropagation();
+          closeBotsRailMenu();
+          try { await action(); }
+          catch (error) { botsSetStatus(error.message); }
+        });
+        const row = make('li');
+        row.append(button);
+        return row;
+      };
+      const sep = () => make('li', 'bots-rail-menu__sep');
+      menu.replaceChildren(
+        item('ピン留め',
+          'M12 17v5 M9 10.76V7a3 3 0 1 1 6 0v3.76l1.8 8.1A2 2 0 0 1 14.84 21H9.16a2 2 0 0 1-1.96-2.14z',
+          async () => {
+            applyBotsOverview(await postJSON(`/api/bots/${bot.id}`, {
+              'pinned?':!bot['pinned?']
+            }, true));
+            botsSetStatus(bot['pinned?'] ? 'ピン留めを外しました。' : 'ピン留めしました。');
+          }),
+        item('1個のBotを新しいセクションに移動',
+          'M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z M12 11v6 M9 14h6',
+          async () => {
+            const name = window.prompt('新しいセクション名', bot.section || '');
+            if (name === null) return;
+            applyBotsOverview(await postJSON(`/api/bots/${bot.id}`, {
+              section:name.trim()
+            }, true));
+            botsSetStatus(name.trim()
+              ? `「${name.trim()}」へ移動しました。`
+              : '日時の一覧に戻しました。');
+          }),
+        item('未読にする',
+          'M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9 M10 21a2 2 0 0 0 4 0 M18 4l2-2',
+          async () => {
+            applyBotsOverview(await postJSON(`/api/bots/${bot.id}`, {
+              'unread?':true
+            }, true));
+          }),
+        sep(),
+        item('プロフィールを編集',
+          'M12 20h9 M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4z',
+          async () => {
+            await selectBot(bot.id);
+            const panel = $('#bots-thread-panel');
+            const tools = $('#bots-thread-tools');
+            panel.hidden = false;
+            tools.setAttribute('aria-expanded', 'true');
+            panel.scrollIntoView({block:'nearest'});
+          }),
+        item('複製',
+          'M8 8h12v12H8z M4 16V4h12',
+          async () => {
+            const data = await postJSON('/api/bots', {
+              name:`コピー — ${bot.name}`.slice(0, 60),
+              avatar:bot.avatar,
+              brief:bot.brief,
+              tools:bot.tools,
+              accounts:bot.accounts,
+              'writes?':bot['writes?'],
+              'browser?':bot['browser?'],
+              'computer?':bot['computer?'],
+              'peers?':bot['peers?'],
+              'coding?':bot['coding?'],
+              'virtual-shell?':bot['virtual-shell?'],
+              'goal?':bot['goal?'],
+              'omakase?':bot['omakase?'],
+              workspace:bot.workspace,
+              'provider-id':bot['provider-id'],
+              model:bot.model
+            }, true);
+            applyBotsOverview(data);
+            const created = (data.bots || []).at(-1);
+            if (created) await selectBot(created.id);
+            botsSetStatus('Bot を複製しました。');
+          }),
+        item('テンプレートとして共有',
+          'M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8 M16 6l-4-4-4 4 M12 2v13',
+          async () => {
+            await botsCopyText(JSON.stringify({
+              name:bot.name,
+              brief:bot.brief,
+              avatar:bot.avatar,
+              tools:bot.tools,
+              'writes?':bot['writes?'],
+              'browser?':bot['browser?'],
+              'computer?':bot['computer?'],
+              'peers?':bot['peers?'],
+              'coding?':bot['coding?'],
+              'goal?':bot['goal?'],
+              'omakase?':bot['omakase?'],
+              'provider-id':bot['provider-id'],
+              model:bot.model
+            }, null, 2));
+            botsSetStatus('テンプレートをコピーしました。');
+          }),
+        sep(),
+        item('会話IDをコピー',
+          'M8 8h12v12H8z M4 16V4h12',
+          async () => {
+            await botsCopyText(bot.id);
+            botsSetStatus('会話IDをコピーしました。');
+          }),
+        sep(),
+        item(bot['hidden?'] ? 'サイドバーに表示' : 'サイドバーから非表示',
+          'M3 3l18 18 M10.6 10.6A2 2 0 0 0 12 14a2 2 0 0 0 1.4-.6 M9.9 5.1A9 9 0 0 1 12 5c5 0 9 7 9 7a16 16 0 0 1-3.2 3.8 M6.1 6.1C3.7 7.8 2 12 2 12s4 7 10 7a9.7 9.7 0 0 0 4.1-.9',
+          async () => {
+            applyBotsOverview(await postJSON(`/api/bots/${bot.id}`, {
+              'hidden?':!bot['hidden?']
+            }, true));
+            botsSetStatus(bot['hidden?']
+              ? 'サイドバーに戻しました。'
+              : 'サイドバーから非表示にしました。');
+          }),
+        item('1個のBotを削除',
+          'M4 7h16 M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2 M10 11v6 M14 11v6 M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12',
+          async () => {
+            if (!window.confirm(`${bot.name} を削除しますか？会話の記録は残ります。`)) return;
+            applyBotsOverview(await postJSON(`/api/bots/${bot.id}/archive`, {}, true));
+            if (botsState.selected === bot.id) {
+              botsState.selected = (botsState.bots.find((candidate) =>
+                candidate['enabled?'] !== false) || {}).id || null;
+              if (botsState.selected) await selectBot(botsState.selected);
+              else {
+                showBotsPane();
+                renderBotsThread();
+              }
+            }
+            botsSetStatus(`${bot.name} を削除しました。`);
+          }, true)
+      );
+      const pointX = Number.isFinite(event.clientX)
+        ? event.clientX
+        : (event.currentTarget?.getBoundingClientRect().right || 8);
+      const pointY = Number.isFinite(event.clientY)
+        ? event.clientY
+        : (event.currentTarget?.getBoundingClientRect().bottom || 8);
+      menu.hidden = false;
+      const box = menu.getBoundingClientRect();
+      const left = Math.min(Math.max(8, pointX), window.innerWidth - box.width - 8);
+      const top = Math.min(Math.max(8, pointY), window.innerHeight - box.height - 8);
+      menu.style.left = `${left}px`;
+      menu.style.top = `${top}px`;
+    };
+    document.addEventListener('pointerdown', (event) => {
+      const menu = $('#bots-rail-menu');
+      if (!menu || menu.hidden || menu.contains(event.target)) return;
+      closeBotsRailMenu();
+    });
+    document.addEventListener('keydown', (event) => {
+      if (event.key === 'Escape') closeBotsRailMenu();
+    });
+    document.addEventListener('scroll', closeBotsRailMenu, true);
     const stopBotsRealtime = () => {
       if (botsState.syncTimer) window.clearTimeout(botsState.syncTimer);
       botsState.syncTimer = null;

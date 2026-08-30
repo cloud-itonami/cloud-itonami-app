@@ -50,6 +50,11 @@
         (is (= #{:dodaf/performer :dodaf/system}
                (:performer/dodaf-types performer)))
         (is (= :agent (get-in performer [:performer/actor :actor/kind])))))
+    (testing "sidebar presentation is the same kind of decoration"
+      (doseq [placed [(assoc plain :bot/section "営業")
+                      (assoc plain :bot/unread? true)
+                      (assoc plain :bot/hidden? true)]]
+        (is (= admitted (bot/admitted-tools placed catalog connected)))))
     (testing "there is no field to claim person authority through: kind and the
               DoDAF types are DERIVED, so a `:performer/kind` written onto the
               Bot is not read, and one written into the persona changes nothing
@@ -85,6 +90,14 @@
            (:bot/capability-policy plain)))
     (is (empty? (bot/admitted-tools plain catalog #{"com.google.gmail"}))
         "an autonomous job policy is not a connector or tool grant")))
+
+(deftest bot-keeps-sidebar-presentation
+  (let [b (a-bot {:bot/section "営業" :bot/unread? true :bot/hidden? true})]
+    (is (= "営業" (:bot/section b)))
+    (is (true? (:bot/unread? b)))
+    (is (true? (:bot/hidden? b))))
+  (is (nil? (:bot/section (a-bot {:bot/section "   "})))
+      "a blank section is absence, not a folder named spaces"))
 
 (deftest a-bot-refuses-a-stored-status
   ;; Status is computed from what is outstanding. A stored one could disagree
