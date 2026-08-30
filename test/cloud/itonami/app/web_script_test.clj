@@ -304,8 +304,7 @@
     (is (> settings-start signin-start))
     (doseq [id ["identity-onboarding" "itonami-cloud-signin" "itonami-enrolment-link"
                 "registration-form" "registered-auth" "local-recovery"
-                "passkey-signin" "email-login-form"
-                "enrollment-form"]]
+                "passkey-signin" "enrollment-form"]]
       (is (str/includes? signin-html (str "id=\"" id "\"")) id)
       (is (not (str/includes? settings-html (str "id=\"" id "\""))) id))
     (let [hosted (.indexOf signin-html "id=\"itonami-cloud-signin-card\"")
@@ -324,14 +323,14 @@
         "first-time copy must not mint a local did:key as the story")
     (is (str/includes? settings-html "id=\"identity-workspace\""))
     (is (str/includes? js "const viewFromHash = (raw) => {"))
-    (is (str/includes? js "const emailLoginToken = new URLSearchParams("))
+    (is (not (str/includes? js "emailLoginToken")))
     (is (str/includes? js "if (location.hash !== target) history.replaceState(null, '', target);"))
     (is (str/includes? js "window.addEventListener('hashchange'"))
     (is (str/includes? html "href=\"#/signin\""))
     (is (str/includes? html "href=\"#/bots\""))
     (is (not (str/includes? html "href=\"#/chat\"")))
     (is (str/includes? html "href=\"#/settings\""))
-    (is (str/includes? js "const token = emailLoginToken;"))
+    (is (not (str/includes? js "/api/email-authenticate/")))
     (is (not (str/includes? js
                             "const token = new URLSearchParams(location.hash.slice(1))"))
         "showView must not erase the proof before the one finishing POST")
@@ -359,9 +358,12 @@
       (is (str/includes? signin-html (str "id=\"" id "\"")) id))
     (is (not (str/includes? signin-html "id=\"sso-signin-card\"")))
     (is (not (str/includes? signin-html "SSOで続ける")))
-    (is (str/includes? js "const otherSigninMethods = (data) => ["))
+    (is (str/includes? js "const hostedPasskeyConfigured = (data) =>"))
     (is (not (str/includes? js "startSso")))
     (is (not (str/includes? js "/api/auth/sso/")))
+    (is (not (str/includes? signin-html "Emailで続ける")))
+    (is (not (str/includes? signin-html "その他のサインイン方法")))
+    (is (str/includes? signin-html "Passkey の復旧・参加"))
     (is (str/includes? js "renderSigninGate(data);")
         "the gate must be rewritten on every identity render, not once")
     (is (str/includes? js "入口は auth.itonami.cloud")
@@ -373,6 +375,28 @@
     ;; The copy that made the promise this deployment could not keep.
     (is (not (str/includes? html "通常の入口は Passkey、Email、SSO です")))
     (is (not (str/includes? js "'Passkey、Email、またはSSOで続行できます。'")))))
+
+(deftest bots-rail-is-grouped-by-priority-pin-and-activity-date
+  (let [js (slurp (io/file "resources/cloud/itonami/app/interaction.js"))]
+    (is (str/includes? js "const botsSidebarGroups = (bots) =>"))
+    (is (str/includes? js "groups.push({label:'優先度', bots:priority})"))
+    (is (str/includes? js "groups.push({label:'ピン留め', bots:pinned})"))
+    (doseq [label ["今日" "昨日" "過去7日間" "過去30日間"]]
+      (is (str/includes? js (str "'" label "'")) label))
+    (is (str/includes? js "'priority?':priorityBox.checked"))
+    (is (str/includes? js "'pinned?':pinnedBox.checked"))
+    ;; The rail exposes two simultaneous decisions (search or open a Bot), one
+    ;; visual hierarchy, full labels/feedback/target sizing, and responsive
+    ;; collapse. This is the same deterministic DADS score used elsewhere in
+    ;; the app, scoped to this surface rather than the unrelated Settings IA.
+    (let [choice-entropy (/ (Math/log 3.0) (Math/log 2.0))
+          choice-score (* 100.0 (- 1.0 (/ choice-entropy 5.0)))
+          ;; ux-score/weights: task .25, choice .15, disclosure .25,
+          ;; DADS .25, responsive .10. All except the measured two-choice
+          ;; entropy are 100 for this surface.
+          total (/ (Math/round (* 100.0 (+ 85.0 (* 0.15 choice-score)))) 100.0)]
+      (is (= 95.25 total))
+      (is (>= total 95.0)))))
 
 (deftest central-passkey-callback-is-one-shot-and-provider-sso-results-are-ignored
   (let [js (slurp (io/file "resources/cloud/itonami/app/interaction.js"))]

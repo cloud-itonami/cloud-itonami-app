@@ -212,8 +212,12 @@
           (is (false? (:bot/virtual-shell? created)))
           (is (true? (:bot/goal? created)))
           (is (true? (:goal? (first (:bots (bots/overview {} alice))))))
-          (bots/update! {} alice (:bot/id created) {:goal? false})
-          (is (false? (:goal? (first (:bots (bots/overview {} alice))))))
+          (bots/update! {} alice (:bot/id created)
+                        {:goal? false :priority? true :pinned? true})
+          (let [public (first (:bots (bots/overview {} alice)))]
+            (is (false? (:goal? public)))
+            (is (true? (:priority? public)))
+            (is (true? (:pinned? public))))
           (is (empty? (:bot/tools created))
               "autonomy does not silently grant an external connector"))))))
 

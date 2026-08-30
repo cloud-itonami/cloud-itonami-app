@@ -3414,15 +3414,15 @@
                          :href "https://itonami.cloud/ja/signin/"})]
            [:p {:class "form-help"}
             "鍵は 1Password / Bitwarden / iCloud キーチェーン / Google パスワードマネージャー のいずれかに保存してください。登録は itonami.cloud で行います。"]]
-          ;; Everything below is the exception, not the entrance: device-local
-          ;; recovery, email, and joining by invitation. One fold, so
+          ;; Everything below is still Passkey: device-local recovery,
+          ;; device-local registration, and joining by invitation. One fold, so
           ;; the screen shows one decision until someone asks for more. The
           ;; invited-user form lives inside #registered-auth on purpose — it
           ;; is pre-auth-only exactly like the rest, and one container means
           ;; one visibility rule in the script.
           (accordion-with-id
            "local-recovery"
-           "その他のサインイン方法"
+           "Passkey の復旧・参加"
            [:div {:class "settings-stack" :id "registered-auth"}
             [:div {:class "settings-form"}
              (dds/heading 3 "この端末の Passkey" {:size "20"})
@@ -3435,16 +3435,6 @@
               "この端末だけに User を作る経路です。通常の登録は itonami.cloud のパスキーです。"]
              [:button {:class "tool-button" :id "registration-submit"
                        :type "submit"} "この端末だけで登録"]]
-            [:form {:class "settings-form" :id "email-login-form" :hidden true}
-             (dds/heading 3 "Emailで続ける" {:size "20"})
-             [:p {:class "form-help"}
-              "10分間・一回限りのリンクを送ります。新規登録が有効な環境では、そのままUserを作成できます。"]
-             [:div {:class "field"}
-              [:label {:for "email-login-address"} "メールアドレス"]
-              [:input {:id "email-login-address" :name "email" :type "email"
-                       :required true :autocomplete "email"}]]
-             [:button {:class "tool-button" :id "email-login-submit"
-                       :type "submit"} "ログインリンクを送る"]]
             [:div {:class "settings-form"}
              (dds/heading 3 "招待された User" {:size "20"})
              [:p {:class "form-help"}

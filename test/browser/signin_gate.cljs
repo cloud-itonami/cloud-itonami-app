@@ -67,7 +67,6 @@
                     (js/process.exit 2))
                   (println "created the pending account")))
             data (identity-state)
-            email? (aget data "email-login-configured?")
             browser (.launch (.-chromium pw)
                              #js {:headless true
                                   :executablePath
@@ -96,7 +95,7 @@
                      (.textContent (.locator page "#signin-gate-note")) "")
               passkey-visible (.isVisible page "#passkey-signin")
               passkey-disabled (.isDisabled page "#passkey-signin")
-              email-card (.isVisible page "#email-login-form")
+              email-card-count (.count (.locator page "#email-login-form"))
               ;; Playwright reads a string argument as an EXPRESSION, so an
               ;; arrow function passed here would evaluate to a function object
               ;; and serialise as nothing. Measured: it silently returns null.
@@ -118,14 +117,14 @@
                 (str/includes? note "Passkey だけがありません"))
 
         (println "\n── the copy names only entrances this deployment has ──")
-        (check! "Email is named only when it is configured"
-                (= (boolean email?) (str/includes? note "Email")))
+        (check! "Email is not named as an entrance"
+                (not (str/includes? note "Email")))
         (check! "provider SSO is not named as an entrance"
                 (not (str/includes? note "SSO")))
         (check! "provider SSO has no card"
                 (zero? (.count (.locator page "#sso-signin-card"))))
-        (check! "the Email card is shown only when Email is configured"
-                (= (boolean email?) email-card))
+        (check! "Email has no sign-in card"
+                (zero? email-card-count))
 
         (println "\n── nothing is offered that cannot work ──")
         (check! "no visible control in the signin view is disabled without a reason on screen"

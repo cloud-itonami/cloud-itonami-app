@@ -362,13 +362,11 @@
    :central {:configured? (true? (:enabled? central))
              :issuer (:issuer central)
              :enrolment-url (:enrolment-url central)}
-   :email {:configured? @runtime-email-login-configured?}
-   :sso (mapv (fn [provider]
-                (let [config (sso-provider-config provider)]
-                  {:id (name provider)
-                   :name (:name config)
-                   :configured? (boolean (:configured? config))}))
-              (:sso-providers @runtime-auth-profile))}))
+   ;; Sign-in is Passkey-only. Email and provider OAuth implementations remain
+   ;; data-migration/connector code, but they are not advertised as session
+   ;; roots and the HTTP server exposes no route that can start them.
+   :email {:configured? false}
+   :sso []}))
 
 (defn- identity-state [state]
   (merge {:organizations {} :users {} :memberships {}
@@ -1107,7 +1105,7 @@
                                       :authn-provider :authn-factors
                                       :created-at :expires-at]))
      :auth-methods (public-auth-methods)
-     :email-login-configured? @runtime-email-login-configured?
+     :email-login-configured? false
      :signup-enabled? (true? (:allow-signup? @runtime-auth-profile))
      :login-identities
      (when session

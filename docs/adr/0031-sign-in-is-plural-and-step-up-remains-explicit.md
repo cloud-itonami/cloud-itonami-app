@@ -1,6 +1,6 @@
 # ADR-0031: Sign-in is plural and step-up remains explicit
 
-**Status:** accepted — 2026-08-10, refined 2026-08-12 and 2026-08-28
+**Status:** superseded by ADR-0083 — 2026-08-30
 
 ## Context
 

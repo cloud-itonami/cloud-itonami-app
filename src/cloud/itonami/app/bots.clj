@@ -917,7 +917,7 @@
   separate capabilities and the Bot settings screen may narrow any default."
   [configuration session {:keys [name avatar brief connectors tools accounts
                                  writes? browser? computer? peers? coding? virtual-shell?
-                                 goal? omakase? workspace provider-id model]
+                                 goal? priority? pinned? omakase? workspace provider-id model]
                           :as attrs}]
   (let [writes? (if (contains? attrs :writes?) (boolean writes?) true)
         omakase? (if (contains? attrs :omakase?) (boolean omakase?) true)
@@ -957,6 +957,8 @@
                     :bot/coding? coding?
                     :bot/virtual-shell? virtual-shell?
                     :bot/goal? goal?
+                    :bot/priority? (boolean priority?)
+                    :bot/pinned? (boolean pinned?)
                     :bot/omakase? omakase?
                     :bot/workspace workspace
                     :bot/created-at now
@@ -1068,6 +1070,8 @@
                  (contains? attrs :computer?) (assoc :bot/computer? (:computer? attrs))
                  (contains? attrs :peers?) (assoc :bot/peers? (:peers? attrs))
                  (contains? attrs :goal?) (assoc :bot/goal? (:goal? attrs))
+                 (contains? attrs :priority?) (assoc :bot/priority? (:priority? attrs))
+                 (contains? attrs :pinned?) (assoc :bot/pinned? (:pinned? attrs))
                  (contains? attrs :omakase?) (assoc :bot/omakase? (:omakase? attrs))
                  (or (contains? attrs :coding?)
                      (contains? attrs :virtual-shell?)
@@ -1791,6 +1795,8 @@
      :goal? (if (contains? b :bot/goal?)
               (boolean (:bot/goal? b))
               (boolean (or (:bot/coding? b) (:bot/virtual-shell? b))))
+     :priority? (boolean (:bot/priority? b))
+     :pinned? (boolean (:bot/pinned? b))
      :omakase? (boolean (:bot/omakase? b))
      :virtual-shell-ready? (boolean (and (:bot/virtual-shell? b)
                                          (virtual-shell/available?)))
