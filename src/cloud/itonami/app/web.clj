@@ -1444,23 +1444,25 @@
       clip-path:inset(50%);width:1px;height:1px;overflow:hidden;white-space:nowrap}
     .view{padding:1rem}.view-header h1{font-size:1.75rem;line-height:1.3}.view-lead{line-height:1.7}
     .bots-view{height:calc(100dvh - 4rem - env(safe-area-inset-top) - var(--mobile-nav-height));padding:0}
-    /* On a phone the Bot picker is a horizontal touch rail. A vertical rail
-       consumed scarce message width and left the conversation looking like
-       an empty desktop pane. The selected Bot's name remains in the titlebar;
-       every avatar button carries its full accessible name. */
-    .bots-shell{display:flex;flex-direction:column}
-    .bots-main{flex:1}
+    /* Keep the Bot picker a vertical column at phone width. A horizontal
+       strip was the exception that appeared only after shrinking; the rest
+       of the layout already stacks faces. Search stays hidden in the 4rem
+       column (same as the tablet rail). The selected Bot's name remains in
+       the titlebar; every avatar button carries its full accessible name. */
+    .bots-shell{display:grid;grid-template-columns:4rem minmax(0,1fr)}
+    .bots-main{min-width:0;min-height:0}
     .bots-conversations{width:100%;border-left:0}
     .bots-quality-panel{width:100%;border-left:0}
     .bots-routines-panel{width:100%;border-left:0}
     .bots-conversations__layout{grid-template-columns:1fr}
-    .bots-rail{display:block;flex:0 0 auto;padding:.375rem .75rem;border-right:0;
-      border-bottom:1px solid var(--color-neutral-solid-gray-200);overflow-x:auto}
-    .bots-rail__search{display:block;margin-bottom:.25rem}
-    .bots-rail__list{display:flex;gap:.375rem;overflow-x:auto;scrollbar-width:none}
-    .bots-rail__list::-webkit-scrollbar{display:none}
-    .bots-rail__list>li{flex:0 0 auto}
-    .bots-rail__item{position:relative;justify-content:center;width:3rem;padding:.5rem .25rem}
+    .bots-rail{display:flex;flex-direction:column;min-height:0;padding:.5rem .375rem;
+      border-right:1px solid var(--color-neutral-solid-gray-200);border-bottom:0;
+      overflow:hidden}
+    .bots-rail__search{display:none}
+    .bots-rail__list{display:flex;flex-direction:column;align-items:stretch;gap:.375rem;
+      overflow-x:hidden;overflow-y:auto;scrollbar-width:thin}
+    .bots-rail__list>li{flex:0 0 auto;width:100%}
+    .bots-rail__item{position:relative;justify-content:center;width:100%;padding:.5rem .25rem}
     .bots-rail__copy,.bots-rail__empty,.bots-rail__group{display:none}
     .bots-rail__item .bots-dot{position:absolute;right:.3rem;bottom:.3rem}
     .bots-mobile-context{display:flex}
@@ -1999,7 +2001,7 @@
            [:p {:class "visually-hidden" :id "request-status"
                 :role "status" :aria-live "polite"}
             "ローカルモデルを準備中です。"]]]]
-        ;; Bots. Two regions, not a document: the horizontal list is how you
+        ;; Bots. Two regions, not a document: the vertical list is how you
         ;; find one and the thread is how you work with it. Both stay visible so
         ;; a Bot that is waiting for you cannot be somewhere you are not
         ;; looking. Everything inside is built by the client from /api/bots —

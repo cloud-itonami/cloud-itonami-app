@@ -475,11 +475,15 @@
                      ".bots-view{max-width:none;padding:0;height:calc(100dvh - 5rem);overflow:hidden}"))
   (is (str/includes? web/app-css
                      ".bots-shell{grid-template-columns:4rem minmax(0,1fr)}"))
+  (is (not (str/includes? web/app-css
+                          ".bots-shell{display:flex;flex-direction:column}"))
+      "shrinking the window must not lay the rail above the thread")
+  (is (str/includes? web/app-css ".bots-main{min-width:0;min-height:0}"))
   (is (str/includes? web/app-css
-                     ".bots-shell{display:flex;flex-direction:column}"))
-  (is (str/includes? web/app-css ".bots-main{flex:1}"))
-  (is (str/includes? web/app-css
-                     ".bots-rail__list{display:flex;gap:.375rem;overflow-x:auto"))
+                     ".bots-rail__list{display:flex;flex-direction:column"))
+  (is (not (str/includes? web/app-css
+                          ".bots-rail__list{display:flex;gap:.375rem;overflow-x:auto"))
+      "the phone picker must not become a sideways strip"))
   (is (str/includes? (web/page-html {}) "id=\"bots-filter\""))
   (is (str/includes? (web/page-html {}) "id=\"bots-mobile-context\""))
   (is (not (str/includes? web/app-css ".bots-rail{display:none}")))
