@@ -224,6 +224,25 @@
           (is (empty? (:bot/tools created))
               "autonomy does not silently grant an external connector"))))))
 
+(deftest sidebar-presentation-is-not-authority
+  (with-store
+    (fn []
+      (let [created (make-bot alice {:connectors []})
+            before (:admitted-tools (first (:bots (bots/overview nil alice))))]
+        (bots/update! {} alice (:bot/id created)
+                      {:section "営業" :unread? true :hidden? true})
+        (let [public (first (:bots (bots/overview {} alice)))]
+          (is (= "営業" (:section public)))
+          (is (true? (:unread? public)))
+          (is (true? (:hidden? public)))
+          (is (= before (:admitted-tools public))
+              "a rail folder, unread mark or hide flag cannot widen reach"))
+        (bots/update! {} alice (:bot/id created) {:section "" :unread? false :hidden? false})
+        (let [cleared (first (:bots (bots/overview {} alice)))]
+          (is (nil? (:section cleared)))
+          (is (false? (:unread? cleared)))
+          (is (false? (:hidden? cleared))))))))
+
 (deftest overview-offers-only-an-admitted-local-git-root
   (with-store
     (fn []

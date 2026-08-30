@@ -145,6 +145,49 @@
       (check! "the face has eyes and pupils" (and (= "\"\"" eye-content)
                                                    (= "\"\"" pupil-content))))
 
+    (println "\n── right-click on a Bot opens the rail menu ──")
+    (p/let [_ (.evaluate page
+                         "document.querySelector('.bots-rail-menu') && (document.querySelector('.bots-rail-menu').hidden = true)")
+            before-hidden (.evaluate page
+                                     "(() => { const m = document.querySelector('.bots-rail-menu'); return !m || m.hidden; })()")
+            _ (.click page ".bots-rail__item")
+            _ (.waitForTimeout page 200)
+            after-left (.evaluate page
+                                  "(() => { const m = document.querySelector('.bots-rail-menu'); return !m || m.hidden; })()")
+            _ (.click page ".bots-rail__item" #js {:button "right"})
+            _ (.waitForTimeout page 300)
+            after-right (.evaluate page
+                                   "(() => { const m = document.querySelector('.bots-rail-menu'); return m && !m.hidden; })()")
+            labels (.allTextContents (.locator page "#bots-rail-menu [role='menuitem']"))
+            danger (.evaluate page
+                              "getComputedStyle(document.querySelector('#bots-rail-menu .bots-rail-menu__item--danger')).color")
+            _ (.evaluate page
+                         "([...document.querySelectorAll('#bots-rail-menu [role=menuitem]')]
+                           .find((node) => node.textContent.trim() === '会話IDをコピー') || {}).click()")
+            _ (.waitForTimeout page 400)
+            status (.textContent page "#bots-thread-status-line")
+            _ (.press (.-keyboard page) "Escape")]
+      (check! "the menu is closed before a right click" before-hidden)
+      (check! "a left click does not open the menu" after-left)
+      (check! "a right click opens the menu" after-right)
+      (check! "the menu names the same actions"
+              (= ["ピン留め"
+                  "1個のBotを新しいセクションに移動"
+                  "未読にする"
+                  "プロフィールを編集"
+                  "複製"
+                  "テンプレートとして共有"
+                  "会話IDをコピー"
+                  "サイドバーから非表示"
+                  "1個のBotを削除"]
+                 (mapv str/trim labels)))
+      (check! "delete is painted as a danger action"
+              (or (str/includes? (or danger "") "rgb(224")
+                  (str/includes? (or danger "") "rgb(196")
+                  (str/includes? (or danger "") "rgb(186"))))
+      (check! "copying the conversation ID is a real action"
+              (str/includes? (or status "") "会話ID"))))
+
     (println "\n── scheduled work stays scoped to the selected Bot ──")
     (p/let [titlebar-visible (.isVisible page "#bots-titlebar-context")
             identity-visible (.isVisible page "#bots-titlebar-identity")

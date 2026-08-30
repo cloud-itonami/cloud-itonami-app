@@ -398,6 +398,37 @@
       (is (= 95.25 total))
       (is (>= total 95.0)))))
 
+(deftest bots-rail-right-click-opens-the-same-bot-menu
+  (let [js (slurp (io/file "resources/cloud/itonami/app/interaction.js"))
+        css (slurp (io/file "src/cloud/itonami/app/web.clj"))]
+    (is (str/includes? js "item.addEventListener('contextmenu'")
+        "the rail face is what opens the menu")
+    (is (str/includes? js "item.addEventListener('click', () => selectBot(bot.id))")
+        "a left click still opens the Bot, not the menu")
+    (is (str/includes? js "openBotsRailMenu(event, bot)"))
+    (is (str/includes? js "event.preventDefault();")
+        "the host menu replaces the browser's")
+    (doseq [label ["ピン留め"
+                   "1個のBotを新しいセクションに移動"
+                   "未読にする"
+                   "プロフィールを編集"
+                   "複製"
+                   "テンプレートとして共有"
+                   "会話IDをコピー"
+                   "サイドバーから非表示"
+                   "1個のBotを削除"]]
+      (is (str/includes? js (str "'" label "'")) label))
+    (is (str/includes? js "postJSON(`/api/bots/${bot.id}/archive`")
+        "delete uses the existing archive route, not a silent no-op")
+    (is (str/includes? js "'pinned?':!bot['pinned?']"))
+    (is (str/includes? js "'unread?':true"))
+    (is (str/includes? js "'hidden?':!bot['hidden?']"))
+    (is (str/includes? js "botsCopyText(bot.id)"))
+    (is (str/includes? css ".bots-rail-menu{"))
+    (is (str/includes? css ".bots-rail-menu__item--danger{color:var(--color-semantic-error-1)}"))
+    (is (str/includes? js "item.addEventListener('click', () => selectBot(bot.id));\n        item.addEventListener('contextmenu'")
+        "left-click and right-click are separate listeners")))
+
 (deftest central-passkey-callback-is-one-shot-and-provider-sso-results-are-ignored
   (let [js (slurp (io/file "resources/cloud/itonami/app/interaction.js"))]
     (is (str/includes? js "provider === 'itonami-cloud'"))
