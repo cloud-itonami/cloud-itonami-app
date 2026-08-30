@@ -92,6 +92,7 @@
             [clojure.walk :as walk]
             [cloud.itonami.app.agent-session :as agent-session]
             [cloud.itonami.app.app-client :as client]
+            [cloud.itonami.app.bot-import :as bot-import]
             [cloud.itonami.app.commands :as commands]
             [cloud.itonami.app.git-hygiene :as git-hygiene]
             [cloud.itonami.app.config :as config]
@@ -561,6 +562,27 @@
                           (get-in configuration [:business :workspace-root])
                           (git-hygiene/workspace-root))))
 
+(defn bot-import-report
+  "Read one external source's bots and render the roles they would become.
+
+  `existing` comes from this workforce's own list rather than from a name the
+  caller passed: re-running an import must be able to say `already-present`,
+  and the only place that is true is the live registry projection.
+
+  Nothing is created here. The output is EDN for `loop-yakuwari`, and the Bot
+  appears at the next `itonami bots provision` -- see `bot-import`'s docstring
+  for why the import is not allowed to be the thing that creates it."
+  [configuration flags]
+  (let [source (or (:source flags) (required-flag flags :source))
+        existing (try (mapv :name (:bots (bot-list configuration)))
+                      (catch Exception _ []))]
+    (bot-import/import-report
+     source
+     {:business (or (:business flags) "cloud-itonami")
+      :home (:home flags)
+      :base (:base flags)
+      :existing existing})))
+
 (defn- refactor-root [configuration flags]
   (or (:root flags)
       (get-in configuration [:business :workspace-root])
@@ -640,6 +662,9 @@
        "  bots cancel --id <bot-id> --run <run-id>\n"
        "  bots hygiene [--root <west-root>]\n"
        "                         west 全 checkout の git 衛生状態（読み取りのみ）\n\n"
+       "  bots import hermes [--home <hermes-home>] [--business <slug>]\n"
+       "  bots import grok   [--base <url>] [--business <slug>]\n"
+       "                         外部 bot を role 提案として読み込みます（Bot は作りません）\n\n"
        "  bots refactor scan --root <west-root> [--limit 25]\n"
        "  bots refactor inspect --root <west-root> --repo <west-name> [--limit 8]\n"
        "  bots refactor start --root <west-root> --repo <west-name> --id <bot-id>\n\n"
@@ -680,6 +705,16 @@
       ["bots" "decide"] (bot-decide configuration flags)
       ["bots" "cancel"] (bot-cancel configuration flags)
       ["bots" "hygiene"] (bot-hygiene configuration flags)
+      ["bots" "import"]
+      (bot-import-report
+       configuration
+       (assoc flags :source
+              (or (nth named 2 nil)
+                  (throw (ex-info
+                          (str "bots import は "
+                               (str/join " / " (sort bot-import/sources))
+                               " を指定してください")
+                          {:type :cli/usage})))))
       ["bots" "refactor"]
       (case (nth named 2 nil)
         "scan" (bot-refactor-scan configuration flags)
