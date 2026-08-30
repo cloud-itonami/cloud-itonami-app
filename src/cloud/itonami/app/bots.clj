@@ -69,6 +69,7 @@
             [cloud.itonami.app.decision-method :as decision-method]
             [cloud.itonami.app.disk-space :as disk-space]
             [cloud.itonami.app.domain-tools :as domain-tools]
+            [cloud.itonami.app.git-hygiene :as git-hygiene]
             [cloud.itonami.app.gc :as gc]
             [cloud.itonami.app.handoff :as handoff]
             [cloud.itonami.app.identity :as identity]
@@ -2156,6 +2157,25 @@
   (and (autonomous-capability? b :disk.inspect)
        (autonomous-capability? b :disk.cleanup)))
 
+(defn- git-hygiene-tools [b]
+  (let [inspect? (autonomous-capability? b :git.inspect)
+        cleanup? (autonomous-capability? b :git.cleanup)]
+    (cond-> []
+      inspect? (conj (first git-hygiene/tool-definitions))
+      cleanup? (conj (second git-hygiene/tool-definitions)))))
+
+(defn- git-hygiene-bot? [b]
+  (or (autonomous-capability? b :git.inspect)
+      (autonomous-capability? b :git.cleanup)))
+
+(defn- git-hygiene-relief-bot? [b]
+  ;; Same narrowing as disk pressure: reading the registry is a maintenance
+  ;; identity, but only the reviewed pair can finish the one thing this Bot
+  ;; exists to finish. A status-only Bot keeps its tool and its cadence and
+  ;; goes through the ordinary planner.
+  (and (autonomous-capability? b :git.inspect)
+       (autonomous-capability? b :git.cleanup)))
+
 (defn- domain-steward-bot? [b]
   (or (autonomous-capability? b :domain.read)
       (autonomous-capability? b :domain.proposal.create)
@@ -2181,6 +2201,13 @@
     ;; Domain work has its own exact Passkey-bound authority. Do not let this
     ;; operational identity inherit coding, Commerce, Wallet or browser tools.
     (domain-tool-definitions configuration b)
+
+    (git-hygiene-bot? b)
+    ;; A repository-hygiene identity. It reads west metadata and prunes
+    ;; bookkeeping for working trees that are already gone; giving it the
+    ;; coding, Commerce, Wallet or browser tools would make its concrete
+    ;; ceiling wider than the two capabilities the registry reviewed.
+    (vec (git-hygiene-tools b))
 
     (disk-maintenance-bot? b)
     ;; This is a host-maintenance identity, not a coding or commerce identity.
@@ -2241,6 +2268,7 @@
       (workspace-tools/write-tool? tool-name)
       (virtual-shell/write-tool? tool-name)
       (disk-space/write-tool? tool-name)
+      (git-hygiene/write-tool? tool-name)
       (domain-tools/write-tool? tool-name)
       (let [registry (connectors/enabled configuration)]
         (boolean
@@ -2274,6 +2302,9 @@
 
     (disk-space/tool? tool-name)
     (disk-space/describe tool-name)
+
+    (git-hygiene/tool? tool-name)
+    (git-hygiene/describe tool-name)
 
     (domain-tools/tool? tool-name)
     (domain-tools/describe tool-name args)
@@ -2475,6 +2506,7 @@
                            (workspace-tools/tool? tool-name)
                            (virtual-shell/tool? tool-name)
                            (disk-space/tool? tool-name)
+                           (git-hygiene/tool? tool-name)
                            (domain-tools/tool? tool-name))
                      (cond
                        (commerce/tool? tool-name)
@@ -2496,6 +2528,9 @@
 
                        (disk-space/tool? tool-name)
                        (disk-space/call! tool-name)
+
+                       (git-hygiene/tool? tool-name)
+                       (git-hygiene/call! tool-name)
 
                        (domain-tools/tool? tool-name)
                        (domain-tools/call-tool configuration tool-name args)
@@ -3273,6 +3308,8 @@
     "選択した local Git workspace のファイルまたは履歴が変わります。remote へは push しません。"
     (virtual-shell/tool? name)
     "Bot 専用のnetwork-disabled仮想環境内でcommandを実行します。選択したGit workspaceは書き換わる場合があります。"
+    (git-hygiene/tool? name)
+    "既に消えている working tree の git 登録だけを片付けます。生きている worktree、stash、branch、未コミットの変更は触らず、push もしません。"
     (domain-tools/tool? name)
     "Domain Authority の proposal 台帳を更新します。購入・更新課金・DNS 変更は、この exact proposal に対する human Passkey 承認が無ければ host が拒否します。"
     :else "接続済みサービスに書き込みます。"))
@@ -5310,7 +5347,21 @@
            "repository-wide search first. Reproduce this exact tool, then repair or verify it."))))
 
 (defn- workforce-goal [b job]
-  (if (disk-pressure-relief-bot? b)
+  (cond
+    (git-hygiene-relief-bot? b)
+    (str "Resident job: " (get-in b [:bot/business :name])
+         " / " (get-in b [:bot/role :name]) "\n"
+         "Task: keep git bookkeeping across the west workspace from accumulating.\n\n"
+         "Contract:\n"
+         "- Call git_hygiene_status exactly once.\n"
+         "- If stale worktree registrations remain, call git_hygiene_prune exactly "
+         "once; if there are none, do not call prune.\n"
+         "- Report interrupted merges, stashes and remaining stale registrations "
+         "as findings for the human runbook. Do not attempt to resolve them.\n"
+         "- Never drop a stash, delete a branch, discard uncommitted work, or push.\n"
+         "- Stop after this single bounded maintenance decision.")
+
+    (disk-pressure-relief-bot? b)
     (str "Resident job: " (get-in b [:bot/business :name])
          " / " (get-in b [:bot/role :name]) "\n"
          "Task: maintain the host's bounded regenerable disk space.\n\n"
@@ -5321,6 +5372,8 @@
          "- Report the observed status and cleanup receipt, including bytes reclaimed.\n"
          "- Do not inspect or modify repositories, worktrees, user data, or any other surface.\n"
          "- Stop after this single bounded maintenance decision.")
+
+    :else
     (let [{:keys [context-id outcome summary]}
           (:workforce.job/continuation job)]
       (str "Resident job: " (get-in b [:bot/business :name])
@@ -5340,6 +5393,10 @@
 (defn- disk-pressure-relief-job? [job]
   (boolean
    (some-> job :workforce.job/bot bot-by-id disk-pressure-relief-bot?)))
+
+(defn- git-hygiene-relief-job? [job]
+  (boolean
+   (some-> job :workforce.job/bot bot-by-id git-hygiene-relief-bot?)))
 
 (defn- domain-steward-job? [job]
   (boolean
@@ -5579,6 +5636,134 @@
                          :turn/finished-at finished-at})
           (throw error))))))
 
+(defn- compact-git-hygiene-receipt [receipt]
+  (let [trim (fn [report]
+               (select-keys report [:schema :listed :scanned :unreadable
+                                    :interrupted-repos :stash-repos :stashes
+                                    :worktrees-live :worktrees-locked
+                                    :stale-worktree-repos :stale-worktrees
+                                    :findings :findings-truncated?]))]
+    (cond-> (select-keys receipt [:schema :action :reason :attempted :limit
+                                  :pruned :remaining-repos])
+      (:before receipt) (assoc :before (trim (:before receipt)))
+      (:after receipt) (assoc :after (trim (:after receipt)))
+      (seq (:failed receipt)) (assoc :failed (:failed receipt)))))
+
+(defn- git-hygiene-summary [receipt]
+  (let [before (:before receipt)
+        after (:after receipt)]
+    (str "Git hygiene pass completed by the bounded resident capability.\n"
+         "- action: " (:action receipt) "\n"
+         "- registry: " (:scanned before) " of " (:listed before)
+         " registered checkouts readable\n"
+         "- stale worktree registrations: " (:stale-worktrees before)
+         " -> " (:stale-worktrees after) "\n"
+         "- registrations pruned: " (long (or (:pruned receipt) 0)) "\n"
+         "- repositories left with stale registrations: "
+         (:stale-worktree-repos after) "\n"
+         "Reported, not acted on (the runbook requires a person): "
+         (:interrupted-repos after) " with an interrupted merge or rebase, "
+         (:stash-repos after) " holding " (:stashes after) " stashes.\n"
+         "Live worktrees (" (:worktrees-live after) "), stashes, branches, "
+         "uncommitted changes and remotes were not targets, and nothing was pushed.")))
+
+(defn- run-git-hygiene!
+  "Execute the Git Maintainer's two reviewed capabilities without inference.
+
+  Deterministic for the same reason disk maintenance is: measured over the
+  fifty resident runs before this landed, forty-five ended in
+  `:provider/http-error`. A pass whose whole content is `status` then, if the
+  count is non-zero, `prune`, does not need a planner -- and routing it
+  through one would make a provider outage able to stop the cleanup
+  indefinitely. The Bot identity, capability gate, cadence, run ledger and
+  transcript are unchanged; only the nondeterministic planner is absent."
+  [session b job run-id]
+  (let [objective (workforce-goal b job)
+        at (store/now)
+        started-ms (now-ms)
+        queued (agent-run/agent-run {:id run-id :goal objective} started-ms)
+        stored-job {:job/id run-id
+                    :job/bot (:bot/id b)
+                    :job/session (select-keys session
+                                              [:user-id :organization-id :kind])
+                    :job/objective objective
+                    :job/run queued
+                    :job/plan []
+                    :job/decision-frame nil
+                    :job/events []
+                    :job/resident-workforce? true
+                    :job/attempt 1
+                    :job/created-at at
+                    :job/updated-at at}]
+    (transact! assoc-in [:goal-jobs run-id] stored-job)
+    (transition-goal-run! run-id :leased {})
+    (transition-goal-run! run-id :running {})
+    (append-goal-event! run-id :run/started
+                        {:attempt 1 :execution :deterministic-git-hygiene})
+    (record-turn! (:bot/id b) run-id
+                  {:turn/state :running :turn/phase :tool
+                   :turn/goal? true :turn/objective objective
+                   :turn/tool "git_hygiene_status"})
+    (try
+      (let [before (git-hygiene/call! "git_hygiene_status")
+            receipt (if (:prunable? before)
+                      (git-hygiene/maintain! (git-hygiene/workspace-root) {})
+                      {:schema "cloud.itonami.app.git-hygiene-maintenance.v1"
+                       :action "none"
+                       :reason "no-stale-worktree-registrations"
+                       :before before
+                       :after before
+                       :pruned 0
+                       :repos []})
+            compact (compact-git-hygiene-receipt receipt)
+            pruned? (= "prune" (:action receipt))
+            tool-count (if pruned? 2 1)
+            summary (git-hygiene-summary receipt)
+            evidence [(str "git_hygiene_status scanned=" (:scanned before)
+                           "/" (:listed before)
+                           " stale-worktrees=" (:stale-worktrees before)
+                           " interrupted-repos=" (:interrupted-repos before)
+                           " stash-repos=" (:stash-repos before))
+                      (str (if pruned? "git_hygiene_prune" "prune-skipped")
+                           " action=" (:action receipt)
+                           " pruned=" (long (or (:pruned receipt) 0)))]
+            finished-at (store/now)]
+        (append-goal-event! run-id :git/hygiene compact)
+        (transition-goal-run! run-id :succeeded
+                              {:agent.run/result compact
+                               :agent.run/finished-at (now-ms)})
+        (record-turn! (:bot/id b) run-id
+                      {:turn/state :completed :turn/phase :completed
+                       :turn/goal? true :turn/objective objective
+                       :turn/tool (if pruned?
+                                    "git_hygiene_prune"
+                                    "git_hygiene_status")
+                       :turn/tool-count tool-count
+                       :turn/result summary
+                       :turn/evidence evidence
+                       :turn/finished-at finished-at})
+        (binding [*message-source* :resident]
+          (say (:bot/id b) summary nil))
+        compact)
+      (catch Exception error
+        (let [error-type (or (:type (ex-data error)) :internal-error)
+              finished-at (store/now)]
+          (transition-goal-run! run-id :failed
+                                {:agent.run/error-type error-type
+                                 :agent.run/error-message (error-message error)
+                                 :agent.run/finished-at (now-ms)})
+          (append-goal-event! run-id :run/failed
+                              {:error-type error-type
+                               :message (error-message error)})
+          (record-turn! (:bot/id b) run-id
+                        {:turn/state :failed :turn/phase :failed
+                         :turn/goal? true :turn/objective objective
+                         :turn/tool "git_hygiene_status"
+                         :turn/error-type error-type
+                         :turn/error-message (error-message error)
+                         :turn/finished-at finished-at})
+          (throw error))))))
+
 (defn fire-due-workforce!
   "Start a bounded number of due startup jobs for one person's live sessions.
   Jobs are staggered when provisioned and fixed-delay after submission, so a
@@ -5711,7 +5896,12 @@
                           cadence (:workforce.job/cadence-minutes job)
                           next-at (str (.plusSeconds (java.time.Instant/parse now)
                                                      (* 60 cadence)))]
-                      (if (disk-pressure-relief-job? job)
+                      (if (git-hygiene-relief-job? job)
+                        (run-git-hygiene!
+                         (get by-organization
+                              (:workforce.job/organization job))
+                         b job run-id)
+                       (if (disk-pressure-relief-job? job)
                         (run-disk-maintenance!
                          (get by-organization
                               (:workforce.job/organization job))
@@ -5740,7 +5930,7 @@
                             :parent-context-id
                             (get-in job [:workforce.job/continuation :context-id])
                             :continuation-summary
-                            (get-in job [:workforce.job/continuation :summary])})))
+                            (get-in job [:workforce.job/continuation :summary])}))))
                       (transact! update-in [:workforce-jobs bot-id]
                                  (fn [stored-job]
                                    (-> stored-job

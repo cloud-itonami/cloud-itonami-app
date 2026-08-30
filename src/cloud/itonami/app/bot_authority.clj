@@ -217,6 +217,8 @@
    "git_commit" :patch.create
    "disk_space_status" :disk.inspect
    "disk_space_cleanup" :disk.cleanup
+   "git_hygiene_status" :git.inspect
+   "git_hygiene_prune" :git.cleanup
    "domain_search" :domain.read
    "domain_check" :domain.read
    "domain_registrations" :domain.read

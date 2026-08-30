@@ -93,6 +93,7 @@
             [cloud.itonami.app.agent-session :as agent-session]
             [cloud.itonami.app.app-client :as client]
             [cloud.itonami.app.commands :as commands]
+            [cloud.itonami.app.git-hygiene :as git-hygiene]
             [cloud.itonami.app.config :as config]
             [cloud.itonami.app.kaiyu-local :as kaiyu-local]
             [cloud.itonami.app.store :as store]
@@ -548,6 +549,18 @@
                    (str "/api/agent-bots/" (required-flag flags :id)
                         "/messages/" (required-flag flags :run) "/cancel") {}))
 
+(defn bot-hygiene
+  "The git hygiene the Git Maintainer Bot reads, on demand.
+
+  Read-only and host-side, like `bots refactor scan`: the numbers come from
+  west metadata on this machine, so asking the server for them would only add
+  a hop. `--root` defaults to the same workspace the resident Bot is pointed
+  at, because two ways to name that directory is a way for them to disagree."
+  [configuration flags]
+  (git-hygiene/status (or (:root flags)
+                          (get-in configuration [:business :workspace-root])
+                          (git-hygiene/workspace-root))))
+
 (defn- refactor-root [configuration flags]
   (or (:root flags)
       (get-in configuration [:business :workspace-root])
@@ -624,7 +637,9 @@
        "  bots task --id <bot-id> --text <依頼>\n"
        "  bots handoff --from <bot-id> --to <bot-id> --task <依頼> [--depth N]\n"
        "  bots decide --id <bot-id> --card <card-id> --decision approved|rejected\n"
-       "  bots cancel --id <bot-id> --run <run-id>\n\n"
+       "  bots cancel --id <bot-id> --run <run-id>\n"
+       "  bots hygiene [--root <west-root>]\n"
+       "                         west 全 checkout の git 衛生状態（読み取りのみ）\n\n"
        "  bots refactor scan --root <west-root> [--limit 25]\n"
        "  bots refactor inspect --root <west-root> --repo <west-name> [--limit 8]\n"
        "  bots refactor start --root <west-root> --repo <west-name> --id <bot-id>\n\n"
@@ -664,6 +679,7 @@
       ["bots" "handoff"] (bot-handoff configuration flags)
       ["bots" "decide"] (bot-decide configuration flags)
       ["bots" "cancel"] (bot-cancel configuration flags)
+      ["bots" "hygiene"] (bot-hygiene configuration flags)
       ["bots" "refactor"]
       (case (nth named 2 nil)
         "scan" (bot-refactor-scan configuration flags)
