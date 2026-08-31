@@ -1956,6 +1956,7 @@
           (nav-item "projects" "Projects" "▦" "projects-count")
           (nav-item "sites" "Sites" "▦" "sites-count")
           (nav-item "drive" "Drive" "◇" "drive-count")
+         (nav-item "resources" "Resources" "❋" "resources-count")
           (nav-section
            "business-design" "事業設計" "◱"
            [(nav-item "portfolio" "Portfolio" "▤" "portfolio-count")
@@ -3266,6 +3267,31 @@
           [:p {:class "drive-create__status"}
            "ゴミ箱にあるものも容量を使っています。完全に削除すると容量が戻ります。"]
           [:ul {:class "drive-trash__list" :id "drive-trash-list"}]]]
+        ;; Resources. What the BOTS made, as opposed to what the person keeps.
+        ;; Drive is the file cabinet; this is the receipt-sourced record of
+        ;; everything the tenant's Bots wrote and committed. The list is built
+        ;; by the client from /api/workspace/resources — the count and the
+        ;; kinds are unknown until it answers.
+        [:section {:class "view" :data-view-panel "resources" :hidden true}
+         (view-header "Resources"
+                      (str "この Organization の Bot が作ったファイルとコミットの一覧。"
+                           "Drive があなたの文書棚なら、Resources は Bot の成果物です。"
+                           "実行の記録（receipt）からのみ構築され、モデルの説明文からは作られません。"))
+         [:p {:class "source-note"} [:span {:class "source-dot"}]
+          [:span {:id "resources-source"} "Bot の成果物を読み込み中…"]]
+         [:div {:class "workspace-toolbar"}
+          [:label {:class "visually-hidden" :for "resources-search"} "リソースを検索"]
+          [:input {:class "workspace-search" :id "resources-search" :type "search"
+                   :aria-describedby "resources-visible-count"
+                   :placeholder "パス、Bot、種類を検索" :autocomplete "off"}]
+          [:span {:class "result-count" :id "resources-visible-count"} "読み込み中…"]]
+         [:div {:class "record-browser"}
+          [:div {:class "record-list"}
+           [:ul {:class "record-list__items" :id "resources-list"}
+            [:li {:class "skeleton"}]]]
+          [:article {:class "record-detail" :id "resources-detail" :aria-live "polite"}
+           [:div {:class "empty-state"}
+            "リソースを選ぶと、それを作った Bot と実行の詳細を表示します。"]]]]
         [:section {:class "view" :data-view-panel "scheduler" :hidden true}
          (view-header "Scheduler" "kotoba-lang/calendar と EventKit で、この先7日間を日ごとに整理します。")
          [:p {:class "source-note"} [:span {:class "source-dot"}]

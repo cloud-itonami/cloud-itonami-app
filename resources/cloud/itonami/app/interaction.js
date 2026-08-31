@@ -5872,6 +5872,71 @@
         return false;
       }
     };
+    // Resources are what the BOTS made, receipt-sourced; the renderer keeps
+    // the fetched rows so the search box filters locally without a request
+    // per keystroke, exactly like Drive's own search. Rows use the shared
+    // `recordButton` pattern (button + aria-pressed) rather than a bespoke
+    // list item, so keyboard and screen-reader behaviour match Drive.
+    let resourcesData = [];
+    let selectedResource = null;
+    const showResourceDetail = (r) => {
+      const detail = $('#resources-detail'); if (!detail) return;
+      detail.replaceChildren();
+      const head = make('h3', null, r.path || r.revision || '(名前なし)');
+      head.style.marginTop = '0';
+      detail.append(head);
+      const metadata = [['種類', r.kind === 'commit' ? 'コミット' : 'ファイル'],
+                        ['Bot', r['bot-id'] || '—']];
+      if (r.bytes) metadata.push(['サイズ', bytes(r.bytes)]);
+      if (r.revision) metadata.push(['リビジョン', r.revision]);
+      if (r.message) metadata.push(['メッセージ', r.message]);
+      if (r.paths?.length) metadata.push(['パス一覧', r.paths.join(', ')]);
+      if (r.at) metadata.push(['記録日時', r.at]);
+      renderDetail('#resources-detail', '', metadata);
+      detail.prepend(head);
+    };
+    const renderResources = (rows, query) => {
+      const list = $('#resources-list'); if (!list) return;
+      const q = (query || '').trim().toLowerCase();
+      const visible = q
+        ? rows.filter((r) => `${r.path || ''} ${r['bot-id'] || ''} ${r.kind || ''}`
+            .toLowerCase().includes(q))
+        : rows;
+      list.replaceChildren();
+      if (!visible.length) {
+        list.append(make('li', 'empty-state',
+          q ? '一致するリソースがありません。' : 'まだ Bot の成果物はありません。Bot に何かを作らせるとここに出ます。'));
+      } else {
+        visible.forEach((r) => {
+          const who = r['bot-id'] ? ` · ${r['bot-id']}` : '';
+          list.append(recordButton(r, selectedResource === r,
+            (item) => { selectedResource = item; showResourceDetail(item);
+                        renderResources(resourcesData, q); },
+            {title: r.path || r.revision || '(名前なし)',
+             time: r.at ? formatDate(r.at, true) : '',
+             meta: `${r.kind === 'commit' ? 'commit' : 'file'}${who}`
+               + (r.bytes ? ` · ${bytes(r.bytes)}` : '')}));
+        });
+      }
+      $('#resources-visible-count').textContent = `${visible.length} 件を表示`;
+      $('#resources-count').textContent = rows.length;
+    };
+    const loadResources = async () => {
+      try {
+        const request = await fetch('/api/workspace/resources');
+        const data = await request.json();
+        if (!request.ok) throw new Error(data?.error?.message || 'リソースを読み込めませんでした。');
+        resourcesData = Array.isArray(data) ? data : (data.items || []);
+        $('#resources-source').textContent = 'Bot の実行記録（receipt）から構築';
+        renderResources(resourcesData, $('#resources-search')?.value);
+        return true;
+      } catch (error) {
+        $('#resources-source').textContent = error.message;
+        return false;
+      }
+    };
+    $('#resources-search')?.addEventListener('input', (event) =>
+      renderResources(resourcesData, event.target.value));
     let organismWorkers = [];
     let selectedOrganism = null;
     let organismCursor = null;
@@ -12721,6 +12786,9 @@
         $('#capture-status').textContent = error.message;
       });
       if (currentView === 'sites') loadSites();
+      if (currentView === 'resources') loadResources().catch((error) => {
+        $('#resources-source').textContent = error.message;
+      });
       if (currentView === 'settings') {
         loadChronicle().catch((error) => { $('#memory-status').textContent = error.message; });
         loadAgentMachine().catch((error) => { $('#agent-machine-status').textContent = error.message; });
