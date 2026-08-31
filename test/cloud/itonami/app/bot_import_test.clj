@@ -112,13 +112,27 @@
     (is (< (count (:yakuwari/objective proposal)) 1000))))
 
 (deftest a-declared-objective-is-not-exempt-from-the-cap
-  (let [job (assoc declaring-hermes-job
-                   :prompt (str "## Objective\n\n"
-                                (apply str (repeat 120 "a purpose stated at length. "))))
-        report (subject/import-report "hermes" {:home (hermes-home! [job])})]
+  ;; Asserting only "it was refused" would pass with or without the change --
+  ;; without it the whole prompt is over the cap too, so the same verdict comes
+  ;; back for a different reason and the test would be counting a refusal it did
+  ;; not cause. So pin the NUMBER the refusal reports: it has to be the length of
+  ;; the declared section, not of the manual around it. Measured 2026-08-31 with
+  ;; the preference reverted, this is the assertion that goes red.
+  (let [declared (apply str (repeat 60 "a purpose stated at some length. "))  ; 1980
+        manual (apply str (repeat 300 "operating instructions that are not a purpose. "))
+        job (assoc declaring-hermes-job
+                   :prompt (str "## Objective\n\n" declared
+                                "\n\n## Your one job this run\n\n" manual))
+        report (subject/import-report "hermes" {:home (hermes-home! [job])})
+        reason (:reason (first (:not-importable report)))]
     (is (empty? (:importable report))
         "declaring a section is a way to satisfy the cap, not a way around it")
-    (is (str/includes? (:reason (first (:not-importable report))) "1000"))))
+    (is (str/includes? reason (str (count (str/trim declared))))
+        "the refusal names the declared section's length")
+    (is (not (str/includes? reason (str (count (str/trim (str "## Objective\n\n" declared
+                                                             "\n\n## Your one job this run\n\n"
+                                                             manual))))))
+        "and not the whole prompt's -- which is what it would report without the preference")))
 
 (deftest a-prompt-without-the-section-behaves-exactly-as-before
   (let [report (subject/import-report "hermes" {:home (hermes-home! [healthy-hermes-job])})
