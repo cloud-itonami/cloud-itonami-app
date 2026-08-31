@@ -6167,6 +6167,14 @@
         (bots/archive! session bot-id)
         (send! exchange 200 (bots/overview config session)))
 
+      (and (= method "POST")
+           (bot-id-from path #"/api/bots/([^/]+)/workspace/sync"))
+      (let [bot-id (bot-id-from path #"/api/bots/([^/]+)/workspace/sync")]
+        (require-human-session! exchange)
+        (require-origin! exchange config)
+        (require-csrf! exchange session)
+        (send! exchange 200 (bots/sync-workspace! config session bot-id)))
+
       (and (= method "POST") (bot-id-from path #"/api/bots/([^/]+)"))
       (let [bot-id (bot-id-from path #"/api/bots/([^/]+)")
             body (read-json exchange)]

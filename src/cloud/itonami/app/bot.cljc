@@ -208,6 +208,9 @@
         email (optional-name (:bot/email value) :bot/email 320)
         workspace (optional-name (:bot/workspace value)
                                  :bot/workspace max-workspace)
+        workspace-kind (some-> (:bot/workspace-kind value) clojure.core/name keyword)
+        workspace-sync-id (optional-name (:bot/workspace-sync-id value)
+                                         :bot/workspace-sync-id 80)
         tools (into (sorted-set) (map str) (:bot/tools value))]
     (when (contains? value :bot/status)
       (throw (ex-info "a Bot does not carry a status; it is computed"
@@ -273,6 +276,8 @@
      ;; It changes WHEN an already-admitted write runs, never WHAT is admitted.
      :bot/omakase? (boolean (:bot/omakase? value))
      :bot/workspace workspace
+     :bot/workspace-kind workspace-kind
+     :bot/workspace-sync-id workspace-sync-id
      ;; Workforce metadata explains a job; it is deliberately not consulted by
      ;; tool admission. `:bot/tools`, workspace/coding and the existing effect
      ;; governor remain the complete execution authority.

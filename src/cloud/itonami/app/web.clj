@@ -2204,7 +2204,7 @@
             [:div {:class "bots-onboard__step" :id "bots-step-services"}
              (dds/heading 2 "必要なら外部サービスを追加" {:size "28"})
              [:p {:class "view-lead"}
-              "Bot は local Git workspace を中心に働きます。Gmail・Driveなどは、その Bot の仕事に必要な場合だけ追加してください。何も選ばず進められます。"]
+              "Bot は Cloud Itonami 専用workspaceを持ちます。Gmailなどは、その Bot の仕事に必要な場合だけ追加してください。何も選ばず進められます。"]
              [:input {:class "bots-search" :id "bots-service-search" :type "search"
                       :placeholder "探す" :autocomplete "off"}]
              [:div {:class "bots-grid" :id "bots-service-grid"}]
@@ -2212,21 +2212,15 @@
              [:button {:class "primary-action" :id "bots-services-next" :type "button"}
               "次へ"]]
             [:div {:class "bots-onboard__step" :id "bots-step-create" :hidden true}
-             (dds/heading 2 "Local workspace で働く Bot" {:size "28"})
+             (dds/heading 2 "Cloud Itonami workspace で働く Bot" {:size "28"})
              [:p {:class "view-lead"}
-              "まずフォルダ・ソース・Git履歴を読み、必要な変更を提案します。外部サービスは追加能力です。"]
-             [:div {:class "field"}
-              [:label {:for "bots-workspace"} "作業する Git workspace"]
-              [:input {:id "bots-workspace" :type "text" :maxlength "4096"
-                       :autocomplete "off"
-                       :placeholder "/Users/name/github/project"}]
-              [:span {:class "form-help"}
-               "既存Git repositoryのrootを正確に指定します。この範囲の外は読めません。"]]
+              "Bot専用フォルダをこのMacに自動作成し、Cloud Itonami Driveと双方向同期します。別の端末やWebでの変更も同じworkspaceに届きます。"]
+             [:input {:id "bots-workspace" :type "hidden" :value ""}]
              [:div {:class "bots-permission bots-permission--summary"}
               [:span {:class "bots-permission__copy"}
                [:span "自律モードで開始します"]
                [:span {:class "bots-permission__help"}
-                (str "このworkspace内の読み取り・ファイル変更・local commitを自律実行します。"
+                (str "Bot専用workspace内の読み取り・ファイル変更・local commitを自律実行します。"
                      "push、外部アカウント、Wallet署名は自動では付与されません。"
                      "細かな権限やModelは、作成後にBot設定から変更できます。")]]]
              [:button {:class "tool-button" :id "bots-pick-services" :type "button"}

@@ -374,6 +374,24 @@ remote installation therefore retains its normal object-store, tenant and
 repository-storage boundaries; the desktop daemon does not receive storage
 credentials.
 
+New Bots use this engine without asking the person to choose a filesystem
+path. Each Bot receives an isolated Git root below the application data
+directory and reconciles it with `Drive/Bots/<bot-id>/Workspace`. To make that
+folder a cross-device network rendezvous, configure the hosted adapter once:
+
+```clojure
+{:bots
+ {:workspace {:enabled? true}
+  :workspace-sync
+  {:remote {:kind :http
+            :base-url "https://itonami.cloud"
+            :bearer-token-env "CLOUD_ITONAMI_FOLDER_SYNC_TOKEN"}}}}
+```
+
+The token remains outside EDN. Without a hosted adapter the same workspace is
+still backed by this device's Cloud Itonami Drive and the UI labels it as
+device-local rather than claiming network synchronization.
+
 ## ローカル projects と、メールの振り分け
 
 Local projects are ordinary Git repositories this machine owns — one per

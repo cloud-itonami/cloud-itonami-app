@@ -61,6 +61,7 @@
             [cloud.itonami.app.bot-authority :as bot-authority]
             [cloud.itonami.app.bot-dispatcher :as bot-dispatcher]
             [cloud.itonami.app.bot-identity :as bot-identity]
+            [cloud.itonami.app.bot-workspace :as bot-workspace]
             [cloud.itonami.app.kotoba-oracle :as oracle]
             [cloud.itonami.app.bot-slo :as bot-slo]
             [cloud.itonami.app.connectors :as connectors]
@@ -961,23 +962,30 @@
                                  writes? browser? computer? peers? coding? virtual-shell?
                                  goal? priority? pinned? omakase? workspace provider-id model]
                           :as attrs}]
-  (let [writes? (if (contains? attrs :writes?) (boolean writes?) true)
+  (let [managed-workspace? (and (true? (get-in configuration [:bots :workspace :enabled?]))
+                                (str/blank? (str workspace))
+                                (not virtual-shell?))
+        writes? (if (contains? attrs :writes?) (boolean writes?) true)
         omakase? (if (contains? attrs :omakase?) (boolean omakase?) true)
         peers? (if (contains? attrs :peers?) (boolean peers?) true)
         coding? (if (contains? attrs :coding?)
                   (boolean coding?)
-                  (boolean (some-> workspace str str/trim not-empty)))
+                  (boolean (or managed-workspace?
+                               (some-> workspace str str/trim not-empty))))
         goal? (if (contains? attrs :goal?)
                 (boolean goal?)
                 (boolean (or coding? virtual-shell?)))
         browser? (if (contains? attrs :browser?) (boolean browser?) true)
         computer? (if (contains? attrs :computer?) (boolean computer?) true)]
   (validate-provider-choice! configuration provider-id model)
-  (let [workspace (cond
-                    virtual-shell? (virtual-shell/admit-workspace workspace)
-                    coding? (workspace-tools/admit-root workspace))
+  (let [id (new-id "bot")
+        managed (when managed-workspace?
+                  (bot-workspace/provision! configuration session id))
+        workspace (or (:bot/workspace managed)
+                      (cond
+                        virtual-shell? (virtual-shell/admit-workspace workspace)
+                        coding? (workspace-tools/admit-root workspace)))
         now (store/now)
-        id (new-id "bot")
         tools (if (seq tools)
                 (set (map str tools))
                 (default-tools configuration connectors))
@@ -1003,6 +1011,8 @@
                     :bot/pinned? (boolean pinned?)
                     :bot/omakase? omakase?
                     :bot/workspace workspace
+                    :bot/workspace-kind (:bot/workspace-kind managed)
+                    :bot/workspace-sync-id (:bot/workspace-sync-id managed)
                     :bot/created-at now
                     :bot/updated-at now})]
     ;; Derive the performer here and discard it. The call is the point: it is
@@ -1011,6 +1021,7 @@
     ;; somebody asks for an org chart.
     (bot/->performer b)
     (store-bot! b)
+    (bot-workspace/register! configuration b)
     ;; A Wallet is part of Bot identity, not an optional account chosen later.
     ;; Its public address is derived from the owner's Passkey immediately;
     ;; external wallets are optional Principal links and never replace it.
@@ -1083,6 +1094,11 @@
                              (:bot/virtual-shell? existing))
         next-workspace (if (contains? attrs :workspace)
                          (:workspace attrs) (:bot/workspace existing))
+        replacing-managed-workspace?
+        (and (= :cloud-itonami (:bot/workspace-kind existing))
+             (contains? attrs :workspace)
+             (not= (some-> next-workspace str str/trim not-empty)
+                   (:bot/workspace existing)))
         next-workspace (cond
                          next-virtual-shell
                          (virtual-shell/admit-workspace next-workspace)
@@ -1124,7 +1140,10 @@
                  (assoc :bot/coding? next-coding
                         :bot/virtual-shell? next-virtual-shell
                         :bot/workspace next-workspace)
+                 replacing-managed-workspace?
+                 (assoc :bot/workspace-kind nil :bot/workspace-sync-id nil)
                  (contains? attrs :enabled?) (assoc :bot/enabled? (:enabled? attrs)))]
+     (when replacing-managed-workspace? (bot-workspace/detach! existing))
      (store-bot! (bot/bot (assoc merged :bot/updated-at (store/now)))))))
 
 (defn archive!
@@ -1864,6 +1883,7 @@
      :virtual-shell-ready? (boolean (and (:bot/virtual-shell? b)
                                          (virtual-shell/available?)))
      :workspace (:bot/workspace b)
+     :workspace-sync (bot-workspace/summary configuration b)
      :workforce-key (:bot/workforce-key b)
      :business (:bot/business b)
      :commerce (commerce/bot-summary b)
@@ -2199,6 +2219,15 @@
      :default-workspace (default-local-workspace configuration)
      :browser-available? (agent-control/browser-enabled? configuration)
      :computer-available? (agent-control/computer-ready? configuration)}))
+
+(defn sync-workspace!
+  "Run one finite two-way reconciliation for an owned managed Bot workspace."
+  [configuration session bot-id]
+  (let [b (owned! session bot-id)]
+    (when-not (= :cloud-itonami (:bot/workspace-kind b))
+      (throw (ex-info "この Bot は Cloud Itonami workspace を使用していません。"
+                      {:type :bot-workspace/not-managed :bot-id bot-id})))
+    (bot-workspace/sync! configuration b)))
 
 (defn suggestions
   "Starting points for the connectors somebody picked."
