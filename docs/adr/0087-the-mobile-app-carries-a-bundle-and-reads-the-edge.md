@@ -55,7 +55,7 @@ Measured 2026-08-31:
 | view, every phase, on the JVM | 6 tests / 21 assertions, and each control breaks exactly the assertion it should |
 | the bundle in a real headless Chromium at 390×844 | 10/10 — mounts, renders actors the API returned, search narrows, and an aborted API gives the failure screen, not the empty one |
 | `app scaffold --target ios --target android` | both ready, real bundle (`:placeholder? false`), policy asset deny-all |
-| **Android `app build --execute`** | **`app-debug.apk`, 1,290,754 bytes, carrying `assets/index.html`, `assets/js/main.js`, `assets/dds.css`** |
+| **Android `app build --execute`** | **`app-debug.apk`, 1,290,818 bytes, carrying `assets/index.html`, `assets/js/main.js`, `assets/dds.css` and a deny-all policy asset** |
 | edge parity + route smoke | 14/14 and 13/13 against the deployed Worker |
 
 **Not verified: iOS compiles.** Not because of anything in this repository —
@@ -65,6 +65,35 @@ free against a download of roughly that size. `xcodebuild -downloadPlatform
 iOS` is the whole remedy. The scaffold itself succeeded, including `xcodegen`.
 
 **Not verified: an actual store upload.** Unchanged from ADR-2608072000.
+
+## The defect the browser found, which the JVM test could not
+
+The screen said something false, intermittently, and only in a browser:
+
+    1294 件が一致しました（全 1294 件中）。条件: finance
+
+1,294 unfiltered results were on screen, `finance` had been typed, and **no
+search had been issued yet**. The summary keyed on `:query` — the search field
+— rather than on the query the results actually came from. Every keystroke
+re-labelled an old result set with a new question.
+
+`:applied-query` is now a separate key, written only when a read succeeds, and
+a JVM test asserts the summary never describes results with a query that has
+not been applied. It took six green browser runs in a row to believe the flake
+was gone; before the fix it was two failures in five.
+
+Two smaller things fell out of chasing it, both of the shape this workspace
+keeps finding — **a wait that cannot wait reads exactly like a wait that
+succeeded**:
+
+- A string handed to Playwright's `waitForFunction` is evaluated as an
+  expression, so a source string holding an arrow function is truthy and the
+  wait returns on its first poll. Two assertions then read a screen that was
+  still loading and reported the app broken while a screenshot taken moments
+  later showed it working.
+- `waitForSelector` with a `text=` selector waits correctly, but it returns as
+  soon as *some* node matches — which, given the defect above, was before the
+  search had happened. The wait now names the applied query.
 
 ## Two things this found that nothing else would have
 

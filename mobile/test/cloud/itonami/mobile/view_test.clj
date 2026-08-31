@@ -54,16 +54,36 @@
 
 (deftest every-phase-renders
   (doseq [state [{:phase :loading :query ""}
-                 {:phase :ready :query "" :actors sample-actors :matched 2 :total 2 :shown 2}
-                 {:phase :ready :query "" :actors sample-actors :matched 1215 :total 1215 :shown 2}
+                 {:phase :ready :query "" :applied-query "" :actors sample-actors
+                  :matched 2 :total 2 :shown 2}
+                 {:phase :ready :query "x" :applied-query "" :actors sample-actors
+                  :matched 1215 :total 1215 :shown 2}
                  {:phase :ready :query "x" :actors [] :matched 0 :total 1215}
                  {:phase :error :query "" :error {:kind :http :message "目録が 500 を返しました。"}}]]
     (let [tree (view/screen state handlers)]
       (is (vector? tree) (str "phase " (:phase state)))
       (is (seq (text tree))))))
 
+(deftest the-summary-describes-the-results-not-what-is-being-typed
+  ;; `:query` is the search field; `:applied-query` is what the results came
+  ;; from. Keying the sentence on the first one made the page state something
+  ;; false: 1,294 unfiltered results on screen, `finance` half-typed, and a
+  ;; summary reading `1294 件が一致しました（全 1294 件中）。条件: finance` —
+  ;; before any search had been issued. Measured in the browser, 2026-08-31.
+  (let [typing (view/screen {:phase :ready :query "finance" :applied-query ""
+                             :actors sample-actors :matched 1294 :total 1294 :shown 2}
+                            handlers)
+        applied (view/screen {:phase :ready :query "finance" :applied-query "finance"
+                              :actors sample-actors :matched 34 :total 1294 :shown 2}
+                             handlers)]
+    (is (str/includes? (text typing) "全 1294 件を表示しています"))
+    (is (not (str/includes? (text typing) "条件: finance"))
+        "the summary described results the query had not been applied to")
+    (is (str/includes? (text applied) "34 件が一致しました（全 1294 件中）。条件: finance"))))
+
 (deftest a-page-that-shows-fewer-than-it-matched-says-so
-  (let [tree (view/screen {:phase :ready :query "" :actors sample-actors
+  (let [tree (view/screen {:phase :ready :query "" :applied-query ""
+                           :actors sample-actors
                            :matched 1215 :total 1215 :shown 2}
                           handlers)]
     (is (str/includes? (text tree) "残り 1213 件は表示していません"))))
