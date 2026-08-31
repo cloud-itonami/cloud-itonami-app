@@ -63,18 +63,26 @@
                     (code-text endpoint))]]))))
 
 (defn- summary
-  "What the current query selected, in words.
+  "What the shown results are, in words.
+
+  Keyed on `:applied-query` — the query the results on screen came from — and
+  never on `:query`, which is whatever is in the search field right now. The
+  two are different for as long as someone is typing, and describing one set of
+  results with the other produced a sentence that was measured to be simply
+  false: with 1,294 unfiltered results on screen and `finance` half-typed, the
+  page read `1294 件が一致しました（全 1294 件中）。条件: finance` before any
+  search had been issued.
 
   `total` is the size of the fleet as this app last measured it, which is not
   the same claim as `matched`. When the app has not yet completed an unfiltered
   read it says so instead of printing `matched / matched` and implying the
   fleet is exactly what the filter returned."
-  [{:keys [matched total query]}]
+  [{:keys [matched total applied-query]}]
   (cond
     (nil? matched) "まだ読み込んでいません。"
-    (str/blank? query) (str "全 " matched " 件を表示しています。")
-    total (str matched " 件が一致しました（全 " total " 件中）。条件: " query)
-    :else (str matched " 件が一致しました。条件: " query)))
+    (str/blank? applied-query) (str "全 " matched " 件を表示しています。")
+    total (str matched " 件が一致しました（全 " total " 件中）。条件: " applied-query)
+    :else (str matched " 件が一致しました。条件: " applied-query)))
 
 (defn- results
   [{:keys [phase actors shown error] :as state}]

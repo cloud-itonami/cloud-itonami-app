@@ -84,7 +84,8 @@
           errors (atom [])
           _ (.on page "console" (fn [^js m]
                                   (when (= "error" (.type m))
-                                    (swap! errors conj (.text m)))))
+                                    (swap! errors conj (.text m)))
+))
           _ (.on page "pageerror" (fn [^js e] (swap! errors conj (str e))))
 
           ;; ── 1. it mounts and shows real actors ───────────────────────────
@@ -104,14 +105,41 @@
                     (empty? @errors) (pr-str @errors))
 
           ;; ── 2. search narrows ────────────────────────────────────────────
-          _ (.fill page "#q" "finance")
+          ;; Typed, not `fill`. `fill` sets the value with one native event,
+          ;; and against a reagent-controlled input that raced: two runs on
+          ;; 2026-08-31 searched for nothing and for something that matched
+          ;; nothing, from the same bundle that had just passed. Typing is also
+          ;; what a person does, so what this measures is what they get.
+          _ (.pressSequentially (.locator page "#q") "finance" #js {:delay 25})
+          typed (.inputValue (.locator page "#q"))
+          _ (check! "the query reaches the field" (= "finance" typed) (pr-str typed))
           _ (.click page "button.dads-button")
-          _ (.waitForSelector page "text=件が一致しました" #js {:timeout 15000})
+          ;; Wait for the exact element the assertions are about, not for text
+          ;; anywhere on the page. `waitForSelector` returns as soon as SOME
+          ;; node matches, and this app re-renders the whole screen on every
+          ;; state change — so between that return and the read, the node can
+          ;; be gone. Measured 2026-08-31: three runs in five read a screen
+          ;; that was loading again and reported the app broken while the
+          ;; request log showed it had answered correctly.
+          ;; `条件: finance` and not `件が一致しました`: the second appears the
+          ;; moment the summary mentions a query, which — before :applied-query
+          ;; existed — was while someone was still typing. Waiting for the
+          ;; applied query waits for the search to have actually landed.
+          hit-line (.locator page "#app p" #js {:hasText "条件: finance"})
+          _ (.waitFor hit-line #js {:state "visible" :timeout 15000})
+          matched-text (.innerText hit-line)
           narrowed (.count (.locator page ".dds-ext-card"))
-          matched-text (.innerText (.locator page "#app"))
-          _ (check! "searching narrows the list"
-                    (and (pos? narrowed) (< narrowed cards))
-                    (str "before=" cards " after=" narrowed))
+          ;; The COUNTS are compared, not the number of cards. One page holds
+          ;; 50 either way, so `cards` is the same before and after any search
+          ;; that still matches 50 — an assertion on it fails on a fleet that
+          ;; has grown rather than on a search that stopped working (measured
+          ;; 2026-08-31 against the deployed catalog of 1,294).
+          fleet-size (some-> (re-find #"全 (\d+) 件" (str summary)) second js/parseInt)
+          hit-count (some-> (re-find #"(\d+) 件が一致しました" (str matched-text)) second js/parseInt)
+          _ (check! "searching narrows the fleet"
+                    (and (pos? narrowed) hit-count fleet-size (< hit-count fleet-size))
+                    (str "matched=" hit-count " of " fleet-size
+                         " (cards before=" cards " after=" narrowed ")"))
           _ (check! "the screen says what it matched on"
                     (str/includes? matched-text "条件: finance") "no 条件 line")
 
@@ -136,7 +164,7 @@
           _ (.unroute page "**/api/fleet/search**")
           _ (.click page "button.dads-button")
           _ (.waitForSelector page ".dds-ext-card" #js {:timeout 15000})
-          _ (.screenshot page #js {:path "target/verify-ready.png" :fullPage true})
+          _ (.screenshot page #js {:path "target/verify-ready.png"})
           _ (.close browser)]
     (if (pos? @failures)
       (do (println "\nFAILED:" @failures) (js/process.exit 1))

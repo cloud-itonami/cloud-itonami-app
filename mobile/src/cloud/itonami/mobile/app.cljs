@@ -28,8 +28,27 @@
   50)
 
 (defonce ^:private state
-  (r/atom {:phase :loading :query "" :actors nil :matched nil :total nil
-           :shown nil :error nil}))
+  ;; `:query` is the search field. `:applied-query` is what the results on
+  ;; screen came from. They differ while someone is typing, and the view must
+  ;; describe results with the second one.
+  (r/atom {:phase :loading :query "" :applied-query nil
+           :actors nil :matched nil :total nil :shown nil :error nil}))
+
+;; How many reads have been started. The last one started is the only one whose
+;; answer may be shown.
+;;
+;; Without it the app applies whichever response arrives, and responses do not
+;; arrive in the order they were asked for: two searches in quick succession on
+;; a slow network can land newest-first, leaving the older answer on screen.
+;;
+;; This one is a precaution and not a measurement — the overtaking above has
+;; not been observed here. The sentence that WAS measured, and that this does
+;; not fix, was the view describing an old result set with the query someone
+;; was still typing; `:applied-query` fixes that.
+;;
+;; (`defonce` takes no docstring in ClojureScript, which is why this is a
+;; comment.)
+(defonce ^:private issued (atom 0))
 
 (defn- search-url [query]
   (let [u (js/URL. "/api/fleet/search" api-base)]
@@ -60,8 +79,12 @@
   many matched and nothing about how many exist, and writing `matched` into
   `total` would make the screen state a number it did not measure."
   [query]
-  (let [unfiltered? (str/blank? query)]
-    (swap! state assoc :phase :loading :query query :error nil)
+  (let [unfiltered? (str/blank? query)
+        token (swap! issued inc)
+        current? #(= token @issued)]
+    ;; `:query` is not written here: the field owns it, and a read in flight
+    ;; must not be able to change what someone is typing.
+    (swap! state assoc :phase :loading :error nil)
     (-> (js/fetch (search-url query))
         (.then (fn [^js res]
                  (if (.-ok res)
@@ -69,21 +92,30 @@
                    (throw (ex-info "http" {:kind :http :detail (.-status res)})))))
         (.then (fn [body]
                  (let [{:keys [actors matched]} (js->clj body :keywordize-keys true)]
-                   (if (and (vector? actors) (number? matched))
+                   (cond
+                     ;; A read that has been superseded is dropped whole. Not
+                     ;; even its error is shown: it is an answer to a question
+                     ;; the screen is no longer asking.
+                     (not (current?)) nil
+
+                     (and (vector? actors) (number? matched))
                      (swap! state
                             (fn [s]
                               (cond-> (assoc s :phase :ready
                                              :actors actors
                                              :matched matched
+                                             :applied-query query
                                              :shown (count actors)
                                              :error nil)
                                 unfiltered? (assoc :total matched))))
-                     (throw (ex-info "shape" {:kind :shape}))))))
+
+                     :else (throw (ex-info "shape" {:kind :shape}))))))
         (.catch (fn [e]
-                  (let [kind (or (:kind (ex-data e)) :network)
-                        detail (or (:detail (ex-data e)) (.-message e))]
-                    (swap! state assoc :phase :error
-                           :error (failure kind detail))))))))
+                  (when (current?)
+                    (let [kind (or (:kind (ex-data e)) :network)
+                          detail (or (:detail (ex-data e)) (.-message e))]
+                      (swap! state assoc :phase :error
+                             :error (failure kind detail)))))))))
 
 (defn- root []
   (view/screen
