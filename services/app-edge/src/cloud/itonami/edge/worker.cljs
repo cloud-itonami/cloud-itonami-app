@@ -120,13 +120,42 @@
 
 ;; ── responses ────────────────────────────────────────────────────────
 
+(def ^:private public-read-cors
+  "`Access-Control-Allow-Origin` for the JSON surface.
+
+  The mobile app (ADR-2608311000) is a web bundle inside a kotoba-shell
+  WebView, and it runs at the app's own origin — `kotoba-webbundle://app` on
+  iOS and macOS, `https://appassets.androidplatform.net` on Android. Every call
+  it makes to this Worker is therefore cross-origin, and without this header
+  the browser withholds the response body from the page: the app would show
+  'could not reach the directory' against a Worker answering 200.
+
+  `*` and not those two origins, deliberately:
+
+  - This surface is public and read-only and takes no credentials. The same
+    bytes are already served to anyone who asks for `/`. A wildcard grants no
+    read that a plain GET did not already grant.
+  - What `Origin` a WKWebView sends for a custom scheme is something this
+    repository has not measured. An allowlist that guesses it wrong fails
+    nowhere except on a device, after packaging — the most expensive place to
+    find out.
+
+  The constraint this carries forward: when a route here starts reading a
+  session, a cookie or an Authorization header — slice 2 of ADR-2608081500 —
+  the wildcard has to become an explicit allowlist for those routes.
+  `Access-Control-Allow-Credentials` beside `*` is refused by the browser, so
+  that mistake is loud; the quiet one is a credentialed route that keeps `*`
+  and is read by any page the person happens to have open."
+  "*")
+
 (defn- json
   ([body] (json 200 body))
   ([status body]
    (js/Response. (js/JSON.stringify (clj->js body))
                  #js {:status status
                       :headers #js {"content-type" "application/json; charset=utf-8"
-                                    "cache-control" "no-store"}})))
+                                    "cache-control" "no-store"
+                                    "access-control-allow-origin" public-read-cors}})))
 
 (defn- problem [status type message]
   (json status {:error {:type type :message message}}))

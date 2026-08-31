@@ -1,0 +1,55 @@
+;; The iOS / Android application, declared rather than assembled at the call
+;; site — the same shape as app.kotoba.edn, and deliberately a second file.
+;;
+;; app.kotoba.edn declares the DESKTOP app, and what it declares is a window
+;; onto `http://localhost:1338/`: the JVM loopback server this repository also
+;; is. Neither iOS nor Android has a JVM, so that single line is the whole
+;; reason the desktop manifest cannot be reused here — the bundle would install
+;; and the server it points at would not exist. That is not hypothetical: it is
+;; exactly what `local-manimani` measured on an iOS Simulator, a real UI with
+;; `TypeError: Load failed` written across it (ADR-2608072000).
+;;
+;; So the mobile surface is a web bundle the app CARRIES (`:web/dist-dir`),
+;; served from the app's own origin by the kotoba-shell host, which reads what
+;; it needs over HTTPS from the edge Worker (ADR-2608081500). Build it with:
+;;
+;;   cd mobile && npm run build
+;;   orgs/kotoba-lang/shell/bin/kotoba-shell app scaffold \
+;;     --target ios --target android \
+;;     --manifest app.mobile.kotoba.edn --policy mobile/shell-policy.edn \
+;;     --output-dir target/kotoba-shell/app
+;;
+;; There is no `:window` here. `:width`/`:height` are a desktop concept; a
+;; phone gives the app the screen it has.
+{:app/id "cloud.itonami.app"
+ :app/name "Cloud Itonami"
+ :app/version "0.4.2"
+
+ ;; Reverse-DNS, and the same string on both platforms so one identity names
+ ;; the app in both stores. It is also the keychain service the in-app bridge
+ ;; scopes items to (kotoba.shell.native-bridge/keychain-service), so changing
+ ;; it orphans anything the app has stored.
+ :ios/bundle-id "cloud.itonami.app"
+ :android/application-id "cloud.itonami.app"
+
+ ;; Xcode's PRODUCT_NAME, which is also what CFBundleName falls back to. Set
+ ;; explicitly: a consumer that leaves it unset ships an app that says
+ ;; `KotobaShell` on the home screen while calling itself Cloud Itonami inside
+ ;; (measured on local-manimani, ADR-2608072000).
+ :ios/product-name "CloudItonami"
+
+ ;; Play's monotonic integer. Bumped per upload, not per version string.
+ :android/version-code 1
+
+ :web/dist-dir "mobile/dist"
+
+ :runtime {:surface :kotoba/web}
+
+ :local/contracts
+ {:language :kotoba
+  :shell :kotoba/web
+  ;; What this surface reads today. The fleet directory is slice 1 of
+  ;; ADR-2608081500; chat, mail, drive, calendar and every write surface are
+  ;; still JVM-only and are therefore not on this app yet.
+  :api [:fleet/search :fleet/facets]
+  :egress :edge-read-only}}
