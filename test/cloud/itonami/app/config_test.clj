@@ -220,7 +220,9 @@
     (is (= "murakumo-main" (:default-model provider)))
     (is (= ["murakumo-main" "murakumo-edge"
             "qwen3.8-27b-throughput-5090"
-            "qwen3.8-27b-fastmtp-aggressive"]
+            "qwen3.8-27b-fastmtp-aggressive"
+            "z-ai/glm-5.3-flash"
+            "qwen/qwen3.8-flash"]
            (:models provider)))
     (is (= {"qwen3.8-27b-throughput-5090" 420}
            (:model-request-timeout-seconds provider)))
@@ -230,8 +232,11 @@
                              "qwen3.8-27b-throughput-5090"])))
     (is (zero? (:max-transient-retries provider)))
     (is (true? (:assert-response-model? provider)))
-    (is (= {"qwen3.8-27b-throughput-5090" "murakumo-main"
-            "qwen3.8-27b-fastmtp-aggressive" "murakumo-main"}
+    (is (= {"murakumo-main" "z-ai/glm-5.3-flash"
+            "qwen3.8-27b-throughput-5090" "murakumo-main"
+            "qwen3.8-27b-fastmtp-aggressive" "murakumo-main"
+            "z-ai/glm-5.3-flash" "qwen/qwen3.8-flash"
+            "qwen/qwen3.8-flash" "murakumo-main"}
            (:model-fallbacks provider)))
     (is (= #{"murakumo-edge"} (:no-fallback-models provider))
         "the resident edge route stays literal even if an old overlay names a fallback")

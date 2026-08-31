@@ -172,10 +172,17 @@
      :timeout-seconds 5}}
    :max-transient-retries 0
    :assert-response-model? true
+   ;; `murakumo-main` remains the stable primary route. A retryable gateway or
+   ;; origin failure falls through once to OpenRouter's reviewed GLM route,
+   ;; still carried by api.murakumo.cloud so the application does not acquire a
+   ;; second provider credential or authority boundary. `with-model-fallback`
+   ;; records both the requested and actually served model.
+   ;;
    ;; 5090 cold-start 503 and FastMTP's dead Modal origin (measured
    ;; 2026-08-26: HTTP 502 body starting `modal-http`, not JSON) both
    ;; retry the alias. The result stays labelled as the model that served.
-   :model-fallbacks {"qwen3.8-27b-throughput-5090" "murakumo-main"
+   :model-fallbacks {"murakumo-main" "z-ai/glm-5.3-flash"
+                    "qwen3.8-27b-throughput-5090" "murakumo-main"
                     "qwen3.8-27b-fastmtp-aggressive" "murakumo-main"
                     "z-ai/glm-5.3-flash" "qwen/qwen3.8-flash"
                     "qwen/qwen3.8-flash" "murakumo-main"}
