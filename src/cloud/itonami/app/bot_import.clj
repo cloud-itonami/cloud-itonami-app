@@ -103,6 +103,39 @@
     "interval" (clamp-cadence (:minutes schedule))
     (clamp-cadence nil)))
 
+(defn- declared-objective
+  "The purpose a prompt states about itself, or nil when it states none.
+
+  A hermes prompt is OPERATING INSTRUCTIONS -- how to work this pass -- and
+  runs to several kilobytes. A yakuwari objective is a STATEMENT OF PURPOSE,
+  capped at `bot/max-responsibility` so a role stays reviewable. Measured
+  2026-08-31: every one of the twelve prompt-bearing hermes jobs exceeded that
+  cap, by 1.2x to 7.0x, so the two planes could not exchange a single bot.
+
+  Splitting the prompt is not the bridge. Twelve responsibilities of a thousand
+  characters are available, and seven fragments of a manual still state no
+  purpose -- which is the thing `yakuwari.spec` refuses. So the SOURCE declares
+  it instead: a prompt may open a `## Objective` section, and that section, not
+  the manual around it, is what crosses.
+
+  Absent the section the whole prompt is still offered and still judged by the
+  same cap, so nothing that imported before stops importing. A declared
+  objective is not exempt either -- an over-long one is refused by `exclusion`
+  like any other, because the cap is what makes a role reviewable and this is a
+  way to satisfy it, not a way around it."
+  [prompt]
+  (let [lines (str/split-lines (str prompt))
+        heading? #(re-matches #"##\s+.*" (str/trim (str %)))
+        start (first (keep-indexed
+                      (fn [i line]
+                        (when (re-matches #"(?i)##\s+objective\s*" (str/trim (str line)))
+                          i))
+                      lines))]
+    (when start
+      (not-empty
+       (str/trim (str/join "\n" (take-while (complement heading?)
+                                             (drop (inc start) lines))))))))
+
 (defn- hermes->bot [job]
   (let [prompt (str/trim (str (:prompt job)))
         script (some-> (:script job) str not-empty)]
@@ -110,7 +143,8 @@
      :source-id (:id job)
      :name (:name job)
      :key (slug (:name job))
-     :objective (when (seq prompt) prompt)
+     :objective (or (declared-objective prompt)
+                    (when (seq prompt) prompt))
      :cadence-minutes (hermes-cadence job)
      :enabled? (boolean (:enabled job))
      :state (:state job)
