@@ -26,8 +26,14 @@
 
 (defn- check-route
   "GET path, assert the status, then hand the parsed body to `body-check`
-  (which returns nil when happy or a string describing what was wrong)."
-  [{:keys [label path method expect-status body-check]}]
+  (which returns nil when happy or a string describing what was wrong).
+
+  `header-check` is handed the response headers and answers the same way. It
+  runs before the body is looked at, because a header can be the whole answer:
+  the mobile app reads nothing at all from a 200 that arrives without
+  `access-control-allow-origin`, and the body it did not get to read is not
+  where that failure shows up."
+  [{:keys [label path method expect-status body-check header-check]}]
   (-> (js/fetch (str base path) #js {:method (or method "GET")})
       (.then (fn [r]
                (-> (.text r)
@@ -37,6 +43,9 @@
                               (fail! label (str "expected HTTP " expect-status
                                                 ", got " (.-status r)
                                                 " — " (subs text 0 (min 120 (count text)))))
+
+                              (and header-check (header-check (.-headers r)))
+                              (fail! label (header-check (.-headers r)))
 
                               (nil? body-check)
                               (println "  ok  " label)
@@ -112,6 +121,24 @@
     (.then #(check-route
              {:label "the surface is read-only: POST is 405"
               :path "/api/fleet/search" :method "POST" :expect-status 405}))
+    ;; The mobile app is a cross-origin caller by construction — a web bundle
+    ;; at kotoba-webbundle://app or https://appassets.androidplatform.net — so
+    ;; without this header a 200 is a blank screen (ADR-2608311000).
+    (.then #(check-route
+             {:label "the JSON surface is readable cross-origin"
+              :path "/api/fleet/search?limit=1" :expect-status 200
+              :header-check (fn [^js h]
+                              (let [v (.get h "access-control-allow-origin")]
+                                (when-not (= "*" v)
+                                  (str "access-control-allow-origin was " (pr-str v)))))}))
+    ;; And scoped to it. The header belongs to the read API, not to the page;
+    ;; asserting only the presence would pass a Worker that put it everywhere.
+    (.then #(check-route
+             {:label "the HTML page does not carry the API's CORS header"
+              :path "/" :expect-status 200
+              :header-check (fn [^js h]
+                              (when-some [v (.get h "access-control-allow-origin")]
+                                (str "the page carried access-control-allow-origin " (pr-str v))))}))
     (.then (fn [_]
              (if (pos? @failures)
                (do (println "\nFAILED:" @failures) (js/process.exit 1))

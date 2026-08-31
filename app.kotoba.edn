@@ -10,6 +10,11 @@
 ;; because an icon that quietly does not apply looks exactly like one that was
 ;; never set.
 ;;
+;; This declares the DESKTOP app. The iOS / Android app is app.mobile.kotoba.edn,
+;; and it is a separate file because of one line here: the window is a view onto
+;; localhost:1338, and there is no JVM on either phone platform to answer there.
+;; See mobile/README.md and ADR-0087.
+;;
 ;; :kotoba/web is the surface: the window is the loopback web surface, which is
 ;; the application's only interface. A `kotoba:dom` surface was retired on
 ;; 2026-08-06 (see README) and is not what this manifest describes.

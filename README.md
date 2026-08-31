@@ -149,6 +149,26 @@ pinned jsign 7.5 release, verified against its published SHA-256 before use;
 the updater rejects a package unless Windows validates its Authenticode chain
 and the signer certificate SHA-256 matches the current installation.
 
+## iOS and Android
+
+There is a phone app, and it is a different shape from the desktop one. The
+desktop app is a window onto the JVM server on `localhost:1338`; neither iOS
+nor Android has a JVM, so the mobile app instead **carries a web bundle** and
+reads over HTTPS from the Cloudflare Worker that ADR-2608081500 moved the
+server surface onto. `kotoba-lang/shell` supplies the native host, the in-app
+provider bridge and the signing/packaging half.
+
+What is on the phone is exactly what the edge serves, which today is the fleet
+directory — chat, mail, drive, calendar and every write surface are still
+JVM-only. They arrive on the phone as the remaining slices land.
+
+Built and measured 2026-08-31: a real `app-debug.apk` carrying the bundle; the
+bundle itself driven in a real browser at phone size, including the offline
+path. iOS scaffolds and has not been compiled on this workstation — Xcode has
+no iOS platform installed here, which `xcodebuild -downloadPlatform iOS` fixes.
+See [`mobile/README.md`](mobile/README.md) and
+[ADR-0087](docs/adr/0087-the-mobile-app-carries-a-bundle-and-reads-the-edge.md).
+
 ## Run
 
 ```bash
