@@ -230,6 +230,10 @@
 
 (deftest bots-pass-server-status-to-decorative-living-faces
   (let [js (slurp (io/file "resources/cloud/itonami/app/interaction.js"))]
+    (is (str/includes? js "const botMood = (avatar, status) =>"))
+    (is (str/includes? js "node.dataset.mood = botMood(avatar, status)"))
+    (doseq [mood ["'hurry'" "'focus'" "'nervous'" "'upset'" "'sleep'" "'joy'" "'nap'"]]
+      (is (str/includes? js mood)))
     (is (str/includes? js "const botAvatar = (node, avatar, status = null) =>"))
     (is (str/includes? js "node.dataset.status = status"))
     (is (str/includes? js "node.setAttribute('aria-hidden', 'true')"))

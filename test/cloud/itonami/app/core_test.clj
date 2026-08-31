@@ -496,6 +496,12 @@
   (is (str/includes? web/app-css "@keyframes bot-breathe"))
   (is (str/includes? web/app-css "@keyframes bot-blink"))
   (is (str/includes? web/app-css "@keyframes bot-look"))
+  (is (str/includes? web/app-css "@keyframes bot-hurry"))
+  (is (str/includes? web/app-css "@keyframes bot-nap"))
+  (is (str/includes? web/app-css "@keyframes bot-joy"))
+  (is (str/includes? web/app-css "@keyframes bot-nervous"))
+  (doseq [mood ["hurry" "nap" "joy" "nervous" "upset"]]
+    (is (str/includes? web/app-css (str "data-mood='" mood "'"))))
   (is (str/includes? web/app-css ".bot-avatar[data-status='working']"))
   (is (str/includes? web/app-css
                      ".bot-avatar,.bot-avatar::before,.bot-avatar::after{animation:none}")))

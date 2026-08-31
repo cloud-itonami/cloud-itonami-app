@@ -9790,10 +9790,20 @@
       } catch (error) { $('#context-status').textContent = error.message; }
       finally { button.disabled = false; }
     });
+    const botMood = (avatar, status) => {
+      const variant = Number.parseInt(avatar?.variant || 0, 10) || 0;
+      if (status === 'working') return variant % 3 === 0 ? 'hurry' : 'focus';
+      if (status === 'waiting-approval' || status === 'waiting-connection') return 'nervous';
+      if (status === 'blocked') return 'upset';
+      if (status === 'disabled') return 'sleep';
+      if (status === 'idle') return variant % 2 === 0 ? 'joy' : 'nap';
+      return 'focus';
+    };
     const botAvatar = (node, avatar, status = null) => {
       node.dataset.color = avatar?.color || 'blue';
       node.dataset.glyph = avatar?.glyph || 'circle';
       node.dataset.variant = String(avatar?.variant || 0);
+      node.dataset.mood = botMood(avatar, status);
       if (status) node.dataset.status = status;
       else delete node.dataset.status;
       node.setAttribute('aria-hidden', 'true');
