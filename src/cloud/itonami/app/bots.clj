@@ -71,6 +71,7 @@
             [cloud.itonami.app.disk-space :as disk-space]
             [cloud.itonami.app.domain-tools :as domain-tools]
             [cloud.itonami.app.git-hygiene :as git-hygiene]
+            [cloud.itonami.app.device :as device]
             [cloud.itonami.app.gc :as gc]
             [cloud.itonami.app.handoff :as handoff]
             [cloud.itonami.app.identity :as identity]
@@ -2482,14 +2483,24 @@
   [source to]
   (let [to (str/trim (str to))
         parsed (peer/parse-address to)
-        _ (when (and parsed (:device parsed))
+        _ (when-let [named (:device parsed)]
             ;; ADR-0062 landed the judgement, not the transport. Saying so is
             ;; the whole point: a silent local delivery for a handle that named
             ;; another machine would put the note on the wrong computer.
-            (throw (ex-info (str "別のマシンの Bot にはまだ送れません（"
-                                 (:device parsed) "）。ADR-0062 の transport は未実装です。")
-                            {:type :peer/no-remote-transport
-                             :device (:device parsed)})))
+            ;;
+            ;; But `bot:<id>@<this-device>` is the LOCAL form spelled out, and
+            ;; `->reach` has always said so — `device-is-local` is
+            ;; `(= device local-device)`. Refusing it needed no transport; it
+            ;; was refused because nothing in this application could say which
+            ;; device it was. `device/local-id` is that answer, and nil (an
+            ;; install nobody enrolled) still refuses everything, which is the
+            ;; direction to be wrong in.
+            (when-not (= named (device/local-id))
+              (throw (ex-info (str "別のマシンの Bot にはまだ送れません（"
+                                   named "）。ADR-0062 の transport は未実装です。")
+                              {:type :peer/no-remote-transport
+                               :device named
+                               :local-device (device/local-id)}))))
         wanted (or (:bot-id parsed) to)
         mine (->> (vals (:bots (snapshot)))
                   (filter #(and (= (:bot/owner %) (:bot/owner source))
@@ -2526,7 +2537,17 @@
   (let [target (peer-target! source to)
         context {:source-owner (:bot/owner source)
                  :target-owner (:bot/owner target)
-                 :local-device nil :device nil
+                 ;; Real, because `peer-target!` now admits
+                 ;; `bot:<id>@<this-device>` and `may-address?` has to agree
+                 ;; with it about the same handle. A nil here beside a resolver
+                 ;; that accepted a device is two answers to one question.
+                 :local-device (device/local-id)
+                 :device (:device (peer/parse-address (str/trim (str to))))
+                 ;; Still literal, and unreachable until the transport lands:
+                 ;; `->reach` reads these two only on the branch where the named
+                 ;; device is NOT this machine, and `peer-target!` throws before
+                 ;; reaching it. Filled with real values they would be inputs
+                 ;; nothing can observe.
                  :known-devices [] :remote-enabled? false}
         text (str/trim (str text))]
     (when (str/blank? text)
@@ -4857,6 +4878,14 @@
           ;; per member per round rather than once: a Bot disabled while the
           ;; room is mid-conversation stops answering at the next question, not
           ;; at the next message the person sends.
+          ;; The device fields stay literal HERE, and that is not an oversight
+          ;; left over from ADR-0062. A room member is a Bot RECORD, not a
+          ;; handle somebody typed, so there is no device to name: with
+          ;; `:device nil`, `->reach` decides `device-known` and
+          ;; `device-is-local` true outright and never reads the other two.
+          ;; Passing `device/local-id` here would be a value the judgement
+          ;; cannot consult — the kind of input that looks like wiring and
+          ;; discriminates nothing.
           reachable (fn [b] (peer/may-address?
                              b {:source-owner (:group/owner g)
                                 :target-owner (:bot/owner b)

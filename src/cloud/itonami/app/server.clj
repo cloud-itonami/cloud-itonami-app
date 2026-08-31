@@ -26,6 +26,7 @@
             [webauthn.assurance :as credential-assurance]
             [cloud.itonami.app.documents :as documents]
             [cloud.itonami.app.desktop :as desktop]
+            [cloud.itonami.app.device :as device]
             [cloud.itonami.app.binding-sweep :as binding-sweep]
             [cloud.itonami.app.domain-binding :as domain-binding]
             [cloud.itonami.app.domain-verification :as domain-verification]
@@ -6694,6 +6695,11 @@
    ;; the snapshot beside it.
    (store/fold-journal!)
    (reset! active-config configuration)
+   ;; Which device this install answers to (ADR-0062). Before anything can
+   ;; deliver a peer note, because `peer/may-address?` reads it to decide
+   ;; whether a handle names this machine, and an unset value has to mean
+   ;; "not enrolled" rather than "not loaded yet".
+   (device/configure! configuration)
    (identity/configure! configuration)
    ;; Bring existing organizations onto did:webvh (ADR-0068). Idempotent, and
    ;; a no-op for every shipped profile, which does not publish at all. Here

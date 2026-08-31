@@ -473,6 +473,15 @@
          :from nil
          :to nil}}
 
+ ;; Which registered device this install IS (ADR-0062). nil means this install
+ ;; was never enrolled as a device, and every `bot:<id>@<device>` handle is
+ ;; therefore not-local — which is the fail-closed direction. It is deliberately
+ ;; not derived from a hostname or a seed: a machine that names itself is the
+ ;; discovery step ADR-0062 refuses. Set it to the id this install was
+ ;; registered under with `messenger/register-device!`.
+ :devices
+ {:local nil}
+
  ;; 事業 (ADR-2607309600). A Business holds one key from each analysis plane —
  ;; BMC canvas, XMILE model, adopted blueprints, repo paths, LEI — so that the
  ;; three planes that cannot currently join to each other meet on one entity.

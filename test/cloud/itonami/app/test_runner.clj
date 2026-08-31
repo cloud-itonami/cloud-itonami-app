@@ -24,6 +24,7 @@
             [cloud.itonami.app.commands-test]
             [cloud.itonami.app.connectors-test]
             [cloud.itonami.app.desktop-test]
+            [cloud.itonami.app.device-test]
             [cloud.itonami.app.decision-method-test]
             [cloud.itonami.app.disk-space-test]
             [cloud.itonami.app.git-hygiene-test]
@@ -230,6 +231,7 @@
     cloud.itonami.app.commands-test
     cloud.itonami.app.connectors-test
     cloud.itonami.app.desktop-test
+    cloud.itonami.app.device-test
     cloud.itonami.app.decision-method-test
     cloud.itonami.app.disk-space-test
     cloud.itonami.app.git-hygiene-test

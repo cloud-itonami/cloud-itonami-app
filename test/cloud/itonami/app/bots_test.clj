@@ -16,6 +16,7 @@
             [cloud.itonami.app.commerce :as commerce]
             [cloud.itonami.app.config :as config]
             [cloud.itonami.app.desktop :as desktop]
+            [cloud.itonami.app.device :as device]
             [cloud.itonami.app.disk-space :as disk-space]
             [cloud.itonami.app.domain-tools :as domain-tools]
             [cloud.itonami.app.gc :as gc]
@@ -3074,6 +3075,58 @@
         (is (= 0 (count (filter #(= "hi" (:text %))
                                 (bots/messages alice (:bot/id b)))))
             "a refused note was delivered anyway")))))
+
+(deftest a-handle-naming-this-device-is-the-local-form
+  ;; ADR-0062: `device-is-local` is `(= device local-device)`, and until
+  ;; `cloud.itonami.app.device` existed nothing could supply the right-hand
+  ;; side. Every handle carrying a device was therefore refused as remote —
+  ;; including this machine's own name, which needs no transport at all.
+  ;;
+  ;; All four cases below are asked of the SAME handle shape. What changes is
+  ;; only which device this install answers to, which is the fact under test.
+  (with-store
+   (fn []
+     (let [a (make-bot alice {:name "alpha" :peers? true})
+           b (make-bot alice {:name "beta" :peers? true})
+           strangers (make-bot bob {:name "beta" :peers? true})
+           handle (fn [bot dev] (str "bot:" (:bot/id bot) "@" dev))
+           refusal (fn [& args]
+                     (try (apply (send-peer!) args) ::delivered
+                          (catch clojure.lang.ExceptionInfo e (:type (ex-data e)))))
+           notes (fn [bot text]
+                   (count (filter #(= text (:text %))
+                                  (bots/messages alice (:bot/id bot)))))]
+       (try
+         (testing "an install nobody enrolled refuses its own name too"
+           ;; The control. If this ever passes, the refusal below is not being
+           ;; decided by the device comparison but by something else.
+           (device/reset-for-test! nil)
+           (is (= :peer/no-remote-transport (refusal a (handle b "studio") "hi")))
+           (is (= 0 (notes b "hi"))))
+
+         (testing "enrolled as that device, the same handle is delivered here"
+           (device/reset-for-test! "studio")
+           (is (= ::delivered (refusal a (handle b "studio") "hi")))
+           (is (= 1 (notes b "hi"))
+               "the note the handle named this machine for was not delivered"))
+
+         (testing "another device is still refused, and says which"
+           (device/reset-for-test! "studio")
+           (let [data (try ((send-peer!) a (handle b "laptop") "yo")
+                           (catch clojure.lang.ExceptionInfo e (ex-data e)))]
+             (is (= :peer/no-remote-transport (:type data)))
+             (is (= "laptop" (:device data)))
+             (is (= "studio" (:local-device data))
+                 "the refusal has to show what it compared against"))
+           (is (= 0 (notes b "yo"))))
+
+         (testing "a device name does not reach across owners"
+           ;; Ownership is asked before anything device-shaped, and the refusal
+           ;; for a stranger's Bot stays `not-found` — `no-remote-transport`
+           ;; here would confirm that Bot exists.
+           (device/reset-for-test! "studio")
+           (is (= :peer/not-found (refusal a (handle strangers "studio") "hi"))))
+         (finally (device/reset-for-test! nil)))))))
 
 (deftest two-bots-sharing-a-name-refuse-rather-than-guess
   (with-store
