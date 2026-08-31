@@ -184,6 +184,47 @@
             "the bounded accelerator request precedes one explicit fallback"))
       (finally (.stop server 0)))))
 
+(deftest a-failed-main-request-falls-back-to-openrouter-glm-through-murakumo
+  (let [requested (atom [])
+        server (HttpServer/create (InetSocketAddress. "127.0.0.1" 0) 0)]
+    (.createContext
+     server "/v1/chat/completions"
+     (reify HttpHandler
+       (handle [_ exchange]
+         (let [request (json/read-str (slurp (.getRequestBody exchange))
+                                      :key-fn keyword)
+               model (:model request)
+               _ (swap! requested conj model)
+               [status payload]
+               (if (= "murakumo-main" model)
+                 [502 {:error "primary origin unavailable"}]
+                 [200 {:model "z-ai/glm-5.3-flash"
+                       :choices [{:finish_reason "stop"
+                                  :message {:content "glm-fallback-ok"}}]}])
+               bytes (.getBytes (json/write-str payload) "UTF-8")]
+           (.sendResponseHeaders exchange status (alength bytes))
+           (with-open [out (.getResponseBody exchange)] (.write out bytes))))))
+    (.start server)
+    (try
+      (let [provider {:kind :openai-compatible
+                      :base-url (str "http://127.0.0.1:"
+                                     (.getPort (.getAddress server)) "/v1")
+                      :max-transient-retries 0
+                      :assert-response-model? true
+                      :model-fallbacks
+                      {"murakumo-main" "z-ai/glm-5.3-flash"}}
+            result (provider/agent-turn
+                    provider {:model "murakumo-main"
+                              :messages [] :tools []})]
+        (is (= "glm-fallback-ok" (:content result)))
+        (is (= "z-ai/glm-5.3-flash" (:model result)))
+        (is (= "murakumo-main" (:requested-model result)))
+        (is (true? (:fallback? result)))
+        (is (= :provider/http-error (:fallback-error-type result)))
+        (is (= ["murakumo-main" "z-ai/glm-5.3-flash"] @requested)
+            "one main failure is followed by exactly one GLM request"))
+      (finally (.stop server 0)))))
+
 (deftest a-literal-edge-route-does-not-cascade-into-the-main-pool
   (let [requested (atom [])
         server (HttpServer/create (InetSocketAddress. "127.0.0.1" 0) 0)]
