@@ -4229,6 +4229,17 @@
                       ;; already capped by `drive-snapshot`.
                       {:cursor (:cursor (query-params exchange))})))
 
+            ;; ── resources ───────────────────────────────────────────────────
+            ;; What the Bots MADE, as opposed to what the person KEEPS. Drive
+            ;; above is one person's file cabinet; this is the receipt-sourced
+            ;; record of what their Bots wrote and committed. Bot-identity is
+            ;; the authorization scope here (`bots/resources` filters by the
+            ;; session's own Bots), matching the rule that one tenant must not
+            ;; reach another tenant's Bot output.
+            (and (= method "GET") (= path "/api/workspace/resources"))
+            (let [session (require-app-session! exchange)]
+              (send! exchange 200 (bots/resources session)))
+
             ;; ── esign ───────────────────────────────────────────────────────
             ;; A signature is not a share and not a credential: see
             ;; `cloud.itonami.app.esign`. Every one of these needs the session's
