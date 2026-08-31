@@ -26,6 +26,7 @@
             [cloud.itonami.app.relay :as relay]
             [cloud.itonami.app.bot :as bot]
             [cloud.itonami.app.bot-authority :as bot-authority]
+            [cloud.itonami.app.folder-sync :as folder-sync]
             [cloud.itonami.app.peer :as peer]
             [cloud.itonami.app.store :as store]
             [cloud.itonami.app.workspace-tools :as workspace-tools]
@@ -224,6 +225,28 @@
             (is (true? (:pinned? public))))
           (is (empty? (:bot/tools created))
               "autonomy does not silently grant an external connector"))))))
+
+(deftest a-new-app-bot-receives-an-isolated-cloud-itonami-workspace
+  (with-store
+    (fn []
+      (let [created (bots/create! {:bots {:workspace {:enabled? true}}}
+                                  alice {:name "managed workspace" :connectors []})
+            bot-id (:bot/id created)
+            path (:bot/workspace created)]
+        (try
+          (is (= :cloud-itonami (:bot/workspace-kind created)))
+          (is (.isDirectory (io/file path ".git")))
+          (is (.isFile (io/file path ".itonami" "workspace.edn")))
+          (let [public (first (:bots (bots/overview
+                                     {:bots {:workspace {:enabled? true}}} alice)))
+                sync (:workspace-sync public)]
+            (is (= "cloud-itonami" (:kind sync)))
+            (is (= ["Bots" bot-id "Workspace"] (:drive-path sync)))
+            (is (= "continuous" (:schedule sync)))
+            (is (= "this-device" (:mode sync))))
+          (finally
+            (folder-sync/unregister-managed-root! (:bot/workspace-sync-id created))
+            (folder-sync/stop!)))))))
 
 (deftest sidebar-presentation-is-not-authority
   (with-store

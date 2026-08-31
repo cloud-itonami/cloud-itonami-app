@@ -40,6 +40,7 @@
 
 (defonce ^:private scheduler (atom nil))
 (defonce ^:private runtime-config (atom {:enabled? false :roots []}))
+(defonce ^:private managed-roots (atom {}))
 (defonce ^:private last-status (atom {}))
 (defonce ^:private root-locks (atom {}))
 (defonce ^:private http-client
@@ -93,7 +94,7 @@
     segment))
 
 (defn- internal-path? [path]
-  (contains? #{".itonami-conflicts" ".itonami-trash"}
+  (contains? #{".git" ".itonami" ".itonami-conflicts" ".itonami-trash"}
              (first (str/split path #"/"))))
 
 (defn- normalized-relative [^Path root ^Path file]
@@ -682,7 +683,7 @@
                (nil? (:maximum-file-bytes %))
                (assoc :maximum-file-bytes
                       (:maximum-file-bytes @runtime-config)))
-            (:roots @runtime-config)))
+            (concat (:roots @runtime-config) (vals @managed-roots))))
   ([actor]
    (filter #(= (str actor) (str (:actor %))) (root-configs))))
 
@@ -721,7 +722,7 @@
   ([actor]
    (let [roots (if actor (root-configs actor) (root-configs))]
      {:schema schema
-      :enabled? (boolean (:enabled? @runtime-config))
+      :enabled? (boolean (or (:enabled? @runtime-config) (seq @managed-roots)))
       :running? (boolean @scheduler)
       :roots (mapv (fn [root]
                      (merge {:id (str (:id root))
@@ -730,6 +731,20 @@
                             (select-keys (get @last-status (str (:id root)))
                                          [:status :at :counts :error])))
                    roots)})))
+
+(defn- ensure-scheduler! []
+  (when (and (some #(= :continuous (:schedule % :continuous)) (root-configs))
+             (nil? @scheduler))
+    (let [executor (Executors/newSingleThreadScheduledExecutor
+                    (reify ThreadFactory
+                      (newThread [_ runnable]
+                        (doto (Thread. runnable "cloud-itonami-folder-sync")
+                          (.setDaemon true)))))
+          interval (max 2 (long (:interval-seconds @runtime-config 30)))]
+      (.scheduleWithFixedDelay
+       ^ScheduledExecutorService executor
+       ^Runnable #(sync-configured! nil #{:continuous}) 2 interval TimeUnit/SECONDS)
+      (reset! scheduler executor))))
 
 (defn start!
   ([] (start! {}))
@@ -764,20 +779,43 @@
        (throw (ex-info "folder sync ids must be unique"
                        {:type :folder-sync/duplicate-id})))
      (reset! runtime-config settings)
-     (when (and (:enabled? settings)
-                (some #(= :continuous (:schedule %)) (:roots settings))
-                (nil? @scheduler))
-       (let [executor (Executors/newSingleThreadScheduledExecutor
-                       (reify ThreadFactory
-                         (newThread [_ runnable]
-                           (doto (Thread. runnable "cloud-itonami-folder-sync")
-                             (.setDaemon true)))))
-             interval (max 2 (long (:interval-seconds settings)))]
-         (.scheduleWithFixedDelay
-          ^ScheduledExecutorService executor
-          ^Runnable #(sync-configured! nil #{:continuous}) 2 interval TimeUnit/SECONDS)
-         (reset! scheduler executor)))
+     (when (:enabled? settings) (ensure-scheduler!))
      true)))
+
+(defn register-managed-root!
+  "Register one application-owned, continuously synchronized directory.
+
+  Unlike operator roots in config.edn, these roots are reconstructed from a
+  durable domain record (currently a Bot) and may therefore be registered at
+  runtime. The root remains pinned: online-only placeholders belong to File
+  Provider, while a Bot needs real bytes when it works offline."
+  [root]
+  (let [root (merge {:schedule :continuous :residency :pinned} root)
+        id (safe-id (:id root))]
+    (when (str/blank? (str (:actor root)))
+      (throw (ex-info "managed folder sync root requires an actor"
+                      {:type :folder-sync/actor-required})))
+    (when (str/blank? (str (:path root)))
+      (throw (ex-info "managed folder sync root requires a local path"
+                      {:type :folder-sync/path-required})))
+    (when-not (= :pinned (:residency root))
+      (throw (ex-info "managed folder sync roots are always pinned"
+                      {:type :folder-sync/residency-requires-file-provider})))
+    (swap! managed-roots assoc id (assoc root :id id))
+    (ensure-scheduler!)
+    (get @managed-roots id)))
+
+(defn unregister-managed-root! [id]
+  (swap! managed-roots dissoc (str id))
+  true)
+
+(defn sync-managed-root! [actor id]
+  (let [id (str id)
+        root (get @managed-roots id)]
+    (when-not (and root (= (str actor) (str (:actor root))))
+      (throw (ex-info "managed folder sync root not found"
+                      {:type :folder-sync/not-found :id id})))
+    (first (sync-configured! actor #{(:schedule root :continuous)}))))
 
 (defn set-root-mode!
   "Change one configured root's schedule. Folder roots are always materialized

@@ -77,6 +77,13 @@
       (let [result (sync/sync-root! config remote)]
         (is (= #{"local.txt" "remote.txt"} (set (:unchanged result))))))))
 
+(deftest local-snapshot-excludes-git-and-cloud-itonami-control-data
+  (let [{:keys [root]} (temporary-config)]
+    (write-text! root "work.txt" "sync me")
+    (write-text! root ".git/config" "do not sync")
+    (write-text! root ".itonami/workspace.edn" "do not sync")
+    (is (= #{"work.txt"} (set (keys (sync/local-snapshot root 1024)))))))
+
 (deftest one-sided-updates-and-deletes-propagate-recoverably
   (let [{:keys [root config]} (temporary-config)
         remote (memory-remote)]

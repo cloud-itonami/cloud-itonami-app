@@ -375,6 +375,12 @@
  ;; explicitly gave a schedule. With no scheduled routine it is a store read
  ;; that finds nothing. Set `:enabled? false` to stop it looking at all.
  :bots {:mail-domain "mail.itonami.cloud"
+        ;; New Bots receive an isolated local Git root automatically. It is
+        ;; continuously reconciled with Drive/Bots/<bot-id>/Workspace. A
+        ;; hosted network target may be supplied under :workspace-sync :remote
+        ;; with the same shape as a folder-sync HTTP remote.
+        :workspace {:enabled? true}
+        :workspace-sync {}
         :tick {:enabled? true :interval-seconds 60}
         ;; Resident startup jobs share the inference plane with interactive
         ;; conversations. One start per tick controls bursts; max-active also

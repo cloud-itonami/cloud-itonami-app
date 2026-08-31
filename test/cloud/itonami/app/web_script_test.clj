@@ -178,9 +178,10 @@
     (is (str/includes? js "personEntry.dataset.role = 'person'"))
     (is (str/includes? js "append(personEntry, entry)"))
     (is (str/includes? js "'coding?':true"))
-    (is (str/includes? js "workspace:$('#bots-workspace').value.trim()"))))
+    (is (str/includes? js "workspace:null"))
+    (is (str/includes? js "/workspace/sync"))))
 
-(deftest bots-render-markdown-safely-and-start-from-a-local-workspace
+(deftest bots-render-markdown-safely-and-start-from-a-cloud-itonami-workspace
   (let [html (with-redefs [store/snapshot (constantly (store/initial-state))]
                (web/page-html config))
         js (slurp (io/file "resources/cloud/itonami/app/interaction.js"))]
@@ -190,7 +191,8 @@
     (is (str/includes? js "renderMarkdown(bubble, message.text)"))
     (is (str/includes? js "renderMarkdown(run.provisional, run.provisional.dataset.markdown)"))
     (is (not (str/includes? js "provisional.innerHTML")))
-    (is (str/includes? html "Local workspace で働く Bot"))
+    (is (str/includes? html "Cloud Itonami workspace で働く Bot"))
+    (is (str/includes? html "Cloud Itonami Driveと双方向同期"))
     (is (str/includes? html "外部サービスを追加（任意）"))
     (is (not (str/includes? html "id=\"bots-coding\"")))
     (is (str/includes? html "自律モードで開始します"))
@@ -230,6 +232,10 @@
 
 (deftest bots-pass-server-status-to-decorative-living-faces
   (let [js (slurp (io/file "resources/cloud/itonami/app/interaction.js"))]
+    (is (str/includes? js "const botMood = (avatar, status) =>"))
+    (is (str/includes? js "node.dataset.mood = botMood(avatar, status)"))
+    (doseq [mood ["'hurry'" "'focus'" "'nervous'" "'upset'" "'sleep'" "'joy'" "'nap'"]]
+      (is (str/includes? js mood)))
     (is (str/includes? js "const botAvatar = (node, avatar, status = null) =>"))
     (is (str/includes? js "node.dataset.status = status"))
     (is (str/includes? js "node.setAttribute('aria-hidden', 'true')"))
