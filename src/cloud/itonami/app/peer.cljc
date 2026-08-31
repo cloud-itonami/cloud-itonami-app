@@ -107,6 +107,22 @@
   (when-let [[_ bot-id device] (re-matches address-pattern (str value))]
     {:bot-id bot-id :device device}))
 
+(defn device-name?
+  "Is this a well-formed device label — the `@…` half of a Bot address?
+
+  Asked by putting the value through `address` and `parse-address` rather than
+  by a second regex beside `address-pattern`. A deployment that recorded a
+  device id this grammar cannot express would be unaddressable while looking
+  configured, and a copy of the rule here is how the two would come to
+  disagree about which ids those are.
+
+  This is the same construction the rest of this namespace uses: one place
+  answers a question, and everybody else asks it."
+  [value]
+  (let [value (some-> value str str/trim not-empty)]
+    (boolean (and value
+                  (= value (:device (parse-address (address "d" value))))))))
+
 (defn- ->reach
   [target {:keys [source-owner target-owner device local-device remote-enabled?
                   known-devices]}]

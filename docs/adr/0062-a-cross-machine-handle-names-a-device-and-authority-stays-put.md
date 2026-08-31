@@ -1,6 +1,37 @@
 # ADR-0062: A cross-machine handle names a device, and authority stays where it is
 
-**Status:** decision core landed, host integration pending — 2026-08-19
+**Status:** decision core landed 2026-08-19; the local-device input landed
+2026-08-31; transport still absent
+
+## What changed on 2026-08-31
+
+`may-address?` decides from four facts, and one of them — **is the named device
+this machine** — had no source. Every call site passed `:local-device nil`, so
+`device-is-local` was decided by the ABSENCE of a device rather than by a
+comparison, and a handle naming *this* machine by name was refused as remote.
+That refusal needed no transport. It was there because nothing in the
+application could say which device it was.
+
+- `cloud.itonami.app.device` is that answer: `local-id`, read from
+  `[:devices :local]`, nil when this install was never enrolled.
+- **Configured, not derived.** A hostname, a MAC address or a hash of the
+  identity seed would each let a machine name itself, and a machine that names
+  itself is a machine nobody enrolled — the discovery step this ADR refuses by
+  name. A value the address grammar cannot express is reported and treated as
+  unset, so "misconfigured" and "never configured" are not the same output.
+- `peer/device-name?` answers what a device label may be, through
+  `address`/`parse-address` rather than a second regex, so the grammar has one
+  owner.
+- `peer-target!` now admits `bot:<id>@<this-device>` and still refuses every
+  other device with `:peer/no-remote-transport`. An install with no device name
+  refuses all of them, which is the direction to be wrong in.
+
+**Not landed: the transport.** `:known-devices` and `:remote-enabled?` are
+still passed as literals at the one call site that could carry them, because
+`->reach` reads them only on the branch where the named device is not this
+machine — and `peer-target!` throws before reaching it. Filling them with real
+values would be wiring nothing can observe. They become live in the same change
+that makes a note cross a machine boundary (ADR-0077's absent SLIM publisher).
 
 ## Context
 
@@ -118,9 +149,17 @@ only the second.
 - The grammar round-trips and returns nil for nine malformed forms.
 
 Not verified, and unverifiable today: that a note actually reaches another
-machine. There is no transport. `send_message` refuses a `@device` handle with
-`no-remote-transport` rather than delivering locally, and that refusal is
-tested — which is the honest end of what exists.
+machine. There is no transport. `send_message` refuses a handle naming a device
+**other than this one** with `no-remote-transport` rather than delivering
+locally, and that refusal is tested — which is the honest end of what exists.
+
+Since 2026-08-31 the local half is tested in both directions from one handle
+shape, varying only which device this install answers to
+(`a-handle-naming-this-device-is-the-local-form`): unenrolled refuses,
+`@this-device` delivers, `@another-device` refuses and reports both the device
+it was asked for and the one it compared against, and a stranger's Bot stays
+`not-found` at every setting. The unenrolled row is the control — if it ever
+passes, the refusal beside it is not being decided by the device comparison.
 
 ## Consequences
 
