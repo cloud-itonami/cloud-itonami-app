@@ -652,7 +652,11 @@
   ;; consent surface below. It still ships OFF: enabling it can lead, after a
   ;; separate named-operator decision, to a recurring-cost Telnyx number order.
   :number {:enabled? false
-           :endpoint "http://127.0.0.1:1345" ; cloud-itonami/cloud-itonami-numbering
+           ;; nil like every sibling: an authority ships with no endpoint and the
+           ;; operator supplies one at deployment. The loopback address that used
+           ;; to sit here (127.0.0.1:1345, added with the actor in #236) was a
+           ;; development default living in the shipped file.
+           :endpoint nil    ; cloud-itonami/cloud-itonami-numbering
            :consent-token-env "NUMBER_CONSENT_TOKEN"
            ;; The ranges this operator was assigned. Configuration, not store: a
            ;; block that could arrive in a request would let a caller allocate
