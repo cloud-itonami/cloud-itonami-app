@@ -2348,15 +2348,22 @@
          (:bot/capability-policy b))))
 
 (defn- disk-space-tools [b]
-  (let [inspect? (autonomous-capability? b :disk.inspect)
-        cleanup? (autonomous-capability? b :disk.cleanup)]
-    (cond-> []
-      inspect? (conj (first disk-space/tool-definitions))
-      cleanup? (conj (second disk-space/tool-definitions)))))
+  (let [capability-by-tool {"disk_space_status" :disk.inspect
+                            "disk_space_cleanup" :disk.cleanup
+                            "disk_space_inventory" :disk.candidate.inspect
+                            "disk_space_reclaim" :disk.reclaimable.cleanup}]
+    (filterv #(autonomous-capability? b (get capability-by-tool (:name %)))
+             disk-space/tool-definitions)))
 
 (defn- disk-maintenance-bot? [b]
   (or (autonomous-capability? b :disk.inspect)
-      (autonomous-capability? b :disk.cleanup)))
+      (autonomous-capability? b :disk.cleanup)
+      (autonomous-capability? b :disk.candidate.inspect)
+      (autonomous-capability? b :disk.reclaimable.cleanup)))
+
+(defn- disk-candidate-relief-bot? [b]
+  (and (autonomous-capability? b :disk.candidate.inspect)
+       (autonomous-capability? b :disk.reclaimable.cleanup)))
 
 (defn- disk-pressure-relief-bot? [b]
   ;; Pressure admission is narrower than tool confinement: a status-only Bot
@@ -2512,7 +2519,7 @@
     (virtual-shell/describe tool-name args)
 
     (disk-space/tool? tool-name)
-    (disk-space/describe tool-name)
+    (disk-space/describe tool-name args)
 
     (git-hygiene/tool? tool-name)
     (git-hygiene/describe tool-name)
@@ -2818,7 +2825,7 @@
                                             tool-name args)
 
                        (disk-space/tool? tool-name)
-                       (disk-space/call! tool-name)
+                       (disk-space/call! tool-name args)
 
                        (git-hygiene/tool? tool-name)
                        (git-hygiene/call! tool-name)
@@ -5787,7 +5794,12 @@
          "- Call disk_space_status exactly once.\n"
          "- If pressure is true, call disk_space_cleanup exactly once; "
          "if pressure is false, do not call cleanup.\n"
-         "- Report the observed status and cleanup receipt, including bytes reclaimed.\n"
+         (when (disk-candidate-relief-bot? b)
+           (str "- If pressure remains after cleanup, call disk_space_inventory exactly once.\n"
+                "- Reclaim only the bounded reclaimable candidate_ids returned by that "
+                "inventory; never supply a path.\n"
+                "- Observe two settled capacity readings and report whether pressure remains.\n"))
+         "- Report the observed status and compact receipts, including bytes reclaimed.\n"
          "- Do not inspect or modify repositories, worktrees, user data, or any other surface.\n"
          "- Stop after this single bounded maintenance decision.")
 
@@ -5822,9 +5834,22 @@
 
 (defn- compact-disk-maintenance-receipt [receipt]
   (cond-> (select-keys receipt [:schema :action :reason :before :after
-                                :reclaimed-bytes])
+                                :reclaimed-bytes :inventory
+                                :selected-candidate-ids :review-required
+                                :stable-observation])
     (:helper receipt)
-    (assoc :helper (select-keys (:helper receipt) [:exit :truncated?]))))
+    (assoc :helper (select-keys (:helper receipt) [:exit :truncated?]))
+
+    (:fixed-cleanup receipt)
+    (assoc :fixed-cleanup
+           (compact-disk-maintenance-receipt (:fixed-cleanup receipt)))
+
+    (:candidate-reclaim receipt)
+    (assoc :candidate-reclaim
+           (select-keys (:candidate-reclaim receipt)
+                        [:schema :action :reason :before :after
+                         :requested-candidate-ids :reclaimed-candidate-ids
+                         :reclaimed-bytes]))))
 
 (defn- disk-maintenance-summary [receipt]
   (let [before (get-in receipt [:before :usable-bytes])
@@ -5836,11 +5861,18 @@
          "- after usable bytes: " after "\n"
          "- reclaimed bytes: " reclaimed "\n"
          "- pressure after: " (boolean (get-in receipt [:after :pressure?])) "\n"
+         (when (:inventory receipt)
+           (str "- reclaimable candidate bytes: "
+                (long (or (get-in receipt [:inventory :reclaimable-bytes]) 0)) "\n"
+                "- review-required candidates: "
+                (count (:review-required receipt)) "\n"
+                "- stable observation: "
+                (boolean (get-in receipt [:stable-observation :stable?])) "\n"))
          "Repositories, worktrees, sessions, user data and other preserved "
          "classes were not targets.")))
 
 (defn- run-disk-maintenance!
-  "Execute the Disk Maintainer's two reviewed capabilities without inference.
+  "Execute the Disk Maintainer's reviewed capabilities without inference.
 
   Disk cleanup is the recovery path for the durable store itself. Routing it
   through a model provider made provider saturation capable of preventing the
@@ -5877,21 +5909,33 @@
     (try
       (let [before (disk-space/call! "disk_space_status")
             receipt (if (:pressure? before)
-                      (disk-space/maintain! before)
+                      (if (disk-candidate-relief-bot? b)
+                        (disk-space/reconcile! before)
+                        (disk-space/maintain! before))
                       {:schema "cloud.itonami.app.disk-space-maintenance.v1"
                        :action "none"
                        :reason "above-threshold"
                        :before before
                        :after before})
             compact (compact-disk-maintenance-receipt receipt)
-            cleanup? (= "cleanup" (:action receipt))
-            tool-count (if cleanup? 2 1)
+            cleanup? (contains? #{"cleanup" "cleanup-and-reclaim"} (:action receipt))
+            inventory? (some? (:inventory receipt))
+            reclaim? (some? (:candidate-reclaim receipt))
+            tool-count (+ 1 (if cleanup? 1 0) (if inventory? 1 0) (if reclaim? 1 0))
             summary (disk-maintenance-summary receipt)
             evidence [(str "disk_space_status usable-bytes="
                            (:usable-bytes before))
                       (str (if cleanup? "disk_space_cleanup" "cleanup-skipped")
                            " action=" (:action receipt)
-                           " reclaimed-bytes=" (long (or (:reclaimed-bytes receipt) 0)))]
+                           " reclaimed-bytes=" (long (or (:reclaimed-bytes receipt) 0)))
+                      (when inventory?
+                        (str "disk_space_inventory candidates="
+                             (long (or (get-in receipt [:inventory :candidate-count]) 0))))
+                      (when reclaim?
+                        (str "disk_space_reclaim candidates="
+                             (count (get-in receipt
+                                            [:candidate-reclaim :reclaimed-candidate-ids]))))]
+            evidence (vec (remove nil? evidence))
             finished-at (store/now)]
         (append-goal-event! run-id :disk/maintenance compact)
         (transition-goal-run! run-id :succeeded
@@ -5900,9 +5944,10 @@
         (record-turn! (:bot/id b) run-id
                       {:turn/state :completed :turn/phase :completed
                        :turn/goal? true :turn/objective objective
-                       :turn/tool (if cleanup?
-                                    "disk_space_cleanup"
-                                    "disk_space_status")
+                       :turn/tool (cond reclaim? "disk_space_reclaim"
+                                        inventory? "disk_space_inventory"
+                                        cleanup? "disk_space_cleanup"
+                                        :else "disk_space_status")
                        :turn/tool-count tool-count
                        :turn/result summary
                        :turn/evidence evidence

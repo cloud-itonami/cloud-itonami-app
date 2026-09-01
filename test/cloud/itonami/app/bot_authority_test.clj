@@ -97,7 +97,8 @@
 (def ^:private runnable
   #{"workspace_read" "workspace_list" "workspace_search"
     "git_status" "git_log" "workspace_write_file" "git_commit"
-    "disk_space_status" "disk_space_cleanup"})
+    "disk_space_status" "disk_space_cleanup"
+    "disk_space_inventory" "disk_space_reclaim"})
 
 (deftest the-capability-policy-decides-and-not-only-in-the-prompt
   ;; Before this, a Bot's capability policy reached exactly one place: its
@@ -118,7 +119,18 @@
           (is (not (contains? inspect-only "disk_space_cleanup"))))
         (let [both (admit [{:capability :disk.inspect :decision :autonomous}
                            {:capability :disk.cleanup :decision :autonomous}])]
-          (is (every? both ["disk_space_status" "disk_space_cleanup"]))))
+          (is (every? both ["disk_space_status" "disk_space_cleanup"]))
+          (is (not (contains? both "disk_space_inventory")))
+          (is (not (contains? both "disk_space_reclaim"))))
+        (let [inventory-only
+              (admit [{:capability :disk.candidate.inspect :decision :autonomous}])]
+          (is (contains? inventory-only "disk_space_inventory"))
+          (is (not (contains? inventory-only "disk_space_reclaim"))))
+        (let [candidate-cleanup
+              (admit [{:capability :disk.candidate.inspect :decision :autonomous}
+                      {:capability :disk.reclaimable.cleanup :decision :autonomous}])]
+          (is (every? candidate-cleanup
+                      ["disk_space_inventory" "disk_space_reclaim"]))))
 
       (testing "a capability a human still decides does NOT authorise the tool"
         (is (not (contains? (admit [{:capability :patch.create :decision :approval-required}])
