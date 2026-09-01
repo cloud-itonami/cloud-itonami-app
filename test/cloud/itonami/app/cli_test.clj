@@ -80,6 +80,28 @@
                :model "qwen3.8-27b-throughput-5090"}]
              @seen)))))
 
+(deftest hermes-cli-keeps-profile-and-run-wire-shapes
+  (let [seen (atom [])]
+    (with-redefs [client/request!
+                  (fn
+                    ([_ method path]
+                     (swap! seen conj [method path])
+                     {:object "list"})
+                    ([_ method path body]
+                     (swap! seen conj [method path body])
+                     {:run_id "run-1" :status "started"}))]
+      (is (= "list" (:object (cli/run {} ["hermes" "profile" "list"]))))
+      (is (= "list" (:object (cli/run {} ["hermes" "session" "list"
+                                           "--profile" "bot/one"]))))
+      (is (= "started"
+             (:status (cli/run {} ["hermes" "run" "--profile" "bot/one"
+                                   "--input" "inspect" "--goal" "true"]))))
+      (is (= [[:get "/api/profiles"]
+              [:get "/p/bot%2Fone/api/sessions"]
+              [:post "/p/bot%2Fone/v1/runs"
+               {:input "inspect" :goal true}]]
+             @seen)))))
+
 (deftest west-refactor-inspection-does-not-start-the-server
   (is (false? (cli/needs-server? ["bots" "refactor" "scan" "--root" "/tmp/ws"])))
   (is (false? (cli/needs-server? ["bots" "refactor" "inspect" "--root" "/tmp/ws"

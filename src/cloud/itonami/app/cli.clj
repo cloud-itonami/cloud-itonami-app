@@ -100,7 +100,9 @@
             [cloud.itonami.app.store :as store]
             [cloud.itonami.app.server-process :as server-process]
             [cloud.itonami.app.west-kotoba-refactor :as west-refactor])
-  (:import [java.nio.file Files LinkOption]
+  (:import [java.net URLEncoder]
+           [java.nio.charset StandardCharsets]
+           [java.nio.file Files LinkOption]
            [java.util.concurrent TimeUnit]))
 
 ;; ---------------------------------------------------------------------------
@@ -550,6 +552,56 @@
                    (str "/api/agent-bots/" (required-flag flags :id)
                         "/messages/" (required-flag flags :run) "/cancel") {}))
 
+(defn- url-segment [value]
+  (URLEncoder/encode (str value) (.name StandardCharsets/UTF_8)))
+
+(defn hermes-profile-list [configuration]
+  (client/request! configuration :get "/api/profiles"))
+
+(defn hermes-session-list [configuration flags]
+  (let [profile (or (:profile flags) "default")]
+    (client/request! configuration :get
+                     (str "/p/" (url-segment profile) "/api/sessions"))))
+
+(defn hermes-session-messages [configuration flags]
+  (let [profile (or (:profile flags) "default")
+        session (or (:session flags) profile)]
+    (client/request! configuration :get
+                     (str "/p/" (url-segment profile) "/api/sessions/"
+                          (url-segment session) "/messages"))))
+
+(defn hermes-run [configuration flags]
+  (let [profile (or (:profile flags) "default")]
+    (client/request! configuration :post
+                     (str "/p/" (url-segment profile) "/v1/runs")
+                     (cond-> {:input (required-flag flags :input)}
+                       (:instructions flags)
+                       (assoc :instructions (:instructions flags))
+                       (:goal flags)
+                       (assoc :goal (contains? #{"true" "1" "yes" true}
+                                                (:goal flags)))))))
+
+(defn hermes-run-status [configuration flags]
+  (client/request! configuration :get
+                   (str "/v1/runs/" (url-segment (required-flag flags :run)))))
+
+(defn hermes-steer [configuration flags]
+  (client/request! configuration :post
+                   (str "/v1/runs/" (url-segment (required-flag flags :run))
+                        "/steer")
+                   {:input (required-flag flags :input)}))
+
+(defn hermes-stop [configuration flags]
+  (client/request! configuration :post
+                   (str "/v1/runs/" (url-segment (required-flag flags :run))
+                        "/stop") {}))
+
+(defn hermes-approve [configuration flags]
+  (client/request! configuration :post
+                   (str "/v1/runs/" (url-segment (required-flag flags :run))
+                        "/approval")
+                   {:choice (or (:choice flags) "once")}))
+
 (defn bot-hygiene
   "The git hygiene the Git Maintainer Bot reads, on demand.
 
@@ -668,6 +720,14 @@
        "  bots refactor scan --root <west-root> [--limit 25]\n"
        "  bots refactor inspect --root <west-root> --repo <west-name> [--limit 8]\n"
        "  bots refactor start --root <west-root> --repo <west-name> --id <bot-id>\n\n"
+       "  hermes profile list\n"
+       "  hermes session list [--profile <bot-id|default>]\n"
+       "  hermes session messages [--profile P] [--session S]\n"
+       "  hermes run --profile <bot-id|default> --input <依頼> [--instructions X] [--goal true]\n"
+       "  hermes run-status --run <run-id>\n"
+       "  hermes steer --run <run-id> --input <追加指示>\n"
+       "  hermes stop --run <run-id>\n"
+       "  hermes approve --run <run-id> [--choice once|session|always|deny]\n\n"
        "CLI では Bot の model route だけ変更できます。権限設定と通常モードの承認はブラウザ専用です。\n"
        "CLI承認はおまかせBotだけです。\n"))
 
@@ -705,6 +765,22 @@
       ["bots" "decide"] (bot-decide configuration flags)
       ["bots" "cancel"] (bot-cancel configuration flags)
       ["bots" "hygiene"] (bot-hygiene configuration flags)
+      ["hermes" "profile"]
+      (if (= "list" (nth named 2 nil))
+        (hermes-profile-list configuration)
+        (throw (ex-info "hermes profile は list を指定してください"
+                        {:type :cli/usage})))
+      ["hermes" "session"]
+      (case (nth named 2 nil)
+        "list" (hermes-session-list configuration flags)
+        "messages" (hermes-session-messages configuration flags)
+        (throw (ex-info "hermes session は list / messages を指定してください"
+                        {:type :cli/usage})))
+      ["hermes" "run"] (hermes-run configuration flags)
+      ["hermes" "run-status"] (hermes-run-status configuration flags)
+      ["hermes" "steer"] (hermes-steer configuration flags)
+      ["hermes" "stop"] (hermes-stop configuration flags)
+      ["hermes" "approve"] (hermes-approve configuration flags)
       ["bots" "import"]
       (bot-import-report
        configuration

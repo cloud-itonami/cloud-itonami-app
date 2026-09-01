@@ -47,6 +47,7 @@
             [cloud.itonami.app.did-web :as did-web]
             [cloud.itonami.app.org-root-did :as org-root-did]
             [cloud.itonami.app.health :as health]
+            [cloud.itonami.app.hermes-compat :as hermes-compat]
             [cloud.itonami.app.humanity-trust :as humanity-trust]
             [cloud.itonami.app.identity :as identity]
             [cloud.itonami.app.fax :as fax]
@@ -6584,6 +6585,239 @@
             (send! exchange 500 {:error {:type "internal_error"
                                          :message (.getMessage error)}})))))))
 
+(defn- hermes-query [^HttpExchange exchange]
+  (let [raw (.getRawQuery (.getRequestURI exchange))]
+    (if (str/blank? raw)
+      {}
+      (into {}
+            (map (fn [part]
+                   (let [[key value] (str/split part #"=" 2)]
+                     [(keyword (URLDecoder/decode key "UTF-8"))
+                      (URLDecoder/decode (or value "") "UTF-8")]))
+                 (str/split raw #"&"))))))
+
+(defn- parse-bounded-int [value default maximum]
+  (try
+    (-> (Long/parseLong (str value)) (max 0) (min maximum))
+    (catch Exception _ default)))
+
+(defn- hermes-openai-error [message code]
+  {:error {:message message :type "invalid_request_error"
+           :param nil :code code}})
+
+(defn- send-hermes-events!
+  "Hermes-compatible `data: <json>` SSE frames over the native Bot stream."
+  [^HttpExchange exchange session run-id]
+  (doto (.getResponseHeaders exchange)
+    (.set "Content-Type" "text/event-stream")
+    (.set "Cache-Control" "no-cache")
+    (.set "X-Accel-Buffering" "no"))
+  (.sendResponseHeaders exchange 200 0)
+  (with-open [writer (OutputStreamWriter. (.getResponseBody exchange)
+                                          StandardCharsets/UTF_8)]
+    (loop []
+      (let [event (hermes-compat/take-event! session run-id 30)]
+        (cond
+          (hermes-compat/closed-event? event)
+          (do (.write writer ": stream closed\n\n") (.flush writer))
+
+          (nil? event)
+          (do (.write writer ": keepalive\n\n") (.flush writer) (recur))
+
+          :else
+          (do (.write writer "data: ")
+              (.write writer (json/write-str event))
+              (.write writer "\n\n")
+              (.flush writer)
+              (recur)))))))
+
+(defn- handle-hermes-compat!
+  [config exchange method raw-path]
+  (let [session (require-app-session! exchange)
+        [path-profile path] (hermes-compat/split-profile-path raw-path)
+        header-profile (some-> (.getFirst (.getRequestHeaders exchange)
+                                          "X-Hermes-Profile")
+                               str/trim not-empty)
+        profile (or path-profile header-profile)
+        query (hermes-query exchange)
+        segment (fn [pattern]
+                  (some-> (re-matches pattern path) second
+                          (URLDecoder/decode "UTF-8")))]
+    (cond
+      (and (= method "GET") (= path "/api/profiles"))
+      (send! exchange 200 (hermes-compat/profile-list config session))
+
+      (and (= method "GET") (= path "/api/sessions"))
+      (send! exchange 200
+             (hermes-compat/session-list
+              config session profile
+              {:limit (parse-bounded-int (:limit query) 50 200)
+               :offset (parse-bounded-int (:offset query) 0 1000000)
+               :title (:title query)
+               :include-hidden (#{"true" "1" "yes"}
+                                (str/lower-case
+                                 (str (:include_hidden query))))}))
+
+      (and (= method "POST") (= path "/api/sessions"))
+      (let [body (read-json exchange)
+            requested (or (:id body) (:session_id body) profile)]
+        (require-origin! exchange config)
+        (require-csrf! exchange session)
+        ;; Bot creation and grant widening stay on the human Itonami surface.
+        ;; Creating the canonical session for an existing Bot is idempotent.
+        (send! exchange 201 (hermes-compat/session config session requested)
+               {"X-Hermes-Session-Id"
+                (get-in (hermes-compat/session config session requested)
+                        [:session :id])}))
+
+      (and (= method "GET") (segment #"/api/sessions/([^/]+)"))
+      (send! exchange 200
+             (hermes-compat/session config session
+                                    (or profile
+                                        (segment #"/api/sessions/([^/]+)"))))
+
+      (and (= method "PATCH") (segment #"/api/sessions/([^/]+)"))
+      (let [body (read-json exchange)]
+        (require-origin! exchange config)
+        (require-csrf! exchange session)
+        (if (or (empty? body)
+                (and (= #{:title} (set (keys body)))
+                     (= "Bot Chat" (:title body))))
+          (send! exchange 200
+                 (hermes-compat/session
+                  config session (or profile
+                                     (segment #"/api/sessions/([^/]+)"))))
+          (send! exchange 400
+                 (hermes-openai-error
+                  "Cloud Itonami canonical Bot sessions do not expose mutable session metadata."
+                  "unsupported_session_field"))))
+
+      (and (= method "DELETE") (segment #"/api/sessions/([^/]+)"))
+      (do
+        (require-origin! exchange config)
+        (require-csrf! exchange session)
+        (send! exchange 409
+               (hermes-openai-error
+                "A canonical Bot Chat cannot delete or disable its Cloud Itonami Bot."
+                "canonical_session")))
+
+      (and (= method "GET")
+           (segment #"/api/sessions/([^/]+)/messages"))
+      (let [order (:order query)]
+        (when-not (#{nil "oldest" "latest"} order)
+          (throw (ex-info "order must be oldest or latest"
+                          {:type :hermes/invalid-pagination})))
+        (send! exchange 200
+               (hermes-compat/session-messages
+                config session
+                (or profile (segment #"/api/sessions/([^/]+)/messages"))
+                {:limit (when (contains? query :limit)
+                          (parse-bounded-int (:limit query) 0 500))
+                 :offset (parse-bounded-int (:offset query) 0 1000000)
+                 :order order})))
+
+      (and (= method "POST")
+           (segment #"/api/sessions/([^/]+)/chat"))
+      (let [body (read-json exchange)
+            session-id (or profile (segment #"/api/sessions/([^/]+)/chat"))]
+        (require-origin! exchange config)
+        (require-csrf! exchange session)
+        (send! exchange 200
+               (hermes-compat/session-chat! config session session-id body)
+               {"X-Hermes-Session-Id" session-id}))
+
+      (and (= method "POST")
+           (segment #"/api/sessions/([^/]+)/chat/stream"))
+      (let [body (read-json exchange)
+            session-id (or profile
+                           (segment #"/api/sessions/([^/]+)/chat/stream"))
+            started (do (require-origin! exchange config)
+                        (require-csrf! exchange session)
+                        (hermes-compat/start-run!
+                         config session session-id
+                         (assoc body :session_id session-id)))]
+        (send-hermes-events! exchange session (:run_id started)))
+
+      (and (= method "POST") (= path "/v1/runs"))
+      (let [body (read-json exchange)]
+        (require-origin! exchange config)
+        (require-csrf! exchange session)
+        (send! exchange 202
+               (hermes-compat/start-run! config session profile body)))
+
+      (and (= method "GET") (segment #"/v1/runs/([^/]+)"))
+      (send! exchange 200
+             (hermes-compat/run-status
+              config session (segment #"/v1/runs/([^/]+)")))
+
+      (and (= method "GET") (segment #"/v1/runs/([^/]+)/events"))
+      (send-hermes-events! exchange session
+                           (segment #"/v1/runs/([^/]+)/events"))
+
+      (and (= method "POST") (segment #"/v1/runs/([^/]+)/approval"))
+      (let [body (read-json exchange)]
+        (require-origin! exchange config)
+        (require-csrf! exchange session)
+        (send! exchange 200
+               (hermes-compat/approval!
+                config session (segment #"/v1/runs/([^/]+)/approval") body)))
+
+      (and (= method "POST") (segment #"/v1/runs/([^/]+)/steer"))
+      (let [body (read-json exchange)]
+        (require-origin! exchange config)
+        (require-csrf! exchange session)
+        (send! exchange 200
+               (hermes-compat/steer!
+                config session (segment #"/v1/runs/([^/]+)/steer") body)))
+
+      (and (= method "POST") (segment #"/v1/runs/([^/]+)/stop"))
+      (do
+        (require-origin! exchange config)
+        (require-csrf! exchange session)
+        (send! exchange 200
+               (hermes-compat/stop!
+                config session (segment #"/v1/runs/([^/]+)/stop"))))
+
+      :else
+      (send! exchange 404 (hermes-openai-error
+                           (str "Hermes endpoint not found: " path)
+                           "not_found")))))
+
+(defn- hermes-compat-handler [config]
+  (reify HttpHandler
+    (handle [_ exchange]
+      (let [method (.getRequestMethod exchange)
+            path (.getPath (.getRequestURI exchange))]
+        (try
+          (handle-hermes-compat! config exchange method path)
+          (catch clojure.lang.ExceptionInfo error
+            (send! exchange
+                   (case (:type (ex-data error))
+                     :identity/unauthenticated 401
+                     :identity/invalid-origin 403
+                     :identity/invalid-csrf 403
+                     :bot/forbidden 403
+                     :bot/approval-refused 403
+                     :hermes/not-found 404
+                     :hermes/run-not-found 404
+                     :bot/not-found 404
+                     :bot/disabled 409
+                     :bot/already-running 409
+                     :bot/turn-not-active 409
+                     :bot/turn-closing 409
+                     :bot/run-not-found 404
+                     :bot/not-held 409
+                     :hermes/approval-not-pending 409
+                     400)
+                   (hermes-openai-error
+                    (.getMessage error)
+                    (name (or (:type (ex-data error)) :hermes/error)))))
+          (catch Exception error
+            (send! exchange 500
+                   {:error {:message (.getMessage error)
+                            :type "server_error" :param nil
+                            :code "internal_error"}})))))))
+
 (defn- chronicle-handler [config]
   (reify HttpHandler
     (handle [_ exchange]
@@ -6800,6 +7034,16 @@
                      (human-passport-handler configuration))
      (.createContext instance "/api/agent-bots"
                      (agent-bots-handler configuration))
+     ;; Hermes Agent Bot Mode compatibility. The longer prefixes win over the
+     ;; root handler; `/p/<profile>/...` provides Hermes profile multiplexing.
+     (.createContext instance "/api/profiles"
+                     (hermes-compat-handler configuration))
+     (.createContext instance "/api/sessions"
+                     (hermes-compat-handler configuration))
+     (.createContext instance "/v1/runs"
+                     (hermes-compat-handler configuration))
+     (.createContext instance "/p/"
+                     (hermes-compat-handler configuration))
      (.createContext instance "/api/update"
                      (update-handler configuration))
      (.createContext instance "/api/folder-sync"
