@@ -13,7 +13,7 @@
    :last-turn {:tool-count 2}})
 
 (def ^:private transcript
-  [{:id "m-1" :role "owner" :text "調べて"
+  [{:id "m-1" :role "person" :text "調べて"
     :at "2026-09-01T00:00:01Z" :cards []}
    {:id "m-2" :role "bot" :text "確認しました"
     :at "2026-09-01T00:00:02Z" :cards []}])
