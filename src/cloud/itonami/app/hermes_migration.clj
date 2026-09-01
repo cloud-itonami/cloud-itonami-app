@@ -116,7 +116,8 @@
                    (first parts))
         (contains? #{"gateway.pid" "gateway_state.json" "processes.json"
                      "active_profile" ".update_check" "errors.log"
-                     ".hermes_history"}
+                     ".hermes_history" "ticker_last_success"
+                     "ticker_heartbeat" ".tick.lock"}
                    leaf)
         (str/ends-with? leaf ".db")
         (str/ends-with? leaf ".db-wal")
