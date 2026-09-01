@@ -16,17 +16,13 @@
             [cloud.itonami.app.commerce :as commerce]
             [cloud.itonami.app.config :as config]
             [cloud.itonami.app.desktop :as desktop]
-            [cloud.itonami.app.device :as device]
-            [cloud.itonami.app.disk-space :as disk-space]
-            [cloud.itonami.app.domain-tools :as domain-tools]
-            [cloud.itonami.app.gc :as gc]
+            [cloud.itonami.app.human-work-tools :as human-work-tools]
             [cloud.itonami.app.identity :as identity]
             [cloud.itonami.app.policy :as policy]
             [cloud.itonami.app.provider :as provider]
             [cloud.itonami.app.relay :as relay]
             [cloud.itonami.app.bot :as bot]
             [cloud.itonami.app.bot-authority :as bot-authority]
-            [cloud.itonami.app.folder-sync :as folder-sync]
             [cloud.itonami.app.peer :as peer]
             [cloud.itonami.app.store :as store]
             [cloud.itonami.app.workspace-tools :as workspace-tools]
@@ -217,55 +213,10 @@
           (is (false? (:bot/virtual-shell? created)))
           (is (true? (:bot/goal? created)))
           (is (true? (:goal? (first (:bots (bots/overview {} alice))))))
-          (bots/update! {} alice (:bot/id created)
-                        {:goal? false :priority? true :pinned? true})
-          (let [public (first (:bots (bots/overview {} alice)))]
-            (is (false? (:goal? public)))
-            (is (true? (:priority? public)))
-            (is (true? (:pinned? public))))
+          (bots/update! {} alice (:bot/id created) {:goal? false})
+          (is (false? (:goal? (first (:bots (bots/overview {} alice))))))
           (is (empty? (:bot/tools created))
               "autonomy does not silently grant an external connector"))))))
-
-(deftest a-new-app-bot-receives-an-isolated-cloud-itonami-workspace
-  (with-store
-    (fn []
-      (let [created (bots/create! {:bots {:workspace {:enabled? true}}}
-                                  alice {:name "managed workspace" :connectors []})
-            bot-id (:bot/id created)
-            path (:bot/workspace created)]
-        (try
-          (is (= :cloud-itonami (:bot/workspace-kind created)))
-          (is (.isDirectory (io/file path ".git")))
-          (is (.isFile (io/file path ".itonami" "workspace.edn")))
-          (let [public (first (:bots (bots/overview
-                                     {:bots {:workspace {:enabled? true}}} alice)))
-                sync (:workspace-sync public)]
-            (is (= "cloud-itonami" (:kind sync)))
-            (is (= ["Bots" bot-id "Workspace"] (:drive-path sync)))
-            (is (= "continuous" (:schedule sync)))
-            (is (= "this-device" (:mode sync))))
-          (finally
-            (folder-sync/unregister-managed-root! (:bot/workspace-sync-id created))
-            (folder-sync/stop!)))))))
-
-(deftest sidebar-presentation-is-not-authority
-  (with-store
-    (fn []
-      (let [created (make-bot alice {:connectors []})
-            before (:admitted-tools (first (:bots (bots/overview nil alice))))]
-        (bots/update! {} alice (:bot/id created)
-                      {:section "営業" :unread? true :hidden? true})
-        (let [public (first (:bots (bots/overview {} alice)))]
-          (is (= "営業" (:section public)))
-          (is (true? (:unread? public)))
-          (is (true? (:hidden? public)))
-          (is (= before (:admitted-tools public))
-              "a rail folder, unread mark or hide flag cannot widen reach"))
-        (bots/update! {} alice (:bot/id created) {:section "" :unread? false :hidden? false})
-        (let [cleared (first (:bots (bots/overview {} alice)))]
-          (is (nil? (:section cleared)))
-          (is (false? (:unread? cleared)))
-          (is (false? (:hidden? cleared))))))))
 
 (deftest overview-offers-only-an-admitted-local-git-root
   (with-store
@@ -372,115 +323,6 @@
    :capabilities [{:capability :patch.create :decision :blocked}]
    :workspace "orgs/network-awai/cloud-itonami"
    :cadence-minutes 60})
-
-(defn- disk-maintainer-entry []
-  {:key "cloud-itonami/disk-maintainer"
-   :business {:id :cloud-itonami :name "Cloud Itonami"}
-   :role {:id :disk-maintainer :name "Disk Maintainer" :job :operations}
-   :objective "Observe disk pressure and run the bounded cleanup when needed."
-   :responsibilities ["Never delete source, worktrees or user data"]
-   :capabilities [{:capability :disk.inspect :decision :autonomous}
-                  {:capability :disk.cleanup :decision :autonomous}]
-   :workspace "orgs/cloud-itonami/cloud-itonami-app"
-   :cadence-minutes 15})
-
-(defn- domain-steward-entry []
-  {:key "cloud-itonami/domain-steward"
-   :business {:id :cloud-itonami :name "Cloud Itonami"}
-   :role {:id :domain-steward :name "Domain Steward" :job :operations}
-   :objective "Inspect the domain portfolio and advance one exact governed proposal."
-   :responsibilities ["Never bypass Passkey"]
-   :capabilities [{:capability :domain.read :decision :autonomous}
-                  {:capability :domain.proposal.create :decision :autonomous}
-                  {:capability :domain.approved-proposal.commit :decision :autonomous}]
-   :workspace "orgs/cloud-itonami/cloud-itonami-app"
-   :cadence-minutes 15})
-
-(deftest workforce-domain-tools-are-isolated-and-capability-mapped
-  (with-store
-    (fn []
-      (with-redefs [workspace-tools/admit-root (fn [path] path)
-                    domain-tools/available? (constantly true)]
-        (bots/provision-workforce! {} alice
-                                   (workforce-catalog [(domain-steward-entry)]))
-        (let [b (first (:bots (bots/overview {} alice)))
-              admitted (set (:admitted-tools b))]
-          (is (= (set (map :name domain-tools/tools)) admitted))
-          (is (not (contains? admitted "workspace_write_file")))
-          (is (not (contains? admitted "wallet_address")))
-          (is (= :domain.approved-proposal.commit
-                 (get bot-authority/tool->capability "domain_commit"))))))))
-
-(deftest resident-domain-steward-observes-and-commits-approved-without-a-model
-  (with-store
-    (fn []
-      (with-redefs [workspace-tools/admit-root (fn [path] path)
-                    domain-tools/available? (constantly true)]
-        (bots/provision-workforce! {} alice
-                                   (workforce-catalog [(domain-steward-entry)]))
-        (let [due "2026-08-15T00:00:00Z"
-              now "2026-08-16T00:00:00Z"
-              calls (atom [])]
-          (swap! store/state update-in [:bots :workforce-jobs]
-                 (fn [jobs]
-                   (into {} (map (fn [[id job]]
-                                   [id (assoc job :workforce.job/next-run-at due)]))
-                         jobs)))
-          (with-redefs [gc/refuse-admission? (constantly nil)
-                        domain-tools/call-tool
-                        (fn [_configuration tool input]
-                          (swap! calls conj [tool input])
-                          (case tool
-                            "domain_registrations"
-                            {:success true
-                             :result [{:name "renewal-risk.example"
-                                       :auto_renew false}]}
-                            "domain_proposals"
-                            {:proposals [{:id "proposal-approved"
-                                          :status :approved}
-                                         {:id "proposal-pending"
-                                          :status :awaiting-passkey}]}
-                            "domain_commit"
-                            {:id (:proposal_id input) :status :committed}))
-                        bots/submit-goal!
-                        (fn [& _]
-                          (throw (ex-info "model path must not run"
-                                          {:type :test/model-path-ran})))]
-            (with-redefs-fn
-              {(ns-resolve 'cloud.itonami.app.bots 'workforce-bot-inferring?)
-               (constantly true)}
-              (fn []
-                (let [result (bots/fire-due-workforce!
-                              {:bots {:workforce {:max-starts-per-tick 1
-                                                 :max-active 1}}}
-                              alice now)
-                      bot-id (:workforce.job/bot
-                              (first (vals (get-in @store/state
-                                                   [:bots :workforce-jobs]))))
-                      turn (bots/latest-turn alice bot-id)]
-                  (is (= ["cloud-itonami/domain-steward"] (:started result))
-                      "a provider-independent cycle has a bounded reserve")
-                  (is (= [["domain_registrations" {}]
-                          ["domain_proposals" {}]
-                          ["domain_commit" {:proposal_id "proposal-approved"}]]
-                         @calls))
-                  (is (= "domain_commit" (:tool turn)))
-                  (is (str/includes? (:result turn) "renewal-risk.example"))
-                  (is (str/includes? (:result turn) "proposal-approved")))))))))))
-
-(deftest workforce-disk-tools-exist-only-behind-the-two-disk-capabilities
-  (with-store
-    (fn []
-      (with-redefs [workspace-tools/admit-root (fn [path] path)]
-        (bots/provision-workforce! {} alice
-                                   (workforce-catalog [(disk-maintainer-entry)]))
-        (let [b (first (:bots (bots/overview {} alice)))
-              admitted (set (:admitted-tools b))]
-          (is (= #{"disk_space_status" "disk_space_cleanup"} admitted)
-              "the host maintainer does not inherit coding, commerce or Wallet tools")
-          (is (= [{:capability "disk.inspect" :decision "autonomous" :note nil}
-                  {:capability "disk.cleanup" :decision "autonomous" :note nil}]
-                 (:capability-policy b))))))))
 
 (deftest workforce-provisioning-is-idempotent-owner-isolated-and-narrow
   (with-store
@@ -763,138 +605,6 @@
                       :parent-context-id "context-previous"
                       :continuation-summary "catalog repository is not admitted"}
                      (nth (first @submitted) 3))))))))))
-
-(deftest a-never-submitted-workforce-job-runs-before-an-older-retry
-  ;; Measured 2026-08-30: the queue had ten never-submitted jobs, including
-  ;; all eight Numbering roles, behind a provider-failure backlog.  The retry
-  ;; jobs had older :next-run-at values, so sorting by due time alone could
-  ;; keep a newly installed business unobserved for hours.
-  (with-store
-    (fn []
-      (with-redefs [workspace-tools/admit-root (fn [path] path)]
-        (let [new-role (-> (engineer-entry)
-                           (assoc :key "cloud-itonami/new-role")
-                           (assoc :role {:id :qa :name "New role" :job :qa}))
-              submitted (atom [])
-              now "2026-08-30T11:00:00Z"]
-          (bots/provision-workforce!
-           {} alice (workforce-catalog [(engineer-entry) new-role]))
-          (swap! store/state update-in [:bots :workforce-jobs]
-                 (fn [jobs]
-                   (into {}
-                         (map (fn [[id job]]
-                                [id (if (= "cloud-itonami/engineer"
-                                           (:workforce.job/key job))
-                                      (assoc job
-                                             :workforce.job/next-run-at
-                                             "2026-08-01T00:00:00Z"
-                                             :workforce.job/last-submitted-at
-                                             "2026-08-01T00:00:00Z")
-                                      (assoc job
-                                             :workforce.job/next-run-at
-                                             "2026-08-29T00:00:00Z"))]))
-                         jobs)))
-          (with-redefs [bots/submit-goal!
-                        (fn [_ _ bot-id _ run-id _]
-                          (swap! submitted conj bot-id)
-                          {:id run-id})]
-            (let [result (bots/fire-due-workforce!
-                          {:bots {:workforce {:max-starts-per-tick 1
-                                              :max-active 1}}}
-                          alice now)
-                  started-id (first @submitted)]
-              (is (= ["cloud-itonami/new-role"] (:started result)))
-              (is (= "cloud-itonami/new-role"
-                     (get-in @store/state
-                             [:bots :bots started-id :bot/workforce-key])))
-              (is (= "2026-08-01T00:00:00Z"
-                     (->> (vals (get-in @store/state [:bots :workforce-jobs]))
-                          (some #(when (= "cloud-itonami/engineer"
-                                          (:workforce.job/key %))
-                                   (:workforce.job/next-run-at %)))))
-                  "the older retry remains due for a later tick"))))))))
-
-(deftest disk-pressure-admits-only-the-bounded-disk-relief-job
-  (with-store
-    (fn []
-      (with-redefs [workspace-tools/admit-root (fn [path] path)]
-        (let [catalog (workforce-catalog [(engineer-entry)
-                                          (disk-maintainer-entry)])
-              maintained (atom nil)
-              due "2026-08-15T00:00:00Z"
-              now "2026-08-16T00:00:00Z"
-              pressure {:usable-bytes 8192 :hard-floor-bytes 16384}
-              disk-before {:schema "cloud.itonami.app.disk-space.v1"
-                           :usable-bytes 8192
-                           :threshold-bytes 16384
-                           :pressure? true}
-              inferring? (ns-resolve 'cloud.itonami.app.bots
-                                     'workforce-bot-inferring?)]
-          (bots/provision-workforce! {} alice catalog)
-          (swap! store/state update-in [:bots :workforce-jobs]
-                 (fn [jobs]
-                   (into {} (map (fn [[id job]]
-                                   [id (assoc job :workforce.job/next-run-at due)]))
-                         jobs)))
-          (with-redefs-fn
-            {inferring? (constantly true)}
-            (fn []
-              (with-redefs [gc/refuse-admission? (constantly pressure)
-                            disk-space/status (constantly disk-before)
-                            disk-space/maintain!
-                            (fn [before]
-                              (reset! maintained before)
-                              {:schema "cloud.itonami.app.disk-space-maintenance.v1"
-                               :action "cleanup"
-                               :before before
-                               :after (assoc before :usable-bytes 12288)
-                               :reclaimed-bytes 4096
-                               :helper {:exit 0 :output "bounded helper log"
-                                        :truncated? false}})
-                            bots/submit-goal!
-                            (fn [& _]
-                              (throw (ex-info "model path must not run"
-                                              {:type :test/model-path-ran})))]
-                (let [result (bots/fire-due-workforce!
-                              {:bots {:workforce {:max-starts-per-tick 2
-                                                 :max-active 1}}}
-                              alice now)
-                      jobs (vals (get-in @store/state [:bots :workforce-jobs]))
-                      engineer-job (some #(when (= "cloud-itonami/engineer"
-                                                      (:workforce.job/key %)) %)
-                                         jobs)
-                      disk-job (some #(when (= "cloud-itonami/disk-maintainer"
-                                                  (:workforce.job/key %)) %)
-                                     jobs)
-                      bot-id (:workforce.job/bot disk-job)
-                      submitted-bot (get-in @store/state [:bots :bots bot-id])
-                      run-id (:workforce.job/last-run-id disk-job)
-                      goal-job (get-in @store/state [:bots :goal-jobs run-id])
-                      turn (bots/latest-turn alice bot-id)
-                      objective (:objective turn)]
-                  (is (= ["cloud-itonami/disk-maintainer"] (:started result)))
-                  (is (= disk-before @maintained))
-                  (is (= :succeeded (get-in goal-job [:job/run
-                                                      :agent.run/status])))
-                  (is (= "completed" (:state turn)))
-                  (is (= 2 (:tool-count turn)))
-                  (is (str/includes? (:result turn) "reclaimed bytes: 4096"))
-                  (is (not (str/includes? (pr-str goal-job)
-                                          "bounded helper log"))
-                      "the recurring ledger stores the compact receipt, not helper output")
-                  (is (empty? (:skipped result))
-                      "pressure is not reported as a failed tick when relief started")
-                  (is (= :disk-maintainer (get-in submitted-bot [:bot/role :id])))
-                  (is (str/includes? objective
-                                     "Call disk_space_status exactly once"))
-                  (is (str/includes? objective
-                                     "call disk_space_cleanup exactly once"))
-                  (is (str/includes? objective
-                                     "Do not inspect or modify repositories"))
-                  (is (not (str/includes? objective "repository evidence")))
-                  (is (nil? (:workforce.job/last-submitted-at engineer-job))
-                      "the ordinary due job remains refused under pressure")
-                  (is (= due (:workforce.job/next-run-at engineer-job))))))))))))
 
 (deftest resident-provider-failure-after-read-receipts-becomes-a-safe-no-op
   (with-store
@@ -1584,48 +1294,6 @@
           (is (= "checkpointed" (get-in turn [:job :state]))
               "restart is a resumable checkpoint, not a failed visible turn"))))))
 
-(deftest restart-migrates-an-inference-disk-run-to-the-deterministic-cadence
-  (with-store
-    (fn []
-      (with-redefs [workspace-tools/admit-root (fn [path] path)]
-        (bots/provision-workforce!
-         {} alice (workforce-catalog [(disk-maintainer-entry)]))
-        (let [bot-id (:id (first (:bots (bots/overview {} alice))))
-              run-id "resident-disk-before-deterministic-1"
-              future "2099-08-30T00:00:00Z"
-              queued (agent-run/agent-run {:id run-id :goal "old disk run"} 1)
-              leased (agent-run/transition queued :leased 2 {})
-              running (agent-run/transition leased :running 3 {})]
-          (store/transact!
-           (fn [state]
-             (-> state
-                 (assoc-in [:bots :goal-jobs run-id]
-                           {:job/id run-id :job/bot bot-id :job/session alice
-                            :job/objective "old disk run" :job/run running
-                            :job/plan [] :job/events [] :job/attempt 1
-                            :job/resident-workforce? true})
-                 (assoc-in [:bots :turn-history bot-id]
-                           [{:turn/id run-id :turn/bot bot-id
-                             :turn/state :running :turn/phase :accepted
-                             :turn/goal? true :turn/objective "old disk run"}])
-                 (assoc-in [:bots :workforce-jobs bot-id
-                            :workforce.job/next-run-at]
-                           future))))
-          (bots/recover-interrupted! {})
-          (let [state @store/state
-                run (get-in state [:bots :goal-jobs run-id :job/run])
-                turn (bots/latest-turn alice bot-id)
-                next-at (get-in state [:bots :workforce-jobs bot-id
-                                       :workforce.job/next-run-at])]
-            (is (= :cancelled (:agent.run/status run)))
-            (is (= :deterministic-maintenance-migration
-                   (:agent.run/error-type run)))
-            (is (= "cancelled" (:state turn)))
-            (is (= "deterministic-maintenance-migration"
-                   (:error-type turn)))
-            (is (not= future next-at)
-                "the first deterministic post-restart tick is due now")))))))
-
 (deftest restart-converges-a-stale-running-turn-to-its-terminal-agent-run
   (with-store
     (fn []
@@ -2066,9 +1734,11 @@
                         (first (:bots (bots/overview nil alice))))]
           (is (not-any? #{"gmail_search_messages"} admitted)
               "an unauthorized connector is still not admitted")
-          (is (= (set (map :name commerce/tool-definitions))
+          (is (= (set (map :name
+                           (concat commerce/tool-definitions
+                                   human-work-tools/tool-definitions)))
                  (set admitted))
-              "the built-in tenant commerce tools remain available"))))))
+              "the built-in commerce and human-work tools remain available"))))))
 
 (deftest a-tool-the-model-invented-is-refused-rather-than-invoked
   (with-store
@@ -3031,50 +2701,16 @@
       (let [plain (make-bot alice {})
             peered (make-bot alice {:name "peered" :peers? true})]
         (is (not (contains? (tools-of plain) "send_message")))
-        (is (not (contains? (tools-of plain) "message_agent")))
         (is (contains? (tools-of peered) "send_message"))
-        (is (contains? (tools-of peered) "message_agent"))
         (is (not (contains? (:bot/tools peered) "send_message"))
-            "the permission leaked into the connector grant")
-        (is (not (contains? (:bot/tools peered) "message_agent")))))))
+            "the permission leaked into the connector grant")))))
 
 (deftest a-note-is-a-write
   ;; It changes another Bot's conversation, which is a person's screen. It holds
   ;; like a send does, and a delegated Bot decides it like one (ADR-0060).
   (with-store
     (fn []
-      (is (true? ((private-fn 'write-tool?) nil "send_message")))
-      (is (true? ((private-fn 'write-tool?) nil "message_agent"))))))
-
-(deftest hermes-message-agent-arguments-dispatch-to-the-async-peer-path
-  (with-store
-    (fn []
-      (let [source (make-bot alice {:name "alpha" :peers? true})
-            seen (atom nil)
-            message-agent-var (ns-resolve 'cloud.itonami.app.bots
-                                          'message-agent!)]
-        (with-redefs-fn
-          {message-agent-var
-           (fn [_ b target message]
-             (reset! seen [(:bot/id b) target message])
-             "accepted")}
-          (fn []
-            (is (= "accepted"
-                   (:text ((private-fn 'run-tool!) {} source nil
-                           "message_agent"
-                           {:target "beta" :message "please inspect"}))))))
-        (is (= [(:bot/id source) "beta" "please inspect"] @seen))))))
-
-(deftest hermes-message-agent-refuses-autonomous-peer-cycles-at-the-depth-bound
-  (with-store
-    (fn []
-      (let [source (make-bot alice {:name "alpha" :peers? true})
-            depth-var (ns-resolve 'cloud.itonami.app.bots
-                                  '*message-agent-depth*)]
-        (is (thrown? clojure.lang.ExceptionInfo
-                     (with-bindings {depth-var bots/max-message-agent-depth}
-                       ((private-fn 'message-agent!)
-                        {} source "beta" "continue the chain"))))))))
+      (is (true? ((private-fn 'write-tool?) nil "send_message"))))))
 
 (deftest a-note-arrives-attributed-and-carries-no-grant
   (with-store
@@ -3132,58 +2768,6 @@
         (is (= 0 (count (filter #(= "hi" (:text %))
                                 (bots/messages alice (:bot/id b)))))
             "a refused note was delivered anyway")))))
-
-(deftest a-handle-naming-this-device-is-the-local-form
-  ;; ADR-0062: `device-is-local` is `(= device local-device)`, and until
-  ;; `cloud.itonami.app.device` existed nothing could supply the right-hand
-  ;; side. Every handle carrying a device was therefore refused as remote —
-  ;; including this machine's own name, which needs no transport at all.
-  ;;
-  ;; All four cases below are asked of the SAME handle shape. What changes is
-  ;; only which device this install answers to, which is the fact under test.
-  (with-store
-   (fn []
-     (let [a (make-bot alice {:name "alpha" :peers? true})
-           b (make-bot alice {:name "beta" :peers? true})
-           strangers (make-bot bob {:name "beta" :peers? true})
-           handle (fn [bot dev] (str "bot:" (:bot/id bot) "@" dev))
-           refusal (fn [& args]
-                     (try (apply (send-peer!) args) ::delivered
-                          (catch clojure.lang.ExceptionInfo e (:type (ex-data e)))))
-           notes (fn [bot text]
-                   (count (filter #(= text (:text %))
-                                  (bots/messages alice (:bot/id bot)))))]
-       (try
-         (testing "an install nobody enrolled refuses its own name too"
-           ;; The control. If this ever passes, the refusal below is not being
-           ;; decided by the device comparison but by something else.
-           (device/reset-for-test! nil)
-           (is (= :peer/no-remote-transport (refusal a (handle b "studio") "hi")))
-           (is (= 0 (notes b "hi"))))
-
-         (testing "enrolled as that device, the same handle is delivered here"
-           (device/reset-for-test! "studio")
-           (is (= ::delivered (refusal a (handle b "studio") "hi")))
-           (is (= 1 (notes b "hi"))
-               "the note the handle named this machine for was not delivered"))
-
-         (testing "another device is still refused, and says which"
-           (device/reset-for-test! "studio")
-           (let [data (try ((send-peer!) a (handle b "laptop") "yo")
-                           (catch clojure.lang.ExceptionInfo e (ex-data e)))]
-             (is (= :peer/no-remote-transport (:type data)))
-             (is (= "laptop" (:device data)))
-             (is (= "studio" (:local-device data))
-                 "the refusal has to show what it compared against"))
-           (is (= 0 (notes b "yo"))))
-
-         (testing "a device name does not reach across owners"
-           ;; Ownership is asked before anything device-shaped, and the refusal
-           ;; for a stranger's Bot stays `not-found` — `no-remote-transport`
-           ;; here would confirm that Bot exists.
-           (device/reset-for-test! "studio")
-           (is (= :peer/not-found (refusal a (handle strangers "studio") "hi"))))
-         (finally (device/reset-for-test! nil)))))))
 
 (deftest two-bots-sharing-a-name-refuse-rather-than-guess
   (with-store
@@ -3664,22 +3248,6 @@
       (is (not= generic timed-out)))
     (testing "and it says how long it waited"
       (is (str/includes? timed-out "120")))))
-
-(deftest a-double-provider-failure-names-both-routes
-  (let [message (ns-resolve 'cloud.itonami.app.bots 'visible-failure-message)
-        generic (message (ex-info "boom" {:type :some/unclassified-bug}))
-        failed (message
-                (ex-info "both failed"
-                         {:type :provider/fallback-failed
-                          :requested-model "murakumo-edge"
-                          :fallback-model "murakumo-main"
-                          :primary-error-type :provider/http-error
-                          :fallback-error-type :provider/timeout}))]
-    (is (not= generic failed))
-    (is (str/includes? failed "murakumo-edge"))
-    (is (str/includes? failed "provider/http-error"))
-    (is (str/includes? failed "murakumo-main"))
-    (is (str/includes? failed "provider/timeout"))))
 
 ;; ── what the workforce has actually been doing ──────────────────────────
 ;;

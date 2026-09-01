@@ -24,23 +24,16 @@
             [cloud.itonami.app.commands-test]
             [cloud.itonami.app.connectors-test]
             [cloud.itonami.app.desktop-test]
-            [cloud.itonami.app.device-test]
             [cloud.itonami.app.decision-method-test]
-            [cloud.itonami.app.disk-space-test]
-            [cloud.itonami.app.git-hygiene-test]
-            [cloud.itonami.app.domain-tools-test]
-            [cloud.itonami.app.bot-import-test]
             [cloud.itonami.app.bot-test]
             [cloud.itonami.app.bot-slo-test]
             [cloud.itonami.app.bot-authority-test]
-            [cloud.itonami.app.bot-dispatcher-test]
             [cloud.itonami.app.bot-identity-test]
             [cloud.itonami.app.bots-test]
             [cloud.itonami.app.virtual-shell-test]
             [cloud.itonami.app.host-grant-test]
             [cloud.itonami.app.host-store-bound-test]
             [cloud.itonami.app.store-journal-test]
-            [cloud.itonami.app.store :as store]
             [cloud.itonami.app.loops-test]
             [cloud.itonami.app.lawfirm-test]
             [cloud.itonami.app.kotobase-federation-test]
@@ -53,7 +46,6 @@
             [cloud.itonami.app.policy-kotoba-parity-test]
             [cloud.itonami.app.native-canary-test]
             [cloud.itonami.app.health-kotoba-parity-test]
-            [cloud.itonami.app.workforce-cadence-kotoba-parity-test]
             [cloud.itonami.app.health-http-test]
             [cloud.itonami.app.store-core-test]
             [cloud.itonami.app.store-core-kotoba-parity-test]
@@ -77,9 +69,6 @@
             [cloud.itonami.app.work-transitions-kotoba-parity-test]
             [cloud.itonami.app.approval-kotoba-parity-test]
             [cloud.itonami.app.routine-kotoba-parity-test]
-            [cloud.itonami.app.model-routing-kotoba-parity-test]
-            [cloud.itonami.app.bot-turn-guards-test]
-            [cloud.itonami.app.model-routing-http-test]
             [cloud.itonami.app.routines-test]
             [cloud.itonami.app.handoff-kotoba-parity-test]
             [cloud.itonami.app.peer-kotoba-parity-test]
@@ -191,8 +180,6 @@
             [cloud.itonami.app.namespaces-test]
             [cloud.itonami.app.fleet-tools-test]
             [cloud.itonami.app.openai-compat-test]
-            [cloud.itonami.app.hermes-compat-test]
-            [cloud.itonami.app.hermes-compat-http-test]
             [cloud.itonami.app.provider-test]
             [cloud.itonami.app.pageview-test]
             [cloud.itonami.app.passkey-test]
@@ -235,14 +222,10 @@
     cloud.itonami.app.commands-test
     cloud.itonami.app.connectors-test
     cloud.itonami.app.desktop-test
-    cloud.itonami.app.device-test
     cloud.itonami.app.decision-method-test
-    cloud.itonami.app.disk-space-test
-    cloud.itonami.app.git-hygiene-test
     cloud.itonami.app.bot-test
     cloud.itonami.app.bot-slo-test
     cloud.itonami.app.bot-authority-test
-    cloud.itonami.app.bot-dispatcher-test
     cloud.itonami.app.bot-identity-test
     cloud.itonami.app.bots-test
     cloud.itonami.app.virtual-shell-test
@@ -261,7 +244,6 @@
     cloud.itonami.app.policy-kotoba-parity-test
     cloud.itonami.app.native-canary-test
     cloud.itonami.app.health-kotoba-parity-test
-    cloud.itonami.app.workforce-cadence-kotoba-parity-test
     cloud.itonami.app.health-http-test
     cloud.itonami.app.store-core-test
     cloud.itonami.app.store-core-kotoba-parity-test
@@ -281,9 +263,6 @@
     cloud.itonami.app.work-transitions-kotoba-parity-test
     cloud.itonami.app.approval-kotoba-parity-test
     cloud.itonami.app.routine-kotoba-parity-test
-    cloud.itonami.app.model-routing-kotoba-parity-test
-    cloud.itonami.app.bot-turn-guards-test
-    cloud.itonami.app.model-routing-http-test
     cloud.itonami.app.routines-test
     cloud.itonami.app.handoff-kotoba-parity-test
     cloud.itonami.app.peer-kotoba-parity-test
@@ -373,8 +352,6 @@
     cloud.itonami.app.namespaces-test
     cloud.itonami.app.fleet-tools-test
     cloud.itonami.app.openai-compat-test
-    cloud.itonami.app.hermes-compat-test
-    cloud.itonami.app.hermes-compat-http-test
     cloud.itonami.app.provider-test
     cloud.itonami.app.pageview-test
     cloud.itonami.app.passkey-test
@@ -415,8 +392,6 @@
     cloud.itonami.app.updater-test
     cloud.itonami.app.oauth-resource-test
     cloud.itonami.app.org-root-did-test
-    cloud.itonami.app.domain-tools-test
-    cloud.itonami.app.bot-import-test
     cloud.itonami.app.did-webvh-http-test
     cloud.itonami.app.oauth-did-binding-test
     cloud.itonami.app.worker-http-test
@@ -454,7 +429,5 @@
     (doseq [n missing] (println "  " n))
     (println "Add them to cloud.itonami.app.test-runner, or they do not run.")
     (System/exit 1))
-  (let [{:keys [fail error]}
-        (binding [store/*reload-before-transaction?* false]
-          (apply test/run-tests namespaces))]
+  (let [{:keys [fail error]} (apply test/run-tests namespaces)]
     (System/exit (if (zero? (+ fail error)) 0 1))))

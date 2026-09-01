@@ -156,9 +156,7 @@
    :models ["murakumo-main"
             "murakumo-edge"
             "qwen3.8-27b-throughput-5090"
-            "qwen3.8-27b-fastmtp-aggressive"
-            "z-ai/glm-5.3-flash"
-            "qwen/qwen3.8-flash"]
+            "qwen3.8-27b-fastmtp-aggressive"]
    :model-request-timeout-seconds
    {"qwen3.8-27b-throughput-5090" 420}
    ;; Do not spend that 420-second cold-start wall when RunPod lacks verified
@@ -172,26 +170,11 @@
      :timeout-seconds 5}}
    :max-transient-retries 0
    :assert-response-model? true
-   ;; `murakumo-main` remains the stable primary route. A retryable gateway or
-   ;; origin failure falls through once to OpenRouter's reviewed GLM route,
-   ;; still carried by api.murakumo.cloud so the application does not acquire a
-   ;; second provider credential or authority boundary. `with-model-fallback`
-   ;; records both the requested and actually served model.
-   ;;
    ;; 5090 cold-start 503 and FastMTP's dead Modal origin (measured
    ;; 2026-08-26: HTTP 502 body starting `modal-http`, not JSON) both
    ;; retry the alias. The result stays labelled as the model that served.
-   :model-fallbacks {"murakumo-main" "z-ai/glm-5.3-flash"
-                    "qwen3.8-27b-throughput-5090" "murakumo-main"
-                    "qwen3.8-27b-fastmtp-aggressive" "murakumo-main"
-                    "z-ai/glm-5.3-flash" "qwen/qwen3.8-flash"
-                    "qwen/qwen3.8-flash" "murakumo-main"}
-   ;; The resident workforce is the murakumo-edge SLO workload. Falling it
-   ;; through to murakumo-main converts one unavailable edge into two occupied
-   ;; inference planes, hides which route failed, and can amplify an edge
-   ;; outage into main-pool timeouts. Operator overlays may still carry an old
-   ;; fallback entry; the provider honours this deny-list after overlays merge.
-   :no-fallback-models #{"murakumo-edge"}
+   :model-fallbacks {"qwen3.8-27b-throughput-5090" "murakumo-main"
+                    "qwen3.8-27b-fastmtp-aggressive" "murakumo-main"}
    ;; The stable alias currently reports 262,144, the Community RTX 5090 Pod
    ;; reports 65,536, and the FastMTP deployment reports 32,768. Keep this map
    ;; beside the alias: repointing `murakumo-main` must update its model metadata
@@ -213,9 +196,7 @@
    {"murakumo-main" #{"murakumo-main"
                       "Qwen3.8-27B-Q4_K_M.gguf"
                       "qwen3.8-27b"
-                      "qwen3.8-27b-throughput-b70"}
-    "z-ai/glm-5.3-flash" #{"z-ai/glm-5.3-flash"}
-    "qwen/qwen3.8-flash" #{"qwen/qwen3.8-flash"}}
+                      "qwen3.8-27b-throughput-b70"}}
    :context-window-tokens {"murakumo-main" 262144
                            ;; Live /v1/models and a real CLI Bot generation,
                            ;; measured 2026-08-29. This is the Ornith Q4 route
@@ -224,14 +205,7 @@
                            ;; an edge stability check report the wrong machine.
                            "murakumo-edge" 65536
                            "qwen3.8-27b-throughput-5090" 65536
-                           "qwen3.8-27b-fastmtp-aggressive" 32768
-                           ;; OpenRouter lists 1.31M / 1M. This Worker has not
-                           ;; measured those windows through api.murakumo.cloud,
-                           ;; so bots budget a conservative 128k — an unmeasured
-                           ;; number that looks like a measured one is the
-                           ;; defect class CLAUDE.md names.
-                           "z-ai/glm-5.3-flash" 128000
-                           "qwen/qwen3.8-flash" 128000}
+                           "qwen3.8-27b-fastmtp-aggressive" 32768}
    ;; 2026-08-29 owner instruction: raise output budgets toward the model
    ;; maximum. The previous 512 (kept "concise" for capacity) truncated real
    ;; work -- measured that day: a resident decision_frame tool call cut at
@@ -382,12 +356,6 @@
  ;; explicitly gave a schedule. With no scheduled routine it is a store read
  ;; that finds nothing. Set `:enabled? false` to stop it looking at all.
  :bots {:mail-domain "mail.itonami.cloud"
-        ;; New Bots receive an isolated local Git root automatically. It is
-        ;; continuously reconciled with Drive/Bots/<bot-id>/Workspace. A
-        ;; hosted network target may be supplied under :workspace-sync :remote
-        ;; with the same shape as a folder-sync HTTP remote.
-        :workspace {:enabled? true}
-        :workspace-sync {}
         :tick {:enabled? true :interval-seconds 60}
         ;; Resident startup jobs share the inference plane with interactive
         ;; conversations. One start per tick controls bursts; max-active also
@@ -513,15 +481,6 @@
   :slim {:enabled? false
          :from nil
          :to nil}}
-
- ;; Which registered device this install IS (ADR-0062). nil means this install
- ;; was never enrolled as a device, and every `bot:<id>@<device>` handle is
- ;; therefore not-local — which is the fail-closed direction. It is deliberately
- ;; not derived from a hostname or a seed: a machine that names itself is the
- ;; discovery step ADR-0062 refuses. Set it to the id this install was
- ;; registered under with `messenger/register-device!`.
- :devices
- {:local nil}
 
  ;; 事業 (ADR-2607309600). A Business holds one key from each analysis plane —
  ;; BMC canvas, XMILE model, adopted blueprints, repo paths, LEI — so that the
@@ -662,25 +621,17 @@
  ;; flag decides only whether this app hosts a record at all.
  :lawfirm {:enabled? false}
 
- ;; Agent-first domain lifecycle. Credentials are named, never stored here.
- ;; The MCP tools are absent unless both variables and a supported agent
- ;; session resolve. Mutations additionally pass through the proposal -> human
- ;; Passkey -> commit spine below; the agent session cannot approve them.
- :domain-service {:account-id-env "CLOUDFLARE_ACCOUNT_ID"
-                  :api-token-env "CLOUDFLARE_API_TOKEN"
-                  :api-base "https://api.cloudflare.com/client/v4"}
-
  :authorities
- {:domain {:enabled? false}
-  :esim {:enabled? false
+ {:esim {:enabled? false
          :endpoint nil    ; cloud-itonami/cloud-itonami-esim
          :consent-token-env "ESIM_CONSENT_TOKEN"}
   ;; Numbering: allocation (払い出し), assignment, lifecycle and portability
-  ;; (ADR-2608034000 + ADR-2608301200). The actor now exists at the loopback
-  ;; consent surface below. It still ships OFF: enabling it can lead, after a
-  ;; separate named-operator decision, to a recurring-cost Telnyx number order.
+  ;; (ADR-2608034000). THE ACTOR DOES NOT EXIST YET -- there is no
+  ;; cloud-itonami-numbering to hand a consented proposal to, so an enabled
+  ;; :number authority with no endpoint records a refusal rather than a commit.
+  ;; That is the honest outcome and it is why this ships off like the others.
   :number {:enabled? false
-           :endpoint "http://127.0.0.1:1345" ; cloud-itonami/cloud-itonami-numbering
+           :endpoint nil   ; cloud-itonami/cloud-itonami-numbering (not built)
            :consent-token-env "NUMBER_CONSENT_TOKEN"
            ;; The ranges this operator was assigned. Configuration, not store: a
            ;; block that could arrive in a request would let a caller allocate

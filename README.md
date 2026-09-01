@@ -149,26 +149,6 @@ pinned jsign 7.5 release, verified against its published SHA-256 before use;
 the updater rejects a package unless Windows validates its Authenticode chain
 and the signer certificate SHA-256 matches the current installation.
 
-## iOS and Android
-
-There is a phone app, and it is a different shape from the desktop one. The
-desktop app is a window onto the JVM server on `localhost:1338`; neither iOS
-nor Android has a JVM, so the mobile app instead **carries a web bundle** and
-reads over HTTPS from the Cloudflare Worker that ADR-2608081500 moved the
-server surface onto. `kotoba-lang/shell` supplies the native host, the in-app
-provider bridge and the signing/packaging half.
-
-What is on the phone is exactly what the edge serves, which today is the fleet
-directory — chat, mail, drive, calendar and every write surface are still
-JVM-only. They arrive on the phone as the remaining slices land.
-
-Built and measured 2026-08-31: a real `app-debug.apk` carrying the bundle; the
-bundle itself driven in a real browser at phone size, including the offline
-path. iOS scaffolds and has not been compiled on this workstation — Xcode has
-no iOS platform installed here, which `xcodebuild -downloadPlatform iOS` fixes.
-See [`mobile/README.md`](mobile/README.md) and
-[ADR-0087](docs/adr/0087-the-mobile-app-carries-a-bundle-and-reads-the-edge.md).
-
 ## Run
 
 ```bash
@@ -249,17 +229,43 @@ rebase, and west pin changes; those remain release operations outside the Bot.
 
 ## Sign-in and sign-up
 
-The product entrance is Passkey/WebAuthn through `auth.itonami.cloud`, with
-device-local Passkey recovery and invitation enrolment. Email magic links and
-provider SSO do not mint application sessions. Provider OAuth exists only for
-delegated service connections, so connecting mailbox, Drive, or repository
-access cannot become a login ceremony. Payment, e-signature, federation, and
-outward-authority approval retain their dedicated Passkey ceremonies.
+The product entrance is Passkey/WebAuthn through `auth.itonami.cloud`, with a
+device-local Passkey recovery path and optional one-time Email links. Provider
+SSO is not exposed by the default or `itonami` profile. The backend retains an
+explicit compatibility option for a deployment that deliberately supplies an
+SSO provider list and OAuth clients.
+
+SSO authentication scopes are separate from delegated service connections:
+signing in never grants mailbox, Drive, or repository access. A provider
+subject is unique to one local User, and a matching Email address never merges
+accounts automatically. To add another provider to an existing User, sign in
+first and use the explicit link controls in Settings. Payment, e-signature,
+federation, and outward-authority approval retain their dedicated Passkey
+ceremonies as step-up authentication.
 
 The Settings page also lists this User's active sessions, can revoke another
-device, and clears the current HttpOnly cookie on sign-out. Legacy linked
-identities may remain readable for migration, but they are not login roots.
-Session responses never contain token digests or CSRF values.
+device, clears the current HttpOnly cookie on sign-out, and can unlink a legacy
+Email or SSO identity only while another login root remains. Session responses
+never contain token digests or CSRF values.
+
+For a compatibility deployment, Google and Microsoft can be configured without
+distributing a secret:
+
+```edn
+{:auth {:sso-enabled? true
+        :sso-providers [:google :microsoft :github]
+        :sso-clients
+        {:google {:client-id "PUBLIC-DESKTOP-CLIENT-ID"
+                  :public-client? true}
+         :microsoft {:client-id "PUBLIC-DESKTOP-CLIENT-ID"
+                     :public-client? true}}}}
+```
+
+The client ID is public configuration; the token exchange still requires the
+per-transaction PKCE verifier. GitHub's browser OAuth exchange requires a
+client secret, so GitHub remains a credential-store/hosted-broker deployment
+until a separate device-flow UX is selected; setting `:public-client? true`
+does not falsely mark it configured.
 
 ## `itonami` — the command line, without opening the app
 
@@ -373,24 +379,6 @@ The HTTP target uses the existing Drive upload/download/folder/trash API. A
 remote installation therefore retains its normal object-store, tenant and
 repository-storage boundaries; the desktop daemon does not receive storage
 credentials.
-
-New Bots use this engine without asking the person to choose a filesystem
-path. Each Bot receives an isolated Git root below the application data
-directory and reconciles it with `Drive/Bots/<bot-id>/Workspace`. To make that
-folder a cross-device network rendezvous, configure the hosted adapter once:
-
-```clojure
-{:bots
- {:workspace {:enabled? true}
-  :workspace-sync
-  {:remote {:kind :http
-            :base-url "https://itonami.cloud"
-            :bearer-token-env "CLOUD_ITONAMI_FOLDER_SYNC_TOKEN"}}}}
-```
-
-The token remains outside EDN. Without a hosted adapter the same workspace is
-still backed by this device's Cloud Itonami Drive and the UI labels it as
-device-local rather than claiming network synchronization.
 
 ## ローカル projects と、メールの振り分け
 
@@ -751,6 +739,25 @@ of the connectors you picked and nothing else.
   first write tool stops the loop and becomes an approval card. A Bot may carry
   out what was approved; it may not approve, and no session it could hold makes
   it able to.
+- **Physical work goes to a verified person.** A Bot can create and publish a
+  HumanWorkRequest for work it cannot finish in software. Matching rechecks the
+  person's organization-verified service location, licence, qualification,
+  permit, insurance, training or asset scopes, jurisdiction, expiry,
+  availability and overlapping assignments. The Bot stays a `:system`; only a
+  Human User accepts and submits evidence. Exact addresses are withheld until
+  acceptance, and verification remains an owner/admin Human action. See
+  [ADR-0083](docs/adr/0083-bots-outsource-human-work-to-verified-people.md).
+
+- **Public Human Work marketplace and external assurance** — `/human-work` and
+  `/api/human-work/requests` expose only redacted public/open work. Fixed HTTPS
+  authority adapters can bind an issuer or identity-provider receipt to the
+  exact person, organization, and claim version. Optional x402 v2
+  `auth-capture` funding holds USDC for the accepted worker, blocks work start
+  until the onchain authorization settles, captures only after evidenced work
+  is verified, and voids cancelled or rejected work. Payer signatures are not
+  retained. All integrations ship disabled until the facilitator and custom
+  escrow operator are configured.
+  See [ADR-0084](docs/adr/0084-human-work-assurance-marketplace-and-held-payouts.md).
 - **An approval belongs to the instruction it was asked under.** If you say
   something else instead of answering the card, the request is retired rather
   than left waiting: the card says 古い指示のため取り下げ, the Bot stops
@@ -829,13 +836,6 @@ the eight startup businesses (`cloud-itonami`, `nexus-x402`, `club-shinshi`,
 product manager, engineer, QA, designer, sales, marketer, supporter,
 financial chief, and the explicitly declared kaizen roles where applicable.
 
-Cloud Itonami also provisions a dedicated `Domain Steward`. Its concrete tool
-surface is only the local Domain Authority: catalog/price/registration/DNS
-reads and exact proposal operations. It inherits no repository, Commerce,
-Wallet or browser tools. Standing omakase may let it create proposals and retry
-commits, but the authority host still refuses registration billing, auto-renew
-changes and DNS mutation until a human Passkey approved that exact proposal.
-
 Each Bot carries its responsibility and capability policy, but those fields do
 not grant execution. The concrete grant is deliberately narrower: one admitted
 business Git repository, no connector, browser, virtual shell, or omakase
@@ -904,8 +904,15 @@ private key remains in the authenticator. Legacy records may have filled a
 blank User DID from a Passkey, but adding or revoking a Passkey must not rename
 an established Principal. Organization information can be entered later.
 
-The session proof model is shared with `kotoba-lang/authentication` (Passkey
-factors, decisions, and assurance levels), and its default-deny access
+Returning active Users may also sign in through a ten-minute, single-use email
+magic link when `:email-login` delivery is configured. Email proves control of
+the registered address for that session; it does not create a User, replace the
+Passkey-rooted `did:key`, enroll an invited User, or approve a governed action.
+Money, signatures, and outward authorities continue to require their own
+operation-bound WebAuthn assertion.
+
+The session proof model is shared with `kotoba-lang/authentication` (email and
+Passkey factors, decisions, and assurance levels), and its default-deny access
 decision is evaluated by `kotoba-lang/authorization`. Cloud Itonami retains the
 runtime adapters—Yubico WebAuthn, mail delivery, cookies/CSRF, persistence—and
 the Tenant/Membership and operation-approval policy. See ADR-0012 for the exact
@@ -1328,10 +1335,21 @@ The included gftd profile maps:
 - public addresses to `@gftd.ai`;
 - relay calls to `https://relay.gftd.ai`.
 
-The included `itonami` profile is also Passkey-only. Older resident files may
-still contain Email or provider SSO configuration, but the public auth contract
-does not advertise it and the server exposes no route that can mint a session
-from it (ADR-0083).
+The included itonami profile turns email sign-in on and points it at
+`https://itonami.cloud/api/auth/magic-link/deliver`:
+
+```bash
+CLOUD_ITONAMI_EMAIL_LOGIN_TOKEN=<bearer> CLOUD_ITONAMI_PROFILE=itonami \
+  clojure -M:server
+```
+
+Email sign-in stays off in the shipped defaults, and that is not an oversight.
+ADR-0012 left delivery to "a deployment-owned HTTPS endpoint", and until one
+existed the form was never shown — a complete feature nothing could reach. A
+tenant-neutral install that mailed through somebody else's sending reputation
+would be choosing for the operator, and a bounce would land on a domain they do
+not own. The bearer must match the endpoint's `MAGIC_LINK_DELIVERY_TOKEN`
+secret; it is read from the environment per call and never persisted.
 
 Enabling `:publish-did-web?` is a deployment assertion: the operator must
 actually serve the DID documents over HTTPS.

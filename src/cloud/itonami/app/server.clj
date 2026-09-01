@@ -26,7 +26,6 @@
             [webauthn.assurance :as credential-assurance]
             [cloud.itonami.app.documents :as documents]
             [cloud.itonami.app.desktop :as desktop]
-            [cloud.itonami.app.device :as device]
             [cloud.itonami.app.binding-sweep :as binding-sweep]
             [cloud.itonami.app.domain-binding :as domain-binding]
             [cloud.itonami.app.domain-verification :as domain-verification]
@@ -47,7 +46,10 @@
             [cloud.itonami.app.did-web :as did-web]
             [cloud.itonami.app.org-root-did :as org-root-did]
             [cloud.itonami.app.health :as health]
-            [cloud.itonami.app.hermes-compat :as hermes-compat]
+            [cloud.itonami.app.human-work :as human-work]
+            [cloud.itonami.app.human-work-assurance :as human-work-assurance]
+            [cloud.itonami.app.human-work-marketplace :as human-work-marketplace]
+            [cloud.itonami.app.human-work-x402 :as human-work-x402]
             [cloud.itonami.app.humanity-trust :as humanity-trust]
             [cloud.itonami.app.identity :as identity]
             [cloud.itonami.app.fax :as fax]
@@ -593,13 +595,6 @@
     (when (= "tools/call" (get request "method"))
       (let [tool (get-in request ["params" "name"])
             required (cond
-                       (contains? #{"domain_search" "domain_check"
-                                    "domain_registrations"
-                                    "domain_registration_status"
-                                    "domain_dns_records"} tool)
-                       "domain:read"
-                       (str/starts-with? (or tool "") "domain_")
-                       "domain:write"
                        (= tool "tenant_repository_read") "repository:read"
                        (contains? #{"tenant_repository_write"
                                     "tenant_repository_publish"} tool)
@@ -1381,7 +1376,8 @@
   (get-in (identity-context exchange) [:organization :organization-id]))
 
 (defn- require-control-role! [context capability]
-  (when (and (#{:approval/submit :stop/request :work-governance/admin}
+  (when (and (#{:approval/submit :stop/request :work-governance/admin
+                :human-work/verify}
                 capability)
              (not (#{:owner :admin}
                    (get-in context [:organization :role]))))
@@ -1876,7 +1872,10 @@
 
       (and (= method "POST") (= path "/api/workspace/bulky-waste/jobs"))
       (do (require-app-session! exchange)
-          (send! exchange 201 (bulky-waste/create-job! (write-body) actor)))
+          (send! exchange 201
+                 (bulky-waste/create-job!
+                  (assoc (write-body) :organization-id (:organization-id session))
+                  actor)))
 
       (and (= method "GET")
            (id-from-path path #"/api/workspace/bulky-waste/jobs/([^/]+)/matches"))
@@ -1951,6 +1950,219 @@
                  (bulky-waste/cancel!
                   (id-from-path path
                                 #"/api/workspace/bulky-waste/jobs/([^/]+)/cancel")
+                  actor)))
+
+      :else (send! exchange 404 {:error "not found"}))))
+
+(defn- handle-human-work!
+  "The bounded HumanWorkRequest surface.
+
+  Worker registration is self-service, but verification of a licence,
+  qualification, insurance claim, or service location is owner/admin-only and
+  organization-scoped. Bots reach requester operations through their own
+  approval-card tools rather than through this browser-session router."
+  [config exchange method path]
+  (let [session (require-app-session! exchange)
+        actor (:user-id session)
+        organization-id (:organization-id session)
+        context (identity-context exchange)
+        _ (when-not (and (string? organization-id)
+                         (not (str/blank? organization-id)))
+            (throw (ex-info "Organization context is required"
+                            {:type :identity/unauthenticated})))
+        scoped-request-id
+        (fn [pattern]
+          (let [id (id-from-path path pattern)
+                request (human-work/request id)]
+            (when (and request
+                       (not= organization-id (:organization-id request)))
+              (throw (ex-info "Human work request was not found"
+                              {:type :human-work/not-found})))
+            id))
+        write-body (fn []
+                     (require-origin! exchange config)
+                     (require-csrf! exchange session)
+                     (read-json exchange))]
+    (cond
+      (and (= method "GET") (= path "/api/workspace/human-work"))
+      (send! exchange 200 (human-work/requests actor organization-id))
+
+      (and (= method "GET") (= path "/api/workspace/human-work/workers/me"))
+      (send! exchange 200
+             (or (human-work/worker-profile actor)
+                 {:schema human-work/schema :worker-id actor
+                  :status "not-registered"}))
+
+      (and (= method "POST") (= path "/api/workspace/human-work/workers"))
+      (send! exchange 200 (human-work/register-worker! (write-body) actor))
+
+      (and (= method "POST")
+           (re-matches
+            #"/api/workspace/human-work/workers/([^/]+)/credentials/([^/]+)/verify"
+            path))
+      (let [[_ worker-id credential-id]
+            (re-matches
+             #"/api/workspace/human-work/workers/([^/]+)/credentials/([^/]+)/verify"
+             path)
+            body (write-body)]
+        (require-control-role! context :human-work/verify)
+        (send! exchange 200
+               (human-work/verify-credential!
+                worker-id credential-id body actor organization-id)))
+
+      (and (= method "POST")
+           (re-matches
+            #"/api/workspace/human-work/workers/([^/]+)/credentials/([^/]+)/check-online"
+            path))
+      (let [[_ worker-id credential-id]
+            (re-matches
+             #"/api/workspace/human-work/workers/([^/]+)/credentials/([^/]+)/check-online"
+             path)
+            body (write-body)]
+        (require-control-role! context :human-work/verify)
+        (send! exchange 200
+               (human-work-assurance/check-credential!
+                config {:worker-id worker-id :credential-id credential-id
+                        :provider-id (:provider-id body)
+                        :organization-id organization-id :verifier-id actor})))
+
+      (and (= method "POST")
+           (re-matches
+            #"/api/workspace/human-work/workers/([^/]+)/identity/check-online"
+            path))
+      (let [[_ worker-id]
+            (re-matches
+             #"/api/workspace/human-work/workers/([^/]+)/identity/check-online"
+             path)
+            body (write-body)]
+        (require-control-role! context :human-work/verify)
+        (send! exchange 200
+               (human-work-assurance/check-identity!
+                config {:worker-id worker-id :provider-id (:provider-id body)
+                        :organization-id organization-id})))
+
+      (and (= method "POST")
+           (re-matches
+            #"/api/workspace/human-work/workers/([^/]+)/locations/([^/]+)/verify"
+            path))
+      (let [[_ worker-id location-id]
+            (re-matches
+             #"/api/workspace/human-work/workers/([^/]+)/locations/([^/]+)/verify"
+             path)
+            body (write-body)]
+        (require-control-role! context :human-work/verify)
+        (send! exchange 200
+               (human-work/verify-location!
+                worker-id location-id body actor organization-id)))
+
+      (and (= method "POST") (= path "/api/workspace/human-work/requests"))
+      (send! exchange 201
+             (human-work/create-request!
+              (assoc (write-body) :organization-id organization-id) actor))
+
+      (and (= method "GET")
+           (id-from-path path
+                         #"/api/workspace/human-work/requests/([^/]+)/matches"))
+      (send! exchange 200
+             (human-work/matches
+              (scoped-request-id
+               #"/api/workspace/human-work/requests/([^/]+)/matches")
+              actor))
+
+      (and (= method "POST")
+           (id-from-path path
+                         #"/api/workspace/human-work/requests/([^/]+)/publish"))
+      (do (write-body)
+          (send! exchange 200
+                 (human-work/publish!
+                  (scoped-request-id
+                   #"/api/workspace/human-work/requests/([^/]+)/publish")
+                  actor)))
+
+      (and (= method "POST")
+           (id-from-path path
+                         #"/api/workspace/human-work/requests/([^/]+)/accept"))
+      (do (write-body)
+          (send! exchange 200
+                 (human-work/accept!
+                  (scoped-request-id
+                   #"/api/workspace/human-work/requests/([^/]+)/accept")
+                  actor)))
+
+      (and (= method "POST")
+           (id-from-path path
+                         #"/api/workspace/human-work/requests/([^/]+)/start"))
+      (let [body (write-body)]
+        (send! exchange 200
+               (human-work/start!
+                (scoped-request-id
+                 #"/api/workspace/human-work/requests/([^/]+)/start")
+                body actor)))
+
+      (and (= method "POST")
+           (id-from-path path
+                         #"/api/workspace/human-work/requests/([^/]+)/submit"))
+      (let [body (write-body)]
+        (send! exchange 200
+               (human-work/submit!
+                (scoped-request-id
+                 #"/api/workspace/human-work/requests/([^/]+)/submit")
+                body actor)))
+
+      (and (= method "POST")
+           (id-from-path path
+                         #"/api/workspace/human-work/requests/([^/]+)/review"))
+      (let [body (write-body)]
+        (send! exchange 200
+               (human-work/review-submission!
+                (scoped-request-id
+                 #"/api/workspace/human-work/requests/([^/]+)/review")
+                body actor)))
+
+      (and (= method "POST")
+           (id-from-path path
+                         #"/api/workspace/human-work/requests/([^/]+)/cancel"))
+      (do (write-body)
+          (send! exchange 200
+                 (human-work/cancel!
+                  (scoped-request-id
+                   #"/api/workspace/human-work/requests/([^/]+)/cancel")
+                  actor)))
+
+      (and (= method "POST")
+           (id-from-path path
+                         #"/api/workspace/human-work/requests/([^/]+)/fund"))
+      (do
+        (write-body)
+        (let [result
+              (human-work-x402/fund!
+               config
+               (scoped-request-id
+                #"/api/workspace/human-work/requests/([^/]+)/fund")
+               actor
+               (.getFirst (.getRequestHeaders exchange) "PAYMENT-SIGNATURE"))]
+          (send! exchange (:status result) (:body result) (:headers result))))
+
+      (and (= method "POST")
+           (id-from-path path
+                         #"/api/workspace/human-work/requests/([^/]+)/release"))
+      (do (write-body)
+          (send! exchange 200
+                 (human-work-x402/release!
+                  config
+                  (scoped-request-id
+                   #"/api/workspace/human-work/requests/([^/]+)/release")
+                  actor)))
+
+      (and (= method "POST")
+           (id-from-path path
+                         #"/api/workspace/human-work/requests/([^/]+)/refund"))
+      (do (write-body)
+          (send! exchange 200
+                 (human-work-x402/refund!
+                  config
+                  (scoped-request-id
+                   #"/api/workspace/human-work/requests/([^/]+)/refund")
                   actor)))
 
       :else (send! exchange 404 {:error "not found"}))))
@@ -4001,6 +4213,38 @@
                      (identity/start-passkey-authentication!
                       (rp-id config) (origin config))))
 
+            (and (= method "POST") (= path "/api/email-authenticate/start"))
+            (let [request (read-json exchange)]
+              (require-origin! exchange config)
+              (send! exchange 202
+                     (identity/start-email-authentication!
+                      config (:email request))))
+
+            (and (= method "POST") (= path "/api/email-authenticate/finish"))
+            (let [request (read-json exchange)
+                  result (do
+                           (require-origin! exchange config)
+                           (identity/finish-email-authentication!
+                            (:token request)))]
+              (send! exchange 200
+                     (identity/public-state (:token result))
+                     {"Set-Cookie" (session-cookie (:token result))}))
+
+            (and (= method "POST")
+                 (provider-from-path path #"/api/auth/sso/([^/]+)/start"))
+            (let [provider (provider-from-path
+                            path #"/api/auth/sso/([^/]+)/start")
+                  request (read-json exchange)
+                  link? (= "link" (some-> (:mode request) name))
+                  session (when link? (require-app-session! exchange))]
+              (require-origin! exchange config)
+              (when link? (require-csrf! exchange session))
+              (send! exchange 200
+                     (identity/start-sso-authentication!
+                      provider (origin config)
+                      {:mode (if link? :link :authenticate)
+                       :session session})))
+
             (and (= method "POST") (= path "/api/passkeys/authenticate/finish"))
             (let [request (read-json exchange)
                   result (do
@@ -4035,18 +4279,28 @@
             (let [provider (provider-from-path
                             path #"/api/oauth/([^/]+)/callback")
                   params (query-params exchange)]
-              ;; Provider OAuth is a delegated service connection, never an
-              ;; application sign-in. Legacy SSO states therefore cannot mint
-              ;; a session through this shared callback path.
-              (try
-                (identity/complete-oauth! provider params)
-                (redirect! exchange
-                           (str "/?connection=connected&provider="
-                                (name provider) "#/settings"))
-                (catch Exception _
+              (if (identity/sso-transaction? provider (:state params))
+                (try
+                  (let [result (identity/complete-sso-authentication!
+                                provider params)]
+                    (redirect! exchange
+                               (str "/?auth=sso&provider=" (name provider)
+                                    "#/settings")
+                               {"Set-Cookie" (session-cookie (:token result))}))
+                  (catch Exception error
+                    (identity/record-auth-failure! provider error)
+                    (redirect! exchange
+                               (str "/?auth=error&provider=" (name provider)
+                                    "#/settings"))))
+                (try
+                  (identity/complete-oauth! provider params)
                   (redirect! exchange
-                             (str "/?connection=error&provider="
-                                  (name provider) "#/settings")))))
+                             (str "/?connection=connected&provider="
+                                  (name provider) "#/settings"))
+                  (catch Exception _
+                    (redirect! exchange
+                               (str "/?connection=error&provider="
+                                    (name provider) "#/settings"))))))
 
             (conversation-route? path)
             (handle-conversation! config exchange method path)
@@ -5170,6 +5424,11 @@
                                     #"/api/workspace/scheduler/events/([^/]+)/cancel")
                       (:user-id session))))
 
+            ;; Generic qualified-human work has its own bounded router: the
+            ;; main handler is already near the JVM method-size limit.
+            (str/starts-with? path "/api/workspace/human-work")
+            (handle-human-work! config exchange method path)
+
             ;; Bulky-waste human computing has its own bounded router: the
             ;; main handler is already near the JVM method-size limit.
             (str/starts-with? path "/api/workspace/bulky-waste")
@@ -5612,6 +5871,25 @@
                      :bulky-waste/evidence-required 422
                      :bulky-waste/invalid-weight 422
                      :bulky-waste/invalid 400
+                     ;; ---- qualified human work ----
+                     :human-work/not-found 404
+                     :human-work/worker-not-found 404
+                     :human-work/claim-not-found 404
+                     :human-work/forbidden 403
+                     :human-work/self-verification 403
+                     :human-work/not-eligible 409
+                     :human-work/invalid-transition 409
+                     :human-work/evidence-required 422
+                     :human-work/invalid-location 422
+                     :human-work/invalid-credential 422
+                     :human-work/invalid-requirement 422
+                     :human-work/invalid-verification 422
+                     :human-work/invalid-review 422
+                     :human-work/invalid-compensation 422
+                     :human-work/payment-required 402
+                     :human-work/payment-unavailable 503
+                     :human-work/payment-provider-failed 502
+                     :human-work/invalid 400
                      ;; ---- mail ----
                      :mail/not-found 404
                      :mail/invalid-label 400
@@ -5882,26 +6160,6 @@
       (serve-issue-comment-image!
        exchange (bot-id-from path #"/api/bots/comments/([^/]+)/image"))
 
-      ;; Before the `([^/]+)` patterns for the same reason `groups` is: a Bot
-      ;; whose id happened to be "model-routing" must not shadow the route.
-      (and (= method "GET") (= path "/api/bots/model-routing"))
-      (do (require-human-session! exchange)
-          (send! exchange 200 (bots/model-routing session)))
-
-      (and (= method "POST") (= path "/api/bots/model-routing"))
-      (let [body (read-json exchange)]
-        (require-human-session! exchange)
-        (require-origin! exchange config)
-        (require-csrf! exchange session)
-        (send! exchange 200 (bots/assign-model! config session body)))
-
-      (and (= method "POST") (= path "/api/bots/model-routing/clear"))
-      (let [body (read-json exchange)]
-        (require-human-session! exchange)
-        (require-origin! exchange config)
-        (require-csrf! exchange session)
-        (send! exchange 200 (bots/clear-model-assignment! config session body)))
-
       (and (= method "GET") (= path "/api/bots/machine"))
       (send! exchange 200
              {:settings (agent-control/settings config)
@@ -6167,14 +6425,6 @@
         (require-csrf! exchange session)
         (bots/archive! session bot-id)
         (send! exchange 200 (bots/overview config session)))
-
-      (and (= method "POST")
-           (bot-id-from path #"/api/bots/([^/]+)/workspace/sync"))
-      (let [bot-id (bot-id-from path #"/api/bots/([^/]+)/workspace/sync")]
-        (require-human-session! exchange)
-        (require-origin! exchange config)
-        (require-csrf! exchange session)
-        (send! exchange 200 (bots/sync-workspace! config session bot-id)))
 
       (and (= method "POST") (bot-id-from path #"/api/bots/([^/]+)"))
       (let [bot-id (bot-id-from path #"/api/bots/([^/]+)")
@@ -6585,239 +6835,6 @@
             (send! exchange 500 {:error {:type "internal_error"
                                          :message (.getMessage error)}})))))))
 
-(defn- hermes-query [^HttpExchange exchange]
-  (let [raw (.getRawQuery (.getRequestURI exchange))]
-    (if (str/blank? raw)
-      {}
-      (into {}
-            (map (fn [part]
-                   (let [[key value] (str/split part #"=" 2)]
-                     [(keyword (URLDecoder/decode key "UTF-8"))
-                      (URLDecoder/decode (or value "") "UTF-8")]))
-                 (str/split raw #"&"))))))
-
-(defn- parse-bounded-int [value default maximum]
-  (try
-    (-> (Long/parseLong (str value)) (max 0) (min maximum))
-    (catch Exception _ default)))
-
-(defn- hermes-openai-error [message code]
-  {:error {:message message :type "invalid_request_error"
-           :param nil :code code}})
-
-(defn- send-hermes-events!
-  "Hermes-compatible `data: <json>` SSE frames over the native Bot stream."
-  [^HttpExchange exchange session run-id]
-  (doto (.getResponseHeaders exchange)
-    (.set "Content-Type" "text/event-stream")
-    (.set "Cache-Control" "no-cache")
-    (.set "X-Accel-Buffering" "no"))
-  (.sendResponseHeaders exchange 200 0)
-  (with-open [writer (OutputStreamWriter. (.getResponseBody exchange)
-                                          StandardCharsets/UTF_8)]
-    (loop []
-      (let [event (hermes-compat/take-event! session run-id 30)]
-        (cond
-          (hermes-compat/closed-event? event)
-          (do (.write writer ": stream closed\n\n") (.flush writer))
-
-          (nil? event)
-          (do (.write writer ": keepalive\n\n") (.flush writer) (recur))
-
-          :else
-          (do (.write writer "data: ")
-              (.write writer (json/write-str event))
-              (.write writer "\n\n")
-              (.flush writer)
-              (recur)))))))
-
-(defn- handle-hermes-compat!
-  [config exchange method raw-path]
-  (let [session (require-app-session! exchange)
-        [path-profile path] (hermes-compat/split-profile-path raw-path)
-        header-profile (some-> (.getFirst (.getRequestHeaders exchange)
-                                          "X-Hermes-Profile")
-                               str/trim not-empty)
-        profile (or path-profile header-profile)
-        query (hermes-query exchange)
-        segment (fn [pattern]
-                  (some-> (re-matches pattern path) second
-                          (URLDecoder/decode "UTF-8")))]
-    (cond
-      (and (= method "GET") (= path "/api/profiles"))
-      (send! exchange 200 (hermes-compat/profile-list config session))
-
-      (and (= method "GET") (= path "/api/sessions"))
-      (send! exchange 200
-             (hermes-compat/session-list
-              config session profile
-              {:limit (parse-bounded-int (:limit query) 50 200)
-               :offset (parse-bounded-int (:offset query) 0 1000000)
-               :title (:title query)
-               :include-hidden (#{"true" "1" "yes"}
-                                (str/lower-case
-                                 (str (:include_hidden query))))}))
-
-      (and (= method "POST") (= path "/api/sessions"))
-      (let [body (read-json exchange)
-            requested (or (:id body) (:session_id body) profile)]
-        (require-origin! exchange config)
-        (require-csrf! exchange session)
-        ;; Bot creation and grant widening stay on the human Itonami surface.
-        ;; Creating the canonical session for an existing Bot is idempotent.
-        (send! exchange 201 (hermes-compat/session config session requested)
-               {"X-Hermes-Session-Id"
-                (get-in (hermes-compat/session config session requested)
-                        [:session :id])}))
-
-      (and (= method "GET") (segment #"/api/sessions/([^/]+)"))
-      (send! exchange 200
-             (hermes-compat/session config session
-                                    (or profile
-                                        (segment #"/api/sessions/([^/]+)"))))
-
-      (and (= method "PATCH") (segment #"/api/sessions/([^/]+)"))
-      (let [body (read-json exchange)]
-        (require-origin! exchange config)
-        (require-csrf! exchange session)
-        (if (or (empty? body)
-                (and (= #{:title} (set (keys body)))
-                     (= "Bot Chat" (:title body))))
-          (send! exchange 200
-                 (hermes-compat/session
-                  config session (or profile
-                                     (segment #"/api/sessions/([^/]+)"))))
-          (send! exchange 400
-                 (hermes-openai-error
-                  "Cloud Itonami canonical Bot sessions do not expose mutable session metadata."
-                  "unsupported_session_field"))))
-
-      (and (= method "DELETE") (segment #"/api/sessions/([^/]+)"))
-      (do
-        (require-origin! exchange config)
-        (require-csrf! exchange session)
-        (send! exchange 409
-               (hermes-openai-error
-                "A canonical Bot Chat cannot delete or disable its Cloud Itonami Bot."
-                "canonical_session")))
-
-      (and (= method "GET")
-           (segment #"/api/sessions/([^/]+)/messages"))
-      (let [order (:order query)]
-        (when-not (contains? #{nil "oldest" "latest"} order)
-          (throw (ex-info "order must be oldest or latest"
-                          {:type :hermes/invalid-pagination})))
-        (send! exchange 200
-               (hermes-compat/session-messages
-                config session
-                (or profile (segment #"/api/sessions/([^/]+)/messages"))
-                {:limit (when (contains? query :limit)
-                          (parse-bounded-int (:limit query) 0 500))
-                 :offset (parse-bounded-int (:offset query) 0 1000000)
-                 :order order})))
-
-      (and (= method "POST")
-           (segment #"/api/sessions/([^/]+)/chat"))
-      (let [body (read-json exchange)
-            session-id (or profile (segment #"/api/sessions/([^/]+)/chat"))]
-        (require-origin! exchange config)
-        (require-csrf! exchange session)
-        (send! exchange 200
-               (hermes-compat/session-chat! config session session-id body)
-               {"X-Hermes-Session-Id" session-id}))
-
-      (and (= method "POST")
-           (segment #"/api/sessions/([^/]+)/chat/stream"))
-      (let [body (read-json exchange)
-            session-id (or profile
-                           (segment #"/api/sessions/([^/]+)/chat/stream"))
-            started (do (require-origin! exchange config)
-                        (require-csrf! exchange session)
-                        (hermes-compat/start-run!
-                         config session session-id
-                         (assoc body :session_id session-id)))]
-        (send-hermes-events! exchange session (:run_id started)))
-
-      (and (= method "POST") (= path "/v1/runs"))
-      (let [body (read-json exchange)]
-        (require-origin! exchange config)
-        (require-csrf! exchange session)
-        (send! exchange 202
-               (hermes-compat/start-run! config session profile body)))
-
-      (and (= method "GET") (segment #"/v1/runs/([^/]+)"))
-      (send! exchange 200
-             (hermes-compat/run-status
-              config session (segment #"/v1/runs/([^/]+)")))
-
-      (and (= method "GET") (segment #"/v1/runs/([^/]+)/events"))
-      (send-hermes-events! exchange session
-                           (segment #"/v1/runs/([^/]+)/events"))
-
-      (and (= method "POST") (segment #"/v1/runs/([^/]+)/approval"))
-      (let [body (read-json exchange)]
-        (require-origin! exchange config)
-        (require-csrf! exchange session)
-        (send! exchange 200
-               (hermes-compat/approval!
-                config session (segment #"/v1/runs/([^/]+)/approval") body)))
-
-      (and (= method "POST") (segment #"/v1/runs/([^/]+)/steer"))
-      (let [body (read-json exchange)]
-        (require-origin! exchange config)
-        (require-csrf! exchange session)
-        (send! exchange 200
-               (hermes-compat/steer!
-                config session (segment #"/v1/runs/([^/]+)/steer") body)))
-
-      (and (= method "POST") (segment #"/v1/runs/([^/]+)/stop"))
-      (do
-        (require-origin! exchange config)
-        (require-csrf! exchange session)
-        (send! exchange 200
-               (hermes-compat/stop!
-                config session (segment #"/v1/runs/([^/]+)/stop"))))
-
-      :else
-      (send! exchange 404 (hermes-openai-error
-                           (str "Hermes endpoint not found: " path)
-                           "not_found")))))
-
-(defn- hermes-compat-handler [config]
-  (reify HttpHandler
-    (handle [_ exchange]
-      (let [method (.getRequestMethod exchange)
-            path (.getPath (.getRequestURI exchange))]
-        (try
-          (handle-hermes-compat! config exchange method path)
-          (catch clojure.lang.ExceptionInfo error
-            (send! exchange
-                   (case (:type (ex-data error))
-                     :identity/unauthenticated 401
-                     :identity/invalid-origin 403
-                     :identity/invalid-csrf 403
-                     :bot/forbidden 403
-                     :bot/approval-refused 403
-                     :hermes/not-found 404
-                     :hermes/run-not-found 404
-                     :bot/not-found 404
-                     :bot/disabled 409
-                     :bot/already-running 409
-                     :bot/turn-not-active 409
-                     :bot/turn-closing 409
-                     :bot/run-not-found 404
-                     :bot/not-held 409
-                     :hermes/approval-not-pending 409
-                     400)
-                   (hermes-openai-error
-                    (.getMessage error)
-                    (name (or (:type (ex-data error)) :hermes/error)))))
-          (catch Exception error
-            (send! exchange 500
-                   {:error {:message (.getMessage error)
-                            :type "server_error" :param nil
-                            :code "internal_error"}})))))))
-
 (defn- chronicle-handler [config]
   (reify HttpHandler
     (handle [_ exchange]
@@ -6923,6 +6940,37 @@
             (send! exchange 500 {:error {:type "internal_error"
                                          :message (.getMessage error)}})))))))
 
+(defn- human-work-public-handler [configuration]
+  (reify HttpHandler
+    (handle [_ exchange]
+      (let [method (.getRequestMethod exchange)
+            path (.getPath (.getRequestURI exchange))]
+        (try
+          (cond
+            (and (= method "GET") (= path "/human-work"))
+            (send-html! exchange
+                        (human-work-marketplace/page-html
+                         (get-in configuration [:brand :name])))
+
+            (and (= method "GET") (= path "/api/human-work/requests"))
+            (do
+              ;; route-gate:none — deliberately public, read-only redaction.
+              (send! exchange 200 (human-work/public-requests)))
+
+            :else (send! exchange 404 {:error {:type "not_found"}}))
+          (catch clojure.lang.ExceptionInfo error
+            (send! exchange
+                   (case (:type (ex-data error))
+                     :human-work/payment-unavailable 503
+                     :human-work/payment-provider-failed 502
+                     400)
+                   {:error {:type (name (or (:type (ex-data error))
+                                            :human-work/error))
+                            :message (.getMessage error)}}))
+          (catch Exception error
+            (send! exchange 500 {:error {:type "internal_error"
+                                         :message (.getMessage error)}})))))))
+
 (defn start!
   ([] (start! (config/load-config)))
   ([configuration]
@@ -6937,11 +6985,6 @@
    ;; the snapshot beside it.
    (store/fold-journal!)
    (reset! active-config configuration)
-   ;; Which device this install answers to (ADR-0062). Before anything can
-   ;; deliver a peer note, because `peer/may-address?` reads it to decide
-   ;; whether a handle names this machine, and an unset value has to mean
-   ;; "not enrolled" rather than "not loaded yet".
-   (device/configure! configuration)
    (identity/configure! configuration)
    ;; Bring existing organizations onto did:webvh (ADR-0068). Idempotent, and
    ;; a no-op for every shipped profile, which does not publish at all. Here
@@ -7015,6 +7058,12 @@
                      (reify HttpHandler
                        (handle [_ exchange]
                          (send-icon! exchange))))
+     ;; Public marketplace lives outside the root handler, whose generated
+     ;; bytecode is already at the JVM method-size ceiling.
+     (.createContext instance "/human-work"
+                     (human-work-public-handler configuration))
+     (.createContext instance "/api/human-work"
+                     (human-work-public-handler configuration))
      ;; A2A remains outside the already full root handler. Exact-path checks in
      ;; the handler keep HttpServer's prefix matching from widening discovery.
      (.createContext instance "/.well-known/agent-card.json"
@@ -7034,16 +7083,6 @@
                      (human-passport-handler configuration))
      (.createContext instance "/api/agent-bots"
                      (agent-bots-handler configuration))
-     ;; Hermes Agent Bot Mode compatibility. The longer prefixes win over the
-     ;; root handler; `/p/<profile>/...` provides Hermes profile multiplexing.
-     (.createContext instance "/api/profiles"
-                     (hermes-compat-handler configuration))
-     (.createContext instance "/api/sessions"
-                     (hermes-compat-handler configuration))
-     (.createContext instance "/v1/runs"
-                     (hermes-compat-handler configuration))
-     (.createContext instance "/p/"
-                     (hermes-compat-handler configuration))
      (.createContext instance "/api/update"
                      (update-handler configuration))
      (.createContext instance "/api/folder-sync"
