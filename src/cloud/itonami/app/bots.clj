@@ -117,6 +117,8 @@
   (daemon-pool 3 "itonami-goal"))
 (defonce ^:private parallel-tool-executor
   (daemon-pool 3 "itonami-goal-tool"))
+(defonce ^:private peer-message-executor
+  (daemon-pool 2 "itonami-message-agent"))
 
 (def ^:dynamic *goal-event!*
   "Host-owned ledger hook. Model text cannot write receipts directly."
@@ -126,12 +128,24 @@
 (def ^:dynamic *message-source* :bot)
 (def ^:dynamic *handoff-id* nil)
 (def ^:dynamic *from-bot* nil)
+(def ^:dynamic *message-agent-depth* 0)
+(def ^:dynamic *turn-session*
+  "The already-authenticated owner session whose Bot is taking this turn.
+
+  `message_agent` carries this exact session into its background teammate turn;
+  it never synthesizes a user or widens the source/target Bot grants."
+  nil)
 
 (def max-turns 8)
 (def max-tool-calls 12)
 (def max-goal-turns 24)
 (def max-goal-tool-calls 32)
 (def max-goal-continuations 24)
+(def max-message-agent-depth
+  "A message_agent chain may wake at most two successive teammates. Replies
+  still land in the source's next conversation, so ordinary collaboration does
+  not consume this budget; it only prevents autonomous peer-message cycles."
+  2)
 
 (def max-empty-turns
   "How many turns in a row may come back with neither prose nor a tool call
@@ -1707,7 +1721,7 @@
                                                       (not (met? providers %))))))
    :active-run? (boolean (get-in (snapshot) [:runs bot-id :pending-call]))})
 
-(declare public-turn peer-tools coding-tools local-tool-definitions)
+(declare public-turn peer-tools coding-tools local-tool-definitions send!)
 
 (defn- workforce-continuation
   "Return the explicit continuation, or recover it from a pre-upgrade no-op.
@@ -2287,14 +2301,36 @@
                              :text {:type "string"}}
                 :required ["to" "text"]}})
 
+(def ^:private message-agent-tool
+  {:name "message_agent"
+   :description
+   (str "Send a fire-and-forget message to another of this owner's Bots. "
+        "The target runs in its own isolated Bot Chat with its own tools and "
+        "grant; its reply is delivered back into your conversation for your "
+        "next turn. Do not wait or poll for it.")
+   :parameters {:type "object"
+                :properties {:target {:type "string"}
+                             :message {:type "string"}}
+                :required ["target" "message"]}})
+
 (defn- peer-tools
   "The peer note tool, when the Bot asked for it. Not written into
   `:bot/tools`: that set is connector names, for the same reason
   `browser-tools` stays out of it."
   [b]
-  (if (:bot/peers? b) [peer-tool] []))
+  (if (:bot/peers? b) [peer-tool message-agent-tool] []))
 
-(defn- peer-tool? [tool-name] (= "send_message" (str tool-name)))
+(defn- message-agent-tool? [tool-name]
+  (= "message_agent" (str tool-name)))
+
+(defn- peer-tool? [tool-name]
+  (contains? #{"send_message" "message_agent"} (str tool-name)))
+
+(defn- peer-target-arg [tool-name args]
+  (if (message-agent-tool? tool-name) (:target args) (:to args)))
+
+(defn- peer-message-arg [tool-name args]
+  (if (message-agent-tool? tool-name) (:message args) (:text args)))
 
 (defn- coding-tools [b]
   (into (if (and (:bot/coding? b) (:bot/workspace b))
@@ -2452,10 +2488,12 @@
 (defn- describe-tool [configuration tool-name args]
   (cond
     (peer-tool? tool-name)
-    (str (:to args) " に「"
-         (let [t (str (:text args))]
+    (str (peer-target-arg tool-name args) " に「"
+         (let [t (str (peer-message-arg tool-name args))]
            (if (> (count t) 60) (str (subs t 0 60) "…") t))
-         "」と書き置きします。")
+         (if (message-agent-tool? tool-name)
+           "」と非同期で依頼します。"
+           "」と書き置きします。"))
 
     (wallet/tool? tool-name)
     (if (wallet/write-tool? tool-name)
@@ -2550,19 +2588,9 @@
                        :candidates (mapv :bot/id matches)})))
     (first matches)))
 
-(defn- send-peer-message!
-  "Leave an attributed note in another of the owner's Bots' conversations.
-
-  It does NOT wake the target, and that is a decision rather than a stage that
-  is missing. Waking one needs the isolated envelope and run lifecycle that
-  `hand-off!` already owns, and a Bot that wants something DONE should hand
-  off -- a handoff is bounded at two rounds and carries a depth ceiling, while
-  a note that woke a peer that answered with a note would be an agent loop with
-  neither. The target reads it on its next turn.
-
-  What crosses is the note and who wrote it. `peer/->pair` has no field for a
-  grant, so nothing else can."
-  [source to text]
+(defn- admitted-peer-message-target!
+  "Resolve and admit one peer message without delivering it."
+  [source to]
   (let [target (peer-target! source to)
         context {:source-owner (:bot/owner source)
                  :target-owner (:bot/owner target)
@@ -2577,12 +2605,7 @@
                  ;; device is NOT this machine, and `peer-target!` throws before
                  ;; reaching it. Filled with real values they would be inputs
                  ;; nothing can observe.
-                 :known-devices [] :remote-enabled? false}
-        text (str/trim (str text))]
-    (when (str/blank? text)
-      (throw (ex-info "空のメッセージは送れません。" {:type :peer/empty-message})))
-    (when (> (count text) max-message-chars)
-      (throw (ex-info "メッセージが長すぎます。" {:type :bot/message-too-long})))
+                 :known-devices [] :remote-enabled? false}]
     (when-not (peer/may-address? target context)
       (throw (ex-info (if (:bot/enabled? target)
                         "この Bot には送れません。"
@@ -2599,6 +2622,28 @@
       ;; window looking like something it said.
       (throw (ex-info (str (:bot/name target) " はピアの受け取りが有効ではありません。")
                       {:type :peer/refused :to (:bot/id target)})))
+    target))
+
+(defn- validate-peer-text! [text]
+  (let [text (str/trim (str text))]
+    (when (str/blank? text)
+      (throw (ex-info "空のメッセージは送れません。" {:type :peer/empty-message})))
+    (when (> (count text) max-message-chars)
+      (throw (ex-info "メッセージが長すぎます。" {:type :bot/message-too-long})))
+    text))
+
+(defn- send-peer-message!
+  "Leave an attributed note in another of the owner's Bots' conversations.
+
+  It does NOT wake the target. `message_agent` is the distinct compatibility
+  operation that does: it first passes this same peer gate, then starts one
+  isolated target turn on a bounded daemon pool.
+
+  What crosses is the note and who wrote it. `peer/->pair` has no field for a
+  grant, so nothing else can."
+  [source to text]
+  (let [target (admitted-peer-message-target! source to)
+        text (validate-peer-text! text)]
     (append! (:bot/id target)
              (bot/message {:id (new-id "msg") :bot (:bot/id target) :role :person
                            :text text :at (store/now)
@@ -2606,6 +2651,56 @@
                            :source :peer
                            :from (peer/address (:bot/id source))}))
     (str "delivered to " (:bot/name target) " (" (peer/address (:bot/id target)) ")")))
+
+(defn- message-agent!
+  "Hermes Bot Mode `message_agent` over Itonami's isolated Bot turn.
+
+  Admission is synchronous, so an invalid target is returned to the model as a
+  tool error. Execution is fire-and-forget: the target uses the exact owner
+  session already authenticating this source turn, its own grant/tools, and an
+  isolated transcript. The reply is an attributed note in the source's normal
+  conversation and therefore appears on its next turn."
+  [configuration source to text]
+  (when (>= (long *message-agent-depth*) max-message-agent-depth)
+    (throw (ex-info "message_agent peer depth exceeded."
+                    {:type :peer/depth-exceeded
+                     :depth *message-agent-depth*
+                     :max-depth max-message-agent-depth})))
+  (let [target (admitted-peer-message-target! source to)
+        text (validate-peer-text! text)
+        session *turn-session*
+        next-depth (inc (long *message-agent-depth*))]
+    (when-not session
+      (throw (ex-info "message_agent requires an authenticated Bot turn."
+                      {:type :peer/session-required})))
+    (.submit ^ExecutorService peer-message-executor
+             ^Runnable
+             (fn []
+               (try
+                 (let [messages
+                       (send! configuration session (:bot/id target)
+                              (str "Message from " (:bot/name source) ": " text)
+                              {:source :peer :isolated? true
+                               :message-agent-depth next-depth})
+                       reply (some->> messages reverse
+                                      (some #(when (= "bot" (:role %))
+                                               (:text %))))]
+                   (when-not (str/blank? (str reply))
+                     (send-peer-message! target
+                                         (str "bot:" (:bot/id source))
+                                         reply)))
+                 (catch Exception _error
+                   ;; The sender's active turn must not fail after the tool has
+                   ;; acknowledged asynchronous delivery. Record the failure as
+                   ;; the reply it would otherwise receive, with no authority or
+                   ;; credential detail from the exception.
+                   (try
+                     (send-peer-message!
+                      target (str "bot:" (:bot/id source))
+                      "message_agent delivery failed before the teammate replied.")
+                     (catch Exception _ nil))))))
+    (str "accepted for " (:bot/name target) " ("
+         (peer/address (:bot/id target)) ")")))
 
 ;; ── images a tool produced ───────────────────────────────────────────────
 ;;
@@ -2709,7 +2804,10 @@
                        (wallet/call-tool! (:bot/id b) tool-name args)
 
                        (peer-tool? tool-name)
-                       (send-peer-message! b (:to args) (:text args))
+                       (if (message-agent-tool? tool-name)
+                         (message-agent! configuration b (:target args)
+                                         (:message args))
+                         (send-peer-message! b (:to args) (:text args)))
 
                        (workspace-tools/tool? tool-name)
                        (workspace-tools/call! (:bot/workspace b) tool-name args)
@@ -3494,6 +3592,21 @@
       (cond-> (assoc (public-turn turn)
                      :pending-followups (count (queued-followups (:turn/id turn))))
         (:turn/goal? turn) (assoc :job (public-goal-job (goal-job (:turn/id turn))))))))
+
+(defn turn
+  "One durable Bot turn by run id, through the same ownership gate as latest-turn.
+
+  Transport adapters use this after a process restart: the in-memory stream is
+  gone, but a completed, failed, cancelled, or recovered-interrupted run still
+  has a pollable answer in the bounded turn ledger."
+  [session bot-id run-id]
+  (owned! session bot-id)
+  (when-let [stored (some #(when (= (str run-id) (:turn/id %)) %)
+                          (get-in (snapshot) [:turn-history bot-id]))]
+    (cond-> (assoc (public-turn stored)
+                   :pending-followups (count (queued-followups (:turn/id stored))))
+      (:turn/goal? stored)
+      (assoc :job (public-goal-job (goal-job (:turn/id stored)))))))
 
 ;; ── the demonstration ───────────────────────────────────────────────────
 
@@ -5054,6 +5167,9 @@
       ;; it is true: `advance!` stops at the CALL, before the tool is reached,
       ;; and the card arrives then.
       (binding [*context-id* context-id
+                *turn-session* session
+                *message-agent-depth*
+                (long (or (:message-agent-depth advance-options) 0))
                 *message-source* (or requested-source
                                      (if resident? :resident :bot))]
         (try

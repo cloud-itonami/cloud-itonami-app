@@ -3031,16 +3031,50 @@
       (let [plain (make-bot alice {})
             peered (make-bot alice {:name "peered" :peers? true})]
         (is (not (contains? (tools-of plain) "send_message")))
+        (is (not (contains? (tools-of plain) "message_agent")))
         (is (contains? (tools-of peered) "send_message"))
+        (is (contains? (tools-of peered) "message_agent"))
         (is (not (contains? (:bot/tools peered) "send_message"))
-            "the permission leaked into the connector grant")))))
+            "the permission leaked into the connector grant")
+        (is (not (contains? (:bot/tools peered) "message_agent")))))))
 
 (deftest a-note-is-a-write
   ;; It changes another Bot's conversation, which is a person's screen. It holds
   ;; like a send does, and a delegated Bot decides it like one (ADR-0060).
   (with-store
     (fn []
-      (is (true? ((private-fn 'write-tool?) nil "send_message"))))))
+      (is (true? ((private-fn 'write-tool?) nil "send_message")))
+      (is (true? ((private-fn 'write-tool?) nil "message_agent"))))))
+
+(deftest hermes-message-agent-arguments-dispatch-to-the-async-peer-path
+  (with-store
+    (fn []
+      (let [source (make-bot alice {:name "alpha" :peers? true})
+            seen (atom nil)
+            message-agent-var (ns-resolve 'cloud.itonami.app.bots
+                                          'message-agent!)]
+        (with-redefs-fn
+          {message-agent-var
+           (fn [_ b target message]
+             (reset! seen [(:bot/id b) target message])
+             "accepted")}
+          (fn []
+            (is (= "accepted"
+                   (:text ((private-fn 'run-tool!) {} source nil
+                           "message_agent"
+                           {:target "beta" :message "please inspect"}))))))
+        (is (= [(:bot/id source) "beta" "please inspect"] @seen))))))
+
+(deftest hermes-message-agent-refuses-autonomous-peer-cycles-at-the-depth-bound
+  (with-store
+    (fn []
+      (let [source (make-bot alice {:name "alpha" :peers? true})
+            depth-var (ns-resolve 'cloud.itonami.app.bots
+                                  '*message-agent-depth*)]
+        (is (thrown? clojure.lang.ExceptionInfo
+                     (with-bindings {depth-var bots/max-message-agent-depth}
+                       ((private-fn 'message-agent!)
+                        {} source "beta" "continue the chain"))))))))
 
 (deftest a-note-arrives-attributed-and-carries-no-grant
   (with-store
