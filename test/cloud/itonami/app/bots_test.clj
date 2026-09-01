@@ -4379,7 +4379,7 @@
                  :tool-calls [{:id (str "call-" i)
                                :name "read_file" :input {:path (str i)}}]}
                 {:role "tool" :tool-call-id (str "call-" i)
-                 :content (str "token=VERY_SECRET_" i " "
+                 :content (str "evidence-marker-" i " token=VERY_SECRET_" i " "
                                (apply str (repeat 2400 (char (+ 65 (mod i 20))))))}])
         history (vec (concat [{:role "system" :content "S"}
                               {:role "user" :content "original goal"}]
@@ -4402,7 +4402,11 @@
     (is (= "user" (:role (some #(when (= "keep this correction verbatim"
                                           (:content %)) %) kept))))
     (is (not (str/includes? combined "VERY_SECRET_0"))
-        "old raw tool result bodies stay only in the durable record")
+        "old evidence excerpts are redacted before they re-enter the prompt")
+    (is (str/includes? combined "evidence-marker-0")
+        "bounded old evidence survives so a resumed Goal need not rediscover it")
+    (is (str/includes? combined "[REDACTED]")
+        "the retained evidence is visibly redacted")
     (is (str/includes? combined "VERY_SECRET_13")
         "the recent verbatim tail is not falsely described as compacted")
     (is (str/includes? combined "conclusion 13") "recent tail remains verbatim")

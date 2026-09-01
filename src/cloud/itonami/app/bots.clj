@@ -4044,7 +4044,12 @@
 
 (defn- summarized-exchange [messages]
   (let [tool-names (->> messages (mapcat :tool-calls) (keep :name) distinct vec)
-        tool-results (count (filter #(= "tool" (:role %)) messages))
+        tool-results (filterv #(= "tool" (:role %)) messages)
+        evidence-excerpts (->> tool-results
+                               (keep :content)
+                               (remove str/blank?)
+                               (map #(clipped % 360))
+                               (take 3))
         conclusions (->> messages
                          (filter #(= "assistant" (:role %)))
                          (keep :content)
@@ -4054,8 +4059,13 @@
         body (str "[CONTEXT COMPACTION — REFERENCE ONLY. The latest user message is authoritative.]\n"
                   (when (seq tool-names)
                     (str "Tools used: " (str/join ", " tool-names) ". "))
-                  (when (pos? tool-results)
-                    (str tool-results " completed tool result(s) remain in the durable run record; raw bodies omitted.\n"))
+                  (when (seq tool-results)
+                    (str (count tool-results)
+                         " completed tool result(s) remain in the durable run record.\n"))
+                  (when (seq evidence-excerpts)
+                    (str "Earlier tool evidence excerpts (redacted and clipped):\n- "
+                         (str/join "\n- " evidence-excerpts)
+                         "\n"))
                   (when (seq conclusions)
                     (str "Earlier assistant conclusions:\n- "
                          (str/join "\n- " conclusions))))]
@@ -4063,8 +4073,9 @@
 
 (defn- compact-middle
   "Replace old derived exchanges with bounded reference markers while keeping
-  every user message in its original role and order. Raw tool bodies stay in
-  the durable run, not in the compacted prompt."
+  every user message in its original role and order. Full tool bodies stay in
+  the durable run; a redacted, clipped excerpt survives so a resident Goal can
+  reuse evidence instead of repeating the same discovery after a checkpoint."
   [messages tail-start]
   (let [middle (subvec messages 2 tail-start)]
     (loop [remaining middle output []]
