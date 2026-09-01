@@ -12,6 +12,7 @@
 (def origin "http://localhost:1338")
 (def csrf "bulky-waste-test-csrf")
 (def actor (atom "person-owner"))
+(def organization "org-gftd")
 
 (def config
   {:brand {:name "Test"}
@@ -53,10 +54,15 @@
    :availability [{:start "2026-09-07T00:00:00Z"
                    :end "2026-09-07T05:00:00Z"}]
    :evidence {:vehicle "vehicle:1" :insurance "insurance:1"
-              :waste-carrier "carrier:1"}})
+              :waste-carrier "carrier:1"
+              :service-location "service-location:1"}
+   :country "JP"
+   :region "13"})
 
 (def job-request
   {:service-area "shibuya-jingumae"
+   :country "JP"
+   :region "13"
    :pickup-address "東京都渋谷区神宮前2丁目"
    :access-notes "private access note"
    :pickup-window {:start "2026-09-07T01:00:00Z"
@@ -77,7 +83,13 @@
       (reset! store/state (store/initial-state))
       (with-redefs [config-loader/data-dir (fn [] (.toFile temporary))
                     local-identity/session
-                    (fn [_] {:csrf csrf :user-id @actor})
+                    (fn [_] {:csrf csrf :user-id @actor
+                             :organization-id organization})
+                    local-identity/public-state
+                    (fn [_] {:user {:id @actor}
+                             :organization {:id organization
+                                            :organization-id organization
+                                            :role :admin}})
                     local-identity/require-passkey! identity
                     local-identity/configure! (fn [_] nil)]
         (server/stop!)
@@ -91,6 +103,22 @@
       (reset! actor "person-worker")
       (is (= 200 (:status (api :post "/api/workspace/bulky-waste/workers"
                                worker-profile))))
+      (reset! actor "person-verifier")
+      (let [verification {:decision "verified"
+                          :valid-until "2027-01-01T00:00:00Z"
+                          :evidence-ref "evidence:organization-check"}]
+        (is (= 200 (:status
+                    (api :post
+                         "/api/workspace/human-work/workers/person-worker/locations/bulky-waste-service-area/verify"
+                         verification))))
+        (doseq [credential-id ["bulky-waste-carrier-license"
+                               "bulky-waste-vehicle-insurance"
+                               "bulky-waste-collection-vehicle"]]
+          (is (= 200 (:status
+                      (api :post
+                           (str "/api/workspace/human-work/workers/person-worker/credentials/"
+                                credential-id "/verify")
+                           verification))))))
       (reset! actor "person-owner")
       (let [created (api :post "/api/workspace/bulky-waste/jobs" job-request)
             id (get-in created [:body :id])]

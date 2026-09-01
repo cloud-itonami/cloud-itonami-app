@@ -59,9 +59,12 @@ workers cannot both book an open job.
 
 ## Trust boundary
 
-Vehicle, insurance, carrier and facility-permit evidence is stored as a
-reference and explicitly marked `self-attested`. This app does not contact a
-regulator or insurer and must not render those claims as verified. Trucks,
+Vehicle, insurance, carrier and service-location evidence starts as a
+self-attested reference. ADR-0083 supersedes the old matching rule: a worker is
+not eligible until an organization owner/admin binds verification to each
+exact claim version and that decision remains valid through the pickup window.
+This app still does not contact a regulator or insurer and must describe the
+result as organization verification, not issuer verification. Trucks,
 weighbridges, physical sorting and municipal acceptance remain external
 authorities.
 
@@ -81,8 +84,9 @@ streams fail closed rather than being routed through a generic category.
 
 ## Verification
 
-- Domain tests exercise matching, address redaction, overlapping-booking
-  exclusion, authorization, capacity, evidence and mass-balance failures.
+- Domain tests exercise organization-verified qualification matching, address
+  redaction, overlapping-booking exclusion, authorization, capacity, evidence
+  and mass-balance failures.
 - HTTP tests execute the complete request -> worker -> collection -> facility ->
   recovery chain and prove every write fails closed without CSRF.
 - The production namespace loads under nbb, demonstrating the `.cljc` source is

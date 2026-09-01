@@ -117,6 +117,8 @@
             [cloud.itonami.app.signal-browser-test]
             [cloud.itonami.app.scheduler-test]
             [cloud.itonami.app.scheduler-http-test]
+            [cloud.itonami.app.human-work-test]
+            [cloud.itonami.app.human-work-http-test]
             [cloud.itonami.app.bulky-waste-test]
             [cloud.itonami.app.bulky-waste-http-test]
             [cloud.itonami.app.sites-test]
@@ -395,6 +397,10 @@
     cloud.itonami.app.signal-browser-test
     cloud.itonami.app.scheduler-test
     cloud.itonami.app.scheduler-http-test
+    cloud.itonami.app.human-work-test
+    cloud.itonami.app.human-work-assurance-test
+    cloud.itonami.app.human-work-x402-test
+    cloud.itonami.app.human-work-http-test
     cloud.itonami.app.bulky-waste-test
     cloud.itonami.app.bulky-waste-http-test
     cloud.itonami.app.sites-test

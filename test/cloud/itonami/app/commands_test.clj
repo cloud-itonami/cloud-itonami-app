@@ -31,6 +31,11 @@
       (is (every? #(str/starts-with? (:template %) "/") routes))
       (is (some #(= "/api/business" (:route %)) routes)))))
 
+(deftest an-explicit-public-handler-marker-bounds-the-final-route-clause
+  (is (= :none
+         (scan/gate-of
+          "(verify-signature!) ;; route-gate:none require-app-session!"))))
+
 (deftest the-registry-matches-the-routes
   (testing "the checked-in registry is what the current server.clj serves"
     (let [fresh (scan/registry (source) server-file)]
