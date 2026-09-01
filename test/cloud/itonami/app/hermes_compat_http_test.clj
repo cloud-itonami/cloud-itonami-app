@@ -107,11 +107,16 @@
       (testing "profile multiplex resolves one canonical Bot Chat"
         (let [profiles (request :get "/api/profiles" nil "test-token")
               sessions (request :get "/p/bot-1/api/sessions" nil
-                                "test-token")]
+                                "test-token")
+              messages (request :get
+                                "/p/bot-1/api/sessions/bot-1/messages"
+                                nil "test-token")]
           (is (= 200 (:status profiles)))
           (is (= "bot-1" (get-in profiles [:body :data 0 :id])))
           (is (= 200 (:status sessions)))
-          (is (= "Bot Chat" (get-in sessions [:body :data 0 :title])))))
+          (is (= "Bot Chat" (get-in sessions [:body :data 0 :title])))
+          (is (= 200 (:status messages)))
+          (is (= "list" (get-in messages [:body :object])))))
 
       (testing "run start, poll and SSE use Hermes envelopes"
         (let [started (request :post "/p/bot-1/v1/runs"
