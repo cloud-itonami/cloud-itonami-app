@@ -429,6 +429,30 @@
    :workspace "orgs/cloud-itonami/cloud-itonami-app"
    :cadence-minutes 15})
 
+(deftest workforce-skills-are-injected-with-a-digest-but-do-not-grant-tools
+  (with-store
+    (fn []
+      (with-redefs [workspace-tools/admit-root (fn [path] path)
+                    workspace-tools/orientation (constantly nil)]
+        (let [skill {:id "itonami-bot-readiness"
+                     :sha256 (apply str (repeat 64 "a"))
+                     :instructions "---\nname: itonami-bot-readiness\n---\nVerify the live resident run."}
+              entry (assoc (engineer-entry) :skills [skill])]
+          (bots/provision-workforce! {} alice (workforce-catalog [entry]))
+          (let [public (first (:bots (bots/overview {} alice)))
+                stored (get-in (store/snapshot) [:bots :bots (:id public)])
+                prompt ((private-fn 'system-prompt) stored {} nil)
+                admitted-with-skill (:admitted-tools public)]
+            (is (str/includes? prompt "Skill $itonami-bot-readiness"))
+            (is (str/includes? prompt "Verify the live resident run."))
+            (is (str/includes? prompt "not authority"))
+            (is (= [(select-keys skill [:id :sha256])] (:skills public)))
+            (bots/provision-workforce! {} alice
+                                       (workforce-catalog [(engineer-entry)]))
+            (is (= admitted-with-skill
+                   (:admitted-tools (first (:bots (bots/overview {} alice)))))
+                "instructions cannot widen the host tool set")))))))
+
 (deftest workforce-domain-tools-are-isolated-and-capability-mapped
   (with-store
     (fn []

@@ -10,6 +10,9 @@
 
 (def schema "network.awai.workforce-bots.v1")
 (def command-timeout-seconds 30)
+(def skill-id-pattern #"^[a-z0-9]+(?:-[a-z0-9]+)*$")
+(def skill-sha256-pattern #"^[0-9a-f]{64}$")
+(def max-skill-instructions 12000)
 (def founding-businesses
   "The eight businesses this app was built around. Required to be PRESENT, not
   required to be all there is.
@@ -83,6 +86,13 @@
                                          error)))))]
       (let [roles (:roles value)
             keys* (map :key roles)
+            valid-skill?
+            (fn [package]
+              (and (map? package)
+                   (re-matches skill-id-pattern (str (:id package)))
+                   (re-matches skill-sha256-pattern (str (:sha256 package)))
+                   (string? (:instructions package))
+                   (<= 1 (count (:instructions package)) max-skill-instructions)))
             businesses (into #{} (map #(get-in % [:business :id])) roles)]
         ;; Completeness is checked as INTERNAL AGREEMENT rather than against a
         ;; fixed number: the projection's own declared business count must
@@ -99,6 +109,10 @@
                                      (map? (:business %))
                                      (map? (:role %))
                                      (seq (str (:objective %)))
+                                     (<= (count (:skills %)) 4)
+                                     (= (count (:skills %))
+                                        (count (set (map :id (:skills %)))))
+                                     (every? valid-skill? (:skills %))
                                      (pos-int? (:cadence-minutes %)))
                                roles))
         (throw (ex-info "workforce projection failed its complete-catalog contract"

@@ -91,6 +91,20 @@
     (is (empty? (bot/admitted-tools plain catalog #{"com.google.gmail"}))
         "an autonomous job policy is not a connector or tool grant")))
 
+(deftest workforce-skill-is-bounded-evidence-not-authority
+  (let [skill {:id "itonami-bot-readiness"
+               :sha256 (apply str (repeat 64 "a"))
+               :instructions "Verify the actual resident run."}
+        plain (a-bot {:bot/skills [skill]})]
+    (is (= [skill] (:bot/skills plain)))
+    (is (empty? (bot/admitted-tools plain catalog #{"com.google.gmail"})))
+    (is (thrown-with-msg?
+         clojure.lang.ExceptionInfo #"invalid workforce Skill package"
+         (a-bot {:bot/skills [(assoc skill :sha256 "not-a-digest")]})))
+    (is (thrown-with-msg?
+         clojure.lang.ExceptionInfo #"duplicate workforce Skill package"
+         (a-bot {:bot/skills [skill skill]})))))
+
 (deftest bot-keeps-sidebar-presentation
   (let [b (a-bot {:bot/section "営業" :bot/unread? true :bot/hidden? true})]
     (is (= "営業" (:bot/section b)))
