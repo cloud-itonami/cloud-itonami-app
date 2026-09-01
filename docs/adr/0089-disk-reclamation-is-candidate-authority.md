@@ -1,4 +1,4 @@
-# ADR-0088: disk reclamation is candidate authority
+# ADR-0089: disk reclamation is candidate authority
 
 **Status**: accepted / **Date**: 2026-09-01
 **Related**: ADR-0034, ADR-0056, ADR-0060, ADR-0070
