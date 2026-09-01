@@ -68,6 +68,7 @@
             [cloud.itonami.app.decision-method :as decision-method]
             [cloud.itonami.app.gc :as gc]
             [cloud.itonami.app.handoff :as handoff]
+            [cloud.itonami.app.human-work-tools :as human-work-tools]
             [cloud.itonami.app.identity :as identity]
             [cloud.itonami.app.peer :as peer]
             [cloud.itonami.app.mail-account :as mail-account]
@@ -2063,6 +2064,7 @@
   execution.  Computer Use and Wallet had the same latent split."
   [configuration b]
   (vec (concat commerce/tool-definitions
+               human-work-tools/tool-definitions
                (browser-tools configuration b)
                (computer-tools configuration b)
                (peer-tools b)
@@ -2105,6 +2107,7 @@
 
 (defn- write-tool? [configuration tool-name]
   (or (peer-tool? tool-name)
+      (human-work-tools/write-tool? tool-name)
       (agent-control/browser-write? tool-name)
       (agent-control/computer-write? tool-name)
       (commerce/write-tool? tool-name)
@@ -2134,6 +2137,9 @@
 
     (commerce/tool? tool-name)
     (commerce/describe tool-name args)
+
+    (human-work-tools/tool? tool-name)
+    (human-work-tools/describe tool-name args)
 
     (workspace-tools/tool? tool-name)
     (workspace-tools/describe tool-name args)
@@ -2332,6 +2338,7 @@
                                 max-tool-output-chars)))
         structured (if (or (peer-tool? tool-name)
                            (commerce/tool? tool-name)
+                           (human-work-tools/tool? tool-name)
                            (wallet/tool? tool-name)
                            (agent-control/browser-tool? tool-name)
                            (agent-control/computer-tool? tool-name)
@@ -2340,6 +2347,9 @@
                      (cond
                        (commerce/tool? tool-name)
                        (commerce/call-tool! b tool-name args)
+
+                       (human-work-tools/tool? tool-name)
+                       (human-work-tools/call-tool! b tool-name args)
 
                        (wallet/tool? tool-name)
                        (wallet/call-tool! (:bot/id b) tool-name args)

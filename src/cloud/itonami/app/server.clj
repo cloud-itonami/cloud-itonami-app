@@ -46,6 +46,10 @@
             [cloud.itonami.app.did-web :as did-web]
             [cloud.itonami.app.org-root-did :as org-root-did]
             [cloud.itonami.app.health :as health]
+            [cloud.itonami.app.human-work :as human-work]
+            [cloud.itonami.app.human-work-assurance :as human-work-assurance]
+            [cloud.itonami.app.human-work-marketplace :as human-work-marketplace]
+            [cloud.itonami.app.human-work-x402 :as human-work-x402]
             [cloud.itonami.app.humanity-trust :as humanity-trust]
             [cloud.itonami.app.identity :as identity]
             [cloud.itonami.app.fax :as fax]
@@ -1372,7 +1376,8 @@
   (get-in (identity-context exchange) [:organization :organization-id]))
 
 (defn- require-control-role! [context capability]
-  (when (and (#{:approval/submit :stop/request :work-governance/admin}
+  (when (and (#{:approval/submit :stop/request :work-governance/admin
+                :human-work/verify}
                 capability)
              (not (#{:owner :admin}
                    (get-in context [:organization :role]))))
@@ -1867,7 +1872,10 @@
 
       (and (= method "POST") (= path "/api/workspace/bulky-waste/jobs"))
       (do (require-app-session! exchange)
-          (send! exchange 201 (bulky-waste/create-job! (write-body) actor)))
+          (send! exchange 201
+                 (bulky-waste/create-job!
+                  (assoc (write-body) :organization-id (:organization-id session))
+                  actor)))
 
       (and (= method "GET")
            (id-from-path path #"/api/workspace/bulky-waste/jobs/([^/]+)/matches"))
@@ -1942,6 +1950,219 @@
                  (bulky-waste/cancel!
                   (id-from-path path
                                 #"/api/workspace/bulky-waste/jobs/([^/]+)/cancel")
+                  actor)))
+
+      :else (send! exchange 404 {:error "not found"}))))
+
+(defn- handle-human-work!
+  "The bounded HumanWorkRequest surface.
+
+  Worker registration is self-service, but verification of a licence,
+  qualification, insurance claim, or service location is owner/admin-only and
+  organization-scoped. Bots reach requester operations through their own
+  approval-card tools rather than through this browser-session router."
+  [config exchange method path]
+  (let [session (require-app-session! exchange)
+        actor (:user-id session)
+        organization-id (:organization-id session)
+        context (identity-context exchange)
+        _ (when-not (and (string? organization-id)
+                         (not (str/blank? organization-id)))
+            (throw (ex-info "Organization context is required"
+                            {:type :identity/unauthenticated})))
+        scoped-request-id
+        (fn [pattern]
+          (let [id (id-from-path path pattern)
+                request (human-work/request id)]
+            (when (and request
+                       (not= organization-id (:organization-id request)))
+              (throw (ex-info "Human work request was not found"
+                              {:type :human-work/not-found})))
+            id))
+        write-body (fn []
+                     (require-origin! exchange config)
+                     (require-csrf! exchange session)
+                     (read-json exchange))]
+    (cond
+      (and (= method "GET") (= path "/api/workspace/human-work"))
+      (send! exchange 200 (human-work/requests actor organization-id))
+
+      (and (= method "GET") (= path "/api/workspace/human-work/workers/me"))
+      (send! exchange 200
+             (or (human-work/worker-profile actor)
+                 {:schema human-work/schema :worker-id actor
+                  :status "not-registered"}))
+
+      (and (= method "POST") (= path "/api/workspace/human-work/workers"))
+      (send! exchange 200 (human-work/register-worker! (write-body) actor))
+
+      (and (= method "POST")
+           (re-matches
+            #"/api/workspace/human-work/workers/([^/]+)/credentials/([^/]+)/verify"
+            path))
+      (let [[_ worker-id credential-id]
+            (re-matches
+             #"/api/workspace/human-work/workers/([^/]+)/credentials/([^/]+)/verify"
+             path)
+            body (write-body)]
+        (require-control-role! context :human-work/verify)
+        (send! exchange 200
+               (human-work/verify-credential!
+                worker-id credential-id body actor organization-id)))
+
+      (and (= method "POST")
+           (re-matches
+            #"/api/workspace/human-work/workers/([^/]+)/credentials/([^/]+)/check-online"
+            path))
+      (let [[_ worker-id credential-id]
+            (re-matches
+             #"/api/workspace/human-work/workers/([^/]+)/credentials/([^/]+)/check-online"
+             path)
+            body (write-body)]
+        (require-control-role! context :human-work/verify)
+        (send! exchange 200
+               (human-work-assurance/check-credential!
+                config {:worker-id worker-id :credential-id credential-id
+                        :provider-id (:provider-id body)
+                        :organization-id organization-id :verifier-id actor})))
+
+      (and (= method "POST")
+           (re-matches
+            #"/api/workspace/human-work/workers/([^/]+)/identity/check-online"
+            path))
+      (let [[_ worker-id]
+            (re-matches
+             #"/api/workspace/human-work/workers/([^/]+)/identity/check-online"
+             path)
+            body (write-body)]
+        (require-control-role! context :human-work/verify)
+        (send! exchange 200
+               (human-work-assurance/check-identity!
+                config {:worker-id worker-id :provider-id (:provider-id body)
+                        :organization-id organization-id})))
+
+      (and (= method "POST")
+           (re-matches
+            #"/api/workspace/human-work/workers/([^/]+)/locations/([^/]+)/verify"
+            path))
+      (let [[_ worker-id location-id]
+            (re-matches
+             #"/api/workspace/human-work/workers/([^/]+)/locations/([^/]+)/verify"
+             path)
+            body (write-body)]
+        (require-control-role! context :human-work/verify)
+        (send! exchange 200
+               (human-work/verify-location!
+                worker-id location-id body actor organization-id)))
+
+      (and (= method "POST") (= path "/api/workspace/human-work/requests"))
+      (send! exchange 201
+             (human-work/create-request!
+              (assoc (write-body) :organization-id organization-id) actor))
+
+      (and (= method "GET")
+           (id-from-path path
+                         #"/api/workspace/human-work/requests/([^/]+)/matches"))
+      (send! exchange 200
+             (human-work/matches
+              (scoped-request-id
+               #"/api/workspace/human-work/requests/([^/]+)/matches")
+              actor))
+
+      (and (= method "POST")
+           (id-from-path path
+                         #"/api/workspace/human-work/requests/([^/]+)/publish"))
+      (do (write-body)
+          (send! exchange 200
+                 (human-work/publish!
+                  (scoped-request-id
+                   #"/api/workspace/human-work/requests/([^/]+)/publish")
+                  actor)))
+
+      (and (= method "POST")
+           (id-from-path path
+                         #"/api/workspace/human-work/requests/([^/]+)/accept"))
+      (do (write-body)
+          (send! exchange 200
+                 (human-work/accept!
+                  (scoped-request-id
+                   #"/api/workspace/human-work/requests/([^/]+)/accept")
+                  actor)))
+
+      (and (= method "POST")
+           (id-from-path path
+                         #"/api/workspace/human-work/requests/([^/]+)/start"))
+      (let [body (write-body)]
+        (send! exchange 200
+               (human-work/start!
+                (scoped-request-id
+                 #"/api/workspace/human-work/requests/([^/]+)/start")
+                body actor)))
+
+      (and (= method "POST")
+           (id-from-path path
+                         #"/api/workspace/human-work/requests/([^/]+)/submit"))
+      (let [body (write-body)]
+        (send! exchange 200
+               (human-work/submit!
+                (scoped-request-id
+                 #"/api/workspace/human-work/requests/([^/]+)/submit")
+                body actor)))
+
+      (and (= method "POST")
+           (id-from-path path
+                         #"/api/workspace/human-work/requests/([^/]+)/review"))
+      (let [body (write-body)]
+        (send! exchange 200
+               (human-work/review-submission!
+                (scoped-request-id
+                 #"/api/workspace/human-work/requests/([^/]+)/review")
+                body actor)))
+
+      (and (= method "POST")
+           (id-from-path path
+                         #"/api/workspace/human-work/requests/([^/]+)/cancel"))
+      (do (write-body)
+          (send! exchange 200
+                 (human-work/cancel!
+                  (scoped-request-id
+                   #"/api/workspace/human-work/requests/([^/]+)/cancel")
+                  actor)))
+
+      (and (= method "POST")
+           (id-from-path path
+                         #"/api/workspace/human-work/requests/([^/]+)/fund"))
+      (do
+        (write-body)
+        (let [result
+              (human-work-x402/fund!
+               config
+               (scoped-request-id
+                #"/api/workspace/human-work/requests/([^/]+)/fund")
+               actor
+               (.getFirst (.getRequestHeaders exchange) "PAYMENT-SIGNATURE"))]
+          (send! exchange (:status result) (:body result) (:headers result))))
+
+      (and (= method "POST")
+           (id-from-path path
+                         #"/api/workspace/human-work/requests/([^/]+)/release"))
+      (do (write-body)
+          (send! exchange 200
+                 (human-work-x402/release!
+                  config
+                  (scoped-request-id
+                   #"/api/workspace/human-work/requests/([^/]+)/release")
+                  actor)))
+
+      (and (= method "POST")
+           (id-from-path path
+                         #"/api/workspace/human-work/requests/([^/]+)/refund"))
+      (do (write-body)
+          (send! exchange 200
+                 (human-work-x402/refund!
+                  config
+                  (scoped-request-id
+                   #"/api/workspace/human-work/requests/([^/]+)/refund")
                   actor)))
 
       :else (send! exchange 404 {:error "not found"}))))
@@ -5203,6 +5424,11 @@
                                     #"/api/workspace/scheduler/events/([^/]+)/cancel")
                       (:user-id session))))
 
+            ;; Generic qualified-human work has its own bounded router: the
+            ;; main handler is already near the JVM method-size limit.
+            (str/starts-with? path "/api/workspace/human-work")
+            (handle-human-work! config exchange method path)
+
             ;; Bulky-waste human computing has its own bounded router: the
             ;; main handler is already near the JVM method-size limit.
             (str/starts-with? path "/api/workspace/bulky-waste")
@@ -5645,6 +5871,25 @@
                      :bulky-waste/evidence-required 422
                      :bulky-waste/invalid-weight 422
                      :bulky-waste/invalid 400
+                     ;; ---- qualified human work ----
+                     :human-work/not-found 404
+                     :human-work/worker-not-found 404
+                     :human-work/claim-not-found 404
+                     :human-work/forbidden 403
+                     :human-work/self-verification 403
+                     :human-work/not-eligible 409
+                     :human-work/invalid-transition 409
+                     :human-work/evidence-required 422
+                     :human-work/invalid-location 422
+                     :human-work/invalid-credential 422
+                     :human-work/invalid-requirement 422
+                     :human-work/invalid-verification 422
+                     :human-work/invalid-review 422
+                     :human-work/invalid-compensation 422
+                     :human-work/payment-required 402
+                     :human-work/payment-unavailable 503
+                     :human-work/payment-provider-failed 502
+                     :human-work/invalid 400
                      ;; ---- mail ----
                      :mail/not-found 404
                      :mail/invalid-label 400
@@ -6695,6 +6940,37 @@
             (send! exchange 500 {:error {:type "internal_error"
                                          :message (.getMessage error)}})))))))
 
+(defn- human-work-public-handler [configuration]
+  (reify HttpHandler
+    (handle [_ exchange]
+      (let [method (.getRequestMethod exchange)
+            path (.getPath (.getRequestURI exchange))]
+        (try
+          (cond
+            (and (= method "GET") (= path "/human-work"))
+            (send-html! exchange
+                        (human-work-marketplace/page-html
+                         (get-in configuration [:brand :name])))
+
+            (and (= method "GET") (= path "/api/human-work/requests"))
+            (do
+              ;; route-gate:none — deliberately public, read-only redaction.
+              (send! exchange 200 (human-work/public-requests)))
+
+            :else (send! exchange 404 {:error {:type "not_found"}}))
+          (catch clojure.lang.ExceptionInfo error
+            (send! exchange
+                   (case (:type (ex-data error))
+                     :human-work/payment-unavailable 503
+                     :human-work/payment-provider-failed 502
+                     400)
+                   {:error {:type (name (or (:type (ex-data error))
+                                            :human-work/error))
+                            :message (.getMessage error)}}))
+          (catch Exception error
+            (send! exchange 500 {:error {:type "internal_error"
+                                         :message (.getMessage error)}})))))))
+
 (defn start!
   ([] (start! (config/load-config)))
   ([configuration]
@@ -6782,6 +7058,12 @@
                      (reify HttpHandler
                        (handle [_ exchange]
                          (send-icon! exchange))))
+     ;; Public marketplace lives outside the root handler, whose generated
+     ;; bytecode is already at the JVM method-size ceiling.
+     (.createContext instance "/human-work"
+                     (human-work-public-handler configuration))
+     (.createContext instance "/api/human-work"
+                     (human-work-public-handler configuration))
      ;; A2A remains outside the already full root handler. Exact-path checks in
      ;; the handler keep HttpServer's prefix matching from widening discovery.
      (.createContext instance "/.well-known/agent-card.json"

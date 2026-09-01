@@ -403,6 +403,34 @@
  :worker {:max-concurrency 2
           :max-runs 50}
 
+ ;; Qualified HumanWorkRequest integrations. Both are fail-closed until an
+ ;; operator explicitly enables fixed providers. Provider endpoints are
+ ;; configuration, never request input. x402 payer signatures are forwarded
+ ;; once and discarded; this app keeps only requirements and settlement
+ ;; receipts. The custom auth-capture operator owns the onchain escrow policy.
+ :human-work
+ {:assurance {:providers []}
+  :x402 {:enabled? false
+         :scheme "auth-capture"
+         :network "eip155:8453"
+         :asset "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"
+         :asset-name "USDC"
+         :asset-version "2"
+         :asset-transfer-method "eip3009"
+         :facilitator-url nil
+         :facilitator-token-env nil
+         :operator-type "custom"
+         :operator-url nil
+         :operator-token-env nil
+         :auth-capture-escrow "0x13AC3b34322D12FE27D5e192D0c2b2266d4F29CB"
+         :capture-authorizer nil
+         :receiver-authorizer nil
+         :fee-recipient nil
+         :max-timeout-seconds 300
+         :capture-window-seconds 2592000
+         :refund-window-seconds 7776000
+         :review-grace-seconds 604800}}
+
  ;; The stdio MCP server. Fleet tools need no session; funding and settlement
  ;; tools need a real one, and appear in the manifest only when this token
  ;; resolves to a live session whose user has enrolled a Passkey. Absent token =
