@@ -6704,7 +6704,7 @@
       (and (= method "GET")
            (segment #"/api/sessions/([^/]+)/messages"))
       (let [order (:order query)]
-        (when-not (#{nil "oldest" "latest"} order)
+        (when-not (contains? #{nil "oldest" "latest"} order)
           (throw (ex-info "order must be oldest or latest"
                           {:type :hermes/invalid-pagination})))
         (send! exchange 200
