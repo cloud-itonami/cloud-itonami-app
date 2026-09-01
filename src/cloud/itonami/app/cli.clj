@@ -615,25 +615,36 @@
                           (git-hygiene/workspace-root))))
 
 (defn bot-import-report
-  "Read one external source's bots and render the roles they would become.
+  "Preview or stage one external source's migration.
 
-  `existing` comes from this workforce's own list rather than from a name the
-  caller passed: re-running an import must be able to say `already-present`,
-  and the only place that is true is the live registry projection.
+  Hermes uses the API's v2 migration manifest verbatim.  `--stage true` posts
+  the preview it just received back to the stage endpoint, so the CLI cannot
+  grow a second bundle shape or omit a profile the API would retain.
 
-  Nothing is created here. The output is EDN for `loop-yakuwari`, and the Bot
-  appears at the next `itonami bots provision` -- see `bot-import`'s docstring
-  for why the import is not allowed to be the thing that creates it."
+  Grok retains the v1 role-proposal report.  Neither path creates a Bot; a
+  staged Hermes bundle still needs review, capability rebinding and normal
+  workforce provisioning."
   [configuration flags]
-  (let [source (or (:source flags) (required-flag flags :source))
-        existing (try (mapv :name (:bots (bot-list configuration)))
-                      (catch Exception _ []))]
-    (bot-import/import-report
-     source
-     {:business (or (:business flags) "cloud-itonami")
-      :home (:home flags)
-      :base (:base flags)
-      :existing existing})))
+  (let [source (or (:source flags) (required-flag flags :source))]
+    (if (= "hermes" source)
+      (let [request (cond-> {:business (or (:business flags) "cloud-itonami")}
+                      (:home flags) (assoc :home (:home flags)))
+            preview (client/request-with-timeout!
+                     configuration :post
+                     "/api/agent-bots/imports/hermes/preview" 120 request)]
+        (if (contains? #{true "true" "1" "yes"} (:stage flags))
+          (client/request-with-timeout!
+           configuration :post "/api/agent-bots/imports/hermes/stage" 3600
+           (cond-> {:manifest preview}
+             (:home flags) (assoc :home (:home flags))))
+          preview))
+      (let [existing (try (mapv :name (:bots (bot-list configuration)))
+                          (catch Exception _ []))]
+        (bot-import/import-report
+         source
+         {:business (or (:business flags) "cloud-itonami")
+          :base (:base flags)
+          :existing existing})))))
 
 (defn- refactor-root [configuration flags]
   (or (:root flags)
@@ -714,9 +725,10 @@
        "  bots cancel --id <bot-id> --run <run-id>\n"
        "  bots hygiene [--root <west-root>]\n"
        "                         west 全 checkout の git 衛生状態（読み取りのみ）\n\n"
-       "  bots import hermes [--home <hermes-home>] [--business <slug>]\n"
+       "  bots import hermes [--home <hermes-home>] [--business <slug>] [--stage true]\n"
        "  bots import grok   [--base <url>] [--business <slug>]\n"
-       "                         外部 bot を role 提案として読み込みます（Bot は作りません）\n\n"
+       "                         Hermes は全 profile の共通 v2 manifest を preview/stage します\n"
+       "                         credential/grant は移送せず rebind-required になります（Bot は作りません）\n\n"
        "  bots refactor scan --root <west-root> [--limit 25]\n"
        "  bots refactor inspect --root <west-root> --repo <west-name> [--limit 8]\n"
        "  bots refactor start --root <west-root> --repo <west-name> --id <bot-id>\n\n"
