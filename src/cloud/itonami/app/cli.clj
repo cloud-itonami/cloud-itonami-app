@@ -620,6 +620,8 @@
   Hermes uses the API's v2 migration manifest verbatim.  `--stage true` posts
   the preview it just received back to the stage endpoint, so the CLI cannot
   grow a second bundle shape or omit a profile the API would retain.
+  `--provision true` additionally creates the inert, credential-free Bots and
+  returns the measured compatibility matrix from that same server-side record.
 
   Grok retains the v1 role-proposal report.  Neither path creates a Bot; a
   staged Hermes bundle still needs review, capability rebinding and normal
@@ -632,11 +634,20 @@
             preview (client/request-with-timeout!
                      configuration :post
                      "/api/agent-bots/imports/hermes/preview" 120 request)]
-        (if (contains? #{true "true" "1" "yes"} (:stage flags))
-          (client/request-with-timeout!
-           configuration :post "/api/agent-bots/imports/hermes/stage" 3600
-           (cond-> {:manifest preview}
-             (:home flags) (assoc :home (:home flags))))
+        (if (or (contains? #{true "true" "1" "yes"} (:stage flags))
+                (contains? #{true "true" "1" "yes"} (:provision flags)))
+          (let [staged
+                (client/request-with-timeout!
+                 configuration :post "/api/agent-bots/imports/hermes/stage" 3600
+                 (cond-> {:manifest preview}
+                   (:home flags) (assoc :home (:home flags))))]
+            (if (contains? #{true "true" "1" "yes"} (:provision flags))
+              (client/request-with-timeout!
+               configuration :post
+               (str "/api/agent-bots/imports/" (:migration-id staged)
+                    "/provision")
+               3600 {})
+              staged))
           preview))
       (let [existing (try (mapv :name (:bots (bot-list configuration)))
                           (catch Exception _ []))]

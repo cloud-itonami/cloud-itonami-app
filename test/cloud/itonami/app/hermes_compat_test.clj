@@ -64,6 +64,31 @@
         (is (= {:limit 1 :offset 0 :order "oldest" :returned 1}
                (:pagination oldest)))))))
 
+(deftest imported-profile-and-source-session-ids-remain-valid-api-aliases
+  (let [imported (assoc bot-row
+                        :hermes-import
+                        {:profile-id "research"
+                         :session-ids ["source-session-1"]})
+        source [{:id "source-session-1" :title "Prior research"
+                 :profile_name "research" :source "cli"
+                 :messages [{:id "hm-1" :role "user"
+                             :content "old question" :timestamp 1.0}
+                            {:id "hm-2" :role "assistant"
+                             :content "old answer" :timestamp 2.0}]}]]
+    (with-redefs [bots/overview (fn [_ _] {:bots [imported]})
+                  bots/messages (fn [_ _] transcript)
+                  bots/hermes-import-sessions (fn [_ _] source)]
+      (is (= "bot-1" (:id (hermes/resolve-bot nil owner "research"))))
+      (is (= "bot-1" (:id (hermes/resolve-bot nil owner "source-session-1"))))
+      (is (= "research" (get-in (hermes/profile-list nil owner) [:data 0 :id])))
+      (is (= "bot-1" (get-in (hermes/profile-list nil owner) [:data 0 :bot_id])))
+      (is (= "source-session-1"
+             (get-in (hermes/session-list nil owner "research" {}) [:data 0 :id])))
+      (is (= "old answer"
+             (get-in (hermes/session-messages
+                      nil owner "source-session-1" {:order "oldest"})
+                     [:data 1 :content]))))))
+
 (deftest a-hermes-run-uses-the-native-loop-and-emits-pollable-sse-events
   (hermes/reset-runs!)
   (let [called (promise)]

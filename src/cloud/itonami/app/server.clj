@@ -6680,6 +6680,28 @@
             :manifest staged})
           (send! exchange 201 staged)))
 
+      (and (= method "POST")
+           (bot-id-from path #"/api/agent-bots/imports/([^/]+)/provision"))
+      (let [session (require-app-session! exchange)
+            id (bot-id-from path #"/api/agent-bots/imports/([^/]+)/provision")
+            record (get-in (store/snapshot) [:bot-imports id])]
+        (when-not (get-in config [:privacy :bind-loopback-only?])
+          (throw (ex-info "Hermes filesystem import は local resident app で実行してください。"
+                          {:type :bot-import/local-only})))
+        (require-origin! exchange config)
+        (require-csrf! exchange session)
+        (if-not (and record
+                     (= (:organization-id session) (:organization-id record)))
+          (send! exchange 404 {:error {:type "bot-import/not-found"}})
+          (let [provisioned
+                (hermes-migration/provision!
+                 {:configuration config
+                  :session session
+                  :data-dir (config/data-dir)
+                  :manifest (:manifest record)})]
+            (store/transact! assoc-in [:bot-imports id :manifest] provisioned)
+            (send! exchange 201 provisioned))))
+
       (and (= method "GET") (= path "/api/agent-bots/imports"))
       (let [session (require-app-session! exchange)
             organization-id (:organization-id session)
