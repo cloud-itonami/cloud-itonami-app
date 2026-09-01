@@ -11,6 +11,7 @@
             [cloud.itonami.app.authority.api :as authority-api]
             [cloud.itonami.app.business :as business]
             [cloud.itonami.app.bulky-waste :as bulky-waste]
+            [cloud.itonami.app.human-work :as human-work]
             [cloud.itonami.app.canvas :as canvas]
             [cloud.itonami.app.capture :as capture]
             [cloud.itonami.app.bots :as bots]
@@ -1953,6 +1954,161 @@
                   (id-from-path path
                                 #"/api/workspace/bulky-waste/jobs/([^/]+)/cancel")
                   actor)))
+
+      :else (send! exchange 404 {:error "not found"}))))
+
+(defn- human-work-pair-from-path
+  "Both ids out of a two-segment claim path, or nil."
+  [path pattern]
+  (when-let [[_ worker-id claim-id] (re-matches pattern path)]
+    [worker-id claim-id]))
+
+(defn- handle-human-work!
+  "The bounded HTTP surface for verified human work.
+
+  Outside the main HttpHandler for the same reason bulky-waste is: that `cond`
+  compiles to one method and is already near the JVM method-size limit.
+
+  `require-app-session!` is repeated in every clause, and it is not redundant
+  even though the session is already taken above: `route-scan/gate-of` reads
+  each `cond` clause body and records `:none` (its own word for a clause that
+  asked for no session at all) when it does not find the call. Leaving it out
+  makes the generated registry state that twelve authenticated routes are
+  unauthenticated, which is worse than the duplication. bulky-waste repeats it
+  for the same reason.
+
+  Every rule here is the test's, not this layer's invention. The domain
+  (`cloud.itonami.app.human-work`) already owns the transitions and the
+  self-verification refusal; this adds the three things only the request knows:
+  the session's actor, the active organization, and same-origin + CSRF on every
+  write. Verification additionally needs `:owner`/`:admin` in the organization,
+  which is a session fact the domain never sees."
+  [config exchange method path]
+  (let [session (require-app-session! exchange)
+        context (identity-context exchange)
+        actor (:user-id session)
+        organization-id (get-in context [:organization :organization-id])
+        write-body (fn []
+                     (require-origin! exchange config)
+                     (require-csrf! exchange session)
+                     (read-json exchange))
+        require-verifier-role!
+        (fn []
+          (when-not (#{:owner :admin} (get-in context [:organization :role]))
+            (throw (ex-info "検証にはOrganizationのownerまたはadmin権限が必要です。"
+                            {:type :identity/forbidden
+                             :capability :human-work/verify}))))
+        ;; A request belonging to another organization must read as absent, not
+        ;; as refused: telling one organization that an id exists elsewhere is
+        ;; itself a disclosure. The domain scopes listings but takes no
+        ;; organization on the by-id paths, so the boundary is drawn here.
+        require-organization!
+        (fn [id]
+          (let [request (human-work/request id)]
+            (when-not (and request (= organization-id (:organization-id request)))
+              (throw (ex-info "Human work request was not found"
+                              {:type :human-work/not-found :id id})))))
+        request-action
+        (fn [pattern] (id-from-path path pattern))]
+    (cond
+      (and (= method "GET") (= path "/api/workspace/human-work"))
+      (do (require-app-session! exchange)
+          (send! exchange 200 (human-work/requests actor)))
+
+      (and (= method "POST") (= path "/api/workspace/human-work/workers"))
+      (do (require-app-session! exchange)
+          (send! exchange 200 (human-work/register-worker! (write-body) actor)))
+
+      (and (= method "POST")
+           (human-work-pair-from-path
+            path
+            #"/api/workspace/human-work/workers/([^/]+)/locations/([^/]+)/verify"))
+      (let [[worker-id location-id]
+            (human-work-pair-from-path
+             path
+             #"/api/workspace/human-work/workers/([^/]+)/locations/([^/]+)/verify")
+            body (write-body)]
+        (require-app-session! exchange)
+        (require-verifier-role!)
+        (send! exchange 200
+               (human-work/verify-location! worker-id location-id body
+                                            actor organization-id)))
+
+      (and (= method "POST")
+           (human-work-pair-from-path
+            path
+            #"/api/workspace/human-work/workers/([^/]+)/credentials/([^/]+)/verify"))
+      (let [[worker-id credential-id]
+            (human-work-pair-from-path
+             path
+             #"/api/workspace/human-work/workers/([^/]+)/credentials/([^/]+)/verify")
+            body (write-body)]
+        (require-app-session! exchange)
+        (require-verifier-role!)
+        (send! exchange 200
+               (human-work/verify-credential! worker-id credential-id body
+                                              actor organization-id)))
+
+      (and (= method "POST") (= path "/api/workspace/human-work/requests"))
+      (do (require-app-session! exchange)
+          (send! exchange 201
+                 (human-work/create-request!
+                  (assoc (write-body) :organization-id organization-id) actor)))
+
+      (and (= method "GET")
+           (request-action #"/api/workspace/human-work/requests/([^/]+)/matches"))
+      (let [id (request-action
+                #"/api/workspace/human-work/requests/([^/]+)/matches")]
+        (require-app-session! exchange)
+        (require-organization! id)
+        (send! exchange 200 (human-work/matches id actor)))
+
+      (and (= method "POST")
+           (request-action #"/api/workspace/human-work/requests/([^/]+)/publish"))
+      (let [id (request-action
+                #"/api/workspace/human-work/requests/([^/]+)/publish")]
+        (require-app-session! exchange)
+        (write-body)
+        (require-organization! id)
+        (send! exchange 200 (human-work/publish! id actor)))
+
+      (and (= method "POST")
+           (request-action #"/api/workspace/human-work/requests/([^/]+)/accept"))
+      (let [id (request-action
+                #"/api/workspace/human-work/requests/([^/]+)/accept")]
+        (require-app-session! exchange)
+        (write-body)
+        (send! exchange 200 (human-work/accept! id actor)))
+
+      (and (= method "POST")
+           (request-action #"/api/workspace/human-work/requests/([^/]+)/start"))
+      (let [id (request-action
+                #"/api/workspace/human-work/requests/([^/]+)/start")]
+        (require-app-session! exchange)
+        (send! exchange 200 (human-work/start! id (write-body) actor)))
+
+      (and (= method "POST")
+           (request-action #"/api/workspace/human-work/requests/([^/]+)/submit"))
+      (let [id (request-action
+                #"/api/workspace/human-work/requests/([^/]+)/submit")]
+        (require-app-session! exchange)
+        (send! exchange 200 (human-work/submit! id (write-body) actor)))
+
+      (and (= method "POST")
+           (request-action #"/api/workspace/human-work/requests/([^/]+)/review"))
+      (let [id (request-action
+                #"/api/workspace/human-work/requests/([^/]+)/review")]
+        (require-app-session! exchange)
+        (send! exchange 200
+               (human-work/review-submission! id (write-body) actor)))
+
+      (and (= method "POST")
+           (request-action #"/api/workspace/human-work/requests/([^/]+)/cancel"))
+      (let [id (request-action
+                #"/api/workspace/human-work/requests/([^/]+)/cancel")]
+        (require-app-session! exchange)
+        (write-body)
+        (send! exchange 200 (human-work/cancel! id actor)))
 
       :else (send! exchange 404 {:error "not found"}))))
 
@@ -5176,6 +5332,11 @@
             (str/starts-with? path "/api/workspace/bulky-waste")
             (handle-bulky-waste! config exchange method path)
 
+            ;; Verified human work has its own bounded router, for the same
+            ;; method-size reason as bulky-waste above.
+            (str/starts-with? path "/api/workspace/human-work")
+            (handle-human-work! config exchange method path)
+
             ;; Worker runs are live queue state, so they bypass the workspace
             ;; read cache.
             (and (= method "GET") (= path "/api/workspace/worker"))
@@ -5606,6 +5767,16 @@
                      ;; ---- bulky-waste human computing ----
                      :bulky-waste/not-found 404
                      :bulky-waste/forbidden 403
+                     :human-work/not-found 404
+                     :human-work/worker-not-found 404
+                     :human-work/claim-not-found 404
+                     :human-work/forbidden 403
+                     ;; Refusing to let a worker verify their own claim is the
+                     ;; point of the rule, not a malformed request.
+                     :human-work/self-verification 403
+                     :human-work/not-eligible 409
+                     :human-work/invalid-transition 409
+                     :human-work/payment-required 402
                      :bulky-waste/not-eligible 409
                      :bulky-waste/invalid-transition 409
                      :bulky-waste/capacity-exceeded 409
