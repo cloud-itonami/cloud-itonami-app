@@ -94,6 +94,31 @@
         (is (= 1 (count (filter #(= :pnpm-temporary-store (:kind %)) candidates)))
             "the pnpm name needs the version/files/index store structure")))))
 
+(deftest resident-releases-are-visible-but-never-reclaim-authority
+  (let [root (temp-root)]
+    (fixture-file! root "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/.git/HEAD"
+                   "ref: refs/heads/main")
+    (fixture-file! root "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/src/app.clj"
+                   "immutable release")
+    (with-redefs [disk-space/candidate-roots
+                  (constantly [{:kind :itonami-releases :path root}])
+                  disk-space/open-file-state (constantly :open)
+                  disk-space/usable-bytes
+                  (constantly (dec disk-space/threshold-bytes))]
+      (let [inventory (disk-space/inventory)
+            candidate (first (:candidates inventory))]
+        (is (= 1 (:candidate-count inventory)))
+        (is (= :resident-releases (:kind candidate)))
+        (is (= :review-required (:decision candidate)))
+        (is (= (:bytes candidate) (:review-required-bytes inventory)))
+        (is (zero? (:reclaimable-bytes inventory)))
+        (is (= :open (get-in candidate [:evidence :open-file-state])))
+        (is (nil? (:path candidate)))
+        (is (= :disk-space/candidate-not-reclaimable
+               (error-type #(disk-space/reclaim!
+                             {:candidate_ids [(:candidate-id candidate)]})))
+            "a receipt makes the pressure visible but grants no release deletion")))))
+
 (deftest git-and-open-file-evidence-fail-closed
   (let [root (temp-root)]
     (fixture-file! root "repo/.git/HEAD" "ref: refs/heads/main")

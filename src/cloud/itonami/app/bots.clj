@@ -5962,6 +5962,8 @@
                 (long (or (get-in receipt [:inventory :reclaimable-bytes]) 0)) "\n"
                 "- review-required candidates: "
                 (count (:review-required receipt)) "\n"
+                "- review-required bytes: "
+                (long (or (get-in receipt [:inventory :review-required-bytes]) 0)) "\n"
                 "- stable observation: "
                 (boolean (get-in receipt [:stable-observation :stable?])) "\n"))
          "Repositories, worktrees, sessions, user data and other preserved "

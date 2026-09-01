@@ -37,9 +37,10 @@
     :parameters {:type "object" :properties {} :additionalProperties false}}
    {:name "disk_space_inventory"
     :description
-    (str "Inspect only fixed temporary/cache roots and return evidence-bound "
+    (str "Inspect only fixed temporary/cache roots and the resident-release "
+         "footprint, then return evidence-bound "
          "candidate ids. Git-owned, open, symlinked and unknown paths are not "
-         "reclaimable; model files are review-required.")
+         "reclaimable; model files and resident releases are review-required.")
     :parameters {:type "object" :properties {} :additionalProperties false}}
    {:name "disk_space_reclaim"
     :description
@@ -127,7 +128,11 @@
 ;; Tests redefine this seam. Production roots cannot be selected by tool input.
 (defn candidate-roots []
   [{:kind :temporary :path (io/file "/private/tmp")}
-   {:kind :uv-cache :path (io/file (System/getProperty "user.home") ".cache" "uv")}])
+   {:kind :uv-cache :path (io/file (System/getProperty "user.home") ".cache" "uv")}
+   ;; This root is observation-only.  A running/rollback release is not cache,
+   ;; and the reclaim tool never admits its :review-required receipt.
+   {:kind :itonami-releases
+    :path (io/file (System/getProperty "user.home") ".cloud-itonami" "releases")}])
 
 (defn- nofollow-options [] (make-array LinkOption 0))
 (defn- path-exists? [^Path p] (Files/exists p (nofollow-options)))
@@ -277,6 +282,8 @@
         source (when (= root-kind :temporary) (cmake-source path))]
     (cond
       (= root-kind :uv-cache) {:kind :uv-cache :recovery :native-cache-manager}
+      (= root-kind :itonami-releases)
+      {:kind :resident-releases :recovery :review-required}
       (and (= root-kind :temporary) (re-matches #"pnpm-.+-store" name)
            (pnpm-store? path))
       {:kind :pnpm-temporary-store :recovery :delete-tree}
@@ -296,7 +303,13 @@
   (try
     (when-let [{:keys [kind recovery]} (classify root-kind path)]
       (let [bytes (directory-bytes path)
-            git (git-evidence root path kind)
+            ;; The aggregate release root deliberately contains Git checkouts.
+            ;; Walking each checkout to infer disposable Git state would be
+            ;; both expensive and the wrong authority question: the whole
+            ;; class remains review-only.
+            git (if (= :resident-releases kind)
+                  {:git-owned? true :nested-git? true :safe? false}
+                  (git-evidence root path kind))
             open-state (open-file-state path)
             reclaimable? (and (not= :review-required recovery) (:safe? git)
                               (= :clear open-state) (not (symlink? path)))]
@@ -314,7 +327,7 @@
   (let [root (.toPath ^java.io.File path)]
     (when (and (path-exists? root) (Files/isDirectory root (nofollow-options))
                (not (symlink? root)))
-      (if (= kind :uv-cache)
+      (if (contains? #{:uv-cache :itonami-releases} kind)
         [root]
         (let [all (walk-paths root 4)
               whole (filter #(and (= root (.getParent ^Path %))
@@ -354,6 +367,9 @@
      :truncated? truncated?
      :reclaimable-bytes (reduce + 0 (map :bytes
                                          (filter #(= :reclaimable (:decision %)) candidates)))
+     :review-required-bytes
+     (reduce + 0 (map :bytes
+                      (filter #(= :review-required (:decision %)) candidates)))
      :candidates candidates}))
 
 (defn- delete-tree! [^Path root ^Path target]
@@ -474,7 +490,8 @@
          {:schema "cloud.itonami.app.disk-space-maintenance.v2"
           :action (if reclaimed "cleanup-and-reclaim" "cleanup")
           :before before :after after :fixed-cleanup fixed
-          :inventory (select-keys found [:candidate-count :truncated? :reclaimable-bytes])
+         :inventory (select-keys found [:candidate-count :truncated?
+                                        :reclaimable-bytes :review-required-bytes])
           :selected-candidate-ids (mapv :candidate-id selected)
           :review-required (->> (:candidates found)
                                 (filter #(= :review-required (:decision %)))
