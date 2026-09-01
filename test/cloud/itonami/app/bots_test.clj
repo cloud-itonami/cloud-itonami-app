@@ -90,6 +90,9 @@
                          [:bots :goal :max-output-tokens])))
     (is (= 16384 (:max-output-tokens
                   (request resident-config provider b run "murakumo-main"))))
+    (is (= 8192 (get-in resident-config [:bots :goal :max-input-tokens])))
+    (is (= 8192 (:context-input-limit-tokens
+                 (request resident-config provider b run "murakumo-main"))))
     (testing "an operator can still keep resident work shorter than interactive"
       (is (= 700 (get-in (configure {:bots {:workforce {:max-output-tokens 700}}}
                                     {:job/resident-workforce? true})
@@ -97,6 +100,9 @@
     (is (nil? (:max-output-tokens
                (request ordinary-config provider b run "murakumo-main")))
         "human-created goals keep the provider's ordinary quality envelope")
+    (is (nil? (:context-input-limit-tokens
+               (request ordinary-config provider b run "murakumo-main")))
+        "human-created goals keep the selected model's full input envelope")
     ;; The cap and the reasoning switch are one decision, not two. Capping the
     ;; budget while leaving reasoning on is how 11 consecutive resident ticks
     ;; of one Bot produced "Provider returned no final answer" between
@@ -122,7 +128,42 @@
       (is (= 1536
              (get-in (configure {:bots {:workforce {:max-output-tokens 1536}}}
                                 {:job/resident-workforce? true})
-                     [:bots :goal :max-output-tokens]))))))
+                     [:bots :goal :max-output-tokens])))
+      (is (= 4096
+             (get-in (configure {:bots {:workforce {:max-input-tokens 4096}}}
+                                {:job/resident-workforce? true})
+                     [:bots :goal :max-input-tokens]))))))
+
+(deftest resident-input-is-bounded-without-changing-interactive-context
+  (let [configure (private-fn 'goal-job-configuration)
+        request (private-fn 'agent-request)
+        estimate (private-fn 'estimated-tokens)
+        model "large-resident-fixture"
+        provider {:max-output-tokens 2048
+                  :context-window-tokens {model 262144}}
+        tools [{:name "workspace_read"
+                :description "Read bounded workspace evidence"
+                :parameters {:type "object" :properties {:path {:type "string"}}}}]
+        history (into [{:role "system" :content "stable system instruction"}
+                       {:role "user" :content "durable resident objective"}]
+                      (for [i (range 220)]
+                        {:role "assistant"
+                         :content (str "old resident observation " i " "
+                                       (apply str (repeat 1200 "x")))}))
+        resident (request (configure {} {:job/resident-workforce? true})
+                          provider {:bot/id "resident"}
+                          {:goal? true :messages history :tools tools} model)
+        interactive (request (configure {} {:job/resident-workforce? false})
+                             provider {:bot/id "interactive"}
+                             {:goal? true :messages history :tools tools} model)
+        resident-message-budget (- 8192 (estimate tools) 512)]
+    (is (= 8192 (:context-input-limit-tokens resident)))
+    (is (:context-compacted? resident))
+    (is (<= (:context-estimated-tokens resident) resident-message-budget))
+    (is (< (count (:messages resident)) (count history)))
+    (is (nil? (:context-input-limit-tokens interactive)))
+    (is (= history (:messages interactive))
+        "the resident throughput repair does not shrink a human-created goal")))
 
 (deftest bot-usage-retains-measured-prefix-cache-hits
   (let [merge-usage (private-fn 'merge-usage)]
