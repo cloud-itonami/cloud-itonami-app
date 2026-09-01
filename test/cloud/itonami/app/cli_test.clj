@@ -1,6 +1,7 @@
 (ns cloud.itonami.app.cli-test
   (:require [clojure.test :refer [deftest is testing]]
             [clojure.data.json :as json]
+            [clojure.string :as str]
             [cloud.itonami.app.agent-session :as agent-session]
             [cloud.itonami.app.app-client :as client]
             [cloud.itonami.app.bot-tools :as bot-tools]
@@ -173,6 +174,27 @@
       (is (= {:businesses 8 :bots 70 :enabled 70}
              (cli/run {} ["bots" "workforce"])))
       (is (= [:get "/api/agent-bots/workforce"] @seen)))))
+
+(deftest hermes-import-cli-round-trips-the-api-manifest-unchanged
+  (let [calls (atom [])
+        preview {:schema "cloud.itonami.app.hermes-bot-migration.v2"
+                 :migration-id "hermes-cli-test" :status "preview"
+                 :profiles [{:id "default"}]}]
+    (with-redefs [client/request-with-timeout!
+                  (fn [_ method path seconds body]
+                    (swap! calls conj [method path seconds body])
+                    (if (str/ends-with? path "/preview")
+                      preview
+                      (assoc (:manifest body) :status "staged")))]
+      (is (= "staged"
+             (:status (cli/run {} ["bots" "import" "hermes"
+                                   "--business" "org-1" "--stage" "true"]))))
+      (is (= "/api/agent-bots/imports/hermes/preview"
+             (second (first @calls))))
+      (is (= "/api/agent-bots/imports/hermes/stage"
+             (second (second @calls))))
+      (is (= preview (get-in (second @calls) [3 :manifest]))
+          "the CLI posts exactly the API preview, not a second local shape"))))
 
 (deftest a-failure-reaches-the-operator-under-the-name-it-was-recorded-with
   ;; Both directions, and the literal is pinned: this assertion exists to fail
