@@ -253,6 +253,8 @@
    "git_commit" :patch.create
    "disk_space_status" :disk.inspect
    "disk_space_cleanup" :disk.cleanup
+   "disk_space_inventory" :disk.candidate.inspect
+   "disk_space_reclaim" :disk.reclaimable.cleanup
    "git_hygiene_status" :git.inspect
    "git_hygiene_prune" :git.cleanup
    "domain_search" :domain.read

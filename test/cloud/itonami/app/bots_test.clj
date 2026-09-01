@@ -377,10 +377,12 @@
   {:key "cloud-itonami/disk-maintainer"
    :business {:id :cloud-itonami :name "Cloud Itonami"}
    :role {:id :disk-maintainer :name "Disk Maintainer" :job :operations}
-   :objective "Observe disk pressure and run the bounded cleanup when needed."
+   :objective "Observe pressure, inventory bounded candidates, and reclaim only verified regenerable artifacts."
    :responsibilities ["Never delete source, worktrees or user data"]
    :capabilities [{:capability :disk.inspect :decision :autonomous}
-                  {:capability :disk.cleanup :decision :autonomous}]
+                  {:capability :disk.cleanup :decision :autonomous}
+                  {:capability :disk.candidate.inspect :decision :autonomous}
+                  {:capability :disk.reclaimable.cleanup :decision :autonomous}]
    :workspace "orgs/cloud-itonami/cloud-itonami-app"
    :cadence-minutes 15})
 
@@ -468,7 +470,7 @@
                   (is (str/includes? (:result turn) "renewal-risk.example"))
                   (is (str/includes? (:result turn) "proposal-approved")))))))))))
 
-(deftest workforce-disk-tools-exist-only-behind-the-two-disk-capabilities
+(deftest workforce-disk-tools-exist-only-behind-the-four-disk-capabilities
   (with-store
     (fn []
       (with-redefs [workspace-tools/admit-root (fn [path] path)]
@@ -476,10 +478,13 @@
                                    (workforce-catalog [(disk-maintainer-entry)]))
         (let [b (first (:bots (bots/overview {} alice)))
               admitted (set (:admitted-tools b))]
-          (is (= #{"disk_space_status" "disk_space_cleanup"} admitted)
+          (is (= #{"disk_space_status" "disk_space_cleanup"
+                   "disk_space_inventory" "disk_space_reclaim"} admitted)
               "the host maintainer does not inherit coding, commerce or Wallet tools")
           (is (= [{:capability "disk.inspect" :decision "autonomous" :note nil}
-                  {:capability "disk.cleanup" :decision "autonomous" :note nil}]
+                  {:capability "disk.cleanup" :decision "autonomous" :note nil}
+                  {:capability "disk.candidate.inspect" :decision "autonomous" :note nil}
+                  {:capability "disk.reclaimable.cleanup" :decision "autonomous" :note nil}]
                  (:capability-policy b))))))))
 
 (deftest workforce-provisioning-is-idempotent-owner-isolated-and-narrow
@@ -841,16 +846,29 @@
             (fn []
               (with-redefs [gc/refuse-admission? (constantly pressure)
                             disk-space/status (constantly disk-before)
-                            disk-space/maintain!
+                            disk-space/reconcile!
                             (fn [before]
                               (reset! maintained before)
-                              {:schema "cloud.itonami.app.disk-space-maintenance.v1"
-                               :action "cleanup"
+                              {:schema "cloud.itonami.app.disk-space-maintenance.v2"
+                               :action "cleanup-and-reclaim"
                                :before before
                                :after (assoc before :usable-bytes 12288)
                                :reclaimed-bytes 4096
-                               :helper {:exit 0 :output "bounded helper log"
-                                        :truncated? false}})
+                               :fixed-cleanup
+                               {:schema "cloud.itonami.app.disk-space-maintenance.v1"
+                                :action "cleanup" :before before :after before
+                                :helper {:exit 0 :output "bounded helper log"
+                                         :truncated? false}}
+                               :inventory {:candidate-count 1 :truncated? false
+                                           :reclaimable-bytes 4096}
+                               :selected-candidate-ids [(apply str (repeat 64 "c"))]
+                               :review-required []
+                               :candidate-reclaim
+                               {:schema "cloud.itonami.app.disk-space-reclaim.v1"
+                                :action "reclaim"
+                                :reclaimed-candidate-ids [(apply str (repeat 64 "c"))]
+                                :reclaimed-bytes 4096}
+                               :stable-observation {:stable? true}})
                             bots/submit-goal!
                             (fn [& _]
                               (throw (ex-info "model path must not run"
@@ -877,7 +895,8 @@
                   (is (= :succeeded (get-in goal-job [:job/run
                                                       :agent.run/status])))
                   (is (= "completed" (:state turn)))
-                  (is (= 2 (:tool-count turn)))
+                  (is (= 4 (:tool-count turn)))
+                  (is (= "disk_space_reclaim" (:tool turn)))
                   (is (str/includes? (:result turn) "reclaimed bytes: 4096"))
                   (is (not (str/includes? (pr-str goal-job)
                                           "bounded helper log"))
@@ -889,6 +908,9 @@
                                      "Call disk_space_status exactly once"))
                   (is (str/includes? objective
                                      "call disk_space_cleanup exactly once"))
+                  (is (str/includes? objective
+                                     "call disk_space_inventory exactly once"))
+                  (is (str/includes? objective "candidate_ids"))
                   (is (str/includes? objective
                                      "Do not inspect or modify repositories"))
                   (is (not (str/includes? objective "repository evidence")))
