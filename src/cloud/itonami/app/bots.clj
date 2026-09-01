@@ -194,6 +194,16 @@
   interactive work sets `[:bots :workforce :max-output-tokens]`, which is
   read first."
   16384)
+(def ^:private default-resident-max-input-tokens
+  "The total prompt envelope for one unattended resident model call.
+
+  This includes messages, tool schemas, and framing reserve, but not output.
+  Measured 2026-09-01: productive resident calls peaked at 6,670 prompt tokens,
+  while one 219-turn Bot had grown to an 82,003-token prompt and accumulated
+  6.65M prompt tokens. 8,192 preserves the measured useful envelope while
+  preventing one durable history from monopolising the single resident slot.
+  Interactive conversations do not receive this cap."
+  8192)
 (def max-message-chars 8000)
 (def max-conversation 200)
 (def max-tool-output-chars 6000)
@@ -4153,17 +4163,41 @@
                           (retry/model-scoped (:max-output-tokens provider) model)
                           2048)
         context-window (provider/model-context-window provider model)
-        prompt-budget (when context-window
-                        (max 1 (- (long context-window)
-                                  (long output-tokens)
-                                  (estimated-tokens (:tools run))
-                                  context-safety-tokens)))
-        threshold-budget (when context-window
-                           (max 1 (- (long (* context-compaction-threshold
-                                              (long context-window)))
-                                     (long output-tokens)
-                                     (estimated-tokens (:tools run))
-                                     context-safety-tokens)))
+        input-limit (when (:goal? run)
+                      (some-> (get-in configuration
+                                      [:bots :goal :max-input-tokens])
+                              long))
+        tools-tokens (estimated-tokens (:tools run))
+        provider-prompt-budget (when context-window
+                                 (max 1 (- (long context-window)
+                                           (long output-tokens)
+                                           tools-tokens
+                                           context-safety-tokens)))
+        resident-prompt-budget (when input-limit
+                                 (max 1 (- input-limit
+                                           tools-tokens
+                                           context-safety-tokens)))
+        prompt-budget (cond
+                        (and provider-prompt-budget resident-prompt-budget)
+                        (min provider-prompt-budget resident-prompt-budget)
+                        provider-prompt-budget provider-prompt-budget
+                        resident-prompt-budget resident-prompt-budget)
+        provider-threshold-budget (when context-window
+                                    (max 1 (- (long (* context-compaction-threshold
+                                                       (long context-window)))
+                                              (long output-tokens)
+                                              tools-tokens
+                                              context-safety-tokens)))
+        resident-threshold-budget (when input-limit
+                                    (max 1 (- (long (* context-compaction-threshold
+                                                       input-limit))
+                                              tools-tokens
+                                              context-safety-tokens)))
+        threshold-budget (cond
+                           (and provider-threshold-budget resident-threshold-budget)
+                           (min provider-threshold-budget resident-threshold-budget)
+                           provider-threshold-budget provider-threshold-budget
+                           resident-threshold-budget resident-threshold-budget)
         before-tokens (estimated-tokens (:messages run))
         compacted? (and threshold-budget (> before-tokens threshold-budget))
         compacted (if compacted?
@@ -4186,6 +4220,7 @@
            :tools (:tools run)
            :temperature 0.2
            :context-window-tokens context-window
+           :context-input-limit-tokens input-limit
            :context-threshold-tokens threshold-budget
            :context-estimated-tokens after-tokens
            :context-compacted? (boolean compacted?)}
@@ -4432,6 +4467,7 @@
                 (on-event (merge {:type "phase" :phase "model"}
                                  (select-keys request
                                               [:context-window-tokens
+                                               :context-input-limit-tokens
                                                :context-threshold-tokens
                                                :context-estimated-tokens
                                                :context-compacted?]))))
@@ -4455,6 +4491,7 @@
                            :model-fallback? (boolean (:fallback? result))
                            :context (select-keys request
                                                  [:context-window-tokens
+                                                  :context-input-limit-tokens
                                                   :context-threshold-tokens
                                                   :context-estimated-tokens
                                                   :context-compacted?]))
@@ -5611,11 +5648,16 @@
                         (assoc-in [:bots :goal :max-tool-output-chars]
                                   max-tool-output-chars)
                         resident-workforce?
-                        (assoc-in [:bots :goal :max-output-tokens]
-                                  (long (or (get-in configuration
-                                                    [:bots :workforce
-                                                     :max-output-tokens])
-                                            default-resident-max-output-tokens)))))
+                        (-> (assoc-in [:bots :goal :max-output-tokens]
+                                      (long (or (get-in configuration
+                                                        [:bots :workforce
+                                                         :max-output-tokens])
+                                                default-resident-max-output-tokens)))
+                            (assoc-in [:bots :goal :max-input-tokens]
+                                      (long (or (get-in configuration
+                                                        [:bots :workforce
+                                                         :max-input-tokens])
+                                                default-resident-max-input-tokens))))))
 
 (defn- run-goal-job! [configuration run-id]
   (let [{:job/keys [bot session objective attempt] :as job} (goal-job run-id)

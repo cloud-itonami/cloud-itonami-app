@@ -405,6 +405,10 @@
                     ;; into a red "tool budget" failure after four reads.
                     :max-tool-calls 8
                     :max-tool-output-chars 1600
+                    ;; Total input per resident inference call, including tool
+                    ;; schemas and framing. Interactive Bots remain bounded by
+                    ;; the selected model's context window instead.
+                    :max-input-tokens 8192
                     ;; The resident workforce is the edge workload: use the
                     ;; explicit Ornith route so its SLO measures the 16 GB Mac
                     ;; fleet, not whatever murakumo-main aliases to later.
