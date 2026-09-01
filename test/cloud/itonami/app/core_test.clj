@@ -554,9 +554,25 @@
   (with-redefs [store/snapshot (constantly (store/initial-state))]
     (let [html (web/page-html config)
           html-ids (set (map second (re-seq #"id=\"([^\"]+)\"" html)))
-          ;; An unresolved lookup throws inside DOMContentLoaded and takes the
-          ;; whole interaction layer down with it, so every one must resolve.
-          scripted (set (map second (re-seq #"\$\('#([^']+)'\)" web/interaction-js)))
+          ;; Every id the script looks up must be in the page -- EXCEPT one the
+          ;; script creates itself, which by construction is not server-rendered.
+          ;;
+          ;; The rule used to be "every one must resolve", justified as "an
+          ;; unresolved lookup throws inside DOMContentLoaded". That premise is
+          ;; wrong: `$` is `querySelector`, which returns null. Measured
+          ;; 2026-09-01, it made `bots-rail-menu` a standing failure on main --
+          ;; a popup the rail builds on first open (`menu.id = 'bots-rail-menu';
+          ;; document.body.append(menu)`), whose three call sites all handle
+          ;; null. Satisfying the old rule would have meant shipping an empty
+          ;; container on every page whose only purpose was this assertion.
+          ;;
+          ;; Exempting exactly the ids the script assigns keeps the guard that
+          ;; matters -- a lookup for an id that nothing creates and nothing
+          ;; renders is still a failure.
+          created (set (map second (re-seq #"\.id = '([^']+)'" web/interaction-js)))
+          scripted (set/difference
+                    (set (map second (re-seq #"\$\('#([^']+)'\)" web/interaction-js)))
+                    created)
           panels (set (map second (re-seq #"data-view-panel=\"([^\"]+)\"" html)))
           views (set (map second (re-seq #"data-view=\"([^\"]+)\"" html)))]
       (is (seq scripted))
