@@ -156,26 +156,39 @@
                                    :business "org-1"}
                      :profiles [{:id "default"}]
                      :safety {:creates-bots false :copies-grants false}}
-            staged (assoc preview :status "staged")]
+            staged (assoc preview :status "staged")
+            provisioned (assoc staged :status "provisioned"
+                               :compatibility {:execution-model {:percent 90}})]
         (with-redefs [migration/preview (fn [request]
                                           (is (= "org-1" (:business request)))
                                           preview)
                       migration/stage! (fn [{:keys [manifest staged-by]}]
                                          (is (= preview manifest))
                                          (is (= "org-1" (:organization-id staged-by)))
-                                         staged)]
+                                         staged)
+                      migration/provision!
+                      (fn [{:keys [manifest session]}]
+                        (is (= staged manifest))
+                        (is (= "org-1" (:organization-id session)))
+                        provisioned)]
           (let [seen-preview
                 (request :post "/api/agent-bots/imports/hermes/preview"
                          {:business "org-1"} "test-token")
                 seen-stage
                 (request :post "/api/agent-bots/imports/hermes/stage"
                          {:manifest (:body seen-preview)} "test-token")
+                seen-provision
+                (request :post
+                         "/api/agent-bots/imports/hermes-http-test/provision"
+                         {} "test-token")
                 fetched
                 (request :get "/api/agent-bots/imports/hermes-http-test"
                          nil "test-token")]
             (is (= 200 (:status seen-preview)))
             (is (= migration/schema (get-in seen-preview [:body :schema])))
             (is (= 201 (:status seen-stage)))
+            (is (= 201 (:status seen-provision)))
+            (is (= 90 (get-in seen-provision
+                              [:body :compatibility :execution-model :percent])))
             (is (= migration/schema (get-in seen-stage [:body :schema])))
-            (is (= "staged" (get-in fetched [:body :status])))
-            (is (false? (get-in fetched [:body :safety :creates-bots])))))))))
+            (is (= "provisioned" (get-in fetched [:body :status])))))))))

@@ -10,6 +10,7 @@
             [clojure.string :as str]
             [clojure.test :refer [deftest is testing]]
             [cloud.itonami.app.bot-import :as subject]
+            [cloud.itonami.app.bots :as bots]
             [cloud.itonami.app.hermes-migration :as migration]))
 
 (defn- temp-dir [prefix]
@@ -84,6 +85,9 @@
     (binding [migration/*export-profile!*
               (fn [_ _ profile-id output]
                 (spit output (str "portable:" profile-id)))
+              migration/*write-runtime-context!*
+              (fn [profile-id _ output]
+                (spit output (str "redacted context:" profile-id)))
               migration/*export-sessions!*
               (fn [_ profile-home output]
                 (spit output (json/write-str
@@ -96,13 +100,61 @@
         (is (= (:migration-id preview) (:migration-id staged)))
         (is (= (:schema preview) (:schema staged)))
         (is (= "staged" (:status staged)))
-        (is (= 4 (count (mapcat :artifacts (:profiles staged)))))
+        (is (= 6 (count (mapcat :artifacts (:profiles staged)))))
         (is (.isFile (io/file bundle "manifest.json")))
         (is (every? #(and (= "staged" (:state %))
                           (pos? (:bytes %))
                           (= 64 (count (:sha256 %))))
                     (mapcat :artifacts (:profiles staged))))
-        (is (false? (get-in staged [:safety :creates-bots])))))))
+        (is (= 2 (count (filter #(= "hermes-runtime-context" (:kind %))
+                                (mapcat :artifacts (:profiles staged)))))
+        (is (false? (get-in staged [:safety :creates-bots]))))))))
+
+(deftest provision-connects-every-profile-to-an-inert-bot-and-scores-the-result
+  (let [home (full-hermes-home!)
+        data-dir (temp-dir "itonami-hermes-provision-")
+        preview (migration/preview
+                 {:home home :migration-id "hermes-provision-test"})
+        captured (atom [])]
+    (binding [migration/*export-profile!*
+              (fn [_ _ profile-id output]
+                (spit output (str "portable:" profile-id)))
+              migration/*write-runtime-context!*
+              (fn [profile-id _ output]
+                (spit output (str "redacted context:" profile-id)))
+              migration/*export-sessions!*
+              (fn [_ profile-home output]
+                (spit output
+                      (json/write-str
+                       {:id (str "session-" (.getName (io/file profile-home)))
+                        :last_active "2026-09-01T00:00:00Z"
+                        :messages [{:id "u" :role "user" :content "hello"}
+                                   {:id "a" :role "assistant" :content "hi"}]})))]
+      (let [staged (migration/stage!
+                    {:home home :data-dir data-dir :manifest preview})]
+        (with-redefs [bots/create-hermes-import!
+                      (fn [_ _ request]
+                        (swap! captured conj request)
+                        {:id (str "bot-" (:profile-id request))})]
+          (let [result
+                (migration/provision!
+                 {:configuration
+                  {:providers [{:id "murakumo"
+                                :models ["example/model"]}]}
+                  :session {:user-id "u" :organization-id "o"}
+                  :data-dir data-dir :manifest staged})]
+            (is (= "provisioned" (:status result)))
+            (is (= 2 (count (:profiles result))))
+            (is (= ["default" "research"] (mapv :profile-id @captured)))
+            (is (every? #(= 2 (count (:seed %))) @captured))
+            (is (every? empty? (map #(select-keys % [:tools :accounts]) @captured)))
+            (is (= 85 (get-in result [:compatibility :execution-model :percent])))
+            (is (= 75 (get-in result [:compatibility :semantic-system :percent])))
+            (is (= 65 (get-in result [:compatibility :zero-adjustment-runtime
+                                      :percent])))
+            (is (= 100 (get-in result [:compatibility :drop-in-core-api :percent])))
+            (is (= {:exact 1 :profiles 2 :percent 50}
+                   (get-in result [:compatibility :model-preservation])))))))))
 
 (deftest stage-refuses-a-stale-or-different-manifest
   (let [home (full-hermes-home!)
