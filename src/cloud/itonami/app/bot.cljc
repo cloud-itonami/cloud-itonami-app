@@ -101,6 +101,8 @@
 (def max-responsibilities 12)
 (def max-responsibility 1000)
 (def max-capability-policy 40)
+(def max-skill-packages 4)
+(def max-skill-instructions 12000)
 
 (def capability-decisions
   #{:autonomous :voice-required :approval-required :blocked})
@@ -129,6 +131,33 @@
             {:capability capability :decision decision
              :note (some-> (:note entry) str str/trim not-empty)}))
         (take max-capability-policy values)))
+
+(def skill-id-pattern #"^[a-z0-9]+(?:-[a-z0-9]+)*$")
+(def skill-sha256-pattern #"^[0-9a-f]{64}$")
+
+(defn- skill-packages [values]
+  (when (> (count (or values [])) max-skill-packages)
+    (throw (ex-info "too many workforce Skill packages"
+                    {:type :bot/invalid :field :bot/skills})))
+  (let [packages
+        (mapv
+         (fn [package]
+           (let [id (some-> (:id package) str str/trim)
+                 sha256 (some-> (:sha256 package) str str/lower-case str/trim)
+                 instructions (some-> (:instructions package) str str/trim)]
+             (when-not (and (re-matches skill-id-pattern (or id ""))
+                            (re-matches skill-sha256-pattern (or sha256 ""))
+                            (seq instructions)
+                            (<= (count instructions) max-skill-instructions))
+               (throw (ex-info "invalid workforce Skill package"
+                               {:type :bot/invalid :field :bot/skills
+                                :id id})))
+             {:id id :sha256 sha256 :instructions instructions}))
+         (or values []))]
+    (when-not (= (count packages) (count (set (map :id packages))))
+      (throw (ex-info "duplicate workforce Skill package"
+                      {:type :bot/invalid :field :bot/skills})))
+    packages))
 
 ;; ── the record ──────────────────────────────────────────────────────────
 
@@ -287,6 +316,10 @@
      :bot/role (:bot/role value)
      :bot/responsibilities (responsibilities (:bot/responsibilities value))
      :bot/capability-policy (capability-policy (:bot/capability-policy value))
+     ;; Governed instructions are persisted with their digest so a live Bot
+     ;; can prove which revision it used. They are never consulted by tool
+     ;; admission, account selection, workspace reach, or effect approval.
+     :bot/skills (skill-packages (:bot/skills value))
      :bot/enabled? (if (contains? value :bot/enabled?)
                      (boolean (:bot/enabled? value))
                      true)
