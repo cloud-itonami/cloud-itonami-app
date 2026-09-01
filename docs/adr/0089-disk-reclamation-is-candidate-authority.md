@@ -26,11 +26,14 @@ Disk maintenance has four separately admitted capabilities and tools:
 | `:disk.candidate.inspect` | `disk_space_inventory` | mint bounded candidate receipts |
 | `:disk.reclaimable.cleanup` | `disk_space_reclaim` | reclaim receipt IDs after revalidation |
 
-Inventory has no path input. It inspects only `/private/tmp` and the exact
-per-user uv cache. A receipt ID binds the canonical object identity, class,
-byte count and modification evidence. A receipt may show a root-relative audit
-locator so a review-required object is identifiable, but reclaim never accepts
-that locator (or any path) as mutation authority.
+Inventory has no path input. It inspects `/private/tmp`, the exact per-user uv
+cache, and the aggregate Cloud Itonami resident-release footprint. The release
+footprint is observation-only and always `review-required`; current and
+rollback releases are never promoted to autonomous deletion authority. A
+receipt ID binds the canonical object identity, class, byte count and
+modification evidence. A receipt may show a root-relative audit locator so a
+review-required object is identifiable, but reclaim never accepts that locator
+(or any path) as mutation authority.
 
 Reclaim accepts only 1–8 unique receipt IDs, only while the disk is below the
 floor, and at most 10 GiB of planned candidates per cycle. It re-discovers each
@@ -45,9 +48,10 @@ Automatic classes are temporary package stores, standalone temporary
 `node_modules` with both package and lock manifests, qualified CMake build
 trees whose source still exists outside the build, and the uv cache through
 uv's own cache manager. Model artifacts such as GGUF are reported as
-`review-required`; they are not automatically deleted. Repositories,
-worktrees, DataLad, sessions, documents, databases, browser profiles, resident
-releases, toolchains and OS storage are outside the authority.
+`review-required`; they are not automatically deleted. Resident releases are
+reported as an aggregate review surface but remain outside mutation authority.
+Repositories, worktrees, DataLad, sessions, documents, databases, browser
+profiles, toolchains and OS storage are outside the authority.
 
 The resident cycle remains deterministic: status, fixed cleanup, inventory
 only if pressure remains, bounded reclaim only if reclaimable receipts exist,

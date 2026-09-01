@@ -891,7 +891,8 @@
                                 :helper {:exit 0 :output "bounded helper log"
                                          :truncated? false}}
                                :inventory {:candidate-count 1 :truncated? false
-                                           :reclaimable-bytes 4096}
+                                           :reclaimable-bytes 4096
+                                           :review-required-bytes 8192}
                                :selected-candidate-ids [(apply str (repeat 64 "c"))]
                                :review-required []
                                :candidate-reclaim
@@ -929,6 +930,7 @@
                   (is (= 4 (:tool-count turn)))
                   (is (= "disk_space_reclaim" (:tool turn)))
                   (is (str/includes? (:result turn) "reclaimed bytes: 4096"))
+                  (is (str/includes? (:result turn) "review-required bytes: 8192"))
                   (is (not (str/includes? (pr-str goal-job)
                                           "bounded helper log"))
                       "the recurring ledger stores the compact receipt, not helper output")
