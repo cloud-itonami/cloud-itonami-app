@@ -142,6 +142,7 @@
 (defn- hermes-role [role]
   (case (str role)
     "owner" "user"
+    "person" "user"
     "bot" "assistant"
     "assistant" "assistant"
     "user" "user"
