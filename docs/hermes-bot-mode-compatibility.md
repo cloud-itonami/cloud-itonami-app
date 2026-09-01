@@ -1,5 +1,18 @@
 # Hermes Agent Bot Mode compatibility
 
+## Full profile migration
+
+`itonami bots import hermes` now uses the resident API's
+`cloud.itonami.app.hermes-bot-migration.v2` manifest. It inventories the
+default and every named Hermes profile together. `--stage true` stores
+Hermes-native credential-free profile archives and forced-redacted JSONL
+session exports under one migration id; the CLI posts the preview manifest
+back unchanged.
+
+Credentials, provider/account bindings and source tool authority are listed as
+`rebind-required`. Staging does not create or enable a Bot and does not widen a
+grant. See ADR-0088.
+
 Cloud Itonami exposes a Hermes-shaped transport for its resident Bots. The
 identity mapping is one-to-one:
 

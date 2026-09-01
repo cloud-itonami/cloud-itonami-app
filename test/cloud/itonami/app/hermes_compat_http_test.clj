@@ -6,6 +6,7 @@
             [cloud.itonami.app.bot :as bot]
             [cloud.itonami.app.config :as config-loader]
             [cloud.itonami.app.hermes-compat :as hermes]
+            [cloud.itonami.app.hermes-migration :as migration]
             [cloud.itonami.app.identity :as identity]
             [cloud.itonami.app.provider :as provider]
             [cloud.itonami.app.server :as server]
@@ -139,3 +140,42 @@
             (is (str/starts-with? (:content-type events) "text/event-stream"))
             (is (str/includes? (:raw events) "\"event\":\"run.started\""))
             (is (str/includes? (:raw events) "\"event\":\"run.completed\""))))))))
+
+(deftest hermes-full-migration-preview-and-stage-share-one-http-schema
+  (with-server
+    (fn []
+      (testing "the filesystem preview is authenticated"
+        (is (= 401 (:status
+                    (request :post "/api/agent-bots/imports/hermes/preview"
+                             {:business "org-1"} nil)))))
+      (let [preview {:schema migration/schema
+                     :migration-id "hermes-http-test"
+                     :status "preview"
+                     :source {:kind "hermes-agent" :revision "revision-1"}
+                     :destination {:kind "cloud-itonami-bots"
+                                   :business "org-1"}
+                     :profiles [{:id "default"}]
+                     :safety {:creates-bots false :copies-grants false}}
+            staged (assoc preview :status "staged")]
+        (with-redefs [migration/preview (fn [request]
+                                          (is (= "org-1" (:business request)))
+                                          preview)
+                      migration/stage! (fn [{:keys [manifest staged-by]}]
+                                         (is (= preview manifest))
+                                         (is (= "org-1" (:organization-id staged-by)))
+                                         staged)]
+          (let [seen-preview
+                (request :post "/api/agent-bots/imports/hermes/preview"
+                         {:business "org-1"} "test-token")
+                seen-stage
+                (request :post "/api/agent-bots/imports/hermes/stage"
+                         {:manifest (:body seen-preview)} "test-token")
+                fetched
+                (request :get "/api/agent-bots/imports/hermes-http-test"
+                         nil "test-token")]
+            (is (= 200 (:status seen-preview)))
+            (is (= migration/schema (get-in seen-preview [:body :schema])))
+            (is (= 201 (:status seen-stage)))
+            (is (= migration/schema (get-in seen-stage [:body :schema])))
+            (is (= "staged" (get-in fetched [:body :status])))
+            (is (false? (get-in fetched [:body :safety :creates-bots])))))))))

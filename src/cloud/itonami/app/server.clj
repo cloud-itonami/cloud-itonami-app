@@ -48,6 +48,7 @@
             [cloud.itonami.app.org-root-did :as org-root-did]
             [cloud.itonami.app.health :as health]
             [cloud.itonami.app.hermes-compat :as hermes-compat]
+            [cloud.itonami.app.hermes-migration :as hermes-migration]
             [cloud.itonami.app.humanity-trust :as humanity-trust]
             [cloud.itonami.app.identity :as identity]
             [cloud.itonami.app.fax :as fax]
@@ -6467,6 +6468,66 @@
   [config exchange method path]
   (let [session (require-app-session! exchange)]
     (cond
+      ;; A Hermes import is server-side because the resident server is the
+      ;; single writer of both state.edn and its bundle directory.  It is
+      ;; deliberately local-only: accepting a filesystem path on the hosted
+      ;; control plane would turn an authenticated API into a remote file
+      ;; inventory service.  Agent sessions are accepted on loopback because
+      ;; their root is already read access to this same 0600 data directory.
+      (and (= method "POST")
+           (= path "/api/agent-bots/imports/hermes/preview"))
+      (let [session (require-app-session! exchange)
+            body (read-json-limited exchange (* 64 1024) keyword)]
+        (when-not (get-in config [:privacy :bind-loopback-only?])
+          (throw (ex-info "Hermes filesystem import は local resident app で実行してください。"
+                          {:type :bot-import/local-only})))
+        (require-origin! exchange config)
+        (require-csrf! exchange session)
+        (send! exchange 200
+               (hermes-migration/preview
+                {:home (:home body)
+                 :business (or (:business body) "cloud-itonami")})))
+
+      (and (= method "POST")
+           (= path "/api/agent-bots/imports/hermes/stage"))
+      (let [session (require-app-session! exchange)
+            body (read-json-limited exchange (* 4 1024 1024) keyword)]
+        (when-not (get-in config [:privacy :bind-loopback-only?])
+          (throw (ex-info "Hermes filesystem import は local resident app で実行してください。"
+                          {:type :bot-import/local-only})))
+        (require-origin! exchange config)
+        (require-csrf! exchange session)
+        (let [staged (hermes-migration/stage!
+                      {:home (:home body)
+                       :data-dir (config/data-dir)
+                       :manifest (:manifest body)
+                       :staged-by {:user-id (:user-id session)
+                                   :organization-id (:organization-id session)}})]
+          (store/transact!
+           assoc-in [:bot-imports (:migration-id staged)]
+           {:organization-id (:organization-id session)
+            :manifest staged})
+          (send! exchange 201 staged)))
+
+      (and (= method "GET") (= path "/api/agent-bots/imports"))
+      (let [session (require-app-session! exchange)
+            organization-id (:organization-id session)
+            imports (->> (:bot-imports (store/snapshot))
+                         vals
+                         (filter #(= organization-id (:organization-id %)))
+                         (mapv :manifest))]
+        (send! exchange 200 {:schema hermes-migration/schema
+                             :imports imports}))
+
+      (and (= method "GET")
+           (bot-id-from path #"/api/agent-bots/imports/([^/]+)"))
+      (let [session (require-app-session! exchange)
+            id (bot-id-from path #"/api/agent-bots/imports/([^/]+)")
+            record (get-in (store/snapshot) [:bot-imports id])]
+        (if (and record (= (:organization-id session) (:organization-id record)))
+          (send! exchange 200 (:manifest record))
+          (send! exchange 404 {:error {:type "bot-import/not-found"}})))
+
       (and (= method "GET") (= path "/api/agent-bots"))
       (send! exchange 200 (bots/overview config session))
 
@@ -6578,6 +6639,18 @@
                      :bot/disabled 409
                      :bot/not-held 409
                      :handoff/refused 409
+                     :bot-import/source-unreadable 409
+                     :bot-import/exporter-unavailable 409
+                     :bot-import/export-failed 409
+                     :bot-import/export-timeout 409
+                     :bot-import/source-changed 409
+                     :bot-import/already-staged 409
+                     :bot-import/insufficient-space 507
+                     :bot-import/stage-directory 500
+                     :bot-import/local-only 403
+                     :bot-import/invalid-schema 422
+                     :bot-import/invalid-migration-id 422
+                     :http/payload-too-large 413
                      400)
                    {:error {:type (name (or (:type (ex-data error)) :bot/error))
                             :message (.getMessage error)}}))
