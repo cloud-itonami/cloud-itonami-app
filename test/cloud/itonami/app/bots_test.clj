@@ -200,6 +200,37 @@
         (is (= :passkey-smart-account (:custody bot-wallet)))
         (is (nil? (:private-key bot-wallet)))))))
 
+(deftest hermes-import-provisioning-is-idempotent-inert-and-seeds-conversation
+  (with-store
+    (fn []
+      (let [request {:migration-id "hermes-unit"
+                     :profile-id "research"
+                     :name "research" :brief "imported"
+                     :runtime-context {:kind "hermes-runtime-context"}
+                     :session-export {:kind "hermes-session-export"}
+                     :session-ids ["source-session-1"]
+                     :seed [{:role :person :text "source question"}
+                            {:role :bot :text "source answer"}]}
+            first-result (bots/create-hermes-import! nil alice request)
+            second-result (bots/create-hermes-import! nil alice request)
+            public (some #(when (= (:id first-result) (:id %)) %)
+                         (:bots (bots/overview nil alice)))]
+        (is (true? (:created? first-result)))
+        (is (false? (:created? second-result)))
+        (is (= (:id first-result) (:id second-result)))
+        (is (= ["source question" "source answer"]
+               (mapv :text (bots/messages alice (:id first-result)))))
+        (is (= "research" (get-in public [:hermes-import :profile-id])))
+        (is (= ["source-session-1"]
+               (get-in public [:hermes-import :session-ids])))
+        (is (= 0 (get-in public [:hermes-import :credentials-copied])))
+        (is (= 0 (get-in public [:hermes-import :grants-copied])))
+        (is (empty? (:tools public)))
+        (is (empty? (:accounts public)))
+        (doseq [flag [:writes? :browser? :computer? :peers? :coding?
+                      :virtual-shell? :goal? :omakase?]]
+          (is (false? (get public flag)) (str flag " stays off")))))))
+
 (deftest a-new-bot-defaults-to-bounded-autonomy
   (with-store
     (fn []

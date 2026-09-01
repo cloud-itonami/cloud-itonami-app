@@ -196,6 +196,28 @@
       (is (= preview (get-in (second @calls) [3 :manifest]))
           "the CLI posts exactly the API preview, not a second local shape"))))
 
+(deftest hermes-import-cli-can-stage-and-provision-through-the-same-api
+  (let [calls (atom [])
+        preview {:schema "cloud.itonami.app.hermes-bot-migration.v2"
+                 :migration-id "hermes-cli-provision" :status "preview"}]
+    (with-redefs [client/request-with-timeout!
+                  (fn [_ method path seconds body]
+                    (swap! calls conj [method path seconds body])
+                    (cond
+                      (str/ends-with? path "/preview") preview
+                      (str/ends-with? path "/stage") (assoc preview :status "staged")
+                      (str/ends-with? path "/provision")
+                      (assoc preview :status "provisioned"
+                             :compatibility {:execution-model {:percent 90}})))]
+      (let [result (cli/run {} ["bots" "import" "hermes"
+                                "--provision" "true"])]
+        (is (= "provisioned" (:status result)))
+        (is (= 90 (get-in result [:compatibility :execution-model :percent])))
+        (is (= ["/api/agent-bots/imports/hermes/preview"
+                "/api/agent-bots/imports/hermes/stage"
+                "/api/agent-bots/imports/hermes-cli-provision/provision"]
+               (mapv second @calls)))))))
+
 (deftest a-failure-reaches-the-operator-under-the-name-it-was-recorded-with
   ;; Both directions, and the literal is pinned: this assertion exists to fail
   ;; when `provider/http-error` reaches an operator as `http-error`, which is

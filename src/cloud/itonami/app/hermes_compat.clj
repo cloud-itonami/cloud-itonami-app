@@ -59,6 +59,12 @@
 (defn- visible-bots [configuration session]
   (:bots (bots/overview configuration session)))
 
+(defn- imported-profile-id [bot]
+  (get-in bot [:hermes-import :profile-id]))
+
+(defn- imported-session-ids [bot]
+  (set (get-in bot [:hermes-import :session-ids])))
+
 (defn resolve-bot
   "Resolve an explicit Hermes profile/session id, with `default` selecting the
   first visible Bot. Throws the same not-found class as the native Bot API."
@@ -67,11 +73,25 @@
         requested (some-> profile str str/trim not-empty)
         default-id (some-> (get-in configuration [:bots :hermes :default-bot-id])
                            str str/trim not-empty)
-        selected (if (or (nil? requested) (= "default" requested))
-                   (or (some #(when (= default-id (:id %)) %) available)
-                       (some #(when (:pinned? %) %) available)
-                       (first available))
-                   (some #(when (= requested (:id %)) %) available))]
+        selected
+        (cond
+          (= "default" requested)
+          (or (some #(when (= "default" (imported-profile-id %)) %) available)
+              (some #(when (= default-id (:id %)) %) available)
+              (some #(when (:pinned? %) %) available)
+              (first available))
+
+          (nil? requested)
+          (or (some #(when (= default-id (:id %)) %) available)
+              (some #(when (:pinned? %) %) available)
+              (first available))
+
+          :else
+          (some #(when (or (= requested (:id %))
+                           (= requested (imported-profile-id %))
+                           (contains? (imported-session-ids %) requested))
+                   %)
+                available))]
     (or selected
         (throw (ex-info (str "Hermes profile/session not found: " requested)
                         {:type :hermes/not-found :profile requested})))))
@@ -79,7 +99,8 @@
 (defn profile-list [configuration session]
   {:object "list"
    :data (mapv (fn [bot]
-                 {:id (:id bot)
+                 {:id (or (imported-profile-id bot) (:id bot))
+                  :bot_id (:id bot)
                   :name (:name bot)
                   :model (:model bot)
                   :provider (:provider-id bot)
@@ -88,6 +109,24 @@
                   :session_id (:id bot)
                   :title bot-chat-title})
                (visible-bots configuration session))})
+
+(defn- source-session-row [bot row]
+  (-> row
+      (select-keys [:id :title :source :model :started_at :message_count
+                    :tool_call_count :last_active :preview :pinned :archived
+                    :hidden :has_system_prompt :has_model_config])
+      (assoc :source (or (:source row) "hermes_import")
+             :profile_id (or (:profile_name row) (imported-profile-id bot))
+             :destination_bot_id (:id bot)
+             :message_count (or (:message_count row) (count (:messages row))))))
+
+(defn- imported-sessions [session-auth bot]
+  (when (imported-profile-id bot)
+    (bots/hermes-import-sessions session-auth (:id bot))))
+
+(defn- imported-session [session-auth bot requested]
+  (some #(when (= (str requested) (str (:id %))) %)
+        (imported-sessions session-auth bot)))
 
 (defn- session-row [bot messages]
   (let [first-message (first messages)
@@ -115,9 +154,12 @@
 
 (defn session
   [configuration session-auth profile-or-session]
-  (let [bot (resolve-bot configuration session-auth profile-or-session)]
+  (let [bot (resolve-bot configuration session-auth profile-or-session)
+        imported (imported-session session-auth bot profile-or-session)]
     {:object "hermes.session"
-     :session (session-row bot (bots/messages session-auth (:id bot)))}))
+     :session (if imported
+                (source-session-row bot imported)
+                (session-row bot (bots/messages session-auth (:id bot))))}))
 
 (defn session-list
   [configuration session-auth profile {:keys [limit offset title include-hidden]}]
@@ -126,8 +168,13 @@
               (visible-bots configuration session-auth))
         rows (->> all
                   (remove #(and (not include-hidden) (:hidden? %)))
-                  (map (fn [bot]
-                         (session-row bot (bots/messages session-auth (:id bot)))))
+                  (mapcat (fn [bot]
+                            (let [source (imported-sessions session-auth bot)]
+                              (if (seq source)
+                                (map #(source-session-row bot %) source)
+                                [(session-row bot
+                                              (bots/messages session-auth
+                                                             (:id bot)))]))))
                   (filter #(or (str/blank? (str title)) (= title (:title %))))
                   vec)
         offset (max 0 (long (or offset 0)))
@@ -151,15 +198,22 @@
 (defn session-messages
   [configuration session-auth profile-or-session {:keys [limit offset order]}]
   (let [bot (resolve-bot configuration session-auth profile-or-session)
-        all (mapv (fn [message]
-                    (cond-> {:id (:id message)
-                             :session_id (:id bot)
-                             :role (hermes-role (:role message))
-                             :content (:text message)
-                             :timestamp (epoch-seconds (:at message))}
-                      (seq (:cards message))
-                      (assoc :display_kind "cloud_itonami_cards")))
-                  (bots/messages session-auth (:id bot)))
+        imported (imported-session session-auth bot profile-or-session)
+        all (if imported
+              (mapv (fn [message]
+                      (-> message
+                          (update :role hermes-role)
+                          (assoc :session_id (:id imported))))
+                    (:messages imported))
+              (mapv (fn [message]
+                      (cond-> {:id (:id message)
+                               :session_id (:id bot)
+                               :role (hermes-role (:role message))
+                               :content (:text message)
+                               :timestamp (epoch-seconds (:at message))}
+                        (seq (:cards message))
+                        (assoc :display_kind "cloud_itonami_cards")))
+                    (bots/messages session-auth (:id bot))))
         default-page? (nil? limit)
         limit (-> (or limit 500) long (max 0) (min 500))
         offset (max 0 (long (or offset 0)))
@@ -167,7 +221,7 @@
         candidates (if latest? (vec (reverse all)) all)
         page (->> candidates (drop offset) (take limit) vec)]
     {:object "list"
-     :session_id (:id bot)
+     :session_id (or (:id imported) (:id bot))
      :data page
      :pagination {:limit limit
                   :offset offset
