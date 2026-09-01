@@ -71,7 +71,12 @@
              (set (map :kind (get-in manifest [:profiles 0 :rebind-required])))))
       (is (= 3 (count (get-in manifest [:profiles 1 :rebind-required])))))
     (testing "preview is an optimistic lock over all portable source files"
-      (let [before (get-in manifest [:source :revision])]
+      (let [before (get-in manifest [:source :revision])
+            heartbeat (io/file home "cron" "ticker_heartbeat")]
+        (spit heartbeat "2026-09-01T00:00:01Z")
+        (is (= before
+               (get-in (migration/preview {:home home}) [:source :revision]))
+            "the live Hermes scheduler heartbeat is exported but is not a control lock")
         (spit (io/file home "profiles" "research" "SOUL.md") "changed persona")
         (is (not= before
                   (get-in (migration/preview {:home home}) [:source :revision])))))))
