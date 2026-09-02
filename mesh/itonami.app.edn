@@ -19,6 +19,10 @@
 ;;                        → the agent's identity record: residency, the models
 ;;                          it speaks through murakumo (awai-network/basho,
 ;;                          awai-network/hokusai), the hostnames that reach it.
+;;                          Self-seeded: `run` asserts the record at placement
+;;                          (identity facts are deploy-time constants), `on-http`
+;;                          reads it back by predicate — see agent_profile.cljc
+;;                          for the measured kqe semantics.
 ;;       agent-heartbeat  on-tick  every 5m → a resident-liveness datom, so
 ;;                        "is the cloud-agent alive" is answered by the lattice's
 ;;                        own Datom log rather than by a laptop being awake.

@@ -96,17 +96,34 @@ Measured 2026-09-02:
 - `awai-network/basho` joins the murakumo provider's models, accepted
   response models (`awai-network/basho`, `zai-org/GLM-5.3`), context window
   (128k conservative, unmeasured through the gateway) and fallbacks.
-- **Placed vs configured.** The mesh app is declared and registered; it is
-  *not* yet placed. Placing it is one command from a machine with a working
-  `kotoba` CLI and a port-forward to a node whose `kotoba-server` is up
-  (levi / joseph / dan today):
-  `murakumo deploy <cloud-itonami-app>/mesh/itonami.app.edn dan`, then record
-  the representative CID in `murakumo.app.edn` and probe
-  `POST /mesh/http/itonami/profile`. Until that receipt exists this ADR says
-  "declared", not "live".
-- The resident asserts the `itonami-agent(key, value)` facts the profile
-  component serves. Today it does so through the same kqe path the fleet
-  directory uses; that write is the resident's, not the guest's.
+- **Placed (2026-09-02).** The `kotoba` CLI was pinned from levi's
+  `~/.murakumo/bin` (same build as the servers, 2026-06-27); `kotoba app
+  deploy --publish` through levi:8077 gossiped the routes, the two blocks were
+  `block put` to levi / dan / joseph with the operator op-token, and
+  `POST /mesh/http/itonami/profile` answers the identity record (HTTP 200,
+  JSON) on all three. CIDs: agent-profile
+  `bafyreig5thbb7i5i56l5m5ym7bp44ez3jvweblqeay3uiwliqkbr54wbxi`, agent-heartbeat
+  `bafyreicp5ashj2ewjjmpmkvs7swdzz4ajol6etmwnk7n7hlartc47g2kr4`; recorded in
+  `murakumo.app.edn`. Before the block put the same call answered 502
+  "component unavailable" — the route-without-block state murakumo's README
+  warns about — so a 200 is the receipt, not the publish.
+- **The record is served from the artifact, not read back from the log.**
+  Measured on kotoba-server 0.1.0: `kqe-query` is a predicate filter over a
+  snapshot (kotoba-runtime `host.rs`), and `invoke_trigger` (kotoba-server
+  `net_actor.rs`) hands every trigger an empty snapshot. A component's
+  `kqe-assert!` output IS persisted to the node's quad store, but nothing a
+  component queries can see it. The first two versions of `agent_profile`
+  queried, executed (`trigger: executed` in `mesh.log`), and returned
+  content-length 0 — the same shape as the kenchi / minidrama "HTTP 200"
+  precedents. The profile component therefore carries its six identity facts
+  as constants (the placed artifact *is* the record), asserts them at
+  placement, and returns them on `on-http`. Handing components a real
+  snapshot is a kotoba-server change, tracked in the root ADR as the next
+  step for any on-mesh read.
+- The murakumo operator token is a JWT-shaped bearer over the operator DID
+  (`murakumo.identity/op-token`); the DID is the nodes' `KOTOBA_AGENT_DID`
+  and is public. `app deploy --publish` accepts no token; `block put` requires
+  it.
 - What is NOT decided: moving the turn loop on-mesh. That waits on
   `capability-llm-infer` having an admitted provider, and is recorded as the
   next step in the root ADR rather than pretended here.
