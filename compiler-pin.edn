@@ -6,6 +6,8 @@
 ;;
 ;; Production runtime pin is unchanged: io.github.kotoba-lang/kotoba :git/tag
 ;; v0.6.29. This file is not a silent 0.7.2/0.7.3 bump.
+;; ADAPTER-EMIT HOLD: app-local bin/kotoba after amu --jvm-free is not the
+;; Release/v0.6.29 kotoba CLI. Do not invent a v0.6.29 CLI emit.
 {:kotoba-lang
  {:git/url "https://github.com/kotoba-lang/kotoba-lang.git"
   :git/sha "bfe618b3a3844d5563a943d63bdefcdc535af98c"

@@ -4,15 +4,11 @@
 ;;   bin/kotoba compile <entry.kotoba> --target wasm --json
 ;;   bin/kotoba compile <entry.kotoba> --target wasm -o target/amu/foo.wasm
 ;;
-;; Success is the wasm file on disk AND then
-;; {:kotoba.cli/ok? true :kotoba.cli/code :compile/emitted}.
-;; amu {:ok true :target …} alone is not that envelope.
+;; ADAPTER-EMIT HOLD. This prints an adapter envelope after amu --jvm-free
+;; writes the file. That is not :compile/emitted from the Release/v0.6.29
+;; kotoba CLI. Do not invent a v0.6.29 CLI emit. Do not bump the pin.
+;; amu {:ok true :target …} alone is not the adapter envelope.
 ;; :command/planned is not emit.
-;;
-;; This launcher writes the file by calling the amu emit frontend pinned in
-;; compiler-pin.edn. It does not bump production deps.edn kotoba v0.6.29.
-;; kotoba-lang CLJC dispatch for :compile is still :command/planned; that
-;; is why the adapter must emit, not only print planned.
 
 (ns kotoba
   (:require ["node:child_process" :as cp]

@@ -172,9 +172,11 @@ AMU=<amu launcher> bin/kotoba compile src/cloud/itonami/app/server_main.kotoba -
 AMU=<amu launcher> bin/kotoba compile src/cloud/itonami/app/mcp_main.kotoba --target wasm --json
 ```
 
-Success is the wasm file on disk and `{:kotoba.cli/ok? true :kotoba.cli/code :compile/emitted}`.
-The amu canary (`nbb --classpath bin bin/compile-amu`) also writes sealed
-`.kexe` plus provenance. KEXE is not a Mach-O executable.
+ADAPTER-EMIT HOLD: the file on disk plus the **app-local** adapter
+envelope (`cloud-itonami-app/bin/kotoba`). That is not `:compile/emitted`
+from the Release/v0.6.29 kotoba CLI. Production pin stays
+`:git/tag v0.6.29`. The amu canary (`nbb --classpath bin bin/compile-amu`)
+also writes sealed `.kexe` plus provenance. KEXE is not a Mach-O executable.
 
 `bin/cloud-itonami-app` opens the web surface as an application window — no tab
 strip, no address bar — and starts the server only when nothing already answers

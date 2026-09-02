@@ -6,11 +6,18 @@ The shipped server and MCP do not start with `clojure -M:server` or
 `spawnSync`s `clojure -M:cli`. A bare `-M:server` / `-M:mcp` / `-M:cli`
 is an unknown alias.
 
-Compile is the public launcher `bin/kotoba compile --target wasm --json`.
-Success is the wasm file on disk **and then**
-`{:kotoba.cli/ok? true :kotoba.cli/code :compile/emitted}`. amu
-`{:ok true :target …}` alone is not that envelope. `:command/planned` is
-not emit.
+## HOLDs (not done-when)
+
+- **ADAPTER-EMIT HOLD.** The measured command is app-local
+  `bin/kotoba compile --target wasm --json` after `amu compile --jvm-free`
+  writes the file. That adapter envelope is **not** the Release/v0.6.29
+  kotoba CLI. Do not invent a v0.6.29 CLI emit. Do not bump the production
+  pin. Do not round this up to `:compile/emitted` from kotoba v0.6.29.
+- **host-listen HOLD.** Guest has no HTTP/MCP socket. nbb listens.
+  `lang/capability-catalog.edn` `:http/accept` (wire 17) and `:http/reply`
+  (wire 18) are `:friendly-qualified`.
+- **kexe-verify Linux HOLD.** `amu verify` of aarch64-macos KEXE fails on
+  Linux. Do not fake `:ok`.
 
 Production `io.github.kotoba-lang/kotoba` stays `:git/tag v0.6.29` — this
 document does not move that pin and does not claim a v0.7.2 emit.
@@ -23,9 +30,9 @@ Compiler freeze is `compiler-pin.edn`:
 - not HEAD past `bfe618b3`
 - amu emit frontend `8435eafb7dada2d3a85cee2c278ca6d38deb7588` (last amu commit at or before that kotoba-lang SHA; not a floating HEAD)
 
-## Compile (this is emit)
+## Compile (ADAPTER-EMIT HOLD)
 
-Public launcher (the envelope kotoba-clj reviews):
+App-local adapter (not the Release/v0.6.29 kotoba binary):
 
 ```bash
 AMU=<path-to-amu> bin/kotoba compile src/cloud/itonami/app/server_main.kotoba --target wasm --json
@@ -48,11 +55,12 @@ Artifacts (gitignored under `target/`):
 | `target/amu/server_main.kexe` | `amu compile … --target aarch64-macos --jvm-free` |
 | `target/amu/mcp_main.kexe` | `amu compile … --target aarch64-macos --jvm-free` |
 
-Success for the public launcher is file bytes **and** `:compile/emitted`.
-Success for the amu canary is file bytes plus `.provenance.edn`.
-`:command/planned` is not emit. KEXE is sealed, not a Mach-O app binary.
-`amu verify` of aarch64-macos KEXE on Linux is HOLD (`unable to start the
-private compiler runtime`). Do not fake `:ok`.
+ADAPTER-EMIT HOLD: file bytes plus the **adapter** envelope
+`{:kotoba.cli/ok? true :kotoba.cli/code :compile/emitted}` from
+`cloud-itonami-app/bin/kotoba`. That is not `:compile/emitted` from the
+Release/v0.6.29 kotoba CLI. amu `{:ok true :target …}` alone is not that
+adapter envelope. `:command/planned` is not emit. KEXE is sealed, not a
+Mach-O app binary. kexe-verify Linux HOLD: do not fake `:ok`.
 
 Public-language `kotoba compile` admits `--target wasm|web` only. Native is
 amu, not `kotoba compile --target native`.
@@ -91,9 +99,8 @@ gone.
   `clojure -M:test` remains as leftover
   (`.github/workflows/leftover-jvm-tests.yml`, workflow_dispatch only) —
   not the required check, and not gone by renaming.
-- `bin/kotoba` `:compile/emitted` is this app's compile adapter. It is
-  not the production kotoba v0.6.29 binary. Production pin stays
-  `:git/tag v0.6.29`.
+- ADAPTER-EMIT HOLD: `bin/kotoba` after amu `--jvm-free` is not the
+  Release/v0.6.29 kotoba CLI. Production pin stays `:git/tag v0.6.29`.
 - `:gen` (`clojure -M:test:gen`) is the JVM KIR-EDN writer. Amu has no
   KIR-EDN emit. `bin/gen_kir_amu.cljs` proves `:kir-sha256` and does not
   write `resources/`
