@@ -1,10 +1,10 @@
 #!/usr/bin/env nbb
 ;; Leftover CLI launcher — closed as a run path.
 ;;
-;; This used to `spawnSync` `clojure -M:cli`. That is no longer how this app
-;; starts. `:cli` in deps.edn refuses the same way. The leftover JVM CLI
-;; (`cli.clj` talking to leftover `server.clj`) is not ported; do not invent
-;; a second KIR-EDN writer or an HttpClient FFI to fake it.
+;; This used to `spawnSync` `clojure -M:cli`. That alias is gone from
+;; deps.edn. The leftover JVM CLI (`cli.clj` talking to leftover
+;; `server.clj`) is not ported; do not invent a second KIR-EDN writer or
+;; an HttpClient FFI to fake it.
 
 (ns itonami
   (:require ["node:fs" :as fs]
@@ -35,7 +35,7 @@
     (js/process.exit 0))
   (binding [*print-fn* *print-err-fn*]
     (println "leftover JVM run path is closed.")
-    (println "bin/itonami no longer starts clojure -M:cli")
+    (println "deps.edn has no :server :mcp :cli aliases")
     (println "server: nbb --classpath bin bin/cloud-itonami-server")
     (println "mcp:    nbb --classpath bin bin/itonami-mcp"))
   (js/process.exit 2))

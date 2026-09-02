@@ -110,8 +110,8 @@
 
 (deftest the-resident-app-directory-resolves-the-resident-store
   (testing "`~/.cloud-itonami/app` and `~/.cloud-itonami/data` are one install.
-            bin/itonami said so by exporting the variable; a bare `clojure -M:cli`
-            in the same directory used to fall back to a relative `data` and make
+            bin/itonami said so by exporting the variable; a bare leftover JVM
+            CLI in the same directory used to fall back to a relative `data` and make
             a third store holding an enrollment key no server had written"
     (let [home (scratch-home)]
       (with-property nil

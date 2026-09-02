@@ -79,9 +79,10 @@ context envelopes, grants, approval and replay. See
 - Ollama or another configured OpenAI-compatible provider
 
 The run path is the nbb hosts that load the guest wasm
-(`bin/cloud-itonami-server`, `bin/itonami-mcp`). `:server`, `:mcp`, and
-`:cli` are closed as a run path. Java and the Clojure CLI remain leftover
-for `:test`, `:gen`, `:repository`, and `:ao-messenger`.
+(`bin/cloud-itonami-server`, `bin/itonami-mcp`). `deps.edn` has no
+`:server`, `:mcp`, or `:cli` aliases. Java and the Clojure CLI remain
+leftover for `:test`, `:gen`, `:repository`, `:ao-messenger`, `:lint`,
+and `:build`. Default CI still runs `clojure -M:test`.
 
 Pure tests and the loopback web surface also run on Linux.
 

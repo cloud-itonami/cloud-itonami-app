@@ -110,18 +110,18 @@
     (is (not (str/includes? windows "Java 21")))
     (is (not (str/includes? windows "clojure.main")))))
 
-(deftest leftover-jvm-aliases-are-not-the-run-path
+(deftest leftover-jvm-aliases-are-gone
   (let [deps (read-string (slurp "deps.edn"))
-        refuse ["-m" "cloud.itonami.app.leftover-jvm-run-path"]]
-    (is (= refuse (get-in deps [:aliases :server :main-opts])))
-    (is (= refuse (get-in deps [:aliases :mcp :main-opts])))
-    (is (= refuse (get-in deps [:aliases :cli :main-opts])))
-    (is (not= ["-m" "cloud.itonami.app.server"]
-              (get-in deps [:aliases :server :main-opts])))
-    (is (not= ["-m" "cloud.itonami.app.mcp"]
-              (get-in deps [:aliases :mcp :main-opts])))
-    (is (not= ["-m" "cloud.itonami.app.cli"]
-              (get-in deps [:aliases :cli :main-opts])))))
+        aliases (:aliases deps)]
+    (is (not (contains? aliases :server)))
+    (is (not (contains? aliases :mcp)))
+    (is (not (contains? aliases :cli)))
+    (is (contains? aliases :test))
+    (is (contains? aliases :gen))
+    (is (contains? aliases :lint))
+    (is (contains? aliases :build))
+    (is (contains? aliases :repository))
+    (is (contains? aliases :ao-messenger))))
 
 (deftest an-explicit-data-directory-wins-in-the-resident-launcher
   (let [explicit "/tmp/cloud-itonami-explicit-data"

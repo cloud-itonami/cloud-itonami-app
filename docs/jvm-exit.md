@@ -1,9 +1,10 @@
 # JVM-exit run path
 
 The shipped server and MCP do not start with `clojure -M:server` or
-`clojure -M:mcp`. Those aliases, and `:cli`, are closed as a run path:
-they print leftover-closed and exit 2. `bin/itonami` no longer
-`spawnSync`s `clojure -M:cli`.
+`clojure -M:mcp`. Those aliases, and `:cli`, are **gone** from
+`deps.edn` — not stubbed, not exit-2. `bin/itonami` no longer
+`spawnSync`s `clojure -M:cli`. A bare `-M:server` / `-M:mcp` / `-M:cli`
+is an unknown alias.
 
 Compile is the public launcher `bin/kotoba compile --target wasm --json`.
 Success is the wasm file on disk **and then**
@@ -82,11 +83,12 @@ start of guest-run for the two entries. Rank 1 #2 is not started by
 kotoba-clj; this app PR is the start. The leftover JVM surface is not
 gone.
 
-- `:server` `:mcp` `:cli` aliases remain in `deps.edn` only as **refuse**
-  (`cloud.itonami.app.leftover-jvm-run-path`, exit 2). They are not how
-  the app starts.
+- `:server` `:mcp` `:cli` aliases are **deleted** from `deps.edn`. Not
+  a refuse stub. Guest still does not serve HTTP/MCP: nbb owns the
+  socket; `:http/accept` / `:http/reply` stay kotoba-lang HOLD.
 - `:gen` `:repository` `:ao-messenger` `:test` `:lint` `:build` still use
-  the JVM
+  the JVM. Default CI is still `clojure -M:test`. Adapter emit
+  (`bin/kotoba` / amu `--jvm-free`) is not the v0.6.29 CLI.
 - `:gen` (`clojure -M:test:gen`) is the JVM KIR-EDN writer. Amu has no
   KIR-EDN emit. `bin/gen_kir_amu.cljs` proves `:kir-sha256` and does not
   write `resources/`

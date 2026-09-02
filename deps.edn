@@ -556,16 +556,8 @@
           :ns-default build}
   :release-sign {:extra-paths ["dev"]
                  :main-opts ["-m" "cloud.itonami.app.sign-update-manifest"]}
-  ;; CLOSED as a run path. These aliases used to start server / MCP / CLI on
-  ;; the JVM. They now refuse. Use bin/cloud-itonami-server and bin/itonami-mcp
-  ;; (nbb hosts that load the guest wasm). bin/itonami no longer spawnSyncs
-  ;; clojure -M:cli. Leftover source (server.clj / mcp.clj / cli.clj) remains
-  ;; but is not how the app starts.
-  :server {:main-opts ["-m" "cloud.itonami.app.leftover-jvm-run-path"]}
   :ao-messenger {:main-opts ["-m" "cloud.itonami.app.organism-messenger-client"]}
   :repository {:main-opts ["-m" "cloud.itonami.app.repository-runtime"]}
-  :mcp {:main-opts ["-m" "cloud.itonami.app.leftover-jvm-run-path"]}
-  :cli {:main-opts ["-m" "cloud.itonami.app.leftover-jvm-run-path"]}
   ;; The suite writes through cloud.itonami.app.store, which persists to
   ;; `cloud.itonami.app.config/data-dir`. Without this it defaults to `./data`
   ;; and the tests overwrite the real store -- measured on 2026-07-30, when a
