@@ -2531,6 +2531,46 @@
       (is (= ["alice" "researcher · workspace_read" "result"]
              @remembered)))))
 
+(deftest a-correctable-parallel-read-error-stays-inside-the-bot-loop
+  ;; Live evidence 2026-09-02: a resumed resident Goal issued independent
+  ;; workspace reads in parallel. Two selected a directory where
+  ;; workspace_read requires a regular file. The sequential path already
+  ;; returned this exact argument error to the model; the parallel child
+  ;; recorded it and then rethrew, failing the entire durable Goal.
+  (with-store
+    (fn []
+      (let [root (git-workspace)
+            _ (spit (io/file root "README.md") "verified evidence\n")
+            execute (private-fn 'execute-parallel-read-calls!)
+            b (make-bot alice {:coding? true :workspace (.getPath root)})
+            run-id "parallel-correctable-1"
+            run {:id run-id :tool-count 0 :messages []
+                 :runnable #{"workspace_read"}
+                 :tool-provider {} :blocked {}}
+            calls [{:id "bad-read" :name "workspace_read" :input {:path "."}}
+                   {:id "good-read" :name "workspace_read" :input {:path "README.md"}}]
+            events (atom [])]
+        (swap! store/state assoc-in [:bots :goal-jobs run-id]
+               {:job/children {} :job/plan []})
+        (let [next-run (execute {} b run calls #(swap! events conj %))
+              tool-texts (->> (:messages next-run)
+                              (filter #(= "tool" (:role %)))
+                              (mapv :content))
+              child-states (->> (get-in @store/state
+                                        [:bots :goal-jobs run-id :job/children])
+                                vals
+                                (map :agent.run/status)
+                                frequencies)]
+          (is (= 2 (:tool-count next-run))
+              "the refused attempt consumes budget, keeping retries bounded")
+          (is (= 2 (count tool-texts)))
+          (is (some #(str/includes? % "workspace/not-a-file") tool-texts))
+          (is (some #(str/includes? % "verified evidence") tool-texts))
+          (is (= {:failed 1 :succeeded 1} child-states)
+              "the child receipt stays truthful while the parent may recover")
+          (is (some #(= "tool-correctable-error" (:phase %)) @events))
+          (is (some #(= "tools-executed" (:phase %)) @events)))))))
+
 (deftest run-tool-carries-an-image-a-capture-produced
   ;; The reason the contract changed. `desktop/screenshot!` writes a PNG and
   ;; answers {:image-path ..}; before this, `str` turned that into a FILENAME
