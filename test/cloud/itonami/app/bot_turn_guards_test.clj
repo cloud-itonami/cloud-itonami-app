@@ -174,6 +174,29 @@
               (is (< (:turn/tool-count record 99) bots/max-tool-calls)
                   "and it stopped before spending the whole tool budget"))))))))
 
+(deftest a-durable-goal-checkpoints-and-breaks-the-repetition-chain
+  ;; Resident work is a durable Goal split into execution slices. Repeating a
+  ;; read is a reason to end one slice and change course, not to throw away the
+  ;; Goal and count the whole resident tick as failed.
+  (with-store
+    (fn []
+      (let [b (make-bot)]
+        (with-model [{:content "" :tool-calls [repeated-call]}]
+          (fn []
+            (let [record (advance! b {:goal? true
+                                      :messages []
+                                      :tools [{:name "gmail.messages.list"}]
+                                      :runnable #{"gmail.messages.list"}})
+                  saved (get-in @store/state [:bots :runs (:bot/id b)])
+                  counted (private-fn 'identical-call-count)]
+              (is (= :checkpointed (:turn/state record)))
+              (is (nil? (:turn/error-type record))
+                  "the repetition ended a slice; it did not fail the Goal")
+              (is (= "tool" (:role (nth (:messages saved) (- (count (:messages saved)) 3))))
+                  "the suppressed proposal has a tool result, so provider history is valid")
+              (is (= 1 (counted saved repeated-call))
+                  "an assistant recovery barrier lets the resumed model choose afresh"))))))))
+
 (deftest the-count-resets-when-something-else-is-proposed
   ;; A Bot alternating between two tools is making progress. If an interleaved
   ;; call did not reset the count, this guard would refuse ordinary work — the
