@@ -82,7 +82,9 @@ The run path is the nbb hosts that load the guest wasm
 (`bin/cloud-itonami-server`, `bin/itonami-mcp`). `deps.edn` has no
 `:server`, `:mcp`, or `:cli` aliases. Java and the Clojure CLI remain
 leftover for `:test`, `:gen`, `:repository`, `:ao-messenger`, `:lint`,
-and `:build`. Default CI still runs `clojure -M:test`.
+and `:build`. Default CI is `amu-jvm-free-emit` (java/clojure off PATH).
+`clojure -M:test` is leftover (`.github/workflows/leftover-jvm-tests.yml`,
+workflow_dispatch only).
 
 Pure tests and the loopback web surface also run on Linux.
 
@@ -1480,6 +1482,14 @@ See [`.env.example`](.env.example), [the architecture](docs/architecture.md),
 and [the tenant model](docs/tenant-model.md).
 
 ## Verify
+
+Default CI gate (no `clojure -M`):
+
+```bash
+AMU=<amu launcher> bash scripts/ci-jvm-free-emit
+```
+
+Leftover JVM suite (not the required path):
 
 ```bash
 clojure -M:test

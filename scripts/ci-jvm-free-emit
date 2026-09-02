@@ -6,6 +6,14 @@ set -euo pipefail
 root="$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$root"
 
+# nbb lives in this app's node_modules. Put it on PATH before the JVM filter.
+if [[ -d "$root/node_modules/.bin" ]]; then
+  PATH="$root/node_modules/.bin:$PATH"
+  export PATH
+fi
+
+echo "honesty: bin/kotoba is this app's compile adapter, not the production kotoba v0.6.29 binary"
+
 pin_sha() {
   local key="$1"
   node --input-type=module -e "
@@ -95,9 +103,24 @@ measure() {
     echo "$json" >&2
     exit 1
   fi
+  if ! echo "$json" | grep -q 'cloud-itonami-app/bin/kotoba'; then
+    echo "public compile must name this app adapter, not a silent kotoba binary" >&2
+    echo "$json" >&2
+    exit 1
+  fi
+  if ! echo "$json" | grep -q 'not-production-kotoba-binary'; then
+    echo "public compile must say it is not the production v0.6.29 kotoba binary" >&2
+    echo "$json" >&2
+    exit 1
+  fi
 }
 
 measure src/cloud/itonami/app/server_main.kotoba "$root/target/amu/server_main.wasm"
 measure src/cloud/itonami/app/mcp_main.kotoba "$root/target/amu/mcp_main.wasm"
 
+CLOUD_ITONAMI_PORT="${CLOUD_ITONAMI_PORT:-17338}"
+export CLOUD_ITONAMI_PORT
+nbb --classpath bin scripts/verify-no-java
+
 echo "ci-jvm-free-emit: ok (kexe verify Linux remains HOLD; not faked)"
+echo "ci-jvm-free-emit: bin/kotoba adapter :compile/emitted is not production kotoba v0.6.29"

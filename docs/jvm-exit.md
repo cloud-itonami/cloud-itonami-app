@@ -87,8 +87,13 @@ gone.
   a refuse stub. Guest still does not serve HTTP/MCP: nbb owns the
   socket; `:http/accept` / `:http/reply` stay kotoba-lang HOLD.
 - `:gen` `:repository` `:ao-messenger` `:test` `:lint` `:build` still use
-  the JVM. Default CI is still `clojure -M:test`. Adapter emit
-  (`bin/kotoba` / amu `--jvm-free`) is not the v0.6.29 CLI.
+  the JVM. Default CI is `amu-jvm-free-emit` (java/clojure off PATH).
+  `clojure -M:test` remains as leftover
+  (`.github/workflows/leftover-jvm-tests.yml`, workflow_dispatch only) —
+  not the required check, and not gone by renaming.
+- `bin/kotoba` `:compile/emitted` is this app's compile adapter. It is
+  not the production kotoba v0.6.29 binary. Production pin stays
+  `:git/tag v0.6.29`.
 - `:gen` (`clojure -M:test:gen`) is the JVM KIR-EDN writer. Amu has no
   KIR-EDN emit. `bin/gen_kir_amu.cljs` proves `:kir-sha256` and does not
   write `resources/`

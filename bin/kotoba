@@ -149,10 +149,11 @@
     (println (pr-str result))))
 
 (defn- help []
-  (str "kotoba — public compile launcher for this app\n"
+  (str "cloud-itonami-app/bin/kotoba — this app's compile adapter\n"
+       "NOT the production kotoba v0.6.29 binary (deps.edn pin stays v0.6.29).\n"
        "compiler freeze: kotoba-lang@" (get-in pin [:kotoba-lang :git/sha]) "\n"
-       "production kotoba pin: v0.6.29 (unchanged)\n\n"
-       "  kotoba compile <entry.kotoba> --target wasm [--output PATH] [--json]\n\n"
+       "amu emit frontend: " (get-in pin [:amu :git/sha]) "\n\n"
+       "  bin/kotoba compile <entry.kotoba> --target wasm [--output PATH] [--json]\n\n"
        "Success after writing the wasm file:\n"
        "  {:kotoba.cli/ok? true :kotoba.cli/code :compile/emitted}\n"
        ":command/planned is not emit."))
@@ -210,7 +211,9 @@
                                    :entry (path/resolve entry)
                                    :kotoba-lang (get-in pin [:kotoba-lang :git/sha])
                                    :amu (get-in pin [:amu :git/sha])
-                                   :production-kotoba "v0.6.29"})]
+                                   :production-kotoba-pin "v0.6.29"
+                                   :launcher "cloud-itonami-app/bin/kotoba"
+                                   :not-production-kotoba-binary true})]
               (when-not (fs/existsSync (:output emitted))
                 (throw (ex-info "envelope refused: file missing after emit"
                                 {:output (:output emitted)})))
