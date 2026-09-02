@@ -232,6 +232,12 @@ The CLI can inventory checked-out west projects locally, then submit one
 compatibility-preserving migration slice to a coding Bot. `scan` and `inspect`
 do not start the app server and never edit a checkout.
 
+> **Not yet on the nbb front end.** `scan` and `inspect` read west metadata on
+> this machine rather than calling a route, so the client refuses them by name
+> (`:client/host-side-command`) instead of reporting "no such command". They are
+> listed in `:host-side` in `resources/cloud-itonami-app.cli-aliases.edn`, with
+> the reason, so the gap is a named entry rather than a silence.
+
 ```bash
 bin/itonami bots refactor scan --root /path/to/com-junkawasaki --limit 25
 bin/itonami bots refactor inspect --root /path/to/com-junkawasaki \
@@ -290,18 +296,30 @@ does not falsely mark it configured.
 
 ## `itonami` — the command line, without opening the app
 
-`bin/itonami` runs any of the app's operations from any directory. It starts a
-headless server if one is not already running, so nothing here needs the desktop
-window (ADR-0018).
+`bin/itonami` runs any of the app's operations from any directory. It starts no
+JVM: it is an nbb client that resolves a command to a method and a path, carries
+the agent session, and prints what the server said.
+
+It does **not** start a server. The resident is launchd's
+(`dev.cloud-itonami.app`), and `up` / `down` say so rather than pretending to
+supervise it.
+
+Two name sources, one resolver (`cloud.itonami.app.commands`, `.cljc`, shared
+with the JVM side): the generated registry in
+`resources/cloud-itonami-app.commands.edn`, and the named commands an operator
+actually types in `resources/cloud-itonami-app.cli-aliases.edn`.
+
+Exit codes are the contract: **0** answered, **1** the server refused or a flag
+is missing, **2** could not answer — no server, no session, no such command.
 
 ```bash
-bin/itonami up                    # start a headless server (no window)
 bin/itonami status                # where the server is, and whether you can act
 bin/itonami commands              # every command, with the coverage counts
 bin/itonami commands drive        # just the ones matching "drive"
-bin/itonami down                  # stop the server this data directory started
 
 bin/itonami auth login --label claude-code
+bin/itonami bots list
+bin/itonami bots task --id bot-1 --text "調べて"
 bin/itonami workspace inbox
 bin/itonami workspace drive search --q invoice
 bin/itonami workspace drive documents rename --document doc-1 --title "New"
