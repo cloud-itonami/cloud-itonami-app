@@ -41,6 +41,20 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: clojure -M -m cloud.itonami.app.repository-profile-ci
 
+  amu-jvm-free-emit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Install nbb host
+        run: npm ci
+      - name: JVM-free emit + public kotoba compile
+        run: bash scripts/ci-jvm-free-emit
+        # No actions/setup-java. PATH is reconstructed without java/clojure.
+        # kexe verify on Linux is HOLD and must not be faked as :ok.
+
   secret-scan:
     runs-on: ubuntu-latest
     steps:

@@ -8,9 +8,12 @@
 ;; disk plus provenance. `:command/planned` / `:kotoba.cli/code` other than
 ;; emit is failure. Production `deps.edn` stays on kotoba `:git/tag v0.6.29`;
 ;; this script does not bump that pin and does not claim a v0.7.2 emit.
-;; Compiler freeze: `compiler-pin.edn` (kotoba-lang@c9dd99f5, not 4adda169).
-;; Amu emit frontend is the SHA in that file, not HEAD. Native output is
-;; sealed KEXE, not Mach-O.
+;; Compiler freeze: `compiler-pin.edn` (kotoba-lang@bfe618b3, not c9dd99f5,
+;; not 4adda169, not HEAD). Amu emit frontend is the SHA in that file, not
+;; a floating HEAD. Native output is sealed KEXE, not Mach-O.
+;; Public-language success is `bin/kotoba compile --target wasm --json`
+;; returning :compile/emitted AFTER the file exists. This script is the
+;; amu --jvm-free canary with provenance on disk.
 ;;
 ;; Inputs are absolute because the nbb Wasm path rejects relative ones
 ;; (same measurement as `bin/gen_kir_amu.cljs`).
@@ -62,6 +65,9 @@
       (some? (:kir-sha256 m))
       (some? (:target m))))
 
+(defn- amu-home [amu]
+  (path/resolve (path/dirname (path/resolve amu)) ".."))
+
 (defn compile-one! [amu {:keys [id rel]} target suffix]
   (fs/mkdirSync out-dir #js {:recursive true})
   (let [source (path/resolve rel)
@@ -99,6 +105,10 @@
       (when-not (or (str/includes? (str stdout) ":ok true")
                     (str/includes? (str stdout) ":compile/emitted"))
         (reject-planned! (str stdout) output))
+      (let [host-src (path/resolve (amu-home amu) "runtime" "browser-host.mjs")
+            host-dest (path/resolve out-dir "browser-host.mjs")]
+        (when (fs/existsSync host-src)
+          (fs/copyFileSync host-src host-dest)))
       {:id id :target target :output output
        :bytes (.-size (fs/statSync output))
        :provenance-path (when (fs/existsSync prov-path) prov-path)

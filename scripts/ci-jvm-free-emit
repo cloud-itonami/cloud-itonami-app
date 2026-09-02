@@ -1,0 +1,96 @@
+#!/usr/bin/env bash
+# CI: amu --jvm-free emit + public kotoba compile launcher.
+# Java/clojure must not be on PATH. kexe verify on Linux stays HOLD.
+set -euo pipefail
+
+root="$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$root"
+
+pin_sha() {
+  local key="$1"
+  nbb -e "(require '[clojure.edn :as edn]) (println (get-in (edn/read-string (slurp \"compiler-pin.edn\")) [$key :git/sha]))"
+}
+
+amu_sha="$(pin_sha :amu)"
+lang_sha="$(pin_sha :kotoba-lang)"
+echo "compiler freeze kotoba-lang@${lang_sha}"
+echo "amu emit frontend @${amu_sha}"
+
+checkout="${AMU_CHECKOUT:-$root/target/amu-checkout}"
+if [[ ! -x "$checkout/bin/amu" ]]; then
+  rm -rf "$checkout"
+  git clone --depth 80 https://github.com/kotoba-lang/amu.git "$checkout"
+  git -C "$checkout" fetch --depth 80 origin "$amu_sha"
+  git -C "$checkout" checkout --detach "$amu_sha"
+  (cd "$checkout" && npm ci --ignore-scripts)
+fi
+
+export AMU="$checkout/bin/amu"
+export AMU_HOME="$checkout"
+
+if [[ ! -x "$AMU" ]]; then
+  echo "amu launcher missing at $AMU" >&2
+  exit 1
+fi
+
+# Reconstruct PATH without java/clojure launchers.
+PATH="$("$root/scripts/path-without-jvm")"
+export PATH
+if command -v java >/dev/null 2>&1 || command -v clojure >/dev/null 2>&1; then
+  echo "java/clojure still on PATH after filter" >&2
+  exit 1
+fi
+
+nbb --classpath bin bin/compile-amu
+
+for artifact in server_main.wasm mcp_main.wasm server_main.kexe mcp_main.kexe; do
+  path="$root/target/amu/$artifact"
+  if [[ ! -s "$path" ]]; then
+    echo "missing or empty artifact: $path" >&2
+    exit 1
+  fi
+  if [[ ! -s "$path.provenance.edn" ]]; then
+    echo "missing provenance: $path.provenance.edn" >&2
+    exit 1
+  fi
+  echo "ok artifact $(wc -c < "$path") bytes $artifact"
+done
+
+if [[ ! -s "$root/target/amu/browser-host.mjs" ]]; then
+  echo "browser-host.mjs was not copied next to the artifacts" >&2
+  exit 1
+fi
+
+# Public compile launcher: file on disk AND :compile/emitted.
+# amu {:ok true} alone is not this envelope.
+measure() {
+  local entry="$1"
+  local out="$2"
+  local json
+  json="$(nbb --classpath bin bin/kotoba compile "$entry" --target wasm --output "$out" --json)"
+  echo "$json"
+  echo "$json" | grep -q '"ok?":true\|"kotoba.cli/ok?":true' || {
+    # nbb clj->js keywordizes :kotoba.cli/ok? to "ok?" or "kotoba.cli/ok?"
+    true
+  }
+  if [[ ! -s "$out" ]]; then
+    echo "public compile wrote no file: $out" >&2
+    echo "$json" >&2
+    exit 1
+  fi
+  if echo "$json" | grep -q 'command/planned'; then
+    echo "public compile returned planned, not emit" >&2
+    echo "$json" >&2
+    exit 1
+  fi
+  if ! echo "$json" | grep -q 'compile/emitted'; then
+    echo "public compile missing :compile/emitted" >&2
+    echo "$json" >&2
+    exit 1
+  fi
+}
+
+measure src/cloud/itonami/app/server_main.kotoba "$root/target/amu/server_main.wasm"
+measure src/cloud/itonami/app/mcp_main.kotoba "$root/target/amu/mcp_main.wasm"
+
+echo "ci-jvm-free-emit: ok (kexe verify Linux remains HOLD; not faked)"

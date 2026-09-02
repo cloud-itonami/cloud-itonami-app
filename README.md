@@ -78,10 +78,10 @@ context envelopes, grants, approval and replay. See
 - `jq` and `curl`
 - Ollama or another configured OpenAI-compatible provider
 
-The run path is the nbb host adapters (`bin/cloud-itonami-server`,
-`bin/itonami-mcp`). Java and the Clojure CLI are leftover for `:test`, `:gen`,
-`:cli`, `:repository`, and `:ao-messenger` — they are not how the shipped
-server or MCP start.
+The run path is the nbb hosts that load the guest wasm
+(`bin/cloud-itonami-server`, `bin/itonami-mcp`). `:server`, `:mcp`, and
+`:cli` are closed as a run path. Java and the Clojure CLI remain leftover
+for `:test`, `:gen`, `:repository`, and `:ao-messenger`.
 
 Pure tests and the loopback web surface also run on Linux.
 
@@ -161,15 +161,17 @@ nbb --classpath bin bin/cloud-itonami-server
 open http://localhost:1338
 ```
 
-`GET /health` is the live surface on this host adapter. Compile the kotoba
-entries first when you need the sealed artifacts:
+`GET /health` is admitted by the guest export `health-route?` in
+`server_main.wasm`. Compile first:
 
 ```bash
-AMU=<amu launcher> nbb --classpath bin bin/compile-amu
+AMU=<amu launcher> bin/kotoba compile src/cloud/itonami/app/server_main.kotoba --target wasm --json
+AMU=<amu launcher> bin/kotoba compile src/cloud/itonami/app/mcp_main.kotoba --target wasm --json
 ```
 
-Artifacts land at `target/amu/server_main.wasm`, `target/amu/mcp_main.wasm`,
-and the matching `.kexe` (sealed KEXE, not a Mach-O executable).
+Success is the wasm file on disk and `{:kotoba.cli/ok? true :kotoba.cli/code :compile/emitted}`.
+The amu canary (`nbb --classpath bin bin/compile-amu`) also writes sealed
+`.kexe` plus provenance. KEXE is not a Mach-O executable.
 
 `bin/cloud-itonami-app` opens the web surface as an application window — no tab
 strip, no address bar — and starts the server only when nothing already answers
@@ -314,7 +316,7 @@ serving process opened, `itonami status` prints it next to this terminal's own
 as `store` / `server-store` / `serves-this-store?`, and a command aimed at a
 server serving a different store is refused before it is sent rather than
 acted on. `~/.cloud-itonami/app` resolves `~/.cloud-itonami/data` whether it is
-entered through `bin/itonami` or with a bare `clojure -M:cli`.
+entered through `bin/itonami` (data-dir only; the leftover JVM CLI is closed).
 
 The commands are generated from the routes `server.clj` serves, not written by
 hand — `commands-test` re-derives them and fails if the checked-in registry has

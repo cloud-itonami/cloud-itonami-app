@@ -28,7 +28,7 @@
         _ (.setExecutable fake-clojure true)
         process (ProcessBuilder. ^java.util.List
                                  (cond-> ["nbb" (.getPath installed)]
-                                   (= launcher "itonami") (conj "status")))
+                                   (= launcher "itonami") (conj "--print-data-dir")))
         environment (.environment process)
         _ (.put environment "HOME" (.getCanonicalPath home))
         _ (.put environment "PATH"
@@ -44,12 +44,13 @@
      :app (.getCanonicalPath app)
      :data (.getCanonicalPath (io/file home ".cloud-itonami" "data"))}))
 
-(deftest resident-cli-launcher-still-uses-leftover-clojure
-  ;; `:cli` is an honest leftover. The MCP and server run paths are not.
+(deftest resident-cli-launcher-is-closed
+  ;; `:cli` is closed as a run path. --print-data-dir still reports the
+  ;; resident store; it does not spawn clojure.
   (let [{:keys [status stderr lines app data]}
         (run-resident-script "itonami" nil)]
     (is (zero? status) stderr)
-    (is (= [app data "-M:cli status"] lines))))
+    (is (= [data app] lines))))
 
 (deftest resident-mcp-launcher-does-not-spawn-clojure
   (let [home (temporary-directory)
@@ -88,6 +89,7 @@
 
 (deftest replacement-launchers-are-not-clojure-wraps
   (let [mcp (slurp "bin/itonami-mcp")
+        itonami (slurp "bin/itonami")
         desktop (slurp "bin/cloud-itonami-app")
         server (slurp "bin/cloud-itonami-server")
         macos (slurp "packaging/macos/CloudItonami")
@@ -95,20 +97,37 @@
     (is (not (str/includes? mcp "spawnSync")))
     (is (not (str/includes? mcp "clojure -M:mcp")))
     (is (not (str/includes? mcp "-M:mcp")))
+    (is (str/includes? mcp "guest-wasm"))
+    (is (not (str/includes? itonami "spawnSync")))
+    (is (str/includes? itonami "leftover JVM run path is closed"))
     (is (not (str/includes? desktop "clojure -M:server")))
     (is (str/includes? desktop "cloud-itonami-server"))
-    (is (str/includes? server "nbb-host"))
+    (is (str/includes? server "guest-wasm"))
+    (is (str/includes? server "health-route?"))
     (is (not (str/includes? macos "Java 21")))
     (is (not (str/includes? macos "java_home")))
     (is (not (str/includes? macos "clojure.main")))
     (is (not (str/includes? windows "Java 21")))
     (is (not (str/includes? windows "clojure.main")))))
 
+(deftest leftover-jvm-aliases-are-not-the-run-path
+  (let [deps (read-string (slurp "deps.edn"))
+        refuse ["-m" "cloud.itonami.app.leftover-jvm-run-path"]]
+    (is (= refuse (get-in deps [:aliases :server :main-opts])))
+    (is (= refuse (get-in deps [:aliases :mcp :main-opts])))
+    (is (= refuse (get-in deps [:aliases :cli :main-opts])))
+    (is (not= ["-m" "cloud.itonami.app.server"]
+              (get-in deps [:aliases :server :main-opts])))
+    (is (not= ["-m" "cloud.itonami.app.mcp"]
+              (get-in deps [:aliases :mcp :main-opts])))
+    (is (not= ["-m" "cloud.itonami.app.cli"]
+              (get-in deps [:aliases :cli :main-opts])))))
+
 (deftest an-explicit-data-directory-wins-in-the-resident-launcher
   (let [explicit "/tmp/cloud-itonami-explicit-data"
         {:keys [status stderr lines]} (run-resident-script "itonami" explicit)]
     (is (zero? status) stderr)
-    (is (= explicit (second lines)))))
+    (is (= explicit (first lines)))))
 
 (deftest resident-clone-resolves-shell-from-workspace-root
   (let [root (temporary-directory)

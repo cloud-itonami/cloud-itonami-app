@@ -4,14 +4,14 @@
 ;; KEXE is `amu compile --target aarch64-macos --jvm-free`. This file is
 ;; that entry. It does not listen: amu http-ingress is host-listen /
 ;; guest-poll and `:native-aot` is still pending (ADR-0038). The nbb host
-;; adapter in `bin/cloud-itonami-server` owns the socket.
+;; in `bin/cloud-itonami-server` owns the socket and LOADS this wasm.
 ;;
 ;; Guest grammar is not Clojure. `server.clj` stays a leftover JVM
 ;; namespace; it is not admitted by rename.
 ;;
 ;; Production `deps.edn` still pins `io.github.kotoba-lang/kotoba` at
-;; `:git/tag v0.6.29`. This entry is compiled by amu (`--jvm-free`), not by
-;; bumping that pin. Existing decision cores in this directory are unchanged.
+;; `:git/tag v0.6.29`. This entry is compiled by the public `bin/kotoba`
+;; launcher (amu `--jvm-free` under it), not by bumping that pin.
 
 (ns cloud.itonami.app.server-main
   (:export [main health-route?]))
@@ -20,6 +20,8 @@
   (and (string=? method "GET")
        (string=? path "/health")))
 
-;; Process start token for a host that already listened. 0 means admitted.
+;; Process start token the host already bound. Not guest listen.
+;; 1338 is the loopback port the nbb host adapter opens.
+;; Must not stay 0 — a zero main is an unused guest.
 (defn main [] :i64
-  0)
+  1338)

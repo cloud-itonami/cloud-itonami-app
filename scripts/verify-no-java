@@ -100,6 +100,11 @@
                  (assert-no-jvm! "server" (.-pid server))
                  (when-not (str/includes? (:body health) "cloud-itonami-app")
                    (throw (ex-info "health body missing service" health)))
+                 (when-not (str/includes? (:body health) "guest-wasm")
+                   (throw (ex-info "health body is not guest-wasm; host must load the wasm"
+                                   health)))
+                 (when-not (str/includes? (:body health) "\"guest-main\":1338")
+                   (throw (ex-info "guest main was not called or stayed 0" health)))
                  (let [mcp (start-nbb "bin/itonami-mcp" {})]
                    (.write (.-stdin mcp)
                            (str (js/JSON.stringify

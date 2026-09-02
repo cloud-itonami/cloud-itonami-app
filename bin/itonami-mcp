@@ -1,15 +1,12 @@
 #!/usr/bin/env nbb
-;; MCP stdio host adapter. Does not spawn java or clojure.
+;; MCP stdio host. Does not spawn java or clojure.
 ;;
-;; The previous launcher exec'd the leftover JVM MCP alias. That wrap is gone.
-;; JSON-RPC stays on stdin/stdout here. Fleet search reads the shipped catalog
-;; EDN. Outbound `fleet_call` is not published: the leftover JVM used
-;; `HttpURLConnection`, and this adapter will not invent a Java client or a
-;; silent URL change.
+;; Protocol admission is the guest export `protocol-ok?` from `mcp_main.wasm`.
+;; Duplicating that predicate here is not the guest running — this file loads
+;; the wasm and calls into it. Guest `main` must not stay 0.
 ;;
-;; Resident install still binds `CLOUD_ITONAMI_DATA_DIR` to the sibling
-;; `~/.cloud-itonami/data` when this script is that install. It does not
-;; read or write `config.edn`.
+;; JSON-RPC stays on stdin/stdout. Fleet search reads the shipped catalog
+;; EDN. Outbound `fleet_call` is not published.
 
 (ns itonami-mcp
   (:require ["node:fs" :as fs]
@@ -17,6 +14,7 @@
             ["node:readline" :as readline]
             [clojure.edn :as edn]
             [clojure.string :as str]
+            [guest-runtime :as guest]
             [nbb.core :refer [*file*]]))
 
 (def app-directory
@@ -36,11 +34,6 @@
 (def server-name "cloud-itonami-fleet")
 (def server-version "1")
 (def latest-protocol-version "2025-11-25")
-(def supported-protocol-versions
-  #{"2025-03-26" "2025-06-18" latest-protocol-version})
-
-(defn protocol-ok? [version]
-  (contains? supported-protocol-versions (str version)))
 
 (def catalog-path
   (path/resolve app-directory "resources" "itonami-fleet-catalog.edn"))
@@ -132,7 +125,7 @@
 (defn- err [id code message]
   {"jsonrpc" "2.0" "id" id "error" {"code" code "message" message}})
 
-(defn respond [request]
+(defn respond [hosted guest-main request]
   (when (contains? request "id")
     (let [id (get request "id")
           method (get request "method")
@@ -140,14 +133,15 @@
       (case method
         "initialize"
         (let [requested (get params "protocolVersion")
-              version (if (protocol-ok? requested)
+              version (if (guest/call-bool hosted "protocol-ok?" (str requested))
                         requested
                         latest-protocol-version)]
           (result id {"protocolVersion" version
                       "capabilities" {"tools" {}}
                       "serverInfo" {"name" server-name
                                     "version" server-version}
-                      "runtime" "nbb-host"}))
+                      "runtime" "guest-wasm"
+                      "guest-main" guest-main}))
 
         "ping"
         (result id {})
@@ -176,26 +170,41 @@
 
         (err id -32601 (str "method not found: " method))))))
 
-(defn- handle-line [line]
+(defn- handle-line [hosted guest-main line]
   (if (str/blank? line)
     nil
     (if-let [request (try (js->clj (js/JSON.parse line))
                           (catch :default _ nil))]
-      (when-let [response (respond request)]
+      (when-let [response (respond hosted guest-main request)]
         (write-json response))
       (write-json {"jsonrpc" "2.0" "id" nil
                    "error" {"code" -32700 "message" "parse error"}}))))
+
+(defn- start-stdio [hosted guest-main]
+  (aset js/process.env "CLOUD_ITONAMI_APP_DIR" app-directory)
+  (let [rl (.createInterface readline
+                             #js {:input js/process.stdin
+                                  :crlfDelay js/Infinity})]
+    (.on rl "line" (fn [line] (handle-line hosted guest-main line)))
+    (.on rl "close" (fn [] (js/process.exit 0)))))
 
 (defn -main [& args]
   (when (= "--print-data-dir" (first args))
     (println (or (aget js/process.env "CLOUD_ITONAMI_DATA_DIR") ""))
     (println (or (aget js/process.env "CLOUD_ITONAMI_APP_DIR") app-directory))
     (js/process.exit 0))
-  (aset js/process.env "CLOUD_ITONAMI_APP_DIR" app-directory)
-  (let [rl (.createInterface readline
-                             #js {:input js/process.stdin
-                                  :crlfDelay js/Infinity})]
-    (.on rl "line" handle-line)
-    (.on rl "close" (fn [] (js/process.exit 0)))))
+  (-> (guest/load-guest app-directory "target/amu/mcp_main.wasm")
+      (.then
+       (fn [hosted]
+         (let [guest-main (guest/call-i64 hosted "main")]
+           (when-not (pos? guest-main)
+             (throw (ex-info "guest main stayed 0; unused guest is not a run"
+                             {:guest-main guest-main})))
+           (start-stdio hosted guest-main))))
+      (.catch
+       (fn [e]
+         (binding [*print-fn* *print-err-fn*]
+           (println (or (.-stack e) (str e))))
+         (js/process.exit 1)))))
 
 (apply -main (or *command-line-args* []))

@@ -1,14 +1,15 @@
-;; Compiler freeze for this JVM-exit PR. kotoba-clj reviews against this file.
+;; Compiler freeze for this JVM-exit follow-up. kotoba-clj reviews against this file.
 ;;
-;; Do not advance kotoba-lang past c9dd99f5 (PR #511). 4adda169 is PR #513
-;; (guest-grammar vendor mismatch, main red). No HEAD.
+;; Follow-up compiler is kotoba-lang@bfe618b3 (merge #514, green run 33598929287).
+;; Leave c9dd99f5 — do not keep using it as the follow-up compiler.
+;; Do not vendor HEAD past bfe618b3. Do not vendor 4adda169 (PR #513) as the pin.
 ;;
 ;; Production runtime pin is unchanged: io.github.kotoba-lang/kotoba :git/tag
 ;; v0.6.29. This file is not a silent 0.7.2/0.7.3 bump.
 {:kotoba-lang
  {:git/url "https://github.com/kotoba-lang/kotoba-lang.git"
-  :git/sha "c9dd99f5958e9e51ba9976bc0c66f7c44feb65d2"
-  :note "last green; PR #511"}
+  :git/sha "bfe618b3a3844d5563a943d63bdefcdc535af98c"
+  :note "merge #514, green run 33598929287. Not c9dd99f5. Not 4adda169. Not HEAD."}
  :kotoba
  {:git/url "https://github.com/kotoba-lang/kotoba.git"
   :git/tag "v0.6.29"
@@ -16,5 +17,5 @@
   :note "production deps.edn pin; do not bump"}
  :amu
  {:git/url "https://github.com/kotoba-lang/amu.git"
-  :git/sha "b1fdaad20d290032c9fdfad7f768763d6facf144"
-  :note "last amu commit at or before kotoba-lang@c9dd99f5 (2026-09-01). Not HEAD. Not a deps.edn runtime pin. Emit frontend only."}}
+  :git/sha "8435eafb7dada2d3a85cee2c278ca6d38deb7588"
+  :note "last amu commit at or before kotoba-lang@bfe618b3 (2026-09-02 15:26 +0900). Not a floating HEAD. Not a deps.edn runtime pin. Emit frontend only."}}
