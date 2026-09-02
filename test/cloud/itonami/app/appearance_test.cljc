@@ -13,6 +13,23 @@
     (doseq [v ["dark" :neon 8 nil ""]]
       (is (= "light" (appearance/resolve-mode{:ui {:appearance v}})) (pr-str v)))))
 
+(deftest residency-is-cloud-only-when-the-configuration-says-so
+  (is (= :local (appearance/residency-plane {})))
+  (is (= :cloud (appearance/residency-plane {:residency {:plane :cloud}})))
+  (is (= :cloud (appearance/residency-plane {:residency {:plane "Cloud"}})))
+  (testing "junk is local, not a crash in the page render"
+    (doseq [v [nil 1 true :orbit ""]]
+      (is (= :local (appearance/residency-plane {:residency {:plane v}})) (pr-str v)))))
+
+(deftest the-layer-styles-the-elements-that-exist
+  ;; Review finding 2026-09-02: a rule for a class combination that never
+  ;; occurs styles nothing, and a generic `button` rule reaches the
+  ;; full-viewport backdrop, which is a <button>.
+  (is (str/includes? appearance/css ".bots-msg[data-role='person'] .bots-msg__bubble"))
+  (is (not (str/includes? appearance/css ".message-row--user")))
+  (is (str/includes? appearance/css "button:not(.mobile-nav-backdrop)"))
+  (is (str/includes? appearance/css ".tool-button:not([disabled]):hover")))
+
 (deftest the-toggle-cycles-through-every-mode-and-comes-back
   (is (= "8bit" (appearance/next-mode "light")))
   (is (= "light" (appearance/next-mode "8bit")))
@@ -56,8 +73,9 @@
     (is (not (str/includes? appearance/css "fonts.googleapis")))))
 
 (deftest palette-is-the-cockpit-floor-palette
-  ;; The public itonami.cloud 8-BIT MODE floor draws with these; a Bot must
-  ;; look like the same Bot in both places.
+  ;; The public itonami.cloud 8-BIT MODE floor draws with these eleven; the
+  ;; other five are this workspace's state colours. A Bot must look like the
+  ;; same Bot in both places, so the shared ones are pinned by value.
   (is (= "#181425" (:night appearance/palette)))
   (is (= "#fff1d2" (:cream appearance/palette)))
   (is (= "#ffd866" (:sun appearance/palette)))

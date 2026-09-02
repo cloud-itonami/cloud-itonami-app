@@ -49,6 +49,15 @@
   [config]
   (or (normalize (get-in config [:ui :appearance])) default-mode))
 
+(defn residency-plane
+  "Where the agent lives, as the workspace shows it: `:cloud` when the
+  configuration says so, `:local` for everything else — absent, nil, a typo.
+  Same shape as `resolve-mode`: a value that names nothing is not a crash."
+  [config]
+  (let [v (get-in config [:residency :plane])
+        s (some-> v (cond-> (keyword? v) name) str str/trim str/lower-case)]
+    (if (= "cloud" s) :cloud :local)))
+
 (defn next-mode
   "The mode a toggle moves to. Unknown input starts the cycle over."
   [mode]
@@ -57,9 +66,11 @@
     (nth modes (mod (inc i) (count modes)))))
 
 ;; ── the 8-bit palette ────────────────────────────────────────────────────
-;; The cockpit floor's colours (cloud_itonami.site.home), named so the
-;; stylesheet below reads as design rather than as hex. Sixteen entries is the
-;; whole system: an 8-bit palette that keeps growing stops being one.
+;; Eleven of these are the cockpit floor's colours (cloud_itonami.site.home:
+;; night, indigo, cream, sun, leaf, grass, sky, blue, pink, wood, white); the
+;; other five (slate, sand, orange, red, gray) are this workspace's state and
+;; chrome colours, chosen in the same family. Sixteen entries is the whole
+;; system: an 8-bit palette that keeps growing stops being one.
 
 (def palette
   {:night   "#181425"   ; ink, borders, hard shadows
@@ -130,11 +141,19 @@
    ".workspace[data-appearance=\"8bit\"] .topbar{background:var(--eightbit-sand);border-bottom:var(--eightbit-border)}\n"
    ".workspace[data-appearance=\"8bit\"] .topbar__title{text-transform:uppercase;letter-spacing:.08em}\n"
    ;; controls — every button is a pixel chip; the primary one wears the sun
-   ".workspace[data-appearance=\"8bit\"] button,.workspace[data-appearance=\"8bit\"] .tool-button,"
-   ".workspace[data-appearance=\"8bit\"] .context-button,.workspace[data-appearance=\"8bit\"] .composer-button{"
+   ;; `.mobile-nav-backdrop` is a <button> that is a full-viewport scrim, not
+   ;; a control; `.composer-button--stop` keeps its dark stop styling.
+   ".workspace[data-appearance=\"8bit\"] button:not(.mobile-nav-backdrop):not(.composer-button--stop),"
+   ".workspace[data-appearance=\"8bit\"] .tool-button,"
+   ".workspace[data-appearance=\"8bit\"] .context-button,"
+   ".workspace[data-appearance=\"8bit\"] .composer-button:not(.composer-button--stop){"
    "border-radius:0;border:var(--eightbit-border);background:var(--eightbit-cream);color:var(--eightbit-night);"
    "box-shadow:var(--eightbit-shadow);font:inherit;font-weight:800}\n"
-   ".workspace[data-appearance=\"8bit\"] button:active,.workspace[data-appearance=\"8bit\"] .tool-button:active{"
+   ".workspace[data-appearance=\"8bit\"] button:not(.mobile-nav-backdrop):not([disabled]):hover,"
+   ".workspace[data-appearance=\"8bit\"] .tool-button:not([disabled]):hover,"
+   ".workspace[data-appearance=\"8bit\"] .bots-rail__item:hover,"
+   ".workspace[data-appearance=\"8bit\"] .local-nav__item:hover{background:var(--eightbit-sand)}\n"
+   ".workspace[data-appearance=\"8bit\"] button:not(.mobile-nav-backdrop):active,.workspace[data-appearance=\"8bit\"] .tool-button:active{"
    "transform:translate(2px,2px);box-shadow:2px 2px 0 var(--eightbit-night)}\n"
    ".workspace[data-appearance=\"8bit\"] .primary-action,.workspace[data-appearance=\"8bit\"] button[type=\"submit\"]{"
    "background:var(--eightbit-sun)}\n"
@@ -157,9 +176,11 @@
    ".workspace[data-appearance=\"8bit\"] .req-row__state[data-tone='ok']{background:var(--eightbit-leaf);color:var(--eightbit-night)}\n"
    ".workspace[data-appearance=\"8bit\"] .req-row__state[data-tone='warn']{background:var(--eightbit-orange);color:var(--eightbit-night)}\n"
    ;; chat
-   ".workspace[data-appearance=\"8bit\"] .bots-msg__bubble,.workspace[data-appearance=\"8bit\"] .message-row--user .bots-msg__bubble{"
+   ;; Person messages are `.bots-msg[data-role='person']` (interaction.js);
+   ;; the sky bubble must target that, or both sides render the same colour.
+   ".workspace[data-appearance=\"8bit\"] .bots-msg__bubble{"
    "border-radius:0;border:var(--eightbit-border);box-shadow:var(--eightbit-shadow);background:var(--eightbit-white)}\n"
-   ".workspace[data-appearance=\"8bit\"] .message-row--user .bots-msg__bubble{background:var(--eightbit-sky)}\n"
+   ".workspace[data-appearance=\"8bit\"] .bots-msg[data-role='person'] .bots-msg__bubble{background:var(--eightbit-sky)}\n"
    ".workspace[data-appearance=\"8bit\"] .composer{border-radius:0;border:var(--eightbit-border);background:var(--eightbit-white)}\n"
    ;; the floor: the Bots rail becomes the office, each Bot a sprite on grass
    ".workspace[data-appearance=\"8bit\"] .bots-rail{background-color:var(--eightbit-grass);border:var(--eightbit-border);"

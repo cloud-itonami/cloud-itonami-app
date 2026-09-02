@@ -2599,6 +2599,9 @@
       (disk-space/write-tool? tool-name)
       (git-hygiene/write-tool? tool-name)
       (domain-tools/write-tool? tool-name)
+      ;; A Hokusai submit spends the operator's vendor balance; it is held
+      ;; for approval like every other write (ADR-0092).
+      (media-tools/write-tool? tool-name)
       (let [registry (connectors/enabled configuration)]
         (boolean
          (some (fn [d] (when-let [t (cm/tool d tool-name)]
@@ -3033,7 +3036,13 @@
     :workspace/invalid-query
     :workspace/parent-required
     :workspace/invalid-commit-paths
-    :workspace/invalid-commit-message})
+    :workspace/invalid-commit-message
+    ;; Hokusai: a bad duration or a malformed job id is the model's to fix.
+    ;; A gateway refusal (budget spent, backend not attested) is not, but the
+    ;; gateway's own code is the answer the Bot needs to stop retrying and
+    ;; say so, so it is handed back too rather than failing the turn.
+    :media/invalid-request
+    :media/upstream-refused})
 
 (defn- self-correctable-tool-result [error]
   (let [error-type (:type (ex-data error))]

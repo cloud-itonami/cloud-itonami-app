@@ -42,8 +42,17 @@
 (defn- parse-number [s]
   (let [t (present s)]
     (when t
-      #?(:clj (try (Double/parseDouble t) (catch Exception _ nil))
-         :cljs (let [n (js/Number t)] (when-not (js/isNaN n) n))))))
+      ;; NaN and Infinity parse as numbers on both runtimes and pass a range
+      ;; check (`(< NaN 1)` is false); only a finite value is a duration.
+      #?(:clj (try (let [d (Double/parseDouble t)]
+                     (when (Double/isFinite d) d))
+                   (catch Exception _ nil))
+         :cljs (let [n (js/Number t)] (when (js/isFinite n) n))))))
+
+(defn- finite-number? [x]
+  (and (number? x)
+       #?(:clj (Double/isFinite (double x))
+          :cljs (js/isFinite x))))
 
 (defn submit-body
   "A Bot's arguments → the request murakumo accepts, or a typed refusal.
@@ -64,7 +73,7 @@
       (nil? prompt)
       {:ok? false :code "prompt_required" :message "video prompt is required"}
 
-      (or (= :invalid seconds) (not (number? seconds))
+      (or (= :invalid seconds) (not (finite-number? seconds))
           (< seconds 1) (> seconds max-seconds))
       {:ok? false :code "seconds_out_of_range"
        :message (str "seconds must be a number between 1 and " max-seconds)}
@@ -103,6 +112,14 @@
      :content-url (present (or (getv response :content_url) (getv response :contentUrl)
                                (get-in response [:output :url]) (get-in response [:video :url])))
      :error (when error (if (string? error) error (str (or (getv error :message) error))))}))
+
+(defn valid-job-id?
+  "murakumo's job ids are opaque tokens. The id is the only Bot-supplied
+  value that reaches a request PATH, so it is allowlisted rather than
+  encoded: a `../` or `?` in it would let the model choose where a
+  Bearer-authenticated GET goes."
+  [id]
+  (boolean (and (string? id) (re-matches #"[A-Za-z0-9_-]{1,128}" id))))
 
 (defn status-url [videos-url id]
   (str (str/replace (str videos-url) #"/+$" "") "/" id))

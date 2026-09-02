@@ -19,11 +19,7 @@
   (:require [clojure.string :as str]
             [cloud.itonami.app.hokusai :as hokusai]
             [cloud.itonami.app.policy :as policy]
-            #?(:clj [clojure.data.json :as json]))
-  #?(:clj (:import [java.net URI]
-                   [java.net.http HttpClient HttpRequest HttpRequest$BodyPublishers
-                    HttpResponse$BodyHandlers]
-                   [java.time Duration])))
+            #?(:clj [cloud.itonami.app.provider :as provider])))
 
 (def provider-id "murakumo")
 
@@ -108,39 +104,33 @@
 
 #?(:clj
    (do
-     (defonce ^:private ^HttpClient client
-       (-> (HttpClient/newBuilder)
-           (.connectTimeout (Duration/ofSeconds 20))
-           (.build)))
-
      (defn- api-key [p]
        (some-> (:api-key-env p) System/getenv str/trim not-empty))
 
      (defn- request-json
-       [method url body api-key]
-       (let [builder (-> (HttpRequest/newBuilder (URI/create url))
-                         (.timeout (Duration/ofSeconds request-timeout-seconds))
-                         (.header "Accept" "application/json")
-                         (.header "Content-Type" "application/json")
-                         (.header "Authorization" (str "Bearer " api-key)))
-             request (case method
-                       :get (.GET builder)
-                       :post (.POST builder (HttpRequest$BodyPublishers/ofString
-                                             (json/write-str body))))
-             response (.send client (.build request) (HttpResponse$BodyHandlers/ofString))
-             status (.statusCode response)
-             parsed (try (json/read-str (.body response) :key-fn keyword)
-                         (catch Exception _ {:raw (.body response)}))]
-         (if (<= 200 status 299)
-           parsed
-           (throw (ex-info (str "hokusai answered HTTP " status)
-                           {:type :media/upstream-refused
-                            :status status
-                            ;; The gateway's own words, so
-                            ;; `self_model_backend_unavailable` reaches the
-                            ;; Bot as what it is rather than as "error".
-                            :code (get-in parsed [:error :code])
-                            :message (get-in parsed [:error :message])})))))
+       "One round trip through `provider/request-json`, so a timeout, an
+       unreachable gateway and a transport reset arrive under the names the
+       ledger already knows (`:provider/timeout` etc.) instead of as an
+       internal error. A non-2xx is re-typed `:media/upstream-refused` and
+       keeps the house shape (`:status` / `:response`) that `bots/error-message`
+       renders, plus the gateway's own `:code` — `self_model_monthly_budget_exhausted`
+       is what the Bot needs to read to stop asking."
+       [method url body key]
+       (try
+         (provider/request-json method url body key nil request-timeout-seconds 0)
+         (catch clojure.lang.ExceptionInfo e
+           (let [{:keys [type status response]} (ex-data e)]
+             (if (= :provider/http-error type)
+               (throw (ex-info (str "hokusai refused: HTTP " status
+                                    (when-let [c (get-in response [:error :code])]
+                                      (str " " c)))
+                               {:type :media/upstream-refused
+                                :status status
+                                :response response
+                                :code (get-in response [:error :code])
+                                :message (get-in response [:error :message])}
+                               e))
+               (throw e))))))
 
      (defn call-tool!
        "Run one media tool. Admission is checked on every call, not once at
@@ -161,6 +151,11 @@
              (when-not id
                (throw (ex-info "video_status needs the job id"
                                {:type :media/invalid-request :code "id_required"})))
+             ;; The id becomes a request path segment under the resident's
+             ;; bearer; only an opaque token shape is allowed through.
+             (when-not (hokusai/valid-job-id? id)
+               (throw (ex-info "video job id must be an opaque token (letters, digits, - or _)"
+                               {:type :media/invalid-request :code "id_invalid"})))
              (status-result videos-url id
                             (request-json :get (hokusai/status-url videos-url id) nil key)))
 

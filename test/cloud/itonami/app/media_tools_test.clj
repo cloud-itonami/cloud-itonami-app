@@ -1,5 +1,6 @@
 (ns cloud.itonami.app.media-tools-test
   (:require [clojure.test :refer [deftest is testing]]
+            [cloud.itonami.app.bot-authority :as bot-authority]
             [cloud.itonami.app.config :as config]
             [cloud.itonami.app.media-tools :as media-tools]
             [cloud.itonami.app.policy :as policy]))
@@ -42,6 +43,28 @@
       (let [{:keys [allowed? blocking]} (media-tools/admission cfg)]
         (is (false? allowed?))
         (is (= [:media-endpoint-missing] blocking))))))
+
+(deftest a-submit-is-a-write-and-both-tools-name-the-media-capability
+  ;; Review finding 2026-09-02: the tool was offered but never classified as
+  ;; a write, so the approval hold did not exist. Pinned here from the
+  ;; authority map, which is what the dispatch consults.
+  (is (= :media.video (get bot-authority/tool->capability "video_generate")))
+  (is (= :media.video (get bot-authority/tool->capability "video_status")))
+  (is (media-tools/write-tool? "video_generate")))
+
+(deftest a-malformed-job-id-is-refused-before-any-request
+  (let [cfg (-> (shipped-config)
+                (assoc-in [:routing :cloud-enabled?] true)
+                (update :providers
+                        (fn [ps] (mapv #(if (= "murakumo" (:id %))
+                                          (assoc % :enabled? true :reviewed? true)
+                                          %)
+                                       ps))))]
+    (with-redefs [policy/credentialed? (constantly true)]
+      (doseq [bad ["../generation/jobs?x=1" "job 1" "a/b"]]
+        (let [d (error-data #(media-tools/call-tool! cfg "video_status" {:id bad}))]
+          (is (= :media/invalid-request (:type d)) bad)
+          (is (= "id_invalid" (:code d)) bad))))))
 
 (deftest the-shipped-endpoint-is-murakumo-over-tls
   (let [p (media-tools/provider (shipped-config))]

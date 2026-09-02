@@ -257,6 +257,11 @@
    "disk_space_reclaim" :disk.reclaimable.cleanup
    "git_hygiene_status" :git.inspect
    "git_hygiene_prune" :git.cleanup
+   ;; Hokusai video (ADR-0092). Both name the same capability: reading a job
+   ;; you submitted is part of submitting it, and a Bot without `:media.video`
+   ;; has no job id to read.
+   "video_generate" :media.video
+   "video_status" :media.video
    "domain_search" :domain.read
    "domain_check" :domain.read
    "domain_registrations" :domain.read

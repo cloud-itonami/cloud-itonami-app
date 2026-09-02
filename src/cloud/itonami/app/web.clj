@@ -1964,7 +1964,7 @@
         model (get-in configuration [:routing :default-model])
         brand (get-in configuration [:brand :name] "Cloud Itonami")
         mode (appearance/resolve-mode configuration)
-        residency (keyword (name (get-in configuration [:residency :plane] :local)))
+        residency (appearance/residency-plane configuration)
         css (slurp (io/resource "jp_go_dds/dds.css"))]
     (page/->page
      {:title (str "Bots | " brand)

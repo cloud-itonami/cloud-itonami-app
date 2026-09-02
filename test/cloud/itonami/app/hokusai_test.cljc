@@ -7,8 +7,9 @@
     (let [r (hokusai/submit-body {:prompt "  "})]
       (is (false? (:ok? r)))
       (is (= "prompt_required" (:code r)))))
-  (testing "duration outside 1..15 is named, not clamped"
-    (doseq [s [0 16 -1 "abc" 100]]
+  (testing "duration outside 1..15 is named, not clamped — and NaN / Infinity
+            are not durations even though they parse as numbers"
+    (doseq [s [0 16 -1 "abc" 100 "NaN" "Infinity" "-Infinity"]]
       (let [r (hokusai/submit-body {:prompt "a cat" :seconds s})]
         (is (false? (:ok? r)) (pr-str s))
         (is (= "seconds_out_of_range" (:code r)) (pr-str s))))))
@@ -47,6 +48,14 @@
     (is (= "no backend" (:error failed)))
     (is (not (:terminal? running)))
     (is (nil? (:error running)))))
+
+(deftest a-job-id-is-an-opaque-token-or-nothing
+  ;; The id is the one Bot-supplied value that reaches a request path under
+  ;; the resident's bearer, so the shape is allowlisted, not encoded.
+  (doseq [ok ["job-1" "abc_DEF-9" "bafyreiabc"]]
+    (is (hokusai/valid-job-id? ok) ok))
+  (doseq [bad ["../generation/jobs?x=1" "job 1" "a/b" "?x" "" nil "j#1" (apply str (repeat 129 "a"))]]
+    (is (not (hokusai/valid-job-id? bad)) (pr-str bad))))
 
 (deftest urls-are-derived-from-the-configured-endpoint
   (is (= "https://murakumo.cloud/api/v1/videos/abc"
