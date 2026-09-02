@@ -1,0 +1,20 @@
+;; MCP stdio ENTRY — word-typed protocol admission, not the JSON-RPC loop.
+;;
+;; The nbb host adapter in `bin/itonami-mcp` owns stdin/stdout. This file
+;; decides whether a protocol version is one this server names. It does not
+;; spawn `clojure -M:mcp`, and it does not call Java.
+;;
+;; Guest grammar is not Clojure. `mcp.clj` stays a leftover JVM namespace;
+;; it is not admitted by rename.
+
+(ns cloud.itonami.app.mcp-main
+  (:export [main protocol-ok?]))
+
+(defn protocol-ok? [version :string] :bool
+  (or (string=? version "2025-11-25")
+      (or (string=? version "2025-06-18")
+          (string=? version "2025-03-26"))))
+
+;; Process start token for a host that already bound stdio. 0 means admitted.
+(defn main [] :i64
+  0)

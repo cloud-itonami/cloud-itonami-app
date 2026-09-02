@@ -556,11 +556,11 @@
           :ns-default build}
   :release-sign {:extra-paths ["dev"]
                  :main-opts ["-m" "cloud.itonami.app.sign-update-manifest"]}
+  ;; LEFTOVER JVM. Not the run path. Use bin/cloud-itonami-server (nbb host).
   :server {:main-opts ["-m" "cloud.itonami.app.server"]}
   :ao-messenger {:main-opts ["-m" "cloud.itonami.app.organism-messenger-client"]}
   :repository {:main-opts ["-m" "cloud.itonami.app.repository-runtime"]}
-  ;; The MCP server speaks JSON-RPC on stdout, so nothing else may print there:
-  ;; run it with this alias, never alongside :server in one process.
+  ;; LEFTOVER JVM. Not the run path. Use bin/itonami-mcp (nbb host, no spawnSync).
   :mcp {:main-opts ["-m" "cloud.itonami.app.mcp"]}
   ;; A client of the running server, not a second writer: `store/state` is read
   ;; once per process, so a CLI that wrote state.edn beside a live server would

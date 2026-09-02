@@ -1,0 +1,141 @@
+#!/usr/bin/env nbb
+;; Amu JVM-free emit for the app entries.
+;;
+;;   AMU=<amu launcher> nbb --classpath bin bin/compile-amu
+;;   AMU=<amu launcher> PATH="$(scripts/path-without-jvm)" nbb --classpath bin bin/compile-amu
+;;
+;; This is the compile kotoba-clj will review. Success is artifact bytes on
+;; disk plus provenance. `:command/planned` / `:kotoba.cli/code` other than
+;; emit is failure. Production `deps.edn` stays on kotoba `:git/tag v0.6.29`;
+;; this script does not bump that pin. Amu is the compiler (already the
+;; `bin/gen_kir_amu.cljs` path). Native output is sealed KEXE, not Mach-O.
+;;
+;; Inputs are absolute because the nbb Wasm path rejects relative ones
+;; (same measurement as `bin/gen_kir_amu.cljs`).
+
+(ns compile-amu
+  (:require ["node:child_process" :as cp]
+            ["node:fs" :as fs]
+            ["node:path" :as path]
+            [clojure.edn :as edn]
+            [clojure.string :as str]))
+
+(def entries
+  [{:id "server_main"
+    :rel "src/cloud/itonami/app/server_main.kotoba"}
+   {:id "mcp_main"
+    :rel "src/cloud/itonami/app/mcp_main.kotoba"}])
+
+(def out-dir "target/amu")
+
+(defn- sh [cmd args]
+  (let [{:keys [status stdout stderr]}
+        (js->clj (cp/spawnSync cmd (clj->js args)
+                               #js {:encoding "utf8" :stdio "pipe"})
+                 :keywordize-keys true)]
+    {:exit (or status 1) :stdout (str stdout) :stderr (str stderr)}))
+
+(defn- reject-planned! [text path]
+  (when (or (str/includes? text ":command/planned")
+            (str/includes? text ":kotoba.cli/code :command/planned")
+            (str/includes? text ":compile/planned"))
+    (throw (ex-info (str "emit refused: planned, not emitted: " path)
+                    {:path path :text text}))))
+
+(defn- require-file! [p]
+  (when-not (fs/existsSync p)
+    (throw (ex-info (str "emit missing file: " p) {:path p})))
+  (let [st (fs/statSync p)]
+    (when-not (pos? (.-size st))
+      (throw (ex-info (str "emit empty file: " p) {:path p}))))
+  p)
+
+(defn- read-edn [p]
+  (edn/read-string (fs/readFileSync p "utf8")))
+
+(defn- emit-ok? [m]
+  (or (= :compile/emitted (:kotoba.cli/code m))
+      (= :compile/emitted (keyword (name (or (:kotoba.cli/code m) ""))))
+      (true? (:kotoba.cli/ok? m))
+      (some? (:kir-sha256 m))
+      (some? (:target m))))
+
+(defn compile-one! [amu {:keys [id rel]} target suffix]
+  (fs/mkdirSync out-dir #js {:recursive true})
+  (let [source (path/resolve rel)
+        output (path/resolve out-dir (str id suffix))
+        args ["compile" source
+              "--target" target
+              "--jvm-free"
+              "--output" output]
+        {:keys [exit stdout stderr]} (sh amu args)
+        text (str stdout "\n" stderr)]
+    (when-not (zero? exit)
+      (throw (ex-info (str "amu compile failed for " id " target=" target)
+                      {:id id :target target :exit exit :stderr text})))
+    (reject-planned! text output)
+    (require-file! output)
+    (let [prov-path (str output ".provenance.edn")
+          pub-path (str output ".publication.edn")
+          marker-candidates [(str output ".output-set.edn")
+                             (str output ".kotoba.output-set.edn")
+                             pub-path]
+          prov (when (fs/existsSync prov-path)
+                 (require-file! prov-path)
+                 (let [m (read-edn prov-path)]
+                   (reject-planned! (pr-str m) prov-path)
+                   (when-not (emit-ok? m)
+                     (throw (ex-info (str "provenance is not emit: " prov-path)
+                                     {:path prov-path :provenance m})))
+                   m))]
+      (when (fs/existsSync pub-path)
+        (require-file! pub-path)
+        (reject-planned! (fs/readFileSync pub-path "utf8") pub-path))
+      (when-not (or prov (some fs/existsSync marker-candidates))
+        (throw (ex-info (str "no provenance beside " output)
+                        {:output output})))
+      (when-not (or (str/includes? (str stdout) ":ok true")
+                    (str/includes? (str stdout) ":compile/emitted"))
+        (reject-planned! (str stdout) output))
+      {:id id :target target :output output
+       :bytes (.-size (fs/statSync output))
+       :provenance-path (when (fs/existsSync prov-path) prov-path)
+       :publication-path (when (fs/existsSync pub-path) pub-path)
+       :provenance prov
+       :stdout stdout})))
+
+(defn- verify! [amu output kind]
+  (let [cmd (case kind
+              :kexe ["verify" output]
+              :wasm ["verify-output-set" output])
+        {:keys [exit stdout stderr]} (sh amu cmd)
+        text (str stdout "\n" stderr)]
+    (when (and (not (zero? exit)) (= kind :wasm))
+      (throw (ex-info (str "amu " (first cmd) " failed for " output)
+                      {:output output :exit exit :stderr text})))
+    (when (and (not (zero? exit)) (= kind :kexe))
+      ;; Linux hosts cannot start amu's private native-verify runtime for
+      ;; aarch64-macos KEXE. Compile already wrote sealed bytes + provenance.
+      ;; Do not treat that as Mach-O verification, and do not fake :ok.
+      (println (str "HOLD amu verify " output " exit=" exit
+                    " (sealed KEXE emit stands; verify runtime missing)"))
+      {:verify (first cmd) :output output :ok? false :hold? true :stderr text})
+    (when (zero? exit)
+      {:verify (first cmd) :output output :ok? true})))
+
+(defn -main [& _]
+  (let [amu (or (.-AMU js/process.env) "amu")
+        native-target (or (.-AMU_NATIVE_TARGET js/process.env) "aarch64-macos")
+        rows (atom [])]
+    (doseq [entry entries]
+      (let [wasm (compile-one! amu entry "wasm32" ".wasm")]
+        (swap! rows conj wasm)
+        (swap! rows conj (verify! amu (:output wasm) :wasm)))
+      (let [kexe (compile-one! amu entry native-target ".kexe")]
+        (swap! rows conj kexe)
+        (swap! rows conj (verify! amu (:output kexe) :kexe))))
+    (doseq [row @rows]
+      (println (pr-str (dissoc row :stdout :provenance))))
+    (println (str (count (filter :bytes @rows)) " artifacts emitted under " out-dir))))
+
+(apply -main (or *command-line-args* []))

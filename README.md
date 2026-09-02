@@ -73,10 +73,15 @@ context envelopes, grants, approval and replay. See
 ## Requirements
 
 - macOS 14 or later for the native shell, EventKit, and Keychain integrations
-- Java 21+
-- Clojure CLI
+- Node.js 22+ and `nbb` (host adapter for the loopback server and MCP stdio)
+- `amu` (`kotoba-lang/amu`) to emit wasm / sealed KEXE
 - `jq` and `curl`
 - Ollama or another configured OpenAI-compatible provider
+
+The run path is the nbb host adapters (`bin/cloud-itonami-server`,
+`bin/itonami-mcp`). Java and the Clojure CLI are leftover for `:test`, `:gen`,
+`:cli`, `:repository`, and `:ao-messenger` — they are not how the shipped
+server or MCP start.
 
 Pure tests and the loopback web surface also run on Linux.
 
@@ -84,7 +89,7 @@ Pure tests and the loopback web surface also run on Linux.
 
 Developer-preview builds are published on the
 [GitHub Releases](https://github.com/cloud-itonami/cloud-itonami-app/releases)
-page. All builds currently require Java 21+.
+page. Packaged launchers start the nbb host adapter; they do not require Java.
 
 - **macOS 14+, Apple Silicon:** DMG and ZIP. The app is ad-hoc signed, not
   Apple notarized, so macOS may require Control-click → Open on first launch.
@@ -152,10 +157,19 @@ and the signer certificate SHA-256 matches the current installation.
 ## Run
 
 ```bash
-clojure -P
-clojure -M:server
+nbb --classpath bin bin/cloud-itonami-server
 open http://localhost:1338
 ```
+
+`GET /health` is the live surface on this host adapter. Compile the kotoba
+entries first when you need the sealed artifacts:
+
+```bash
+AMU=<amu launcher> nbb --classpath bin bin/compile-amu
+```
+
+Artifacts land at `target/amu/server_main.wasm`, `target/amu/mcp_main.wasm`,
+and the matching `.kexe` (sealed KEXE, not a Mach-O executable).
 
 `bin/cloud-itonami-app` opens the web surface as an application window — no tab
 strip, no address bar — and starts the server only when nothing already answers
@@ -177,7 +191,7 @@ Until that is fixed, use the launcher's own documented fallback, which is the
 same surface in an application window:
 
 ```bash
-clojure -M:server &
+nbb --classpath bin bin/cloud-itonami-server &
 open -na "Google Chrome" --args --app="http://localhost:1338/" \
   --window-size=430,860 --window-position=140,60
 ```
@@ -518,17 +532,15 @@ Transport is stdio, so nothing new listens on the network.
 {
   "mcpServers": {
     "cloud-itonami-fleet": {
-      "command": "clojure",
-      "args": ["-M:mcp"],
+      "command": "nbb",
+      "args": ["--classpath", "bin", "bin/itonami-mcp"],
       "cwd": "/path/to/cloud-itonami-app"
     }
   }
 }
 ```
 
-There is no wrapper script on purpose: MCP clients launch a command directly, and
-putting another process in the middle of a stdio protocol stream only risks its
-framing.
+`bin/itonami-mcp` is the stdio server (nbb). It does not `spawnSync` `clojure`.
 
 Two tools, the same ones the in-app agent uses — the descriptors and behaviour
 live in `cloud.itonami.app.fleet`, and `cloud.itonami.app.mcp` is an adapter over
@@ -1219,7 +1231,7 @@ The stdio MCP server publishes these as tools — but only when it can resolve a
 ```bash
 security add-generic-password -s cloud-itonami-app.mcp -a session-token -w
 export CLOUD_ITONAMI_MCP_SESSION=…   # takes precedence over the Keychain
-clojure -M:mcp
+nbb --classpath bin bin/itonami-mcp
 ```
 
 | tool | |
@@ -1320,8 +1332,8 @@ and every test drives an injected transport. See
 Set a named profile or an EDN file path:
 
 ```bash
-CLOUD_ITONAMI_PROFILE=gftd clojure -M:server
-CLOUD_ITONAMI_PROFILE=/secure/path/company.edn clojure -M:server
+CLOUD_ITONAMI_PROFILE=gftd nbb --classpath bin bin/cloud-itonami-server
+CLOUD_ITONAMI_PROFILE=/secure/path/company.edn nbb --classpath bin bin/cloud-itonami-server
 ```
 
 Profiles contain branding and non-secret service coordinates. Secrets remain
@@ -1340,7 +1352,7 @@ The included itonami profile turns email sign-in on and points it at
 
 ```bash
 CLOUD_ITONAMI_EMAIL_LOGIN_TOKEN=<bearer> CLOUD_ITONAMI_PROFILE=itonami \
-  clojure -M:server
+  nbb --classpath bin bin/cloud-itonami-server
 ```
 
 Email sign-in stays off in the shipped defaults, and that is not an oversight.

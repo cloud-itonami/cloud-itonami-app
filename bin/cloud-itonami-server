@@ -1,0 +1,74 @@
+#!/usr/bin/env nbb
+;; Loopback HTTP host adapter. Does not spawn java or clojure.
+;;
+;; Listen is Node `http` (nbb host adapter). Guest judgement for `/health`
+;; is the same two-string admission `server_main.kotoba` / `health_core.kotoba`
+;; export. This is not `clojure -M:server` and it does not load `server.clj`.
+;;
+;; Honest surface: process liveness on GET /health. The rest of the JVM
+;; HTTP API (Passkey, store, web page, connectors) remains leftover until a
+;; catalog capability or a further host adapter carries it. Do not read the
+;; operator overlay at ~/.cloud-itonami/data/config.edn.
+
+(ns cloud-itonami-server
+  (:require ["node:crypto" :as crypto]
+            ["node:fs" :as fs]
+            ["node:http" :as http]
+            ["node:path" :as path]
+            [nbb.core :refer [*file*]]))
+
+(def app-directory
+  (fs/realpathSync (path/resolve (path/dirname *file*) "..")))
+
+(defn- health-route? [method url-path]
+  (and (= method "GET") (= url-path "/health")))
+
+(defn- data-dir []
+  (or (aget js/process.env "CLOUD_ITONAMI_DATA_DIR")
+      (path/resolve app-directory "data")))
+
+(defn- store-fingerprint []
+  (-> (crypto/createHash "sha256")
+      (.update (str (data-dir)) "utf8")
+      (.digest "hex")
+      (subs 0 16)))
+
+(defn- json-response [res status body]
+  (.writeHead res status #js {"content-type" "application/json; charset=utf-8"
+                              "cache-control" "no-store"})
+  (.end res (js/JSON.stringify (clj->js body))))
+
+(defn- handle [req res]
+  (let [method (.-method req)
+        url-path (.-pathname (js/URL. (str "http://127.0.0.1" (.-url req))))]
+    (cond
+      (health-route? method url-path)
+      (json-response res 200 {:ok true
+                              :service "cloud-itonami-app"
+                              :schema "cloud.itonami.app.health.v1"
+                              :runtime "nbb-host"
+                              :store (store-fingerprint)})
+
+      (and (= method "GET") (= url-path "/"))
+      (do
+        (.writeHead res 200 #js {"content-type" "text/html; charset=utf-8"})
+        (.end res
+              (str "<!doctype html><meta charset=\"utf-8\">"
+                   "<title>Cloud Itonami</title>"
+                   "<p>nbb host adapter. GET /health is live. "
+                   "The leftover JVM page in server.clj is not this process.</p>")))
+
+      :else
+      (json-response res 404 {:error {:type "nbb-host/not-ported"
+                                      :message "this host adapter serves /health; the leftover JVM API is not loaded"}}))))
+
+(defn -main [& _]
+  (let [host (or (aget js/process.env "CLOUD_ITONAMI_HOST") "127.0.0.1")
+        port (js/parseInt (or (aget js/process.env "CLOUD_ITONAMI_PORT") "1338") 10)
+        server (.createServer http handle)]
+    (.listen server port host
+             (fn []
+               (binding [*print-fn* *print-err-fn*]
+                 (println (str "cloud-itonami-server nbb-host " host ":" port)))))))
+
+(apply -main (or *command-line-args* []))

@@ -1,0 +1,25 @@
+;; Loopback server ENTRY — word-typed admission, not the HTTP listen.
+;;
+;; Public-language compile is wasm|web only (lang/cli.edn). Native sealed
+;; KEXE is `amu compile --target aarch64-macos --jvm-free`. This file is
+;; that entry. It does not listen: amu http-ingress is host-listen /
+;; guest-poll and `:native-aot` is still pending (ADR-0038). The nbb host
+;; adapter in `bin/cloud-itonami-server` owns the socket.
+;;
+;; Guest grammar is not Clojure. `server.clj` stays a leftover JVM
+;; namespace; it is not admitted by rename.
+;;
+;; Production `deps.edn` still pins `io.github.kotoba-lang/kotoba` at
+;; `:git/tag v0.6.29`. This entry is compiled by amu (`--jvm-free`), not by
+;; bumping that pin. Existing decision cores in this directory are unchanged.
+
+(ns cloud.itonami.app.server-main
+  (:export [main health-route?]))
+
+(defn health-route? [method :string path :string] :bool
+  (and (string=? method "GET")
+       (string=? path "/health")))
+
+;; Process start token for a host that already listened. 0 means admitted.
+(defn main [] :i64
+  0)

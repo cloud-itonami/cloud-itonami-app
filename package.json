@@ -1,0 +1,8 @@
+{
+  "name": "cloud-itonami-app-host",
+  "private": true,
+  "description": "nbb host adapter for the JVM-free server and MCP run path",
+  "devDependencies": {
+    "nbb": "1.5.211"
+  }
+}

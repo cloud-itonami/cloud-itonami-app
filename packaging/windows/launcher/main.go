@@ -78,18 +78,16 @@ func startPendingUpdate(installDir, dataDir string) bool {
 }
 
 func startServer(installDir, dataDir, logDir string) error {
-	java, err := exec.LookPath("java.exe")
-	if err != nil {
-		return fmt.Errorf("Java 21 or later is required")
+	server := filepath.Join(installDir, "cloud-itonami-server")
+	if _, err := os.Stat(server); err != nil {
+		return fmt.Errorf("cloud-itonami-server is missing; this launcher does not start Java")
 	}
 	logFile, err := os.OpenFile(filepath.Join(logDir, "server.log"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
 	if err != nil {
 		return err
 	}
-	command := exec.Command(java,
-		"-Dcloud.itonami.data-dir="+dataDir,
-		"-cp", filepath.Join(installDir, "cloud-itonami-app.jar"),
-		"clojure.main", "-m", "cloud.itonami.app.server")
+	command := exec.Command(server)
+	command.Env = append(os.Environ(), "CLOUD_ITONAMI_DATA_DIR="+dataDir)
 	command.Stdout = logFile
 	command.Stderr = logFile
 	if err := command.Start(); err != nil {

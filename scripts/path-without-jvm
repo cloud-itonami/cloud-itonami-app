@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+# Build a PATH whose directories do not contain java / javac / clojure / clj
+# launchers, without dropping mkdir/git from the same /usr/bin.
+#
+# Prints one directory: a reconstructed bin of symlinks. Used by the no-Java
+# compile and run proofs.
+set -euo pipefail
+dest="${TMPDIR:-/tmp}/itonami-path-without-jvm"
+rm -rf "$dest"
+mkdir -p "$dest"
+blocked='^(java|javac|clojure|clj)$'
+IFS=':'
+for dir in $PATH; do
+  [[ -z "$dir" || ! -d "$dir" ]] && continue
+  for exe in "$dir"/*; do
+    [[ -e "$exe" || -L "$exe" ]] || continue
+    name="$(basename -- "$exe")"
+    if [[ "$name" =~ $blocked ]]; then
+      continue
+    fi
+    if [[ -e "$dest/$name" ]]; then
+      continue
+    fi
+    if [[ -x "$exe" ]]; then
+      ln -s "$exe" "$dest/$name"
+    fi
+  done
+done
+printf '%s\n' "$dest"

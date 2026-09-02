@@ -1,37 +1,201 @@
 #!/usr/bin/env nbb
-;; Run the local MCP stdio adapter against the same resident installation as
-;; `bin/itonami`. MCP clients keep this process open and own its stdin/stdout.
+;; MCP stdio host adapter. Does not spawn java or clojure.
+;;
+;; The previous launcher exec'd the leftover JVM MCP alias. That wrap is gone.
+;; JSON-RPC stays on stdin/stdout here. Fleet search reads the shipped catalog
+;; EDN. Outbound `fleet_call` is not published: the leftover JVM used
+;; `HttpURLConnection`, and this adapter will not invent a Java client or a
+;; silent URL change.
+;;
+;; Resident install still binds `CLOUD_ITONAMI_DATA_DIR` to the sibling
+;; `~/.cloud-itonami/data` when this script is that install. It does not
+;; read or write `config.edn`.
+
 (ns itonami-mcp
-  (:require ["node:child_process" :as child-process]
-            ["node:fs" :as fs]
+  (:require ["node:fs" :as fs]
             ["node:path" :as path]
+            ["node:readline" :as readline]
+            [clojure.edn :as edn]
+            [clojure.string :as str]
             [nbb.core :refer [*file*]]))
 
 (def app-directory
   (fs/realpathSync (path/resolve (path/dirname *file*) "..")))
 (def home-directory
-  (some-> (aget js/process.env "HOME") fs/realpathSync))
+  (when-let [home (aget js/process.env "HOME")]
+    (try (fs/realpathSync home) (catch :default _ home))))
 (def resident-app-directory
   (when home-directory (path/resolve home-directory ".cloud-itonami" "app")))
-(def child-environment
-  (js/Object.assign #js {} js/process.env
-                    #js {"CLOUD_ITONAMI_APP_DIR" app-directory}))
 
 (when (and resident-app-directory
            (= app-directory resident-app-directory)
-           (nil? (aget child-environment "CLOUD_ITONAMI_DATA_DIR")))
-  (aset child-environment "CLOUD_ITONAMI_DATA_DIR"
+           (nil? (aget js/process.env "CLOUD_ITONAMI_DATA_DIR")))
+  (aset js/process.env "CLOUD_ITONAMI_DATA_DIR"
         (path/resolve home-directory ".cloud-itonami" "data")))
 
-(def result
-  (child-process/spawnSync
-   "clojure" (into-array ["-M:mcp"])
-   #js {:cwd app-directory :stdio "inherit" :env child-environment}))
+(def server-name "cloud-itonami-fleet")
+(def server-version "1")
+(def latest-protocol-version "2025-11-25")
+(def supported-protocol-versions
+  #{"2025-03-26" "2025-06-18" latest-protocol-version})
 
-(when-let [error (.-error result)]
-  (binding [*print-fn* *print-err-fn*]
-    (println (str "itonami-mcp: clojure を実行できませんでした: "
-                  (.-message error))))
-  (set! (.-exitCode js/process) 127))
+(defn protocol-ok? [version]
+  (contains? supported-protocol-versions (str version)))
 
-(set! (.-exitCode js/process) (or (.-status result) 0))
+(def catalog-path
+  (path/resolve app-directory "resources" "itonami-fleet-catalog.edn"))
+
+(defn- load-catalog []
+  (when-not (fs/existsSync catalog-path)
+    (throw (ex-info "fleet catalog resource missing"
+                    {:type :fleet/catalog-missing :path catalog-path})))
+  (edn/read-string (fs/readFileSync catalog-path "utf8")))
+
+(def catalog (delay (load-catalog)))
+
+(defn- actors []
+  (or (:actors @catalog) []))
+
+(defn- matches-text? [actor q]
+  (let [q (str/lower-case (str q))]
+    (some (fn [v] (and v (str/includes? (str/lower-case (str v)) q)))
+          [(:id actor) (:name actor) (:domain actor)])))
+
+(defn- isic-of [actor]
+  (or (:isic actor) (:isic-rev5 actor) (:isic-rev4 actor)))
+
+(defn- callable? [actor]
+  (boolean (and (:endpoint actor) (seq (str (:endpoint actor))))))
+
+(defn- search [criteria]
+  (let [{:keys [text domain governor maturity status isic iso3166 execution role]
+         want-callable :callable?} criteria]
+    (cond->> (actors)
+      text (filter #(matches-text? % text))
+      domain (filter #(= domain (:domain %)))
+      governor (filter #(= governor (:governor %)))
+      maturity (filter #(= maturity (:maturity %)))
+      status (filter #(= status (:status %)))
+      isic (filter #(= isic (isic-of %)))
+      iso3166 (filter #(= iso3166 (:iso3166 %)))
+      execution (filter #(= execution (:execution %)))
+      role (filter #(= role (:role %)))
+      (some? want-callable) (filter #(= (boolean want-callable) (callable? %)))
+      true vec)))
+
+(defn- keywordize [m]
+  (into {} (map (fn [[k v]] [(keyword k) v])) (or m {})))
+
+(defn- kw [v]
+  (when (and v (seq (str v))) (keyword (str v))))
+
+(defn search-tool [input]
+  (when-not (= "cloud.itonami.fleet-catalog.v1" (str (:schema @catalog)))
+    (throw (ex-info "fleet catalog schema mismatch"
+                    {:type :fleet/schema-mismatch})))
+  (let [limit (min 100 (max 1 (or (:limit input) 20)))
+        hits (search (cond-> {}
+                       (:text input) (assoc :text (:text input))
+                       (:domain input) (assoc :domain (kw (:domain input)))
+                       (:isic input) (assoc :isic (str (:isic input)))
+                       (:iso3166 input) (assoc :iso3166 (str (:iso3166 input)))
+                       (:maturity input) (assoc :maturity (kw (:maturity input)))
+                       (:execution input) (assoc :execution (kw (:execution input)))
+                       (contains? input :callable) (assoc :callable? (true? (:callable input)))))]
+    {:matched (count hits)
+     :returned (min limit (count hits))
+     :actors (mapv #(select-keys % [:repo :id :name :domain :governor :maturity
+                                    :execution :role :endpoint :endpoint-kind])
+                   (take limit hits))}))
+
+(def tools
+  [{:name "fleet_search"
+    :description (str "Query the bundled actor catalog. No network. "
+                      "fleet_call is not on this nbb host — leftover JVM.")
+    :inputSchema {:type "object"
+                  :properties
+                  {:text {:type "string"}
+                   :domain {:type "string"}
+                   :isic {:type "string"}
+                   :iso3166 {:type "string"}
+                   :maturity {:type "string"}
+                   :execution {:type "string"}
+                   :callable {:type "boolean"}
+                   :limit {:type "integer"}}}}])
+
+(defn- write-json [value]
+  (.write js/process.stdout (str (js/JSON.stringify (clj->js value)) "\n")))
+
+(defn- result [id value]
+  {"jsonrpc" "2.0" "id" id "result" value})
+
+(defn- err [id code message]
+  {"jsonrpc" "2.0" "id" id "error" {"code" code "message" message}})
+
+(defn respond [request]
+  (when (contains? request "id")
+    (let [id (get request "id")
+          method (get request "method")
+          params (get request "params")]
+      (case method
+        "initialize"
+        (let [requested (get params "protocolVersion")
+              version (if (protocol-ok? requested)
+                        requested
+                        latest-protocol-version)]
+          (result id {"protocolVersion" version
+                      "capabilities" {"tools" {}}
+                      "serverInfo" {"name" server-name
+                                    "version" server-version}
+                      "runtime" "nbb-host"}))
+
+        "ping"
+        (result id {})
+
+        "tools/list"
+        (result id {"tools" (mapv (fn [t]
+                                    {"name" (:name t)
+                                     "description" (:description t)
+                                     "inputSchema" (:inputSchema t)})
+                                  tools)})
+
+        "tools/call"
+        (let [tool-name (get params "name")
+              args (keywordize (get params "arguments"))]
+          (if (= "fleet_search" tool-name)
+            (try
+              (result id {"content" [{"type" "text"
+                                      "text" (js/JSON.stringify (clj->js (search-tool args)))}]})
+              (catch :default e
+                (result id {"isError" true
+                            "content" [{"type" "text"
+                                        "text" (or (.-message e) (str e))}]})))
+            (result id {"isError" true
+                        "content" [{"type" "text"
+                                    "text" (str "unknown tool: " tool-name)}]})))
+
+        (err id -32601 (str "method not found: " method))))))
+
+(defn- handle-line [line]
+  (if (str/blank? line)
+    nil
+    (if-let [request (try (js->clj (js/JSON.parse line))
+                          (catch :default _ nil))]
+      (when-let [response (respond request)]
+        (write-json response))
+      (write-json {"jsonrpc" "2.0" "id" nil
+                   "error" {"code" -32700 "message" "parse error"}}))))
+
+(defn -main [& args]
+  (when (= "--print-data-dir" (first args))
+    (println (or (aget js/process.env "CLOUD_ITONAMI_DATA_DIR") ""))
+    (println (or (aget js/process.env "CLOUD_ITONAMI_APP_DIR") app-directory))
+    (js/process.exit 0))
+  (aset js/process.env "CLOUD_ITONAMI_APP_DIR" app-directory)
+  (let [rl (.createInterface readline
+                             #js {:input js/process.stdin
+                                  :crlfDelay js/Infinity})]
+    (.on rl "line" handle-line)
+    (.on rl "close" (fn [] (js/process.exit 0)))))
+
+(apply -main (or *command-line-args* []))

@@ -44,13 +44,65 @@
      :app (.getCanonicalPath app)
      :data (.getCanonicalPath (io/file home ".cloud-itonami" "data"))}))
 
-(deftest resident-command-launchers-share-the-resident-data-directory
-  (doseq [[launcher alias] [["itonami" "-M:cli status"]
-                            ["itonami-mcp" "-M:mcp"]]]
-    (let [{:keys [status stderr lines app data]}
-          (run-resident-script launcher nil)]
-      (is (zero? status) stderr)
-      (is (= [app data alias] lines) launcher))))
+(deftest resident-cli-launcher-still-uses-leftover-clojure
+  ;; `:cli` is an honest leftover. The MCP and server run paths are not.
+  (let [{:keys [status stderr lines app data]}
+        (run-resident-script "itonami" nil)]
+    (is (zero? status) stderr)
+    (is (= [app data "-M:cli status"] lines))))
+
+(deftest resident-mcp-launcher-does-not-spawn-clojure
+  (let [home (temporary-directory)
+        app (io/file home ".cloud-itonami" "app")
+        bin (io/file app "bin")
+        fake-bin (io/file home "fake-bin")
+        installed (io/file bin "itonami-mcp")
+        fake-clojure (io/file fake-bin "clojure")
+        marker (io/file home "clojure-was-spawned")
+        _ (.mkdirs bin)
+        _ (.mkdirs fake-bin)
+        _ (io/copy (io/file "bin" "itonami-mcp") installed)
+        _ (.setExecutable installed true)
+        _ (spit fake-clojure
+                (str "#!/bin/sh\n"
+                     "printf spawned > '" (.getCanonicalPath marker) "'\n"
+                     "exit 42\n"))
+        _ (.setExecutable fake-clojure true)
+        process (ProcessBuilder. ^java.util.List
+                                 ["nbb" (.getPath installed) "--print-data-dir"])
+        environment (.environment process)
+        _ (.put environment "HOME" (.getCanonicalPath home))
+        _ (.put environment "PATH"
+                (str (.getCanonicalPath fake-bin) ":" (get environment "PATH")))
+        _ (.remove environment "CLOUD_ITONAMI_DATA_DIR")
+        started (.start process)
+        stdout (slurp (.getInputStream started))
+        stderr (slurp (.getErrorStream started))
+        status (.waitFor started)
+        lines (str/split-lines stdout)]
+    (is (zero? status) stderr)
+    (is (not (.exists marker)) "itonami-mcp must not spawn clojure")
+    (is (= (.getCanonicalPath (io/file home ".cloud-itonami" "data"))
+           (first lines)))
+    (is (= (.getCanonicalPath app) (second lines)))))
+
+(deftest replacement-launchers-are-not-clojure-wraps
+  (let [mcp (slurp "bin/itonami-mcp")
+        desktop (slurp "bin/cloud-itonami-app")
+        server (slurp "bin/cloud-itonami-server")
+        macos (slurp "packaging/macos/CloudItonami")
+        windows (slurp "packaging/windows/launcher/main.go")]
+    (is (not (str/includes? mcp "spawnSync")))
+    (is (not (str/includes? mcp "clojure -M:mcp")))
+    (is (not (str/includes? mcp "-M:mcp")))
+    (is (not (str/includes? desktop "clojure -M:server")))
+    (is (str/includes? desktop "cloud-itonami-server"))
+    (is (str/includes? server "nbb-host"))
+    (is (not (str/includes? macos "Java 21")))
+    (is (not (str/includes? macos "java_home")))
+    (is (not (str/includes? macos "clojure.main")))
+    (is (not (str/includes? windows "Java 21")))
+    (is (not (str/includes? windows "clojure.main")))))
 
 (deftest an-explicit-data-directory-wins-in-the-resident-launcher
   (let [explicit "/tmp/cloud-itonami-explicit-data"
