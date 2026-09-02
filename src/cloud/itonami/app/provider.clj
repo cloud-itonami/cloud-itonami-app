@@ -99,7 +99,11 @@
 
     :else (throw error))))
 
-(defn- request-json
+(defn request-json
+  "One JSON round trip with the typed failures every provider call shares
+  (`timeout->typed`, `:provider/http-error` with `:status`/`:response`).
+  Public so other outbound callers (`media-tools`) do not grow a second copy
+  that files a timeout as an internal error."
   ([method url body] (request-json method url body nil))
   ([method url body api-key]
    (request-json method url body api-key nil))

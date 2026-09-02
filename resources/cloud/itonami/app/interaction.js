@@ -1,5 +1,47 @@
 
   document.addEventListener('DOMContentLoaded', () => {
+    // Appearance (ADR-0091). One attribute on `.workspace` is the whole mode;
+    // the stylesheet reads it, nothing below cares. Precedence: `?appearance=`
+    // in the URL, then this device's remembered choice, then what the server
+    // rendered from configuration. The URL form exists so a link can open the
+    // 8-bit floor for someone who has never pressed the toggle.
+    (() => {
+      const workspace = document.querySelector('.workspace');
+      const toggle = document.getElementById('appearance-toggle');
+      if (!workspace) return;
+      const modes = ['light', '8bit'];
+      const key = 'cloud-itonami-appearance';
+      const normalize = (v) => (modes.includes(v) ? v : null);
+      const read = () => {
+        try { return normalize(localStorage.getItem(key)); } catch (_) { return null; }
+      };
+      const remember = (mode) => {
+        try { localStorage.setItem(key, mode); } catch (_) { /* private window: not remembered */ }
+      };
+      const apply = (mode) => {
+        workspace.dataset.appearance = mode;
+        document.documentElement.dataset.appearance = mode;
+        if (toggle) {
+          const next = modes[(modes.indexOf(mode) + 1) % modes.length];
+          toggle.dataset.mode = mode;
+          toggle.dataset.next = next;
+          toggle.setAttribute('aria-pressed', mode === '8bit' ? 'true' : 'false');
+          toggle.textContent = next === '8bit' ? '8-BIT' : 'DADS';
+          toggle.title = next === '8bit' ? '8-BIT MODE にする' : '標準表示に戻す';
+        }
+      };
+      const fromUrl = normalize(new URLSearchParams(location.search).get('appearance'));
+      const initial = fromUrl || read() || normalize(workspace.dataset.appearance) || 'light';
+      apply(initial);
+      if (fromUrl) remember(fromUrl);
+      if (toggle) {
+        toggle.addEventListener('click', () => {
+          const next = toggle.dataset.next || 'light';
+          apply(next);
+          remember(next);
+        });
+      }
+    })();
     const $ = (selector, root = document) => root.querySelector(selector);
     const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
     const make = (tag, className, text) => {

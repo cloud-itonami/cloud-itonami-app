@@ -97,6 +97,15 @@
  :routing {:default-provider "ollama"
            :default-model "gemma4:e2b"
            :cloud-enabled? false}
+ ;; Where the agent lives (ADR-0092). `:local` is a resident on the person's
+ ;; own machine; `:cloud` is the resident placed on murakumo.cloud that
+ ;; itonami.cloud reaches instead (profiles/itonami.edn). Both bind loopback;
+ ;; the workspace shows which one it is because the process cannot tell.
+ :residency {:plane :local}
+ ;; Appearance of the workspace (ADR-0091): `:light` (DADS as shipped) or
+ ;; `:8bit`. This is the server default for a fresh document; a device's own
+ ;; choice from the topbar toggle is remembered in the browser and wins.
+ :ui {:appearance :light}
  ;; Normal Bots start with the local interaction surfaces requested. Concrete
  ;; tool admission still fails closed when agent-browser, CuaDriver or the
  ;; required macOS permissions are missing, and an explicit saved false value
@@ -153,8 +162,15 @@
    ;; than local and warm models.  The requested model is checked against
    ;; the response before output is admitted; a failed bounded request is
    ;; retried explicitly as murakumo-main and remains labelled as that model.
+   ;; `awai-network/basho` is awai.network's chat model served by murakumo
+   ;; (root ADR-2609011842 / ADR-2609021200). Its API base as of 2026-09-02 is
+   ;; GLM-5.3 on a vendor serverless Model API behind a monthly budget the
+   ;; gateway enforces; the gateway answers 503 with
+   ;; `self_model_monthly_budget_exhausted` or `self_model_backend_unavailable`
+   ;; when it will not serve, and the fallback below carries the turn.
    :models ["murakumo-main"
             "murakumo-edge"
+            "awai-network/basho"
             "qwen3.8-27b-throughput-5090"
             "qwen3.8-27b-fastmtp-aggressive"
             "z-ai/glm-5.3-flash"
@@ -182,6 +198,7 @@
    ;; 2026-08-26: HTTP 502 body starting `modal-http`, not JSON) both
    ;; retry the alias. The result stays labelled as the model that served.
    :model-fallbacks {"murakumo-main" "z-ai/glm-5.3-flash"
+                    "awai-network/basho" "z-ai/glm-5.3-flash"
                     "qwen3.8-27b-throughput-5090" "murakumo-main"
                     "qwen3.8-27b-fastmtp-aggressive" "murakumo-main"
                     "z-ai/glm-5.3-flash" "qwen/qwen3.8-flash"
@@ -215,8 +232,16 @@
                       "qwen3.8-27b"
                       "qwen3.8-27b-throughput-b70"}
     "z-ai/glm-5.3-flash" #{"z-ai/glm-5.3-flash"}
-    "qwen/qwen3.8-flash" #{"qwen/qwen3.8-flash"}}
+    "qwen/qwen3.8-flash" #{"qwen/qwen3.8-flash"}
+    ;; The gateway forwards the vendor's served name in the request and may
+    ;; echo either the public id or the vendor id back; both name the same
+    ;; artifact revision the gateway pinned (MURAKUMO_BASHO_ARTIFACT_REVISION).
+    "awai-network/basho" #{"awai-network/basho" "zai-org/GLM-5.3"}}
    :context-window-tokens {"murakumo-main" 262144
+                           ;; Vendors advertise 1M for GLM-5.3. Unmeasured
+                           ;; through api.murakumo.cloud, so the same
+                           ;; conservative 128k as the OpenRouter routes.
+                           "awai-network/basho" 128000
                            ;; Live /v1/models and a real CLI Bot generation,
                            ;; measured 2026-08-29. This is the Ornith Q4 route
                            ;; resident on the 16 GB Mac mini fleet. Keep it
@@ -242,6 +267,14 @@
    ;; actually serves.
    :max-output-tokens 16384
    :api-key-env "MURAKUMO_API_KEY"
+   ;; `awai-network/hokusai`, awai.network's video model, through murakumo's
+   ;; OpenRouter-compatible async video contract (root ADR-2609011842). Same
+   ;; provider record on purpose: the Bot tools video_generate / video_status
+   ;; (cloud.itonami.app.media-tools) pass the same admission as chat and use
+   ;; the same credential. murakumo answers 503 until the Hokusai backend is
+   ;; attested; that answer is carried to the Bot, not retried elsewhere.
+   :media {:videos-url "https://murakumo.cloud/api/v1/videos"
+           :video-model "awai-network/hokusai"}
    :local? false
    ;; Shipped off and unreviewed. The distribution is tenant-neutral: it cannot
    ;; review a fleet on a stranger's behalf, and a default that did would be

@@ -27,6 +27,9 @@
             [cloud.itonami.app.device-test]
             [cloud.itonami.app.decision-method-test]
             [cloud.itonami.app.disk-space-test]
+            [cloud.itonami.app.appearance-test]
+            [cloud.itonami.app.hokusai-test]
+            [cloud.itonami.app.media-tools-test]
             [cloud.itonami.app.git-hygiene-test]
             [cloud.itonami.app.domain-tools-test]
             [cloud.itonami.app.bot-import-test]
@@ -240,6 +243,9 @@
     cloud.itonami.app.device-test
     cloud.itonami.app.decision-method-test
     cloud.itonami.app.disk-space-test
+    cloud.itonami.app.appearance-test
+    cloud.itonami.app.hokusai-test
+    cloud.itonami.app.media-tools-test
     cloud.itonami.app.git-hygiene-test
     cloud.itonami.app.bot-test
     cloud.itonami.app.bot-slo-test
