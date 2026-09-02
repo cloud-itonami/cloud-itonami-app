@@ -3924,16 +3924,31 @@
             (goal-event! :subagent/succeeded {:child-run-id child-id})
             {:call call :output output :receipt receipt})
           (catch Exception error
-            (update-goal-job! (:id run) update-in [:job/children child-id]
-                              agent-run/transition :failed (now-ms)
-                              {:agent.run/error-type (or (:type (ex-data error))
-                                                         :internal-error)
-                               :agent.run/error-message (error-message error)})
-            (goal-event! :subagent/failed {:child-run-id child-id
-                                           :error-type (or (:type (ex-data error))
-                                                           :internal-error)
-                                           :message (error-message error)})
-            (throw error)))))))
+            (let [error-type (or (:type (ex-data error)) :internal-error)
+                  recoverable (self-correctable-tool-result error)]
+              (update-goal-job! (:id run) update-in [:job/children child-id]
+                                agent-run/transition :failed (now-ms)
+                                {:agent.run/error-type error-type
+                                 :agent.run/error-message (error-message error)})
+              (goal-event! :subagent/failed {:child-run-id child-id
+                                             :error-type error-type
+                                             :message (error-message error)})
+              ;; A parallel read has the same correction boundary as the
+              ;; sequential tool path.  Measured 2026-09-02: a resident model
+              ;; issued several independent workspace reads; two selected a
+              ;; directory where workspace_read requires a file.  The child
+              ;; receipts correctly said :workspace/not-a-file, but this
+              ;; unconditional throw turned the whole durable Goal terminal
+              ;; instead of letting the model correct those two arguments.
+              ;;
+              ;; Keep the child failed -- the attempted action did fail -- and
+              ;; return only the narrow argument/shape errors admitted by
+              ;; self-correctable-tool-result.  Authority, unsafe-path,
+              ;; provider, and host failures still rethrow and fail closed.
+              (if recoverable
+                {:call call :output recoverable
+                 :recoverable-error? true :error-type error-type}
+                (throw error)))))))))
 
 (defn- parallel-batch-violation
   "Why this parallel batch may not run as issued, or nil.
@@ -3968,11 +3983,22 @@
   (when (> (count calls) 3)
     (throw (ex-info "parallel tool limit is three"
                     {:type :agent/parallel-tool-limit :count (count calls)})))
-  (let [tasks (mapv #(.submit ^ExecutorService parallel-tool-executor
-                             ^java.util.concurrent.Callable
-                             (bound-fn []
-                               (execute-read-call! configuration b run %)))
-                    calls)
+  (let [tasks (mapv
+               (fn [call]
+                 ;; Clojure functions implement both Runnable and Callable.
+                 ;; The overload selected for a bare `bound-fn` was Runnable,
+                 ;; so Future.get returned nil even though the child executed
+                 ;; and wrote a receipt.  The parent then sent two empty tool
+                 ;; messages back to the model.  An explicit Callable keeps
+                 ;; the child result, while the bound function retains the
+                 ;; dynamic Goal event sink in the worker thread.
+                 (let [task (bound-fn []
+                              (execute-read-call! configuration b run call))]
+                   (.submit ^ExecutorService parallel-tool-executor
+                            ^java.util.concurrent.Callable
+                            (reify java.util.concurrent.Callable
+                              (call [_] (task))))))
+               calls)
         ;; `Future/.get` wraps whatever the child threw in an
         ;; ExecutionException whose own ex-data is nil, so every typed child
         ;; failure was reaching the ledger as :internal-error -- the bucket a
@@ -3982,6 +4008,11 @@
                              (catch java.util.concurrent.ExecutionException e
                                (throw (or (.getCause e) e)))))
                       tasks)
+        _ (when on-event
+            (doseq [{:keys [call recoverable-error? error-type]} results
+                    :when recoverable-error?]
+              (on-event {:type "phase" :phase "tool-correctable-error"
+                         :tool (:name call) :error-type error-type})))
         next-run (reduce (fn [r {:keys [call output]}]
                            (-> r
                                (update :tool-count (fnil inc 0))
