@@ -4415,6 +4415,29 @@
           "compaction never exposes an orphan tool result"))
     (is (<= (estimate kept) (- 8192 512 (estimate []) 512)))))
 
+(deftest compacted-evidence-budget-covers-the-whole-tool-slice
+  (let [summarize (private-fn 'summarized-exchange)
+        messages (vec
+                  (mapcat
+                   (fn [i]
+                     [{:role "assistant"
+                       :tool-calls [{:id (str "call-" i)
+                                     :name "workspace_read"
+                                     :input {:path (str "repo-" i)}}]}
+                      {:role "tool" :tool-call-id (str "call-" i)
+                       :content (str "evidence-marker-" i
+                                     " token=VERY_SECRET_" i " "
+                                     (apply str (repeat 300 "x")))}])
+                   (range 24)))
+        content (:content (summarize messages))]
+    (doseq [i (range 24)]
+      (is (str/includes? content (str "evidence-marker-" i))
+          "every result in the maximum resident run survives compaction"))
+    (is (str/includes? content "workspace_read: evidence-marker-0"))
+    (is (not (str/includes? content "VERY_SECRET_")))
+    (is (str/includes? content "[REDACTED]"))
+    (is (<= (count content) (inc 1600)))))
+
 (deftest context-compaction-threshold-is-preflight-not-overflow-recovery
   (let [request (private-fn 'agent-request)
         model "threshold-fixture"
