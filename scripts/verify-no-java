@@ -1,0 +1,132 @@
+#!/usr/bin/env nbb
+;; Prove the replacement run path starts no java / clojure process.
+;;
+;;   nbb --classpath bin scripts/verify-no-java
+;;   PATH="$(scripts/path-without-jvm)" nbb --classpath bin scripts/verify-no-java
+;;
+;; This is the process-tree proof. `nbb scripts/jvm-exit-report.cljs` is not.
+
+(ns verify-no-java
+  (:require ["node:child_process" :as cp]
+            ["node:fs" :as fs]
+            ["node:http" :as http]
+            [clojure.string :as str]))
+
+(defn- sh [cmd args]
+  (let [{:keys [status stdout stderr]}
+        (js->clj (cp/spawnSync cmd (clj->js args)
+                               #js {:encoding "utf8"})
+                 :keywordize-keys true)]
+    {:exit (or status 1) :stdout (str stdout) :stderr (str stderr)}))
+
+(defn- process-rows []
+  (for [line (str/split-lines (:stdout (sh "ps" ["-e" "-o" "pid=,ppid=,args="])))
+        :let [cols (str/split (str/trim line) #"\s+" 3)]
+        :when (= 3 (count cols))]
+    {:pid (nth cols 0) :ppid (nth cols 1) :args (nth cols 2)}))
+
+(defn- descendants [pid]
+  (let [rows (vec (process-rows))]
+    (loop [frontier #{(str pid)} seen #{}]
+      (let [kids (filter #(contains? frontier (:ppid %)) rows)
+            next (into seen (map :pid kids))]
+        (if (= next seen)
+          (mapv (fn [p] (first (filter #(= (:pid %) p) rows))) seen)
+          (recur (into frontier (map :pid kids)) next))))))
+
+(defn- jvm-args? [args]
+  (let [a (str/lower-case (or args ""))]
+    (boolean
+     (or (re-find #"(^|/)java(\s|$)" a)
+         (re-find #"(^|/)clojure(\s|$)" a)
+         (str/includes? a "clojure -m")
+         (str/includes? a "-M:server")
+         (str/includes? a "-M:mcp")
+         (str/includes? a "openjdk")))))
+
+(defn- assert-no-jvm! [label pid]
+  (let [tree (remove nil? (descendants pid))
+        hits (filter #(jvm-args? (:args %)) tree)]
+    (when (seq hits)
+      (throw (ex-info (str label " pid tree contains java/clojure")
+                      {:pid pid :hits hits})))
+    (println (str label ": no java/clojure in pid tree (" (inc (count tree)) " procs)"))))
+
+(defn- get-health [port]
+  (js/Promise.
+   (fn [resolve reject]
+     (let [req (.get http #js {:host "127.0.0.1" :port port :path "/health"}
+                     (fn [res]
+                       (let [chunks (atom [])]
+                         (.on res "data" (fn [c] (swap! chunks conj c)))
+                         (.on res "end"
+                              (fn []
+                                (resolve {:status (.-statusCode res)
+                                          :body (apply str @chunks)}))))))]
+       (.on req "error" reject)
+       (.setTimeout req 2000
+                    (fn []
+                      (.destroy req)
+                      (reject (js/Error. "health timeout"))))))))
+
+(defn- sleep [ms]
+  (js/Promise. (fn [resolve] (js/setTimeout resolve ms))))
+
+(defn- start-nbb [script extra-env]
+  (cp/spawn "nbb" (clj->js ["--classpath" "bin" script])
+            #js {:env (js/Object.assign #js {} js/process.env (clj->js extra-env))
+                 :stdio #js ["pipe" "pipe" "pipe"]}))
+
+(defn- wait-health [port attempt]
+  (if (> attempt 50)
+    (js/Promise.reject (js/Error. "server never became healthy"))
+    (-> (get-health port)
+        (.then (fn [r]
+                 (if (= 200 (:status r))
+                   r
+                   (js/Promise.reject (js/Error. "not 200")))))
+        (.catch (fn [_]
+                  (-> (sleep 100)
+                      (.then (fn [] (wait-health port (inc attempt))))))))))
+
+(defn -main [& _]
+  (println "note: java/clojure binaries may exist on disk; PATH filter is the bar")
+  (let [port (js/parseInt (or (aget js/process.env "CLOUD_ITONAMI_PORT") "17338") 10)
+        server (start-nbb "bin/cloud-itonami-server"
+                          {:CLOUD_ITONAMI_PORT (str port)
+                           :CLOUD_ITONAMI_HOST "127.0.0.1"})]
+    (-> (wait-health port 0)
+        (.then (fn [health]
+                 (assert-no-jvm! "server" (.-pid server))
+                 (when-not (str/includes? (:body health) "cloud-itonami-app")
+                   (throw (ex-info "health body missing service" health)))
+                 (when-not (str/includes? (:body health) "guest-wasm")
+                   (throw (ex-info "health body is not guest-wasm; host must load the wasm"
+                                   health)))
+                 (when-not (str/includes? (:body health) "\"guest-main\":1338")
+                   (throw (ex-info "guest main was not called or stayed 0" health)))
+                 (let [mcp (start-nbb "bin/itonami-mcp" {})]
+                   (.write (.-stdin mcp)
+                           (str (js/JSON.stringify
+                                 #js {"jsonrpc" "2.0"
+                                      "id" 1
+                                      "method" "initialize"
+                                      "params" #js {"protocolVersion" "2025-11-25"
+                                                    "capabilities" #js {}
+                                                    "clientInfo" #js {"name" "verify-no-java"
+                                                                      "version" "1"}}})
+                                "\n"))
+                   (-> (sleep 400)
+                       (.then (fn []
+                                (assert-no-jvm! "mcp" (.-pid mcp))
+                                (.kill mcp "SIGTERM")
+                                (.kill server "SIGTERM")
+                                (println "verify-no-java: ok")
+                                (js/process.exit 0)))))))
+        (.catch (fn [e]
+                  (try (.kill server "SIGTERM") (catch :default _))
+                  (binding [*print-fn* *print-err-fn*]
+                    (println (or (.-stack e) (str e))))
+                  (js/process.exit 1))))))
+
+(apply -main (or *command-line-args* []))

@@ -41,7 +41,7 @@
 ;; happen: `resources/cloud-itonami-app.defaults.edn` ships every destination
 ;; that leaves the machine as `:reviewed? false :enabled? false`.
 ;;
-;;   MURAKUMO_API_KEY=<key> CLOUD_ITONAMI_PROFILE=itonami clojure -M:server
+;;   MURAKUMO_API_KEY=<key> CLOUD_ITONAMI_PROFILE=itonami nbb --classpath bin bin/cloud-itonami-server
 {:auth {:allow-signup? true}
  :cloud-relay {:base-url "https://hooks.itonami.cloud"
                :access-token-env "CLOUD_ITONAMI_RELAY_ACCESS_TOKEN"}

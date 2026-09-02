@@ -1,60 +1,43 @@
 #!/usr/bin/env nbb
-;; The `itonami` command: run this app's CLI from anywhere.
+;; Leftover CLI launcher — closed as a run path.
 ;;
-;; ## Why a launcher exists at all
-;;
-;; `clojure -M:cli` only works from the app's own directory, because that is
-;; where `deps.edn` is. So every documented invocation began with a `cd`, and an
-;; operator or an agent in some other directory could not run one command without
-;; first knowing where the app was installed.
-;;
-;; This resolves the app directory from its own path — the script lives in
-;; `bin/`, so the app is its parent — and runs the CLI there with the arguments
-;; it was given. A resident install also resolves its sibling data directory:
-;; `~/.cloud-itonami/app` and `~/.cloud-itonami/data` are one installation, and
-;; letting the CLI fall back to `app/data` would make `auth login` read a
-;; different enrollment key from the launchd server. An explicit environment
-;; value still wins. The launcher does not otherwise parse or interpret a
-;; command, because that would make it a second front end.
-;;
-;; Written in nbb rather than shell, per the workspace rule that new scripts are
-;; ClojureScript.
+;; This used to `spawnSync` `clojure -M:cli`. That alias is gone from
+;; deps.edn. The leftover JVM CLI (`cli.clj` talking to leftover
+;; `server.clj`) is not ported; do not invent a second KIR-EDN writer or
+;; an HttpClient FFI to fake it.
+
 (ns itonami
-  (:require ["node:child_process" :as child-process]
-            ["node:fs" :as fs]
+  (:require ["node:fs" :as fs]
             ["node:path" :as path]
             [nbb.core :refer [*file*]]))
 
 (def app-directory
   (fs/realpathSync (path/resolve (path/dirname *file*) "..")))
 (def home-directory
-  (some-> (aget js/process.env "HOME") fs/realpathSync))
+  (when-let [home (aget js/process.env "HOME")]
+    (try (fs/realpathSync home) (catch :default _ home))))
 (def resident-app-directory
   (when home-directory (path/resolve home-directory ".cloud-itonami" "app")))
-(def child-environment
-  (js/Object.assign #js {} js/process.env
-                    #js {"CLOUD_ITONAMI_APP_DIR" app-directory}))
 
 (when (and resident-app-directory
            (= app-directory resident-app-directory)
-           (nil? (aget child-environment "CLOUD_ITONAMI_DATA_DIR")))
-  (aset child-environment "CLOUD_ITONAMI_DATA_DIR"
+           (nil? (aget js/process.env "CLOUD_ITONAMI_DATA_DIR")))
+  (aset js/process.env "CLOUD_ITONAMI_DATA_DIR"
         (path/resolve home-directory ".cloud-itonami" "data")))
 
-(def result
-  (child-process/spawnSync
-   "clojure"
-   (into-array (concat ["-M:cli"] (drop 3 (js->clj js/process.argv))))
-   #js {:cwd app-directory
-        :stdio "inherit"
-        ;; The CLI starts a headless server when there is not one, and that child
-        ;; must outlive this process. `spawnSync` waits for the CLI, not for its
-        ;; grandchild, so nothing here needs to keep the launcher alive.
-        :env child-environment}))
+(defn- print-data-dir []
+  (println (or (aget js/process.env "CLOUD_ITONAMI_DATA_DIR") ""))
+  (println (or (aget js/process.env "CLOUD_ITONAMI_APP_DIR") app-directory)))
 
-(when-let [error (.-error result)]
+(defn -main [& args]
+  (when (= "--print-data-dir" (first args))
+    (print-data-dir)
+    (js/process.exit 0))
   (binding [*print-fn* *print-err-fn*]
-    (println (str "itonami: clojure を実行できませんでした: " (.-message error))))
-  (set! (.-exitCode js/process) 127))
+    (println "leftover JVM run path is closed.")
+    (println "deps.edn has no :server :mcp :cli aliases")
+    (println "server: nbb --classpath bin bin/cloud-itonami-server")
+    (println "mcp:    nbb --classpath bin bin/itonami-mcp"))
+  (js/process.exit 2))
 
-(set! (.-exitCode js/process) (or (.-status result) 0))
+(apply -main (or *command-line-args* []))

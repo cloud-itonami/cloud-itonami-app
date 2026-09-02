@@ -51,27 +51,18 @@
   It cannot create or widen a Bot. It may submit work and, only for a Bot whose
   owner enabled omakase in the app, approve its held shell/mail/Git write.
 
-  Usage:
+  Usage of this leftover namespace (the `:cli` alias is gone from
+  deps.edn; `bin/itonami` does not start it):
 
-    itonami up | down | status
-    itonami kaiyu [--days 7]        ; このマシンの回遊（送信しない）
+    auth login --label <name> [--ttl-days 30] [--organization <slug>]
+    auth status | auth revoke --id session-…
+    tenant list | tenant connect | tenant status | tenant renew | tenant revoke
+    tenant repository-read | tenant repository-write | tenant repository-publish
+    business list | business create | business bind
+
+    itonami up | down | status     ; leftover verbs; launcher is closed
+    itonami kaiyu [--days 7]
     itonami commands [term …]
-    itonami <command words> [--flag value …] [--json '{…}']
-
-    clojure -M:cli auth login --label \"claude-code\" [--ttl-days 30] [--organization <slug>]
-    clojure -M:cli auth status
-    clojure -M:cli auth revoke --id session-…
-    clojure -M:cli tenant list
-    clojure -M:cli tenant connect --tenant acme --cap workspace.read,actor.invoke
-    clojure -M:cli tenant status --connection tc-…
-    clojure -M:cli tenant renew --connection tc-… [--ttl-seconds 3600]
-    clojure -M:cli tenant revoke --connection tc-…
-    clojure -M:cli tenant repository-read --connection tc-…
-    clojure -M:cli tenant repository-write --connection tc-… --file state.edn
-    clojure -M:cli tenant repository-publish --connection tc-…
-    clojure -M:cli business list
-    clojure -M:cli business create --slug cloud-itonami-vc --name \"…\"
-    clojure -M:cli business bind --id business-… --repos a,b,c [--canvas …]
 
   The CLI resolves the server's address and the data directory from the same
   config the server does, so it must run with the same `CLOUD_ITONAMI_DATA_DIR`

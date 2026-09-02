@@ -1,0 +1,225 @@
+#!/usr/bin/env nbb
+;; Public-language compile launcher (lang/cli.edn compile surface).
+;;
+;;   bin/kotoba compile <entry.kotoba> --target wasm --json
+;;   bin/kotoba compile <entry.kotoba> --target wasm -o target/amu/foo.wasm
+;;
+;; ADAPTER-EMIT HOLD. This prints an adapter envelope after amu --jvm-free
+;; writes the file. That is not :compile/emitted from the Release/v0.6.29
+;; kotoba CLI. Do not invent a v0.6.29 CLI emit. Do not bump the pin.
+;; amu {:ok true :target …} alone is not the adapter envelope.
+;; :command/planned is not emit.
+
+(ns kotoba
+  (:require ["node:child_process" :as cp]
+            ["node:fs" :as fs]
+            ["node:path" :as path]
+            [clojure.edn :as edn]
+            [clojure.string :as str]
+            [nbb.core :refer [*file*]]))
+
+(def app-directory
+  (fs/realpathSync (path/resolve (path/dirname *file*) "..")))
+
+(def pin
+  (edn/read-string
+   (fs/readFileSync (path/resolve app-directory "compiler-pin.edn") "utf8")))
+
+(defn- sh [cmd args]
+  (let [{:keys [status stdout stderr]}
+        (js->clj (cp/spawnSync cmd (clj->js args)
+                               #js {:encoding "utf8"
+                                    :stdio "pipe"
+                                    :cwd app-directory})
+                 :keywordize-keys true)]
+    {:exit (or status 1) :stdout (str stdout) :stderr (str stderr)}))
+
+(defn- fail! [code message data]
+  {:kotoba.cli/ok? false
+   :kotoba.cli/code code
+   :kotoba.cli/message message
+   :kotoba.cli/data data})
+
+(defn- success [code data]
+  {:kotoba.cli/ok? true
+   :kotoba.cli/code code
+   :kotoba.cli/data data})
+
+(defn- parse-argv [argv]
+  (loop [args (seq argv)
+         positionals []
+         options {}]
+    (if-not args
+      {:positionals positionals :options options}
+      (let [arg (first args)]
+        (if (str/starts-with? arg "-")
+          (let [k (keyword (str/replace arg #"^--?" ""))
+                more (next args)
+                v (first more)]
+            (if (or (nil? v) (str/starts-with? v "-"))
+              (recur more positionals (assoc options k true))
+              (recur (next more) positionals
+                     (update options k (fn [old]
+                                         (cond
+                                           (nil? old) v
+                                           (vector? old) (conj old v)
+                                           :else [old v]))))))
+          (recur (next args) (conj positionals arg) options))))))
+
+(defn- emit-name [entry]
+  (-> (path/basename entry)
+      (str/replace #"\.kotoba$" "")
+      (str/replace #"-" "_")))
+
+(defn- default-output [entry]
+  (path/resolve app-directory "target" "amu" (str (emit-name entry) ".wasm")))
+
+(defn- resolve-amu []
+  (or (aget js/process.env "AMU")
+      (let [home (aget js/process.env "AMU_HOME")]
+        (when (and home (fs/existsSync (path/resolve home "bin" "amu")))
+          (fs/realpathSync (path/resolve home "bin" "amu"))))
+      (let [local (path/resolve app-directory "target" "amu-checkout" "bin" "amu")]
+        (when (fs/existsSync local) local))))
+
+(defn- copy-browser-host! [amu]
+  (let [src (path/resolve (path/dirname amu) ".." "runtime" "browser-host.mjs")
+        dest (path/resolve app-directory "target" "amu" "browser-host.mjs")]
+    (when (fs/existsSync src)
+      (fs/mkdirSync (path/dirname dest) #js {:recursive true})
+      (fs/copyFileSync src dest)
+      dest)))
+
+(defn- reject-planned! [text]
+  (when (or (str/includes? text ":command/planned")
+            (str/includes? text ":compile/planned")
+            (str/includes? text ":kotoba.cli/code :command/planned"))
+    (throw (ex-info "emit refused: planned, not emitted" {:text text}))))
+
+(defn compile-wasm! [entry output]
+  (let [amu (resolve-amu)]
+    (when-not amu
+      (throw (ex-info "AMU is unset and no amu launcher was found"
+                      {:hint "AMU=<amu-pin>/bin/amu bin/kotoba compile …"})))
+    (when-not (fs/existsSync entry)
+      (throw (ex-info (str "compile entry missing: " entry) {:entry entry})))
+    (fs/mkdirSync (path/dirname output) #js {:recursive true})
+    (let [args ["compile" (path/resolve entry)
+                "--target" "wasm32"
+                "--jvm-free"
+                "--output" (path/resolve output)]
+          {:keys [exit stdout stderr]} (sh amu args)
+          text (str stdout "\n" stderr)]
+      (when-not (zero? exit)
+        (throw (ex-info (str "amu compile failed for " entry)
+                        {:entry entry :exit exit :stderr text})))
+      (reject-planned! text)
+      (when-not (fs/existsSync output)
+        (throw (ex-info (str "compile wrote no file: " output)
+                        {:output output :stdout stdout})))
+      (when-not (pos? (.-size (fs/statSync output)))
+        (throw (ex-info (str "compile wrote empty file: " output) {:output output})))
+      (copy-browser-host! amu)
+      {:amu-stdout stdout
+       :bytes (.-size (fs/statSync output))
+       :output output
+       :amu amu})))
+
+(defn- json-key [k]
+  (if (keyword? k)
+    (if (namespace k)
+      (str (namespace k) "/" (name k))
+      (name k))
+    (str k)))
+
+(defn- json-val [v]
+  (cond
+    (keyword? v) (json-key v)
+    (map? v) (into {} (map (fn [[k x]] [(json-key k) (json-val x)]) v))
+    (vector? v) (mapv json-val v)
+    :else v))
+
+(defn- print-result [result json?]
+  (if json?
+    (println (js/JSON.stringify (clj->js (json-val result))))
+    (println (pr-str result))))
+
+(defn- help []
+  (str "cloud-itonami-app/bin/kotoba — this app's compile adapter\n"
+       "NOT the production kotoba v0.6.29 binary (deps.edn pin stays v0.6.29).\n"
+       "compiler freeze: kotoba-lang@" (get-in pin [:kotoba-lang :git/sha]) "\n"
+       "amu emit frontend: " (get-in pin [:amu :git/sha]) "\n\n"
+       "  bin/kotoba compile <entry.kotoba> --target wasm [--output PATH] [--json]\n\n"
+       "Success after writing the wasm file:\n"
+       "  {:kotoba.cli/ok? true :kotoba.cli/code :compile/emitted}\n"
+       ":command/planned is not emit."))
+
+(defn -main [& argv]
+  (let [{:keys [positionals options]} (parse-argv argv)
+        command (first positionals)
+        json? (true? (:json options))]
+    (cond
+      (or (nil? command) (= command "help") (true? (:help options)) (true? (:h options)))
+      (do (println (help)) (js/process.exit 0))
+
+      (not= command "compile")
+      (do (print-result (fail! :command/unknown
+                               (str "this launcher implements compile only; got " command)
+                               {:command command
+                                :kotoba-lang (get-in pin [:kotoba-lang :git/sha])})
+                        json?)
+          (js/process.exit 2))
+
+      :else
+      (let [entry (second positionals)
+            target (str (or (:target options) "wasm"))
+            output (or (:output options) (:o options)
+                       (when entry (default-output entry)))]
+        (cond
+          (nil? entry)
+          (do (print-result (fail! :compile/entry-required
+                                   "compile requires an entry path"
+                                   {})
+                            json?)
+              (js/process.exit 2))
+
+          (not (#{"wasm" "web"} target))
+          (do (print-result (fail! :compile/target-unsupported
+                                   "public-language compile admits --target wasm|web only"
+                                   {:target target})
+                            json?)
+              (js/process.exit 2))
+
+          (= target "web")
+          (do (print-result (fail! :compile/web-not-this-launcher
+                                   "this launcher emits wasm via amu --jvm-free; --target web is not wired"
+                                   {:target target})
+                            json?)
+              (js/process.exit 2))
+
+          :else
+          (try
+            (let [emitted (compile-wasm! entry output)
+                  result (success :compile/emitted
+                                  {:output (:output emitted)
+                                   :bytes (:bytes emitted)
+                                   :target :wasm
+                                   :entry (path/resolve entry)
+                                   :kotoba-lang (get-in pin [:kotoba-lang :git/sha])
+                                   :amu (get-in pin [:amu :git/sha])
+                                   :production-kotoba-pin "v0.6.29"
+                                   :launcher "cloud-itonami-app/bin/kotoba"
+                                   :not-production-kotoba-binary true})]
+              (when-not (fs/existsSync (:output emitted))
+                (throw (ex-info "envelope refused: file missing after emit"
+                                {:output (:output emitted)})))
+              (print-result result json?)
+              (js/process.exit 0))
+            (catch :default e
+              (print-result (fail! :compile/failed
+                                   (or (.-message e) (str e))
+                                   (or (ex-data e) {}))
+                            json?)
+              (js/process.exit 1))))))))
+
+(apply -main (or *command-line-args* []))

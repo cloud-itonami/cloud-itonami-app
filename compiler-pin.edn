@@ -1,0 +1,23 @@
+;; Compiler freeze for this JVM-exit follow-up. kotoba-clj reviews against this file.
+;;
+;; Follow-up compiler is kotoba-lang@bfe618b3 (merge #514, green run 33598929287).
+;; Leave c9dd99f5 — do not keep using it as the follow-up compiler.
+;; Do not vendor HEAD past bfe618b3. Do not vendor 4adda169 (PR #513) as the pin.
+;;
+;; Production runtime pin is unchanged: io.github.kotoba-lang/kotoba :git/tag
+;; v0.6.29. This file is not a silent 0.7.2/0.7.3 bump.
+;; ADAPTER-EMIT HOLD: app-local bin/kotoba after amu --jvm-free is not the
+;; Release/v0.6.29 kotoba CLI. Do not invent a v0.6.29 CLI emit.
+{:kotoba-lang
+ {:git/url "https://github.com/kotoba-lang/kotoba-lang.git"
+  :git/sha "bfe618b3a3844d5563a943d63bdefcdc535af98c"
+  :note "merge #514, green run 33598929287. Not c9dd99f5. Not 4adda169. Not HEAD."}
+ :kotoba
+ {:git/url "https://github.com/kotoba-lang/kotoba.git"
+  :git/tag "v0.6.29"
+  :git/sha "42ae4941089a5be3d06e46d440680589e781f19f"
+  :note "production deps.edn pin; do not bump"}
+ :amu
+ {:git/url "https://github.com/kotoba-lang/amu.git"
+  :git/sha "8435eafb7dada2d3a85cee2c278ca6d38deb7588"
+  :note "last amu commit at or before kotoba-lang@bfe618b3 (2026-09-02 15:26 +0900). Not a floating HEAD. Not a deps.edn runtime pin. Emit frontend only."}}

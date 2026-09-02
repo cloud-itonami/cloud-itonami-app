@@ -135,8 +135,8 @@
   [configuration method path & [body]]
   (let [t (or (token configuration)
               (throw (ex-info (str "agent session がありません。"
-                                   "`clojure -M:cli auth login --label <name>` "
-                                   "を実行してください")
+                                   "deps.edn に :cli エイリアスはない。"
+                                   "leftover JVM CLI (`cli.clj`) はランパスではない。")
                               {:type :app-client/no-session})))]
     (unwrap (call configuration method path {:body body :token t}))))
 

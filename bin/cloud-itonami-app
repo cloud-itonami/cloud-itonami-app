@@ -78,7 +78,12 @@ if healthy; then
   exit 0
 fi
 
-clojure -M:server >target-server.log 2>&1 &
+# nbb host adapter. The leftover JVM server alias is not the run path.
+if ! command -v nbb >/dev/null 2>&1; then
+  printf 'cloud-itonami-app: nbb is required to start the host adapter\n' >&2
+  exit 127
+fi
+nbb --classpath bin "$app_dir/bin/cloud-itonami-server" >target-server.log 2>&1 &
 server_pid=$!
 
 for _ in {1..300}; do

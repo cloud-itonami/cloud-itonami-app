@@ -4,7 +4,9 @@
 2. Keep product-neutral behavior in `src/`.
 3. Put organization-specific, non-secret defaults in `profiles/`.
 4. Pin runtime Git dependencies to immutable SHAs.
-5. Run `clojure -M:test` and `clojure -M:lint`.
+5. Default CI is `bash scripts/ci-jvm-free-emit` (no `clojure -M`).
+   Leftover JVM suite `clojure -M:test` / `clojure -M:lint` is
+   workflow_dispatch only (`.github/workflows/leftover-jvm-tests.yml`).
 6. Never commit runtime data, credentials, mailbox exports, or OAuth tokens.
 
 Changes to authentication, DID, relay, provider policy, or persistence should
