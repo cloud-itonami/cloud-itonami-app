@@ -145,6 +145,8 @@
 (def max-goal-turns 24)
 (def max-goal-tool-calls 32)
 (def max-goal-continuations 24)
+(def provider-retry-base-seconds 60)
+(def provider-retry-max-seconds 900)
 (def max-message-agent-depth
   "A message_agent chain may wake at most two successive teammates. Replies
   still land in the source's next conversation, so ordinary collaboration does
@@ -5788,6 +5790,74 @@
                                                          :max-input-tokens])
                                                 default-resident-max-input-tokens))))))
 
+(def ^:private checkpointable-provider-errors
+  "Transient inference failures that preserve a resident Goal rather than
+  disproving it.
+
+  This is deliberately narrower than every provider error. Invalid tool
+  arguments, output-budget exhaustion, model mismatch without an admitted
+  fallback, and application errors still terminate: retrying them unchanged
+  would only hide a deterministic defect. `:provider/fallback-failed` is safe
+  here because the provider layer creates it only after both explicitly
+  admitted routes failed with one of its bounded fallback error types."
+  #{:provider/timeout :provider/unreachable :provider/network-error
+    :provider/model-unready :provider/fallback-failed})
+
+(defn- provider-retry-delay-seconds [attempt]
+  (min provider-retry-max-seconds
+       (* provider-retry-base-seconds
+          (bit-shift-left 1 (min 4 (max 0 (dec (long attempt))))))))
+
+(defn- provider-retry-at [attempt]
+  (str (.plusSeconds (java.time.Instant/parse (store/now))
+                     (provider-retry-delay-seconds attempt))))
+
+(defn- provider-retry-due?
+  [job now]
+  (if-let [retry-at (:job/retry-at job)]
+    (try
+      (not (.isAfter (java.time.Instant/parse retry-at)
+                     (java.time.Instant/parse now)))
+      ;; This is host-written metadata, not authority. A malformed legacy
+      ;; value must not strand a durable Goal forever; retrying exposes the
+      ;; condition through the ordinary bounded attempt ceiling.
+      (catch Exception _ true))
+    true))
+
+(defn- checkpoint-provider-error!
+  "Persist one transient provider boundary and yield the inference slot.
+
+  The same visible turn is updated on resume, so a recovered Goal eventually
+  becomes completed or a truthful terminal failure rather than accumulating
+  a row per retry. The event and retry-at retain the operational evidence."
+  [run-id bot error]
+  (let [job (goal-job run-id)
+        attempt (long (or (:job/attempt job) 0))
+        error-type (:type (ex-data error))
+        at (store/now)
+        retry-at (provider-retry-at attempt)
+        summary (str "モデル実行先が一時的に利用できないため、進捗を保存しました。"
+                     "再開予定: " retry-at)]
+    (transition-goal-run! run-id :checkpointed
+                          {:agent.run/checkpoint-reason error-type})
+    (update-goal-job! run-id assoc :job/retry-at retry-at)
+    (record-turn! bot run-id
+                  {:turn/state :checkpointed
+                   :turn/phase :checkpointed
+                   :turn/checkpoint-reason error-type
+                   :turn/result summary
+                   :turn/error-type nil
+                   :turn/error-status nil
+                   :turn/error-message nil
+                   :turn/updated-at at
+                   :turn/finished-at at})
+    (append-goal-event! run-id :run/checkpointed
+                        {:reason error-type
+                         :retry-at retry-at
+                         :attempt attempt
+                         :message (error-message error)})
+    true))
+
 (defn- run-goal-job! [configuration run-id]
   (let [{:job/keys [bot session objective attempt] :as job} (goal-job run-id)
         configuration (goal-job-configuration configuration job)]
@@ -5796,6 +5866,7 @@
       (transition-goal-run! run-id :running {})
       (append-goal-event! run-id :run/started {:attempt (inc (long (or attempt 0)))})
       (update-goal-job! run-id update :job/attempt (fnil inc 0))
+      (update-goal-job! run-id dissoc :job/retry-at)
       (binding [*goal-event!* #(append-goal-event! run-id %1 %2)]
         (if (zero? (long (or attempt 0)))
           ;; A detached Goal has no delta consumer. Passing a pretend callback
@@ -5829,21 +5900,32 @@
                 ;; retry ceiling. The core, not this call site, knows which.
                 (adjust-workforce-cadence! run-id)))))
       (catch Exception error
-        ;; `:provider/timeout` is deliberately NOT here. The other two mean the
-        ;; provider answered and had nothing to add, so the host's own receipts
-        ;; settle what happened. A timeout means the tick never found out --
-        ;; recording it as a completed no-op would claim the Bot looked and saw
-        ;; nothing, which it did not. It fails and runs again at its cadence.
-        (when-not (and (contains? #{:provider/empty-response :provider/http-error}
-                                  (:type (ex-data error)))
-                       (complete-resident-no-op!
-                        configuration run-id
-                        {:reason (:type (ex-data error))
-                         :status (:status (ex-data error))}))
-          (let [error-type (or (:type (ex-data error)) :internal-error)
-                error-status (:status (ex-data error))
-                status (get-in (goal-job run-id) [:job/run :agent.run/status])]
-            (when (contains? #{:leased :running :checkpointed} status)
+        ;; Empty/HTTP responses after read-only work retain the bounded safe
+        ;; no-op path. A timeout or double-route outage never becomes a no-op:
+        ;; the Goal checkpoints because the model did not settle the work.
+        (let [error-type (or (:type (ex-data error)) :internal-error)
+              error-status (:status (ex-data error))
+              job (goal-job run-id)
+              status (get-in job [:job/run :agent.run/status])
+              resident? (:job/resident-workforce? job)
+              attempt (long (or (:job/attempt job) 0))]
+          (cond
+            (and (contains? #{:provider/empty-response :provider/http-error}
+                            error-type)
+                 (complete-resident-no-op!
+                  configuration run-id
+                  {:reason error-type :status error-status}))
+            nil
+
+            (and resident?
+                 (contains? checkpointable-provider-errors error-type)
+                 (< attempt max-goal-continuations)
+                 (contains? #{:leased :running :checkpointed} status))
+            (checkpoint-provider-error! run-id bot error)
+
+            :else
+            (do
+              (when (contains? #{:leased :running :checkpointed} status)
               ;; The message goes on the RUN as well as the turn. These are two
               ;; projections of one execution -- the comment below says so --
               ;; and only one of them was carrying the why. Measured 2026-08-21:
@@ -5857,31 +5939,31 @@
                                     {:agent.run/error-type error-type
                                      :agent.run/error-message (error-message error)
                                      :agent.run/finished-at (now-ms)}))
-            ;; The AgentRun and the human-facing turn are two projections of
-            ;; one execution. A resumed Goal used to fail only the AgentRun,
-            ;; leaving Bots UI permanently at running/resuming after the
-            ;; worker had already stopped. Close both in the same catch path.
-            (record-turn! bot run-id
-                          (failed-goal-turn
-                           (get-in (snapshot) [:runs bot])
-                           {:error-type error-type
-                            :error-status error-status
-                            :error-message (error-message error)
-                            :tool (:tool-name (ex-data error))
-                            :at (store/now)})))
-          (append-goal-event! run-id :run/failed
-                              {:error-type (or (:type (ex-data error)) :internal-error)
-                               :error-status (:status (ex-data error))
-                               :message (.getMessage error)
-                               ;; The class, because the message can be nil and
-                               ;; then nothing identifies what failed. Measured
-                               ;; 2026-08-19: four resident runs recorded
-                               ;; `:internal-error` with a nil message and no
-                               ;; other trace, and there is no way to find out
-                               ;; now what threw. An unclassified failure is
-                               ;; the one case where the type is all a reader
-                               ;; has, so it is the one case it must be kept.
-                               :cause-class (.getName (class error))})))
+              ;; The AgentRun and the human-facing turn are two projections of
+              ;; one execution. A resumed Goal used to fail only the AgentRun,
+              ;; leaving Bots UI permanently at running/resuming after the
+              ;; worker had already stopped. Close both in the same catch path.
+              (record-turn! bot run-id
+                            (failed-goal-turn
+                             (get-in (snapshot) [:runs bot])
+                             {:error-type error-type
+                              :error-status error-status
+                              :error-message (error-message error)
+                              :tool (:tool-name (ex-data error))
+                              :at (store/now)}))
+              (append-goal-event! run-id :run/failed
+                                  {:error-type error-type
+                                   :error-status error-status
+                                   :message (.getMessage error)
+                                   ;; The class, because the message can be nil and
+                                   ;; then nothing identifies what failed. Measured
+                                   ;; 2026-08-19: four resident runs recorded
+                                   ;; `:internal-error` with a nil message and no
+                                   ;; other trace, and there is no way to find out
+                                   ;; now what threw. An unclassified failure is
+                                   ;; the one case where the type is all a reader
+                                   ;; has, so it is the one case it must be kept.
+                                   :cause-class (.getName (class error))})))))
       (finally
         (swap! goal-workers dissoc run-id)
         ;; A resident recovery queue is durable rather than submitted wholesale
@@ -5918,6 +6000,7 @@
   [configuration]
   (locking goal-workers
     (let [partition (snapshot)
+          now (store/now)
           jobs (:goal-jobs partition)
           max-active (max 0 (long (or (get-in configuration
                                              [:bots :workforce
@@ -5932,6 +6015,7 @@
                       (filter :job/resident-workforce?)
                       (filter #(contains? #{:queued :checkpointed}
                                           (get-in % [:job/run :agent.run/status])))
+                      (filter #(provider-retry-due? % now))
                       (remove #(contains? @goal-workers (:job/id %)))
                       (sort-by (juxt :job/created-at :job/id))
                       (take available)
@@ -7451,20 +7535,26 @@
   OAuth token must not stop everybody else's schedules, and a timer that dies
   on the first failure is a scheduler that silently stops being one."
   [configuration now]
-  (mapv (fn [{:keys [session per-organization]}]
-          (try
-            (let [routines (fire-due! configuration session now)
-                  workforce (fire-due-workforce! configuration per-organization now)]
-              {:user (:user-id session)
-               :organizations (mapv :organization-id per-organization)
-               :started (:started routines) :skipped (:skipped routines)
-               :workforce-started (:started workforce)
-               :workforce-skipped (:skipped workforce)})
-            (catch Exception error
-              {:user (:user-id session) :started [] :skipped []
-               :workforce-started [] :workforce-skipped []
-               :error (.getMessage error)})))
-        (tick-people configuration)))
+  (let [result
+        (mapv (fn [{:keys [session per-organization]}]
+                (try
+                  (let [routines (fire-due! configuration session now)
+                        workforce (fire-due-workforce! configuration per-organization now)]
+                    {:user (:user-id session)
+                     :organizations (mapv :organization-id per-organization)
+                     :started (:started routines) :skipped (:skipped routines)
+                     :workforce-started (:started workforce)
+                     :workforce-skipped (:skipped workforce)})
+                  (catch Exception error
+                    {:user (:user-id session) :started [] :skipped []
+                     :workforce-started [] :workforce-skipped []
+                     :error (.getMessage error)})))
+              (tick-people configuration))]
+    ;; A provider checkpoint intentionally yields its slot until :job/retry-at.
+    ;; The periodic scheduler is the durable wake-up source: no sleeping worker
+    ;; holds a fleet slot, and a process restart can recover the same metadata.
+    (drain-goal-queue! configuration)
+    result))
 
 (defn start-tick!
   "Begin looking. Idempotent, and a no-op when the deployment turned it off."

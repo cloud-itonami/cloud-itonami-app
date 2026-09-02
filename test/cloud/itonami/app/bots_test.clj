@@ -3815,6 +3815,56 @@
         (testing "while its neighbours still are"
           (is (true? (complete! {} run-id {:reason :provider/empty-response}))))))))
 
+(deftest a-transient-provider-outage-checkpoints-without-holding-the-slot
+  (with-store
+    (fn []
+      (let [bot-id (:bot/id (make-bot alice {}))
+            run-id "resident-provider-checkpoint-1"
+            run! (ns-resolve 'cloud.itonami.app.bots 'run-goal-job!)
+            drain! (ns-resolve 'cloud.itonami.app.bots 'drain-goal-queue!)
+            queued (agent-run/agent-run {:id run-id :goal "continue safely"} 1)
+            enqueued (atom [])
+            outage (ex-info "both routes unavailable"
+                            {:type :provider/fallback-failed
+                             :requested-model "murakumo-main"
+                             :fallback-model "z-ai/glm-5.3-flash"
+                             :primary-error-type :provider/http-error
+                             :fallback-error-type :provider/timeout})]
+        (swap! store/state assoc-in [:bots :goal-jobs run-id]
+               {:job/id run-id :job/bot bot-id :job/session alice
+                :job/objective "continue safely" :job/run queued
+                :job/plan [] :job/events [] :job/attempt 0
+                :job/resident-workforce? true})
+        (with-redefs [bots/send-stream! (fn [& _] (throw outage))
+                      bots/enqueue-goal! (fn [_ id]
+                                           (swap! enqueued conj id)
+                                           id)]
+          (run! {} run-id)
+          (let [job (get-in @store/state [:bots :goal-jobs run-id])
+                checkpoint (->> (:job/events job)
+                                (filter #(= :run/checkpointed (:event/kind %)))
+                                last)]
+            (is (= :checkpointed
+                   (get-in job [:job/run :agent.run/status])))
+            (is (= :provider/fallback-failed
+                   (get-in job [:job/run :agent.run/checkpoint-reason])))
+            (is (= :provider/fallback-failed
+                   (get-in checkpoint [:event/data :reason])))
+            (is (string? (:job/retry-at job)))
+            (is (empty? @enqueued)
+                "the failed route yields its slot instead of hot-looping"))
+          (swap! store/state assoc-in [:bots :goal-jobs run-id :job/retry-at]
+                 "1970-01-01T00:00:00Z")
+          (drain! {})
+          (is (= [run-id] @enqueued)
+              "the periodic drain resumes the same durable Goal when due"))))))
+
+(deftest provider-retry-backoff-is-bounded
+  (let [delay (ns-resolve 'cloud.itonami.app.bots
+                          'provider-retry-delay-seconds)]
+    (is (= [60 120 240 480 900 900]
+           (mapv delay [1 2 3 4 5 20])))))
+
 (deftest a-timeout-tells-the-person-it-ran-out-of-time
   (let [message (ns-resolve 'cloud.itonami.app.bots 'visible-failure-message)
         generic (message (ex-info "boom" {:type :some/unclassified-bug}))
