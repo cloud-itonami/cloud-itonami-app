@@ -4,14 +4,36 @@
 ;;   bin/kotoba compile <entry.kotoba> --target wasm --json
 ;;   bin/kotoba compile <entry.kotoba> --target wasm -o target/amu/foo.wasm
 ;;
-;; ADAPTER-EMIT HOLD. This prints an adapter envelope after amu --jvm-free
-;; writes the file. That is not :compile/emitted from the Release/v0.6.29
-;; kotoba CLI. Do not invent a v0.6.29 CLI emit. Do not bump the pin.
-;; amu {:ok true :target …} alone is not the adapter envelope.
-;; :command/planned is not emit.
+;; TWO EMITTERS, AND THE ENVELOPE SAYS WHICH ONE RAN.
+;;
+;; `:native` is a real kotoba CLI binary, which returns :compile/emitted itself.
+;; `:amu` is the adapter path: amu --jvm-free writes the file and this prints an
+;; envelope around it. The adapter envelope is NOT a kotoba CLI emit and never
+;; claims to be one -- that is what the earlier ADAPTER-EMIT HOLD guarded, and
+;; the guard is kept by naming the emitter and its sha256 in every envelope
+;; rather than by refusing to have a native path.
+;;
+;; The runtime pin is untouched. deps.edn stays on kotoba v0.6.29; this file
+;; selects an EMITTER, which compiler-pin.edn already tracks separately from the
+;; runtime (`:amu … "Emit frontend only."`). A native binary on PATH is not
+;; v0.6.29 and the envelope reports its digest so nobody has to assume.
+;;
+;; Measured 2026-09-02 on this app's two real guests: the two emitters produce
+;; DIFFERENT bytes and the SAME behaviour. `kotoba.target`,
+;; `kotoba.compatibility` and `kotoba.typed` are byte-identical; exports match;
+;; the native import set is a strict SUBSET of amu's (it does not ask for
+;; vector-alloc-i64 / vector-assoc-in-place-i64); both load through this app's
+;; own runtime/load-guest.mjs and agree on main and health-route?.
+;; `test/emit_parity_nbb.cljs` is that measurement, and it refuses to report a
+;; pass when either emitter is missing.
+;;
+;; :command/planned is not emit. The native CLI answers :command/planned with
+;; EXIT 0 for commands it has not implemented, so the code is checked, never the
+;; exit status alone.
 
 (ns kotoba
   (:require ["node:child_process" :as cp]
+            ["node:crypto" :as crypto]
             ["node:fs" :as fs]
             ["node:path" :as path]
             [clojure.edn :as edn]
@@ -74,6 +96,52 @@
 (defn- default-output [entry]
   (path/resolve app-directory "target" "amu" (str (emit-name entry) ".wasm")))
 
+(defn- sha256-file
+  "Content identity for the emitter binary. A version string would be better if
+  the native CLI had one; it answers :command/unknown to --version, so the
+  digest is what can actually be recorded."
+  [file]
+  (try
+    (-> (crypto/createHash "sha256")
+        (.update (fs/readFileSync file))
+        (.digest "hex"))
+    (catch :default _ nil)))
+
+(defn- this-launcher []
+  (try (fs/realpathSync *file*) (catch :default _ nil)))
+
+(defn- which [program]
+  (let [{:keys [exit stdout]} (sh "/usr/bin/which" [program])]
+    (when (zero? exit)
+      (let [p (str/trim (str stdout))]
+        (when-not (str/blank? p)
+          (try (fs/realpathSync p) (catch :default _ p)))))))
+
+(defn- resolve-native-cli
+  "A real kotoba CLI binary to emit with, or nil.
+
+  `KOTOBA_CLI` wins; otherwise `kotoba` on PATH. This launcher is REFUSED as a
+  candidate: an install that puts this file on PATH as `kotoba` would make the
+  adapter call itself, and unbounded recursion reads as a hang rather than as a
+  configuration mistake."
+  []
+  (let [candidate (or (some-> (aget js/process.env "KOTOBA_CLI") str/trim not-empty)
+                      (which "kotoba"))
+        resolved (when candidate
+                   (try (fs/realpathSync candidate) (catch :default _ candidate)))]
+    (when (and resolved (not= resolved (this-launcher)))
+      resolved)))
+
+(defn- envelope-code
+  "The :kotoba.cli/code a real CLI printed, or nil when the output was not an
+  envelope. Parsed, not substring-matched: `:compile/emitted` appearing inside a
+  diagnostic string is not an emit."
+  [text]
+  (try
+    (let [m (edn/read-string (str/trim (str text)))]
+      (when (map? m) (:kotoba.cli/code m)))
+    (catch :default _ nil)))
+
 (defn- resolve-amu []
   (or (aget js/process.env "AMU")
       (let [home (aget js/process.env "AMU_HOME")]
@@ -96,7 +164,7 @@
             (str/includes? text ":kotoba.cli/code :command/planned"))
     (throw (ex-info "emit refused: planned, not emitted" {:text text}))))
 
-(defn compile-wasm! [entry output]
+(defn compile-amu! [entry output]
   (let [amu (resolve-amu)]
     (when-not amu
       (throw (ex-info "AMU is unset and no amu launcher was found"
@@ -119,11 +187,70 @@
                         {:output output :stdout stdout})))
       (when-not (pos? (.-size (fs/statSync output)))
         (throw (ex-info (str "compile wrote empty file: " output) {:output output})))
-      (copy-browser-host! amu)
-      {:amu-stdout stdout
+      {:emitter :amu
+       :emitter-path amu
+       :emitter-sha256 nil
+       :host-runtime (copy-browser-host! amu)
+       :amu-stdout stdout
        :bytes (.-size (fs/statSync output))
        :output output
        :amu amu})))
+
+(defn compile-native!
+  "Emit with a real kotoba CLI. The CLI owns the envelope; this checks it."
+  [cli entry output]
+  (when-not (fs/existsSync entry)
+    (throw (ex-info (str "compile entry missing: " entry) {:entry entry})))
+  (fs/mkdirSync (path/dirname output) #js {:recursive true})
+  (let [args ["compile" (path/resolve entry)
+              "--target" "wasm"
+              "--output" (path/resolve output)]
+        {:keys [exit stdout stderr]} (sh cli args)
+        text (str stdout "\n" stderr)
+        code (envelope-code stdout)]
+    (reject-planned! text)
+    ;; Exit status alone is not the answer: this CLI returns 0 for
+    ;; :command/planned. The code is required to be the emit code.
+    (when-not (= :compile/emitted code)
+      (throw (ex-info (str "native kotoba CLI did not emit for " entry)
+                      {:entry entry :exit exit :code code :stderr text})))
+    (when-not (fs/existsSync output)
+      (throw (ex-info (str "compile wrote no file: " output) {:output output})))
+    (when-not (pos? (.-size (fs/statSync output)))
+      (throw (ex-info (str "compile wrote empty file: " output) {:output output})))
+    ;; The artifact this app loads needs amu's browser-host.mjs beside it. A
+    ;; native emit does not produce one, so copy it when amu is reachable and
+    ;; report its absence rather than emitting something nothing can load.
+    (let [host (copy-browser-host! (resolve-amu))]
+      {:emitter :native
+       :emitter-path cli
+       :emitter-sha256 (sha256-file cli)
+       :host-runtime (or host
+                         (let [copied (path/resolve app-directory "target" "amu"
+                                                    "browser-host.mjs")]
+                           (when (fs/existsSync copied) copied)))
+       :bytes (.-size (fs/statSync output))
+       :output output})))
+
+(defn compile-wasm!
+  "Emit, preferring a real kotoba CLI and falling back to the amu adapter.
+
+  `KOTOBA_EMITTER=amu` or `=native` forces one. Forcing `native` with no CLI
+  present is a refusal, not a silent fallback: a run that was asked for a
+  specific emitter and quietly used the other one produces an artifact whose
+  provenance nobody can reconstruct."
+  [entry output]
+  (let [forced (some-> (aget js/process.env "KOTOBA_EMITTER") str/trim not-empty)
+        cli (resolve-native-cli)]
+    (case forced
+      "amu" (compile-amu! entry output)
+      "native" (if cli
+                 (compile-native! cli entry output)
+                 (throw (ex-info "KOTOBA_EMITTER=native but no kotoba CLI was found"
+                                 {:hint "set KOTOBA_CLI=<path to a kotoba binary>"})))
+      (if cli
+        (compile-native! cli entry output)
+        (compile-amu! entry output)))))
 
 (defn- json-key [k]
   (if (keyword? k)
@@ -145,8 +272,10 @@
     (println (pr-str result))))
 
 (defn- help []
-  (str "cloud-itonami-app/bin/kotoba — this app's compile adapter\n"
-       "NOT the production kotoba v0.6.29 binary (deps.edn pin stays v0.6.29).\n"
+  (str "cloud-itonami-app/bin/kotoba — this app's compile front end\n"
+       "Emitter: a real kotoba CLI when one is on PATH (KOTOBA_CLI overrides),\n"
+       "otherwise the amu --jvm-free adapter. KOTOBA_EMITTER=native|amu forces.\n"
+       "Neither is the v0.6.29 runtime pin; deps.edn stays v0.6.29.\n"
        "compiler freeze: kotoba-lang@" (get-in pin [:kotoba-lang :git/sha]) "\n"
        "amu emit frontend: " (get-in pin [:amu :git/sha]) "\n\n"
        "  bin/kotoba compile <entry.kotoba> --target wasm [--output PATH] [--json]\n\n"
@@ -205,11 +334,24 @@
                                    :bytes (:bytes emitted)
                                    :target :wasm
                                    :entry (path/resolve entry)
+                                   :emitter (:emitter emitted)
+                                   :emitter-path (:emitter-path emitted)
+                                   :emitter-sha256 (:emitter-sha256 emitted)
+                                   ;; The app loads a guest through amu's
+                                   ;; browser-host.mjs. A native emit does not
+                                   ;; produce one, so whether the artifact can
+                                   ;; be loaded is reported, not assumed.
+                                   :host-runtime (:host-runtime emitted)
                                    :kotoba-lang (get-in pin [:kotoba-lang :git/sha])
                                    :amu (get-in pin [:amu :git/sha])
                                    :production-kotoba-pin "v0.6.29"
                                    :launcher "cloud-itonami-app/bin/kotoba"
-                                   :not-production-kotoba-binary true})]
+                                   ;; True only for the adapter path. A native
+                                   ;; emit IS a kotoba CLI emit -- of whatever
+                                   ;; binary :emitter-sha256 names, which is not
+                                   ;; the v0.6.29 runtime pin either way.
+                                   :not-production-kotoba-binary
+                                   (= :amu (:emitter emitted))})]
               (when-not (fs/existsSync (:output emitted))
                 (throw (ex-info "envelope refused: file missing after emit"
                                 {:output (:output emitted)})))
