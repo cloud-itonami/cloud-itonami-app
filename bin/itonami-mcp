@@ -195,8 +195,9 @@
     (js/process.exit 0))
   (-> (guest/load-guest app-directory "target/amu/mcp_main.wasm")
       (.then
-       (fn [hosted]
-         (let [guest-main (guest/call-i64 hosted "main")]
+       (fn [loaded]
+         (let [hosted (.-hosted loaded)
+               guest-main (.-main loaded)]
            (when-not (pos? guest-main)
              (throw (ex-info "guest main stayed 0; unused guest is not a run"
                              {:guest-main guest-main})))

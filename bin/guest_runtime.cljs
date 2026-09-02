@@ -21,7 +21,7 @@
   (let [wasm (require-wasm! app-directory rel)]
     (-> (js/import (loader-url app-directory))
         (.then (fn [mod]
-                 (.instantiateGuest ^js mod wasm app-directory))))))
+                 (.loadAndCallMain ^js mod wasm app-directory))))))
 
 (defn export-fn [hosted name]
   (let [f (aget (.-exports (.-instance hosted)) name)]
@@ -35,8 +35,6 @@
     (true? result)))
 
 (defn call-i64 [hosted name]
-  (let [f (export-fn hosted name)
-        result (f)]
-    (if (instance? js/BigInt result)
-      (js/Number result)
-      (long result))))
+  (let [f (export-fn hosted name)]
+    ;; nbb `long` cannot take a wasm i64 BigInt. JS Number can.
+    (js/Number (f))))

@@ -8,7 +8,14 @@ cd "$root"
 
 pin_sha() {
   local key="$1"
-  nbb -e "(require '[clojure.edn :as edn]) (println (get-in (edn/read-string (slurp \"compiler-pin.edn\")) [$key :git/sha]))"
+  node --input-type=module -e "
+    import fs from 'node:fs';
+    const text = fs.readFileSync('compiler-pin.edn','utf8');
+    const re = new RegExp(':' + process.argv[1] + '\\\\s*\\\\{[^}]*:git/sha\\\\s+\\\"([0-9a-f]+)\\\"');
+    const m = text.match(re);
+    if (!m) { console.error('pin missing', process.argv[1]); process.exit(1); }
+    console.log(m[1]);
+  " "${key#:}"
 }
 
 amu_sha="$(pin_sha :amu)"

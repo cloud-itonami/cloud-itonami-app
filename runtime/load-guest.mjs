@@ -53,3 +53,16 @@ export function guestI64(value) {
   if (typeof value === "bigint") return Number(value);
   return Number(value);
 }
+
+export function callI64(hosted, name) {
+  const fn = hosted.instance.exports[name];
+  if (typeof fn !== "function") {
+    throw new Error(`guest export missing: ${name}`);
+  }
+  return guestI64(fn());
+}
+
+export async function loadAndCallMain(wasmPath, appDir) {
+  const hosted = await instantiateGuest(wasmPath, appDir);
+  return { hosted, main: callI64(hosted, "main") };
+}
