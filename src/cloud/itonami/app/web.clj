@@ -1,6 +1,7 @@
 (ns cloud.itonami.app.web
   "DADS-backed WebKit workspace hosted by kotoba-lang/shell."
   (:require [clojure.java.io :as io]
+            [cloud.itonami.app.appearance :as appearance]
             [hanmen.svg :as hanmen-svg]
             [jp-go-dds.core :as dds]
             [jp-go-dds.page :as page]))
@@ -1643,8 +1644,12 @@
   arrives with the version that emits the markup needing it. It brings no
   colour and no font — everything in it is `currentColor` and `inherit`,
   which is why this can concatenate it without checking it against the
-  tokens `core-test` guards."
-  (str base-css "\n  " hanmen-svg/stylesheet "\n"))
+  tokens `core-test` guards.
+
+  The 8-bit appearance layer (`cloud.itonami.app.appearance/css`) is
+  concatenated LAST so that its overrides win, and so that the same token
+  guard covers it: every `--eightbit-*` it references it also declares."
+  (str base-css "\n  " hanmen-svg/stylesheet "\n" appearance/css "\n"))
 
 (def interaction-js
   "The page's interaction layer, which is JavaScript and now lives in a
@@ -1958,6 +1963,8 @@
         provider (get-in configuration [:routing :default-provider])
         model (get-in configuration [:routing :default-model])
         brand (get-in configuration [:brand :name] "Cloud Itonami")
+        mode (appearance/resolve-mode configuration)
+        residency (keyword (name (get-in configuration [:residency :plane] :local)))
         css (slurp (io/resource "jp_go_dds/dds.css"))]
     (page/->page
      {:title (str "Bots | " brand)
@@ -1966,7 +1973,11 @@
       :head [[:link {:rel "icon" :type "image/png" :href "/icon.png"}]
              [:link {:rel "apple-touch-icon" :href "/icon.png"}]
              [:script signal-js] [:script interaction-js]]}
-     [:div {:class "workspace" :data-brand brand}
+     ;; `data-appearance` is the whole of a mode (ADR-0091): the server renders
+     ;; the configured default, `interaction.js` flips it to the device's
+     ;; remembered choice, and the stylesheet reads it. Nothing else differs.
+     [:div {:class "workspace" :data-brand brand :data-appearance mode
+            :data-residency (name residency)}
       (comment-layer)
       [:aside {:class "sidebar" :aria-label "メインメニュー"}
        [:div {:class "brand"}
@@ -2034,11 +2045,18 @@
         ;; egress was impossible; with a reviewed cloud provider admitted it
         ;; was a badge claiming the opposite of what the app was doing.
         [:strong (if cloud? "● 許可済み接続あり" "● ローカルのみ")]
+        ;; Where the agent itself lives (ADR-0092): `local` is this machine's
+        ;; resident; `cloud` is the resident placed on murakumo.cloud, which
+        ;; the person reaches instead of running one. Read from configuration
+        ;; because the process cannot tell from inside — both bind loopback.
+        [:span {:id "workspace-residency" :data-residency (name residency)}
+         (if (= :cloud residency) "cloud-agent · murakumo.cloud" "local-agent · この端末")]
         [:span {:id "workspace-status"} "既存サービスを確認中…"]]]
       [:div {:class "main"}
        [:header {:class "topbar" :data-kotoba-window-drag "true"}
         [:h2 {:class "topbar__title" :id "current-view"} "Bots"]
         (comment-mode-toggle)
+        (appearance/toggle-button mode)
         [:div {:class "topbar__context authenticated-only" :id "project-titlebar-context"
                :data-topbar-view "chat" :hidden true}
          [:button {:class "context-button" :id "chat-context-button" :type "button"

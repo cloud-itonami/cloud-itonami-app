@@ -72,6 +72,7 @@
             [cloud.itonami.app.decision-method :as decision-method]
             [cloud.itonami.app.disk-space :as disk-space]
             [cloud.itonami.app.domain-tools :as domain-tools]
+            [cloud.itonami.app.media-tools :as media-tools]
             [cloud.itonami.app.git-hygiene :as git-hygiene]
             [cloud.itonami.app.device :as device]
             [cloud.itonami.app.gc :as gc]
@@ -2452,6 +2453,20 @@
     (filterv #(autonomous-capability? b (get capability-by-tool (:name %)))
              disk-space/tool-definitions)))
 
+(defn- media-tools
+  "Hokusai video tools, when the Bot's capability policy names `:media.video`
+  with any decision other than blocked. The decision itself (autonomous vs
+  approval) is enforced where every other write is: `video_generate` is a
+  write tool and is held for approval unless the Bot is omakase. Like the
+  browser tools, not written into `:bot/tools`."
+  [b]
+  (if (some (fn [{held :capability decision :decision}]
+              (and (= :media.video (keyword (name held)))
+                   (not= :blocked (keyword (name decision)))))
+            (:bot/capability-policy b))
+    media-tools/tool-definitions
+    []))
+
 (defn- disk-maintenance-bot? [b]
   (or (autonomous-capability? b :disk.inspect)
       (autonomous-capability? b :disk.cleanup)
@@ -2536,6 +2551,7 @@
                  (computer-tools configuration b)
                  (peer-tools b)
                  (coding-tools b)
+                 (media-tools b)
                  (wallet/bot-tool-definitions (:bot/id b))))))
 
 (defn- tool-definitions
@@ -2898,6 +2914,7 @@
                            (workspace-tools/tool? tool-name)
                            (virtual-shell/tool? tool-name)
                            (disk-space/tool? tool-name)
+                           (media-tools/tool? tool-name)
                            (git-hygiene/tool? tool-name)
                            (domain-tools/tool? tool-name))
                      (cond
@@ -2923,6 +2940,9 @@
 
                        (disk-space/tool? tool-name)
                        (disk-space/call! tool-name args)
+
+                       (media-tools/tool? tool-name)
+                       (media-tools/call-tool! configuration tool-name args)
 
                        (git-hygiene/tool? tool-name)
                        (git-hygiene/call! tool-name)

@@ -219,11 +219,17 @@
     (is (= 16384 (:max-output-tokens provider)))
     (is (= "murakumo-main" (:default-model provider)))
     (is (= ["murakumo-main" "murakumo-edge"
+            "awai-network/basho"
             "qwen3.8-27b-throughput-5090"
             "qwen3.8-27b-fastmtp-aggressive"
             "z-ai/glm-5.3-flash"
             "qwen/qwen3.8-flash"]
            (:models provider)))
+    ;; ADR-0092: Basho is served by the gateway and may echo the vendor id.
+    (is (= #{"awai-network/basho" "zai-org/GLM-5.3"}
+           (get-in provider [:accepted-response-models "awai-network/basho"])))
+    (is (= "https://murakumo.cloud/api/v1/videos"
+           (get-in provider [:media :videos-url])))
     (is (= {"qwen3.8-27b-throughput-5090" 420}
            (:model-request-timeout-seconds provider)))
     (is (= {:url "https://api.murakumo.cloud/ready?model=qwen3.8-27b-throughput-5090"
@@ -233,6 +239,7 @@
     (is (zero? (:max-transient-retries provider)))
     (is (true? (:assert-response-model? provider)))
     (is (= {"murakumo-main" "z-ai/glm-5.3-flash"
+            "awai-network/basho" "z-ai/glm-5.3-flash"
             "qwen3.8-27b-throughput-5090" "murakumo-main"
             "qwen3.8-27b-fastmtp-aggressive" "murakumo-main"
             "z-ai/glm-5.3-flash" "qwen/qwen3.8-flash"
