@@ -739,6 +739,25 @@ of the connectors you picked and nothing else.
   first write tool stops the loop and becomes an approval card. A Bot may carry
   out what was approved; it may not approve, and no session it could hold makes
   it able to.
+- **Physical work goes to a verified person.** A Bot can create and publish a
+  HumanWorkRequest for work it cannot finish in software. Matching rechecks the
+  person's organization-verified service location, licence, qualification,
+  permit, insurance, training or asset scopes, jurisdiction, expiry,
+  availability and overlapping assignments. The Bot stays a `:system`; only a
+  Human User accepts and submits evidence. Exact addresses are withheld until
+  acceptance, and verification remains an owner/admin Human action. See
+  [ADR-0083](docs/adr/0083-bots-outsource-human-work-to-verified-people.md).
+
+- **Public Human Work marketplace and external assurance** — `/human-work` and
+  `/api/human-work/requests` expose only redacted public/open work. Fixed HTTPS
+  authority adapters can bind an issuer or identity-provider receipt to the
+  exact person, organization, and claim version. Optional x402 v2
+  `auth-capture` funding holds USDC for the accepted worker, blocks work start
+  until the onchain authorization settles, captures only after evidenced work
+  is verified, and voids cancelled or rejected work. Payer signatures are not
+  retained. All integrations ship disabled until the facilitator and custom
+  escrow operator are configured.
+  See [ADR-0084](docs/adr/0084-human-work-assurance-marketplace-and-held-payouts.md).
 - **An approval belongs to the instruction it was asked under.** If you say
   something else instead of answering the card, the request is retired rather
   than left waiting: the card says 古い指示のため取り下げ, the Bot stops

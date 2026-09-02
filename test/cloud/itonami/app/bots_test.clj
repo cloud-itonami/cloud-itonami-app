@@ -16,6 +16,7 @@
             [cloud.itonami.app.commerce :as commerce]
             [cloud.itonami.app.config :as config]
             [cloud.itonami.app.desktop :as desktop]
+            [cloud.itonami.app.human-work-tools :as human-work-tools]
             [cloud.itonami.app.identity :as identity]
             [cloud.itonami.app.policy :as policy]
             [cloud.itonami.app.provider :as provider]
@@ -1733,9 +1734,11 @@
                         (first (:bots (bots/overview nil alice))))]
           (is (not-any? #{"gmail_search_messages"} admitted)
               "an unauthorized connector is still not admitted")
-          (is (= (set (map :name commerce/tool-definitions))
+          (is (= (set (map :name
+                           (concat commerce/tool-definitions
+                                   human-work-tools/tool-definitions)))
                  (set admitted))
-              "the built-in tenant commerce tools remain available"))))))
+              "the built-in commerce and human-work tools remain available"))))))
 
 (deftest a-tool-the-model-invented-is-refused-rather-than-invoked
   (with-store
