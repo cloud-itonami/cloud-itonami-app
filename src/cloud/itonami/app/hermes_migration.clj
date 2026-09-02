@@ -123,6 +123,25 @@
         (str/ends-with? leaf ".db-wal")
         (str/ends-with? leaf ".db-shm"))))
 
+(defn- content-hashed-relative?
+  "Files whose BYTES are reviewed configuration but whose mtime is noise.
+
+  `cron/jobs.json` is rewritten by the cron ticker roughly every two minutes
+  with identical bytes. Hashing its mtime made an optimistic lock that could
+  never close on a live Hermes home: measured 2026-09-01, two inventories taken
+  three minutes apart with Hermes PAUSED differed in exactly this one file
+  across all thirty-one profiles -- size unchanged, mtime moved -- and a
+  twenty-five minute export therefore always lost the race (ADR-2609012300).
+  `hermes pause` does not stop the ticker; it halts dispatch. Pausing is not a
+  way to make the source still.
+
+  Calling it volatile instead would close the lock by giving up: a genuine edit
+  to the job list would then cross the boundary unreviewed, and the job list is
+  exactly the configuration this migration exists to carry. Hashing the content
+  keeps that guarantee and drops only the noise."
+  [relative]
+  (contains? #{"cron/jobs.json"} relative))
+
 (defn- portable-files [{:keys [id root]}]
   (let [candidates (if (= "default" id)
                      (mapcat (fn [name]
@@ -185,16 +204,25 @@
   (let [files (portable-files profile)
         root (:root profile)
         rows (mapv (fn [^File file]
-                     {:path (relative-path root file)
-                      :bytes (.length file)
-                      :modified-ms (.lastModified file)})
+                     (let [relative (relative-path root file)]
+                       {:path relative
+                        :bytes (.length file)
+                        :modified-ms (.lastModified file)
+                        ;; What the lock actually compares. Content for the
+                        ;; handful of files a live ticker rewrites, mtime for
+                        ;; everything else -- hashing all of them would read
+                        ;; every byte of a two-gigabyte export a second time,
+                        ;; twice per stage.
+                        :control-token (if (content-hashed-relative? relative)
+                                         (str "sha256:" (sha256-file file))
+                                         (str (.lastModified file)))}))
                    files)
         control-rows (remove #(volatile-relative? (:path %)) rows)
         revision (sha256-string
                   (str (:id profile) "\n"
                        (str/join "\n"
-                                 (map (fn [{:keys [path bytes modified-ms]}]
-                                        (str path "\t" bytes "\t" modified-ms))
+                                 (map (fn [{:keys [path bytes control-token]}]
+                                        (str path "\t" bytes "\t" control-token))
                                       control-rows))))]
     {:id (:id profile)
      :runtime (runtime-reference root)
