@@ -257,15 +257,19 @@
                            ;; defect class CLAUDE.md names.
                            "z-ai/glm-5.3-flash" 128000
                            "qwen/qwen3.8-flash" 128000}
-   ;; 2026-08-29 owner instruction: raise output budgets toward the model
-   ;; maximum. The previous 512 (kept "concise" for capacity) truncated real
-   ;; work -- measured that day: a resident decision_frame tool call cut at
-   ;; its budget, filed :provider/output-budget-exhausted. 16384 matches the
-   ;; gateway's raised public cap; at b70's measured 53 tok/s it is ~5
-   ;; minutes of decode, inside the gateway's ten-minute ceiling, and the
-   ;; observed-ceiling mechanism still clamps to whatever an endpoint
-   ;; actually serves.
-   :max-output-tokens 16384
+   ;; Shipped install default is 400, matching the homepage try box. 16384
+   ;; was the 2026-08-29 raise toward the gateway public cap; a fresh
+   ;; install that kept it asked gad for n_predict 16384 on the Java HTTP
+   ;; client and filled --parallel 2. 2048 is already the other gad slot
+   ;; and the maximum if 400 were impossible. Do not copy 16384 back into
+   ;; an overlay "to match shipped default" -- that number is no longer
+   ;; shipped. Live operator overlays that already cap this (and disable
+   ;; the provider) are not this file.
+   ;;
+   ;; History: 512 truncated real work (2026-08-29: decision_frame cut at
+   ;; budget, :provider/output-budget-exhausted). The observed-ceiling
+   ;; mechanism still clamps to whatever an endpoint actually serves.
+   :max-output-tokens 400
    :api-key-env "MURAKUMO_API_KEY"
    ;; `awai-network/hokusai`, awai.network's video model, through murakumo's
    ;; OpenRouter-compatible async video contract (root ADR-2609011842). Same
@@ -442,6 +446,12 @@
                     ;; schemas and framing. Interactive Bots remain bounded by
                     ;; the selected model's context window instead.
                     :max-input-tokens 8192
+                    ;; Same 400 as the murakumo provider. Absent this, resident
+                    ;; ticks fall back to a code constant that used to match
+                    ;; the old 16384 provider default and would still fill
+                    ;; gad --parallel 2 on a new install. Do not copy 16384
+                    ;; here "to match shipped default".
+                    :max-output-tokens 400
                     ;; The resident workforce is the edge workload: use the
                     ;; explicit Ornith route so its SLO measures the 16 GB Mac
                     ;; fleet, not whatever murakumo-main aliases to later.

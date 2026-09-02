@@ -734,7 +734,7 @@
     (is (= 512 (requested {:id "p" :max-output-tokens 512} {}))
         "the provider default applies when the request names none")
     (is (= 16384 (requested {:id "p"} {}))
-        "and the shipped default when neither does")
+        "and the provider-layer fallback when neither does -- not the murakumo shipped install default")
     (is (= (requested {:id "p" :kind :openai-compatible :max-output-tokens 512}
                       {:model "m" :messages []})
            (:max_tokens (body {:id "p" :kind :openai-compatible
@@ -858,7 +858,7 @@
     (is (= 16384 (:max_tokens (body {:id "p" :kind :openai-compatible
                                      :max-output-tokens {"other" 4096}}
                                     {:model "murakumo-main" :messages []})))
-        "an unnamed model falls to the shipped default, not to a sibling's cap")))
+        "an unnamed model falls to the provider-layer fallback, not to a sibling's cap")))
 
 (defn- refusing-server
   "An HTTP server that refuses with `status` and says `body`, once."

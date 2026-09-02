@@ -177,26 +177,20 @@
 (def ^:private default-resident-max-output-tokens
   "The output budget an unattended resident turn asks for.
 
-  1024 until 2026-08-29, chosen when the gateway capped public chat at 2048
-  and one slow origin made every long generation expensive. Both of those
-  moved the same day: the gateway cap is 16384 and its non-streaming ceiling
-  ten minutes, which at the measured 53 tok/s of the origin that now leads the
-  pool is roughly a 31k-token completion.
+  1024 until 2026-08-29, when four of fifteen resident turns died at
+  :provider/output-budget-exhausted with decision_frame JSON cut at 1024/1024.
+  16384 then matched the gateway's public ceiling. That number is not the
+  shipped install default: a fresh install that asked gad for it filled
+  --parallel 2.
 
-  1024 was not merely conservative, it was WRONG, and measured so: of fifteen
-  resident turns in the window after that gateway change, four failed at
-  :provider/output-budget-exhausted, every one of them a decision_frame tool
-  call whose JSON arguments were cut mid-string at exactly 1024/1024. A turn
-  that dies costs its whole tick plus a requeue -- far more of the single
-  resident slot than the generation it refused to finish.
-
-  Matched to the provider default rather than set to a second number: the
-  per-model cap, the endpoint's observed ceiling and the context window all
-  still bound this in `provider/requested-max-tokens`, so this is the ask, not
-  the guarantee. An operator who wants resident work kept shorter than
-  interactive work sets `[:bots :workforce :max-output-tokens]`, which is
-  read first."
-  16384)
+  Matched to the murakumo provider default (400, same as the homepage try
+  box) rather than set to a second number. The per-model cap, the endpoint's
+  observed ceiling and the context window still bound this in
+  `provider/requested-max-tokens`, so this is the ask, not the guarantee. An
+  operator who wants a different resident envelope sets
+  `[:bots :workforce :max-output-tokens]`, which is read first. Do not copy
+  16384 into an overlay to match a shipped default -- 400 is what ships."
+  400)
 (def ^:private default-resident-max-input-tokens
   "The total prompt envelope for one unattended resident model call.
 
