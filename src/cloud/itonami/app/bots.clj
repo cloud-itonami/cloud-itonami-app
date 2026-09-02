@@ -4634,15 +4634,60 @@
           (bot/repetition-exhausted?
            {:identical-consecutive (identical-call-count run (first calls))
             :limit max-identical-calls})
-          (let [{:keys [name]} (first calls)]
-            (clear-run! (:bot/id b))
-            (finish-visible! on-finish run :failed
-                             {:turn/error-type :provider/repeating
-                              :turn/result (str "同じ操作（" name "）を同じ引数で繰り返したため停止しました。")})
-            (say (:bot/id b)
-                 (str "同じ操作（" name "）を同じ引数で繰り返していたので止めました。"
-                      "うまくいっていないようです。別のやり方を指示してください。")
-                 nil))
+          (let [{:keys [id name]} (first calls)
+                continuable-goal?
+                (and (:goal? run)
+                     (< (long (or (:job/attempt (goal-job (:id run))) 0))
+                        max-goal-continuations))]
+            (if continuable-goal?
+              ;; Repetition is a bad execution slice, not evidence that the
+              ;; durable Goal itself is impossible.  Measured 2026-09-02: 29
+              ;; of the latest 200 resident runs were filed as bare `failed`;
+              ;; their visible turns were all `:provider/repeating`, mostly a
+              ;; second workspace_read of evidence the run already held.  A
+              ;; terminal failure discarded useful receipts and pushed the
+              ;; same open-ended objective to the back of a 143-Bot queue.
+              ;;
+              ;; Close the unresolved tool-call in provider history, add an
+              ;; assistant barrier so `identical-call-count` starts fresh on
+              ;; resume, and checkpoint.  The ordinary continuation ceiling
+              ;; still terminates a model that never changes course.
+              (let [recovery
+                    (str "The host suppressed repeated " name
+                         ". Reuse the earlier result already present in this durable run. "
+                         "On resume, choose a different specific action, complete the Goal "
+                         "from existing evidence, or report the exact external blocker.")
+                    checkpointed
+                    (-> run
+                        (update :messages conj
+                                {:role "tool" :tool-call-id id :name name
+                                 :content recovery})
+                        (update :messages conj
+                                {:role "assistant" :content recovery
+                                 :tool-calls []})
+                        (update :messages conj
+                                {:role "user"
+                                 :content
+                                 "Continue from the saved evidence without repeating that call."}))]
+                (save-run! (:bot/id b) checkpointed)
+                (finish-visible! on-finish checkpointed :checkpointed
+                                 {:turn/result
+                                  (str "重複した " name
+                                       " を抑止し、証拠を保存して別の手順から自動再開します。")})
+                (goal-event! :run/checkpointed
+                             {:reason :provider/repeating
+                              :tool name
+                              :turn-count (:turn-count checkpointed 0)
+                              :tool-count (:tool-count checkpointed 0)}))
+              (do
+                (clear-run! (:bot/id b))
+                (finish-visible! on-finish run :failed
+                                 {:turn/error-type :provider/repeating
+                                  :turn/result (str "同じ操作（" name "）を同じ引数で繰り返したため停止しました。")})
+                (say (:bot/id b)
+                     (str "同じ操作（" name "）を同じ引数で繰り返していたので止めました。"
+                          "うまくいっていないようです。別のやり方を指示してください。")
+                     nil))))
 
           :else
           (let [{:keys [name input] :as call} (first calls)
