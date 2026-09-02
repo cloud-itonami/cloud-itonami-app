@@ -100,39 +100,15 @@
 ;; arguments
 ;; ---------------------------------------------------------------------------
 
-(defn parse-flags
-  "`--key value` pairs into a map. A flag with no value is `true`, so `--json`
-  works without inventing a second syntax."
-  [args]
-  (loop [args args acc {}]
-    (if-let [head (first args)]
-      (if (str/starts-with? head "--")
-        (let [k (keyword (subs head 2))
-              v (second args)]
-          (if (and v (not (str/starts-with? v "--")))
-            (recur (drop 2 args) (assoc acc k v))
-            (recur (rest args) (assoc acc k true))))
-        (recur (rest args) acc))
-      acc)))
+(def parse-flags
+  "Moved to `cloud.itonami.app.commands` when a second front end appeared.
+  Re-exported so this namespace's call sites and its tests keep one name for
+  one implementation."
+  commands/parse-flags)
 
-(defn words
-  "The arguments that name a command: not flags, and not a flag's value.
-
-  Walked rather than filtered. `--label claude-code` puts a bare token after a
-  flag, and a filter would read `claude-code` as a command word — which matters
-  now that the words are looked up in a registry rather than matched against a
-  fixed list, because an unexpected word turns a valid call into 'no such
-  command'."
-  [args]
-  (loop [args args acc []]
-    (if-let [head (first args)]
-      (if (str/starts-with? head "--")
-        (let [v (second args)]
-          (if (and v (not (str/starts-with? v "--")))
-            (recur (drop 2 args) acc)
-            (recur (rest args) acc)))
-        (recur (rest args) (conj acc head)))
-      acc)))
+(def words
+  "See `parse-flags`. One definition, two front ends."
+  commands/words)
 
 (defn- comma-list [v]
   (when (string? v)

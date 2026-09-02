@@ -14,11 +14,12 @@
             ["node:readline" :as readline]
             [clojure.edn :as edn]
             [clojure.string :as str]
-            [guest-runtime :as guest]
+            [nbb.classpath :as classpath]
             [nbb.core :refer [*file*]]))
 
 (def app-directory
   (fs/realpathSync (path/resolve (path/dirname *file*) "..")))
+
 (def home-directory
   (when-let [home (aget js/process.env "HOME")]
     (try (fs/realpathSync home) (catch :default _ home))))
@@ -30,6 +31,25 @@
            (nil? (aget js/process.env "CLOUD_ITONAMI_DATA_DIR")))
   (aset js/process.env "CLOUD_ITONAMI_DATA_DIR"
         (path/resolve home-directory ".cloud-itonami" "data")))
+
+
+;; `--print-data-dir` is answered from this file alone, before the guest
+;; namespace is resolved. A resident install copies the launcher by itself, so
+;; "where is your store" must not depend on a sibling being present.
+(when (= "--print-data-dir" (first *command-line-args*))
+  (println (or (aget js/process.env "CLOUD_ITONAMI_DATA_DIR") ""))
+  (println (or (aget js/process.env "CLOUD_ITONAMI_APP_DIR") app-directory))
+  (js/process.exit 0))
+
+;; Resolved from THIS file's directory, not the caller's.
+;;
+;; Measured 2026-09-02: requiring `guest-runtime` through the ns form made this
+;; launcher die with "Could not find namespace" unless the caller remembered
+;; `--classpath bin` -- a launcher that cannot be started by its own shebang.
+;; `resident-mcp-launcher-does-not-spawn-clojure` had been red on exactly that
+;; since the launcher landed.
+(classpath/add-classpath (path/resolve app-directory "bin"))
+(require '[guest-runtime :as guest])
 
 (def server-name "cloud-itonami-fleet")
 (def server-version "1")

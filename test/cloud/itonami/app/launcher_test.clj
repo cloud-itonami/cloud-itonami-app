@@ -44,9 +44,11 @@
      :app (.getCanonicalPath app)
      :data (.getCanonicalPath (io/file home ".cloud-itonami" "data"))}))
 
-(deftest resident-cli-launcher-is-closed
-  ;; `:cli` is closed as a run path. --print-data-dir still reports the
-  ;; resident store; it does not spawn clojure.
+(deftest resident-cli-launcher-answers-from-its-own-file
+  ;; A resident install copies the launcher alone, so --print-data-dir has to be
+  ;; answerable before any sibling is loaded. It still does not spawn clojure.
+  ;; (Renamed 2026-09-03: the CLI is no longer closed -- it dispatches -- but
+  ;; this property is the one the copy actually tests.)
   (let [{:keys [status stderr lines app data]}
         (run-resident-script "itonami" nil)]
     (is (zero? status) stderr)
@@ -98,8 +100,15 @@
     (is (not (str/includes? mcp "clojure -M:mcp")))
     (is (not (str/includes? mcp "-M:mcp")))
     (is (str/includes? mcp "guest-wasm"))
-    (is (not (str/includes? itonami "spawnSync")))
-    (is (str/includes? itonami "leftover JVM run path is closed"))
+    ;; The launcher must not start a JVM. It DOES spawn `security` to read one
+    ;; Keychain item, so the bare word `spawnSync` is not the property -- and
+    ;; measured 2026-09-02, that substring check was already failing on the
+    ;; file's own comment about the spawn it had removed, which is a control
+    ;; going red for a reason other than the one it names.
+    (is (not (re-find #"spawnSync[^\n]*\"clojure\"" itonami)))
+    (is (not (str/includes? itonami "-M:cli")))
+    ;; It is a front end now, not a refusal: it resolves commands.
+    (is (str/includes? itonami "resolve-invocation"))
     (is (not (str/includes? desktop "clojure -M:server")))
     (is (str/includes? desktop "cloud-itonami-server"))
     (is (str/includes? server "guest-wasm"))
