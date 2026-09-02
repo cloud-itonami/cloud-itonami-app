@@ -4013,6 +4013,7 @@
 (def ^:private context-compaction-threshold 0.75)
 (def ^:private context-tail-share 0.45)
 (def ^:private compacted-exchange-max-chars 1600)
+(def ^:private compacted-evidence-budget-chars 1050)
 
 (defn- estimated-tokens
   "A conservative Qwen-family prompt estimate without shipping a second model
@@ -4043,13 +4044,24 @@
     (if (<= (count s) limit) s (str (subs s 0 limit) "…"))))
 
 (defn- summarized-exchange [messages]
-  (let [tool-names (->> messages (mapcat :tool-calls) (keep :name) distinct vec)
+  (let [tool-calls (mapcat :tool-calls messages)
+        tool-names (->> tool-calls (keep :name) distinct vec)
+        tool-name-by-call-id (into {} (keep (juxt :id :name)) tool-calls)
         tool-results (filterv #(= "tool" (:role %)) messages)
-        evidence-excerpts (->> tool-results
-                               (keep :content)
-                               (remove str/blank?)
-                               (map #(clipped % 360))
-                               (take 3))
+        evidence-results (->> tool-results
+                              (filterv #(not (str/blank? (:content %)))))
+        evidence-limit (-> (quot compacted-evidence-budget-chars
+                                 (max 1 (count evidence-results)))
+                           (max 40)
+                           (min 360))
+        evidence-excerpts (mapv (fn [result]
+                                  (clipped
+                                   (str (or (get tool-name-by-call-id
+                                                 (:tool-call-id result))
+                                            "tool")
+                                        ": " (:content result))
+                                   evidence-limit))
+                                evidence-results)
         conclusions (->> messages
                          (filter #(= "assistant" (:role %)))
                          (keep :content)
@@ -4074,8 +4086,9 @@
 (defn- compact-middle
   "Replace old derived exchanges with bounded reference markers while keeping
   every user message in its original role and order. Full tool bodies stay in
-  the durable run; a redacted, clipped excerpt survives so a resident Goal can
-  reuse evidence instead of repeating the same discovery after a checkpoint."
+  the durable run; the bounded summary budget is divided across every redacted
+  tool-result excerpt so a resident Goal does not lose the beginning of an
+  eight-tool checkpoint slice and repeat the same discovery."
   [messages tail-start]
   (let [middle (subvec messages 2 tail-start)]
     (loop [remaining middle output []]
