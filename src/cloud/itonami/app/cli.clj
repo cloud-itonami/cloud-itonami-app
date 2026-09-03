@@ -502,6 +502,11 @@
 (defn bot-list [configuration]
   (client/request! configuration :get "/api/agent-bots"))
 
+(defn org-list [configuration]
+  "The tenants this session's user belongs to, with per-tenant Bot counts and
+  which one the session currently acts in."
+  (client/request! configuration :get "/api/agent-bots/orgs" {}))
+
 (defn bot-workforce [configuration]
   (client/request! configuration :get "/api/agent-bots/workforce"))
 
@@ -726,6 +731,7 @@
        "  business bind --id <business-id> [--repos a,b] [--canvas c]\n"
        "                [--model path] [--leverage path] [--adoptions a,b] [--lei L]\n\n"
        "  bots list\n"
+      "  orgs list              所属 organization 一覧（Bot 数 / active 表示）\n"
        "  bots workforce\n"
        "  bots provision\n"
        "  bots messages --id <bot-id>\n"
@@ -779,6 +785,7 @@
       ["business" "create"] (business-create configuration flags)
       ["business" "bind"] (business-bind configuration flags)
       ["bots" "list"] (bot-list configuration)
+      ["orgs" "list"] (org-list configuration)
       ["bots" "workforce"] (bot-workforce configuration)
       ["bots" "provision"] (bot-workforce-provision configuration)
       ["bots" "messages"] (bot-messages configuration flags)
