@@ -46,15 +46,16 @@ cleanup() {
 trap cleanup EXIT INT TERM
 
 if ! healthy; then
-  java_home="$(/usr/libexec/java_home -v 21 2>/dev/null || true)"
-  if [[ -z "$java_home" || ! -x "$java_home/bin/java" ]]; then
-    /usr/bin/osascript -e 'display alert "Cloud Itonami requires Java 21" message "Install Java 21 or later, then open Cloud Itonami again." as critical' || true
+  server_bin="$contents_dir/MacOS/cloud-itonami-server"
+  if [[ ! -x "$server_bin" ]]; then
+    server_bin="$resources_dir/cloud-itonami-server"
+  fi
+  if [[ ! -x "$server_bin" ]]; then
+    /usr/bin/osascript -e 'display alert "Cloud Itonami host adapter missing" message "cloud-itonami-server was not packaged. This build does not start Java." as critical' || true
     exit 1
   fi
   CLOUD_ITONAMI_DATA_DIR="$support_dir" \
-    "$java_home/bin/java" -cp "$resources_dir/cloud-itonami-app.jar" \
-    clojure.main -m cloud.itonami.app.server \
-    >>"$log_dir/server.log" 2>&1 &
+    "$server_bin" >>"$log_dir/server.log" 2>&1 &
   server_pid=$!
 
   for _ in {1..600}; do

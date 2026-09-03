@@ -18,10 +18,14 @@
 (def tool-definitions
   [{:name "workspace_list"
     :description "List one directory inside the selected local Git repository."
-    :parameters {:type "object" :properties {:path {:type "string"}}}}
+    :parameters {:type "object"
+                 :properties {:path {:type "string"
+                                     :description "Relative to the repository root, e.g. \"src\" or \".\" for the root. An absolute path is refused."}}}}
    {:name "workspace_read"
     :description "Read one UTF-8 text file inside the selected local Git repository."
-    :parameters {:type "object" :properties {:path {:type "string"}}
+    :parameters {:type "object"
+                 :properties {:path {:type "string"
+                                     :description "Relative to the repository root, e.g. \"src/core.clj\". An absolute path is refused."}}
                  :required ["path"]}}
    {:name "workspace_search"
     :description "Search text files in the selected local Git repository for a literal string."
@@ -31,14 +35,18 @@
    {:name "workspace_write_file"
     :description "Replace one UTF-8 text file inside the selected repository. Requires approval. (write)"
     :parameters {:type "object"
-                 :properties {:path {:type "string"} :content {:type "string"}}
+                 :properties {:path {:type "string"
+                                     :description "Relative to the repository root, e.g. \"src/core.clj\". An absolute path is refused."}
+                              :content {:type "string"}}
                  :required ["path" "content"]}}
    {:name "git_status"
     :description "Read local Git status for the selected repository."
     :parameters {:type "object" :properties {}}}
    {:name "git_diff"
     :description "Read the unstaged Git diff, optionally for one path."
-    :parameters {:type "object" :properties {:path {:type "string"}}}}
+    :parameters {:type "object"
+                 :properties {:path {:type "string"
+                                     :description "Relative to the repository root, e.g. \"src/core.clj\". An absolute path is refused."}}}}
    {:name "git_log"
     :description "Read recent local Git commits."
     :parameters {:type "object" :properties {:limit {:type "integer"}}}}
@@ -273,7 +281,16 @@
                     (into-array StandardCopyOption
                                 [StandardCopyOption/REPLACE_EXISTING
                                  StandardCopyOption/ATOMIC_MOVE]))
-        (str "wrote " path " (" (alength bytes) " bytes)")
+        ;; The sentence AND the values it was made of. `run-tool!` reads
+        ;; `:tool/text` for the model, which sees exactly what it saw before;
+        ;; `:tool/artifacts` is the same facts as data, so the record of what
+        ;; this Bot left behind does not have to be parsed back out of prose.
+        {:tool/text (str "wrote " path " (" (alength bytes) " bytes)")
+         :tool/artifacts [{:artifact/kind :file
+                           :artifact/path (str (relative-name
+                                                (.toPath (io/file (admit-root root)))
+                                                target))
+                           :artifact/bytes (alength bytes)}]}
         (finally (Files/deleteIfExists temporary))))))
 
 (defn- safe-relative [root value]
@@ -295,7 +312,9 @@
     (let [status (run-git (admit-root root)
                           (into ["diff" "--cached" "--name-only" "--"] paths))]
       (if (str/blank? status)
-        "nothing to commit"
+        ;; No artifact, because nothing was made. A card here would report a
+        ;; commit that does not exist.
+        {:tool/text "nothing to commit"}
         (do
           (run-git (admit-root root)
                    (into ["-c" "user.name=Cloud Itonami"
@@ -304,8 +323,17 @@
                           "-c" "core.hooksPath=/dev/null"
                           "commit" "--no-verify" "-m" message "--"]
                          paths))
-          (str "committed "
-               (str/trim (run-git (admit-root root) ["rev-parse" "HEAD"]))))))))
+          (let [revision (str/trim (run-git (admit-root root) ["rev-parse" "HEAD"]))]
+            {:tool/text (str "committed " revision)
+             :tool/artifacts [{:artifact/kind :commit
+                               :artifact/revision revision
+                               :artifact/message message
+                               ;; The paths git actually staged, not the ones
+                               ;; asked for: a path that matched nothing is not
+                               ;; in the commit and must not be listed as if it
+                               ;; were.
+                               :artifact/paths (vec (remove str/blank?
+                                                            (str/split-lines status)))}]}))))))
 
 (defn describe [name input]
   (case (str name)

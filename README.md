@@ -6,6 +6,14 @@ Cloud Itonami is a **security-first** (緑十字) AI workspace built with
 mail, projects, drive, calendar, Passkey identity, and delegated service
 connections while keeping authority boundaries explicit.
 
+In the public domain model, **itonami.cloud is the agent-work plane**. “Work”
+here means work performed and coordinated by agents—workspaces, goals, tools,
+approvals, conversations, and resumable runs—not a generic human-work suite.
+[`kotoba.cloud`](https://kotoba.cloud) supplies Kotoba identity and deploy
+discovery, [`kotobase.net`](https://kotobase.net) supplies durable storage,
+and [`murakumo.cloud`](https://murakumo.cloud) supplies CPU/GPU execution.
+Itonami composes those capabilities without inheriting their authority.
+
 Security is the principle; keeping data local is one instrument for it, and no
 longer the one that grants permission. Every provider must have been reviewed —
 including one running on this machine, because a process listening on
@@ -34,6 +42,26 @@ responsibilities — the presentation gap is structural, not unfinished work: a
 Passkey signs its own `authenticatorData || clientDataHash` and cannot produce a
 Data Integrity proof.
 
+Wallet creation is Passkey-first: the first verified P-256 public key names a
+deterministic ERC-4337 counterfactual account, so no injected wallet extension
+is required to receive. A Passkey remains scoped to its WebAuthn RP ID; the
+stable Principal and Smart Account are the domain-independent layer. Verified
+credentials now retain their RP provenance, the Wallet exposes which keys are
+active or still require `addOwner`, and it can build the unsigned replay-safe
+Smart Wallet 1.1 owner-addition call. The current owner can now authorize that
+call with WebAuthn, submit the complete ERC-4337 v0.6 UserOperation to a
+configured bundler, and activate the candidate only after receipt and on-chain
+owner-set verification. General transfers, owner removal and loss recovery are
+still separate gates. `itonami.cloud`,
+`murakumo.cloud` and `kotobase.net` also do not currently expose one raw
+Passkey from all three origins. See
+[Passkey Smart Account: ドメイン共有・別端末・復旧](docs/passkey-smart-account.md)
+for the current domain matrix and new-device procedure,
+[ADR-0080](docs/adr/0080-passkey-smart-account-is-the-default-wallet.md) for
+the Wallet decision, and
+[ADR-0082](docs/adr/0082-webauthn-credentials-are-rp-scoped-smart-account-controllers.md)
+for the domain-portability decision.
+
 The open interoperability stack assigns one responsibility to each protocol:
 MCP for tools and data is implemented. The opt-in A2A v1 text-task adapter
 serves an Agent Card plus authenticated `SendMessage` and `GetTask`. AGNTCY
@@ -45,10 +73,18 @@ context envelopes, grants, approval and replay. See
 ## Requirements
 
 - macOS 14 or later for the native shell, EventKit, and Keychain integrations
-- Java 21+
-- Clojure CLI
+- Node.js 22+ and `nbb` (host adapter for the loopback server and MCP stdio)
+- `amu` (`kotoba-lang/amu`) to emit wasm / sealed KEXE
 - `jq` and `curl`
 - Ollama or another configured OpenAI-compatible provider
+
+The run path is the nbb hosts that load the guest wasm
+(`bin/cloud-itonami-server`, `bin/itonami-mcp`). `deps.edn` has no
+`:server`, `:mcp`, or `:cli` aliases. Java and the Clojure CLI remain
+leftover for `:test`, `:gen`, `:repository`, `:ao-messenger`, `:lint`,
+and `:build`. Default CI is `amu-jvm-free-emit` (java/clojure off PATH).
+`clojure -M:test` is leftover (`.github/workflows/leftover-jvm-tests.yml`,
+workflow_dispatch only).
 
 Pure tests and the loopback web surface also run on Linux.
 
@@ -56,7 +92,7 @@ Pure tests and the loopback web surface also run on Linux.
 
 Developer-preview builds are published on the
 [GitHub Releases](https://github.com/cloud-itonami/cloud-itonami-app/releases)
-page. All builds currently require Java 21+.
+page. Packaged launchers start the nbb host adapter; they do not require Java.
 
 - **macOS 14+, Apple Silicon:** DMG and ZIP. The app is ad-hoc signed, not
   Apple notarized, so macOS may require Control-click → Open on first launch.
@@ -124,10 +160,23 @@ and the signer certificate SHA-256 matches the current installation.
 ## Run
 
 ```bash
-clojure -P
-clojure -M:server
+nbb --classpath bin bin/cloud-itonami-server
 open http://localhost:1338
 ```
+
+`GET /health` is admitted by the guest export `health-route?` in
+`server_main.wasm`. Compile first:
+
+```bash
+AMU=<amu launcher> bin/kotoba compile src/cloud/itonami/app/server_main.kotoba --target wasm --json
+AMU=<amu launcher> bin/kotoba compile src/cloud/itonami/app/mcp_main.kotoba --target wasm --json
+```
+
+ADAPTER-EMIT HOLD: the file on disk plus the **app-local** adapter
+envelope (`cloud-itonami-app/bin/kotoba`). That is not `:compile/emitted`
+from the Release/v0.6.29 kotoba CLI. Production pin stays
+`:git/tag v0.6.29`. The amu canary (`nbb --classpath bin bin/compile-amu`)
+also writes sealed `.kexe` plus provenance. KEXE is not a Mach-O executable.
 
 `bin/cloud-itonami-app` opens the web surface as an application window — no tab
 strip, no address bar — and starts the server only when nothing already answers
@@ -149,7 +198,7 @@ Until that is fixed, use the launcher's own documented fallback, which is the
 same surface in an application window:
 
 ```bash
-clojure -M:server &
+nbb --classpath bin bin/cloud-itonami-server &
 open -na "Google Chrome" --args --app="http://localhost:1338/" \
   --window-size=430,860 --window-position=140,60
 ```
@@ -183,6 +232,12 @@ The CLI can inventory checked-out west projects locally, then submit one
 compatibility-preserving migration slice to a coding Bot. `scan` and `inspect`
 do not start the app server and never edit a checkout.
 
+> **Not yet on the nbb front end.** `scan` and `inspect` read west metadata on
+> this machine rather than calling a route, so the client refuses them by name
+> (`:client/host-side-command`) instead of reporting "no such command". They are
+> listed in `:host-side` in `resources/cloud-itonami-app.cli-aliases.edn`, with
+> the reason, so the gap is a named entry rather than a silence.
+
 ```bash
 bin/itonami bots refactor scan --root /path/to/com-junkawasaki --limit 25
 bin/itonami bots refactor inspect --root /path/to/com-junkawasaki \
@@ -201,11 +256,11 @@ rebase, and west pin changes; those remain release operations outside the Bot.
 
 ## Sign-in and sign-up
 
-The single Settings surface supports Passkey, one-time Email links, and
-minimal-scope Google, Microsoft, and GitHub SSO. The `itonami` deployment
-profile allows a verified Email or provider subject to create a personal User;
-tenant-neutral defaults keep sign-up and Email delivery disabled until the
-operator chooses their delivery and OAuth clients.
+The product entrance is Passkey/WebAuthn through `auth.itonami.cloud`, with a
+device-local Passkey recovery path and optional one-time Email links. Provider
+SSO is not exposed by the default or `itonami` profile. The backend retains an
+explicit compatibility option for a deployment that deliberately supplies an
+SSO provider list and OAuth clients.
 
 SSO authentication scopes are separate from delegated service connections:
 signing in never grants mailbox, Drive, or repository access. A provider
@@ -216,15 +271,16 @@ federation, and outward-authority approval retain their dedicated Passkey
 ceremonies as step-up authentication.
 
 The Settings page also lists this User's active sessions, can revoke another
-device, clears the current HttpOnly cookie on sign-out, and can unlink an Email
-or SSO identity only while another login root remains. Session responses never
-contain token digests or CSRF values.
+device, clears the current HttpOnly cookie on sign-out, and can unlink a legacy
+Email or SSO identity only while another login root remains. Session responses
+never contain token digests or CSRF values.
 
-For an installed-app registration, Google and Microsoft can be configured
-without distributing a secret:
+For a compatibility deployment, Google and Microsoft can be configured without
+distributing a secret:
 
 ```edn
-{:auth {:sso-providers [:google :microsoft :github]
+{:auth {:sso-enabled? true
+        :sso-providers [:google :microsoft :github]
         :sso-clients
         {:google {:client-id "PUBLIC-DESKTOP-CLIENT-ID"
                   :public-client? true}
@@ -240,18 +296,30 @@ does not falsely mark it configured.
 
 ## `itonami` — the command line, without opening the app
 
-`bin/itonami` runs any of the app's operations from any directory. It starts a
-headless server if one is not already running, so nothing here needs the desktop
-window (ADR-0018).
+`bin/itonami` runs any of the app's operations from any directory. It starts no
+JVM: it is an nbb client that resolves a command to a method and a path, carries
+the agent session, and prints what the server said.
+
+It does **not** start a server. The resident is launchd's
+(`dev.cloud-itonami.app`), and `up` / `down` say so rather than pretending to
+supervise it.
+
+Two name sources, one resolver (`cloud.itonami.app.commands`, `.cljc`, shared
+with the JVM side): the generated registry in
+`resources/cloud-itonami-app.commands.edn`, and the named commands an operator
+actually types in `resources/cloud-itonami-app.cli-aliases.edn`.
+
+Exit codes are the contract: **0** answered, **1** the server refused or a flag
+is missing, **2** could not answer — no server, no session, no such command.
 
 ```bash
-bin/itonami up                    # start a headless server (no window)
 bin/itonami status                # where the server is, and whether you can act
 bin/itonami commands              # every command, with the coverage counts
 bin/itonami commands drive        # just the ones matching "drive"
-bin/itonami down                  # stop the server this data directory started
 
 bin/itonami auth login --label claude-code
+bin/itonami bots list
+bin/itonami bots task --id bot-1 --text "調べて"
 bin/itonami workspace inbox
 bin/itonami workspace drive search --q invoice
 bin/itonami workspace drive documents rename --document doc-1 --title "New"
@@ -271,7 +339,7 @@ serving process opened, `itonami status` prints it next to this terminal's own
 as `store` / `server-store` / `serves-this-store?`, and a command aimed at a
 server serving a different store is refused before it is sent rather than
 acted on. `~/.cloud-itonami/app` resolves `~/.cloud-itonami/data` whether it is
-entered through `bin/itonami` or with a bare `clojure -M:cli`.
+entered through `bin/itonami` (data-dir only; the leftover JVM CLI is closed).
 
 The commands are generated from the routes `server.clj` serves, not written by
 hand — `commands-test` re-derives them and fails if the checked-in registry has
@@ -489,17 +557,15 @@ Transport is stdio, so nothing new listens on the network.
 {
   "mcpServers": {
     "cloud-itonami-fleet": {
-      "command": "clojure",
-      "args": ["-M:mcp"],
+      "command": "nbb",
+      "args": ["--classpath", "bin", "bin/itonami-mcp"],
       "cwd": "/path/to/cloud-itonami-app"
     }
   }
 }
 ```
 
-There is no wrapper script on purpose: MCP clients launch a command directly, and
-putting another process in the middle of a stdio protocol stream only risks its
-framing.
+`bin/itonami-mcp` is the stdio server (nbb). It does not `spawnSync` `clojure`.
 
 Two tools, the same ones the in-app agent uses — the descriptors and behaviour
 live in `cloud.itonami.app.fleet`, and `cloud.itonami.app.mcp` is an adapter over
@@ -710,6 +776,25 @@ of the connectors you picked and nothing else.
   first write tool stops the loop and becomes an approval card. A Bot may carry
   out what was approved; it may not approve, and no session it could hold makes
   it able to.
+- **Physical work goes to a verified person.** A Bot can create and publish a
+  HumanWorkRequest for work it cannot finish in software. Matching rechecks the
+  person's organization-verified service location, licence, qualification,
+  permit, insurance, training or asset scopes, jurisdiction, expiry,
+  availability and overlapping assignments. The Bot stays a `:system`; only a
+  Human User accepts and submits evidence. Exact addresses are withheld until
+  acceptance, and verification remains an owner/admin Human action. See
+  [ADR-0083](docs/adr/0083-bots-outsource-human-work-to-verified-people.md).
+
+- **Public Human Work marketplace and external assurance** — `/human-work` and
+  `/api/human-work/requests` expose only redacted public/open work. Fixed HTTPS
+  authority adapters can bind an issuer or identity-provider receipt to the
+  exact person, organization, and claim version. Optional x402 v2
+  `auth-capture` funding holds USDC for the accepted worker, blocks work start
+  until the onchain authorization settles, captures only after evidenced work
+  is verified, and voids cancelled or rejected work. Payer signatures are not
+  retained. All integrations ship disabled until the facilitator and custom
+  escrow operator are configured.
+  See [ADR-0084](docs/adr/0084-human-work-assurance-marketplace-and-held-payouts.md).
 - **An approval belongs to the instruction it was asked under.** If you say
   something else instead of answering the card, the request is retired rather
   than left waiting: the card says 古い指示のため取り下げ, the Bot stops
@@ -821,31 +906,40 @@ output would rewrite the whole state file on every token. Output is capped at
 16,000 characters per run. Cancellation takes effect at the next streamed
 chunk, so a stalled provider request can stay open until it times out.
 
-## Kotobase Passkey federation
+## Kotobase / Murakumo Passkey federation
 
-Passkey browser session から、短命・一回限りの Kotobase 交換証明を発行します。
-Passkey で成立した browser session から、短命・一回限りの Kotobase 交換証明を
-発行できます。
+Passkey で成立した browser session から、短命・一回限り・接続先固定の交換証明を
+KotobaseまたはMurakumoへ発行できます。
 
 ```text
 POST /api/integrations/kotobase/assertion
 Origin: <this app origin>
 X-CLOUD-ITONAMI-CSRF: <session csrf>
 Cookie: cloud_itonami_identity=...
+
+{"target":"kotobase"} or {"target":"murakumo"}
 ```
 
 response の `cacao_b64` を `exchange_url` へ top-level form POST すると通常の
-Kotobase session が成立します。Datomic query と Git bundle read はその session
-を共有し、Git write は引き続き Nekko署名・委任・quorumを要求します。
-response の `cacao_b64` を `exchange_url` へ top-level form POST すると、
-Kotobase の通常 session が成立します。Datomic query と Git bundle read はその
-session を共有します。Git write は引き続き Nekko 署名・委任・quorum が必要です。
+対象apexのfirst-party sessionが成立します。その画面で対象ドメイン用のPasskeyを
+登録すると、raw credentialを共有せず同じPrincipalへlinkします。Kotobaseの
+Datomic query と Git bundle read はその sessionを共有し、Git write は引き続き
+Nekko署名・委任・quorumを要求します。
+
+これは同じ Principal を渡す federation であり、`itonami.cloud` の raw WebAuthn
+credential を別RPから使う仕組みではありません。issuerはresidentが直接検証した
+Passkey sessionに加え、Hosted authが検証した
+`phishing-resistant + webauthn` sessionだけを受理します。Email、通常のSSO、agentは
+Passkey proofへ昇格しません。詳しいcurrent/target境界は
+[Passkey Smart Account guide](docs/passkey-smart-account.md) を参照してください。
 
 ## Identity and organizations
 
-First launch requires only a Passkey. The verified ES256/P-256 public key is
-encoded as the stable User `did:key`; the private key remains in the
-authenticator. Organization information can be entered later.
+The User/Principal identity is stable across authentication methods. A Passkey
+record separately names its active ES256/P-256 credential/controller, whose
+private key remains in the authenticator. Legacy records may have filled a
+blank User DID from a Passkey, but adding or revoking a Passkey must not rename
+an established Principal. Organization information can be entered later.
 
 Returning active Users may also sign in through a ten-minute, single-use email
 magic link when `:email-login` delivery is configured. Email proves control of
@@ -870,7 +964,7 @@ override both identity domains before inviting production users.
 Identity concepts remain separate:
 
 - Installation: one local application state
-- User: Passkey-rooted person with a stable `did:key`
+- User: stable person/Principal with one or more explicitly bound authenticators
 - Tenant: internal immutable organization/workspace ID
 - Organization ID: human-readable, immutable slug
 - Domain: managed or independently verified DNS name
@@ -1162,7 +1256,7 @@ The stdio MCP server publishes these as tools — but only when it can resolve a
 ```bash
 security add-generic-password -s cloud-itonami-app.mcp -a session-token -w
 export CLOUD_ITONAMI_MCP_SESSION=…   # takes precedence over the Keychain
-clojure -M:mcp
+nbb --classpath bin bin/itonami-mcp
 ```
 
 | tool | |
@@ -1263,8 +1357,8 @@ and every test drives an injected transport. See
 Set a named profile or an EDN file path:
 
 ```bash
-CLOUD_ITONAMI_PROFILE=gftd clojure -M:server
-CLOUD_ITONAMI_PROFILE=/secure/path/company.edn clojure -M:server
+CLOUD_ITONAMI_PROFILE=gftd nbb --classpath bin bin/cloud-itonami-server
+CLOUD_ITONAMI_PROFILE=/secure/path/company.edn nbb --classpath bin bin/cloud-itonami-server
 ```
 
 Profiles contain branding and non-secret service coordinates. Secrets remain
@@ -1283,7 +1377,7 @@ The included itonami profile turns email sign-in on and points it at
 
 ```bash
 CLOUD_ITONAMI_EMAIL_LOGIN_TOKEN=<bearer> CLOUD_ITONAMI_PROFILE=itonami \
-  clojure -M:server
+  nbb --classpath bin bin/cloud-itonami-server
 ```
 
 Email sign-in stays off in the shipped defaults, and that is not an oversight.
@@ -1408,6 +1502,14 @@ See [`.env.example`](.env.example), [the architecture](docs/architecture.md),
 and [the tenant model](docs/tenant-model.md).
 
 ## Verify
+
+Default CI gate (no `clojure -M`):
+
+```bash
+AMU=<amu launcher> bash scripts/ci-jvm-free-emit
+```
+
+Leftover JVM suite (not the required path):
 
 ```bash
 clojure -M:test

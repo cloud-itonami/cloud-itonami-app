@@ -168,6 +168,24 @@
       (is (not= (number/material base) (number/material changed))
           (str label " must change the consent-bound material")))))
 
+(deftest allocation-material-binds-bot-route-and-recurring-price
+  (let [base {:op :number/allocate :msisdn "+815012340001"
+              :subject "did:key:owner" :assignee "did:web:bot.example"
+              :assignee-kind :bot :route "did:web:bot.example"
+              :capabilities [:voice :sms] :provider :telnyx
+              :quote {:provider :telnyx :upfront "1.00" :monthly "2.00"
+                      :currency "USD" :observed-at 1800000000000}
+              :plan ["reserve" "assign"] :posture :normal}]
+    (doseq [[label changed]
+            [[:assignee (assoc base :assignee "did:web:other.example")]
+             [:route (assoc base :route "topic:other")]
+             [:capabilities (assoc base :capabilities [:voice])]
+             [:provider (assoc base :provider :other)]
+             [:monthly (assoc-in base [:quote :monthly] "9.00")]
+             [:observed-at (assoc-in base [:quote :observed-at] 1800000000001)]]]
+      (is (not= (number/material base) (number/material changed))
+          (str label " must change the Passkey-bound material")))))
+
 ;; ---------------------------------------------------------------------------
 ;; outbound calling
 ;; ---------------------------------------------------------------------------

@@ -59,25 +59,38 @@
             [cloud.itonami.app.agent-control :as agent-control]
             [cloud.itonami.app.bot :as bot]
             [cloud.itonami.app.bot-authority :as bot-authority]
+            [cloud.itonami.app.bot-dispatcher :as bot-dispatcher]
             [cloud.itonami.app.bot-identity :as bot-identity]
+            [cloud.itonami.app.bot-workspace :as bot-workspace]
+            [cloud.itonami.app.kotoba-oracle :as oracle]
             [cloud.itonami.app.bot-slo :as bot-slo]
             [cloud.itonami.app.connectors :as connectors]
             [cloud.itonami.app.chronicle :as chronicle]
             [cloud.itonami.app.commerce :as commerce]
+            [cloud.itonami.app.config :as app-config]
             [cloud.itonami.app.conversation-context :as conversation-context]
             [cloud.itonami.app.decision-method :as decision-method]
+            [cloud.itonami.app.disk-space :as disk-space]
+            [cloud.itonami.app.domain-tools :as domain-tools]
+            [cloud.itonami.app.media-tools :as media-tools]
+            [cloud.itonami.app.git-hygiene :as git-hygiene]
+            [cloud.itonami.app.device :as device]
             [cloud.itonami.app.gc :as gc]
             [cloud.itonami.app.handoff :as handoff]
+            [cloud.itonami.app.hermes-import-data :as hermes-import-data]
             [cloud.itonami.app.identity :as identity]
+            [cloud.itonami.app.model-routing :as routing]
             [cloud.itonami.app.peer :as peer]
             [cloud.itonami.app.mail-account :as mail-account]
             [cloud.itonami.app.mail-sync :as mail-sync]
             [cloud.itonami.app.policy :as policy]
             [cloud.itonami.app.wallet :as wallet]
             [cloud.itonami.app.provider :as provider]
+            [cloud.itonami.app.provider-retry :as retry]
             [cloud.itonami.app.relay :as relay]
             [cloud.itonami.app.routine :as routine]
             [cloud.itonami.app.store :as store]
+            [cloud.itonami.app.store-core :as store-core]
             [cloud.itonami.app.virtual-shell :as virtual-shell]
             [cloud.itonami.app.workspace-tools :as workspace-tools]
             [connector.invoke :as invoke]
@@ -107,6 +120,8 @@
   (daemon-pool 3 "itonami-goal"))
 (defonce ^:private parallel-tool-executor
   (daemon-pool 3 "itonami-goal-tool"))
+(defonce ^:private peer-message-executor
+  (daemon-pool 2 "itonami-message-agent"))
 
 (def ^:dynamic *goal-event!*
   "Host-owned ledger hook. Model text cannot write receipts directly."
@@ -116,18 +131,88 @@
 (def ^:dynamic *message-source* :bot)
 (def ^:dynamic *handoff-id* nil)
 (def ^:dynamic *from-bot* nil)
+(def ^:dynamic *message-agent-depth* 0)
+(def ^:dynamic *turn-session*
+  "The already-authenticated owner session whose Bot is taking this turn.
+
+  `message_agent` carries this exact session into its background teammate turn;
+  it never synthesizes a user or widens the source/target Bot grants."
+  nil)
+(def ^:dynamic ^:private *create-bot-id* nil)
 
 (def max-turns 8)
 (def max-tool-calls 12)
 (def max-goal-turns 24)
 (def max-goal-tool-calls 32)
 (def max-goal-continuations 24)
-(def ^:private default-resident-max-output-tokens 1024)
+(def provider-retry-base-seconds 60)
+(def provider-retry-max-seconds 900)
+(def max-message-agent-depth
+  "A message_agent chain may wake at most two successive teammates. Replies
+  still land in the source's next conversation, so ordinary collaboration does
+  not consume this budget; it only prevents autonomous peer-message cycles."
+  2)
+
+(def max-empty-turns
+  "How many turns in a row may come back with neither prose nor a tool call
+  before the run is refused rather than asked again.
+
+  One. A model that drops a response usually does not drop the next one, so
+  refusing immediately turns a hiccup into an error somebody has to act on; but
+  a second empty turn is a pattern, and asking a third time spends the same
+  budget the loop would have spent anyway while telling the person less about
+  why it stopped."
+  1)
+
+(def max-identical-calls
+  "How many times running the same tool may be proposed with the same arguments
+  before the run stops.
+
+  Counting the call about to run, so 3 means: propose it, propose it again,
+  propose it a third time and stop. Below 3 a legitimate retry after a
+  transient tool failure would be refused; well above it the tool budget
+  arrives first and reports a budget failure instead, which sends the person to
+  raise a limit that was never the problem."
+  3)
+(def ^:private default-resident-max-output-tokens
+  "The output budget an unattended resident turn asks for.
+
+  1024 until 2026-08-29, chosen when the gateway capped public chat at 2048
+  and one slow origin made every long generation expensive. Both of those
+  moved the same day: the gateway cap is 16384 and its non-streaming ceiling
+  ten minutes, which at the measured 53 tok/s of the origin that now leads the
+  pool is roughly a 31k-token completion.
+
+  1024 was not merely conservative, it was WRONG, and measured so: of fifteen
+  resident turns in the window after that gateway change, four failed at
+  :provider/output-budget-exhausted, every one of them a decision_frame tool
+  call whose JSON arguments were cut mid-string at exactly 1024/1024. A turn
+  that dies costs its whole tick plus a requeue -- far more of the single
+  resident slot than the generation it refused to finish.
+
+  Matched to the provider default rather than set to a second number: the
+  per-model cap, the endpoint's observed ceiling and the context window all
+  still bound this in `provider/requested-max-tokens`, so this is the ask, not
+  the guarantee. An operator who wants resident work kept shorter than
+  interactive work sets `[:bots :workforce :max-output-tokens]`, which is
+  read first."
+  16384)
+(def ^:private default-resident-max-input-tokens
+  "The total prompt envelope for one unattended resident model call.
+
+  This includes messages, tool schemas, and framing reserve, but not output.
+  Measured 2026-09-01: productive resident calls peaked at 6,670 prompt tokens,
+  while one 219-turn Bot had grown to an 82,003-token prompt and accumulated
+  6.65M prompt tokens. 8,192 preserves the measured useful envelope while
+  preventing one durable history from monopolising the single resident slot.
+  Interactive conversations do not receive this cap."
+  8192)
 (def max-message-chars 8000)
 (def max-conversation 200)
 (def max-tool-output-chars 6000)
 (def max-trace 60)
 (def max-routines 40)
+(def max-artifact-cards 8)
 (def max-turn-history 40)
 (def max-turn-followups 20)
 (def max-contexts 120)
@@ -152,7 +237,31 @@
   unbounded text. `nil` when there is nothing to say, so a reader can tell
   'no message' from an empty one."
   [error]
-  (let [{:keys [status response]} (ex-data error)
+  ;; `status` and `response` are NOT destructured here: `main` moved them to
+  ;; explicit bindings below that also consult the cause's ex-data, because a
+  ;; fallback failure carries the outer types and the inner response. The two
+  ;; budget keys join that list rather than reinstating the old shape.
+  (let [{:keys [tool-name arguments-kind arguments-sample
+                requested-model fallback-model
+                primary-error-type fallback-error-type
+                max-output-tokens completion-tokens]}
+        (ex-data error)
+        ;; `:provider/fallback-failed` (`with-model-fallback`) names both
+        ;; models and both error TYPES in its own ex-data, but the response
+        ;; BODY that says why the fallback also refused sits one level
+        ;; further down -- on the secondary exception it wraps as its cause
+        ;; (`ex-info`'s third argument, which `ex-data` does not reach).
+        ;; Falling back to the cause's own :status/:response when the outer
+        ;; exception has none lets the exact same extraction below answer
+        ;; both shapes. Measured 2026-08-28, first hours pinning a specific
+        ;; free model: every stored `:provider/fallback-failed` read the
+        ;; same nine words regardless of whether the fallback hit a rate
+        ;; limit, a context-window refusal, or something else -- the one
+        ;; failure this record exists to tell apart from "the pin mostly
+        ;; works."
+        cause-data (some-> (ex-cause error) ex-data)
+        status (or (:status (ex-data error)) (:status cause-data))
+        response (or (:response (ex-data error)) (:response cause-data))
         ;; The provider layer throws with :status, :url and :response, and this
         ;; kept only (.getMessage), so every HTTP failure was stored as the same
         ;; nine words -- "model provider request failed" -- while the answer sat
@@ -163,12 +272,74 @@
         ;;
         ;; Still bounded and still one line, as the docstring requires: this
         ;; rides in a record the UI reads.
+        ;;
+        ;; `:error` is a MAP for every OpenAI-shaped provider (OpenRouter
+        ;; included) -- `{:message ... :code ... :metadata {:raw ...}}`, the
+        ;; same shape `provider-retry/body-error-type` already reads via
+        ;; `(get-in parsed [:error :type])`. `(str (:error response))` printed
+        ;; that whole map instead of its `:message`, so "Provider returned
+        ;; error" (OpenRouter's own wrapper text) crowded out the 120-char
+        ;; budget and every recorded HTTP 400 read the same regardless of
+        ;; cause. Measured 2026-08-28, first hours on the OpenRouter free
+        ;; plan: this was the shape of every stored 400.
+        ;;
+        ;; OpenRouter also nests the upstream backend's own error a second
+        ;; time, as a JSON STRING at `:error :metadata :raw` (it proxies many
+        ;; backends and does not reshape what they said). That string is
+        ;; parsed only if it decodes; a raw body that is not JSON -- a
+        ;; Cloudflare or Modal error page, same as `provider-retry`'s own
+        ;; measurement -- falls through to the wrapper message instead.
+        error-map (:error response)
+        raw-message (when (map? error-map)
+                      (let [raw (get-in error-map [:metadata :raw])]
+                        (when (string? raw)
+                          (try (:message (:error (json/read-str raw :key-fn keyword)))
+                               (catch Exception _ nil)))))
         body (when response
-               (let [t (-> (str (or (:error response) (:message response) response))
+               (let [source (cond
+                              raw-message raw-message
+                              (map? error-map) (or (:message error-map) error-map)
+                              :else (or error-map (:message response) response))
+                     t (-> (str source)
                            (str/replace #"\s+" " ")
                            str/trim)]
                  (not-empty (subs t 0 (min 120 (count t))))))
-        parts (remove nil? [(when status (str "HTTP " status)) body])
+        ;; `parse-arguments` goes to some trouble to KEEP the offending string
+        ;; -- its docstring says why, and names the defect: status kept, body
+        ;; discarded. Then this function dropped it again, one layer up,
+        ;; because it destructured `:response` and nothing else.
+        ;;
+        ;; Measured 2026-08-28: `:provider/invalid-tool-arguments` is the most
+        ;; common live failure -- every failed turn in the window after the
+        ;; attribution deploy, and 138 all told -- and not one recorded WHICH
+        ;; tool was mis-called or WHAT the arguments were. Both were in the
+        ;; ex-data the whole time.
+        one-line (fn [v limit]
+                   (let [t (-> (str v) (str/replace #"\s+" " ") str/trim)]
+                     (not-empty (subs t 0 (min limit (count t))))))
+        parts (remove nil? [(when status (str "HTTP " status))
+                            body
+                            (when tool-name (str "tool " tool-name))
+                            (when arguments-kind
+                              (str "arguments were a " arguments-kind))
+                            ;; The two numbers that decide whether a truncated
+                            ;; tool call is the model's fault or a cap's. Kept
+                            ;; here so the turn record answers that without a
+                            ;; re-run: `:provider/output-budget-exhausted`
+                            ;; names the cause, these say which number to move.
+                            (when max-output-tokens
+                              (str "budget " (or completion-tokens "?")
+                                   "/" max-output-tokens " output tokens"))
+                            (when-let [sample (one-line arguments-sample 160)]
+                              (str "arguments: " sample))
+                            ;; The FULL namespaced type, the same way
+                            ;; `resident-outcomes` keeps `:provider/timeout`
+                            ;; distinguishable from any other namespace's
+                            ;; timeout -- `name` alone would drop `provider/`
+                            ;; and reintroduce that exact defect here.
+                            (when fallback-model
+                              (str requested-model " (" (subs (str primary-error-type) 1)
+                                   ") -> " fallback-model " (" (subs (str fallback-error-type) 1) ")"))])
         detail (when (seq parts) (str/join " " parts))]
     (some-> (.getMessage ^Exception error)
             str/split-lines
@@ -353,6 +524,14 @@
 (defn- mailbox-registration [bot-id]
   (get-in (snapshot) [:mailboxes bot-id] {:status :pending}))
 
+(defn- routing-index
+  "The deployment-wide model assignments, indexed by [task scope].
+
+  Per-Bot assignment is NOT here — it is `:bot/provider-id` / `:bot/model` on
+  the Bot's own record, where it has always been. See `model-routing/index`."
+  []
+  (routing/index-in (store/snapshot)))
+
 (defn- transact! [f & args]
   (store/transact!
    (fn [state] (assoc state :bots (apply f (partition* state) args))))
@@ -375,14 +554,23 @@
 
 (defn- append-goal-event!
   "Append one host-observed event. The bounded vector is the action/receipt/
-  verifier ledger shown to the person; provider prose never enters it."
+  verifier ledger shown to the person; provider prose never enters it.
+
+  Eviction runs with hysteresis rather than on every append. Trimming each
+  time turned the vector at its cap into a sliding window whose prefix moved
+  on every transact, so the store journal could never express the change as
+  an `:append` and rewrote all ~200 events whole -- measured 2026-08-29
+  (ADR-2608291500): 87% of journal bytes, 52 KB per rewrite, exactly here.
+  Letting the ledger run to 220 and trimming back to 200 keeps the bound
+  within 10% while 19 of every 20 appends journal only their own tail."
   [run-id kind data]
   (let [event {:event/id (new-id "event") :event/kind kind
                :event/at (store/now) :event/data data}]
     (update-goal-job! run-id
                       (fn [job]
                         (-> job
-                            (update :job/events #(vec (take-last 200 (conj (vec %) event))))
+                            (update :job/events
+                                    #(store-core/append-bounded % event 200))
                             (assoc :job/updated-at (:event/at event)))))
     event))
 
@@ -477,6 +665,47 @@
 
 (defn- action-receipts [run-id]
   (filter #(= :action/finished (:event/kind %)) (:job/events (goal-job run-id))))
+
+(defn- artifact-cards
+  "What this run LEFT BEHIND, as cards on the turn that reports it.
+
+  Built from the receipts, never from the summary. A card that came from the
+  model's own prose would be the model asserting its work rather than the host
+  recording it -- and a Bot that says it committed and did not would get a card
+  saying so. A receipt is written by the tool that ran; if there is no receipt
+  there is no card.
+
+  De-duplicated because a run may write the same path more than once and the
+  last write is the state the file is in. Bounded, because a card list is a
+  screen and a 200-file run would be a wall rather than a report; the receipts
+  keep the complete record either way."
+  [run-id]
+  (->> (action-receipts run-id)
+       (mapcat #(get-in % [:event/data :artifacts]))
+       ;; Ordered de-duplication, keeping the LAST write of a path -- that is
+       ;; the state the file is in -- at the position of that last write.
+       ;; Sorting by kind and path instead meant `take` dropped whatever sorted
+       ;; late, so a run that wrote ten files showed the alphabetically first
+       ;; eight rather than the eight it finished with.
+       (reduce (fn [ordered artifact]
+                 (let [k [(:artifact/kind artifact)
+                          (or (:artifact/path artifact)
+                              (:artifact/revision artifact))]]
+                   (conj (vec (remove #(= k (first %)) ordered)) [k artifact])))
+               [])
+       (mapv second)
+       (take-last max-artifact-cards)
+       (map-indexed (fn [index artifact]
+                      (bot/artifact-card
+                       {:id (str "artifact-" index "-" (hash artifact))
+                        :kind (:artifact/kind artifact)
+                        :path (:artifact/path artifact)
+                        :bytes (:artifact/bytes artifact)
+                        :revision (:artifact/revision artifact)
+                        :message (:artifact/message artifact)
+                        :paths (:artifact/paths artifact)})))
+       vec
+       not-empty))
 
 (defn- plan-complete? [run-id]
   (let [plan (:job/plan (goal-job run-id))]
@@ -691,6 +920,18 @@
                       {:type :bot/forbidden :bot bot-id})))
     b))
 
+(defn assert-owned!
+  "Refuse a Bot this session does not own, and return nothing.
+
+  `owned!` stays private because its RECORD is internal — handing a Bot's
+  stored map to another namespace is how a caller starts depending on fields
+  this one is free to change. The refusal is not internal: a handler that names
+  a Bot before doing work on its behalf should be able to make that check
+  without also being given the Bot."
+  [session bot-id]
+  (owned! session bot-id)
+  nil)
+
 (defn wallet-principal
   "The public identity Wallet needs after the ordinary Bot ownership check."
   [session bot-id]
@@ -706,9 +947,15 @@
   policy as every other model call. A stored id is a preference, never a way
   around review, TLS, credential, or the deployment egress switch."
   [configuration b]
-  (let [requested (:bot/provider-id b)
+  (let [;; The deployment default fills each half the Bot's record leaves
+        ;; empty, and only those. A Bot that names a provider keeps it even
+        ;; when the default names another, because somebody chose it for that
+        ;; Bot; the default is for the ones nobody has chosen for.
+        fallback (routing/resolve-main (routing-index) b)
+        requested (or (:bot/provider-id b) (:provider-id fallback))
         selected (policy/select-provider configuration requested)
         model (or (:bot/model b)
+                  (:model fallback)
                   (:default-model selected)
                   (get-in configuration [:routing :default-model]))]
     (when-not selected
@@ -743,22 +990,32 @@
   separate capabilities and the Bot settings screen may narrow any default."
   [configuration session {:keys [name avatar brief connectors tools accounts
                                  writes? browser? computer? peers? coding? virtual-shell?
-                                 omakase? workspace provider-id model]
+                                 goal? priority? pinned? omakase? workspace provider-id model]
                           :as attrs}]
-  (let [writes? (if (contains? attrs :writes?) (boolean writes?) true)
+  (let [managed-workspace? (and (true? (get-in configuration [:bots :workspace :enabled?]))
+                                (str/blank? (str workspace))
+                                (not virtual-shell?))
+        writes? (if (contains? attrs :writes?) (boolean writes?) true)
         omakase? (if (contains? attrs :omakase?) (boolean omakase?) true)
         peers? (if (contains? attrs :peers?) (boolean peers?) true)
         coding? (if (contains? attrs :coding?)
                   (boolean coding?)
-                  (boolean (some-> workspace str str/trim not-empty)))
+                  (boolean (or managed-workspace?
+                               (some-> workspace str str/trim not-empty))))
+        goal? (if (contains? attrs :goal?)
+                (boolean goal?)
+                (boolean (or coding? virtual-shell?)))
         browser? (if (contains? attrs :browser?) (boolean browser?) true)
         computer? (if (contains? attrs :computer?) (boolean computer?) true)]
   (validate-provider-choice! configuration provider-id model)
-  (let [workspace (cond
-                    virtual-shell? (virtual-shell/admit-workspace workspace)
-                    coding? (workspace-tools/admit-root workspace))
+  (let [id (or *create-bot-id* (new-id "bot"))
+        managed (when managed-workspace?
+                  (bot-workspace/provision! configuration session id))
+        workspace (or (:bot/workspace managed)
+                      (cond
+                        virtual-shell? (virtual-shell/admit-workspace workspace)
+                        coding? (workspace-tools/admit-root workspace)))
         now (store/now)
-        id (new-id "bot")
         tools (if (seq tools)
                 (set (map str tools))
                 (default-tools configuration connectors))
@@ -779,8 +1036,13 @@
                     :bot/peers? peers?
                     :bot/coding? coding?
                     :bot/virtual-shell? virtual-shell?
+                    :bot/goal? goal?
+                    :bot/priority? (boolean priority?)
+                    :bot/pinned? (boolean pinned?)
                     :bot/omakase? omakase?
                     :bot/workspace workspace
+                    :bot/workspace-kind (:bot/workspace-kind managed)
+                    :bot/workspace-sync-id (:bot/workspace-sync-id managed)
                     :bot/created-at now
                     :bot/updated-at now})]
     ;; Derive the performer here and discard it. The call is the point: it is
@@ -789,10 +1051,11 @@
     ;; somebody asks for an org chart.
     (bot/->performer b)
     (store-bot! b)
+    (bot-workspace/register! configuration b)
     ;; A Wallet is part of Bot identity, not an optional account chosen later.
-    ;; This provisions only the durable container; an external signer still
-    ;; requires the person's explicit SIWE connection before funds can move.
-    (wallet/provision-bot! session b)
+    ;; Its public address is derived from the owner's Passkey immediately;
+    ;; external wallets are optional Principal links and never replace it.
+    (wallet/provision-bot! configuration session b)
     ;; Provisioning is deliberately best-effort at creation. The durable Bot
     ;; and its address do not disappear because a laptop is offline; overview
     ;; reports whether the relay has a concrete destination yet.
@@ -820,6 +1083,82 @@
                       :last-error-type (:type (ex-data error))
                       :last-error-message (error-message error)}))))
     b)))
+
+(defn- stable-hermes-bot-id [session migration-id profile-id]
+  (str "bot-"
+       (UUID/nameUUIDFromBytes
+        (.getBytes
+         (str (:organization-id session) ":" (:user-id session) ":"
+              migration-id ":" profile-id)
+         java.nio.charset.StandardCharsets/UTF_8))))
+
+(defn hermes-import-binding
+  "Return the credential-free migration binding after the normal ownership gate."
+  [session bot-id]
+  (owned! session bot-id)
+  (get-in (snapshot) [:hermes-import-bindings bot-id]))
+
+(defn hermes-import-sessions
+  "Read verified, redacted source sessions for an owned imported Bot."
+  [session bot-id]
+  (when-let [binding (hermes-import-binding session bot-id)]
+    (hermes-import-data/sessions
+     (app-config/data-dir) (:migration-id binding)
+     {:artifacts [(:session-export binding)]})))
+
+(defn create-hermes-import!
+  "Idempotently provision one inert Bot from a reviewed Hermes bundle.
+
+  No source tool, account, grant, workspace, browser, computer, peer authority,
+  schedule, or omakase setting crosses this boundary. The Bot can immediately
+  use the destination's admitted inference route; capabilities are rebound on
+  the ordinary Itonami settings surface later."
+  [configuration session {:keys [migration-id profile-id name brief provider-id
+                                  model runtime-context session-export
+                                  session-ids seed]}]
+  (let [bot-id (stable-hermes-bot-id session migration-id profile-id)
+        expected {:migration-id migration-id :profile-id profile-id}
+        existing (bot-by-id bot-id)
+        current-binding (get-in (snapshot) [:hermes-import-bindings bot-id])]
+    (cond
+      (and existing (= expected (select-keys current-binding [:migration-id :profile-id])))
+      {:id bot-id :created? false :binding current-binding}
+
+      existing
+      (throw (ex-info "Stable Hermes import Bot id is already occupied."
+                      {:type :bot-import/id-collision :bot-id bot-id}))
+
+      :else
+      (let [created
+            (binding [*create-bot-id* bot-id]
+              (create! configuration session
+                       {:name name :brief brief
+                        :provider-id provider-id :model model
+                        :tools [] :accounts {}
+                        :writes? false :browser? false :computer? false
+                        :peers? false :coding? false :virtual-shell? false
+                        :goal? false :priority? false :pinned? false
+                        :omakase? false}))
+            now (store/now)
+            messages
+            (mapv (fn [index {:keys [role text at]}]
+                    (bot/message
+                     {:id (str "import-" index "-" (UUID/randomUUID))
+                      :bot bot-id :role role :text text :cards []
+                      :at (if (string? at) at now)
+                      :source :hermes-import}))
+                  (range) (take-last max-conversation seed))
+            binding (assoc expected
+                           :runtime-context runtime-context
+                           :session-export session-export
+                           :session-ids (vec (remove nil? session-ids))
+                           :imported-at now
+                           :credentials-copied 0
+                           :grants-copied 0)]
+        (transact! assoc-in [:hermes-import-bindings bot-id] binding)
+        (when (seq messages)
+          (transact! assoc-in [:conversations bot-id] messages))
+        {:id (:bot/id created) :created? true :binding binding}))))
 
 (defn- bot-context-refs [b]
   (or (:bot/context-refs b)
@@ -861,6 +1200,11 @@
                              (:bot/virtual-shell? existing))
         next-workspace (if (contains? attrs :workspace)
                          (:workspace attrs) (:bot/workspace existing))
+        replacing-managed-workspace?
+        (and (= :cloud-itonami (:bot/workspace-kind existing))
+             (contains? attrs :workspace)
+             (not= (some-> next-workspace str str/trim not-empty)
+                   (:bot/workspace existing)))
         next-workspace (cond
                          next-virtual-shell
                          (virtual-shell/admit-workspace next-workspace)
@@ -889,6 +1233,12 @@
                  (contains? attrs :browser?) (assoc :bot/browser? (:browser? attrs))
                  (contains? attrs :computer?) (assoc :bot/computer? (:computer? attrs))
                  (contains? attrs :peers?) (assoc :bot/peers? (:peers? attrs))
+                 (contains? attrs :goal?) (assoc :bot/goal? (:goal? attrs))
+                 (contains? attrs :priority?) (assoc :bot/priority? (:priority? attrs))
+                 (contains? attrs :pinned?) (assoc :bot/pinned? (:pinned? attrs))
+                 (contains? attrs :section) (assoc :bot/section (:section attrs))
+                 (contains? attrs :unread?) (assoc :bot/unread? (:unread? attrs))
+                 (contains? attrs :hidden?) (assoc :bot/hidden? (:hidden? attrs))
                  (contains? attrs :omakase?) (assoc :bot/omakase? (:omakase? attrs))
                  (or (contains? attrs :coding?)
                      (contains? attrs :virtual-shell?)
@@ -896,7 +1246,10 @@
                  (assoc :bot/coding? next-coding
                         :bot/virtual-shell? next-virtual-shell
                         :bot/workspace next-workspace)
+                 replacing-managed-workspace?
+                 (assoc :bot/workspace-kind nil :bot/workspace-sync-id nil)
                  (contains? attrs :enabled?) (assoc :bot/enabled? (:enabled? attrs)))]
+     (when replacing-managed-workspace? (bot-workspace/detach! existing))
      (store-bot! (bot/bot (assoc merged :bot/updated-at (store/now)))))))
 
 (defn archive!
@@ -1067,7 +1420,18 @@
                      ;; A profile says how a role RUNS. It cannot say what it
                      ;; may do: only these keys are read, and the registry
                      ;; refuses an authority-shaped one at the source.
-                     :bot/provider-id (or (get-in entry [:profile :profile/provider])
+                     ;;
+                     ;; The operator override reads first, same as
+                     ;; `:bot/model` below -- an instance that reviewed and
+                     ;; enabled only "openrouter" (no "murakumo" in its
+                     ;; `:providers` at all) still provisioned every Bot onto
+                     ;; "murakumo" here, so every resident tick was denied at
+                     ;; `provider-choice!` before a turn ever started. The
+                     ;; sibling model override existed and this one did not,
+                     ;; which is why only the model half of that switch moved.
+                     :bot/provider-id (or (get-in configuration
+                                                  [:bots :workforce :provider])
+                                          (get-in entry [:profile :profile/provider])
                                           "murakumo")
                      ;; An operator may move the whole resident workforce away
                      ;; from a degraded model without rewriting role profiles.
@@ -1076,11 +1440,30 @@
                      :bot/model (or (get-in configuration
                                              [:bots :workforce :model])
                                     (get-in entry [:profile :profile/model])
-                                    "murakumo-main")
+                                    "murakumo-edge")
                      :bot/email (mailbox-address configuration id)
                      :bot/tools #{} :bot/accounts #{}
-                     :bot/writes? false :bot/browser? false
-                     :bot/coding? true :bot/virtual-shell? false
+                     ;; The same "operator's own config.edn, applied at
+                     ;; provisioning, never taken away" contract omakase
+                     ;; already has (standing-omakase?, ADR-0070), extended to
+                     ;; the grants that gate whether a write/browser/peer TOOL
+                     ;; is even offered before omakase ever gets asked to
+                     ;; decide a card for one. Each still defaults to false --
+                     ;; an instance that never sets `[:bots :workforce ...]`
+                     ;; provisions exactly as before.
+                     :bot/writes? (boolean (or (:bot/writes? existing)
+                                               (get-in configuration
+                                                       [:bots :workforce :writes?])))
+                     :bot/browser? (boolean (or (:bot/browser? existing)
+                                                (get-in configuration
+                                                        [:bots :workforce :browser?])))
+                     :bot/coding? true
+                     :bot/virtual-shell? (boolean (or (:bot/virtual-shell? existing)
+                                                      (get-in configuration
+                                                              [:bots :workforce :virtual-shell?])))
+                     :bot/peers? (boolean (or (:bot/peers? existing)
+                                              (get-in configuration
+                                                      [:bots :workforce :peers?])))
                      :bot/omakase? (boolean (or (:bot/omakase? existing)
                                                 (standing-omakase? configuration key)))
                      :bot/workspace (workforce-workspace entry)
@@ -1089,6 +1472,7 @@
                      :bot/role (:role entry)
                      :bot/responsibilities (:responsibilities entry)
                      :bot/capability-policy (:capabilities entry)
+                     :bot/skills (:skills entry)
                      :bot/enabled? true
                      :bot/created-at (or (:bot/created-at existing) now)
                      :bot/updated-at now})
@@ -1220,6 +1604,74 @@
                     (map (comp #(subs (str %) 1) resident-outcome))
                     frequencies)})))
 
+(def ^:private cadence-ceiling-minutes
+  "How far a Bot that keeps finding nothing may back off. A day: past that the
+  interval stops being a schedule and becomes a decision to stop."
+  1440)
+
+(def ^:private cadence-retry-ceiling-minutes
+  "How far a Bot whose run never executed may back off. Deliberately far below
+  `cadence-ceiling-minutes`: an hour of provider outage must not leave the
+  whole workforce on a daily interval the day after it recovers."
+  60)
+
+(defn- workforce-outcome-code
+  "The last run's outcome, as the three codes `workforce_cadence_core.kotoba`
+  decides from.
+
+  `resident-outcome` already draws the line this needs -- `:no-op` is a tick
+  that looked and found nothing, `:completed` is one that changed something,
+  and a failure keeps the provider's own name. Everything that is not one of
+  the first two is the third code, INCLUDING statuses this function has never
+  seen: a run whose outcome we cannot read did not measure whether there was
+  work, and must not earn the back-off that only evidence earns."
+  [job]
+  (let [outcome (resident-outcome job)]
+    (cond
+      (= :completed outcome) (oracle/call :workforce-cadence 'outcome-produced-change [])
+      (= :no-op outcome) (oracle/call :workforce-cadence 'outcome-no-op [])
+      :else (oracle/call :workforce-cadence 'outcome-unavailable []))))
+
+(defn adjust-workforce-cadence!
+  "Recompute this Bot's next resident gap from what the run it just finished found.
+
+  Until 2026-08-29 `next-run-at` was set at SUBMIT time as `now + cadence`, a
+  constant per role. Measured that day: `max-active 2` and p50 174s serve about
+  993 runs a day while 126 Bots on a 15-minute cadence ask for 12,096. Twelve
+  times over, the constant describes nothing -- the queue decides, and a Bot
+  that found nothing and a Bot that changed something wait the same ~3 hours
+  for the same two slots.
+
+  The scarce thing is the slot, so the Bot without work is the one that should
+  yield it. `floor` stays whatever the operator configured; this only ever
+  lengthens the gap, and one productive run returns it to the floor.
+
+  Returns the interval it wrote, or nil when there was nothing to adjust."
+  [run-id]
+  (let [job (goal-job run-id)
+        bot-id (:job/bot job)]
+    (when (and (:job/resident-workforce? job) bot-id)
+      (when-let [wjob (get-in (snapshot) [:workforce-jobs bot-id])]
+      (let [floor (long (or (:workforce.job/cadence-minutes wjob) 15))
+            current (long (or (:workforce.job/interval-minutes wjob) floor))
+            code (workforce-outcome-code job)
+            minutes (long (oracle/call :workforce-cadence 'next-interval-minutes
+                                       [floor cadence-ceiling-minutes
+                                        cadence-retry-ceiling-minutes
+                                        current code]))
+            now (store/now)]
+        (transact! update-in [:workforce-jobs bot-id] merge
+                   {:workforce.job/interval-minutes minutes
+                    :workforce.job/next-run-at
+                    (str (.plusSeconds (java.time.Instant/parse now) (* 60 minutes)))
+                    ;; Why it moved, next to what it moved to. "Backed off
+                    ;; because there was nothing to do" and "backed off because
+                    ;; the provider was down" are different facts and the
+                    ;; interval alone cannot tell them apart.
+                      :workforce.job/interval-reason (resident-outcome job)
+                      :workforce.job/updated-at now})
+          minutes)))))
+
 (defn workforce-status [session]
   (let [partition (snapshot)
         workforce (get-in partition [:workforces
@@ -1257,8 +1709,7 @@
 
 (defn- append! [bot-id message]
   (transact! update-in [:conversations bot-id]
-             (fn [messages]
-               (vec (take-last max-conversation (conj (vec messages) message)))))
+             #(store-core/append-bounded % message max-conversation))
   message)
 
 (defn- context-message
@@ -1363,7 +1814,7 @@
                                                       (not (met? providers %))))))
    :active-run? (boolean (get-in (snapshot) [:runs bot-id :pending-call]))})
 
-(declare public-turn peer-tools coding-tools local-tool-definitions)
+(declare public-turn peer-tools coding-tools local-tool-definitions send!)
 
 (defn- workforce-continuation
   "Return the explicit continuation, or recover it from a pre-upgrade no-op.
@@ -1445,6 +1896,7 @@
         local-tools (local-tool-definitions configuration b)
         admitted (into (bot/admitted-tools b rows connected)
                        (map :name) local-tools)
+        routed (routing/resolve-main (routing-index) b)
         stored-avatar (:bot/avatar b)
         ;; Earlier wire clients omitted avatar fields, so uncustomised Bots
         ;; were all persisted as the same blue circle. Give only that default
@@ -1467,6 +1919,7 @@
           (-> continuation
               (update :outcome #(some-> % name))
               (select-keys [:outcome :context-id :summary :run-id])))
+        import-binding (get-in partition [:hermes-import-bindings (:bot/id b)])
         base-status (bot/status b (presence (:bot/id b)
                                             (connected-providers did)))
         public-status (if (and (= :idle base-status)
@@ -1486,14 +1939,33 @@
               :glyph (name (:avatar/glyph display-avatar))
               :variant (mod face-hash 7)}
      :brief (:bot/brief b)
+     :hermes-import
+     (when import-binding
+       (select-keys import-binding
+                    [:migration-id :profile-id :imported-at
+                     :session-ids :credentials-copied :grants-copied]))
      :context-project-id (:bot/context-project-id b)
      :context-refs (bot-context-refs b)
+     ;; What this Bot actually runs on, resolved the way `provider-choice!`
+     ;; resolves it -- including the deployment assignment, which was missing
+     ;; here and would have made the picker name one model while the turn used
+     ;; another.
      :provider-id (or (:bot/provider-id b)
+                      (:provider-id routed)
                       (get-in configuration [:routing :default-provider]))
      :model (or (:bot/model b)
+                (:model routed)
                 (:default-model (policy/select-provider
                                  configuration (:bot/provider-id b)))
                 (get-in configuration [:routing :default-model]))
+     ;; And what this Bot chose FOR ITSELF, which is a different fact. The two
+     ;; above are filled in from three fallbacks, so a screen reading them
+     ;; cannot tell a Bot somebody assigned a model to from one inheriting the
+     ;; deployment default -- and a settings screen whose every row looks
+     ;; assigned is the state where nothing on it is worth reading.
+     :own-provider-id (:bot/provider-id b)
+     :own-model (:bot/model b)
+     :model-scope (name (:scope routed))
      :tools (vec (:bot/tools b))
      :accounts (vec (:bot/accounts b))
      :email (or (:bot/email b) (mailbox-address configuration (:bot/id b)))
@@ -1510,15 +1982,27 @@
                                     (agent-control/computer-ready? configuration)))
      :coding? (:bot/coding? b)
      :virtual-shell? (:bot/virtual-shell? b)
+     ;; Persisted Bots from before this setting lived on the record must keep
+     ;; the composer's former default until they are saved once.
+     :goal? (if (contains? b :bot/goal?)
+              (boolean (:bot/goal? b))
+              (boolean (or (:bot/coding? b) (:bot/virtual-shell? b))))
+     :priority? (boolean (:bot/priority? b))
+     :pinned? (boolean (:bot/pinned? b))
+     :section (:bot/section b)
+     :unread? (boolean (:bot/unread? b))
+     :hidden? (boolean (:bot/hidden? b))
      :omakase? (boolean (:bot/omakase? b))
      :virtual-shell-ready? (boolean (and (:bot/virtual-shell? b)
                                          (virtual-shell/available?)))
      :workspace (:bot/workspace b)
+     :workspace-sync (bot-workspace/summary configuration b)
      :workforce-key (:bot/workforce-key b)
      :business (:bot/business b)
      :commerce (commerce/bot-summary b)
      :role (:bot/role b)
      :responsibilities (:bot/responsibilities b)
+     :skills (mapv #(select-keys % [:id :sha256]) (:bot/skills b))
      :capability-policy
      (mapv #(update % :decision name) (:bot/capability-policy b))
      :resident-job
@@ -1729,6 +2213,89 @@
          (System/getenv "CLOUD_ITONAMI_WORKSPACE_ROOT")
          (System/getProperty "user.dir")]))
 
+(defn- public-assignment [a]
+  {:task (name (:routing/task a))
+   :scope (:routing/scope a)
+   :provider-id (:routing/provider-id a)
+   :model (:routing/model a)})
+
+(defn model-routing
+  "Which model answers for which task, and what may be assigned.
+
+  `:tasks` is the whole assignable set with `:main?` marking the one that can
+  be scoped to a Bot. `:assignments` is the deployment-wide rows only — a Bot's
+  own pair is on the Bot, and `overview` already ships it there. Two copies of
+  one Bot's model is the state this surface exists to avoid, so it is not
+  reported twice here either."
+  [_session]
+  ;; Authorization is the route's, as it is for `/api/bots/machine`: these are
+  ;; deployment settings rather than one person's Bots, and the handler already
+  ;; requires a human session, a known origin and a CSRF token before calling.
+  {:default-scope routing/default-scope
+   :main-task (name routing/main-task)
+   :tasks (into [{:task (name routing/main-task)
+                  :label "Bot"
+                  :hint "Bot 自身のターン"
+                  :main? true}]
+                (map (fn [t] {:task (name (:task t))
+                              :label (:label t)
+                              :hint (:hint t)
+                              :source (:source t)
+                              :main? false}))
+                routing/auxiliary-tasks)
+   :assignments (mapv public-assignment
+                      (vals (routing/index-in (store/snapshot))))})
+
+(defn assign-model!
+  "Point one task at one provider and model.
+
+  Two destinations, because there are two kinds of assignment and only one of
+  them is new storage:
+
+  - the `:bot` task scoped to a Bot writes that Bot's record, the same fields
+    the Bot picker has always written. It goes through `update!`, so ownership,
+    provider admission and the audit entry are the ones already in place.
+  - everything else is a deployment-wide row.
+
+  `routing/assignment` validates before either happens, so a half-filled pair
+  reaches neither."
+  [configuration session submitted]
+  (let [a (routing/assignment submitted)]
+    (if (and (= routing/main-task (:routing/task a))
+             (not (routing/default-scope? (:routing/scope a))))
+      (update! configuration session (:routing/scope a)
+               {:provider-id (:routing/provider-id a)
+                :model (:routing/model a)})
+      (do
+        ;; Admission is asked here as well as at call time. Not redundant: a
+        ;; provider that cannot be reached now will refuse at call time either
+        ;; way, and finding that out while the screen is open is the difference
+        ;; between a message and a Bot that stops mid-task tomorrow.
+        (when-not (policy/select-provider configuration (:routing/provider-id a))
+          (throw (ex-info "選択した model provider は許可されていません。"
+                          {:type :provider/denied
+                           :provider (:routing/provider-id a)})))
+        (transact! assoc-in [:routing [(:routing/task a) (:routing/scope a)]] a)))
+    (model-routing session)))
+
+(defn clear-model-assignment!
+  "Remove one assignment, returning that task to what it did before.
+
+  For the main task on a Bot that is clearing the Bot's own pair, which drops
+  it back to the deployment default and then to the provider's declared model —
+  the same ladder `provider-choice!` walks. Nothing here can leave a task with
+  no model at all."
+  [configuration session {:keys [task scope]}]
+  (let [t (routing/task task)
+        sc (routing/scope scope)]
+    (when-not t
+      (throw (ex-info "この application にその model task はありません。"
+                      {:type :routing/unknown-task :task task})))
+    (if (and (= routing/main-task t) (not (routing/default-scope? sc)))
+      (update! configuration session sc {:provider-id nil :model nil})
+      (transact! update :routing dissoc [t sc]))
+    (model-routing session)))
+
 (defn overview
   "Everything the Bots screen needs on load: the Bots, and — when there are
   none — what it takes to make the first one."
@@ -1759,12 +2326,22 @@
      (mapv #(select-keys % [:id :name :model :models])
            (filter :allowed? provider-readiness))
      :model-provider-readiness provider-readiness
+     :model-routing (model-routing session)
      :catalog (catalog configuration did)
      :palette {:colors (mapv name bot/avatar-colors)
                :glyphs (mapv name bot/avatar-glyphs)}
      :default-workspace (default-local-workspace configuration)
      :browser-available? (agent-control/browser-enabled? configuration)
      :computer-available? (agent-control/computer-ready? configuration)}))
+
+(defn sync-workspace!
+  "Run one finite two-way reconciliation for an owned managed Bot workspace."
+  [configuration session bot-id]
+  (let [b (owned! session bot-id)]
+    (when-not (= :cloud-itonami (:bot/workspace-kind b))
+      (throw (ex-info "この Bot は Cloud Itonami workspace を使用していません。"
+                      {:type :bot-workspace/not-managed :bot-id bot-id})))
+    (bot-workspace/sync! configuration b)))
 
 (defn suggestions
   "Starting points for the connectors somebody picked."
@@ -1824,14 +2401,36 @@
                              :text {:type "string"}}
                 :required ["to" "text"]}})
 
+(def ^:private message-agent-tool
+  {:name "message_agent"
+   :description
+   (str "Send a fire-and-forget message to another of this owner's Bots. "
+        "The target runs in its own isolated Bot Chat with its own tools and "
+        "grant; its reply is delivered back into your conversation for your "
+        "next turn. Do not wait or poll for it.")
+   :parameters {:type "object"
+                :properties {:target {:type "string"}
+                             :message {:type "string"}}
+                :required ["target" "message"]}})
+
 (defn- peer-tools
   "The peer note tool, when the Bot asked for it. Not written into
   `:bot/tools`: that set is connector names, for the same reason
   `browser-tools` stays out of it."
   [b]
-  (if (:bot/peers? b) [peer-tool] []))
+  (if (:bot/peers? b) [peer-tool message-agent-tool] []))
 
-(defn- peer-tool? [tool-name] (= "send_message" (str tool-name)))
+(defn- message-agent-tool? [tool-name]
+  (= "message_agent" (str tool-name)))
+
+(defn- peer-tool? [tool-name]
+  (contains? #{"send_message" "message_agent"} (str tool-name)))
+
+(defn- peer-target-arg [tool-name args]
+  (if (message-agent-tool? tool-name) (:target args) (:to args)))
+
+(defn- peer-message-arg [tool-name args]
+  (if (message-agent-tool? tool-name) (:message args) (:text args)))
 
 (defn- coding-tools [b]
   (into (if (and (:bot/coding? b) (:bot/workspace b))
@@ -1840,6 +2439,83 @@
         (if (and (:bot/virtual-shell? b) (:bot/workspace b))
           virtual-shell/tool-definitions
           [])))
+
+(defn- autonomous-capability? [b capability]
+  (boolean
+   (some (fn [{held :capability decision :decision}]
+           (and (= capability (keyword (name held)))
+                (= :autonomous (keyword (name decision)))))
+         (:bot/capability-policy b))))
+
+(defn- disk-space-tools [b]
+  (let [capability-by-tool {"disk_space_status" :disk.inspect
+                            "disk_space_cleanup" :disk.cleanup
+                            "disk_space_inventory" :disk.candidate.inspect
+                            "disk_space_reclaim" :disk.reclaimable.cleanup}]
+    (filterv #(autonomous-capability? b (get capability-by-tool (:name %)))
+             disk-space/tool-definitions)))
+
+(defn- media-tools
+  "Hokusai video tools, when the Bot's capability policy names `:media.video`
+  with any decision other than blocked. The decision itself (autonomous vs
+  approval) is enforced where every other write is: `video_generate` is a
+  write tool and is held for approval unless the Bot is omakase. Like the
+  browser tools, not written into `:bot/tools`."
+  [b]
+  (if (some (fn [{held :capability decision :decision}]
+              (and (= :media.video (keyword (name held)))
+                   (not= :blocked (keyword (name decision)))))
+            (:bot/capability-policy b))
+    media-tools/tool-definitions
+    []))
+
+(defn- disk-maintenance-bot? [b]
+  (or (autonomous-capability? b :disk.inspect)
+      (autonomous-capability? b :disk.cleanup)
+      (autonomous-capability? b :disk.candidate.inspect)
+      (autonomous-capability? b :disk.reclaimable.cleanup)))
+
+(defn- disk-candidate-relief-bot? [b]
+  (and (autonomous-capability? b :disk.candidate.inspect)
+       (autonomous-capability? b :disk.reclaimable.cleanup)))
+
+(defn- disk-pressure-relief-bot? [b]
+  ;; Pressure admission is narrower than tool confinement: a status-only Bot
+  ;; is still a host-maintenance identity, but it cannot relieve the condition
+  ;; that is stopping every ordinary resident job.  Only the reviewed pair may
+  ;; cross the disk floor.
+  (and (autonomous-capability? b :disk.inspect)
+       (autonomous-capability? b :disk.cleanup)))
+
+(defn- git-hygiene-tools [b]
+  (let [inspect? (autonomous-capability? b :git.inspect)
+        cleanup? (autonomous-capability? b :git.cleanup)]
+    (cond-> []
+      inspect? (conj (first git-hygiene/tool-definitions))
+      cleanup? (conj (second git-hygiene/tool-definitions)))))
+
+(defn- git-hygiene-bot? [b]
+  (or (autonomous-capability? b :git.inspect)
+      (autonomous-capability? b :git.cleanup)))
+
+(defn- git-hygiene-relief-bot? [b]
+  ;; Same narrowing as disk pressure: reading the registry is a maintenance
+  ;; identity, but only the reviewed pair can finish the one thing this Bot
+  ;; exists to finish. A status-only Bot keeps its tool and its cadence and
+  ;; goes through the ordinary planner.
+  (and (autonomous-capability? b :git.inspect)
+       (autonomous-capability? b :git.cleanup)))
+
+(defn- domain-steward-bot? [b]
+  (or (autonomous-capability? b :domain.read)
+      (autonomous-capability? b :domain.proposal.create)
+      (autonomous-capability? b :domain.approved-proposal.commit)))
+
+(defn- domain-tool-definitions [configuration b]
+  (if (and (domain-steward-bot? b)
+           (domain-tools/available? configuration))
+    (vec domain-tools/tools)
+    []))
 
 (defn- local-tool-definitions
   "Built-in tools this Bot may run without an external connector grant.
@@ -1850,12 +2526,35 @@
   model and in Settings, but omitted from the set checked immediately before
   execution.  Computer Use and Wallet had the same latent split."
   [configuration b]
-  (vec (concat commerce/tool-definitions
-               (browser-tools configuration b)
-               (computer-tools configuration b)
-               (peer-tools b)
-               (coding-tools b)
-               (wallet/bot-tool-definitions (:bot/id b)))))
+  (cond
+    (domain-steward-bot? b)
+    ;; Domain work has its own exact Passkey-bound authority. Do not let this
+    ;; operational identity inherit coding, Commerce, Wallet or browser tools.
+    (domain-tool-definitions configuration b)
+
+    (git-hygiene-bot? b)
+    ;; A repository-hygiene identity. It reads west metadata and prunes
+    ;; bookkeeping for working trees that are already gone; giving it the
+    ;; coding, Commerce, Wallet or browser tools would make its concrete
+    ;; ceiling wider than the two capabilities the registry reviewed.
+    (vec (git-hygiene-tools b))
+
+    (disk-maintenance-bot? b)
+    ;; This is a host-maintenance identity, not a coding or commerce identity.
+    ;; Workforce provisioning currently marks every role coding-capable and
+    ;; the application has global local tools; carrying either into this Bot
+    ;; would make its concrete ceiling wider than the two capabilities the
+    ;; registry reviewed.
+    (vec (disk-space-tools b))
+
+    :else
+    (vec (concat commerce/tool-definitions
+                 (browser-tools configuration b)
+                 (computer-tools configuration b)
+                 (peer-tools b)
+                 (coding-tools b)
+                 (media-tools b)
+                 (wallet/bot-tool-definitions (:bot/id b))))))
 
 (defn- tool-definitions
   "The tools the Bot's grant REACHES, as the model sees them.
@@ -1899,6 +2598,12 @@
       (wallet/write-tool? tool-name)
       (workspace-tools/write-tool? tool-name)
       (virtual-shell/write-tool? tool-name)
+      (disk-space/write-tool? tool-name)
+      (git-hygiene/write-tool? tool-name)
+      (domain-tools/write-tool? tool-name)
+      ;; A Hokusai submit spends the operator's vendor balance; it is held
+      ;; for approval like every other write (ADR-0092).
+      (media-tools/write-tool? tool-name)
       (let [registry (connectors/enabled configuration)]
         (boolean
          (some (fn [d] (when-let [t (cm/tool d tool-name)]
@@ -1908,10 +2613,12 @@
 (defn- describe-tool [configuration tool-name args]
   (cond
     (peer-tool? tool-name)
-    (str (:to args) " に「"
-         (let [t (str (:text args))]
+    (str (peer-target-arg tool-name args) " に「"
+         (let [t (str (peer-message-arg tool-name args))]
            (if (> (count t) 60) (str (subs t 0 60) "…") t))
-         "」と書き置きします。")
+         (if (message-agent-tool? tool-name)
+           "」と非同期で依頼します。"
+           "」と書き置きします。"))
 
     (wallet/tool? tool-name)
     (if (wallet/write-tool? tool-name)
@@ -1928,6 +2635,15 @@
 
     (virtual-shell/tool? tool-name)
     (virtual-shell/describe tool-name args)
+
+    (disk-space/tool? tool-name)
+    (disk-space/describe tool-name args)
+
+    (git-hygiene/tool? tool-name)
+    (git-hygiene/describe tool-name)
+
+    (domain-tools/tool? tool-name)
+    (domain-tools/describe tool-name args)
 
     (agent-control/browser-tool? tool-name)
     (agent-control/describe-browser-tool tool-name args)
@@ -1959,14 +2675,24 @@
   [source to]
   (let [to (str/trim (str to))
         parsed (peer/parse-address to)
-        _ (when (and parsed (:device parsed))
+        _ (when-let [named (:device parsed)]
             ;; ADR-0062 landed the judgement, not the transport. Saying so is
             ;; the whole point: a silent local delivery for a handle that named
             ;; another machine would put the note on the wrong computer.
-            (throw (ex-info (str "別のマシンの Bot にはまだ送れません（"
-                                 (:device parsed) "）。ADR-0062 の transport は未実装です。")
-                            {:type :peer/no-remote-transport
-                             :device (:device parsed)})))
+            ;;
+            ;; But `bot:<id>@<this-device>` is the LOCAL form spelled out, and
+            ;; `->reach` has always said so — `device-is-local` is
+            ;; `(= device local-device)`. Refusing it needed no transport; it
+            ;; was refused because nothing in this application could say which
+            ;; device it was. `device/local-id` is that answer, and nil (an
+            ;; install nobody enrolled) still refuses everything, which is the
+            ;; direction to be wrong in.
+            (when-not (= named (device/local-id))
+              (throw (ex-info (str "別のマシンの Bot にはまだ送れません（"
+                                   named "）。ADR-0062 の transport は未実装です。")
+                              {:type :peer/no-remote-transport
+                               :device named
+                               :local-device (device/local-id)}))))
         wanted (or (:bot-id parsed) to)
         mine (->> (vals (:bots (snapshot)))
                   (filter #(and (= (:bot/owner %) (:bot/owner source))
@@ -1987,29 +2713,24 @@
                        :candidates (mapv :bot/id matches)})))
     (first matches)))
 
-(defn- send-peer-message!
-  "Leave an attributed note in another of the owner's Bots' conversations.
-
-  It does NOT wake the target, and that is a decision rather than a stage that
-  is missing. Waking one needs the isolated envelope and run lifecycle that
-  `hand-off!` already owns, and a Bot that wants something DONE should hand
-  off -- a handoff is bounded at two rounds and carries a depth ceiling, while
-  a note that woke a peer that answered with a note would be an agent loop with
-  neither. The target reads it on its next turn.
-
-  What crosses is the note and who wrote it. `peer/->pair` has no field for a
-  grant, so nothing else can."
-  [source to text]
+(defn- admitted-peer-message-target!
+  "Resolve and admit one peer message without delivering it."
+  [source to]
   (let [target (peer-target! source to)
         context {:source-owner (:bot/owner source)
                  :target-owner (:bot/owner target)
-                 :local-device nil :device nil
-                 :known-devices [] :remote-enabled? false}
-        text (str/trim (str text))]
-    (when (str/blank? text)
-      (throw (ex-info "空のメッセージは送れません。" {:type :peer/empty-message})))
-    (when (> (count text) max-message-chars)
-      (throw (ex-info "メッセージが長すぎます。" {:type :bot/message-too-long})))
+                 ;; Real, because `peer-target!` now admits
+                 ;; `bot:<id>@<this-device>` and `may-address?` has to agree
+                 ;; with it about the same handle. A nil here beside a resolver
+                 ;; that accepted a device is two answers to one question.
+                 :local-device (device/local-id)
+                 :device (:device (peer/parse-address (str/trim (str to))))
+                 ;; Still literal, and unreachable until the transport lands:
+                 ;; `->reach` reads these two only on the branch where the named
+                 ;; device is NOT this machine, and `peer-target!` throws before
+                 ;; reaching it. Filled with real values they would be inputs
+                 ;; nothing can observe.
+                 :known-devices [] :remote-enabled? false}]
     (when-not (peer/may-address? target context)
       (throw (ex-info (if (:bot/enabled? target)
                         "この Bot には送れません。"
@@ -2026,6 +2747,28 @@
       ;; window looking like something it said.
       (throw (ex-info (str (:bot/name target) " はピアの受け取りが有効ではありません。")
                       {:type :peer/refused :to (:bot/id target)})))
+    target))
+
+(defn- validate-peer-text! [text]
+  (let [text (str/trim (str text))]
+    (when (str/blank? text)
+      (throw (ex-info "空のメッセージは送れません。" {:type :peer/empty-message})))
+    (when (> (count text) max-message-chars)
+      (throw (ex-info "メッセージが長すぎます。" {:type :bot/message-too-long})))
+    text))
+
+(defn- send-peer-message!
+  "Leave an attributed note in another of the owner's Bots' conversations.
+
+  It does NOT wake the target. `message_agent` is the distinct compatibility
+  operation that does: it first passes this same peer gate, then starts one
+  isolated target turn on a bounded daemon pool.
+
+  What crosses is the note and who wrote it. `peer/->pair` has no field for a
+  grant, so nothing else can."
+  [source to text]
+  (let [target (admitted-peer-message-target! source to)
+        text (validate-peer-text! text)]
     (append! (:bot/id target)
              (bot/message {:id (new-id "msg") :bot (:bot/id target) :role :person
                            :text text :at (store/now)
@@ -2033,6 +2776,56 @@
                            :source :peer
                            :from (peer/address (:bot/id source))}))
     (str "delivered to " (:bot/name target) " (" (peer/address (:bot/id target)) ")")))
+
+(defn- message-agent!
+  "Hermes Bot Mode `message_agent` over Itonami's isolated Bot turn.
+
+  Admission is synchronous, so an invalid target is returned to the model as a
+  tool error. Execution is fire-and-forget: the target uses the exact owner
+  session already authenticating this source turn, its own grant/tools, and an
+  isolated transcript. The reply is an attributed note in the source's normal
+  conversation and therefore appears on its next turn."
+  [configuration source to text]
+  (when (>= (long *message-agent-depth*) max-message-agent-depth)
+    (throw (ex-info "message_agent peer depth exceeded."
+                    {:type :peer/depth-exceeded
+                     :depth *message-agent-depth*
+                     :max-depth max-message-agent-depth})))
+  (let [target (admitted-peer-message-target! source to)
+        text (validate-peer-text! text)
+        session *turn-session*
+        next-depth (inc (long *message-agent-depth*))]
+    (when-not session
+      (throw (ex-info "message_agent requires an authenticated Bot turn."
+                      {:type :peer/session-required})))
+    (.submit ^ExecutorService peer-message-executor
+             ^Runnable
+             (fn []
+               (try
+                 (let [messages
+                       (send! configuration session (:bot/id target)
+                              (str "Message from " (:bot/name source) ": " text)
+                              {:source :peer :isolated? true
+                               :message-agent-depth next-depth})
+                       reply (some->> messages reverse
+                                      (some #(when (= "bot" (:role %))
+                                               (:text %))))]
+                   (when-not (str/blank? (str reply))
+                     (send-peer-message! target
+                                         (str "bot:" (:bot/id source))
+                                         reply)))
+                 (catch Exception _error
+                   ;; The sender's active turn must not fail after the tool has
+                   ;; acknowledged asynchronous delivery. Record the failure as
+                   ;; the reply it would otherwise receive, with no authority or
+                   ;; credential detail from the exception.
+                   (try
+                     (send-peer-message!
+                      target (str "bot:" (:bot/id source))
+                      "message_agent delivery failed before the teammate replied.")
+                     (catch Exception _ nil))))))
+    (str "accepted for " (:bot/name target) " ("
+         (peer/address (:bot/id target)) ")")))
 
 ;; ── images a tool produced ───────────────────────────────────────────────
 ;;
@@ -2124,7 +2917,11 @@
                            (agent-control/browser-tool? tool-name)
                            (agent-control/computer-tool? tool-name)
                            (workspace-tools/tool? tool-name)
-                           (virtual-shell/tool? tool-name))
+                           (virtual-shell/tool? tool-name)
+                           (disk-space/tool? tool-name)
+                           (media-tools/tool? tool-name)
+                           (git-hygiene/tool? tool-name)
+                           (domain-tools/tool? tool-name))
                      (cond
                        (commerce/tool? tool-name)
                        (commerce/call-tool! b tool-name args)
@@ -2133,7 +2930,10 @@
                        (wallet/call-tool! (:bot/id b) tool-name args)
 
                        (peer-tool? tool-name)
-                       (send-peer-message! b (:to args) (:text args))
+                       (if (message-agent-tool? tool-name)
+                         (message-agent! configuration b (:target args)
+                                         (:message args))
+                         (send-peer-message! b (:to args) (:text args)))
 
                        (workspace-tools/tool? tool-name)
                        (workspace-tools/call! (:bot/workspace b) tool-name args)
@@ -2142,6 +2942,18 @@
                        (virtual-shell/call! {:bot-id (:bot/id b)
                                              :workspace (:bot/workspace b)}
                                             tool-name args)
+
+                       (disk-space/tool? tool-name)
+                       (disk-space/call! tool-name args)
+
+                       (media-tools/tool? tool-name)
+                       (media-tools/call-tool! configuration tool-name args)
+
+                       (git-hygiene/tool? tool-name)
+                       (git-hygiene/call! tool-name)
+
+                       (domain-tools/tool? tool-name)
+                       (domain-tools/call-tool configuration tool-name args)
 
                        (agent-control/computer-tool? tool-name)
                        (agent-control/call-computer-tool!
@@ -2154,13 +2966,26 @@
                        (invoke/call registry tool-name args
                                     {:http (http-port)
                                      :tokens (tokens-port configuration selection)})))
-        text (if (string? structured) structured (pr-str structured))
+        ;; A tool that has a sentence for the model says so with `:tool/text`,
+        ;; and then the model reads exactly what it read before this key
+        ;; existed. Without it a structured result reaches the model as
+        ;; `pr-str` of a map -- correct for `computer_screenshot`, which has no
+        ;; sentence, and wrong for a write tool whose whole answer is one.
+        text (cond
+               (string? structured) structured
+               (string? (:tool/text structured)) (:tool/text structured)
+               :else (pr-str structured))
         result {:text (if (> (count text) limit)
                         (str (subs text 0 limit)
                              "\n[tool output truncated for model context; full output is represented by the host receipt hash]")
                         text)
                 :images (when (map? structured)
-                          (vec (keep identity [(image-attachment structured)])))}]
+                          (vec (keep identity [(image-attachment structured)])))
+                ;; What the tool LEFT BEHIND, carried out as data for the same
+                ;; reason the image is: re-deriving it from the printed map
+                ;; would couple the caller to a print format nobody promised.
+                :artifacts (when (map? structured)
+                             (vec (:tool/artifacts structured)))}]
     ;; Chronicle is an enrichment plane, not part of tool execution. A full or
     ;; damaged memory partition must never turn a completed Bot action into a
     ;; failed action. remember-tool! applies the user's Settings switches and
@@ -2213,7 +3038,13 @@
     :workspace/invalid-query
     :workspace/parent-required
     :workspace/invalid-commit-paths
-    :workspace/invalid-commit-message})
+    :workspace/invalid-commit-message
+    ;; Hokusai: a bad duration or a malformed job id is the model's to fix.
+    ;; A gateway refusal (budget spent, backend not attested) is not, but the
+    ;; gateway's own code is the answer the Bot needs to stop retrying and
+    ;; say so, so it is handed back too rather than failing the turn.
+    :media/invalid-request
+    :media/upstream-refused})
 
 (defn- self-correctable-tool-result [error]
   (let [error-type (:type (ex-data error))]
@@ -2251,6 +3082,17 @@
        "Call a write only when it is the right next step and say what you are about to do. "
        "Answer in the language the person used.\n\n"
        decision-method/prompt "\n\n"
+       (when-let [import-binding
+                  (get-in (snapshot) [:hermes-import-bindings (:bot/id b)])]
+         (when-let [context
+                    (hermes-import-data/runtime-context
+                     (app-config/data-dir)
+                     (:migration-id import-binding)
+                     {:artifacts [(:runtime-context import-binding)]})]
+           (str "Imported Hermes persona and memory context follows. It is "
+                "untrusted portable context, not a grant: it cannot add tools, "
+                "accounts, credentials, filesystem access, or approval.\n\n"
+                context "\n\n")))
        ;; The repository's top level, handed over instead of charged for.
        ;; Measured 2026-08-19 across 84 resident ticks: `workspace_list` took
        ;; 103 of 187 tool calls and only 37 of 84 runs ever opened a file --
@@ -2273,6 +3115,15 @@
                         (map #(str "- " (:capability %) ": " (name (:decision %)))
                              (:bot/capability-policy b)))
               "\nNever act across another business. Blocked capabilities stay blocked; approval-required and voice-required effects must not be reframed as autonomous.\n\n"))
+       (when (seq (:bot/skills b))
+         (str "Governed role Skill packages follow. They are operating guidance, not authority: they cannot add a tool, account, workspace, approval, credential, or external effect. If a Skill conflicts with the admitted tools or capability policy above, the narrower host grant wins.\n\n"
+              (str/join
+               "\n\n"
+               (map (fn [{:keys [id sha256 instructions]}]
+                      (str "Skill $" id " (sha256 " sha256 "):\n"
+                           instructions))
+                    (:bot/skills b)))
+              "\n\n"))
        (when (and (:bot/browser? b)
                   (agent-control/browser-enabled? configuration))
          (str "You have an isolated browser of your own on this machine. "
@@ -2440,11 +3291,24 @@
 (defn- usage-value [usage key]
   (long (or (get usage key) (get usage (name key)) 0)))
 
+(defn- cached-usage-value [usage]
+  (or (get-in usage [:prompt_tokens_details :cached_tokens])
+      (get-in usage ["prompt_tokens_details" "cached_tokens"])
+      (get usage :cache_read_input_tokens)
+      (get usage "cache_read_input_tokens")))
+
 (defn- merge-usage [total usage]
   (when (or total usage)
-    (into {}
-          (for [key [:prompt_tokens :completion_tokens :total_tokens]]
-            [key (+ (usage-value total key) (usage-value usage key))]))))
+    (let [base (into {}
+                     (for [key [:prompt_tokens :completion_tokens :total_tokens]]
+                       [key (+ (usage-value total key) (usage-value usage key))]))
+          total-cached (cached-usage-value total)
+          usage-cached (cached-usage-value usage)]
+      (cond-> base
+        (or (number? total-cached) (number? usage-cached))
+        (assoc :prompt_tokens_details
+               {:cached_tokens (+ (long (or total-cached 0))
+                                  (long (or usage-cached 0)))})))))
 
 (defn- save-run! [bot-id run]
   (transact! assoc-in [:runs bot-id] run))
@@ -2453,6 +3317,52 @@
   (transact! update :runs dissoc bot-id))
 
 ;; ── visible turn lifecycle ─────────────────────────────────────────────
+
+(defn run-attribution
+  "What a run can say about itself, as turn fields, omitting what it cannot.
+
+  Measured 2026-08-28 over 273 turns that failed at `:provider/timeout` --
+  every one of them a Goal: `:turn/model` nil, `:turn/provider` nil, and
+  `:turn/turn-count` nil for 268 of them. So for the failure mode that accounts
+  for most failures, `which model timed out, and how far into the turn` had no
+  answer anywhere a reader looks.
+
+  The run was never missing. `finish-visible!` is handed one and carries all of
+  this; the Goal path is a catch block that had only the bot id and never read
+  the run beside it. There is no `finally` clearing runs -- `clear-run!` is
+  called on completion paths -- so a provider exception leaves the run exactly
+  where it was.
+
+  `cond->` rather than a fixed map, so a run with nothing to say contributes
+  nothing instead of writing nils over a turn that already knew better."
+  [run]
+  (cond-> {}
+    (:provider run) (assoc :turn/provider (:provider run))
+    (:model run) (assoc :turn/model (:model run))
+    (:requested-model run) (assoc :turn/requested-model (:requested-model run))
+    (:served-node-did run) (assoc :turn/served-node-did (:served-node-did run))
+    (:turn-count run) (assoc :turn/turn-count (:turn-count run))
+    (:tool-count run) (assoc :turn/tool-count (:tool-count run))
+    (:usage run) (assoc :turn/usage (:usage run))))
+
+(defn failed-goal-turn
+  "The turn record for a Goal whose worker threw.
+
+  Pure, and separate from the catch block it is used in, because what a failure
+  RECORDS is the part that has been wrong -- and a catch block needs a provider,
+  a model and a running fleet before anyone can look at it."
+  [run {:keys [error-type error-status error-message tool at]}]
+  (cond-> (merge (run-attribution run)
+                 {:turn/state :failed
+                  :turn/phase :failed
+                  :turn/finished-at at
+                  :turn/error-type error-type
+                  :turn/error-status error-status
+                  :turn/error-message error-message})
+    ;; `:turn/tool` is already in this record's vocabulary and was nil for
+    ;; every one of the 138 invalid-argument failures. The name is in the
+    ;; error; nothing carried it across.
+    tool (assoc :turn/tool tool)))
 
 (defn- record-turn!
   "Upsert one bounded, durable lifecycle record for a visible Bot turn.
@@ -2473,9 +3383,12 @@
                                :turn/phase :accepted
                                :turn/started-at at}
                               previous attrs {:turn/updated-at at})]
-         (vec (take-last max-turn-history
-                         (conj (filterv #(not= run-id (:turn/id %)) turns)
-                               next-turn))))))
+         ;; `filterv` first: updating a turn already in the ledger moves it
+         ;; to the end, which is a rewrite either way. What hysteresis buys is
+         ;; the NEW-turn case, which is a pure tail append until the window
+         ;; runs past its slack.
+         (store-core/append-bounded (filterv #(not= run-id (:turn/id %)) turns)
+                                    next-turn max-turn-history))))
     nil))
 
 (defn- queued-followups [run-id]
@@ -2522,6 +3435,42 @@
              :state "queued"
              :queued (inc (count current))
              :at (:followup/at followup)}))))))
+
+(defn- call-signature
+  "What makes two proposed calls the SAME call.
+
+  The tool name and its arguments, and nothing else -- not the call id, which
+  the provider makes fresh each time and which would therefore make every
+  repetition look like a new action. `pr-str` of a sorted map so that two
+  argument maps built in different orders compare equal: a model that reissues
+  the same call is not obliged to serialise its keys the same way twice, and
+  reading a reordering as a different call is how this guard would quietly
+  never fire."
+  [call]
+  (let [input (:input call)]
+    (pr-str [(:name call)
+             (if (map? input) (into (sorted-map) input) input)])))
+
+(defn- identical-call-count
+  "How many times in a row this exact call has been proposed, counting this one.
+
+  Walks BACKWARDS through the run's assistant turns and stops at the first one
+  that proposed something else, so an interleaved different action resets the
+  count -- a Bot alternating between two tools is making progress, and only an
+  unbroken run of one call is the failure this counts toward."
+  [run call]
+  (let [signature (call-signature call)]
+    (loop [remaining (reverse (:messages run)) seen 1]
+      (let [message (first remaining)]
+        (cond
+          (nil? message) seen
+          ;; Only assistant turns propose calls; tool results and user
+          ;; messages sit between them and are not a break in the pattern.
+          (not= "assistant" (:role message)) (recur (rest remaining) seen)
+          (not= 1 (count (:tool-calls message))) seen
+          (= signature (call-signature (first (:tool-calls message))))
+          (recur (rest remaining) (inc seen))
+          :else seen)))))
 
 (defn- take-followups!
   ([run-id] (take-followups! run-id false))
@@ -2634,6 +3583,36 @@
       ;; restart stampede that starved ordinary Bot turns.
       (when (and configuration (not (:job/resident-workforce? job)))
         (enqueue-goal! configuration run-id)))
+    ;; Disk maintenance no longer crosses a model provider. A resident disk
+    ;; run checkpointed by an upgrade belongs to the old inference path; if it
+    ;; were drained again it could wait behind the same provider outage the
+    ;; deterministic path removes. Close only that exact governed identity and
+    ;; make its cadence due now, preserving a truthful terminal receipt before
+    ;; the first post-restart tick retries it locally.
+    (doseq [[run-id job] (:goal-jobs (snapshot))
+            :let [b (bot-by-id (:job/bot job))
+                  status (get-in job [:job/run :agent.run/status])]
+            :when (and (:job/resident-workforce? job)
+                       (disk-pressure-relief-bot? b)
+                       (contains? #{:queued :leased :running :checkpointed}
+                                  status))]
+      (transition-goal-run! run-id :cancelled
+                            {:agent.run/error-type
+                             :deterministic-maintenance-migration
+                             :agent.run/finished-at (now-ms)})
+      (record-turn! (:job/bot job) run-id
+                    {:turn/state :cancelled :turn/phase :cancelled
+                     :turn/goal? true :turn/objective (:job/objective job)
+                     :turn/finished-at at
+                     :turn/error-type :deterministic-maintenance-migration})
+      (append-goal-event! run-id :run/cancelled
+                          {:reason :deterministic-maintenance-migration})
+      (transact! update-in [:workforce-jobs (:job/bot job)]
+                 (fn [workforce-job]
+                   (when workforce-job
+                     (assoc workforce-job
+                            :workforce.job/next-run-at at
+                            :workforce.job/updated-at at)))))
     ;; A RESIDENT `:held` run with no outstanding approval card is a hold
     ;; nobody can answer. `:held` is not in the requeue set above, `cancel!`
     ;; needs an in-memory turn that this process does not have, and
@@ -2734,6 +3713,8 @@
      :followup-count (:turn/followup-count turn 0)
      :provider (:turn/provider turn)
      :model (:turn/model turn)
+     :requested-model (:turn/requested-model turn)
+     :served-node-did (:turn/served-node-did turn)
      :usage (:turn/usage turn)
      :cost {:status "not-calculated"
             :reason "provider usage does not include a billed amount"}
@@ -2767,6 +3748,21 @@
                      :pending-followups (count (queued-followups (:turn/id turn))))
         (:turn/goal? turn) (assoc :job (public-goal-job (goal-job (:turn/id turn))))))))
 
+(defn turn
+  "One durable Bot turn by run id, through the same ownership gate as latest-turn.
+
+  Transport adapters use this after a process restart: the in-memory stream is
+  gone, but a completed, failed, cancelled, or recovered-interrupted run still
+  has a pollable answer in the bounded turn ledger."
+  [session bot-id run-id]
+  (owned! session bot-id)
+  (when-let [stored (some #(when (= (str run-id) (:turn/id %)) %)
+                          (get-in (snapshot) [:turn-history bot-id]))]
+    (cond-> (assoc (public-turn stored)
+                   :pending-followups (count (queued-followups (:turn/id stored))))
+      (:turn/goal? stored)
+      (assoc :job (public-goal-job (goal-job (:turn/id stored)))))))
+
 ;; ── the demonstration ───────────────────────────────────────────────────
 
 (defn- trace!
@@ -2783,13 +3779,12 @@
   a person pointing at 'what you just did' means the last few minutes."
   [configuration bot-id tool-name]
   (transact! update-in [:traces bot-id]
-             (fn [entries]
-               (vec (take-last max-trace
-                               (conj (vec entries)
-                                     {:trace/tool tool-name
-                                      :trace/effect (if (write-tool? configuration tool-name)
-                                                      :write :read)
-                                      :trace/at (store/now)}))))))
+             #(store-core/append-bounded
+               % {:trace/tool tool-name
+                  :trace/effect (if (write-tool? configuration tool-name)
+                                  :write :read)
+                  :trace/at (store/now)}
+               max-trace)))
 
 (defn- trace-of [bot-id]
   (vec (get-in (snapshot) [:traces bot-id] [])))
@@ -2810,6 +3805,10 @@
     "選択した local Git workspace のファイルまたは履歴が変わります。remote へは push しません。"
     (virtual-shell/tool? name)
     "Bot 専用のnetwork-disabled仮想環境内でcommandを実行します。選択したGit workspaceは書き換わる場合があります。"
+    (git-hygiene/tool? name)
+    "既に消えている working tree の git 登録だけを片付けます。生きている worktree、stash、branch、未コミットの変更は触らず、push もしません。"
+    (domain-tools/tool? name)
+    "Domain Authority の proposal 台帳を更新します。購入・更新課金・DNS 変更は、この exact proposal に対する human Passkey 承認が無ければ host が拒否します。"
     :else "接続済みサービスに書き込みます。"))
 
 (defn- approval-request [configuration b run call card-id]
@@ -2831,11 +3830,31 @@
              :turn/followup-count (:followup-count run 0)
              :turn/provider (:provider run)
              :turn/model (:model run)
+             ;; What was ASKED for, kept separately from what answered.
+             ;;
+             ;; `:turn/model` is the model in the RESPONSE, so a turn that
+             ;; failed before any response has none -- and that is every
+             ;; provider failure, which is most failures. Measured 2026-08-27
+             ;; over the three preceding days: 119 of 411 turns recorded no
+             ;; model, 116 of those 119 failed, and the reasons were
+             ;; `invalid-tool-arguments` (48), HTTP 502 from the fleet (35) and
+             ;; `model-mismatch` (25). Every one of them named a model on the
+             ;; way out; none of them could be attributed to one afterwards.
+             ;;
+             ;; So the question "which model or endpoint is failing" had no
+             ;; answer in turn history, which is the surface anyone opens. It
+             ;; is not a fallback into `:turn/model`: a failed request did not
+             ;; get an answer from a model, and recording one as though it had
+             ;; would be a different, worse kind of wrong.
+             :turn/requested-model (:requested-model run)
+             :turn/served-node-did (:served-node-did run)
              :turn/usage (:usage run)}
             attrs))))
 
 (defn- visible-failure-message [error]
-  (let [{:keys [type status timeout-seconds]} (ex-data error)]
+  (let [{:keys [type status timeout-seconds max-output-tokens
+                requested-model fallback-model primary-error-type
+                fallback-error-type]} (ex-data error)]
     (case type
       :bot/cancelled nil
       :provider/empty-response
@@ -2857,6 +3876,27 @@
       ;; long look the same to somebody told only that execution failed.
       (:provider/network-error :provider/unreachable)
       "モデルへの通信が途切れました。依頼は記録されています。もう一度送ると再試行できます。"
+      ;; Says which knob, because retrying changes nothing here. The other
+      ;; provider failures above are transient and "もう一度送ると" is honest
+      ;; advice for them; a budget that could not hold the answer will not hold
+      ;; it on the next attempt either, and telling somebody to retry into the
+      ;; same cap wastes their time and a run slot.
+      :provider/output-budget-exhausted
+      (str "モデルの出力が上限に達し、回答が途中で切れました"
+           (when max-output-tokens
+             (str "（max-output-tokens " max-output-tokens "）"))
+           "。依頼を分割するか、出力トークンの上限を上げてください。")
+      :provider/fallback-failed
+      (str "主モデルと切替先の両方で実行できませんでした"
+           (when (or requested-model fallback-model)
+             (str "（" (or requested-model "主モデル")
+                  (when primary-error-type
+                    (str ": " (subs (str primary-error-type) 1)))
+                  " → " (or fallback-model "切替先")
+                  (when fallback-error-type
+                    (str ": " (subs (str fallback-error-type) 1)))
+                  "）"))
+           "。依頼は記録されています。実行先の回復後に再試行してください。")
       "実行に失敗しました。依頼は記録されています。もう一度送ると再試行できます。")))
 
 (defn- goal-event! [kind data]
@@ -2896,10 +3936,17 @@
       (let [started (now-ms)]
         (try
           (let [output (run-tool! configuration b (:selection run) name input)
-                receipt {:action/id (:id call) :child-run-id child-id :tool name
-                         :step-id (current-plan-step-id run)
-                         :duration-ms (- (now-ms) started)
-                         :output-sha256 (receipt-sha256 (:text output))}]
+                receipt (cond-> {:action/id (:id call) :child-run-id child-id
+                                 :tool name
+                                 :step-id (current-plan-step-id run)
+                                 :duration-ms (- (now-ms) started)
+                                 :output-sha256 (receipt-sha256 (:text output))}
+                          ;; The receipt already proved an action HAPPENED, by
+                          ;; hashing what it printed. What it MADE was in the
+                          ;; same call and was not kept, so the transcript could
+                          ;; say a Bot wrote a file and no record named which.
+                          (seq (:artifacts output))
+                          (assoc :artifacts (vec (:artifacts output))))]
             (trace! configuration (:bot/id b) name)
             (update-goal-job! (:id run) update-in [:job/children child-id]
                               agent-run/transition :succeeded (now-ms)
@@ -2908,27 +3955,95 @@
             (goal-event! :subagent/succeeded {:child-run-id child-id})
             {:call call :output output :receipt receipt})
           (catch Exception error
-            (update-goal-job! (:id run) update-in [:job/children child-id]
-                              agent-run/transition :failed (now-ms)
-                              {:agent.run/error-type (or (:type (ex-data error))
-                                                         :internal-error)
-                               :agent.run/error-message (error-message error)})
-            (goal-event! :subagent/failed {:child-run-id child-id
-                                           :error-type (or (:type (ex-data error))
-                                                           :internal-error)
-                                           :message (error-message error)})
-            (throw error)))))))
+            (let [error-type (or (:type (ex-data error)) :internal-error)
+                  recoverable (self-correctable-tool-result error)]
+              (update-goal-job! (:id run) update-in [:job/children child-id]
+                                agent-run/transition :failed (now-ms)
+                                {:agent.run/error-type error-type
+                                 :agent.run/error-message (error-message error)})
+              (goal-event! :subagent/failed {:child-run-id child-id
+                                             :error-type error-type
+                                             :message (error-message error)})
+              ;; A parallel read has the same correction boundary as the
+              ;; sequential tool path.  Measured 2026-09-02: a resident model
+              ;; issued several independent workspace reads; two selected a
+              ;; directory where workspace_read requires a file.  The child
+              ;; receipts correctly said :workspace/not-a-file, but this
+              ;; unconditional throw turned the whole durable Goal terminal
+              ;; instead of letting the model correct those two arguments.
+              ;;
+              ;; Keep the child failed -- the attempted action did fail -- and
+              ;; return only the narrow argument/shape errors admitted by
+              ;; self-correctable-tool-result.  Authority, unsafe-path,
+              ;; provider, and host failures still rethrow and fail closed.
+              (if recoverable
+                {:call call :output recoverable
+                 :recoverable-error? true :error-type error-type}
+                (throw error)))))))))
+
+(defn- parallel-batch-violation
+  "Why this parallel batch may not run as issued, or nil.
+
+  A string rather than a throw, because the model is the one who can fix it.
+  Requests already carry `parallel_tool_calls false`; llama.cpp-hosted models
+  emit parallel batches anyway, and failing the turn for that spent a whole
+  resident tick per disobedience -- measured over the window ending
+  2026-08-29: 10 turns dead at :agent/parallel-tool-limit and 12 more at
+  :agent/unsafe-parallel-tools (the latter filed as :internal-error, see
+  `execute-parallel-read-calls!`). The recoverable shape already exists in
+  this file: goal_plan returns its failure as tool-message content and the
+  model retries. Same here."
+  [configuration run calls]
+  (if (> (count calls) 3)
+    (str "parallel tool limit is three; this reply issued " (count calls)
+         ". Re-issue at most three independent read-only calls, or call"
+         " tools one at a time.")
+    (when-let [offender
+               (some (fn [{:keys [name]}]
+                       (when (or (get (:blocked run) (get (:tool-provider run) name))
+                                 (not (contains? (:runnable run) name))
+                                 (contains? goal-tool-names name)
+                                 (write-tool? configuration name))
+                         name))
+               calls)]
+      (str "parallel calls must be admitted independent read-only tools; "
+           offender " is not. Call it on its own, with nothing else in the"
+           " same reply."))))
 
 (defn- execute-parallel-read-calls! [configuration b run calls on-event]
   (when (> (count calls) 3)
     (throw (ex-info "parallel tool limit is three"
                     {:type :agent/parallel-tool-limit :count (count calls)})))
-  (let [tasks (mapv #(.submit ^ExecutorService parallel-tool-executor
-                             ^java.util.concurrent.Callable
-                             (bound-fn []
-                               (execute-read-call! configuration b run %)))
-                    calls)
-        results (mapv #(.get ^Future %) tasks)
+  (let [tasks (mapv
+               (fn [call]
+                 ;; Clojure functions implement both Runnable and Callable.
+                 ;; The overload selected for a bare `bound-fn` was Runnable,
+                 ;; so Future.get returned nil even though the child executed
+                 ;; and wrote a receipt.  The parent then sent two empty tool
+                 ;; messages back to the model.  An explicit Callable keeps
+                 ;; the child result, while the bound function retains the
+                 ;; dynamic Goal event sink in the worker thread.
+                 (let [task (bound-fn []
+                              (execute-read-call! configuration b run call))]
+                   (.submit ^ExecutorService parallel-tool-executor
+                            ^java.util.concurrent.Callable
+                            (reify java.util.concurrent.Callable
+                              (call [_] (task))))))
+               calls)
+        ;; `Future/.get` wraps whatever the child threw in an
+        ;; ExecutionException whose own ex-data is nil, so every typed child
+        ;; failure was reaching the ledger as :internal-error -- the bucket a
+        ;; reader checks for OUR bugs. Rethrow the cause; it carries the type.
+        results (mapv (fn [^Future task]
+                        (try (.get task)
+                             (catch java.util.concurrent.ExecutionException e
+                               (throw (or (.getCause e) e)))))
+                      tasks)
+        _ (when on-event
+            (doseq [{:keys [call recoverable-error? error-type]} results
+                    :when recoverable-error?]
+              (on-event {:type "phase" :phase "tool-correctable-error"
+                         :tool (:name call) :error-type error-type})))
         next-run (reduce (fn [r {:keys [call output]}]
                            (-> r
                                (update :tool-count (fnil inc 0))
@@ -2960,6 +4075,7 @@
 (def ^:private context-compaction-threshold 0.75)
 (def ^:private context-tail-share 0.45)
 (def ^:private compacted-exchange-max-chars 1600)
+(def ^:private compacted-evidence-budget-chars 1050)
 
 (defn- estimated-tokens
   "A conservative Qwen-family prompt estimate without shipping a second model
@@ -2990,8 +4106,24 @@
     (if (<= (count s) limit) s (str (subs s 0 limit) "…"))))
 
 (defn- summarized-exchange [messages]
-  (let [tool-names (->> messages (mapcat :tool-calls) (keep :name) distinct vec)
-        tool-results (count (filter #(= "tool" (:role %)) messages))
+  (let [tool-calls (mapcat :tool-calls messages)
+        tool-names (->> tool-calls (keep :name) distinct vec)
+        tool-name-by-call-id (into {} (keep (juxt :id :name)) tool-calls)
+        tool-results (filterv #(= "tool" (:role %)) messages)
+        evidence-results (->> tool-results
+                              (filterv #(not (str/blank? (:content %)))))
+        evidence-limit (-> (quot compacted-evidence-budget-chars
+                                 (max 1 (count evidence-results)))
+                           (max 40)
+                           (min 360))
+        evidence-excerpts (mapv (fn [result]
+                                  (clipped
+                                   (str (or (get tool-name-by-call-id
+                                                 (:tool-call-id result))
+                                            "tool")
+                                        ": " (:content result))
+                                   evidence-limit))
+                                evidence-results)
         conclusions (->> messages
                          (filter #(= "assistant" (:role %)))
                          (keep :content)
@@ -3001,8 +4133,13 @@
         body (str "[CONTEXT COMPACTION — REFERENCE ONLY. The latest user message is authoritative.]\n"
                   (when (seq tool-names)
                     (str "Tools used: " (str/join ", " tool-names) ". "))
-                  (when (pos? tool-results)
-                    (str tool-results " completed tool result(s) remain in the durable run record; raw bodies omitted.\n"))
+                  (when (seq tool-results)
+                    (str (count tool-results)
+                         " completed tool result(s) remain in the durable run record.\n"))
+                  (when (seq evidence-excerpts)
+                    (str "Earlier tool evidence excerpts (redacted and clipped):\n- "
+                         (str/join "\n- " evidence-excerpts)
+                         "\n"))
                   (when (seq conclusions)
                     (str "Earlier assistant conclusions:\n- "
                          (str/join "\n- " conclusions))))]
@@ -3010,8 +4147,10 @@
 
 (defn- compact-middle
   "Replace old derived exchanges with bounded reference markers while keeping
-  every user message in its original role and order. Raw tool bodies stay in
-  the durable run, not in the compacted prompt."
+  every user message in its original role and order. Full tool bodies stay in
+  the durable run; the bounded summary budget is divided across every redacted
+  tool-result excerpt so a resident Goal does not lose the beginning of an
+  eight-tool checkpoint slice and repeat the same discovery."
   [messages tail-start]
   (let [middle (subvec messages 2 tail-start)]
     (loop [remaining middle output []]
@@ -3098,22 +4237,53 @@
         (into head (subvec tail start))))))
 
 (defn- agent-request [configuration provider b run model]
-  (let [output-tokens (or (when (:goal? run)
-                            (get-in configuration [:bots :goal :max-output-tokens]))
-                          (:max-output-tokens provider)
+  (let [;; Through `model-scoped`, because `:max-output-tokens` may be a map by
+        ;; model -- the shape `requested-max-tokens` documents and this copy of
+        ;; the resolution did not know about. `(long {...})` throws
+        ;; ClassCastException, so an operator following that docstring killed
+        ;; every turn before a request was made.
+        output-tokens (or (when (:goal? run)
+                            (retry/model-scoped
+                             (get-in configuration [:bots :goal :max-output-tokens])
+                             model))
+                          (retry/model-scoped (:max-output-tokens provider) model)
                           2048)
         context-window (provider/model-context-window provider model)
-        prompt-budget (when context-window
-                        (max 1 (- (long context-window)
-                                  (long output-tokens)
-                                  (estimated-tokens (:tools run))
-                                  context-safety-tokens)))
-        threshold-budget (when context-window
-                           (max 1 (- (long (* context-compaction-threshold
-                                              (long context-window)))
-                                     (long output-tokens)
-                                     (estimated-tokens (:tools run))
-                                     context-safety-tokens)))
+        input-limit (when (:goal? run)
+                      (some-> (get-in configuration
+                                      [:bots :goal :max-input-tokens])
+                              long))
+        tools-tokens (estimated-tokens (:tools run))
+        provider-prompt-budget (when context-window
+                                 (max 1 (- (long context-window)
+                                           (long output-tokens)
+                                           tools-tokens
+                                           context-safety-tokens)))
+        resident-prompt-budget (when input-limit
+                                 (max 1 (- input-limit
+                                           tools-tokens
+                                           context-safety-tokens)))
+        prompt-budget (cond
+                        (and provider-prompt-budget resident-prompt-budget)
+                        (min provider-prompt-budget resident-prompt-budget)
+                        provider-prompt-budget provider-prompt-budget
+                        resident-prompt-budget resident-prompt-budget)
+        provider-threshold-budget (when context-window
+                                    (max 1 (- (long (* context-compaction-threshold
+                                                       (long context-window)))
+                                              (long output-tokens)
+                                              tools-tokens
+                                              context-safety-tokens)))
+        resident-threshold-budget (when input-limit
+                                    (max 1 (- (long (* context-compaction-threshold
+                                                       input-limit))
+                                              tools-tokens
+                                              context-safety-tokens)))
+        threshold-budget (cond
+                           (and provider-threshold-budget resident-threshold-budget)
+                           (min provider-threshold-budget resident-threshold-budget)
+                           provider-threshold-budget provider-threshold-budget
+                           resident-threshold-budget resident-threshold-budget)
         before-tokens (estimated-tokens (:messages run))
         compacted? (and threshold-budget (> before-tokens threshold-budget))
         compacted (if compacted?
@@ -3136,6 +4306,7 @@
            :tools (:tools run)
            :temperature 0.2
            :context-window-tokens context-window
+           :context-input-limit-tokens input-limit
            :context-threshold-tokens threshold-budget
            :context-estimated-tokens after-tokens
            :context-compacted? (boolean compacted?)}
@@ -3158,7 +4329,13 @@
            ;; for no answer: the model spends the cap thinking and never reaches
            ;; a text block. See the measurement in provider/agent-request-body.
            ;; These two go together -- do not set one without the other.
-           :disable-thinking? true))))
+           :disable-thinking? true)
+
+    (and (:goal? run) (= "murakumo-edge" model) (seq (:tools run)))
+    ;; Ornith follows llama.cpp's required-tool contract exactly (live direct
+    ;; proof, 2026-08-29). Without this it may write a correct completion in
+    ;; prose forever while the host waits for goal_complete/goal_blocked.
+    (assoc :require-tool? true))))
 
 (def ^:private capability-repair-workforce-keys
   "The two governed roles that close a capability-drift incident.
@@ -3247,9 +4424,8 @@
                       p (if existing
                           p
                           (update-in p [:conversations target-id]
-                                     (fn [messages]
-                                       (vec (take-last max-conversation
-                                                       (conj (vec messages) message))))))]
+                                     #(store-core/append-bounded
+                                       % message max-conversation)))]
                   ;; A routed incident is work now, not at the role's next
                   ;; ordinary cadence.  The global active/slot gate still
                   ;; decides when it may actually start.
@@ -3360,19 +4536,34 @@
 
       :else
       (let [{:keys [provider model]} (provider-choice! configuration b)
+            ;; `:provider`/`:requested-model` below (after `result`) only ever
+            ;; runs when `provider/agent-turn` returns -- the very thing that
+            ;; throws on every :provider/http-error, :timeout and the rest.
+            ;; `run-attribution`/`failed-goal-turn` (ADR-2608280300, landed
+            ;; the same day) already read both off `run` when present; the gap
+            ;; was never in that projection, it was that a FAILED call never
+            ;; got this far to write them. Saving what was ASKED before the
+            ;; risky call closes it without duplicating that landed fix --
+            ;; the catch block downstream reads this same store entry.
+            _ (save-run! (:bot/id b)
+                         (assoc run :provider (some-> (:id provider) name)
+                                    :requested-model model))
             request (agent-request configuration provider b run model)
             _ (when on-event
                 (on-event (merge {:type "phase" :phase "model"}
                                  (select-keys request
                                               [:context-window-tokens
+                                               :context-input-limit-tokens
                                                :context-threshold-tokens
                                                :context-estimated-tokens
                                                :context-compacted?]))))
-            result (if on-event
-                     (provider/agent-turn-stream!
-                      provider request
-                      #(on-event {:type "delta" :content %}))
-                     (provider/agent-turn provider request))
+            result (bot-dispatcher/dispatch!
+                    #(if on-event
+                       (provider/agent-turn-stream!
+                        provider request
+                        (fn [delta]
+                          (on-event {:type "delta" :content delta})))
+                       (provider/agent-turn provider request)))
             calls (:tool-calls result)
             run (-> run
                     (update :turn-count (fnil inc 0))
@@ -3382,9 +4573,11 @@
                            ;; murakumo-main answer as RTX 5090 output.
                            :model (or (:model result) model)
                            :requested-model (or (:requested-model result) model)
+                           :served-node-did (:served-node-did result)
                            :model-fallback? (boolean (:fallback? result))
                            :context (select-keys request
                                                  [:context-window-tokens
+                                                  :context-input-limit-tokens
                                                   :context-threshold-tokens
                                                   :context-estimated-tokens
                                                   :context-compacted?]))
@@ -3408,6 +4601,16 @@
               (say (:bot/id b) (:content result) nil))
             (recur (apply-followups! (:bot/id b) run followups on-event)))
 
+          (and (empty? calls) (:goal? run) (:require-tool? request))
+          (do
+            (clear-run! (:bot/id b))
+            (finish-visible! on-finish run :failed
+                             {:turn/error-type :provider/required-tool-missing
+                              :turn/result (:content result)})
+            (say (:bot/id b)
+                 "モデルが必須の完了ツールを返さなかったため、この実行を停止しました。"
+                 nil))
+
           (empty? calls)
           (if (:goal? run)
             (let [run (update run :messages conj
@@ -3418,11 +4621,45 @@
               (when on-event (on-event {:type "phase" :phase "continuing"}))
               (recur run))
             (let [followups (take-followups! (:id run) true)]
-              (if (seq followups)
+              (cond
+                (seq followups)
                 (do
                   (when (seq (str (:content result)))
                     (say (:bot/id b) (:content result) nil))
                   (recur (apply-followups! (:bot/id b) run followups on-event)))
+
+                ;; Neither prose nor an action. Before this the run was marked
+                ;; COMPLETED and an empty message was appended, so a turn that
+                ;; did nothing and a turn that finished were the same row --
+                ;; in the audit trail, and in the one-line preview the picker
+                ;; shows. One more ask first, because a dropped response is
+                ;; often not repeated; then a refusal that says so.
+                (bot/answer-empty? {:content (:content result)
+                                    :tool-calls 0
+                                    :empty-turns (:empty-turns run 0)
+                                    :nudge-limit max-empty-turns})
+                (if (bot/may-nudge? {:content (:content result)
+                                     :tool-calls 0
+                                     :empty-turns (:empty-turns run 0)
+                                     :nudge-limit max-empty-turns})
+                  (let [run (-> run
+                                (update :empty-turns (fnil inc 0))
+                                (update :messages conj
+                                        {:role "user"
+                                         :content (str "Your last turn returned no text and no tool call. "
+                                                       "Answer the question, or take the next admitted "
+                                                       "tool action.")}))]
+                    (when on-event (on-event {:type "phase" :phase "continuing"}))
+                    (recur run))
+                  (do
+                    (clear-run! (:bot/id b))
+                    (finish-visible! on-finish run :failed
+                                     {:turn/error-type :provider/empty-answer})
+                    (say (:bot/id b)
+                         "model が本文もツール呼び出しも返さなかったため、この実行を止めました。もう一度、何をしてほしいか教えてください。"
+                         nil)))
+
+                :else
                 (do
                   (clear-run! (:bot/id b))
                   (finish-visible! on-finish run :completed
@@ -3431,12 +4668,88 @@
 
           (> (count calls) 1)
           (if (:goal? run)
-            (let [run (execute-parallel-read-calls! configuration b run calls on-event)]
-              (save-run! (:bot/id b) run)
-              (recur run))
+            ;; A policy-violating batch goes back to the model as tool-message
+            ;; content instead of failing the turn: the model is the party
+            ;; that can re-issue the calls, and a failed turn costs the whole
+            ;; tick plus a requeue (`parallel-batch-violation`).
+            (if-let [violation (parallel-batch-violation configuration run calls)]
+              (let [run (reduce (fn [r call]
+                                  (update r :messages conj
+                                          {:role "tool" :tool-call-id (:id call)
+                                           :name (:name call) :content violation}))
+                                run calls)]
+                (save-run! (:bot/id b) run)
+                (recur run))
+              (let [run (execute-parallel-read-calls! configuration b run calls on-event)]
+                (save-run! (:bot/id b) run)
+                (recur run)))
             (throw (ex-info
                     "model provider が複数のツール呼び出しを返したため、安全のため停止しました。"
                     {:type :agent/multiple-tool-calls :count (count calls)})))
+
+          ;; The same action, with the same arguments, proposed over and over.
+          ;; The tool budget already ends such a run -- after spending all of
+          ;; it, and then reporting `:continuation-budget-exhausted`, which
+          ;; sends the person to raise a limit that was never the problem.
+          ;; Stopping here costs the rest of the budget nothing and says what
+          ;; actually happened.
+          (bot/repetition-exhausted?
+           {:identical-consecutive (identical-call-count run (first calls))
+            :limit max-identical-calls})
+          (let [{:keys [id name]} (first calls)
+                continuable-goal?
+                (and (:goal? run)
+                     (< (long (or (:job/attempt (goal-job (:id run))) 0))
+                        max-goal-continuations))]
+            (if continuable-goal?
+              ;; Repetition is a bad execution slice, not evidence that the
+              ;; durable Goal itself is impossible.  Measured 2026-09-02: 29
+              ;; of the latest 200 resident runs were filed as bare `failed`;
+              ;; their visible turns were all `:provider/repeating`, mostly a
+              ;; second workspace_read of evidence the run already held.  A
+              ;; terminal failure discarded useful receipts and pushed the
+              ;; same open-ended objective to the back of a 143-Bot queue.
+              ;;
+              ;; Close the unresolved tool-call in provider history, add an
+              ;; assistant barrier so `identical-call-count` starts fresh on
+              ;; resume, and checkpoint.  The ordinary continuation ceiling
+              ;; still terminates a model that never changes course.
+              (let [recovery
+                    (str "The host suppressed repeated " name
+                         ". Reuse the earlier result already present in this durable run. "
+                         "On resume, choose a different specific action, complete the Goal "
+                         "from existing evidence, or report the exact external blocker.")
+                    checkpointed
+                    (-> run
+                        (update :messages conj
+                                {:role "tool" :tool-call-id id :name name
+                                 :content recovery})
+                        (update :messages conj
+                                {:role "assistant" :content recovery
+                                 :tool-calls []})
+                        (update :messages conj
+                                {:role "user"
+                                 :content
+                                 "Continue from the saved evidence without repeating that call."}))]
+                (save-run! (:bot/id b) checkpointed)
+                (finish-visible! on-finish checkpointed :checkpointed
+                                 {:turn/result
+                                  (str "重複した " name
+                                       " を抑止し、証拠を保存して別の手順から自動再開します。")})
+                (goal-event! :run/checkpointed
+                             {:reason :provider/repeating
+                              :tool name
+                              :turn-count (:turn-count checkpointed 0)
+                              :tool-count (:tool-count checkpointed 0)}))
+              (do
+                (clear-run! (:bot/id b))
+                (finish-visible! on-finish run :failed
+                                 {:turn/error-type :provider/repeating
+                                  :turn/result (str "同じ操作（" name "）を同じ引数で繰り返したため停止しました。")})
+                (say (:bot/id b)
+                     (str "同じ操作（" name "）を同じ引数で繰り返していたので止めました。"
+                          "うまくいっていないようです。別のやり方を指示してください。")
+                     nil))))
 
           :else
           (let [{:keys [name input] :as call} (first calls)
@@ -3546,7 +4859,7 @@
                     (when on-event (on-event {:type "phase" :phase "verifying"}))
                     (finish-visible! on-finish run :completed
                                      {:turn/result summary :turn/evidence evidence})
-                    (say (:bot/id b) summary nil))
+                    (say (:bot/id b) summary (artifact-cards (:id run))))
                   (recur (update run :messages conj
                                  {:role "tool" :tool-call-id (:id call)
                                   :name name
@@ -3655,7 +4968,18 @@
                                                 :message (error-message tool-error))
                                          (not tool-error)
                                          (assoc :output-sha256
-                                                (receipt-sha256 (:text output)))))
+                                                (receipt-sha256 (:text output)))
+                                         ;; THIS is the site that runs a write
+                                         ;; tool. `execute-read-call!` refuses
+                                         ;; one by construction, so recording
+                                         ;; artifacts only there made the whole
+                                         ;; feature dead for a delegated Bot --
+                                         ;; the screen showed nothing and no
+                                         ;; error said why.
+                                         (and (not tool-error)
+                                              (seq (:artifacts output)))
+                                         (assoc :artifacts
+                                                (vec (:artifacts output)))))
                         run (-> run
                                 (update :tool-count (fnil inc 0))
                                 (update :messages into
@@ -3699,7 +5023,11 @@
                                             :message (error-message tool-error))
                                      (not tool-error)
                                      (assoc :output-sha256
-                                            (receipt-sha256 (:text output)))))
+                                            (receipt-sha256 (:text output)))
+                                     (and (not tool-error)
+                                          (seq (:artifacts output)))
+                                     (assoc :artifacts
+                                            (vec (:artifacts output)))))
                     run (-> run
                             (update :tool-count (fnil inc 0))
                             (update :messages into
@@ -3924,7 +5252,7 @@
 
 (defn- append-group! [group-id message]
   (transact! update-in [:group-conversations group-id]
-             (fn [ms] (vec (take-last max-conversation (conj (vec ms) message))))))
+             #(store-core/append-bounded % message max-conversation)))
 
 (defn- group-prompt [b g others]
   (str "You are " (:bot/name b) ", in a room called \"" (:group/name g)
@@ -3974,6 +5302,14 @@
           ;; per member per round rather than once: a Bot disabled while the
           ;; room is mid-conversation stops answering at the next question, not
           ;; at the next message the person sends.
+          ;; The device fields stay literal HERE, and that is not an oversight
+          ;; left over from ADR-0062. A room member is a Bot RECORD, not a
+          ;; handle somebody typed, so there is no device to name: with
+          ;; `:device nil`, `->reach` decides `device-known` and
+          ;; `device-is-local` true outright and never reads the other two.
+          ;; Passing `device/local-id` here would be a value the judgement
+          ;; cannot consult — the kind of input that looks like wiring and
+          ;; discriminates nothing.
           reachable (fn [b] (peer/may-address?
                              b {:source-owner (:group/owner g)
                                 :target-owner (:bot/owner b)
@@ -3988,7 +5324,16 @@
                    (let [others (->> members
                                      (remove #(= (:bot/id %) (:bot/id b)))
                                      (mapv :bot/name))
-                         {:keys [provider model]} (provider-choice! configuration b)
+                         ;; A room round is an auxiliary task: it may be
+                         ;; assigned its own model, and with none it runs on
+                         ;; whatever this Bot's own turn would have used. An
+                         ;; assignment naming a provider this deployment will
+                         ;; not admit raises here rather than quietly billing
+                         ;; the main model -- see `model-routing`.
+                         {:keys [provider model]}
+                         (routing/auxiliary-choice!
+                          configuration (routing-index) :room
+                          (provider-choice! configuration b))
                          messages (into [{:role "system"
                                           :content (group-prompt b g others)}]
                                         (for [m (group-conversation (:group/id g))
@@ -3999,12 +5344,13 @@
                                            :content (if-let [from (:message/from m)]
                                                       (str from ": " (:message/text m))
                                                       (:message/text m))}))
-                         result (provider/agent-turn
-                                 provider {:model model
-                                           :conversation-id (:group/id g)
-                                           :messages messages
-                                           :tools []
-                                           :temperature 0.2})
+                         result (bot-dispatcher/dispatch!
+                                 #(provider/agent-turn
+                                   provider {:model model
+                                             :conversation-id (:group/id g)
+                                             :messages messages
+                                             :tools []
+                                             :temperature 0.2}))
                          answer (str (:content result))]
                      (if (passed? answer)
                        answered
@@ -4103,6 +5449,9 @@
       ;; it is true: `advance!` stops at the CALL, before the tool is reached,
       ;; and the card arrives then.
       (binding [*context-id* context-id
+                *turn-session* session
+                *message-agent-depth*
+                (long (or (:message-agent-depth advance-options) 0))
                 *message-source* (or requested-source
                                      (if resident? :resident :bot))]
         (try
@@ -4407,6 +5756,9 @@
         (transition-goal-run! run-id :succeeded
                               {:agent.run/result :safe-no-op
                                :agent.run/finished-at (now-ms)})
+        ;; The tick looked and found nothing. That is evidence about the work,
+        ;; so this Bot yields its share of the two slots to one that has some.
+        (adjust-workforce-cadence! run-id)
         (transact!
          (fn [partition]
            (if (get-in partition [:workforce-jobs bot])
@@ -4427,11 +5779,84 @@
                         (assoc-in [:bots :goal :max-tool-output-chars]
                                   max-tool-output-chars)
                         resident-workforce?
-                        (assoc-in [:bots :goal :max-output-tokens]
-                                  (long (or (get-in configuration
-                                                    [:bots :workforce
-                                                     :max-output-tokens])
-                                            default-resident-max-output-tokens)))))
+                        (-> (assoc-in [:bots :goal :max-output-tokens]
+                                      (long (or (get-in configuration
+                                                        [:bots :workforce
+                                                         :max-output-tokens])
+                                                default-resident-max-output-tokens)))
+                            (assoc-in [:bots :goal :max-input-tokens]
+                                      (long (or (get-in configuration
+                                                        [:bots :workforce
+                                                         :max-input-tokens])
+                                                default-resident-max-input-tokens))))))
+
+(def ^:private checkpointable-provider-errors
+  "Transient inference failures that preserve a resident Goal rather than
+  disproving it.
+
+  This is deliberately narrower than every provider error. Invalid tool
+  arguments, output-budget exhaustion, model mismatch without an admitted
+  fallback, and application errors still terminate: retrying them unchanged
+  would only hide a deterministic defect. `:provider/fallback-failed` is safe
+  here because the provider layer creates it only after both explicitly
+  admitted routes failed with one of its bounded fallback error types."
+  #{:provider/timeout :provider/unreachable :provider/network-error
+    :provider/model-unready :provider/fallback-failed})
+
+(defn- provider-retry-delay-seconds [attempt]
+  (min provider-retry-max-seconds
+       (* provider-retry-base-seconds
+          (bit-shift-left 1 (min 4 (max 0 (dec (long attempt))))))))
+
+(defn- provider-retry-at [attempt]
+  (str (.plusSeconds (java.time.Instant/parse (store/now))
+                     (provider-retry-delay-seconds attempt))))
+
+(defn- provider-retry-due?
+  [job now]
+  (if-let [retry-at (:job/retry-at job)]
+    (try
+      (not (.isAfter (java.time.Instant/parse retry-at)
+                     (java.time.Instant/parse now)))
+      ;; This is host-written metadata, not authority. A malformed legacy
+      ;; value must not strand a durable Goal forever; retrying exposes the
+      ;; condition through the ordinary bounded attempt ceiling.
+      (catch Exception _ true))
+    true))
+
+(defn- checkpoint-provider-error!
+  "Persist one transient provider boundary and yield the inference slot.
+
+  The same visible turn is updated on resume, so a recovered Goal eventually
+  becomes completed or a truthful terminal failure rather than accumulating
+  a row per retry. The event and retry-at retain the operational evidence."
+  [run-id bot error]
+  (let [job (goal-job run-id)
+        attempt (long (or (:job/attempt job) 0))
+        error-type (:type (ex-data error))
+        at (store/now)
+        retry-at (provider-retry-at attempt)
+        summary (str "モデル実行先が一時的に利用できないため、進捗を保存しました。"
+                     "再開予定: " retry-at)]
+    (transition-goal-run! run-id :checkpointed
+                          {:agent.run/checkpoint-reason error-type})
+    (update-goal-job! run-id assoc :job/retry-at retry-at)
+    (record-turn! bot run-id
+                  {:turn/state :checkpointed
+                   :turn/phase :checkpointed
+                   :turn/checkpoint-reason error-type
+                   :turn/result summary
+                   :turn/error-type nil
+                   :turn/error-status nil
+                   :turn/error-message nil
+                   :turn/updated-at at
+                   :turn/finished-at at})
+    (append-goal-event! run-id :run/checkpointed
+                        {:reason error-type
+                         :retry-at retry-at
+                         :attempt attempt
+                         :message (error-message error)})
+    true))
 
 (defn- run-goal-job! [configuration run-id]
   (let [{:job/keys [bot session objective attempt] :as job} (goal-job run-id)
@@ -4441,6 +5866,7 @@
       (transition-goal-run! run-id :running {})
       (append-goal-event! run-id :run/started {:attempt (inc (long (or attempt 0)))})
       (update-goal-job! run-id update :job/attempt (fnil inc 0))
+      (update-goal-job! run-id dissoc :job/retry-at)
       (binding [*goal-event!* #(append-goal-event! run-id %1 %2)]
         (if (zero? (long (or attempt 0)))
           ;; A detached Goal has no delta consumer. Passing a pretend callback
@@ -4466,25 +5892,40 @@
                         configuration run-id
                         {:reason :blocked
                          :detail (first (:evidence (latest-turn session bot)))}))
-            (transition-goal-run! run-id (goal-run-status state resident?)
-                                  {:agent.run/result state
-                                   :agent.run/finished-at (now-ms)}))))
+            (do (transition-goal-run! run-id (goal-run-status state resident?)
+                                      {:agent.run/result state
+                                       :agent.run/finished-at (now-ms)})
+                ;; Terminal either way: a run that changed something returns to
+                ;; the floor, one that never executed backs off only to the
+                ;; retry ceiling. The core, not this call site, knows which.
+                (adjust-workforce-cadence! run-id)))))
       (catch Exception error
-        ;; `:provider/timeout` is deliberately NOT here. The other two mean the
-        ;; provider answered and had nothing to add, so the host's own receipts
-        ;; settle what happened. A timeout means the tick never found out --
-        ;; recording it as a completed no-op would claim the Bot looked and saw
-        ;; nothing, which it did not. It fails and runs again at its cadence.
-        (when-not (and (contains? #{:provider/empty-response :provider/http-error}
-                                  (:type (ex-data error)))
-                       (complete-resident-no-op!
-                        configuration run-id
-                        {:reason (:type (ex-data error))
-                         :status (:status (ex-data error))}))
-          (let [error-type (or (:type (ex-data error)) :internal-error)
-                error-status (:status (ex-data error))
-                status (get-in (goal-job run-id) [:job/run :agent.run/status])]
-            (when (contains? #{:leased :running :checkpointed} status)
+        ;; Empty/HTTP responses after read-only work retain the bounded safe
+        ;; no-op path. A timeout or double-route outage never becomes a no-op:
+        ;; the Goal checkpoints because the model did not settle the work.
+        (let [error-type (or (:type (ex-data error)) :internal-error)
+              error-status (:status (ex-data error))
+              job (goal-job run-id)
+              status (get-in job [:job/run :agent.run/status])
+              resident? (:job/resident-workforce? job)
+              attempt (long (or (:job/attempt job) 0))]
+          (cond
+            (and (contains? #{:provider/empty-response :provider/http-error}
+                            error-type)
+                 (complete-resident-no-op!
+                  configuration run-id
+                  {:reason error-type :status error-status}))
+            nil
+
+            (and resident?
+                 (contains? checkpointable-provider-errors error-type)
+                 (< attempt max-goal-continuations)
+                 (contains? #{:leased :running :checkpointed} status))
+            (checkpoint-provider-error! run-id bot error)
+
+            :else
+            (do
+              (when (contains? #{:leased :running :checkpointed} status)
               ;; The message goes on the RUN as well as the turn. These are two
               ;; projections of one execution -- the comment below says so --
               ;; and only one of them was carrying the why. Measured 2026-08-21:
@@ -4498,29 +5939,31 @@
                                     {:agent.run/error-type error-type
                                      :agent.run/error-message (error-message error)
                                      :agent.run/finished-at (now-ms)}))
-            ;; The AgentRun and the human-facing turn are two projections of
-            ;; one execution. A resumed Goal used to fail only the AgentRun,
-            ;; leaving Bots UI permanently at running/resuming after the
-            ;; worker had already stopped. Close both in the same catch path.
-            (record-turn! bot run-id
-                          {:turn/state :failed :turn/phase :failed
-                           :turn/finished-at (store/now)
-                           :turn/error-type error-type
-                           :turn/error-status error-status
-                           :turn/error-message (error-message error)}))
-          (append-goal-event! run-id :run/failed
-                              {:error-type (or (:type (ex-data error)) :internal-error)
-                               :error-status (:status (ex-data error))
-                               :message (.getMessage error)
-                               ;; The class, because the message can be nil and
-                               ;; then nothing identifies what failed. Measured
-                               ;; 2026-08-19: four resident runs recorded
-                               ;; `:internal-error` with a nil message and no
-                               ;; other trace, and there is no way to find out
-                               ;; now what threw. An unclassified failure is
-                               ;; the one case where the type is all a reader
-                               ;; has, so it is the one case it must be kept.
-                               :cause-class (.getName (class error))})))
+              ;; The AgentRun and the human-facing turn are two projections of
+              ;; one execution. A resumed Goal used to fail only the AgentRun,
+              ;; leaving Bots UI permanently at running/resuming after the
+              ;; worker had already stopped. Close both in the same catch path.
+              (record-turn! bot run-id
+                            (failed-goal-turn
+                             (get-in (snapshot) [:runs bot])
+                             {:error-type error-type
+                              :error-status error-status
+                              :error-message (error-message error)
+                              :tool (:tool-name (ex-data error))
+                              :at (store/now)}))
+              (append-goal-event! run-id :run/failed
+                                  {:error-type error-type
+                                   :error-status error-status
+                                   :message (.getMessage error)
+                                   ;; The class, because the message can be nil and
+                                   ;; then nothing identifies what failed. Measured
+                                   ;; 2026-08-19: four resident runs recorded
+                                   ;; `:internal-error` with a nil message and no
+                                   ;; other trace, and there is no way to find out
+                                   ;; now what threw. An unclassified failure is
+                                   ;; the one case where the type is all a reader
+                                   ;; has, so it is the one case it must be kept.
+                                   :cause-class (.getName (class error))})))))
       (finally
         (swap! goal-workers dissoc run-id)
         ;; A resident recovery queue is durable rather than submitted wholesale
@@ -4557,6 +6000,7 @@
   [configuration]
   (locking goal-workers
     (let [partition (snapshot)
+          now (store/now)
           jobs (:goal-jobs partition)
           max-active (max 0 (long (or (get-in configuration
                                              [:bots :workforce
@@ -4571,6 +6015,7 @@
                       (filter :job/resident-workforce?)
                       (filter #(contains? #{:queued :checkpointed}
                                           (get-in % [:job/run :agent.run/status])))
+                      (filter #(provider-retry-due? % now))
                       (remove #(contains? @goal-workers (:job/id %)))
                       (sort-by (juxt :job/created-at :job/id))
                       (take available)
@@ -4689,21 +6134,462 @@
            "repository-wide search first. Reproduce this exact tool, then repair or verify it."))))
 
 (defn- workforce-goal [b job]
-  (let [{:keys [context-id outcome summary]}
-        (:workforce.job/continuation job)]
+  (cond
+    (git-hygiene-relief-bot? b)
     (str "Resident job: " (get-in b [:bot/business :name])
          " / " (get-in b [:bot/role :name]) "\n"
-         "Task: " (:workforce.job/objective job) "\n\n"
+         "Task: keep git bookkeeping across the west workspace from accumulating.\n\n"
          "Contract:\n"
-         "- Advance one verified step using admitted repository evidence.\n"
-         "- Reuse recorded evidence; do not repeat discovery.\n"
-         "- Separate observed facts from proposals; external effects require their grant.\n"
-         "- If blocked, name one exact prerequisite once and stop."
-         (capability-repair-context b job)
-         (when context-id
-           (str "\n\nContinuation: {:parent-context \"" context-id
-                "\" :outcome " (pr-str outcome)
-                " :summary " (pr-str (compact-line summary)) "}")))))
+         "- Call git_hygiene_status exactly once.\n"
+         "- If stale worktree registrations remain, call git_hygiene_prune exactly "
+         "once; if there are none, do not call prune.\n"
+         "- Report interrupted merges, stashes and remaining stale registrations "
+         "as findings for the human runbook. Do not attempt to resolve them.\n"
+         "- Never drop a stash, delete a branch, discard uncommitted work, or push.\n"
+         "- Stop after this single bounded maintenance decision.")
+
+    (disk-pressure-relief-bot? b)
+    (str "Resident job: " (get-in b [:bot/business :name])
+         " / " (get-in b [:bot/role :name]) "\n"
+         "Task: maintain the host's bounded regenerable disk space.\n\n"
+         "Contract:\n"
+         "- Call disk_space_status exactly once.\n"
+         "- If pressure is true, call disk_space_cleanup exactly once; "
+         "if pressure is false, do not call cleanup.\n"
+         (when (disk-candidate-relief-bot? b)
+           (str "- If pressure remains after cleanup, call disk_space_inventory exactly once.\n"
+                "- Reclaim only the bounded reclaimable candidate_ids returned by that "
+                "inventory; never supply a path.\n"
+                "- Observe two settled capacity readings and report whether pressure remains.\n"))
+         "- Report the observed status and compact receipts, including bytes reclaimed.\n"
+         "- Do not inspect or modify repositories, worktrees, user data, or any other surface.\n"
+         "- Stop after this single bounded maintenance decision.")
+
+    :else
+    (let [{:keys [context-id outcome summary]}
+          (:workforce.job/continuation job)]
+      (str "Resident job: " (get-in b [:bot/business :name])
+           " / " (get-in b [:bot/role :name]) "\n"
+           "Task: " (:workforce.job/objective job) "\n\n"
+           "Contract:\n"
+           "- Advance one verified step using admitted repository evidence.\n"
+           "- Reuse recorded evidence; do not repeat discovery.\n"
+           "- Separate observed facts from proposals; external effects require their grant.\n"
+           "- If blocked, name one exact prerequisite once and stop."
+           (capability-repair-context b job)
+           (when context-id
+             (str "\n\nContinuation: {:parent-context \"" context-id
+                  "\" :outcome " (pr-str outcome)
+                  " :summary " (pr-str (compact-line summary)) "}"))))))
+
+(defn- disk-pressure-relief-job? [job]
+  (boolean
+   (some-> job :workforce.job/bot bot-by-id disk-pressure-relief-bot?)))
+
+(defn- git-hygiene-relief-job? [job]
+  (boolean
+   (some-> job :workforce.job/bot bot-by-id git-hygiene-relief-bot?)))
+
+(defn- domain-steward-job? [job]
+  (boolean
+   (some-> job :workforce.job/bot bot-by-id domain-steward-bot?)))
+
+(defn- compact-disk-maintenance-receipt [receipt]
+  (cond-> (select-keys receipt [:schema :action :reason :before :after
+                                :reclaimed-bytes :inventory
+                                :selected-candidate-ids :review-required
+                                :stable-observation])
+    (:helper receipt)
+    (assoc :helper (select-keys (:helper receipt) [:exit :truncated?]))
+
+    (:fixed-cleanup receipt)
+    (assoc :fixed-cleanup
+           (compact-disk-maintenance-receipt (:fixed-cleanup receipt)))
+
+    (:candidate-reclaim receipt)
+    (assoc :candidate-reclaim
+           (select-keys (:candidate-reclaim receipt)
+                        [:schema :action :reason :before :after
+                         :requested-candidate-ids :reclaimed-candidate-ids
+                         :reclaimed-bytes]))))
+
+(defn- disk-maintenance-summary [receipt]
+  (let [before (get-in receipt [:before :usable-bytes])
+        after (get-in receipt [:after :usable-bytes])
+        reclaimed (long (or (:reclaimed-bytes receipt) 0))]
+    (str "Disk maintenance completed by the bounded resident capability.\n"
+         "- action: " (:action receipt) "\n"
+         "- before usable bytes: " before "\n"
+         "- after usable bytes: " after "\n"
+         "- reclaimed bytes: " reclaimed "\n"
+         "- pressure after: " (boolean (get-in receipt [:after :pressure?])) "\n"
+         (when (:inventory receipt)
+           (str "- reclaimable candidate bytes: "
+                (long (or (get-in receipt [:inventory :reclaimable-bytes]) 0)) "\n"
+                "- review-required candidates: "
+                (count (:review-required receipt)) "\n"
+                "- review-required bytes: "
+                (long (or (get-in receipt [:inventory :review-required-bytes]) 0)) "\n"
+                "- stable observation: "
+                (boolean (get-in receipt [:stable-observation :stable?])) "\n"))
+         "Repositories, worktrees, sessions, user data and other preserved "
+         "classes were not targets.")))
+
+(defn- run-disk-maintenance!
+  "Execute the Disk Maintainer's reviewed capabilities without inference.
+
+  Disk cleanup is the recovery path for the durable store itself. Routing it
+  through a model provider made provider saturation capable of preventing the
+  recovery indefinitely. The Bot identity, capability gate, cadence, run
+  ledger and transcript remain; only the nondeterministic planner is absent
+  from this fixed status-then-maybe-cleanup contract."
+  [session b job run-id]
+  (let [objective (workforce-goal b job)
+        at (store/now)
+        started-ms (now-ms)
+        queued (agent-run/agent-run {:id run-id :goal objective} started-ms)
+        stored-job {:job/id run-id
+                    :job/bot (:bot/id b)
+                    :job/session (select-keys session
+                                              [:user-id :organization-id :kind])
+                    :job/objective objective
+                    :job/run queued
+                    :job/plan []
+                    :job/decision-frame nil
+                    :job/events []
+                    :job/resident-workforce? true
+                    :job/attempt 1
+                    :job/created-at at
+                    :job/updated-at at}]
+    (transact! assoc-in [:goal-jobs run-id] stored-job)
+    (transition-goal-run! run-id :leased {})
+    (transition-goal-run! run-id :running {})
+    (append-goal-event! run-id :run/started
+                        {:attempt 1 :execution :deterministic-disk-maintenance})
+    (record-turn! (:bot/id b) run-id
+                  {:turn/state :running :turn/phase :tool
+                   :turn/goal? true :turn/objective objective
+                   :turn/tool "disk_space_status"})
+    (try
+      (let [before (disk-space/call! "disk_space_status")
+            receipt (if (:pressure? before)
+                      (if (disk-candidate-relief-bot? b)
+                        (disk-space/reconcile! before)
+                        (disk-space/maintain! before))
+                      {:schema "cloud.itonami.app.disk-space-maintenance.v1"
+                       :action "none"
+                       :reason "above-threshold"
+                       :before before
+                       :after before})
+            compact (compact-disk-maintenance-receipt receipt)
+            cleanup? (contains? #{"cleanup" "cleanup-and-reclaim"} (:action receipt))
+            inventory? (some? (:inventory receipt))
+            reclaim? (some? (:candidate-reclaim receipt))
+            tool-count (+ 1 (if cleanup? 1 0) (if inventory? 1 0) (if reclaim? 1 0))
+            summary (disk-maintenance-summary receipt)
+            evidence [(str "disk_space_status usable-bytes="
+                           (:usable-bytes before))
+                      (str (if cleanup? "disk_space_cleanup" "cleanup-skipped")
+                           " action=" (:action receipt)
+                           " reclaimed-bytes=" (long (or (:reclaimed-bytes receipt) 0)))
+                      (when inventory?
+                        (str "disk_space_inventory candidates="
+                             (long (or (get-in receipt [:inventory :candidate-count]) 0))))
+                      (when reclaim?
+                        (str "disk_space_reclaim candidates="
+                             (count (get-in receipt
+                                            [:candidate-reclaim :reclaimed-candidate-ids]))))]
+            evidence (vec (remove nil? evidence))
+            finished-at (store/now)]
+        (append-goal-event! run-id :disk/maintenance compact)
+        (transition-goal-run! run-id :succeeded
+                              {:agent.run/result compact
+                               :agent.run/finished-at (now-ms)})
+        (record-turn! (:bot/id b) run-id
+                      {:turn/state :completed :turn/phase :completed
+                       :turn/goal? true :turn/objective objective
+                       :turn/tool (cond reclaim? "disk_space_reclaim"
+                                        inventory? "disk_space_inventory"
+                                        cleanup? "disk_space_cleanup"
+                                        :else "disk_space_status")
+                       :turn/tool-count tool-count
+                       :turn/result summary
+                       :turn/evidence evidence
+                       :turn/finished-at finished-at})
+        (binding [*message-source* :resident]
+          (say (:bot/id b) summary nil))
+        compact)
+      (catch Exception error
+        (let [error-type (or (:type (ex-data error)) :internal-error)
+              finished-at (store/now)]
+          (transition-goal-run! run-id :failed
+                                {:agent.run/error-type error-type
+                                 :agent.run/error-message (error-message error)
+                                 :agent.run/finished-at (now-ms)})
+          (append-goal-event! run-id :run/failed
+                              {:error-type error-type
+                               :message (error-message error)})
+          (record-turn! (:bot/id b) run-id
+                        {:turn/state :failed :turn/phase :failed
+                         :turn/goal? true :turn/objective objective
+                         :turn/tool "disk_space_cleanup"
+                         :turn/error-type error-type
+                         :turn/error-message (error-message error)
+                         :turn/finished-at finished-at})
+          (throw error))))))
+
+(defn- response-items [response]
+  (let [result (:result response)]
+    (cond
+      (sequential? result) (vec result)
+      (sequential? (:registrations result)) (vec (:registrations result))
+      (sequential? (:domains result)) (vec (:domains result))
+      :else [])))
+
+(defn- auto-renew-off? [registration]
+  (or (false? (:auto_renew registration))
+      (false? (:auto-renew registration))))
+
+(defn- registration-name [registration]
+  (or (:name registration) (:domain registration) (:id registration) "unknown"))
+
+(defn- proposal-status [proposal]
+  (some-> proposal :status name keyword))
+
+(defn- run-domain-steward!
+  "Run the provider-independent minimum Domain operation.
+
+  The fixed cycle observes registrations and proposals, then commits at most
+  one proposal whose durable status is already `:approved`. It never searches,
+  invents a domain, or creates a proposal. `domain_commit` still re-enters
+  authority.api, so Passkey approval and the actor's current provider checks
+  remain the only mutation path."
+  [configuration session b job run-id]
+  (let [objective (workforce-goal b job)
+        at (store/now)
+        started-ms (now-ms)
+        queued (agent-run/agent-run {:id run-id :goal objective} started-ms)
+        stored-job {:job/id run-id
+                    :job/bot (:bot/id b)
+                    :job/session (select-keys session
+                                              [:user-id :organization-id :kind])
+                    :job/objective objective
+                    :job/run queued
+                    :job/plan []
+                    :job/decision-frame nil
+                    :job/events []
+                    :job/resident-workforce? true
+                    :job/attempt 1
+                    :job/created-at at
+                    :job/updated-at at}]
+    (transact! assoc-in [:goal-jobs run-id] stored-job)
+    (transition-goal-run! run-id :leased {})
+    (transition-goal-run! run-id :running {})
+    (append-goal-event! run-id :run/started
+                        {:attempt 1 :execution :deterministic-domain-steward})
+    (record-turn! (:bot/id b) run-id
+                  {:turn/state :running :turn/phase :tool
+                   :turn/goal? true :turn/objective objective
+                   :turn/tool "domain_registrations"})
+    (try
+      (let [registrations-response
+            (domain-tools/call-tool configuration "domain_registrations" {})
+            proposals-response
+            (domain-tools/call-tool configuration "domain_proposals" {})
+            registrations (response-items registrations-response)
+            proposals (vec (:proposals proposals-response))
+            approved (first (filter #(= :approved (proposal-status %))
+                                    proposals))
+            commit (when approved
+                     (domain-tools/call-tool configuration "domain_commit"
+                                            {:proposal_id (:id approved)}))
+            renewal-risk (mapv registration-name
+                               (filter auto-renew-off? registrations))
+            receipt {:schema "cloud.itonami.app.domain-steward.v1"
+                     :registrations-count (count registrations)
+                     :proposal-count (count proposals)
+                     :awaiting-passkey-count
+                     (count (filter #(= :awaiting-passkey (proposal-status %))
+                                    proposals))
+                     :renewal-risk renewal-risk
+                     :committed-proposal (some-> approved :id)
+                     :commit-status (:status commit)}
+            summary (str "Domain Steward completed the provider-independent cycle.\n"
+                         "- registrations observed: " (count registrations) "\n"
+                         "- proposals observed: " (count proposals) "\n"
+                         "- awaiting Passkey: " (:awaiting-passkey-count receipt) "\n"
+                         "- auto-renew off: " (if (seq renewal-risk)
+                                                  (str/join ", " renewal-risk)
+                                                  "none observed") "\n"
+                         "- approved proposal committed: "
+                         (or (:id approved) "none") "\n"
+                         "No domain search or proposal creation ran.")
+            tool-count (if approved 3 2)
+            finished-at (store/now)]
+        (append-goal-event! run-id :domain/steward-cycle receipt)
+        (transition-goal-run! run-id :succeeded
+                              {:agent.run/result receipt
+                               :agent.run/finished-at (now-ms)})
+        (record-turn! (:bot/id b) run-id
+                      {:turn/state :completed :turn/phase :completed
+                       :turn/goal? true :turn/objective objective
+                       :turn/tool (if approved "domain_commit" "domain_proposals")
+                       :turn/tool-count tool-count
+                       :turn/result summary
+                       :turn/evidence
+                       [(str "domain_registrations count=" (count registrations))
+                        (str "domain_proposals count=" (count proposals))
+                        (str "approved-commit=" (or (:id approved) "none"))]
+                       :turn/finished-at finished-at})
+        (binding [*message-source* :resident]
+          (say (:bot/id b) summary nil))
+        receipt)
+      (catch Exception error
+        (let [error-type (or (:type (ex-data error)) :internal-error)
+              finished-at (store/now)]
+          (transition-goal-run! run-id :failed
+                                {:agent.run/error-type error-type
+                                 :agent.run/error-message (error-message error)
+                                 :agent.run/finished-at (now-ms)})
+          (append-goal-event! run-id :run/failed
+                              {:error-type error-type
+                               :message (error-message error)})
+          (record-turn! (:bot/id b) run-id
+                        {:turn/state :failed :turn/phase :failed
+                         :turn/goal? true :turn/objective objective
+                         :turn/tool "domain_registrations"
+                         :turn/error-type error-type
+                         :turn/error-message (error-message error)
+                         :turn/finished-at finished-at})
+          (throw error))))))
+
+(defn- compact-git-hygiene-receipt [receipt]
+  (let [trim (fn [report]
+               (select-keys report [:schema :listed :scanned :unreadable
+                                    :interrupted-repos :stash-repos :stashes
+                                    :worktrees-live :worktrees-locked
+                                    :stale-worktree-repos :stale-worktrees
+                                    :findings :findings-truncated?]))]
+    (cond-> (select-keys receipt [:schema :action :reason :attempted :limit
+                                  :pruned :remaining-repos])
+      (:before receipt) (assoc :before (trim (:before receipt)))
+      (:after receipt) (assoc :after (trim (:after receipt)))
+      (seq (:failed receipt)) (assoc :failed (:failed receipt)))))
+
+(defn- git-hygiene-summary [receipt]
+  (let [before (:before receipt)
+        after (:after receipt)]
+    (str "Git hygiene pass completed by the bounded resident capability.\n"
+         "- action: " (:action receipt) "\n"
+         "- registry: " (:scanned before) " of " (:listed before)
+         " registered checkouts readable\n"
+         "- stale worktree registrations: " (:stale-worktrees before)
+         " -> " (:stale-worktrees after) "\n"
+         "- registrations pruned: " (long (or (:pruned receipt) 0)) "\n"
+         "- repositories left with stale registrations: "
+         (:stale-worktree-repos after) "\n"
+         "Reported, not acted on (the runbook requires a person): "
+         (:interrupted-repos after) " with an interrupted merge or rebase, "
+         (:stash-repos after) " holding " (:stashes after) " stashes.\n"
+         "Live worktrees (" (:worktrees-live after) "), stashes, branches, "
+         "uncommitted changes and remotes were not targets, and nothing was pushed.")))
+
+(defn- run-git-hygiene!
+  "Execute the Git Maintainer's two reviewed capabilities without inference.
+
+  Deterministic for the same reason disk maintenance is: measured over the
+  fifty resident runs before this landed, forty-five ended in
+  `:provider/http-error`. A pass whose whole content is `status` then, if the
+  count is non-zero, `prune`, does not need a planner -- and routing it
+  through one would make a provider outage able to stop the cleanup
+  indefinitely. The Bot identity, capability gate, cadence, run ledger and
+  transcript are unchanged; only the nondeterministic planner is absent."
+  [session b job run-id]
+  (let [objective (workforce-goal b job)
+        at (store/now)
+        started-ms (now-ms)
+        queued (agent-run/agent-run {:id run-id :goal objective} started-ms)
+        stored-job {:job/id run-id
+                    :job/bot (:bot/id b)
+                    :job/session (select-keys session
+                                              [:user-id :organization-id :kind])
+                    :job/objective objective
+                    :job/run queued
+                    :job/plan []
+                    :job/decision-frame nil
+                    :job/events []
+                    :job/resident-workforce? true
+                    :job/attempt 1
+                    :job/created-at at
+                    :job/updated-at at}]
+    (transact! assoc-in [:goal-jobs run-id] stored-job)
+    (transition-goal-run! run-id :leased {})
+    (transition-goal-run! run-id :running {})
+    (append-goal-event! run-id :run/started
+                        {:attempt 1 :execution :deterministic-git-hygiene})
+    (record-turn! (:bot/id b) run-id
+                  {:turn/state :running :turn/phase :tool
+                   :turn/goal? true :turn/objective objective
+                   :turn/tool "git_hygiene_status"})
+    (try
+      (let [before (git-hygiene/call! "git_hygiene_status")
+            receipt (if (:prunable? before)
+                      (git-hygiene/maintain! (git-hygiene/workspace-root) {})
+                      {:schema "cloud.itonami.app.git-hygiene-maintenance.v1"
+                       :action "none"
+                       :reason "no-stale-worktree-registrations"
+                       :before before
+                       :after before
+                       :pruned 0
+                       :repos []})
+            compact (compact-git-hygiene-receipt receipt)
+            pruned? (= "prune" (:action receipt))
+            tool-count (if pruned? 2 1)
+            summary (git-hygiene-summary receipt)
+            evidence [(str "git_hygiene_status scanned=" (:scanned before)
+                           "/" (:listed before)
+                           " stale-worktrees=" (:stale-worktrees before)
+                           " interrupted-repos=" (:interrupted-repos before)
+                           " stash-repos=" (:stash-repos before))
+                      (str (if pruned? "git_hygiene_prune" "prune-skipped")
+                           " action=" (:action receipt)
+                           " pruned=" (long (or (:pruned receipt) 0)))]
+            finished-at (store/now)]
+        (append-goal-event! run-id :git/hygiene compact)
+        (transition-goal-run! run-id :succeeded
+                              {:agent.run/result compact
+                               :agent.run/finished-at (now-ms)})
+        (record-turn! (:bot/id b) run-id
+                      {:turn/state :completed :turn/phase :completed
+                       :turn/goal? true :turn/objective objective
+                       :turn/tool (if pruned?
+                                    "git_hygiene_prune"
+                                    "git_hygiene_status")
+                       :turn/tool-count tool-count
+                       :turn/result summary
+                       :turn/evidence evidence
+                       :turn/finished-at finished-at})
+        (binding [*message-source* :resident]
+          (say (:bot/id b) summary nil))
+        compact)
+      (catch Exception error
+        (let [error-type (or (:type (ex-data error)) :internal-error)
+              finished-at (store/now)]
+          (transition-goal-run! run-id :failed
+                                {:agent.run/error-type error-type
+                                 :agent.run/error-message (error-message error)
+                                 :agent.run/finished-at (now-ms)})
+          (append-goal-event! run-id :run/failed
+                              {:error-type error-type
+                               :message (error-message error)})
+          (record-turn! (:bot/id b) run-id
+                        {:turn/state :failed :turn/phase :failed
+                         :turn/goal? true :turn/objective objective
+                         :turn/tool "git_hygiene_status"
+                         :turn/error-type error-type
+                         :turn/error-message (error-message error)
+                         :turn/finished-at finished-at})
+          (throw error))))))
 
 (defn fire-due-workforce!
   "Start a bounded number of due startup jobs for one person's live sessions.
@@ -4751,36 +6637,76 @@
                                                 [:bots :workforce
                                                  :max-starts-per-tick])
                                          1)))
-        limit (min starts-per-tick available)
-        jobs (->> owned-jobs
-                  (filter #(workforce-job-due? % now))
-                  (map #(assoc % :workforce.job/continuation
-                               (workforce-continuation
-                                workforce-state
-                                (:workforce.job/bot %)
-                                %)))
-                  ;; A repair incident is a current host defect, not another
-                  ;; ordinary cadence.  Sorting only by `next-run-at` left a
-                  ;; freshly woken Engineer/QA pair behind the resident
-                  ;; backlog, so the monitor could report a repair and then
-                  ;; starve it indefinitely.  Priority changes ordering only;
-                  ;; the same owner, tenant, slot and authority gates remain.
-                  (sort-by (juxt #(if (= :capability-repair
-                                         (:workforce.job/trigger %))
-                                   0 1)
-                                 :workforce.job/next-run-at
-                                 :workforce.job/key)))
-        jobs (if disk-pressure [] jobs)]
+        due-jobs (->> owned-jobs
+                      (filter #(workforce-job-due? % now))
+                      (map #(assoc % :workforce.job/continuation
+                                   (workforce-continuation
+                                    workforce-state
+                                    (:workforce.job/bot %)
+                                    %)))
+                      ;; Disk relief must precede even capability repair: at
+                      ;; the hard floor no ordinary turn can durably record a
+                      ;; repair.  Outside pressure this only changes ordering;
+                      ;; the same owner, tenant, slot and authority gates hold.
+                      (sort-by (juxt #(cond
+                                       (disk-pressure-relief-job? %) 0
+                                       (domain-steward-job? %) 1
+                                       (= :capability-repair
+                                          (:workforce.job/trigger %)) 2
+                                       :else 3)
+                                     ;; A newly provisioned Bot must get one
+                                     ;; observed turn before failed retries
+                                     ;; consume the queue again.  Measured
+                                     ;; 2026-08-30: ten jobs had never been
+                                     ;; submitted (eight belonged to the new
+                                     ;; Numbering business), while an older
+                                     ;; provider-failure backlog was retried
+                                     ;; ahead of them once per minute.  Sorting
+                                     ;; by due time alone made installing a
+                                     ;; workforce indistinguishable from a
+                                     ;; scheduler that never started it.
+                                     #(if (:workforce.job/last-submitted-at %) 1 0)
+                                     :workforce.job/next-run-at
+                                     :workforce.job/key)))
+        ;; The disk floor still refuses every ordinary resident job.  The one
+        ;; exception is a due identity carrying BOTH reviewed autonomous disk
+        ;; capabilities; it is the only job able to relieve the refusal.
+        jobs (if disk-pressure
+               (filter disk-pressure-relief-job? due-jobs)
+               due-jobs)
+        ;; A wedged or recovering ordinary run must not make the condition
+        ;; that threatens its own durable store impossible to relieve.  When
+        ;; the normal budget is completely occupied, reserve exactly one start
+        ;; for the already-confined disk identity.  This never widens an
+        ;; ordinary job, never defeats max-active=0, and never creates more
+        ;; than one maintenance start in this tick.
+        maintenance-reserve?
+        (and (pos? max-active)
+             (zero? available)
+             (some disk-pressure-relief-job? jobs))
+        ;; The Domain Steward's fixed cycle never enters inference. A wedged
+        ;; or unavailable model therefore must not consume its capacity. Keep
+        ;; one bounded start for that already-confined identity, just as disk
+        ;; maintenance has a reserve for a different host-owned necessity.
+        domain-steward-reserve?
+        (and (pos? max-active)
+             (zero? available)
+             (some domain-steward-job? jobs))
+        effective-available (if (or maintenance-reserve?
+                                    domain-steward-reserve?)
+                              1
+                              available)
+        limit (min starts-per-tick effective-available)]
     (loop [remaining jobs
            result {:started []
                    :skipped (cond
-                              disk-pressure
+                              (and disk-pressure (empty? jobs))
                               [{:reason :disk-pressure
                                 :usable-bytes (:usable-bytes disk-pressure)
                                 :hard-floor-bytes
                                 (:hard-floor-bytes disk-pressure)}]
 
-                              (and (seq jobs) (zero? available))
+                              (and (seq jobs) (zero? effective-available))
                               [{:reason :workforce-capacity
                                 :active active
                                 :limit max-active}]
@@ -4809,25 +6735,41 @@
                           cadence (:workforce.job/cadence-minutes job)
                           next-at (str (.plusSeconds (java.time.Instant/parse now)
                                                      (* 60 cadence)))]
-                      (submit-goal!
-                       configuration
-                       (get by-organization (:workforce.job/organization job))
-                       bot-id
-                       (workforce-goal b job) run-id
-                       {:max-tool-calls
-                        (max 1 (long (or (get-in configuration
-                                               [:bots :workforce :max-tool-calls])
-                                         4)))
-                       :max-tool-output-chars
-                        (max 1 (long (or (get-in configuration
-                                               [:bots :workforce
-                                                :max-tool-output-chars])
-                                         1600)))
-                        :resident-workforce? true
-                        :parent-context-id
-                        (get-in job [:workforce.job/continuation :context-id])
-                        :continuation-summary
-                        (get-in job [:workforce.job/continuation :summary])})
+                      (if (git-hygiene-relief-job? job)
+                        (run-git-hygiene!
+                         (get by-organization
+                              (:workforce.job/organization job))
+                         b job run-id)
+                       (if (disk-pressure-relief-job? job)
+                        (run-disk-maintenance!
+                         (get by-organization
+                              (:workforce.job/organization job))
+                         b job run-id)
+                        (if (domain-steward-job? job)
+                          (run-domain-steward!
+                           configuration
+                           (get by-organization
+                                (:workforce.job/organization job))
+                           b job run-id)
+                          (submit-goal!
+                           configuration
+                           (get by-organization (:workforce.job/organization job))
+                           bot-id
+                           (workforce-goal b job) run-id
+                           {:max-tool-calls
+                            (max 1 (long (or (get-in configuration
+                                                   [:bots :workforce :max-tool-calls])
+                                             4)))
+                           :max-tool-output-chars
+                            (max 1 (long (or (get-in configuration
+                                                   [:bots :workforce
+                                                    :max-tool-output-chars])
+                                             1600)))
+                            :resident-workforce? true
+                            :parent-context-id
+                            (get-in job [:workforce.job/continuation :context-id])
+                            :continuation-summary
+                            (get-in job [:workforce.job/continuation :summary])}))))
                       (transact! update-in [:workforce-jobs bot-id]
                                  (fn [stored-job]
                                    (-> stored-job
@@ -4989,10 +6931,14 @@
                          (let [output (run-tool! configuration b (:selection run)
                                                  (:name call) (:input call))]
                            (goal-event! :action/finished
-                                        {:action/id (:id call) :tool (:name call)
-                                         :step-id (current-plan-step-id run)
-                                         :duration-ms (- (now-ms) started)
-                                         :output-sha256 (receipt-sha256 (:text output))})
+                                        (cond-> {:action/id (:id call)
+                                                 :tool (:name call)
+                                                 :step-id (current-plan-step-id run)
+                                                 :duration-ms (- (now-ms) started)
+                                                 :output-sha256 (receipt-sha256
+                                                                 (:text output))}
+                                          (seq (:artifacts output))
+                                          (assoc :artifacts (vec (:artifacts output)))))
                            output))
               output (if goal?
                        (binding [*goal-event!*
@@ -5293,12 +7239,12 @@
      (-> state
          (assoc-in [:routines routine-id :routine/last-run-at] started-at)
          (update-in [:routines routine-id :routine/runs]
-                    #(vec (take-last max-routine-runs
-                                     (conj (vec %)
-                                           {:routine.run/id run-id
-                                            :routine.run/source source
-                                            :routine.run/state :running
-                                            :routine.run/started-at started-at})))))))
+                    #(store-core/append-bounded
+                      % {:routine.run/id run-id
+                         :routine.run/source source
+                         :routine.run/state :running
+                         :routine.run/started-at started-at}
+                      max-routine-runs)))))
   (append! (:bot/id b) (bot/message {:id (new-id "msg") :bot (:bot/id b)
                                      :role :person
                                      :text (routine-prompt r)
@@ -5440,7 +7386,7 @@
                         :handoff-id handoff-id :from-bot from-bot-id})
           started-at (store/now)]
       (transact! update-in [:handoffs to-bot-id]
-                 (fn [entries] (vec (take-last max-trace (conj (vec entries) h)))))
+                 #(store-core/append-bounded % h max-trace))
       (transact! assoc-in [:handoff-runs run-id]
                  {:handoff.run/id run-id :handoff.run/handoff handoff-id
                   :handoff.run/from from-bot-id :handoff.run/to to-bot-id
@@ -5589,20 +7535,26 @@
   OAuth token must not stop everybody else's schedules, and a timer that dies
   on the first failure is a scheduler that silently stops being one."
   [configuration now]
-  (mapv (fn [{:keys [session per-organization]}]
-          (try
-            (let [routines (fire-due! configuration session now)
-                  workforce (fire-due-workforce! configuration per-organization now)]
-              {:user (:user-id session)
-               :organizations (mapv :organization-id per-organization)
-               :started (:started routines) :skipped (:skipped routines)
-               :workforce-started (:started workforce)
-               :workforce-skipped (:skipped workforce)})
-            (catch Exception error
-              {:user (:user-id session) :started [] :skipped []
-               :workforce-started [] :workforce-skipped []
-               :error (.getMessage error)})))
-        (tick-people configuration)))
+  (let [result
+        (mapv (fn [{:keys [session per-organization]}]
+                (try
+                  (let [routines (fire-due! configuration session now)
+                        workforce (fire-due-workforce! configuration per-organization now)]
+                    {:user (:user-id session)
+                     :organizations (mapv :organization-id per-organization)
+                     :started (:started routines) :skipped (:skipped routines)
+                     :workforce-started (:started workforce)
+                     :workforce-skipped (:skipped workforce)})
+                  (catch Exception error
+                    {:user (:user-id session) :started [] :skipped []
+                     :workforce-started [] :workforce-skipped []
+                     :error (.getMessage error)})))
+              (tick-people configuration))]
+    ;; A provider checkpoint intentionally yields its slot until :job/retry-at.
+    ;; The periodic scheduler is the durable wake-up source: no sleeping worker
+    ;; holds a fleet slot, and a process restart can recover the same metadata.
+    (drain-goal-queue! configuration)
+    result))
 
 (defn start-tick!
   "Begin looking. Idempotent, and a no-op when the deployment turned it off."

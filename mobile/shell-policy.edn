@@ -1,0 +1,21 @@
+;; What the in-app native bridge may do, evaluated inside the app.
+;;
+;; Nothing. The surface this app ships today reads a public catalog over HTTPS
+;; and stores nothing, so it needs no clipboard, no app-data filesystem, no
+;; keychain, no notifications and not even the bridge's own `http/fetch` — an
+;; ordinary browser fetch reaches the edge, and routing it through a native
+;; provider would trade CORS for a grant that can reach ANY host: the policy
+;; names commands, not destinations (kotoba.shell.launcher/policy-decision).
+;;
+;; `:deny ["*"]` beside the empty allow list is not redundant. `policy-decision`
+;; already refuses what is not allowed, so this states the same thing a second
+;; way — and it is the state the native halves fall back to when the policy
+;; asset cannot be read at all, so an app whose asset is missing behaves like
+;; this one rather than differently from it.
+;;
+;; When a slice needs a capability, it is one string here plus the reason it is
+;; needed. Adding one is a decision; leaving one in after the need is gone is
+;; how a read-only app ends up holding a keychain.
+{:allow []
+ :deny ["*"]
+ :audit true}

@@ -50,6 +50,11 @@
         (is (= #{:dodaf/performer :dodaf/system}
                (:performer/dodaf-types performer)))
         (is (= :agent (get-in performer [:performer/actor :actor/kind])))))
+    (testing "sidebar presentation is the same kind of decoration"
+      (doseq [placed [(assoc plain :bot/section "営業")
+                      (assoc plain :bot/unread? true)
+                      (assoc plain :bot/hidden? true)]]
+        (is (= admitted (bot/admitted-tools placed catalog connected)))))
     (testing "there is no field to claim person authority through: kind and the
               DoDAF types are DERIVED, so a `:performer/kind` written onto the
               Bot is not read, and one written into the persona changes nothing
@@ -86,6 +91,28 @@
     (is (empty? (bot/admitted-tools plain catalog #{"com.google.gmail"}))
         "an autonomous job policy is not a connector or tool grant")))
 
+(deftest workforce-skill-is-bounded-evidence-not-authority
+  (let [skill {:id "itonami-bot-readiness"
+               :sha256 (apply str (repeat 64 "a"))
+               :instructions "Verify the actual resident run."}
+        plain (a-bot {:bot/skills [skill]})]
+    (is (= [skill] (:bot/skills plain)))
+    (is (empty? (bot/admitted-tools plain catalog #{"com.google.gmail"})))
+    (is (thrown-with-msg?
+         clojure.lang.ExceptionInfo #"invalid workforce Skill package"
+         (a-bot {:bot/skills [(assoc skill :sha256 "not-a-digest")]})))
+    (is (thrown-with-msg?
+         clojure.lang.ExceptionInfo #"duplicate workforce Skill package"
+         (a-bot {:bot/skills [skill skill]})))))
+
+(deftest bot-keeps-sidebar-presentation
+  (let [b (a-bot {:bot/section "営業" :bot/unread? true :bot/hidden? true})]
+    (is (= "営業" (:bot/section b)))
+    (is (true? (:bot/unread? b)))
+    (is (true? (:bot/hidden? b))))
+  (is (nil? (:bot/section (a-bot {:bot/section "   "})))
+      "a blank section is absence, not a folder named spaces"))
+
 (deftest a-bot-refuses-a-stored-status
   ;; Status is computed from what is outstanding. A stored one could disagree
   ;; with reality, and the disagreement would be invisible.
@@ -111,6 +138,13 @@
                           (a-bot {:bot/avatar {:color "chartreuse"}}))))
   (testing "an absent avatar is still the default — that IS a choice nobody made"
     (is (= bot/default-avatar (:bot/avatar (a-bot {}))))))
+
+(deftest sidebar-placement-is-persisted-as-presentation-state
+  (let [placed (a-bot {:bot/priority? true :bot/pinned? true})]
+    (is (true? (:bot/priority? placed)))
+    (is (true? (:bot/pinned? placed)))
+    (is (false? (:bot/priority? (a-bot {}))))
+    (is (false? (:bot/pinned? (a-bot {}))))))
 
 ;; ── 2. a grant narrows, never widens ────────────────────────────────────
 
@@ -281,3 +315,51 @@
     (is (not (contains? (set (map :template/id (bot/suggestions ["com.google.gmail"])))
                         :repo-watch)))
     (is (empty? (bot/suggestions [])))))
+
+;; ── what the Bot left behind ────────────────────────────────────────────
+;;
+;; Every other card asks the PERSON to act. This one reports that the Bot
+;; already did, and it exists because both write tools spent their structured
+;; facts on a sentence: `workspace_write_file` answered "wrote src/foo.clj
+;; (1234 bytes)" and `git_commit` answered "committed <sha>". Reading the path
+;; and the revision back out of those would be parsing our own print format.
+
+(deftest an-artifact-card-records-what-the-tool-already-knew
+  (testing "a file write"
+    (let [card (bot/artifact-card {:id "a-1" :kind :file
+                                   :path "src/cloud/itonami/app/core.clj"
+                                   :bytes 1234})]
+      (is (= :artifact (:card/kind card)))
+      (is (= :file (:card/artifact-kind card)))
+      (is (= "src/cloud/itonami/app/core.clj" (:card/path card)))
+      (is (= 1234 (:card/bytes card)))
+      (is (not (contains? card :card/revision))
+          "a file write has no revision, and an absent field must stay absent")))
+
+  (testing "a commit"
+    (let [card (bot/artifact-card {:id "a-2" :kind :commit
+                                   :revision "0f1e2d3c4b5a"
+                                   :message "Add the binding"
+                                   :paths ["a.clj" "b.clj"]})]
+      (is (= :commit (:card/artifact-kind card)))
+      (is (= "0f1e2d3c4b5a" (:card/revision card)))
+      (is (= ["a.clj" "b.clj"] (:card/paths card)))
+      (is (not (contains? card :card/bytes)))))
+
+  (testing "an empty path list is absent rather than empty"
+    ;; `git_commit` stages named paths and reports what it actually staged; a
+    ;; commit that staged nothing never gets here, and a card carrying `[]`
+    ;; would render an empty file list under a heading.
+    (is (not (contains? (bot/artifact-card {:id "a" :kind :commit :revision "x"})
+                        :card/paths))))
+
+  (testing "a kind nothing can produce is refused"
+    ;; `git_commit` never pushes, so no Bot on this surface can open a pull
+    ;; request. Accepting the kind would let a screen promise what no tool can
+    ;; deliver.
+    (doseq [kind [:pull-request :deploy nil "file"]]
+      (is (thrown? clojure.lang.ExceptionInfo
+                   (bot/artifact-card {:id "a" :kind kind :path "p"})))))
+
+  (testing "an artifact is a card kind like the others"
+    (is (contains? bot/card-kinds :artifact))))

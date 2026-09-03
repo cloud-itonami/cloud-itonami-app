@@ -1,0 +1,90 @@
+[{:db/id -1
+  :adr/id "adr-2608300100-a-failure-keeps-its-name-its-status-and-its-words"
+  :adr/title "A failure keeps its name, its status and its words"
+  :adr/status "accepted"
+  :adr/date "2026-08-30"
+  :adr/body
+  "## What was measured
+
+2026-08-30, on the resident deployment. `bots workforce` answered:
+
+    bots 126 / enabled 126 / businesses 21
+    outcomes, last 50 resident runs (2026-08-29T10:43Z -> 2026-08-30T03:04Z):
+      http-error 40 / fallback-failed 8 / running 2   -- zero successes
+
+Sixteen hours, fifty runs, nothing completed. The question an operator has to
+answer next is whether to look at the model provider or at this application.
+Nothing in the store could answer it, for three separate reasons, each of
+which is a name for the same defect: a failure lost information on the way
+from the wire to the person reading about it.
+
+## The three seams
+
+**1. The words were never read.** The resident Goal path streams --
+`send-stream!` -> `agent-turn-stream!` -> `streaming-response` -- and that arm
+threw `:provider/http-error` carrying `:status` and `:url` and nothing else.
+It never opened the response body. `request-json`, the non-streaming arm,
+supplies `:response`, and `error-message` two layers up is written to render
+exactly that -- it parses OpenRouter's doubly-nested `:metadata :raw`, falls
+back to a cause's ex-data, and bounds the result to 120 characters. All of
+that machinery was reachable and was handed nothing on the path the workforce
+actually takes. Every one of the 40 failures was stored as the same nine
+words.
+
+**2. The words that did exist were deleted.** `:agent.run/error-message` was
+added to the failure path on 2026-08-21, after a measurement found it written
+zero times against 141 for `:turn/error-message` -- \"a type alone cannot
+distinguish a misconfigured provider from an overloaded one.\" It was never
+added to `compact-run-keys` in `gc.cljc`, whose docstring enumerates the
+readers of a terminal run. Compaction dropped it two days later, and has
+dropped it since. Measured on the store: 1,079 runs carry an error type; 108
+still carry its message. The 2026-08-21 fix has been live and ineffective for
+nine days.
+
+**3. The name lost its namespace at the operator's surface.**
+`resident-outcomes` counts under the FULL name on purpose, with a comment
+explaining that `json/write-str` renders a keyword as its name alone. The
+server sends `\"provider/http-error\"` as a string, correctly. `app-client`
+parses the response with `:key-fn keyword`, and `cli/-main` wrote it back out
+with `json/write-str` -- turning the string back into a keyword and then
+printing its name. `bots workforce` therefore reported `{\"http-error\": 40}`,
+which is indistinguishable from another namespace's `http-error` and from a
+bare one. The server's care was undone one layer out, in the surface an
+operator and an agent actually read.
+
+## The decision
+
+A failure reaches the operator with its name, its status and its words.
+
+- `streaming-response` reads a bounded excerpt of a refused body and throws it
+  as `:response`, in the same shape `request-json` uses: parsed JSON when it
+  parses, `{:raw text}` when it does not, so one extraction downstream answers
+  both and a Cloudflare error page survives as text rather than as nothing.
+  The bound is 8 KiB and is named: a refusal is an error document, not a
+  generation, and an unbounded read of a stream a broken origin controls does
+  not belong inside a `throw`.
+- `compact-run-keys` keeps `:agent.run/error-message`. It is bounded to one
+  120-character line by `error-message` itself, which is what makes it
+  affordable to keep for the life of the run.
+- `cli/-main` walks its result and gives every keyword the name it actually
+  has, before writing JSON. A walk rather than `:key-fn`/`:value-fn`: those
+  two reach map keys and map values, and a keyword inside a vector would still
+  be stripped. A guarantee with a hole in it reads exactly like a whole one.
+
+## What this does not do
+
+It does not fix the outage. It makes the outage legible. Reproduced against
+`api.murakumo.cloud` the same hour, non-streaming and streaming, with and
+without a 12 KB 28-tool payload: HTTP 200 every time, 0.9 s to 5.7 s, real
+generation. Whatever the 40 refused requests differ in, the answer is in a
+response body that has never been recorded. The next reading of
+`bots workforce` will say which subsystem refused and in what words; this one
+could not.
+
+## Related
+
+- ADR-2608280300, the layer below kept it and the layer above dropped it.
+- ADR-2608280200, the failure path is not the path you fixed. This is the
+  third instance in the series, and the first where all three seams were on
+  one request at once.
+"}]

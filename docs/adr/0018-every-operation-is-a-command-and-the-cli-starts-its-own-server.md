@@ -2,7 +2,9 @@
 
 ## Status
 
-Accepted. 2026-08-05.
+Accepted. 2026-08-05. 2026-09-02: `deps.edn` aliases `:server` and `:cli`
+are gone. Do not run `clojure -M:server` or `clojure -M:cli`. The loopback
+host is `bin/cloud-itonami-server`. `bin/itonami` is closed as a CLI.
 
 ## Context
 

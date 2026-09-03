@@ -45,7 +45,8 @@
                   {:provider provider :name "Google" :client-id nil
                    :client-secret nil :configured? false})]
     (identity/configure!
-     {:auth {:sso-providers [:google]
+     {:auth {:sso-enabled? true
+             :sso-providers [:google]
              :sso-clients {:google {:client-id "desktop-public-client"
                                     :public-client? true}}}})
     (let [config (identity/sso-provider-config :google)]
@@ -64,7 +65,8 @@
                   {:provider provider :name "GitHub" :client-id nil
                    :client-secret nil :configured? false})]
     (identity/configure!
-     {:auth {:sso-providers [:github]
+     {:auth {:sso-enabled? true
+             :sso-providers [:github]
              :sso-clients {:github {:client-id "public-looking-client"
                                     :public-client? true}}}})
     (is (false? (:configured? (identity/sso-provider-config :github))))))
@@ -195,6 +197,30 @@
       (finally
         (reset! store/state previous)))))
 
+(deftest central-auth-keeps-principal-controller-and-account-coordinate-separate
+  (let [previous @store/state
+        principal "urn:kotoba:principal:018f4d6c-29bf-7f80-9a21-111111111111"
+        account "did:key:zAccountCompatibility"
+        controller "did:key:zActivePasskey"]
+    (try
+      (reset! store/state (store/initial-state))
+      (identity/configure! {})
+      (identity/start-central-authentication! nil "http://localhost:1338")
+      (let [finished (finish-central!
+                      principal
+                      {:acr "phishing-resistant" :amr ["webauthn"]
+                       :account_did account :active_did controller})
+            state (get-in (store/snapshot) [:identity])
+            user (get-in state [:users (:user-id finished)])
+            session (identity/session (:token finished))]
+        (is (= principal (:principal-id user)))
+        (is (= account (:did user))
+            "a Principal URN is not mislabeled as a DID")
+        (is (= controller (:active-did session)))
+        (is (= principal (identity/user-principal-id state (:id user)))))
+      (finally
+        (reset! store/state previous)))))
+
 (deftest an-authenticated-callback-browser-links-the-native-handoff
   ;; The native window has no local cookie. The system browser does: it is
   ;; already signed in to the existing User visible on the Settings page.
@@ -320,8 +346,19 @@
   (identity/configure! {})
   (let [methods (identity/public-auth-methods)]
     (is (true? (get-in methods [:central :configured?])))
+    (is (empty? (:sso methods))
+        "provider SSO is opt-in; Passkey is the default product entrance")
     (is (= "https://auth.itonami.cloud" (get-in methods [:central :issuer])))
     ;; The /ja/ route: itonami.cloud is English-default multilingual and this
     ;; app's UI is Japanese, so the ceremony must not switch language mid-way.
     (is (= "https://itonami.cloud/ja/signin/"
            (get-in methods [:central :enrolment-url])))))
+
+(deftest provider-sso-is-not-an-application-signin-method
+  (testing "an older resident provider list cannot revive SSO by itself"
+    (identity/configure! {:auth {:sso-providers [:google]}})
+    (is (empty? (:sso (identity/public-auth-methods)))))
+  (testing "even an old explicit opt-in is no longer advertised as sign-in"
+    (identity/configure! {:auth {:sso-enabled? true
+                                 :sso-providers [:google]}})
+    (is (empty? (:sso (identity/public-auth-methods))))))

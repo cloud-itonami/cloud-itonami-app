@@ -13,3 +13,13 @@
 # build / cache output (untracked 2026-08-22)
 **/.wrangler/
 **/node_modules/
+
+# mobile: the built bundle. dist/index.html is generated and committed
+# (it is the one document the app has); everything else here is output.
+/mobile/dist/js/
+/mobile/dist/dds.css
+/mobile/dist/*.png
+/mobile/.shadow-cljs/
+# tools.deps caches, in any sub-project (root /.cpcache/ above is root-anchored)
+**/.cpcache/
+/mobile/target/

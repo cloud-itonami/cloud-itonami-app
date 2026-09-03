@@ -8,38 +8,25 @@ on:
 permissions:
   contents: read
 
+# Default required path is JVM-free emit. It does not run clojure -M:test.
+# Leftover JVM suite lives in leftover-jvm-tests.yml (workflow_dispatch only).
+# Do not rename that leftover into this file and pretend it is gone.
+
 jobs:
-  test:
-    strategy:
-      matrix:
-        os: [ubuntu-latest, macos-latest]
-    runs-on: ${{ matrix.os }}
+  amu-jvm-free-emit:
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      # Pinned, and not left to the runner's default. `kagitaba` signs with
-      # ML-DSA-65 (FIPS 204), which the JDK gained in 24; the runners default to
-      # 21, so every CI run since that dependency landed has failed with
-      # "ML-DSA-65 KeyPairGenerator not available" — eleven errors in
-      # contracts-test, on main, for everyone. It passed locally only because
-      # local `clojure` happened to pick up a newer JDK.
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-node@v4
         with:
-          distribution: temurin
-          java-version: "25"
-      - uses: DeLaGuardo/setup-clojure@13.4
-        with:
-          cli: latest
-      - name: Resolve standalone dependencies
-        run: clojure -P
-      - name: Test
-        run: clojure -M:test
-      - name: Lint
-        run: clojure -M:lint
-      - name: Audit all repository storage profiles
-        if: matrix.os == 'ubuntu-latest'
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: clojure -M -m cloud.itonami.app.repository-profile-ci
+          node-version: "22"
+      - name: Install nbb host
+        run: npm ci
+      - name: JVM-free emit + guest load (no java/clojure)
+        run: bash scripts/ci-jvm-free-emit
+        # No actions/setup-java. PATH is reconstructed without java/clojure.
+        # kexe verify on Linux is HOLD and must not be faked as :ok.
+        # bin/kotoba is this app's compile adapter, not production kotoba v0.6.29.
 
   secret-scan:
     runs-on: ubuntu-latest

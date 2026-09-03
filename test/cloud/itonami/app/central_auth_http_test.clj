@@ -87,6 +87,18 @@
         (is (= 403 (:status response)))
         (is (= "invalid-origin" (get-in response [:body :error :type])))))))
 
+(deftest legacy-email-and-provider-sso-cannot-start-an-app-session
+  (with-server
+    (fn []
+      (doseq [path ["/api/email-authenticate/start"
+                    "/api/email-authenticate/finish"
+                    "/api/auth/sso/google/start"]]
+        (is (= 404 (:status (send-request :post path
+                                         {"Origin" public-origin
+                                          "Content-Type" "application/json"})))
+            path))
+      (is (empty? (get-in (store/snapshot) [:identity :sessions]))))))
+
 (deftest callback-passes-its-browser-session-to-central-completion
   (with-server
     (fn []

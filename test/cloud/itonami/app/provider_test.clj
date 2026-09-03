@@ -55,7 +55,7 @@
            (options {:max-output-tokens 2048}
                     {:max-output-tokens 512
                      :context-window-tokens 131072})))
-    (is (= {:temperature 0.2 :num_predict 2048}
+    (is (= {:temperature 0.2 :num_predict 16384}
            (options {} {}))
         "unknown model metadata does not invent a local allocation")))
 
@@ -95,7 +95,7 @@
               {:model "murakumo-main"
                :messages [{:role "user" :content "hello"}]
                :tools []})]
-    (is (= 2048 (:max_tokens body)))
+    (is (= 16384 (:max_tokens body)))
     (is (false? (:stream body)))
     (testing "the ordinary provider fields are preserved"
       (is (= "murakumo-main" (:model body)))
@@ -182,6 +182,89 @@
         (is (= ["qwen3.8-27b-throughput-5090" "murakumo-main"]
                @requested)
             "the bounded accelerator request precedes one explicit fallback"))
+      (finally (.stop server 0)))))
+
+(deftest a-failed-main-request-falls-back-to-openrouter-glm-through-murakumo
+  (let [requested (atom [])
+        server (HttpServer/create (InetSocketAddress. "127.0.0.1" 0) 0)]
+    (.createContext
+     server "/v1/chat/completions"
+     (reify HttpHandler
+       (handle [_ exchange]
+         (let [request (json/read-str (slurp (.getRequestBody exchange))
+                                      :key-fn keyword)
+               model (:model request)
+               _ (swap! requested conj model)
+               [status payload]
+               (if (= "murakumo-main" model)
+                 [502 {:error "primary origin unavailable"}]
+                 [200 {:model "z-ai/glm-5.3-flash"
+                       :choices [{:finish_reason "stop"
+                                  :message {:content "glm-fallback-ok"}}]}])
+               bytes (.getBytes (json/write-str payload) "UTF-8")]
+           (.sendResponseHeaders exchange status (alength bytes))
+           (with-open [out (.getResponseBody exchange)] (.write out bytes))))))
+    (.start server)
+    (try
+      (let [provider {:kind :openai-compatible
+                      :base-url (str "http://127.0.0.1:"
+                                     (.getPort (.getAddress server)) "/v1")
+                      :max-transient-retries 0
+                      :assert-response-model? true
+                      :model-fallbacks
+                      {"murakumo-main" "z-ai/glm-5.3-flash"}}
+            result (provider/agent-turn
+                    provider {:model "murakumo-main"
+                              :messages [] :tools []})]
+        (is (= "glm-fallback-ok" (:content result)))
+        (is (= "z-ai/glm-5.3-flash" (:model result)))
+        (is (= "murakumo-main" (:requested-model result)))
+        (is (true? (:fallback? result)))
+        (is (= :provider/http-error (:fallback-error-type result)))
+        (is (= ["murakumo-main" "z-ai/glm-5.3-flash"] @requested)
+            "one main failure is followed by exactly one GLM request"))
+      (finally (.stop server 0)))))
+
+(deftest a-literal-edge-route-does-not-cascade-into-the-main-pool
+  (let [requested (atom [])
+        server (HttpServer/create (InetSocketAddress. "127.0.0.1" 0) 0)]
+    (.createContext
+     server "/v1/chat/completions"
+     (reify HttpHandler
+       (handle [_ exchange]
+         (let [request (json/read-str (slurp (.getRequestBody exchange))
+                                      :key-fn keyword)
+               model (:model request)
+               _ (swap! requested conj model)
+               [status payload]
+               (if (= "murakumo-edge" model)
+                 [503 {:error "edge unavailable"}]
+                 [200 {:model "murakumo-main"
+                       :choices [{:finish_reason "stop"
+                                  :message {:content "must-not-run"}}]}])
+               bytes (.getBytes (json/write-str payload) "UTF-8")]
+           (.sendResponseHeaders exchange status (alength bytes))
+           (with-open [out (.getResponseBody exchange)] (.write out bytes))))))
+    (.start server)
+    (try
+      (let [provider {:kind :openai-compatible
+                      :base-url (str "http://127.0.0.1:"
+                                     (.getPort (.getAddress server)) "/v1")
+                      :max-transient-retries 0
+                      :assert-response-model? true
+                      ;; Reproduces the stale resident override observed on
+                      ;; 2026-08-30. The deny-list must win over this entry.
+                      :model-fallbacks {"murakumo-edge" "murakumo-main"}
+                      :no-fallback-models #{"murakumo-edge"}}
+            error (try
+                    (provider/agent-turn
+                     provider {:model "murakumo-edge" :messages [] :tools []})
+                    nil
+                    (catch clojure.lang.ExceptionInfo e e))]
+        (is (= :provider/http-error (:type (ex-data error))))
+        (is (= 503 (:status (ex-data error))))
+        (is (= ["murakumo-edge"] @requested)
+            "an edge outage does not consume a main-pool request"))
       (finally (.stop server 0)))))
 
 (deftest an-unready-5090-falls-back-before-generation
@@ -416,6 +499,21 @@
     (is (nil? ((private-fn 'xai-headers)
                {:kind :openai-compatible} {:conversation-id "bot-123"})))))
 
+(deftest murakumo-affinity-header-is-stable-and-opaque
+  (let [headers (private-fn 'provider-headers)
+        first-value (get (headers {:id :murakumo :kind :openai-compatible}
+                                  {:conversation-id "bot-123"})
+                         "x-murakumo-affinity-key")]
+    (is (re-matches #"[0-9a-f]{64}" first-value))
+    (is (not (str/includes? first-value "bot-123")))
+    (is (= first-value
+           (get (headers {:id :murakumo :kind :openai-compatible}
+                         {:conversation-id "bot-123"})
+                "x-murakumo-affinity-key")))
+    (is (nil? (get (headers {:id :other :kind :openai-compatible}
+                            {:conversation-id "bot-123"})
+                   "x-murakumo-affinity-key")))))
+
 (deftest openai-compatible-agent-turn-keeps-one-tool-continuation
   (let [body ((private-fn 'agent-request-body)
               {:kind :openai-compatible :max-output-tokens 512}
@@ -428,6 +526,16 @@
     (is (= 512 (:max_tokens body)))
     (is (nil? (:reasoning_effort body))
         "xAI-specific reasoning policy is not sent to Murakumo")))
+
+(deftest required-tool-choice-is-explicit-not-a-prompt-hope
+  (let [body ((private-fn 'agent-request-body)
+              {:kind :openai-compatible :max-output-tokens 512}
+              {:model "murakumo-edge" :require-tool? true
+               :messages [{:role "user" :content "complete"}]
+               :tools [{:name "goal_complete" :description "Complete"
+                        :parameters {:type "object"}}]})]
+    (is (= "required" (:tool_choice body)))
+    (is (= "goal_complete" (get-in body [:tools 0 :function :name])))))
 
 (deftest text-only-agent-turn-omits-the-tool-protocol-entirely
   (let [body ((private-fn 'agent-request-body)
@@ -487,30 +595,152 @@
   ;; failures. The reason was in the value the error dropped.
   (let [parse (private-fn 'parse-arguments)]
     (testing "the offending string survives into ex-data"
-      (let [error (try (parse "{\"path\":\"REA")
+      (let [error (try (parse "workspace_write_file" "{\"path\":\"REA")
                        (catch clojure.lang.ExceptionInfo e e))]
         (is (= :provider/invalid-tool-arguments (:type (ex-data error))))
         (is (= "{\"path\":\"REA" (:arguments-sample (ex-data error))))
         (is (= 12 (:arguments-length (ex-data error))))))
 
+    (testing "and so does the name of the tool that was mis-called"
+      ;; Measured 2026-08-28: this became the most common live failure, and
+      ;; `:turn/tool` was nil for all 138 of them. The caller knew the name;
+      ;; this function had not asked for it.
+      (let [error (try (parse "workspace_write_file" "{\"path\":\"REA")
+                       (catch clojure.lang.ExceptionInfo e e))]
+        (is (= "workspace_write_file" (:tool-name (ex-data error)))))
+      (let [error (try (parse "goal_plan" "[\"Osaka\"]")
+                       (catch clojure.lang.ExceptionInfo e e))]
+        (is (= "goal_plan" (:tool-name (ex-data error)))
+            "on the wrong-shape path too, which is a different throw site")))
+
     (testing "valid JSON of the wrong shape is refused, not silently emptied"
       ;; A bare array parsed fine before and became the tool's arguments, so
       ;; every (:key args) lookup answered nil and the tool ran with none.
       (doseq [value ["[\"Osaka\"]" "\"Osaka\"" "42"]]
-        (let [error (try (parse value)
+        (let [error (try (parse "some_tool" value)
                          (catch clojure.lang.ExceptionInfo e e))]
           (is (= :provider/invalid-tool-arguments (:type (ex-data error)))
               (str value " must be refused"))
           (is (= value (:arguments-sample (ex-data error)))))))
 
     (testing "a markdown fence is decoration, not malformation"
-      (is (= {:city "Kyoto"} (parse "```json\n{\"city\":\"Kyoto\"}\n```")))
-      (is (= {:city "Nara"} (parse "```\n{\"city\":\"Nara\"}\n```"))))
+      (is (= {:city "Kyoto"} (parse "some_tool" "```json\n{\"city\":\"Kyoto\"}\n```")))
+      (is (= {:city "Nara"} (parse "some_tool" "```\n{\"city\":\"Nara\"}\n```"))))
 
     (testing "what already worked keeps working"
-      (is (= {:city "Osaka"} (parse "{\"city\":\"Osaka\"}")))
-      (is (= {:city "Osaka"} (parse {:city "Osaka"})))
-      (is (= {} (parse ""))))))
+      (is (= {:city "Osaka"} (parse "some_tool" "{\"city\":\"Osaka\"}")))
+      (is (= {:city "Osaka"} (parse "some_tool" {:city "Osaka"})))
+      (is (= {} (parse "some_tool" ""))))))
+
+;; ── a cut-off tool call and a malformed one are different problems ─────
+;;
+;; Measured 2026-08-28 on the resident fleet: `:provider/invalid-tool-arguments`
+;; was the most common live failure, 20 of 45 failed turns. Every reproduction
+;; came from `:max-output-tokens 1024` against `decision_frame`, whose frames
+;; need 1350-1676 tokens -- three streamed runs at 1024 were unparseable, three
+;; each at 2048/3072/4096 were complete. The model authored nothing malformed;
+;; a configured number cut it in half, and the error name sent operators to
+;; look at the model.
+
+(deftest a-truncated-json-argument-is-marked-as-having-ended-early
+  ;; The signal that needs no agreement with the server about token counts.
+  ;; api.murakumo.cloud caps output at 2048 whatever is requested, so an app
+  ;; configured at 8192 can never see `completion_tokens` reach its own cap.
+  (let [parse (private-fn 'parse-arguments)
+        ended-early? (fn [v] (:json-ended-early?
+                              (ex-data (try (parse "decision_frame" v)
+                                            (catch clojure.lang.ExceptionInfo e e)))))]
+    (testing "input that simply ran out"
+      (is (true? (ended-early? "{\"scope\": \"club shinshi\", \"facts\": [{\"id")))
+      (is (true? (ended-early? "{\"scope\": [1,2,"))))
+    (testing "a genuine syntax error is not truncation"
+      (is (false? (ended-early? "{\"scope\": tru3}")))
+      (is (false? (ended-early? "{\"a\": 1,, \"b\": 2}"))))
+    (testing "not every truncation looks like one, and that is why it is not the only signal"
+      ;; A cut landing between a key and its colon reads as an ordinary syntax
+      ;; error. The token-count and finish_reason signals cover this shape.
+      (is (false? (ended-early? "{\"a\": 1, \"b\": [{\"c\""))))))
+
+(deftest a-tool-call-cut-off-by-the-budget-says-so
+  (let [normalize (private-fn 'agent-result)
+        cut {:id "call-1"
+             :function {:name "decision_frame"
+                        :arguments "{\"scope\": \"club shinshi\", \"facts\": [{\"id\": \"f1"}}]
+    (testing "the failure is named for the budget, not the model"
+      (let [error (try (normalize {:content "" :tool_calls [cut]}
+                                  "tool_calls"
+                                  {:completion_tokens 1024} 1024)
+                       (catch clojure.lang.ExceptionInfo e e))]
+        (is (= :provider/output-budget-exhausted (:type (ex-data error))))
+        (is (= 1024 (:max-output-tokens (ex-data error))))
+        (is (= 1024 (:completion-tokens (ex-data error))))))
+
+    (testing "and everything the original error carried survives the rename"
+      ;; The tool name and the offending string are the whole point of
+      ;; `parse-arguments` keeping them; renaming the failure must not drop
+      ;; them, or this trades one blind error for another.
+      (let [error (try (normalize {:content "" :tool_calls [cut]}
+                                  "length" {:completion_tokens 1024} 1024)
+                       (catch clojure.lang.ExceptionInfo e e))]
+        (is (= "decision_frame" (:tool-name (ex-data error))))
+        (is (str/starts-with? (:arguments-sample (ex-data error)) "{\"scope\""))))
+
+    (testing "a call the SERVER cut below our own cap is still the budget"
+      ;; The case that made the count unreliable. api.murakumo.cloud enforces a
+      ;; 2048-token ceiling of its own: measured 2026-08-28, requests for 3072,
+      ;; 4096, 8192 and 16384 all returned completion_tokens 2048. An app
+      ;; configured at 8192 therefore never sees its own cap reached, and if
+      ;; the provider also words the stop as `tool_calls` -- four of six
+      ;; measured streamed calls did -- both count and reason go quiet.
+      (let [error (try (normalize {:content "" :tool_calls [cut]}
+                                  "tool_calls"
+                                  {:completion_tokens 2048} 8192)
+                       (catch clojure.lang.ExceptionInfo e e))]
+        (is (= :provider/output-budget-exhausted (:type (ex-data error)))
+            "2048 of a requested 8192 is a server ceiling, not a model defect")
+        (is (= 2048 (:completion-tokens (ex-data error)))
+            "the spent count is reported, since it is not the requested one")))
+
+    (testing "a malformed call inside its budget stays the model's problem"
+      (let [malformed {:id "call-2"
+                       :function {:name "decision_frame"
+                                  :arguments "{\"scope\": tru3}"}}
+            error (try (normalize {:content "" :tool_calls [malformed]}
+                                  "tool_calls"
+                                  {:completion_tokens 40} 2048)
+                       (catch clojure.lang.ExceptionInfo e e))]
+        (is (= :provider/invalid-tool-arguments (:type (ex-data error)))
+            "40 of 2048 tokens with intact JSON framing is the model, not a cap")))
+
+    (testing "an exhausted budget does not invent a failure for a call that parsed"
+      ;; Running out of room after a COMPLETE tool call is not an error; the
+      ;; reclassification must only ever rename one that already failed.
+      (is (= {:path "README.md"}
+             (get-in (normalize {:content ""
+                                 :tool_calls
+                                 [{:id "c" :function {:name "workspace_read"
+                                                      :arguments "{\"path\":\"README.md\"}"}}]}
+                                "length" {:completion_tokens 1024} 1024)
+                     [:tool-calls 0 :input]))))))
+
+(deftest the-request-cap-is-computed-once-for-wire-and-verdict
+  ;; `agent-request-body` puts this on the wire and `agent-result` compares
+  ;; `completion_tokens` against it. Two copies of the `or` chain would make the
+  ;; comparison silently wrong the first time either default moved.
+  (let [requested (private-fn 'requested-max-tokens)
+        body (private-fn 'agent-request-body)]
+    (is (= 1024 (requested {:id "p" :max-output-tokens 512}
+                           {:max-output-tokens 1024})))
+    (is (= 512 (requested {:id "p" :max-output-tokens 512} {}))
+        "the provider default applies when the request names none")
+    (is (= 16384 (requested {:id "p"} {}))
+        "and the shipped default when neither does")
+    (is (= (requested {:id "p" :kind :openai-compatible :max-output-tokens 512}
+                      {:model "m" :messages []})
+           (:max_tokens (body {:id "p" :kind :openai-compatible
+                               :max-output-tokens 512}
+                              {:model "m" :messages []})))
+        "the wire and the verdict read the same number")))
 ;; ── a slow model and a broken host are different problems ───────────────
 ;;
 ;; `java.net.http` throws `HttpTimeoutException` with no ex-data, so every
@@ -602,3 +832,107 @@
       (let [original (IllegalStateException. "a bug here")
             e (thrown original)]
         (is (identical? original e))))))
+
+(deftest a-fallback-resolves-the-cap-for-the-model-it-actually-used
+  ;; `with-model-fallback` calls the turn with a DIFFERENT model than the
+  ;; request named, and every input to the resolution is model-scoped. Reading
+  ;; the original model for the verdict compares `completion_tokens` against a
+  ;; cap that was never on the wire -- and the misclassification this whole
+  ;; branch removes comes straight back.
+  (let [requested (private-fn 'requested-max-tokens)
+        provider {:id "p" :kind :openai-compatible
+                  :max-output-tokens {"big" 8192 "small" 2048}}
+        request {:model "big" :messages [] :tools []}]
+    (is (= 8192 (requested provider request)))
+    (is (= 2048 (requested provider (assoc request :model "small")))
+        "the fallback model's own cap, which is what the body carried")))
+
+(deftest a-per-model-cap-map-does-not-reach-arithmetic-as-a-map
+  ;; `:max-output-tokens` may be a map by model. Every place that treats it as
+  ;; a number has to resolve first, or `(long {...})` throws before a request
+  ;; is even made.
+  (let [body (private-fn 'agent-request-body)]
+    (is (= 2048 (:max_tokens (body {:id "p" :kind :openai-compatible
+                                    :max-output-tokens {"murakumo-main" 2048}}
+                                   {:model "murakumo-main" :messages []}))))
+    (is (= 16384 (:max_tokens (body {:id "p" :kind :openai-compatible
+                                     :max-output-tokens {"other" 4096}}
+                                    {:model "murakumo-main" :messages []})))
+        "an unnamed model falls to the shipped default, not to a sibling's cap")))
+
+(defn- refusing-server
+  "An HTTP server that refuses with `status` and says `body`, once."
+  [status ^String body]
+  (let [server (HttpServer/create (InetSocketAddress. "127.0.0.1" 0) 0)]
+    (.createContext
+     server "/v1/chat/completions"
+     (reify HttpHandler
+       (handle [_ exchange]
+         (let [bytes (.getBytes body "UTF-8")]
+           (.sendResponseHeaders exchange status (alength bytes))
+           (with-open [out (.getResponseBody exchange)]
+             (.write out bytes))))))
+    (.start server)
+    server))
+
+(deftest a-refused-stream-carries-what-the-provider-said
+  ;; The resident Goal path streams (`send-stream!` -> `agent-turn-stream!`),
+  ;; and this arm threw with `:status` and `:url` and never opened the body --
+  ;; while `error-message`, two layers up, was already written to render the
+  ;; `:response` that the non-streaming arm supplies. So every recorded
+  ;; `:provider/http-error` from the workforce read the same nine words.
+  ;; Measured 2026-08-30: 40 of the last 50 resident runs failed this way and
+  ;; not one of them could say what the provider had answered.
+  (let [streaming-response (private-fn 'streaming-response)]
+    (testing "a JSON refusal arrives in the shape error-message reads"
+      (let [server (refusing-server
+                    503 (json/write-str {:error {:message "upstream is busy"
+                                                 :type "overloaded"}}))
+            url (str "http://127.0.0.1:" (.getPort (.getAddress server))
+                     "/v1/chat/completions")]
+        (try
+          (let [thrown (try (streaming-response url {} nil nil 5)
+                            nil
+                            (catch clojure.lang.ExceptionInfo e e))
+                data (ex-data thrown)]
+            (is (= :provider/http-error (:type data)))
+            (is (= 503 (:status data)))
+            (is (= "upstream is busy" (get-in data [:response :error :message]))
+                "the words the provider actually said, not the nine this application says"))
+          (finally (.stop server 0)))))
+    (testing "a body that is not JSON survives as text rather than as nothing"
+      (let [server (refusing-server 502 "<html>Bad gateway</html>")
+            url (str "http://127.0.0.1:" (.getPort (.getAddress server))
+                     "/v1/chat/completions")]
+        (try
+          (let [data (ex-data (try (streaming-response url {} nil nil 5)
+                                   nil
+                                   (catch clojure.lang.ExceptionInfo e e)))]
+            (is (= 502 (:status data)))
+            (is (str/includes? (get-in data [:response :raw]) "Bad gateway")))
+          (finally (.stop server 0)))))
+    (testing "an empty refusal says nothing rather than saying an empty something"
+      (let [server (refusing-server 429 "")
+            url (str "http://127.0.0.1:" (.getPort (.getAddress server))
+                     "/v1/chat/completions")]
+        (try
+          (let [data (ex-data (try (streaming-response url {} nil nil 5)
+                                   nil
+                                   (catch clojure.lang.ExceptionInfo e e)))]
+            (is (= 429 (:status data)))
+            (is (nil? (:response data))
+                "nil is distinguishable from a body; an empty map would not be"))
+          (finally (.stop server 0)))))
+    (testing "a body larger than the bound is read up to it and no further"
+      (let [huge (apply str (repeat 40000 "x"))
+            server (refusing-server 500 huge)
+            url (str "http://127.0.0.1:" (.getPort (.getAddress server))
+                     "/v1/chat/completions")]
+        (try
+          (let [data (ex-data (try (streaming-response url {} nil nil 5)
+                                   nil
+                                   (catch clojure.lang.ExceptionInfo e e)))
+                raw (get-in data [:response :raw])]
+            (is (= 8192 (count raw))
+                "bounded: a refusal body is an error document, not a generation"))
+          (finally (.stop server 0)))))))

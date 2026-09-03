@@ -22,8 +22,8 @@ An unbound central DID may create a User only on an empty installation. On an
 installation that already has Users, it must be linked from an authenticated
 local session. Email equality is never an account-linking signal.
 
-The existing local Passkey, Email, and provider SSO entrances remain available
-as compatibility and recovery paths, not as the first-time entrance (ADR-0041). Operations whose policy requires a fresh
+The existing local Passkey entrance remains available as recovery. Email and
+provider SSO no longer expose application session routes (ADR-0083). Operations whose policy requires a fresh
 local WebAuthn ceremony continue to require that step-up; central authentication
 does not silently satisfy an operation-specific approval challenge.
 

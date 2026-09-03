@@ -14,8 +14,17 @@
   JVM suite was green through the whole period the ClojureScript surface could
   not execute a single decision core."
   (:require [cljs.test :as t]
+            [cloud.itonami.app.appearance-test]
             [cloud.itonami.app.domain-name-test]
+            [cloud.itonami.app.hokusai-test]
+            [cloud.itonami.app.config-policy-test]
+            [cloud.itonami.app.host-bounds-test]
+            [cloud.itonami.app.issue-comment-test]
+            [cloud.itonami.app.lifecycle-test]
+            [cloud.itonami.app.mail-authentication-test]
             [cloud.itonami.app.mail-domain-records-test]
+            [cloud.itonami.app.provider-retry-test]
+            [cloud.itonami.app.store-core-test]
             [cloud.itonami.app.tls-binding-test]))
 
 (defmethod t/report [::t/default :end-run-tests] [m]
@@ -25,6 +34,15 @@
   (when-not (t/successful? m)
     (set! (.-exitCode js/process) 1)))
 
-(t/run-tests 'cloud.itonami.app.domain-name-test
+(t/run-tests 'cloud.itonami.app.appearance-test
+             'cloud.itonami.app.domain-name-test
+             'cloud.itonami.app.hokusai-test
+             'cloud.itonami.app.config-policy-test
+             'cloud.itonami.app.host-bounds-test
+             'cloud.itonami.app.issue-comment-test
+             'cloud.itonami.app.lifecycle-test
+             'cloud.itonami.app.mail-authentication-test
              'cloud.itonami.app.mail-domain-records-test
+             'cloud.itonami.app.provider-retry-test
+             'cloud.itonami.app.store-core-test
              'cloud.itonami.app.tls-binding-test)

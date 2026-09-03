@@ -1,5 +1,6 @@
 (ns cloud.itonami.app.commerce-test
-  (:require [clojure.test :refer [deftest is testing]]
+  (:require [clojure.string :as str]
+            [clojure.test :refer [deftest is testing]]
             [cloud.itonami.app.commerce :as commerce]
             [cloud.itonami.app.config :as config]
             [cloud.itonami.app.store :as store]))
@@ -357,3 +358,171 @@
                          :delivery_address address}))))
       (is (= 4 (get-in (commerce/storefront "alice-store")
                        [:products 0 :inventory]))))))
+
+;; ---------------------------------------------------------------------------
+;; Digital fulfillment.
+;;
+;; The pairs matter more than the individual assertions: each capability is
+;; checked together with its refusal, so a kind cannot become a way to be ready
+;; with fewer gates, and neither half can quietly answer for the other.
+
+(defn- ready-digital-store! []
+  (commerce/configure-store!
+   alice {:business_kind "corporation" :fulfillment_kind "digital"
+          :display_name "Alice Data" :legal_name "Alice株式会社"
+          :legal_address address})
+  (store/transact! assoc-in [:wallet :assignments "bot-commerce"]
+                   {:bot-id "bot-commerce" :bot-did "did:key:bot"
+                    :user-id "alice" :organization-id "org-1"
+                    :link-id "link-base" :chain-id 8453
+                    :address "0x0000000000000000000000000000000000000001"})
+  (commerce/configure-x402! alice "bot-commerce")
+  (commerce/configure-delivery!
+   alice {:delivery_method "api_credential"
+          :instructions "支払い確認後、注文に per-query credential が付与されます。"})
+  (commerce/finalize! alice))
+
+(deftest digital-store-is-ready-without-a-shipping-address
+  (with-commerce-store
+    (fn []
+      (ready-digital-store!)
+      (let [state (commerce/overview alice)]
+        (is (= "ready" (:status state)))
+        (is (= "digital" (:fulfillment-kind state)))
+        ;; Still five gates. The fifth is the one this store can answer.
+        (is (= 5 (count (get-in state [:readiness :checks]))))
+        ;; overview names the ids, so compare what it actually returns
+        (is (= #{"identity" "legal-profile" "legal-address" "x402" "delivery"}
+               (set (map :id (get-in state [:readiness :checks])))))
+        (is (empty? (get-in state [:readiness :missing])))))))
+
+(deftest digital-readiness-still-fails-without-its-own-gate
+  (with-commerce-store
+    (fn []
+      (commerce/configure-store!
+       alice {:business_kind "corporation" :fulfillment_kind "digital"
+              :display_name "Alice Data" :legal_name "Alice株式会社"
+              :legal_address address})
+      (store/transact! assoc-in [:wallet :assignments "bot-commerce"]
+                       {:bot-id "bot-commerce" :bot-did "did:key:bot"
+                        :user-id "alice" :organization-id "org-1"
+                        :link-id "link-base" :chain-id 8453
+                        :address "0x0000000000000000000000000000000000000001"})
+      (commerce/configure-x402! alice "bot-commerce")
+      ;; delivery deliberately not configured
+      (is (= [:delivery] (get-in (commerce/overview alice) [:readiness :missing])))
+      (is (= :commerce/not-ready (refuses #(commerce/finalize! alice)))))))
+
+(deftest the-two-halves-refuse-each-other
+  (with-commerce-store
+    (fn []
+      (ready-digital-store!)
+      (is (= :commerce/digital-store
+             (refuses #(commerce/configure-shipping!
+                        alice {:ship_from address :return_address address}))))
+      ;; and a digital store cannot sell something with nothing to hand over
+      (is (= :commerce/field-required
+             (refuses #(commerce/upsert-product!
+                        alice {:sku "PHYS-01" :name "箱" :description "物"
+                               :price_usdc "1" :inventory 1}))))))
+  (with-commerce-store
+    (fn []
+      (ready-store!)
+      (is (= :commerce/physical-store
+             (refuses #(commerce/configure-delivery!
+                        alice {:delivery_method "download_url" :instructions "x"}))))
+      (is (= :commerce/physical-store
+             (refuses #(commerce/upsert-product!
+                        alice {:sku "DIG-01" :name "鍵" :description "d"
+                               :price_usdc "1" :inventory 1
+                               :delivery_ref "https://example.test/x"})))))))
+
+(deftest a-digital-product-must-carry-what-the-buyer-receives
+  (with-commerce-store
+    (fn []
+      (ready-digital-store!)
+      (is (= :commerce/field-required
+             (refuses #(commerce/upsert-product!
+                        alice {:sku "DIG-01" :name "鍵" :description "d"
+                               :price_usdc "1" :inventory 1})))
+          "a digital product with no delivery-ref would deliver silence")
+      (commerce/upsert-product!
+       alice {:sku "DIG-01" :name "per-query credential" :description "1000 queries"
+              :price_usdc "5" :inventory 100
+              :delivery_ref "https://example.test/credential/abc"})
+      (is (= 100 (get-in (commerce/overview alice)
+                         [:store :products "DIG-01" :inventory]))))))
+
+(deftest the-delivery-ref-never-reaches-the-public-storefront
+  (with-commerce-store
+    (fn []
+      (ready-digital-store!)
+      (commerce/upsert-product!
+       alice {:sku "DIG-01" :name "per-query credential" :description "1000 queries"
+              :price_usdc "5" :inventory 100
+              :delivery_ref "SECRET-CREDENTIAL-VALUE"})
+      (commerce/publish-storefront! alice {:slug "alice-data"})
+      (let [public (commerce/storefront "alice-data")]
+        (is (= "digital" (:fulfillment-kind public)))
+        (is (= "api-credential" (get-in public [:delivery :method])))
+        (is (nil? (:shipping public)) "a digital storefront advertises no carrier")
+        (is (not (str/includes? (pr-str public) "SECRET-CREDENTIAL-VALUE"))
+            "the thing being paid for is not published next to its price")))))
+
+(deftest a-verified-payment-delivers-a-digital-order
+  (with-commerce-store
+    (fn []
+      (ready-digital-store!)
+      (commerce/upsert-product!
+       alice {:sku "DIG-01" :name "per-query credential" :description "1000 queries"
+              :price_usdc "5" :inventory 100
+              :delivery_ref "https://example.test/credential/abc"})
+      (commerce/publish-storefront! alice {:slug "alice-data"})
+      (let [order (commerce/create-order!
+                   bob "alice-data" {:lines [{:sku "DIG-01" :quantity 1}]})]
+        (binding [commerce/*verify-payment!*
+                  (fn [_ _ _] {:isValid true})]
+          (let [paid (commerce/verify-order-payment!
+                      bob "alice-data" (:id order)
+                      {:transaction (apply str "0x" (repeat 64 "a"))
+                       :payer "0xffffffffffffffffffffffffffffffffffffffff"})]
+            (is (= "paid" (:status paid)))
+            (is (= "delivered" (get-in paid [:fulfillment :status]))
+                "there is no state between paid and delivered for a digital order")))
+        ;; and the shipment machine refuses, naming the reason
+        (is (= :commerce/digital-store
+               (refuses #(commerce/advance-fulfillment!
+                          alice {:order_id (:id order) :status "packed"}))))
+        (is (= :commerce/digital-store
+               (refuses #(commerce/prepare-shipment!
+                          alice {:order_id (:id order) :weight_kg "1"
+                                 :length_cm "1" :width_cm "1" :height_cm "1"}))))
+        (is (= 99 (get-in (store/snapshot)
+                          [:commerce :stores "org-1" :products "DIG-01" :inventory]))
+            "digital still decrements inventory")))))
+
+(deftest the-kind-is-immutable-once-a-product-exists
+  (with-commerce-store
+    (fn []
+      (ready-digital-store!)
+      (commerce/upsert-product!
+       alice {:sku "DIG-01" :name "鍵" :description "d" :price_usdc "1"
+              :inventory 1 :delivery_ref "https://example.test/x"})
+      (is (= :commerce/fulfillment-axis-immutable
+             (refuses #(commerce/configure-store!
+                        alice {:business_kind "corporation" :fulfillment_kind "physical"
+                               :display_name "Alice Data" :legal_name "Alice株式会社"
+                               :legal_address address})))))))
+
+(deftest an-existing-store-stays-physical-when-nothing-is-said
+  (with-commerce-store
+    (fn []
+      (ready-store!)
+      (is (= "physical" (:fulfillment-kind (commerce/overview alice))))
+      ;; reconfiguring without naming the kind must not silently move it
+      (commerce/configure-store!
+       alice {:business_kind "corporation" :display_name "Alice Store 2"
+              :legal_name "Alice株式会社" :legal_address address})
+      (is (= "physical" (:fulfillment-kind (commerce/overview alice))))
+      (is (= "shipping" (:id (last (get-in (commerce/overview alice)
+                                           [:readiness :checks]))))))))

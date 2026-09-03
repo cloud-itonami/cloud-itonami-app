@@ -196,7 +196,8 @@
                  :server-data-dir directory})))))
 
 (defn app-directory
-  "Where to run `clojure -M:server` from.
+  "Where leftover CLI code used to run `clojure -M:server` from.
+  That alias is gone from deps.edn. This leftover still names it.
 
   The current directory when it holds this app's `deps.edn`, otherwise
   `CLOUD_ITONAMI_APP_DIR`. Refusing rather than guessing: a wrong answer starts a
@@ -282,9 +283,9 @@
 (defn- spawn!
   "A detached headless server, its output in the data directory.
 
-  `-M:server` and not `bin/cloud-itonami-app`: that script also starts the native
-  shell, which is the window this exists to avoid. The child outlives this
-  process, which is the point — the next command finds it already up."
+  Leftover: this still names `clojure -M:server`. That alias is gone from
+  deps.edn. Do not treat this spawn as the run path. `bin/cloud-itonami-app`
+  starts the nbb host, not this leftover."
   [configuration]
   (let [directory (app-directory)
         log (data-file "server.log")

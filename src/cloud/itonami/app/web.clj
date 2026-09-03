@@ -1,6 +1,7 @@
 (ns cloud.itonami.app.web
   "DADS-backed WebKit workspace hosted by kotoba-lang/shell."
   (:require [clojure.java.io :as io]
+            [cloud.itonami.app.appearance :as appearance]
             [hanmen.svg :as hanmen-svg]
             [jp-go-dds.core :as dds]
             [jp-go-dds.page :as page]))
@@ -213,12 +214,16 @@
   .local-card+.local-card{margin-top:1rem}
   .wallet-workspace{max-width:46rem;display:grid;gap:1rem}
   .wallet-accountbar{display:flex;align-items:center;justify-content:space-between;gap:.75rem;
+    flex-wrap:wrap;
     padding:.75rem 1rem;border:1px solid var(--color-neutral-solid-gray-200);border-radius:.75rem;
     background:var(--color-neutral-white)}
   .wallet-accountbar select{min-width:0;flex:1;border:0;background:transparent;font:inherit;
     font-weight:700;color:var(--color-neutral-solid-gray-900)}
   .wallet-accountbar select:focus-visible{outline:4px solid var(--color-primitive-yellow-300);
     outline-offset:2px;border-radius:.25rem}
+  .wallet-provider-picker{display:flex;align-items:center;gap:.5rem;min-width:min(100%,16rem);
+    color:var(--color-neutral-solid-gray-600);font-size:.75rem;white-space:nowrap}
+  .wallet-provider-picker select{color:var(--color-neutral-solid-gray-900);font-size:.875rem}
   .wallet-hero{display:grid;justify-items:center;gap:.75rem;padding:2rem 1.25rem;
     border:1px solid var(--color-neutral-solid-gray-200);border-radius:1rem;
     background:var(--color-neutral-white);text-align:center}
@@ -355,6 +360,26 @@
   .bots-rail__item[aria-current='true']{background:var(--color-key-50)}
   .bots-rail__item:focus-visible{outline:4px solid var(--color-primitive-yellow-300);
     outline-offset:1px}
+  .bots-rail__item[data-unread='true'] .bots-rail__name{font-weight:700}
+  .bots-rail__item[data-unread='true'] .bots-dot{background:var(--color-key-600)}
+  .bots-rail-menu{position:fixed;z-index:80;min-width:18.5rem;
+    max-width:min(22rem,calc(100vw - 1rem));padding:.375rem 0;margin:0;
+    border:1px solid var(--color-neutral-solid-gray-200);border-radius:.875rem;
+    background:var(--color-neutral-white);box-shadow:0 .5rem 1.5rem rgb(0 0 0 / .16);
+    list-style:none}
+  .bots-rail-menu[hidden]{display:none}
+  .bots-rail-menu__item{display:flex;align-items:center;gap:.75rem;width:100%;
+    min-height:2.75rem;border:0;background:transparent;padding:.375rem 1rem;
+    color:var(--color-neutral-solid-gray-900);font:inherit;font-size:.9375rem;
+    text-align:left;cursor:pointer}
+  .bots-rail-menu__item:hover{background:var(--color-neutral-solid-gray-50)}
+  .bots-rail-menu__item:focus-visible{outline:4px solid var(--color-primitive-yellow-300);
+    outline-offset:-4px}
+  .bots-rail-menu__icon{width:1.25rem;height:1.25rem;flex:0 0 auto}
+  .bots-rail-menu__sep{height:1px;margin:.375rem .75rem;border:0;
+    background:var(--color-neutral-solid-gray-200)}
+  .bots-rail-menu__item--danger{color:var(--color-semantic-error-1)}
+  .bots-rail-menu__item--danger:hover{background:var(--color-primitive-red-50)}
   .bots-rail__copy{flex:1;min-width:0;display:grid;gap:.125rem}
   .bots-rail__headline{display:flex;align-items:baseline;gap:.5rem;min-width:0}
   .bots-rail__name{font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -389,6 +414,35 @@
   .bot-avatar[data-status='working']{--bot-breathe-time:2.4s;--bot-look-time:4.2s}
   .bot-avatar[data-status='waiting-approval'],
   .bot-avatar[data-status='waiting-connection']{--bot-look-time:4.8s}
+  /* Mood is a deterministic projection of operational state plus the avatar
+     variant. It adds character without replacing the readable status text. */
+  .bot-avatar[data-mood='hurry']{animation:bot-hurry .42s steps(2,end) infinite}
+  .bot-avatar[data-mood='hurry']::after{box-shadow:.62em 0 0 var(--color-neutral-solid-gray-900),
+    1.18em -.72em 0 .08em #73eff7}
+  .bot-avatar[data-mood='nap'],.bot-avatar[data-mood='sleep']{
+    animation:bot-nap 2.8s steps(2,end) infinite}
+  .bot-avatar[data-mood='nap']::before,.bot-avatar[data-mood='sleep']::before{
+    height:.12em;top:48%;border-radius:999px;background:var(--color-neutral-solid-gray-800);
+    box-shadow:.62em 0 0 var(--color-neutral-solid-gray-800);animation:none}
+  .bot-avatar[data-mood='nap']::after,.bot-avatar[data-mood='sleep']::after{
+    content:'z';width:auto;height:auto;left:auto;right:-.35em;top:-.45em;
+    color:var(--color-neutral-solid-gray-700);background:transparent;box-shadow:none;
+    font-size:.72em;font-weight:800;animation:bot-dream 2.8s steps(2,end) infinite}
+  .bot-avatar[data-mood='joy']{animation:bot-joy .8s steps(2,end) infinite}
+  .bot-avatar[data-mood='joy']::before{height:.2em;top:40%;transform:scaleY(.6);
+    animation:none}
+  .bot-avatar[data-mood='joy']::after{width:.58em;height:.3em;left:calc(50% - .29em);top:58%;
+    border-radius:0 0 999px 999px;border-bottom:.12em solid var(--color-neutral-solid-gray-900);
+    background:transparent;box-shadow:none;animation:none}
+  .bot-avatar[data-mood='nervous']{animation:bot-nervous .32s steps(2,end) infinite}
+  .bot-avatar[data-mood='nervous']::before{transform:scale(1.15);animation:none}
+  .bot-avatar[data-mood='nervous']::after{animation:bot-nervous-look .64s steps(2,end) infinite}
+  .bot-avatar[data-mood='upset']::before{height:.22em;top:42%;border-radius:999px;
+    transform:rotate(-8deg);animation:none}
+  .bot-avatar[data-mood='upset']::after{width:.55em;height:.22em;left:calc(50% - .275em);top:66%;
+    border-radius:999px 999px 0 0;border-top:.1em solid var(--color-neutral-solid-gray-900);
+    background:transparent;box-shadow:none;animation:none}
+  /* Disabled remains still even though its projected mood is sleep. */
   .bot-avatar[data-status='disabled']{animation:none;filter:saturate(.35)}
   .bot-avatar[data-status='disabled']::before{animation:none;transform:scaleY(.22)}
   .bot-avatar[data-status='disabled']::after{animation:none}
@@ -399,6 +453,16 @@
   @keyframes bot-look{0%,18%,82%,100%{transform:translateX(0)}
     28%,42%{transform:translateX(.1em)}
     58%,72%{transform:translateX(-.08em)}}
+  @keyframes bot-hurry{0%,100%{transform:translateX(-.08rem) rotate(-2deg)}
+    50%{transform:translateX(.08rem) rotate(2deg)}}
+  @keyframes bot-nap{0%,100%{transform:translateY(0)}50%{transform:translateY(.08rem)}}
+  @keyframes bot-dream{0%,100%{transform:translateY(0);opacity:.55}
+    50%{transform:translateY(-.18rem);opacity:1}}
+  @keyframes bot-joy{0%,100%{transform:translateY(0) rotate(-2deg)}
+    50%{transform:translateY(-.16rem) rotate(3deg)}}
+  @keyframes bot-nervous{0%,100%{transform:rotate(-2deg)}50%{transform:rotate(2deg)}}
+  @keyframes bot-nervous-look{0%,100%{transform:translateX(-.08em)}
+    50%{transform:translateX(.1em)}}
   .bot-avatar--xl{width:4.5rem;height:4.5rem;font-size:1.75rem}
   .bot-avatar[data-glyph='circle']{border-radius:50%}
   .bot-avatar[data-glyph='bean']{border-radius:50% 50% 45% 55% / 55% 45% 55% 45%}
@@ -592,6 +656,20 @@
   .bots-msg__resident-result[open] .bots-msg__resident-preview{display:none}
   .bots-msg__resident-body{padding:.25rem .875rem .875rem;
     border-top:1px solid var(--color-neutral-solid-gray-100)}
+  /* Only rendered inside a RUN of identical results, where it is the one thing
+     that tells the copies apart. A single result keeps its own card and needs
+     no timestamp inside it -- the thread's order already says when. */
+  .bots-msg__resident-at{margin:.5rem 0 .125rem;font-size:.75rem;
+    color:var(--color-neutral-solid-gray-600)}
+  /* What the Bot left behind. Same card frame as the ones that ask the person
+     for something, because it belongs to the same turn -- the difference is
+     that this one is a report, so it carries no control. */
+  .bots-card__meta{display:flex;flex-wrap:wrap;align-items:center;gap:.5rem;
+    margin-top:.25rem}
+  .bots-card__revision,.bots-card__path{font-size:.75rem;word-break:break-all;
+    color:var(--color-neutral-solid-gray-700)}
+  .bots-card__path{display:block;margin-top:.125rem}
+  .bots-card__count{font-size:.75rem;color:var(--color-neutral-solid-gray-600)}
   .bots-card{border:1px solid var(--color-neutral-solid-gray-200);
     border-radius:.75rem;padding:.875rem;background:var(--color-neutral-white);
     display:grid;gap:.5rem;width:100%}
@@ -624,7 +702,6 @@
     background:var(--color-neutral-solid-gray-100)}
   .bots-composer{display:flex;flex-wrap:wrap;gap:.5rem;align-items:flex-end;padding:.75rem 1rem;
     border-top:1px solid var(--color-neutral-solid-gray-200)}
-  .bots-composer__goal{flex:1 0 100%;font-size:.8125rem}
   .bots-composer textarea{flex:1;resize:none;padding:.625rem .75rem;
     border-radius:.75rem;border:1px solid var(--color-neutral-solid-gray-300);
     max-height:12rem;font:inherit}
@@ -1427,23 +1504,25 @@
       clip-path:inset(50%);width:1px;height:1px;overflow:hidden;white-space:nowrap}
     .view{padding:1rem}.view-header h1{font-size:1.75rem;line-height:1.3}.view-lead{line-height:1.7}
     .bots-view{height:calc(100dvh - 4rem - env(safe-area-inset-top) - var(--mobile-nav-height));padding:0}
-    /* On a phone the Bot picker is a horizontal touch rail. A vertical rail
-       consumed scarce message width and left the conversation looking like
-       an empty desktop pane. The selected Bot's name remains in the titlebar;
-       every avatar button carries its full accessible name. */
-    .bots-shell{display:flex;flex-direction:column}
-    .bots-main{flex:1}
+    /* Keep the Bot picker a vertical column at phone width. A horizontal
+       strip was the exception that appeared only after shrinking; the rest
+       of the layout already stacks faces. Search stays hidden in the 4rem
+       column (same as the tablet rail). The selected Bot's name remains in
+       the titlebar; every avatar button carries its full accessible name. */
+    .bots-shell{display:grid;grid-template-columns:4rem minmax(0,1fr)}
+    .bots-main{min-width:0;min-height:0}
     .bots-conversations{width:100%;border-left:0}
     .bots-quality-panel{width:100%;border-left:0}
     .bots-routines-panel{width:100%;border-left:0}
     .bots-conversations__layout{grid-template-columns:1fr}
-    .bots-rail{display:block;flex:0 0 auto;padding:.375rem .75rem;border-right:0;
-      border-bottom:1px solid var(--color-neutral-solid-gray-200);overflow-x:auto}
-    .bots-rail__search{display:block;margin-bottom:.25rem}
-    .bots-rail__list{display:flex;gap:.375rem;overflow-x:auto;scrollbar-width:none}
-    .bots-rail__list::-webkit-scrollbar{display:none}
-    .bots-rail__list>li{flex:0 0 auto}
-    .bots-rail__item{position:relative;justify-content:center;width:3rem;padding:.5rem .25rem}
+    .bots-rail{display:flex;flex-direction:column;min-height:0;padding:.5rem .375rem;
+      border-right:1px solid var(--color-neutral-solid-gray-200);border-bottom:0;
+      overflow:hidden}
+    .bots-rail__search{display:none}
+    .bots-rail__list{display:flex;flex-direction:column;align-items:stretch;gap:.375rem;
+      overflow-x:hidden;overflow-y:auto;scrollbar-width:thin}
+    .bots-rail__list>li{flex:0 0 auto;width:100%}
+    .bots-rail__item{position:relative;justify-content:center;width:100%;padding:.5rem .25rem}
     .bots-rail__copy,.bots-rail__empty,.bots-rail__group{display:none}
     .bots-rail__item .bots-dot{position:absolute;right:.3rem;bottom:.3rem}
     .bots-mobile-context{display:flex}
@@ -1470,6 +1549,86 @@
      and the static state still says that -- the dots are still there, the
      skeleton still occupies the space it is reserving -- so nothing is lost by
      holding them still. */
+  /* Comment mode (ADR: 画面コメント). A region of this application's own screen,
+     a sentence about it, and the Goal that becomes.
+
+     The overlay is `position:fixed` and covers the viewport, so a rectangle is
+     drawn in the same coordinate space the client reports and the server
+     records: CSS pixels relative to the viewport. Any other basis would need
+     the browser chrome's offset, which a page cannot measure.
+
+     `pointer-events` moves rather than the element appearing: the layer is in
+     the DOM at all times so entering the mode costs no layout, and it is inert
+     until `data-comment-mode='on'` is on the body. */
+  .comment-layer{position:fixed;inset:0;z-index:80;display:none}
+  body[data-comment-mode='on'] .comment-layer{display:block;cursor:crosshair}
+  body[data-comment-mode='on'] .comment-layer[data-picked='true']{cursor:default}
+  .comment-layer__scrim{position:absolute;inset:0;background:rgba(28,32,38,.28)}
+  .comment-layer__hint{position:absolute;top:1rem;left:50%;transform:translateX(-50%);
+    max-width:min(90vw,42rem);padding:.5rem .875rem;border-radius:.5rem;
+    background:var(--color-neutral-white);color:var(--color-neutral-solid-gray-800);
+    font-size:.8125rem;line-height:1.5;box-shadow:0 2px 12px rgba(0,0,0,.18)}
+  .comment-layer__rect{position:absolute;border:2px solid var(--color-primitive-blue-600);
+    background:rgba(26,79,191,.12);border-radius:.25rem;pointer-events:none}
+  /* The selected region is cut out of the scrim so the thing being commented on
+     stays legible while the popover is open. Without this the person writes the
+     comment against a dimmed copy of what they are describing. */
+  .comment-layer__cutout{position:absolute;border-radius:.25rem;pointer-events:none;
+    box-shadow:0 0 0 9999px rgba(28,32,38,.28);outline:2px solid var(--color-primitive-blue-600)}
+  .comment-popover{position:absolute;width:min(92vw,26rem);padding:1rem;
+    display:flex;flex-direction:column;gap:.625rem;border-radius:.75rem;
+    background:var(--color-neutral-white);box-shadow:0 8px 32px rgba(0,0,0,.24)}
+  .comment-popover__target{margin:0;font-size:.75rem;line-height:1.5;
+    color:var(--color-neutral-solid-gray-600);word-break:break-all}
+  .comment-popover textarea{width:100%;min-height:5rem;padding:.5rem;
+    border:1px solid var(--color-neutral-solid-gray-300);border-radius:.375rem;
+    font:inherit;font-size:.875rem;resize:vertical}
+  .comment-popover select{width:100%;min-height:2.25rem;padding:.25rem .5rem;
+    border:1px solid var(--color-neutral-solid-gray-300);border-radius:.375rem;font:inherit}
+  .comment-popover__row{display:flex;gap:.5rem;justify-content:flex-end;align-items:center}
+  .comment-popover__note{margin:0;font-size:.75rem;line-height:1.5;
+    color:var(--color-neutral-solid-gray-600)}
+  .comment-popover__note[data-state='error']{color:var(--color-semantic-error-1)}
+  #comment-shot{margin:0;color:var(--color-neutral-solid-gray-700)}
+  #comment-mode-toggle[aria-pressed='true']{background:var(--color-primitive-blue-600);
+    color:var(--color-neutral-white);border-color:transparent}
+  /* Model routing. The scope chips are a radiogroup rather than a select
+     because the set is small, the current one has to stay visible while the
+     provider and model beneath it are being chosen, and which Bots already
+     carry their own model is a fact worth reading off the row. */
+  .routing-scopes{display:flex;flex-wrap:wrap;gap:.375rem;margin:.25rem 0 .5rem}
+  .routing-scope{border:1px solid var(--color-neutral-solid-gray-300);
+    border-radius:999px;background:var(--color-neutral-white);
+    padding:.3125rem .75rem;font:inherit;font-size:.8125rem;cursor:pointer;
+    color:var(--color-neutral-solid-gray-800)}
+  .routing-scope:hover{background:var(--color-neutral-solid-gray-50)}
+  .routing-scope:focus-visible{outline:4px solid var(--color-primitive-yellow-300);
+    outline-offset:1px}
+  .routing-scope[aria-checked='true']{background:var(--color-key-50);
+    border-color:var(--color-key-900);color:var(--color-key-900);font-weight:700}
+  /* A scope that already has its own assignment is marked, so choosing one is
+     not a guess about whether it is about to be created or replaced. */
+  .routing-scope__mark{margin-left:.375rem;font-size:.6875rem;
+    color:var(--color-neutral-solid-gray-600)}
+  .routing-scope[aria-checked='true'] .routing-scope__mark{color:var(--color-key-900)}
+  .routing-picker{display:flex;flex-wrap:wrap;gap:.5rem;align-items:flex-end;
+    margin:.5rem 0}
+  .routing-picker .field{flex:1 1 12rem;min-width:0;margin:0}
+  .routing-picker select{width:100%;min-height:2.25rem;padding:.25rem .5rem;
+    border:1px solid var(--color-neutral-solid-gray-300);
+    border-radius:.375rem;font:inherit}
+  .routing-aux{list-style:none;margin:.25rem 0 0;padding:0;display:grid;gap:.25rem}
+  .routing-aux__row{display:flex;flex-wrap:wrap;gap:.5rem;align-items:center;
+    padding:.5rem 0;border-bottom:1px solid var(--color-neutral-solid-gray-200);
+    font-size:.8125rem}
+  .routing-aux__copy{flex:1 1 12rem;min-width:0;display:flex;flex-direction:column}
+  .routing-aux__hint{color:var(--color-neutral-solid-gray-600);font-size:.75rem}
+  /* 'main' and an assigned model must not read alike: one is a decision
+     somebody made and the other is the absence of one. */
+  .routing-aux__state{font-variant-numeric:tabular-nums;
+    color:var(--color-neutral-solid-gray-700)}
+  .routing-aux__state[data-assigned='false']{color:var(--color-neutral-solid-gray-600);
+    font-style:italic}
   @media (prefers-reduced-motion: reduce){
     .typing span{animation:none;opacity:1}
     .skeleton{animation:none;background:var(--color-neutral-solid-gray-100)}
@@ -1485,8 +1644,12 @@
   arrives with the version that emits the markup needing it. It brings no
   colour and no font — everything in it is `currentColor` and `inherit`,
   which is why this can concatenate it without checking it against the
-  tokens `core-test` guards."
-  (str base-css "\n  " hanmen-svg/stylesheet "\n"))
+  tokens `core-test` guards.
+
+  The 8-bit appearance layer (`cloud.itonami.app.appearance/css`) is
+  concatenated LAST so that its overrides win, and so that the same token
+  guard covers it: every `--eightbit-*` it references it also declares."
+  (str base-css "\n  " hanmen-svg/stylesheet "\n" appearance/css "\n"))
 
 (def interaction-js
   "The page's interaction layer, which is JavaScript and now lives in a
@@ -1606,6 +1769,51 @@
     [:ul {:class "memory-recent" :id "memory-recent-list"}
      [:li "まだcontextはありません。"]]]])
 
+(defn- model-routing-settings
+  "Which model answers, for which task.
+
+  The layout follows the decision it is editing rather than the storage: a
+  scope row, then a provider and model, then Apply. Auxiliary tasks are a
+  separate block because they are a different question — not \"which Bot\" but
+  \"which kind of work\" — and putting them in one list would invite reading a
+  room round as a Bot that does not exist.
+
+  Everything inside `#model-routing-scopes` and `#model-routing-aux` is built
+  by the client from `/api/bots/model-routing`: the number of Bots and the
+  number of tasks are both unknown until it answers, and the tasks in
+  particular are read from the application rather than written here, so a task
+  that stops being called cannot keep a row on this screen."
+  []
+  [:div {:class "local-card" :id "model-routing-settings"}
+   (dds/heading 2 "Model" {:size "20"})
+   [:p {:class "view-lead"}
+    "どの仕事をどの model に任せるかを決めます。ここでの割り当ては希望であって許可ではありません — 審査・TLS・資格情報・送信許可はこれまでどおり別に判定され、通らない宛先は選んでも拒否されます。"]
+   [:p {:class "form-help"} "適用先"]
+   [:div {:class "routing-scopes" :id "model-routing-scopes" :role "radiogroup"
+          :aria-label "この割り当ての適用先"}]
+   [:p {:class "form-help" :id "model-routing-scope-note"}
+    "「既定」は自分の model を持たない Bot すべてに効きます。Bot を選ぶとその Bot だけを変えます。"]
+   [:div {:class "routing-picker"}
+    [:div {:class "field"}
+     [:label {:for "model-routing-provider"} "Provider"]
+     [:select {:id "model-routing-provider"}]]
+    [:div {:class "field"}
+     [:label {:for "model-routing-model"} "Model"]
+     [:select {:id "model-routing-model"}]]
+    [:button {:class "primary-action" :id "model-routing-apply" :type "button"}
+     "適用"]
+    [:button {:class "tool-button" :id "model-routing-clear" :type "button"}
+     "この割り当てを外す"]]
+   [:p {:class "drive-create__status" :id "model-routing-status"
+        :role "status" :aria-live "polite"}]
+   [:div {:class "section-heading"}
+    (dds/heading 3 "補助タスクの model" {:size "16"})
+    [:button {:class "tool-button" :id "model-routing-reset-aux" :type "button"}
+     "すべて main に戻す"]]
+   [:p {:class "form-help"}
+    "Bot 自身のターン以外の model 呼び出しです。既定では Bot と同じ model で動きます。ここに出ているのはこの application が実際に呼んでいる場所だけで、呼ばなくなった仕事は行ごと消えます。"]
+   [:ul {:class "routing-aux" :id "model-routing-aux"}]])
+
 (defn- agent-machine-settings []
   [:div {:class "local-card" :id "agent-machine-settings"}
    (dds/heading 2 "Botの操作環境" {:size "20"})
@@ -1677,11 +1885,86 @@
              :id "agent-permission-dismiss" :type "button"
              :aria-label "準備リクエストを閉じる"} "×"]])
 
+(defn- comment-mode-toggle
+  "Comment mode's entry point, in the topbar and not gated by
+  `data-topbar-view`: a person can be looking at any screen when they notice
+  the thing they want changed."
+  []
+       [:div {:class "topbar__context authenticated-only" :hidden true}
+        [:button {:class "tool-button" :id "comment-mode-toggle" :type "button"
+                  :aria-pressed "false"
+                  :aria-label "この画面にコメントする"
+                  :title "この画面の範囲を選んで、直してほしいことを書く"} "✎"]])
+
+(defn- comment-layer
+  "Comment mode's overlay, as its own function rather than inline in
+  `page-html`.
+
+  Not a stylistic split. `page-html` compiles to a single JVM method and was
+  already at the 64 KB ceiling — adding this markup inline is what produced
+  `Method code too large!`, which is the same limit `server.clj` names for its
+  `handler`. A new panel in this page belongs in a function for that reason."
+  []
+     ;; Comment mode's layer. Present in the DOM at all times and inert until
+     ;; the body carries `data-comment-mode='on'`, so entering the mode is a
+     ;; dataset write rather than a render. `aria-hidden` moves with it: an
+     ;; assistive reader must not meet a scrim that is not there yet.
+     [:div {:class "comment-layer" :id "comment-layer" :aria-hidden "true"}
+      [:div {:class "comment-layer__scrim" :id "comment-scrim"}]
+      [:p {:class "comment-layer__hint" :id "comment-hint" :role "status"}
+       "コメントしたい範囲をドラッグするか、要素を右クリックしてください（Esc で終了）"]
+      [:div {:class "comment-layer__rect" :id "comment-rect" :hidden true}]
+      [:div {:class "comment-layer__cutout" :id "comment-cutout" :hidden true}]
+      [:form {:class "comment-popover" :id "comment-popover" :hidden true}
+       [:p {:class "comment-popover__target" :id "comment-target"}]
+       ;; Not an `<img>`. The crop is an SVG and this page's CSP is
+       ;; `img-src 'self'` (ADR-0007), so an inline preview is the one thing
+       ;; that cannot be shown here. The selection is already cut out of the
+       ;; scrim behind this popover, which is the live version of the same
+       ;; picture; this line says the record is being kept.
+       [:p {:class "comment-popover__note" :id "comment-shot" :hidden true}]
+       [:label {:for "comment-text" :class "comment-popover__note"}
+        "直してほしいこと"]
+       [:textarea {:id "comment-text" :required true
+                   :placeholder "例: ここ、失敗の理由が出ていない"}]
+       [:label {:for "comment-bot" :class "comment-popover__note"} "宛先の Bot"]
+       [:select {:id "comment-bot"}]
+       [:p {:class "comment-popover__note" :id "comment-status" :role "status"
+            :aria-live "polite"}]
+       [:div {:class "comment-popover__row"}
+        [:button {:class "tool-button" :id "comment-cancel" :type "button"} "やめる"]
+        [:button {:class "primary-action" :id "comment-send" :type "submit"}
+         "Bot に送る"]]]])
+
+(defn- wallet-accountbar []
+  [:div {:class "wallet-accountbar"}
+   [:label {:class "visually-hidden" :for "wallet-bot-select"} "表示するWallet"]
+   [:select {:id "wallet-bot-select" :aria-label "表示するWallet"}]
+   [:label {:class "wallet-provider-picker" :for "wallet-provider-select"}
+    [:span "他のWallet（任意）"]
+    [:select {:id "wallet-provider-select" :aria-label "任意でリンクする他のWallet"}
+     [:option {:value ""} "Walletを検出中…"]]]
+   [:span {:class "state-chip" :id "wallet-account-state"} "準備中"]])
+
+(defn- wallet-owner-panel []
+  [:section {:class "wallet-drawer" :id "wallet-owner-panel"}
+   [:div {:class "wallet-drawer__header"}
+    (dds/heading 2 "別端末のPasskey" {:size "24"})
+    [:select {:id "wallet-owner-chain" :aria-label "ownerを追加するchain"}]]
+   [:p {:class "form-help"}
+    "同期済みPasskeyなら追加は不要です。別の公開鍵を作った場合は、現在のowner Passkeyをこの端末またはQRで確認し、chain上のownerへ追加します。"]
+   [:ul {:class "data-list" :id "wallet-owner-list"}
+    [:li {:class "skeleton"}]]
+   [:p {:class "form-help" :id "wallet-owner-status"
+        :role "status" :aria-live "polite"}]])
+
 (defn page-html [configuration]
   (let [cloud? (get-in configuration [:routing :cloud-enabled?])
         provider (get-in configuration [:routing :default-provider])
         model (get-in configuration [:routing :default-model])
         brand (get-in configuration [:brand :name] "Cloud Itonami")
+        mode (appearance/resolve-mode configuration)
+        residency (appearance/residency-plane configuration)
         css (slurp (io/resource "jp_go_dds/dds.css"))]
     (page/->page
      {:title (str "Bots | " brand)
@@ -1690,7 +1973,12 @@
       :head [[:link {:rel "icon" :type "image/png" :href "/icon.png"}]
              [:link {:rel "apple-touch-icon" :href "/icon.png"}]
              [:script signal-js] [:script interaction-js]]}
-     [:div {:class "workspace" :data-brand brand}
+     ;; `data-appearance` is the whole of a mode (ADR-0091): the server renders
+     ;; the configured default, `interaction.js` flips it to the device's
+     ;; remembered choice, and the stylesheet reads it. Nothing else differs.
+     [:div {:class "workspace" :data-brand brand :data-appearance mode
+            :data-residency (name residency)}
+      (comment-layer)
       [:aside {:class "sidebar" :aria-label "メインメニュー"}
        [:div {:class "brand"}
         [:p {:class "brand__eyebrow"} green-cross "SAFETY FIRST"]
@@ -1757,10 +2045,18 @@
         ;; egress was impossible; with a reviewed cloud provider admitted it
         ;; was a badge claiming the opposite of what the app was doing.
         [:strong (if cloud? "● 許可済み接続あり" "● ローカルのみ")]
+        ;; Where the agent itself lives (ADR-0092): `local` is this machine's
+        ;; resident; `cloud` is the resident placed on murakumo.cloud, which
+        ;; the person reaches instead of running one. Read from configuration
+        ;; because the process cannot tell from inside — both bind loopback.
+        [:span {:id "workspace-residency" :data-residency (name residency)}
+         (if (= :cloud residency) "cloud-agent · murakumo.cloud" "local-agent · この端末")]
         [:span {:id "workspace-status"} "既存サービスを確認中…"]]]
       [:div {:class "main"}
        [:header {:class "topbar" :data-kotoba-window-drag "true"}
         [:h2 {:class "topbar__title" :id "current-view"} "Bots"]
+        (comment-mode-toggle)
+        (appearance/toggle-button mode)
         [:div {:class "topbar__context authenticated-only" :id "project-titlebar-context"
                :data-topbar-view "chat" :hidden true}
          [:button {:class "context-button" :id "chat-context-button" :type "button"
@@ -1864,7 +2160,7 @@
            [:p {:class "visually-hidden" :id "request-status"
                 :role "status" :aria-live "polite"}
             "ローカルモデルを準備中です。"]]]]
-        ;; Bots. Two regions, not a document: the horizontal list is how you
+        ;; Bots. Two regions, not a document: the vertical list is how you
         ;; find one and the thread is how you work with it. Both stay visible so
         ;; a Bot that is waiting for you cannot be somewhere you are not
         ;; looking. Everything inside is built by the client from /api/bots —
@@ -1926,7 +2222,7 @@
             [:div {:class "bots-onboard__step" :id "bots-step-services"}
              (dds/heading 2 "必要なら外部サービスを追加" {:size "28"})
              [:p {:class "view-lead"}
-              "Bot は local Git workspace を中心に働きます。Gmail・Driveなどは、その Bot の仕事に必要な場合だけ追加してください。何も選ばず進められます。"]
+              "Bot は Cloud Itonami 専用workspaceを持ちます。Gmailなどは、その Bot の仕事に必要な場合だけ追加してください。何も選ばず進められます。"]
              [:input {:class "bots-search" :id "bots-service-search" :type "search"
                       :placeholder "探す" :autocomplete "off"}]
              [:div {:class "bots-grid" :id "bots-service-grid"}]
@@ -1934,21 +2230,15 @@
              [:button {:class "primary-action" :id "bots-services-next" :type "button"}
               "次へ"]]
             [:div {:class "bots-onboard__step" :id "bots-step-create" :hidden true}
-             (dds/heading 2 "Local workspace で働く Bot" {:size "28"})
+             (dds/heading 2 "Cloud Itonami workspace で働く Bot" {:size "28"})
              [:p {:class "view-lead"}
-              "まずフォルダ・ソース・Git履歴を読み、必要な変更を提案します。外部サービスは追加能力です。"]
-             [:div {:class "field"}
-              [:label {:for "bots-workspace"} "作業する Git workspace"]
-              [:input {:id "bots-workspace" :type "text" :maxlength "4096"
-                       :autocomplete "off"
-                       :placeholder "/Users/name/github/project"}]
-              [:span {:class "form-help"}
-               "既存Git repositoryのrootを正確に指定します。この範囲の外は読めません。"]]
+              "Bot専用フォルダをこのMacに自動作成し、Cloud Itonami Driveと双方向同期します。別の端末やWebでの変更も同じworkspaceに届きます。"]
+             [:input {:id "bots-workspace" :type "hidden" :value ""}]
              [:div {:class "bots-permission bots-permission--summary"}
               [:span {:class "bots-permission__copy"}
                [:span "自律モードで開始します"]
                [:span {:class "bots-permission__help"}
-                (str "このworkspace内の読み取り・ファイル変更・local commitを自律実行します。"
+                (str "Bot専用workspace内の読み取り・ファイル変更・local commitを自律実行します。"
                      "push、外部アカウント、Wallet署名は自動では付与されません。"
                      "細かな権限やModelは、作成後にBot設定から変更できます。")]]]
              [:button {:class "tool-button" :id "bots-pick-services" :type "button"}
@@ -2004,9 +2294,6 @@
              [:div {:class "bots-run" :id "bots-run" :hidden true}]
              [:ol {:class "bots-thread__messages" :id "bots-messages"}]]
             [:form {:class "bots-composer" :id "bots-form"}
-             [:label {:class "bots-permission bots-composer__goal"}
-              [:input {:id "bots-goal" :type "checkbox"}]
-              [:span "Goal — 完了または具体的な阻害まで進める"]]
              [:textarea {:id "bots-input" :rows "1" :maxlength "8000"
                          :placeholder "この Bot に頼む" :autocomplete "off"}]
              [:button {:class "primary-action" :id "bots-send" :type "submit"
@@ -2133,12 +2420,9 @@
            [:div {:class "storefront-order" :id "storefront-order" :hidden true}]]]]
         [:section {:class "view" :data-view-panel "wallet" :hidden true}
          (view-header "Wallet"
-                      "Botを作ると専用Walletも自動で生まれます。受取・送金提案・履歴をBot単位で管理します。")
+                      "Passkeyを作ると自分のSmart Accountが、Botを作ると専用Walletが自動で生まれます。外部Walletは不要です。")
          [:div {:class "wallet-workspace"}
-          [:div {:class "wallet-accountbar"}
-           [:label {:class "visually-hidden" :for "wallet-bot-select"} "表示するBot Wallet"]
-           [:select {:id "wallet-bot-select" :aria-label "表示するBot Wallet"}]
-           [:span {:class "state-chip" :id "wallet-account-state"} "準備中"]]
+          (wallet-accountbar)
           [:article {:class "wallet-hero" :id "wallet-hero" :aria-live "polite"}
            [:div {:class "wallet-hero__identity"}
             [:span {:class "bot-avatar" :id "wallet-bot-avatar" :aria-hidden "true"}]
@@ -2146,14 +2430,14 @@
              [:p {:class "wallet-network" :id "wallet-network"} "Ethereum"]]]
            [:p {:class "wallet-balance" :id "wallet-balance"} "— ETH"]
            [:button {:class "wallet-address-button wallet-address" :id "wallet-address"
-                     :type "button" :disabled true} "署名Walletを接続してください"]
+                     :type "button" :disabled true} "Passkey Walletを準備中"]
            [:div {:class "wallet-actions" :aria-label "Wallet操作"}
             [:button {:class "wallet-action" :id "wallet-receive" :type "button" :disabled true}
              [:span {:class "wallet-action__icon" :aria-hidden "true"} "↓"] [:span "受け取る"]]
             [:button {:class "wallet-action" :id "wallet-send" :type "button" :disabled true}
              [:span {:class "wallet-action__icon" :aria-hidden "true"} "↗"] [:span "送る"]]
             [:button {:class "wallet-action" :id "wallet-connect" :type "button"}
-             [:span {:class "wallet-action__icon" :aria-hidden "true"} "✓"] [:span "署名接続"]]]]
+             [:span {:class "wallet-action__icon" :aria-hidden "true"} "+"] [:span "他のWallet"]]]]
           [:p {:class "form-help" :id "wallet-connect-status"
                :role "status" :aria-live "polite"}]
           [:div {:class "wallet-tabs" :role "tablist" :aria-label "Wallet内容"}
@@ -2169,11 +2453,12 @@
              [:div [:p [:strong "Ethereum"]] [:p {:class "form-help"} "ETH"]]]
             [:div {:class "wallet-token__amount"}
              [:p {:id "wallet-asset-balance"} "— ETH"]
-             [:p {:class "form-help"} "残高は接続中のWalletから取得"]]]]
+             [:p {:class "form-help"} "対応するchain providerがあれば残高を取得"]]]]
           [:section {:class "wallet-panel" :id "wallet-activity-panel" :role "tabpanel"
                      :aria-labelledby "wallet-activity-tab" :hidden true}
            [:ul {:class "data-list" :id "wallet-transfer-list"}
             [:li {:class "skeleton"}]]]
+          (wallet-owner-panel)
           [:section {:class "wallet-drawer" :id "wallet-send-drawer" :hidden true}
            [:div {:class "wallet-drawer__header"}
             (dds/heading 2 "送る" {:size "24"})
@@ -2193,7 +2478,7 @@
           [:div {:class "wallet-safety"}
            [:span {:aria-hidden "true"} "🔒"]
            [:p [:strong "秘密鍵はCloud Itonamiに保存しません。"]
-            " Botは送金内容を提案し、最終署名はMetaMaskなどの外部Walletで確認します。"]]
+            " PasskeyがSmart Accountを所有し、Botは送金内容を提案します。最終UserOperationはPasskeyで確認します。MetaMaskやCoinbase Walletは任意です。"]]
           [:p {:class "source-note"} [:span {:class "source-dot"}]
            [:span {:id "wallet-source"} "Walletを確認中…"]]
           [:ul {:class "visually-hidden" :id "wallet-account-list"}]
@@ -3263,7 +3548,7 @@
           [:div {:class "view-header__copy"}
            (dds/heading 1 "サインイン" {:size "36" :id "registration-title"})
            [:p {:class "view-lead" :id "registration-lead"}
-            "パスキーでサインインします。Email や SSO を連携済みなら、それでも入れます。"]]]
+            "Web3 の本人確認を、パスキーで安全に始めます。"]]]
          [:div {:class "security-callout" :id "passkey-gate-notice"
                 :role "status" :aria-live "polite"}
           [:strong {:id "signin-gate-headline"} "パスキーでサインインしてください。"]
@@ -3284,15 +3569,15 @@
                          :href "https://itonami.cloud/ja/signin/"})]
            [:p {:class "form-help"}
             "鍵は 1Password / Bitwarden / iCloud キーチェーン / Google パスワードマネージャー のいずれかに保存してください。登録は itonami.cloud で行います。"]]
-          ;; Everything below is the exception, not the entrance: device-local
-          ;; recovery, email, SSO, and joining by invitation. One fold, so
+          ;; Everything below is still Passkey: device-local recovery,
+          ;; device-local registration, and joining by invitation. One fold, so
           ;; the screen shows one decision until someone asks for more. The
           ;; invited-user form lives inside #registered-auth on purpose — it
           ;; is pre-auth-only exactly like the rest, and one container means
           ;; one visibility rule in the script.
           (accordion-with-id
            "local-recovery"
-           "その他のサインイン方法"
+           "Passkey の復旧・参加"
            [:div {:class "settings-stack" :id "registered-auth"}
             [:div {:class "settings-form"}
              (dds/heading 3 "この端末の Passkey" {:size "20"})
@@ -3305,21 +3590,6 @@
               "この端末だけに User を作る経路です。通常の登録は itonami.cloud のパスキーです。"]
              [:button {:class "tool-button" :id "registration-submit"
                        :type "submit"} "この端末だけで登録"]]
-            [:form {:class "settings-form" :id "email-login-form" :hidden true}
-             (dds/heading 3 "Emailで続ける" {:size "20"})
-             [:p {:class "form-help"}
-              "10分間・一回限りのリンクを送ります。新規登録が有効な環境では、そのままUserを作成できます。"]
-             [:div {:class "field"}
-              [:label {:for "email-login-address"} "メールアドレス"]
-              [:input {:id "email-login-address" :name "email" :type "email"
-                       :required true :autocomplete "email"}]]
-             [:button {:class "tool-button" :id "email-login-submit"
-                       :type "submit"} "ログインリンクを送る"]]
-            [:div {:class "settings-form" :id "sso-signin-card" :hidden true}
-             (dds/heading 3 "SSOで続ける" {:size "20"})
-             [:p {:class "form-help"}
-              "Google、Microsoft、GitHubの認証だけを使います。メールやリポジトリへのアクセス権は要求しません。"]
-             [:div {:class "button-row" :id "sso-signin-list"}]]
             [:div {:class "settings-form"}
              (dds/heading 3 "招待された User" {:size "20"})
              [:p {:class "form-help"}
@@ -3338,6 +3608,7 @@
         [:section {:class "view" :data-view-panel "settings" :hidden true}
          (view-header "Settings" "サインイン済みのUser、Organization、外部サービス接続を管理します。")
          (context-capture-settings)
+         (model-routing-settings)
          (agent-machine-settings)
          [:div {:class "local-card" :id "desktop-update-card"}
           (dds/heading 2 "Desktop update" {:size "20"})
@@ -3368,8 +3639,7 @@
             "同じEmailでも自動統合しません。既存Userへサインインした状態で接続してください。"]
            [:div {:class "button-row"}
             [:button {:class "primary-action" :id "itonami-cloud-link"
-                      :type "button"} "auth.itonami.cloud を接続"]
-            [:span {:id "sso-link-list"}]]]
+                      :type "button"} "auth.itonami.cloud を接続"]]]
           [:div {:class "local-card" :id "session-management-card"}
            (dds/heading 2 "ログイン中の端末" {:size "24"})
            [:p {:class "view-lead"}

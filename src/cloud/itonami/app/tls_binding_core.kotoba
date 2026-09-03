@@ -1,0 +1,33 @@
+;; The certificate renewal DECISION CORE — whether a certificate should be
+;; replaced by a given time.
+;;
+;; `tls_binding.cljc` keeps the ACME challenge token (a string guard, not a
+;; decision) and the thin adapter that calls this core. The decision itself —
+;; given an expiry, a now, and a window, is renewal due? — lives here.
+;;
+;; Two cases, one answer:
+;;   - the expiry is unreadable (the host could not parse it) → due.
+;;     A certificate whose expiry this process cannot read is not one it can
+;;     promise anything about.
+;;   - the expiry is readable and within the window → due.
+;;
+;; What crosses is a `:bool` result from three `:i64` arguments. The host
+;; resolves the expiry to an epoch-ms integer (or -1 for unreadable) before
+;; calling. No keywords, no sets, no records.
+;;
+;; Parity: test/cloud/itonami/app/tls_binding_kotoba_parity_test.clj
+
+(ns cloud.itonami.app.tls-binding-core
+  (:export [renewal-due?]))
+
+(defn renewal-due?
+  "Whether a certificate expiring at `expiry-ms` should be replaced by
+  `now-ms` within `window-ms`.
+
+  `expiry-ms` is -1 when the host could not read the expiry. A certificate
+  whose expiry this process cannot read is not one it can promise anything
+  about, so it is due."
+  [expiry-ms :i64 now-ms :i64 window-ms :i64]
+  (if (= expiry-ms -1)
+    true
+    (<= expiry-ms (+ now-ms window-ms))))

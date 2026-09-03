@@ -1,6 +1,7 @@
 (ns cloud.itonami.app.config
   (:require [clojure.edn :as edn]
             [clojure.java.io :as io]
+            [cloud.itonami.app.config-policy :as policy-layer]
             [clojure.string :as str]
             [cloud.itonami.app.policy :as policy])
   (:import [java.security MessageDigest]))
@@ -28,7 +29,7 @@
   `~/.cloud-itonami/app` and `~/.cloud-itonami/data` are one installation, and
   `bin/itonami` already says so -- it exports `CLOUD_ITONAMI_DATA_DIR` before
   spawning the CLI. That covered commands run THROUGH the launcher and nothing
-  else. A bare `clojure -M:cli` or `-M:server` in the same directory fell back
+  else. A bare leftover JVM CLI or leftover JVM server in the same directory fell back
   to the relative `data` and created a THIRD store at
   `~/.cloud-itonami/app/data`, holding an enrollment key no running server had
   ever written. Measured 2026-08-20 on this machine: that directory existed,
@@ -89,15 +90,7 @@
                          (.getBytes (.getPath (canonical dir)) "UTF-8"))]
      (subs (apply str (map #(format "%02x" (bit-and % 0xff)) digest)) 0 12))))
 
-(defn- deep-merge
-  ([a b]
-   (merge-with (fn [x y]
-                 (if (and (map? x) (map? y))
-                   (deep-merge x y)
-                   y))
-               a b))
-  ([a b & more]
-   (reduce deep-merge (deep-merge a b) more)))
+(def ^:private deep-merge policy-layer/deep-merge)
 
 (defn- read-edn-file [file]
   (when (.isFile file)
@@ -115,18 +108,21 @@
                          :path (.getPath file)})))
       (read-edn-file file))))
 
+(def overlay-providers
+  "See `config-policy/overlay-providers`. Re-exported because callers name it
+  here, and because the layering is the part that had a silent failure -- it
+  now lives where a test can reach it without a filesystem."
+  policy-layer/overlay-providers)
+
 (defn load-config []
   (let [defaults (-> "cloud-itonami-app.defaults.edn" io/resource slurp edn/read-string)
         override-file (io/file (data-dir) "config.edn")
         profile (or (profile-overrides) {})
         overrides (or (read-edn-file override-file) {})
-        provider-overrides (into {} (map (juxt :id identity)
-                                         (:providers overrides)))
-        providers (mapv #(deep-merge % (get provider-overrides (:id %) {}))
-                        (:providers defaults))
-        config (assoc (deep-merge defaults profile
-                                  (dissoc overrides :providers))
-                      :providers providers)
+        ;; The layering is `config-policy`'s; the environment, the directory
+        ;; and the slurps above are this namespace's. The one validation below
+        ;; stays here because it goes through the Kotoba oracle.
+        config (policy-layer/compose defaults profile overrides)
         host (get-in config [:server :host])]
     (when (and (get-in config [:privacy :bind-loopback-only?])
                (not (policy/loopback-host? host)))
@@ -135,6 +131,5 @@
     config))
 
 (defn env-secret [provider]
-  (let [env-name (:api-key-env provider)]
-    (when-not (str/blank? env-name)
-      (not-empty (System/getenv env-name)))))
+  (when-let [env-name (policy-layer/secret-env-name provider)]
+    (not-empty (System/getenv env-name))))

@@ -1,0 +1,142 @@
+[{:db/id -1
+  :adr/id "adr-2608291900-cli-bots-use-explicit-ornith-edge-route"
+  :adr/title "CLI Bots use the explicit Ornith edge route"
+  :adr/status "accepted"
+  :adr/date "2026-08-29"
+  :adr/body
+  "## The request
+
+`itonami` CLI の Bots を `murakumo.cloud` の Ornith model に接続し、16 GB
+Mac mini で安定運用できるかを実生成で検証する。
+
+## Before
+
+The resident installation was admitted to the Murakumo provider, but its
+workforce override and every observed Bot still selected `murakumo-main`.
+The 24-hour Bot SLO at 08:46Z was failing: 167 turns, 18 completed, 146 failed,
+10.8% completion, 70.1% provider timeouts, p50 214 s and p90 1,203 s. This is a
+historical window over `murakumo-main`; it is the baseline, not an Ornith result.
+
+## Decision
+
+Resident workforce Bots select the literal `murakumo-edge` route. It is added
+to the shipped Murakumo catalog with the 65,536-token window advertised by the
+live `/v1/models` endpoint. There is deliberately no fallback from
+`murakumo-edge` to `murakumo-main`: a fallback could make an edge stability
+test succeed on GAD or B70 and therefore answer the wrong question.
+
+The provider-wide default stays `murakumo-main`. This decision changes Bots,
+not unrelated interactive model calls. A per-Bot `itonami bots model` choice
+still wins, and provisioning can still read an explicit role profile or an
+operator workforce override.
+
+## Live verification, 2026-08-29 08:47-09:05Z
+
+The path under test was the real one:
+
+    itonami CLI -> resident server -> api.murakumo.cloud -> murakumo-edge
+
+The shell held no `MURAKUMO_API_KEY`; the resident process retained the
+credential boundary. A dedicated Bot was changed with `itonami bots model`,
+then asked for nonce-only answers without tools or external effects.
+
+- First generation: exact `ORNITH_EDGE_OK_20260829`; model
+  `murakumo-edge`; inference turn 32.6 s; fresh CLI process end-to-end 49.4 s.
+- Sequential soak in one CLI process: 10/10 exact answers, 0 timeout, 0 HTTP
+  error and 0 model mismatch. End-to-end p50 34.84 s, p95/max 37.51 s.
+- Before the soak, the public inference registry reported ten
+  `murakumo-edge` workers; 10/10 were enrolled, live, ready and fresh.
+- After the soak, the same ten were still enrolled/live/ready/fresh with ten
+  free slots. Fleet telemetry reported ten 16 GiB macOS workers, all online
+  and reachable. Memory in use was 4.34-13.48 GiB (median 10.65 GiB); the
+  newest telemetry sample was under 10 s old.
+
+The application suite after the configuration change ran 2,064 tests / 12,144
+assertions with 0 failures and 0 errors.
+
+## Landed and resident, 2026-08-29 09:09-09:17Z
+
+PR #221 merged as `67041af073329aeea7f7ebf8df451d57036b4b51`. The
+LaunchAgent `dev.cloud-itonami.app` was moved from immutable release `4a2dbb3`
+to the matching `67041af` release; the old directory and the existing store
+were retained for rollback. `/health` returned the resident store fingerprint,
+and the PATH-resolved `itonami status` reported `serves-this-store?: true`.
+
+Re-provisioning moved all 92 workforce Bots through the configuration path.
+Six remaining saved Murakumo Bots were updated through `itonami bots model`.
+The post-change inventory was 99 enabled Murakumo Bots, 99 on
+`murakumo-edge`, zero on another model. A post-release real generation returned
+exact `ORNITH_RELEASE_67041AF_OK` in 31.35 s. The public registry still reported
+ten of ten Ornith workers live/ready/fresh with all ten slots free afterwards.
+
+## Stabilization integration, 2026-08-29
+
+Two real resident goal runs then exposed a different boundary: generation was
+healthy, but Ornith kept describing completion in prose for 11/13 turns and
+never called the host's completion tool. A direct request to the same live
+worker with OpenAI `tool_choice: required` returned an exact
+`goal_complete({summary, evidence})` tool call. The app therefore uses the
+wire-level required-tool contract for tool-bearing `murakumo-edge` goals and
+fails the turn immediately as `:provider/required-tool-missing` if a provider
+violates it. This replaces an unproductive 24-turn prose loop; it does not mark
+the goal successful without evidence.
+
+Prefix reuse is integrated as a soft placement contract across the three
+components rather than an application result cache:
+
+1. Cloud Itonami hashes the conversation id and sends only the 64-hex digest as
+   `x-murakumo-affinity-key`; the raw Bot/conversation identity does not cross
+   the provider boundary.
+2. local-murakumo chooses a stable live Ornith worker for that digest and gives
+   it an eight-second exclusive preference. This is deliberately distinct from
+   AIUEOS `target-did`: a hard physical-device target never falls back, while a
+   cache preference expires so a busy or dead Mac cannot pin the request.
+3. Each Murakumo poll worker includes its DID when listing queue work, while
+   claim remains the authoritative atomic check.
+
+The bounded edge response now preserves measured llama.cpp
+`prompt_tokens_details.cached_tokens` and bounded timing fields, and adds the
+serving worker DID. Cloud Itonami accumulates cached tokens without turning an
+unmeasured value into zero and projects the serving DID on the public turn.
+This makes same-worker cache reuse and fallback observable per task.
+
+## Post-integration evidence and production blocker, 2026-08-29 12:16-12:18Z
+
+The stabilization source is merged in all three owners: Murakumo
+`590de39a` (worker DID on queue polling), local-murakumo `64584add` (soft
+affinity plus a ten-minute queue hot window and five-minute queue shards), and
+Cloud Itonami `09efa016` (hashed affinity, required-tool fail-fast, cache and
+serving-worker evidence). The resident app runs the immutable `09efa016`
+release and `/health` is green. The Murakumo poll-worker source has SHA-256
+`b414ad4df215a229c831878b11648c48ba6666fecbf47bcc9228f873be533c07`
+on all ten canonical 16 GiB Mac minis; all ten then appeared simultaneously as
+live, ready, and fresh in the public registry.
+
+The bounded Worker tree is merged, builds successfully, and was uploaded as
+Cloudflare Version `479d1c89-1a6a-4ea8-ac2e-11b4f2fb4d8c` with zero
+production traffic. It is therefore a staged artifact, not a live release.
+The production deployment still runs an older queue implementation. A public
+required-tool request at 12:16Z again returned HTTP 503 / Cloudflare error
+1102 after about 37 seconds. This failure occurred before a resident model
+could complete the request and is not an Ornith tool-call result.
+
+The production switch was deliberately stopped by the local deployment safety
+gate: the shared root checkout is behind `origin/main` and has overlapping
+uncommitted owner work, so synchronizing or releasing from it could roll back
+unrelated production changes. The existing sovereign CDCI allowlist contains
+test, build, and smoke actions but no production-release action; it was not
+misrepresented as a deployment path. Until the staged Version receives
+production traffic and the goal/cache tests pass, task completion rate and
+cache-hit effectiveness remain unqualified.
+
+## Qualification boundary
+
+The original sequential soak established short-generation health and memory
+headroom, but did not prove per-request worker attribution or goal completion.
+The integrated fields now make attribution measurable, but a
+post-release goal/tool run and repeated-prefix cache observation are still
+required before calling the stabilization live. The honest production gate
+remains the existing Bot SLO after enough new Ornith turns enter its window:
+completion >=90%, provider timeout <2%, stale runs 0, with the model recorded
+as `murakumo-edge`.
+"}]

@@ -19,27 +19,43 @@
                  (str "store-bound-" (System/nanoTime)))
     (.mkdirs)))
 
+(defn- delete-tree! [file]
+  (when (.exists file)
+    (doseq [entry (reverse (file-seq file))]
+      (when (and (.exists entry) (not (.delete entry)))
+        (throw (ex-info "test temp entry could not be deleted"
+                        {:path (.getPath entry)}))))))
+
+(defn- with-tmp-dir [f]
+  (let [dir (tmp-dir)]
+    (try
+      (f dir)
+      (finally
+        (delete-tree! dir)))))
+
 (deftest a-store-larger-than-the-document-bound-still-persists
-  (let [dir (tmp-dir)
-        file (io/file dir "state.edn")
-        ;; Just over the document bound; far under the store bound.
-        content (apply str (repeat (+ (* 16 1024 1024) 1024) "x"))]
-    (testing "the document bound refuses it -- that bound is not wrong, it is for something else"
-      (is (thrown? clojure.lang.ExceptionInfo (host/write-atomic! file content))))
-    (testing "and the store's own bound accepts it"
-      (host/write-atomic! file content host/store-max-bytes)
-      (is (.exists file))
-      (is (= (count content) (.length file))))
-    (testing "no .tmp is left behind"
-      (is (not (.exists (io/file dir "state.edn.tmp")))))))
+  (with-tmp-dir
+    (fn [dir]
+      (let [file (io/file dir "state.edn")
+            ;; Just over the document bound; far under the store bound.
+            content (apply str (repeat (+ (* 16 1024 1024) 1024) "x"))]
+        (testing "the document bound refuses it -- that bound is not wrong, it is for something else"
+          (is (thrown? clojure.lang.ExceptionInfo (host/write-atomic! file content))))
+        (testing "and the store's own bound accepts it"
+          (host/write-atomic! file content host/store-max-bytes)
+          (is (.exists file))
+          (is (= (count content) (.length file))))
+        (testing "no .tmp is left behind"
+          (is (not (.exists (io/file dir "state.edn.tmp")))))))))
 
 (deftest the-store-bound-is-a-bound-not-an-absence
   (testing "unbounded is not the alternative to wrong"
-    (let [dir (tmp-dir)
-          file (io/file dir "state.edn")
-          over (apply str (repeat (+ host/store-max-bytes 8) "x"))]
-      (is (thrown? clojure.lang.ExceptionInfo
-                   (host/write-atomic! file over host/store-max-bytes)))))
+    (with-tmp-dir
+      (fn [dir]
+        (let [file (io/file dir "state.edn")
+              over (apply str (repeat (+ host/store-max-bytes 8) "x"))]
+          (is (thrown? clojure.lang.ExceptionInfo
+                       (host/write-atomic! file over host/store-max-bytes)))))))
   (testing "and it is larger than the document bound, which is the whole point"
     (is (> host/store-max-bytes (* 16 1024 1024)))))
 
@@ -62,25 +78,38 @@
   ;; Sizes are exact byte counts, not fractions of the bound: the first version
   ;; used (int (* 0.8 bound)) and asserted "80%", which the truncation made 79
   ;; and put in a different decile. That tested my arithmetic, not the warning.
-  (let [dir (tmp-dir)
-        file (io/file dir "state.edn")
-        bound (* 4 1024 1024)                 ;; 4194304
-        say (fn [n] (let [out (java.io.StringWriter.)]
-                      (binding [*err* out]
-                        (host/write-atomic! file (apply str (repeat n "x")) bound))
-                      (str out)))]
-    (testing "well under the bound, nothing is said"
-      (is (= "" (say 1024))))
-    (testing "past the fraction it warns, with a number and the consequence"
-      (let [msg (say 3500000)]                ;; 83% -> decile 8
-        (is (re-find #"WARNING" msg))
-        (is (re-find #"\d+% of its" msg))
-        (is (re-find #"will not start" msg)
-            "the warning must say what happens at the bound, not just report a number")))
-    (testing "and does not repeat within the same decile"
-      (is (= "" (say 3540000))))              ;; 84% -> still decile 8
-    (testing "but speaks again when it moves closer"
-      (is (re-find #"WARNING" (say 3900000)))) ;; 92% -> decile 9
-    (testing "the bound itself still refuses -- the warning does not replace it"
-      (is (thrown? clojure.lang.ExceptionInfo
-                   (host/write-atomic! file (apply str (repeat (+ bound 8) "x")) bound))))))
+  (with-tmp-dir
+    (fn [dir]
+      (let [file (io/file dir "state.edn")
+            bound (* 4 1024 1024)                 ;; 4194304
+            say (fn [n] (let [out (java.io.StringWriter.)]
+                          (binding [*err* out]
+                            (host/write-atomic! file (apply str (repeat n "x")) bound))
+                          (str out)))]
+        (testing "well under the bound, nothing is said"
+          (is (= "" (say 1024))))
+        (testing "past the fraction it warns, with a number and the consequence"
+          (let [msg (say 3500000)]                ;; 83% -> decile 8
+            (is (re-find #"WARNING" msg))
+            (is (re-find #"\d+% of its" msg))
+            (is (re-find #"will not start" msg)
+                "the warning must say what happens at the bound, not just report a number")))
+        (testing "and does not repeat within the same decile"
+          (is (= "" (say 3540000))))              ;; 84% -> still decile 8
+        (testing "but speaks again when it moves closer"
+          (is (re-find #"WARNING" (say 3900000)))) ;; 92% -> decile 9
+        (testing "the bound itself still refuses -- the warning does not replace it"
+          (is (thrown? clojure.lang.ExceptionInfo
+                       (host/write-atomic! file (apply str (repeat (+ bound 8) "x")) bound))))))))
+
+(deftest the-test-temp-directory-is-reclaimed-on-failure
+  (let [created (atom nil)]
+    (is (thrown-with-msg?
+          clojure.lang.ExceptionInfo
+          #"probe"
+          (with-tmp-dir
+            (fn [dir]
+              (reset! created dir)
+              (spit (io/file dir "probe") "temporary")
+              (throw (ex-info "probe" {}))))))
+    (is (not (.exists @created)))))

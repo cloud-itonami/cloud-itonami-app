@@ -1,6 +1,6 @@
 # ADR-0031: Sign-in is plural and step-up remains explicit
 
-**Status:** accepted — 2026-08-10, refined 2026-08-12
+**Status:** superseded by ADR-0083 — 2026-08-30
 
 ## Context
 
@@ -25,6 +25,11 @@ a verified Email address or a provider subject to create an active personal
 User. Authentication OAuth uses a separate minimal scope set, PKCE S256,
 single-use state, nonce where supported, and a ten-minute transaction;
 connector scopes and tokens remain separate.
+
+As of 2026-08-28, the product and `itonami` profiles configure no provider SSO:
+Web3 identity begins with Passkey/WebAuthn. The SSO transaction implementation
+remains available only as an explicit compatibility deployment option; it is
+not rendered as a dormant or disabled entrance.
 
 The stable login key is `[provider, provider-subject]`. It can belong to one
 local User only. Email equality is display and recovery context, never an

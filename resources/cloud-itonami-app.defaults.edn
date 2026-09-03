@@ -63,6 +63,33 @@
         #_{:google {:client-id "..." :public-client? true}
            :microsoft {:client-id "..." :public-client? true}}
         {}}
+ ;; Passkey Smart Account owner operations. Endpoints are operator inputs, not
+ ;; Coinbase authority: any ERC-4337 v0.6 bundler serving the allowlisted chain
+ ;; may be used. Full URLs live in environment variables because provider URLs
+ ;; commonly contain an API key. With them absent the receive address still
+ ;; works, while owner submission fails closed as not configured.
+ :wallet
+ {:smart-account
+  {:factory-address "0xBA5ED110eFDBa3D005bfC882d75358ACBbB85842"
+   :implementation-address "0x00000110dCdEdC9581cb5eCB8467282f2926534d"
+   :entry-point-address "0x5FF137D4b0FDCD49DcA30c7CF57E578a026d2789"
+   :entry-point-version "0.6"
+   :factory-family "coinbase-smart-wallet"
+   :owner-management-abi "coinbase-smart-wallet-v1"}
+  :chains
+  [{:chain-id 1 :name "Ethereum"
+    :rpc-url-env "CLOUD_ITONAMI_EVM_RPC_URL"
+    :bundler-url-env "CLOUD_ITONAMI_ERC4337_BUNDLER_URL"
+    ;; Optional ERC-4337 v0.6 sponsorship endpoint. When absent the Smart
+    ;; Account pays its own gas from its deterministic address.
+    :paymaster-url-env "CLOUD_ITONAMI_ERC4337_PAYMASTER_URL"}
+   ;; Public-chain rehearsal before mainnet. The Coinbase Smart Wallet v1.1
+   ;; factory/implementation and EntryPoint v0.6 use the same deterministic
+   ;; addresses on Sepolia, but endpoints remain independently replaceable.
+   {:chain-id 11155111 :name "Ethereum Sepolia" :network "testnet"
+    :rpc-url-env "CLOUD_ITONAMI_EVM_SEPOLIA_RPC_URL"
+    :bundler-url-env "CLOUD_ITONAMI_ERC4337_SEPOLIA_BUNDLER_URL"
+    :paymaster-url-env "CLOUD_ITONAMI_ERC4337_SEPOLIA_PAYMASTER_URL"}]}
  ;; SECURITY FIRST (ADR-2608130100). `:cloud-enabled?` is the deployment-wide
  ;; egress switch: with it false, no provider that leaves this machine is
  ;; admitted no matter what it declares. It does NOT admit anything on its own —
@@ -70,6 +97,15 @@
  :routing {:default-provider "ollama"
            :default-model "gemma4:e2b"
            :cloud-enabled? false}
+ ;; Where the agent lives (ADR-0092). `:local` is a resident on the person's
+ ;; own machine; `:cloud` is the resident placed on murakumo.cloud that
+ ;; itonami.cloud reaches instead (profiles/itonami.edn). Both bind loopback;
+ ;; the workspace shows which one it is because the process cannot tell.
+ :residency {:plane :local}
+ ;; Appearance of the workspace (ADR-0091): `:light` (DADS as shipped) or
+ ;; `:8bit`. This is the server default for a fresh document; a device's own
+ ;; choice from the topbar toggle is remembered in the browser and wins.
+ :ui {:appearance :light}
  ;; Normal Bots start with the local interaction surfaces requested. Concrete
  ;; tool admission still fails closed when agent-browser, CuaDriver or the
  ;; required macOS permissions are missing, and an explicit saved false value
@@ -126,9 +162,19 @@
    ;; than local and warm models.  The requested model is checked against
    ;; the response before output is admitted; a failed bounded request is
    ;; retried explicitly as murakumo-main and remains labelled as that model.
+   ;; `awai-network/basho` is awai.network's chat model served by murakumo
+   ;; (root ADR-2609011842 / ADR-2609021200). Its API base as of 2026-09-02 is
+   ;; GLM-5.3 on a vendor serverless Model API behind a monthly budget the
+   ;; gateway enforces; the gateway answers 503 with
+   ;; `self_model_monthly_budget_exhausted` or `self_model_backend_unavailable`
+   ;; when it will not serve, and the fallback below carries the turn.
    :models ["murakumo-main"
+            "murakumo-edge"
+            "awai-network/basho"
             "qwen3.8-27b-throughput-5090"
-            "qwen3.8-27b-fastmtp-aggressive"]
+            "qwen3.8-27b-fastmtp-aggressive"
+            "z-ai/glm-5.3-flash"
+            "qwen/qwen3.8-flash"]
    :model-request-timeout-seconds
    {"qwen3.8-27b-throughput-5090" 420}
    ;; Do not spend that 420-second cold-start wall when RunPod lacks verified
@@ -142,27 +188,93 @@
      :timeout-seconds 5}}
    :max-transient-retries 0
    :assert-response-model? true
+   ;; `murakumo-main` remains the stable primary route. A retryable gateway or
+   ;; origin failure falls through once to OpenRouter's reviewed GLM route,
+   ;; still carried by api.murakumo.cloud so the application does not acquire a
+   ;; second provider credential or authority boundary. `with-model-fallback`
+   ;; records both the requested and actually served model.
+   ;;
    ;; 5090 cold-start 503 and FastMTP's dead Modal origin (measured
    ;; 2026-08-26: HTTP 502 body starting `modal-http`, not JSON) both
    ;; retry the alias. The result stays labelled as the model that served.
-   :model-fallbacks {"qwen3.8-27b-throughput-5090" "murakumo-main"
-                    "qwen3.8-27b-fastmtp-aggressive" "murakumo-main"}
+   :model-fallbacks {"murakumo-main" "z-ai/glm-5.3-flash"
+                    "awai-network/basho" "z-ai/glm-5.3-flash"
+                    "qwen3.8-27b-throughput-5090" "murakumo-main"
+                    "qwen3.8-27b-fastmtp-aggressive" "murakumo-main"
+                    "z-ai/glm-5.3-flash" "qwen/qwen3.8-flash"
+                    "qwen/qwen3.8-flash" "murakumo-main"}
+   ;; The resident workforce is the murakumo-edge SLO workload. Falling it
+   ;; through to murakumo-main converts one unavailable edge into two occupied
+   ;; inference planes, hides which route failed, and can amplify an edge
+   ;; outage into main-pool timeouts. Operator overlays may still carry an old
+   ;; fallback entry; the provider honours this deny-list after overlays merge.
+   :no-fallback-models #{"murakumo-edge"}
    ;; The stable alias currently reports 262,144, the Community RTX 5090 Pod
    ;; reports 65,536, and the FastMTP deployment reports 32,768. Keep this map
    ;; beside the alias: repointing `murakumo-main` must update its model metadata
    ;; in the same configuration change. Every Bot uses the window of the model
    ;; it selected; this does not change that model selection.
+   ;; Measured 2026-08-27: this set was stale and every alias turn was refused
+   ;; after generating fine -- 24h completion 37.3%, 25 of the last 50 runs
+   ;; `model-mismatch`. The gateway answered HTTP 200 with
+   ;; .model = "qwen3.8-27b-throughput-b70", while the alias entry still
+   ;; reported alias-for = "qwen3.8-27b" and /infer/models listed neither.
+   ;;
+   ;; Enumerating names is a floor, not the fix: the next redeploy that moves
+   ;; the suffix breaks it again, and pinning a literal contradicts what an
+   ;; alias is. Do not delete the guard to make this go away -- what it
+   ;; protects is `:context-window-tokens` below, which is the only thing
+   ;; standing between a repointed alias and an over-budget request.
+   ;; See 90-docs/adr/2608270100-an-alias-cannot-be-checked-against-a-pinned-name.edn
    :accepted-response-models
-   {"murakumo-main" #{"murakumo-main" "Qwen3.8-27B-Q4_K_M.gguf"}}
+   {"murakumo-main" #{"murakumo-main"
+                      "Qwen3.8-27B-Q4_K_M.gguf"
+                      "qwen3.8-27b"
+                      "qwen3.8-27b-throughput-b70"}
+    "z-ai/glm-5.3-flash" #{"z-ai/glm-5.3-flash"}
+    "qwen/qwen3.8-flash" #{"qwen/qwen3.8-flash"}
+    ;; The gateway forwards the vendor's served name in the request and may
+    ;; echo either the public id or the vendor id back; both name the same
+    ;; artifact revision the gateway pinned (MURAKUMO_BASHO_ARTIFACT_REVISION).
+    "awai-network/basho" #{"awai-network/basho" "zai-org/GLM-5.3"}}
    :context-window-tokens {"murakumo-main" 262144
+                           ;; Vendors advertise 1M for GLM-5.3. Unmeasured
+                           ;; through api.murakumo.cloud, so the same
+                           ;; conservative 128k as the OpenRouter routes.
+                           "awai-network/basho" 128000
+                           ;; Live /v1/models and a real CLI Bot generation,
+                           ;; measured 2026-08-29. This is the Ornith Q4 route
+                           ;; resident on the 16 GB Mac mini fleet. Keep it
+                           ;; literal: falling back to murakumo-main would make
+                           ;; an edge stability check report the wrong machine.
+                           "murakumo-edge" 65536
                            "qwen3.8-27b-throughput-5090" 65536
-                           "qwen3.8-27b-fastmtp-aggressive" 32768}
-   ;; Keep unattended turns concise even though the 5090 route has higher
-   ;; throughput: context and output budgets are product bounds, not a reason
-   ;; to fill the wider cold-start wall with prose. 512 leaves room for a
-   ;; role/tool decision while preserving capacity for other Bots.
-   :max-output-tokens 512
+                           "qwen3.8-27b-fastmtp-aggressive" 32768
+                           ;; OpenRouter lists 1.31M / 1M. This Worker has not
+                           ;; measured those windows through api.murakumo.cloud,
+                           ;; so bots budget a conservative 128k — an unmeasured
+                           ;; number that looks like a measured one is the
+                           ;; defect class CLAUDE.md names.
+                           "z-ai/glm-5.3-flash" 128000
+                           "qwen/qwen3.8-flash" 128000}
+   ;; 2026-08-29 owner instruction: raise output budgets toward the model
+   ;; maximum. The previous 512 (kept "concise" for capacity) truncated real
+   ;; work -- measured that day: a resident decision_frame tool call cut at
+   ;; its budget, filed :provider/output-budget-exhausted. 16384 matches the
+   ;; gateway's raised public cap; at b70's measured 53 tok/s it is ~5
+   ;; minutes of decode, inside the gateway's ten-minute ceiling, and the
+   ;; observed-ceiling mechanism still clamps to whatever an endpoint
+   ;; actually serves.
+   :max-output-tokens 16384
    :api-key-env "MURAKUMO_API_KEY"
+   ;; `awai-network/hokusai`, awai.network's video model, through murakumo's
+   ;; OpenRouter-compatible async video contract (root ADR-2609011842). Same
+   ;; provider record on purpose: the Bot tools video_generate / video_status
+   ;; (cloud.itonami.app.media-tools) pass the same admission as chat and use
+   ;; the same credential. murakumo answers 503 until the Hokusai backend is
+   ;; attested; that answer is carried to the Bot, not retried elsewhere.
+   :media {:videos-url "https://murakumo.cloud/api/v1/videos"
+           :video-model "awai-network/hokusai"}
    :local? false
    ;; Shipped off and unreviewed. The distribution is tenant-neutral: it cannot
    ;; review a fleet on a stranger's behalf, and a default that did would be
@@ -195,6 +307,48 @@
    :base-url "https://api.openai.com/v1"
    :api-key-env "OPENAI_API_KEY"
    :local? false
+   :reviewed? false
+   :enabled? false}
+  {:id "openrouter"
+   :name "OpenRouter (free plan)"
+   :kind :openai-compatible
+   :base-url "https://openrouter.ai/api/v1"
+   :api-key-env "OPENROUTER_API_KEY"
+   ;; `openrouter/free` is a ROUTER over the models that are free right now,
+   ;; not a model. That is the point of naming it here: the free tier is the
+   ;; fastest-moving set of model ids this workspace touches -- `ox-alpha` was
+   ;; the most-used model on the platform and served zero endpoints four days
+   ;; later -- so a pinned free id would go stale faster than the fleet alias
+   ;; ever did (root ADR-2608272100).
+   :default-model "openrouter/free"
+   :models ["openrouter/free"]
+   ;; NO `:assert-response-model?`, and this is the deliberate part.
+   ;;
+   ;; The router answers with the model that actually served: measured
+   ;; 2026-08-27, a request for `openrouter/free` returned HTTP 200 with
+   ;; .model = "nvidia/nemotron-3.5-lightning:free" and a well-formed tool
+   ;; call. A hand-maintained accepted-set would refuse that, and refuse a
+   ;; different name tomorrow. ADR-2608270100 is what that costs: the same
+   ;; check against `murakumo-main` refused 25 of 50 runs while the model was
+   ;; generating fine, and the 24h completion rate read 37.3%.
+   ;;
+   ;; What the assertion protects elsewhere is `:context-window-tokens`. Here
+   ;; that is bounded from the other side: the router advertises 200,000 and
+   ;; only routes to models that can take the request, and the budget below is
+   ;; set well under it rather than at any single model's window.
+   :context-window-tokens {"openrouter/free" 128000}
+   ;; Unattended Bot turns are a role/tool decision, not prose. Same bound the
+   ;; fleet entry carries, for the same reason.
+   :max-output-tokens 512
+   :local? false
+   ;; Shipped off and unreviewed, like every destination that leaves the
+   ;; machine. Two things an operator is consenting to here, and the second is
+   ;; not obvious: the transcript goes to OpenRouter, AND onward to whichever
+   ;; third party is serving the free endpoint that minute -- which is a
+   ;; different company on different turns. A free tier is priced that way for
+   ;; reasons, and the account's own data policy at
+   ;; openrouter.ai/settings/privacy decides which of those endpoints are even
+   ;; offered. A distribution cannot review that on a tenant's behalf.
    :reviewed? false
    :enabled? false}]
  ;; `:allow-cloud-without-review?` was retired here (ADR-2608130100). It was
@@ -261,6 +415,12 @@
  ;; explicitly gave a schedule. With no scheduled routine it is a store read
  ;; that finds nothing. Set `:enabled? false` to stop it looking at all.
  :bots {:mail-domain "mail.itonami.cloud"
+        ;; New Bots receive an isolated local Git root automatically. It is
+        ;; continuously reconciled with Drive/Bots/<bot-id>/Workspace. A
+        ;; hosted network target may be supplied under :workspace-sync :remote
+        ;; with the same shape as a folder-sync HTTP remote.
+        :workspace {:enabled? true}
+        :workspace-sync {}
         :tick {:enabled? true :interval-seconds 60}
         ;; Resident startup jobs share the inference plane with interactive
         ;; conversations. One start per tick controls bursts; max-active also
@@ -278,7 +438,14 @@
                     ;; into a red "tool budget" failure after four reads.
                     :max-tool-calls 8
                     :max-tool-output-chars 1600
-                    :model "murakumo-main"
+                    ;; Total input per resident inference call, including tool
+                    ;; schemas and framing. Interactive Bots remain bounded by
+                    ;; the selected model's context window instead.
+                    :max-input-tokens 8192
+                    ;; The resident workforce is the edge workload: use the
+                    ;; explicit Ornith route so its SLO measures the 16 GB Mac
+                    ;; fleet, not whatever murakumo-main aliases to later.
+                    :model "murakumo-edge"
                     ;; Standing delegation, deliberately ABSENT here: `:all`
                     ;; or a set of workforce keys ("business/kind") an
                     ;; operator writes into their own config.edn. A
@@ -355,6 +522,15 @@
   :slim {:enabled? false
          :from nil
          :to nil}}
+
+ ;; Which registered device this install IS (ADR-0062). nil means this install
+ ;; was never enrolled as a device, and every `bot:<id>@<device>` handle is
+ ;; therefore not-local — which is the fail-closed direction. It is deliberately
+ ;; not derived from a hostname or a seed: a machine that names itself is the
+ ;; discovery step ADR-0062 refuses. Set it to the id this install was
+ ;; registered under with `messenger/register-device!`.
+ :devices
+ {:local nil}
 
  ;; 事業 (ADR-2607309600). A Business holds one key from each analysis plane —
  ;; BMC canvas, XMILE model, adopted blueprints, repo paths, LEI — so that the
@@ -495,17 +671,29 @@
  ;; flag decides only whether this app hosts a record at all.
  :lawfirm {:enabled? false}
 
+ ;; Agent-first domain lifecycle. Credentials are named, never stored here.
+ ;; The MCP tools are absent unless both variables and a supported agent
+ ;; session resolve. Mutations additionally pass through the proposal -> human
+ ;; Passkey -> commit spine below; the agent session cannot approve them.
+ :domain-service {:account-id-env "CLOUDFLARE_ACCOUNT_ID"
+                  :api-token-env "CLOUDFLARE_API_TOKEN"
+                  :api-base "https://api.cloudflare.com/client/v4"}
+
  :authorities
- {:esim {:enabled? false
+ {:domain {:enabled? false}
+  :esim {:enabled? false
          :endpoint nil    ; cloud-itonami/cloud-itonami-esim
          :consent-token-env "ESIM_CONSENT_TOKEN"}
   ;; Numbering: allocation (払い出し), assignment, lifecycle and portability
-  ;; (ADR-2608034000). THE ACTOR DOES NOT EXIST YET -- there is no
-  ;; cloud-itonami-numbering to hand a consented proposal to, so an enabled
-  ;; :number authority with no endpoint records a refusal rather than a commit.
-  ;; That is the honest outcome and it is why this ships off like the others.
+  ;; (ADR-2608034000 + ADR-2608301200). The actor now exists at the loopback
+  ;; consent surface below. It still ships OFF: enabling it can lead, after a
+  ;; separate named-operator decision, to a recurring-cost Telnyx number order.
   :number {:enabled? false
-           :endpoint nil   ; cloud-itonami/cloud-itonami-numbering (not built)
+           ;; nil like every sibling: an authority ships with no endpoint and the
+           ;; operator supplies one at deployment. The loopback address that used
+           ;; to sit here (127.0.0.1:1345, added with the actor in #236) was a
+           ;; development default living in the shipped file.
+           :endpoint nil    ; cloud-itonami/cloud-itonami-numbering
            :consent-token-env "NUMBER_CONSENT_TOKEN"
            ;; The ranges this operator was assigned. Configuration, not store: a
            ;; block that could arrive in a request would let a caller allocate

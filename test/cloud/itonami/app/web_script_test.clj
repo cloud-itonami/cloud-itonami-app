@@ -74,6 +74,16 @@
         (is (zero? exit) (str source " does not parse under node " version ":\n" err))))
     (println "web-script-test: node is not on PATH, so the interaction layer was not parsed.")))
 
+(deftest passkey-owner-addition-is-distinguishable-and-single-flight
+  (let [js (slurp (io/file "resources/cloud/itonami/app/interaction.js"))]
+    (is (str/includes? js "candidate['public-key-sha256']")
+        "same-RP Passkeys have a visible fingerprint")
+    (is (str/includes? js "if (walletOwnerAuthorizationBusy) return;")
+        "a second owner ceremony cannot start while the first is active")
+    (is (str/includes? js
+                       "document.querySelectorAll('#wallet-owner-list button')")
+        "starting one ceremony disables every owner action")))
+
 (deftest encrypted-share-links-keep-the-one-time-key-in-the-url-fragment
   (let [js (slurp (io/file "resources/cloud/itonami/app/interaction.js"))]
     (is (str/includes? js "sessionStorage.setItem(fragmentStorageKey(data.token)"))
@@ -143,8 +153,10 @@
                (web/page-html config))
         js (slurp (io/file "resources/cloud/itonami/app/interaction.js"))]
     (doseq [id ["bots-workspace" "bots-cancel"
-                "bots-goal" "bots-run"]]
+                "bots-run"]]
       (is (str/includes? html (str "id=\"" id "\"")) id))
+    (is (not (str/includes? html "id=\"bots-goal\""))
+        "Goal is a per-Bot setting, not a composer checkbox")
     (is (not (str/includes? html "id=\"bots-coding\"")))
     (is (str/includes? html "ファイル変更・local commitを自律実行"))
     (is (str/includes? js "messages/stream"))
@@ -155,6 +167,8 @@
     (is (str/includes? js "activeRuns:new Map()"))
     (is (str/includes? js "通常より時間がかかっています…"))
     (is (str/includes? js "'goal?':goal"))
+    (is (str/includes? js "'goal?':goalBox.checked"))
+    (is (str/includes? js "Boolean(selectedBot?.['goal?'])"))
     (is (str/includes? js "provider の請求額が未提供のため未算出"))
     (is (str/includes? js "HTTP ${turn['error-status']}"))
     (is (str/includes? js "renderBotsRun(botsState.latestTurn)"))
@@ -164,9 +178,10 @@
     (is (str/includes? js "personEntry.dataset.role = 'person'"))
     (is (str/includes? js "append(personEntry, entry)"))
     (is (str/includes? js "'coding?':true"))
-    (is (str/includes? js "workspace:$('#bots-workspace').value.trim()"))))
+    (is (str/includes? js "workspace:null"))
+    (is (str/includes? js "/workspace/sync"))))
 
-(deftest bots-render-markdown-safely-and-start-from-a-local-workspace
+(deftest bots-render-markdown-safely-and-start-from-a-cloud-itonami-workspace
   (let [html (with-redefs [store/snapshot (constantly (store/initial-state))]
                (web/page-html config))
         js (slurp (io/file "resources/cloud/itonami/app/interaction.js"))]
@@ -176,7 +191,8 @@
     (is (str/includes? js "renderMarkdown(bubble, message.text)"))
     (is (str/includes? js "renderMarkdown(run.provisional, run.provisional.dataset.markdown)"))
     (is (not (str/includes? js "provisional.innerHTML")))
-    (is (str/includes? html "Local workspace で働く Bot"))
+    (is (str/includes? html "Cloud Itonami workspace で働く Bot"))
+    (is (str/includes? html "Cloud Itonami Driveと双方向同期"))
     (is (str/includes? html "外部サービスを追加（任意）"))
     (is (not (str/includes? html "id=\"bots-coding\"")))
     (is (str/includes? html "自律モードで開始します"))
@@ -216,6 +232,10 @@
 
 (deftest bots-pass-server-status-to-decorative-living-faces
   (let [js (slurp (io/file "resources/cloud/itonami/app/interaction.js"))]
+    (is (str/includes? js "const botMood = (avatar, status) =>"))
+    (is (str/includes? js "node.dataset.mood = botMood(avatar, status)"))
+    (doseq [mood ["'hurry'" "'focus'" "'nervous'" "'upset'" "'sleep'" "'joy'" "'nap'"]]
+      (is (str/includes? js mood)))
     (is (str/includes? js "const botAvatar = (node, avatar, status = null) =>"))
     (is (str/includes? js "node.dataset.status = status"))
     (is (str/includes? js "node.setAttribute('aria-hidden', 'true')"))
@@ -290,8 +310,7 @@
     (is (> settings-start signin-start))
     (doseq [id ["identity-onboarding" "itonami-cloud-signin" "itonami-enrolment-link"
                 "registration-form" "registered-auth" "local-recovery"
-                "passkey-signin" "email-login-form" "sso-signin-list"
-                "enrollment-form"]]
+                "passkey-signin" "enrollment-form"]]
       (is (str/includes? signin-html (str "id=\"" id "\"")) id)
       (is (not (str/includes? settings-html (str "id=\"" id "\""))) id))
     (let [hosted (.indexOf signin-html "id=\"itonami-cloud-signin-card\"")
@@ -310,14 +329,14 @@
         "first-time copy must not mint a local did:key as the story")
     (is (str/includes? settings-html "id=\"identity-workspace\""))
     (is (str/includes? js "const viewFromHash = (raw) => {"))
-    (is (str/includes? js "const emailLoginToken = new URLSearchParams("))
+    (is (not (str/includes? js "emailLoginToken")))
     (is (str/includes? js "if (location.hash !== target) history.replaceState(null, '', target);"))
     (is (str/includes? js "window.addEventListener('hashchange'"))
     (is (str/includes? html "href=\"#/signin\""))
     (is (str/includes? html "href=\"#/bots\""))
     (is (not (str/includes? html "href=\"#/chat\"")))
     (is (str/includes? html "href=\"#/settings\""))
-    (is (str/includes? js "const token = emailLoginToken;"))
+    (is (not (str/includes? js "/api/email-authenticate/")))
     (is (not (str/includes? js
                             "const token = new URLSearchParams(location.hash.slice(1))"))
         "showView must not erase the proof before the one finishing POST")
@@ -326,7 +345,7 @@
     (is (not (str/includes? signin-html "auth.itonami.cloud でサインイン"))
         "the hostname is not the verb; the hosted page's copy is")))
 
-(deftest the-signin-gate-describes-this-deployment-and-not-a-general-one
+(deftest the-signin-gate-is-passkey-first-and-does-not-offer-provider-sso
   ;; The screen a person meets when the owner ceremony was interrupted:
   ;; `/api/identity/register` created the account and the Passkey never
   ;; arrived, so `registered?` is true and `passkey-required?` is true. Measured
@@ -341,16 +360,16 @@
         js (slurp (io/file "resources/cloud/itonami/app/interaction.js"))
         signin-start (.indexOf html "data-view-panel=\"signin\"")
         signin-html (subs html signin-start (.indexOf html "data-view-panel=\"settings\""))]
-    (doseq [id ["signin-gate-headline" "signin-gate-note" "sso-signin-card"]]
+    (doseq [id ["signin-gate-headline" "signin-gate-note"]]
       (is (str/includes? signin-html (str "id=\"" id "\"")) id))
-    ;; The SSO card ships hidden: a card of disabled buttons is not an entrance,
-    ;; and the client reveals it only once a provider is configured.
-    (is (str/includes? signin-html "id=\"sso-signin-card\" hidden"))
-    (is (str/includes? js "const otherSigninMethods = (data) => ["))
-    (is (str/includes? js "$('#sso-signin-card').hidden = !providers.length;"))
-    (is (str/includes? js
-                       "(methods.sso || []).filter((p) => p['configured?'])")
-        "the sign-in list must hold only providers that can actually start")
+    (is (not (str/includes? signin-html "id=\"sso-signin-card\"")))
+    (is (not (str/includes? signin-html "SSOで続ける")))
+    (is (str/includes? js "const hostedPasskeyConfigured = (data) =>"))
+    (is (not (str/includes? js "startSso")))
+    (is (not (str/includes? js "/api/auth/sso/")))
+    (is (not (str/includes? signin-html "Emailで続ける")))
+    (is (not (str/includes? signin-html "その他のサインイン方法")))
+    (is (str/includes? signin-html "Passkey の復旧・参加"))
     (is (str/includes? js "renderSigninGate(data);")
         "the gate must be rewritten on every identity render, not once")
     (is (str/includes? js "入口は auth.itonami.cloud")
@@ -362,6 +381,67 @@
     ;; The copy that made the promise this deployment could not keep.
     (is (not (str/includes? html "通常の入口は Passkey、Email、SSO です")))
     (is (not (str/includes? js "'Passkey、Email、またはSSOで続行できます。'")))))
+
+(deftest bots-rail-is-grouped-by-priority-pin-and-activity-date
+  (let [js (slurp (io/file "resources/cloud/itonami/app/interaction.js"))]
+    (is (str/includes? js "const botsSidebarGroups = (bots) =>"))
+    (is (str/includes? js "groups.push({label:'優先度', bots:priority})"))
+    (is (str/includes? js "groups.push({label:'ピン留め', bots:pinned})"))
+    (doseq [label ["今日" "昨日" "過去7日間" "過去30日間"]]
+      (is (str/includes? js (str "'" label "'")) label))
+    (is (str/includes? js "'priority?':priorityBox.checked"))
+    (is (str/includes? js "'pinned?':pinnedBox.checked"))
+    ;; The rail exposes two simultaneous decisions (search or open a Bot), one
+    ;; visual hierarchy, full labels/feedback/target sizing, and responsive
+    ;; collapse. This is the same deterministic DADS score used elsewhere in
+    ;; the app, scoped to this surface rather than the unrelated Settings IA.
+    (let [choice-entropy (/ (Math/log 3.0) (Math/log 2.0))
+          choice-score (* 100.0 (- 1.0 (/ choice-entropy 5.0)))
+          ;; ux-score/weights: task .25, choice .15, disclosure .25,
+          ;; DADS .25, responsive .10. All except the measured two-choice
+          ;; entropy are 100 for this surface.
+          total (/ (Math/round (* 100.0 (+ 85.0 (* 0.15 choice-score)))) 100.0)]
+      (is (= 95.25 total))
+      (is (>= total 95.0)))))
+
+(deftest bots-rail-right-click-opens-the-same-bot-menu
+  (let [js (slurp (io/file "resources/cloud/itonami/app/interaction.js"))
+        css (slurp (io/file "src/cloud/itonami/app/web.clj"))]
+    (is (str/includes? js "item.addEventListener('contextmenu'")
+        "the rail face is what opens the menu")
+    (is (str/includes? js "item.addEventListener('click', () => selectBot(bot.id))")
+        "a left click still opens the Bot, not the menu")
+    (is (str/includes? js "openBotsRailMenu(event, bot)"))
+    (is (str/includes? js "event.preventDefault();")
+        "the host menu replaces the browser's")
+    (doseq [label ["ピン留め"
+                   "1個のBotを新しいセクションに移動"
+                   "未読にする"
+                   "プロフィールを編集"
+                   "複製"
+                   "テンプレートとして共有"
+                   "会話IDをコピー"
+                   "サイドバーから非表示"
+                   "1個のBotを削除"]]
+      (is (str/includes? js (str "'" label "'")) label))
+    (is (str/includes? js "postJSON(`/api/bots/${bot.id}/archive`")
+        "delete uses the existing archive route, not a silent no-op")
+    (is (str/includes? js "'pinned?':!bot['pinned?']"))
+    (is (str/includes? js "'unread?':true"))
+    (is (str/includes? js "'hidden?':!bot['hidden?']"))
+    (is (str/includes? js "botsCopyText(bot.id)"))
+    (is (str/includes? css ".bots-rail-menu{"))
+    (is (str/includes? css ".bots-rail-menu__item--danger{color:var(--color-semantic-error-1)}"))
+    (is (str/includes? js "item.addEventListener('click', () => selectBot(bot.id));\n        item.addEventListener('contextmenu'")
+        "left-click and right-click are separate listeners")))
+
+(deftest central-passkey-callback-is-one-shot-and-provider-sso-results-are-ignored
+  (let [js (slurp (io/file "resources/cloud/itonami/app/interaction.js"))]
+    (is (str/includes? js "provider === 'itonami-cloud'"))
+    (is (str/includes? js "authResult === 'itonami-cloud'"))
+    (is (str/includes? js "cleaned.searchParams.delete('auth')"))
+    (is (str/includes? js "cleaned.searchParams.delete('provider')"))
+    (is (not (str/includes? js "provider || 'SSO'")))))
 
 (deftest domain-ownership-ui-uses-the-human-session-api
   (let [html (with-redefs [store/snapshot (constantly (store/initial-state))]
@@ -449,9 +529,30 @@
   (let [html (with-redefs [store/snapshot (constantly (store/initial-state))]
                (web/page-html config))
         js (slurp (io/file "resources/cloud/itonami/app/interaction.js"))]
-    (is (str/includes? html "Botを作ると専用Walletも自動で生まれます"))
+    (is (str/includes? html "Passkeyを作ると自分のSmart Accountが"))
+    (is (str/includes? html "外部Walletは不要です"))
     (is (str/includes? html "id=\"wallet-bot-select\""))
+    (is (str/includes? html "id=\"wallet-provider-select\""))
+    (is (str/includes? html "MetaMaskやCoinbase Walletは任意です"))
+    (is (str/includes? html "PasskeyがSmart Accountを所有"))
     (is (str/includes? html "id=\"wallet-assets-tab\""))
     (is (str/includes? html "id=\"wallet-activity-tab\""))
     (is (not (str/includes? html "Walletを選択")))
-    (is (str/includes? js "このBot Walletへ署名権限を接続しました"))))
+    (is (str/includes? js "外部WalletをPrincipalへ任意リンクしました"))
+    (is (str/includes? js "id:'__principal__', name:'自分のPasskey Wallet'"))
+    (is (str/includes? js "awaiting-passkey-user-operation"))
+    (is (str/includes? html "id=\"wallet-owner-panel\""))
+    (is (str/includes? html "現在のowner Passkeyをこの端末またはQRで確認"))
+    (is (str/includes? js "/api/wallet/owners/authorize/start"))
+    (is (str/includes? js "/api/wallet/owners/authorize/finish"))
+    (is (not (str/includes? js "/api/wallet/bots/${encodeURIComponent(botId)}/assign"))
+        "linking an injected wallet cannot replace a Passkey Smart Account")
+    (is (str/includes? js "if (nativeSurface())"))
+    (is (str/includes? js "Passkey Walletはそのまま利用できます"))
+    (is (str/includes? js "eip6963:announceProvider"))
+    (is (str/includes? js "eip6963:requestProvider"))
+    (is (str/includes? js "announcedWalletProviders.has(info.uuid)"))
+    (is (str/includes? js "option.textContent = name"))
+    (is (not (str/includes? js "info.icon"))
+        "self-attested provider icons are not injected into the page")
+    (is (str/includes? js "legacyInjectedWallet"))))

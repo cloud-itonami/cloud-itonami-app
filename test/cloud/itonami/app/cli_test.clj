@@ -1,5 +1,7 @@
 (ns cloud.itonami.app.cli-test
   (:require [clojure.test :refer [deftest is testing]]
+            [clojure.data.json :as json]
+            [clojure.string :as str]
             [cloud.itonami.app.agent-session :as agent-session]
             [cloud.itonami.app.app-client :as client]
             [cloud.itonami.app.bot-tools :as bot-tools]
@@ -79,6 +81,28 @@
                :model "qwen3.8-27b-throughput-5090"}]
              @seen)))))
 
+(deftest hermes-cli-keeps-profile-and-run-wire-shapes
+  (let [seen (atom [])]
+    (with-redefs [client/request!
+                  (fn
+                    ([_ method path]
+                     (swap! seen conj [method path])
+                     {:object "list"})
+                    ([_ method path body]
+                     (swap! seen conj [method path body])
+                     {:run_id "run-1" :status "started"}))]
+      (is (= "list" (:object (cli/run {} ["hermes" "profile" "list"]))))
+      (is (= "list" (:object (cli/run {} ["hermes" "session" "list"
+                                           "--profile" "bot/one"]))))
+      (is (= "started"
+             (:status (cli/run {} ["hermes" "run" "--profile" "bot/one"
+                                   "--input" "inspect" "--goal" "true"]))))
+      (is (= [[:get "/api/profiles"]
+              [:get "/p/bot%2Fone/api/sessions"]
+              [:post "/p/bot%2Fone/v1/runs"
+               {:input "inspect" :goal true}]]
+             @seen)))))
+
 (deftest west-refactor-inspection-does-not-start-the-server
   (is (false? (cli/needs-server? ["bots" "refactor" "scan" "--root" "/tmp/ws"])))
   (is (false? (cli/needs-server? ["bots" "refactor" "inspect" "--root" "/tmp/ws"
@@ -150,3 +174,74 @@
       (is (= {:businesses 8 :bots 70 :enabled 70}
              (cli/run {} ["bots" "workforce"])))
       (is (= [:get "/api/agent-bots/workforce"] @seen)))))
+
+(deftest hermes-import-cli-round-trips-the-api-manifest-unchanged
+  (let [calls (atom [])
+        preview {:schema "cloud.itonami.app.hermes-bot-migration.v2"
+                 :migration-id "hermes-cli-test" :status "preview"
+                 :profiles [{:id "default"}]}]
+    (with-redefs [client/request-with-timeout!
+                  (fn [_ method path seconds body]
+                    (swap! calls conj [method path seconds body])
+                    (if (str/ends-with? path "/preview")
+                      preview
+                      (assoc (:manifest body) :status "staged")))]
+      (is (= "staged"
+             (:status (cli/run {} ["bots" "import" "hermes"
+                                   "--business" "org-1" "--stage" "true"]))))
+      (is (= "/api/agent-bots/imports/hermes/preview"
+             (second (first @calls))))
+      (is (= "/api/agent-bots/imports/hermes/stage"
+             (second (second @calls))))
+      (is (= preview (get-in (second @calls) [3 :manifest]))
+          "the CLI posts exactly the API preview, not a second local shape"))))
+
+(deftest hermes-import-cli-can-stage-and-provision-through-the-same-api
+  (let [calls (atom [])
+        preview {:schema "cloud.itonami.app.hermes-bot-migration.v2"
+                 :migration-id "hermes-cli-provision" :status "preview"}]
+    (with-redefs [client/request-with-timeout!
+                  (fn [_ method path seconds body]
+                    (swap! calls conj [method path seconds body])
+                    (cond
+                      (str/ends-with? path "/preview") preview
+                      (str/ends-with? path "/stage") (assoc preview :status "staged")
+                      (str/ends-with? path "/provision")
+                      (assoc preview :status "provisioned"
+                             :compatibility {:execution-model {:percent 90}})))]
+      (let [result (cli/run {} ["bots" "import" "hermes"
+                                "--provision" "true"])]
+        (is (= "provisioned" (:status result)))
+        (is (= 90 (get-in result [:compatibility :execution-model :percent])))
+        (is (= ["/api/agent-bots/imports/hermes/preview"
+                "/api/agent-bots/imports/hermes/stage"
+                "/api/agent-bots/imports/hermes-cli-provision/provision"]
+               (mapv second @calls)))))))
+
+(deftest a-failure-reaches-the-operator-under-the-name-it-was-recorded-with
+  ;; Both directions, and the literal is pinned: this assertion exists to fail
+  ;; when `provider/http-error` reaches an operator as `http-error`, which is
+  ;; what it did until 2026-08-30. `bots workforce` reported
+  ;; `{"http-error": 40}` for 40 runs whose recorded type was
+  ;; `:provider/http-error`, and nothing in that answer said whether the model
+  ;; provider or this application had refused.
+  (testing "the namespace survives the printer, as a map key"
+    (is (= "{\"counts\":{\"provider/http-error\":40}}"
+           (json/write-str (cli/qualified-names {:counts {:provider/http-error 40}})
+                           :escape-slash false))))
+  (testing "and as a map value"
+    (is (= "{\"outcome\":\"provider/timeout\"}"
+           (json/write-str (cli/qualified-names {:outcome :provider/timeout})
+                           :escape-slash false))))
+  (testing "and inside a vector, which :key-fn and :value-fn do not reach"
+    (is (= "{\"seen\":[\"provider/timeout\",\"internal-error\"]}"
+           (json/write-str (cli/qualified-names
+                            {:seen [:provider/timeout :internal-error]})
+                           :escape-slash false))))
+  (testing "a keyword with no namespace is unchanged, so this is not a rename"
+    (is (= "{\"window\":50}"
+           (json/write-str (cli/qualified-names {:window 50})))))
+  (testing "the printer without it is the defect, stated so the test can fail"
+    (is (= "{\"counts\":{\"http-error\":40}}"
+           (json/write-str {:counts {:provider/http-error 40}}))
+        "clojure.data.json renders a keyword as its name alone; that is why qualified-names exists")))

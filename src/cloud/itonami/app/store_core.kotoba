@@ -1,0 +1,84 @@
+;; STORE's retention decision -- how many items a bounded window must evict
+;; from its front to make room for growth -- separated from the map/vector
+;; assembly around it.
+;;
+;; `store_core.cljc` still owns `initial-state`, `set-context-refs`,
+;; `append-message`, `record-response`, `clear-session`, `session-messages`
+;; and `session-context-refs`, and, unlike `fleet_core.cljc`, keeps owning
+;; all of them. What moved is not a boolean judgement over a flat record
+;; like the other fourteen cores; it is the one piece of arithmetic two of
+;; those functions share, and it is native word-typed on its own.
+;;
+;; ## Why the rest did not move
+;;
+;; Every other function in `store_core.cljc` reads or writes `state`, and
+;; `state`'s `:sessions` is a map keyed by session id -- an arbitrary
+;; runtime string minted by `new-id`, not a compile-time keyword. Measured
+;; against this repository's pinned compiler (2026-08-29):
+;;
+;;   - the legacy map literal that `get`/`assoc`/`dissoc` desugar to admits
+;;     only keyword keys ("expected keyword, got string" on a string key);
+;;   - the typed `[:map K V]` family that DOES take a string key
+;;     (`typed-map-new`/`-get`/`-assoc`/`-dissoc`) requires one uniform
+;;     value type for every entry, and a session carries a vector of
+;;     messages beside a string timestamp beside a vector of context-refs
+;;     -- no single `V` describes it;
+;;   - `:document`, the value shaped for heterogeneous nesting, is bounded
+;;     to 256 nodes and depth 8. A real transcript at `max-messages`
+;;     crosses that before the rest of the state is even counted -- the
+;;     same ceiling `amu/examples/todo-app.kotoba`'s own header measures at
+;;     "about seven rows" for a plain list of two-field todos.
+;;
+;; None of this is a permanent refusal of maps or vectors in `.kotoba`
+;; (ADR-2608650000 distinguishes exactly this): it is today's backend not
+;; admitting a dynamically-keyed, heterogeneously-valued, unbounded-growth
+;; map as one exported value. Revisit `:sessions` when a typed-map value
+;; family stops requiring uniform values, when `:document`'s bounds grow,
+;; or when a homogeneous arbitrary-length vector-of-record type lands.
+;;
+;; ## The one piece that IS native word-typed
+;;
+;; `append-message` trims the transcript with `(take-last max-messages …)`
+;; after appending; `record-response` trims the completion-event ring with
+;; `(take-last max-events …)` the same way. Both ask the identical
+;; question -- given a collection about to hold `size` items and a cap, how
+;; many of the oldest must be evicted -- over two `:i64`s. That question
+;; needs no map, vector, closure or string, so it fits inside
+;; `kotoba.kir/only-native-word-typed-features?` exactly like the other
+;; fourteen cores in this repository, and — unlike the collection work
+;; around it — compiles for `:x86_64-kotoba-v1` and `:aarch64-kotoba-v1`
+;; too (see the parity test's native-target assertions).
+;;
+;; Parity: test/cloud/itonami/app/store_core_kotoba_parity_test.clj
+
+(ns store-core
+  (:export [retention-drop-count retention-drop-count-hysteresis]))
+
+;; `size` is the collection's length AFTER the new item would be appended;
+;; `cap` is `max-messages` (a `store`-call argument) or `max-events` (the
+;; `.cljc`'s own constant). Zero when there is nothing to evict, otherwise
+;; exactly enough to bring the collection back down to `cap` --
+;; `(drop (retention-drop-count size cap) items)` is what
+;; `(take-last cap items)` already meant, spelled as a drop-count instead
+;; of a keep-count so it is one `:i64` in, one `:i64` out at this seam.
+(defn retention-drop-count [size :i64 cap :i64] :i64
+  (if (> size cap) (- size cap) 0))
+
+;; The same question asked with HYSTERESIS, for a window whose every append
+;; is journalled.
+;;
+;; Evicting on every append keeps the collection exactly at `cap`, and at that
+;; point its first element changes with every write -- so the store journal
+;; cannot express the change as an append of the tail and rewrites the whole
+;; window instead. Measured 2026-08-29 (ADR-2608291500): one 200-entry event
+;; ledger did that 52 times in thirteen minutes for 2.7 MB, 87% of the
+;; journal; with that fixed, a 60-entry tool-trace window took its place at
+;; 271 KB and 48% of what remained.
+;;
+;; So: evict nothing until the collection has grown `slack` past `cap`, then
+;; evict all the way back to `cap`. The window is at most `cap + slack` and
+;; `slack` of every `slack + 1` appends leave the prefix alone. Non-positive
+;; slack is the old behaviour exactly, so one rule serves both callers.
+(defn retention-drop-count-hysteresis [size :i64 cap :i64 slack :i64] :i64
+  (let [threshold (if (> slack 0) (+ cap slack) cap)]
+    (if (> size threshold) (- size cap) 0)))

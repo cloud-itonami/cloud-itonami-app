@@ -330,7 +330,7 @@
       (is (re-find #"id=\"registration-form\"" html))
       (is (re-find #"id=\"passkey-gate-notice\"" html))
       (is (re-find #"パスキーでサインインしてください" html))
-      (is (re-find #"id=\"sso-signin-list\"" html))
+      (is (not (re-find #"id=\"sso-signin-list\"" html)))
       (is (re-find #"id=\"auth-methods-card\"" html))
       (is (re-find #"現在のOrganization" html))
       (is (re-find #"aria-label=\"Organization切替\"" html))
@@ -451,16 +451,39 @@
   (is (str/includes? web/app-css ".bots-msg__resident-result")
       "the outcome row has a bounded visual treatment"))
 
+(deftest a-run-of-identical-auto-checks-is-one-row-and-what-it-made-is-a-card
+  ;; Observed on the resident fleet 2026-08-28: ten consecutive `変更なし`
+  ;; cards, and the one 失敗 among them looked exactly like its neighbours.
+  ;; The Bot list had the same problem one pane over -- every row read
+  ;; `自動確認 · 変更なし`, because the preview showed the classification
+  ;; instead of the sentence the Bot wrote.
+  (is (str/includes? web/interaction-js "botsMessageRuns")
+      "repeated identical results collapse into one row")
+  (is (str/includes? web/interaction-js "residentInstruction")
+      "the internal instruction between two results must not break the run")
+  (is (str/includes? web/interaction-js "botsRailPreview")
+      "a list row says what the Bot said, or what it needs")
+  (is (str/includes? web/interaction-js "botsArtifactCard")
+      "what a run left behind is a card, not a sentence to parse")
+  (is (str/includes? web/interaction-js "card.kind === 'artifact'")
+      "the artifact card is reachable from the one card dispatch")
+  (is (str/includes? web/app-css ".bots-card__revision")
+      "the artifact card has a bounded visual treatment"))
+
 (deftest bots-remain-a-single-viewport-pane-in-the-phone-layout
   (is (str/includes? web/app-css
                      ".bots-view{max-width:none;padding:0;height:calc(100dvh - 5rem);overflow:hidden}"))
   (is (str/includes? web/app-css
                      ".bots-shell{grid-template-columns:4rem minmax(0,1fr)}"))
+  (is (not (str/includes? web/app-css
+                          ".bots-shell{display:flex;flex-direction:column}"))
+      "shrinking the window must not lay the rail above the thread")
+  (is (str/includes? web/app-css ".bots-main{min-width:0;min-height:0}"))
   (is (str/includes? web/app-css
-                     ".bots-shell{display:flex;flex-direction:column}"))
-  (is (str/includes? web/app-css ".bots-main{flex:1}"))
-  (is (str/includes? web/app-css
-                     ".bots-rail__list{display:flex;gap:.375rem;overflow-x:auto"))
+                     ".bots-rail__list{display:flex;flex-direction:column"))
+  (is (not (str/includes? web/app-css
+                          ".bots-rail__list{display:flex;gap:.375rem;overflow-x:auto"))
+      "the phone picker must not become a sideways strip")
   (is (str/includes? (web/page-html {}) "id=\"bots-filter\""))
   (is (str/includes? (web/page-html {}) "id=\"bots-mobile-context\""))
   (is (not (str/includes? web/app-css ".bots-rail{display:none}")))
@@ -473,6 +496,12 @@
   (is (str/includes? web/app-css "@keyframes bot-breathe"))
   (is (str/includes? web/app-css "@keyframes bot-blink"))
   (is (str/includes? web/app-css "@keyframes bot-look"))
+  (is (str/includes? web/app-css "@keyframes bot-hurry"))
+  (is (str/includes? web/app-css "@keyframes bot-nap"))
+  (is (str/includes? web/app-css "@keyframes bot-joy"))
+  (is (str/includes? web/app-css "@keyframes bot-nervous"))
+  (doseq [mood ["hurry" "nap" "joy" "nervous" "upset"]]
+    (is (str/includes? web/app-css (str "data-mood='" mood "'"))))
   (is (str/includes? web/app-css ".bot-avatar[data-status='working']"))
   (is (str/includes? web/app-css
                      ".bot-avatar,.bot-avatar::before,.bot-avatar::after{animation:none}")))
@@ -525,9 +554,25 @@
   (with-redefs [store/snapshot (constantly (store/initial-state))]
     (let [html (web/page-html config)
           html-ids (set (map second (re-seq #"id=\"([^\"]+)\"" html)))
-          ;; An unresolved lookup throws inside DOMContentLoaded and takes the
-          ;; whole interaction layer down with it, so every one must resolve.
-          scripted (set (map second (re-seq #"\$\('#([^']+)'\)" web/interaction-js)))
+          ;; Every id the script looks up must be in the page -- EXCEPT one the
+          ;; script creates itself, which by construction is not server-rendered.
+          ;;
+          ;; The rule used to be "every one must resolve", justified as "an
+          ;; unresolved lookup throws inside DOMContentLoaded". That premise is
+          ;; wrong: `$` is `querySelector`, which returns null. Measured
+          ;; 2026-09-01, it made `bots-rail-menu` a standing failure on main --
+          ;; a popup the rail builds on first open (`menu.id = 'bots-rail-menu';
+          ;; document.body.append(menu)`), whose three call sites all handle
+          ;; null. Satisfying the old rule would have meant shipping an empty
+          ;; container on every page whose only purpose was this assertion.
+          ;;
+          ;; Exempting exactly the ids the script assigns keeps the guard that
+          ;; matters -- a lookup for an id that nothing creates and nothing
+          ;; renders is still a failure.
+          created (set (map second (re-seq #"\.id = '([^']+)'" web/interaction-js)))
+          scripted (set/difference
+                    (set (map second (re-seq #"\$\('#([^']+)'\)" web/interaction-js)))
+                    created)
           panels (set (map second (re-seq #"data-view-panel=\"([^\"]+)\"" html)))
           views (set (map second (re-seq #"data-view=\"([^\"]+)\"" html)))]
       (is (seq scripted))

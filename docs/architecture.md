@@ -1154,11 +1154,12 @@ she chose to. Revocation is likewise still this server's word: the
 capability is deleted with the ACL entry, and one already handed out would
 still verify until its expiry.
 
-The reason it is not alice's key is concrete. Her identity here is a
-`did:key` derived from a WebAuthn P-256 credential, and WebAuthn signs its
-own `authenticatorData || clientDataHash` with ES256; `cacao.core/mint`
-signs a SIWE string with EdDSA. Making a user-issued CACAO possible means
-teaching `org-chainagnostic-cacao` a WebAuthn signature type.
+The reason it is not alice's key is concrete. Her stable Principal and her
+active authenticator are separate. When that authenticator is a WebAuthn P-256
+credential, WebAuthn signs its own `authenticatorData || clientDataHash` with
+ES256; `cacao.core/mint` signs a SIWE string with EdDSA. Making a user-issued
+CACAO possible means teaching `org-chainagnostic-cacao` a WebAuthn signature
+type and binding that active controller back to the stable Principal.
 
 **This is authorization, not confidentiality.** The stored objects are
 plaintext EDN and this server reads all of them — which is what
@@ -1354,8 +1355,8 @@ See ADR-0077.
 
 ## MCP surface
 
-`cloud.itonami.app.mcp` is one dispatcher with two adapters. `clojure -M:mcp`
-keeps stdio for a process the operator launched. `POST /mcp` exposes the same
+`cloud.itonami.app.mcp` is one dispatcher with two adapters. `bin/itonami-mcp`
+(nbb host) keeps stdio for a process the operator launched. `POST /mcp` exposes the same
 manifest over stateless Streamable HTTP, with bearer authentication, Origin
 validation, protocol negotiation and RFC 9728 protected-resource discovery.
 Externally issued tokens are introspected and audience/scope checked; local

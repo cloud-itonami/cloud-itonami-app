@@ -1,12 +1,15 @@
 (ns cloud.itonami.app.bulky-waste-test
   (:require [clojure.test :refer [deftest is testing use-fixtures]]
             [cloud.itonami.app.bulky-waste :as bulky]
+            [cloud.itonami.app.human-work :as human-work]
             [cloud.itonami.app.store :as store]))
 
 (def owner "person-owner")
 (def worker "person-worker")
 (def other-worker "person-other-worker")
 (def facility "person-facility-operator")
+(def verifier "person-verifier")
+(def organization "org-gftd")
 
 (use-fixtures :each
   (fn [run]
@@ -26,10 +29,16 @@
                    :end "2026-09-07T05:00:00Z"}]
    :evidence {:vehicle "vehicle:kei-truck-1"
               :insurance "evidence:insurance-1"
-              :waste-carrier "evidence:carrier-attestation-1"}})
+              :waste-carrier "evidence:carrier-attestation-1"
+              :service-location "evidence:service-location-1"}
+   :country "JP"
+   :region "13"})
 
 (def job-request
-  {:service-area "shibuya-jingumae"
+  {:organization-id organization
+   :service-area "shibuya-jingumae"
+   :country "JP"
+   :region "13"
    :pickup-address "東京都渋谷区神宮前2丁目"
    :access-notes "予約後に建物への入り方を表示"
    :pickup-window pickup-window
@@ -47,8 +56,26 @@
   (let [job (bulky/create-job! job-request owner)]
     (bulky/publish! (:id job) owner)))
 
+(defn- verify-worker! [worker-id]
+  (let [verification {:decision "verified"
+                      :valid-until "2027-01-01T00:00:00Z"
+                      :evidence-ref "evidence:organization-check"}]
+    (human-work/verify-location! worker-id "bulky-waste-service-area"
+                                 verification verifier organization)
+    (doseq [credential-id ["bulky-waste-carrier-license"
+                           "bulky-waste-vehicle-insurance"
+                           "bulky-waste-collection-vehicle"]]
+      (human-work/verify-credential! worker-id credential-id verification
+                                     verifier organization))))
+
+(defn- register-and-verify!
+  ([worker-id] (register-and-verify! worker-profile worker-id))
+  ([profile worker-id]
+   (bulky/register-worker! profile worker-id)
+   (verify-worker! worker-id)))
+
 (deftest request-to-recovery-is-one-audited-chain
-  (bulky/register-worker! worker-profile worker)
+  (register-and-verify! worker)
   (let [job (open-job!) id (:id job)]
     (is (= [worker] (mapv :worker-id (:items (bulky/matches id owner)))))
     (is (= "booked" (:status (bulky/book! id worker))))
@@ -78,9 +105,9 @@
       (is (= 42000 (get-in done [:recovery :recovered-weight-grams]))))))
 
 (deftest matching-is-capability-based-and-address-is-private-until-booking
-  (bulky/register-worker! worker-profile worker)
-  (bulky/register-worker! (assoc worker-profile :capacity-grams 47000)
-                          other-worker)
+  (register-and-verify! worker)
+  (register-and-verify! (assoc worker-profile :capacity-grams 47000)
+                        other-worker)
   (let [job (open-job!) id (:id job)
         visible (first (:items (bulky/jobs worker)))]
     (is (= [worker] (mapv :worker-id (:items (bulky/matches id owner))))
@@ -94,7 +121,7 @@
            (:pickup-address (first (:items (bulky/jobs worker))))))))
 
 (deftest overlapping-booking-removes-a-worker-from-the-next-match
-  (bulky/register-worker! worker-profile worker)
+  (register-and-verify! worker)
   (let [first-job (open-job!)]
     (bulky/book! (:id first-job) worker)
     (let [second-job (open-job!)]
@@ -112,14 +139,15 @@
                                           :quantity 1
                                           :unit-weight-grams 1000}])
               owner)))))
-  (testing "worker attestations are mandatory but remain labelled as such"
+  (testing "worker attestations are mandatory and remain ineligible until verified"
     (is (= :bulky-waste/evidence-required
            (error-type #(bulky/register-worker!
                          (update worker-profile :evidence dissoc :insurance)
                          worker))))
-    (is (= "self-attested"
-           (get-in (bulky/register-worker! worker-profile worker)
-                   [:evidence :verification]))))
+    (bulky/register-worker! worker-profile worker)
+    (let [job (open-job!)]
+      (is (= [] (:items (bulky/matches (:id job) owner)))))
+    (verify-worker! worker))
   (let [job (open-job!) id (:id job)]
     (bulky/book! id worker)
     (is (= :bulky-waste/evidence-required
@@ -156,7 +184,7 @@
                                         facility))))))
 
 (deftest chain-of-custody-references-cannot-be-replayed
-  (bulky/register-worker!
+  (register-and-verify!
    (assoc worker-profile :availability
           [{:start "2026-09-07T00:00:00Z" :end "2026-09-07T05:00:00Z"}
            {:start "2026-09-07T06:00:00Z" :end "2026-09-07T10:00:00Z"}])
@@ -182,7 +210,7 @@
                            worker)))))))
 
 (deftest only-draft-or-open-jobs-can-be-cancelled
-  (bulky/register-worker! worker-profile worker)
+  (register-and-verify! worker)
   (let [job (open-job!) id (:id job)]
     (is (= :bulky-waste/forbidden
            (error-type #(bulky/cancel! id worker))))

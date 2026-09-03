@@ -1,0 +1,49 @@
+;; itonami.app.edn — KOTOBA Mesh application manifest for the itonami
+;; cloud-agent's ON-MESH surface (ADR-0092; same split of duties as
+;; kotoba-lang/kenchi `mesh/kenchi.app.edn` and minidrama's mesh app).
+;;
+;; murakumo.app.edn (kotoba-lang/murakumo) references this as a fleet app;
+;;   kotoba app deploy mesh/itonami.app.edn --publish --url http://<node>:8080
+;; compiles each :src to a CID and announces the triggers/routes to a node, and
+;; murakumo's reconciler keeps the declared replica count converged.
+;;
+;; SPLIT OF DUTIES:
+;;   - Goals, Assignments, grants, approvals, replay and every Bot TURN stay
+;;     OFF-MESH on the JVM resident (`cloud.itonami.app.server`), which is the
+;;     authority (ADR-0077). A Bot turn needs `llm/infer`, and that capability's
+;;     provider status is `contract-only` today (kotoba-lang/capability-llm-infer),
+;;     so a guest cannot yet be admitted to call Basho. When it can, the turn
+;;     loop moves here as a third component; nothing in this file changes shape.
+;;   - THESE on-mesh components only SERVE and ATTEST already-decided facts:
+;;       agent-profile    on-http  POST /mesh/http/itonami/profile
+;;                        → the agent's identity record: residency, the models
+;;                          it speaks through murakumo (awai-network/basho,
+;;                          awai-network/hokusai), the hostnames that reach it.
+;;                          Self-seeded: `run` asserts the record at placement
+;;                          (identity facts are deploy-time constants), `on-http`
+;;                          reads it back by predicate — see agent_profile.cljc
+;;                          for the measured kqe semantics.
+;;       agent-heartbeat  on-tick  every 5m → a resident-liveness datom, so
+;;                        "is the cloud-agent alive" is answered by the lattice's
+;;                        own Datom log rather than by a laptop being awake.
+;;   That is what makes itonami.cloud a cloud-agent: its presence and liveness
+;;   are hosted by murakumo's lattice, placed by auction, content-addressed, and
+;;   independent of any one machine — including the owner's.
+{:kotoba.app/name    "itonami-agent"
+ :kotoba.app/version "0.1.0"
+ :kotoba.app/components
+ [{:name     "agent-profile"
+   :src      "agent_profile.cljc"           ; Clojure (kotoba-clj, portable subset) → compiled to CID
+   :scale    2
+   :triggers [{:type :http :route "/itonami/profile"}]
+   :requires #{:cap/kqe}}
+
+  {:name     "agent-heartbeat"
+   :src      "agent_heartbeat.cljc"
+   :scale    1
+   :triggers [{:type :tick :every "5m"}]
+   :requires #{:cap/kqe}}]
+
+ ;; Same class murakumo's other mesh apps use: the JP edge tribe.
+ :kotoba.app/placement {:spread  :zone
+                        :require {:tier "edge"}}}

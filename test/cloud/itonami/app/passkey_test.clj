@@ -246,3 +246,22 @@
       (is (= "cred-3" (:credential-id r)))
       (is (true? (get-in (store/snapshot)
                          [:identity :passkeys "cred-3" :user-verified?]))))))
+
+(deftest verified-registration-persists-its-rp-provenance
+  (let [result (passkey/bind-verified-registration!
+                (:id user)
+                {:credential-id "cred-rp"
+                 :public-key-b64 "BBBB"
+                 :sign-count 1
+                 :user-verified? true}
+                {:rp-id "kotobase.net"
+                 :origin "https://auth.kotobase.net"})
+        stored (get-in (store/snapshot) [:identity :passkeys "cred-rp"])]
+    (is (= "kotobase.net" (:rp-id result)))
+    (is (= "https://auth.kotobase.net" (:registration-origin result)))
+    (is (= "kotobase.net" (:rp-id stored)))
+    (is (= "https://auth.kotobase.net" (:registration-origin stored)))
+    (is (= "kotobase.net"
+           (get-in (store/snapshot)
+                   [:identity :authenticators "cred-rp"
+                    :identity.authenticator/rp-id])))))

@@ -75,6 +75,7 @@
 (def max-model 200)
 (def max-context-project-id 80)
 (def max-context-refs 12)
+(def max-section 60)
 
 (defn- context-refs [value legacy-project-id]
   (let [refs (if (contains? value :bot/context-refs)
@@ -100,6 +101,8 @@
 (def max-responsibilities 12)
 (def max-responsibility 1000)
 (def max-capability-policy 40)
+(def max-skill-packages 4)
+(def max-skill-instructions 12000)
 
 (def capability-decisions
   #{:autonomous :voice-required :approval-required :blocked})
@@ -128,6 +131,33 @@
             {:capability capability :decision decision
              :note (some-> (:note entry) str str/trim not-empty)}))
         (take max-capability-policy values)))
+
+(def skill-id-pattern #"^[a-z0-9]+(?:-[a-z0-9]+)*$")
+(def skill-sha256-pattern #"^[0-9a-f]{64}$")
+
+(defn- skill-packages [values]
+  (when (> (count (or values [])) max-skill-packages)
+    (throw (ex-info "too many workforce Skill packages"
+                    {:type :bot/invalid :field :bot/skills})))
+  (let [packages
+        (mapv
+         (fn [package]
+           (let [id (some-> (:id package) str str/trim)
+                 sha256 (some-> (:sha256 package) str str/lower-case str/trim)
+                 instructions (some-> (:instructions package) str str/trim)]
+             (when-not (and (re-matches skill-id-pattern (or id ""))
+                            (re-matches skill-sha256-pattern (or sha256 ""))
+                            (seq instructions)
+                            (<= (count instructions) max-skill-instructions))
+               (throw (ex-info "invalid workforce Skill package"
+                               {:type :bot/invalid :field :bot/skills
+                                :id id})))
+             {:id id :sha256 sha256 :instructions instructions}))
+         (or values []))]
+    (when-not (= (count packages) (count (set (map :id packages))))
+      (throw (ex-info "duplicate workforce Skill package"
+                      {:type :bot/invalid :field :bot/skills})))
+    packages))
 
 ;; ── the record ──────────────────────────────────────────────────────────
 
@@ -207,6 +237,9 @@
         email (optional-name (:bot/email value) :bot/email 320)
         workspace (optional-name (:bot/workspace value)
                                  :bot/workspace max-workspace)
+        workspace-kind (some-> (:bot/workspace-kind value) clojure.core/name keyword)
+        workspace-sync-id (optional-name (:bot/workspace-sync-id value)
+                                         :bot/workspace-sync-id 80)
         tools (into (sorted-set) (map str) (:bot/tools value))]
     (when (contains? value :bot/status)
       (throw (ex-info "a Bot does not carry a status; it is computed"
@@ -252,10 +285,28 @@
      :bot/peers? (boolean (:bot/peers? value))
      :bot/coding? (boolean (:bot/coding? value))
      :bot/virtual-shell? (boolean (:bot/virtual-shell? value))
+     ;; Whether a new direct request should keep working until completion or a
+     ;; concrete blocker is recorded. This belongs to the Bot, not to the chat
+     ;; composer: changing threads must not silently change its work contract.
+     ;; Legacy coding Bots retain the old composer default on first load.
+     :bot/goal? (if (contains? value :bot/goal?)
+                  (boolean (:bot/goal? value))
+                  (boolean (or (:bot/coding? value)
+                               (:bot/virtual-shell? value))))
+     ;; Sidebar placement is presentation state, not execution authority.
+     ;; Priority outranks pinning in the client; keeping both flags means a Bot
+     ;; returns to the pinned section when priority is later cleared.
+     :bot/priority? (boolean (:bot/priority? value))
+     :bot/pinned? (boolean (:bot/pinned? value))
+     :bot/section (optional-name (:bot/section value) :bot/section max-section)
+     :bot/unread? (boolean (:bot/unread? value))
+     :bot/hidden? (boolean (:bot/hidden? value))
      ;; Standing delegation, intentionally independent of writes/tool reach.
      ;; It changes WHEN an already-admitted write runs, never WHAT is admitted.
      :bot/omakase? (boolean (:bot/omakase? value))
      :bot/workspace workspace
+     :bot/workspace-kind workspace-kind
+     :bot/workspace-sync-id workspace-sync-id
      ;; Workforce metadata explains a job; it is deliberately not consulted by
      ;; tool admission. `:bot/tools`, workspace/coding and the existing effect
      ;; governor remain the complete execution authority.
@@ -265,6 +316,10 @@
      :bot/role (:bot/role value)
      :bot/responsibilities (responsibilities (:bot/responsibilities value))
      :bot/capability-policy (capability-policy (:bot/capability-policy value))
+     ;; Governed instructions are persisted with their digest so a live Bot
+     ;; can prove which revision it used. They are never consulted by tool
+     ;; admission, account selection, workspace reach, or effect approval.
+     :bot/skills (skill-packages (:bot/skills value))
      :bot/enabled? (if (contains? value :bot/enabled?)
                      (boolean (:bot/enabled? value))
                      true)
@@ -432,6 +487,48 @@
                     (oracle/i64 (or (:current request) 0))
                     (boolean (:answered? request))])]))
 
+;; ── when a turn has stopped being a turn ─────────────────────────────
+
+(def ^:private answer-record
+  [:record :bot/answer [[:has-content :bool] [:tool-calls :i64]
+                        [:empty-turns :i64] [:nudge-limit :i64]]])
+
+(def ^:private repetition-record
+  [:record :bot/repetition [[:identical-consecutive :i64] [:limit :i64]]])
+
+(defn- answer-args [{:keys [content tool-calls empty-turns nudge-limit]}]
+  (oracle/record answer-record
+                 [(boolean (and content (not= "" (str/trim (str content)))))
+                  (oracle/i64 (long (or tool-calls 0)))
+                  (oracle/i64 (long (or empty-turns 0)))
+                  (oracle/i64 (long (or nudge-limit 1)))]))
+
+(defn answer-empty?
+  "Did this model turn come back with neither prose nor an action?
+
+  Blank prose is empty prose. A turn whose whole content is whitespace has said
+  nothing, and recording it as something said is how an empty message reaches
+  the conversation and the picker preview."
+  [answer]
+  (oracle/call :bot 'answer-empty? [(answer-args answer)]))
+
+(defn may-nudge?
+  "Is this empty turn worth asking once more, rather than refusing?"
+  [answer]
+  (oracle/call :bot 'may-nudge? [(answer-args answer)]))
+
+(defn repetition-exhausted?
+  "Has the model proposed the same action with the same arguments too often?
+
+  `identical-consecutive` counts the call about to run, so the first proposal
+  of anything is 1 and a limit of 1 would refuse everything. The host keeps the
+  count; this only says when it is too many."
+  [{:keys [identical-consecutive limit]}]
+  (oracle/call :bot 'repetition-exhausted?
+               [(oracle/record repetition-record
+                               [(oracle/i64 (long (or identical-consecutive 1)))
+                                (oracle/i64 (long (or limit 4)))])]))
+
 (defn usable-accounts
   "The accounts a Bot may actually use at one provider: the ones it was bound
   to, or — when it was bound to none — the person's."
@@ -550,7 +647,7 @@
 ;; part of a Bot's turn that is not prose because prose cannot be acted on:
 ;; a connector to authorize, a choice to make, an approval to give.
 
-(def card-kinds #{:connection :choice :approval})
+(def card-kinds #{:connection :choice :approval :artifact})
 
 (def connection-states
   "`:offered` — the Bot needs it and nobody has started.
@@ -698,6 +795,46 @@
    :card/action action
    :card/direction (or direction 0)
    :card/decision decision})
+
+(def artifact-kinds
+  "What a Bot can have LEFT BEHIND that outlives the sentence describing it.
+
+  `:file` — a path in the admitted workspace, and how many bytes were written.
+  `:commit` — a local revision, its message, and the paths it named.
+
+  Only these two, because only two tools write: `workspace_write_file` and
+  `git_commit`. There is deliberately no `:pull-request` -- `git_commit` never
+  pushes, so a Bot on this surface cannot open one, and a kind nothing can
+  produce is a promise the screen would keep making and never keep."
+  #{:file :commit})
+
+(defn artifact-card
+  "Something the Bot made, recorded as a value rather than described in prose.
+
+  A card is the part of a turn that is not prose because prose cannot be acted
+  on -- and until now that meant only things asking the PERSON to act. This is
+  the other half: what the Bot already did. `workspace_write_file` answered
+  `\"wrote src/foo.clj (1234 bytes)\"` and `git_commit` answered
+  `\"committed <sha>\"`, so the path, the byte count and the revision existed
+  at the moment of the call and were spent on a sentence. Reading them back out
+  of that sentence would be parsing our own print format, which is the same
+  mistake `run-tool!` names about `pr-str`.
+
+  Every field is what the tool already knew. Nothing here is derived from the
+  model's summary, so a card cannot claim work that did not happen: a Bot that
+  says it committed and did not has no receipt, and therefore no card."
+  [{:keys [id kind path bytes revision message paths]}]
+  (when-not (contains? artifact-kinds kind)
+    (throw (ex-info "unknown artifact kind"
+                    {:type :bot/invalid-card :card id :artifact-kind kind})))
+  (cond-> {:card/id (required! id :card/id)
+           :card/kind :artifact
+           :card/artifact-kind kind}
+    path (assoc :card/path path)
+    (number? bytes) (assoc :card/bytes (long bytes))
+    revision (assoc :card/revision revision)
+    message (assoc :card/message message)
+    (seq paths) (assoc :card/paths (vec paths))))
 
 (defn message
   "One turn. `:message/role` is `:person` or `:bot` — not `:user`/`:assistant`,

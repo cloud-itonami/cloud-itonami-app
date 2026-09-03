@@ -1,0 +1,79 @@
+[{:db/id -1
+  :adr/id "adr-2608280100-a-ceiling-with-no-relief-valve-is-a-deadline"
+  :adr/title "A ceiling with no relief valve is a deadline"
+  :adr/status "accepted"
+  :adr/date "2026-08-28"
+  :adr/body
+  "## The incident
+
+2026-08-27 23:34 JST、journal 付きの build を resident server に deploy した。
+翌 08:28 に測ると、**8 時間 34 分ぶん何も記録されていなかった。**
+
+    state.edn         最終書き込み 23:34:41  (deploy 時の checkpoint)
+    state.journal.edn 最終書き込み 23:57:16  4,194,086 bytes
+    journal-max-bytes                        4,194,304 bytes
+                                    残り        218 bytes
+
+`workforce_status` の outcomes に `content-too-large: 2`、`running: 5`。
+その 5 本は永久に終われない —— 終了を記録する書き込み自体が落ちるから。
+
+## The defect
+
+`persist-delta!` は **append してから** checkpoint を判定していた。
+
+    (host/append-durable! path record max)      ; ← ここで throw
+    (when (checkpoint-due? entries (file-size path))
+      (checkpoint! after))                      ; ← ここへ到達しない
+
+journal が bound の手前 218 バイトまで来ると、それより大きいレコードは
+すべて `:fs/content-too-large` で拒否される。**その拒否は、余裕を作るはずの
+行より手前で起きる。** 一度この状態に入ると自力では出られない。
+
+`entries >= 256` の側の trigger も効かなかった。レコードが大きいので
+72 件で 4 MiB に達しており、256 に届く前に詰まる。
+
+## This failure was already written down, one file over
+
+`host-bounds/store-max-bytes` の docstring:
+
+    writes succeeded at 99% of the bound and the process failed to start
+    at 101%. The first thing anyone learned was that the fleet was down.
+
+snapshot について記録されていたその形を、**journal で再現した。**
+2026-08-20 に snapshot で起きたことが、2026-08-27 に journal で起きた。
+
+**上限に逃がし弁が無ければ、それは bound ではなく期限である。**
+
+## Decision
+
+1. **余裕は append の前に訊く。** 入らないレコードは checkpoint を
+   起動する。snapshot するのは `before` —— journal に既に在るレコード群が
+   作った状態がそれで、このレコードはそこからの増分だから。
+2. **checkpoint 後にレコードを作り直す。** `:base-bytes` が指す snapshot が
+   動いたので、古い長さを書くと `journal-belongs-to-snapshot?` が
+   正しい journal を拒否することになる。
+3. **予算そのものより大きいレコードは snapshot として書く。**
+   checkpoint しても入らないので、journal がこの書き込みに合っていない。
+   実測: mail-sync の 1 transaction が 2,041 op / 393 KB。4 MiB 予算に対して
+   仮定の話ではない。**これは旧挙動への後退ではなく正しい答え** ——
+   予算より大きい差分は何も節約しない。
+
+## What this says about the previous verification
+
+前夜の検証は「1,981 tests 緑」「journal 12 レコードが全部 `:base-bytes` を
+持ち snapshot と一致」まで確認していた。**どちらも真で、どちらもこの欠陥を
+見ていない。** 12 レコードは 1 MB で、bound は 4 MiB だった。
+
+**deploy 直後の状態を確認することは、bound を跨いだ状態を確認することでは
+ない。** 新しい上限を入れたときに確かめるべきは「上限に達したときどうなるか」
+であって「まだ達していないときどうなるか」ではない。回帰テストは予算を
+5 倍超えて書き、全部通ることと復元できることを要求する。
+
+## Verification
+
+- `clojure -M:test`: 1,992 tests / 11,716 assertions / 0 failures
+  （この修正前は 1,989 / 11,710 / 0）。
+- 回帰テストは修正前のコードで赤くなることを確認した。しかも**本番と同一の
+  拒否理由**で: `:fs/content-too-large`, `state.journal.edn`,
+  4,401,982 / 4,194,304 bytes。
+"}]

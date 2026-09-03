@@ -25,13 +25,23 @@
   verify it holding no secret, which is the property macaroons could not give
   without shipping the root secret everywhere it is checked.
 
-  ## What is NOT here
+  ## Attenuation by the Bot itself -- decided 2026-09-01
 
-  Attenuation by the Bot itself. `biscuit.token/append` needs the private key
-  the previous block named, and no Bot holds one -- `bot-identity` gives a
-  Bot a name, deliberately not a signing key. So the fleet can issue a Bot's
-  authority and anyone can verify it, and a Bot cannot yet hand a narrower
-  slice to something else. That is the next decision, not an oversight.
+  This section used to say a Bot could not narrow its own token, because
+  `biscuit.token/append` needs the private key the previous block named and no
+  Bot held one. Owner decision: give Bots that key.
+
+  It turned out to be less of a grant than the sentence implies. `bot-did` is
+  the public half of `derive-seed(fleet, bot-id)`, so the private half was
+  always derivable from the same seed file; what was missing was a caller able
+  to reach it. `bot-identity/bot-signing-seed` is that caller, and its
+  docstring carries what a holder of one can and cannot do.
+
+  So `attenuate` below completes the half the fleet could not deliver: one
+  issuance, then a Bot narrowing its own authority before handing a slice on,
+  with the issuer never consulted. Narrowing is all it can do -- meet never
+  widens -- and the reader half of that claim is measured in
+  kotoba-lang/grant, `kotobase.biscuit-grant-attenuation-test`.
 
   The root key here signs authority for the whole workforce. It is a separate
   secret from `bot-identity.seed`: one names Bots, this one speaks for the
@@ -119,6 +129,32 @@
         :next-public-key holder
         :root-private-key seed
         :sign-fn (fn [s payload] (ed/sign s (.getBytes ^String payload "UTF-8")))}))))
+
+(defn attenuate
+  "Narrow a Bot's own token and name who may narrow it next.
+
+  The Bot signs with the key its own did names, so the issuer is not
+  consulted and never learns this happened. `scopes` are the facts the new
+  block carries; because `biscuit.authority/->grant` MEETS each block onto the
+  last, they can only take authority away. A block naming a scope the token
+  never had grants nothing rather than adding it.
+
+  `recipient-did` becomes the next key, which is the whole point of handing a
+  slice on: only the holder of that did may append after this. Passing the
+  Bot's own did back keeps the narrowing to itself.
+
+  Returns nil rather than an unattenuated token when the Bot has no seed. A
+  caller that cannot narrow must not silently pass on the wide one."
+  [{:bot/keys [id]} t scopes recipient-did]
+  (when (and t (seq scopes) (some-> recipient-did str not-empty))
+    (when-let [seed (bot-identity/bot-signing-seed id)]
+      (token/append
+       t
+       {:facts (vec (for [s scopes] ['scope s]))
+        :rules [] :checks []
+        :next-public-key recipient-did
+        :private-key seed
+        :sign-fn (fn [k payload] (ed/sign k (.getBytes ^String payload "UTF-8")))}))))
 
 (defn verify
   "`{:ok? true :blocks n}` or a reason. Needs only the root did:key."
@@ -214,7 +250,29 @@
   given`. Mapping them to `:metrics.read` would be a guess, and a guess that
   can remove a Bot's ability to look at the repository it was pointed at."
   {"workspace_write_file" :patch.create
-   "git_commit" :patch.create})
+   "git_commit" :patch.create
+   "disk_space_status" :disk.inspect
+   "disk_space_cleanup" :disk.cleanup
+   "disk_space_inventory" :disk.candidate.inspect
+   "disk_space_reclaim" :disk.reclaimable.cleanup
+   "git_hygiene_status" :git.inspect
+   "git_hygiene_prune" :git.cleanup
+   ;; Hokusai video (ADR-0092). Both name the same capability: reading a job
+   ;; you submitted is part of submitting it, and a Bot without `:media.video`
+   ;; has no job id to read.
+   "video_generate" :media.video
+   "video_status" :media.video
+   "domain_search" :domain.read
+   "domain_check" :domain.read
+   "domain_registrations" :domain.read
+   "domain_registration_status" :domain.read
+   "domain_dns_records" :domain.read
+   "domain_proposals" :domain.read
+   "domain_registration_review" :domain.proposal.create
+   "domain_auto_renew_review" :domain.proposal.create
+   "domain_dns_change_review" :domain.proposal.create
+   "domain_reject" :domain.proposal.create
+   "domain_commit" :domain.approved-proposal.commit})
 
 (defn covered-tools
   "The tools this gate actually decides. Everything else is unchanged by it."

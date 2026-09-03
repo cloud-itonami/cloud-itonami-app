@@ -5,14 +5,16 @@
   not provide: a resident may publish one pickup, an eligible human User may
   book it, and collection evidence is carried through a permitted facility to
   a recovery receipt.  It is deliberately a control plane.  Evidence refs are
-  recorded and never promoted from `:self-attested` to verified by this app;
-  trucks, scales, permits and physical sorting remain external authorities.
+  recorded and only become eligible after an organization verifier binds a
+  decision to the exact claim version; trucks, scales, permits and physical
+  sorting remain external authorities.
 
   Exact pickup addresses are visible only to the requester and the booked
   worker.  An open-job candidate sees the service area, window and items, which
   is enough to decide whether to book without exposing a resident's address."
   (:require [clojure.set :as set]
             [clojure.string :as str]
+            [cloud.itonami.app.human-work :as human-work]
             #?(:clj [cloud.itonami.app.store :as store])))
 
 (def schema "cloud.itonami.app.bulky-waste.v1")
@@ -94,18 +96,20 @@
   (reduce + (map #(* (:quantity %) (:unit-weight-grams %)) items)))
 
 (defn- validate-evidence! [evidence]
-  (doseq [key [:vehicle :insurance :waste-carrier]]
+  (doseq [key [:vehicle :insurance :waste-carrier :service-location]]
     (when-not (present? (get evidence key))
       (fail! :bulky-waste/evidence-required
-             "vehicle, insurance and waste-carrier evidence refs are required"
+             "vehicle, insurance, waste-carrier and service-location evidence refs are required"
              {:missing key}))))
 
 (defn register-worker!
   "Register or replace `actor`'s own availability profile.
 
-  Evidence is explicitly self-attested.  Registration makes the worker
-  matchable; it does not assert that a regulator or insurer verified them."
-  [{:keys [service-areas categories capacity-grams availability evidence]} actor]
+  Evidence is explicitly self-attested. Registration does not make the worker
+  matchable until an organization verifier checks the service location,
+  licence, insurance, and vehicle claims through the HumanWork registry."
+  [{:keys [service-areas categories capacity-grams availability evidence
+           country region]} actor]
   (when-not (present? actor) (fail! :identity/unauthenticated "Sign in required"))
   (when-not (and (vector? service-areas) (seq service-areas)
                  (every? present? service-areas))
@@ -119,13 +123,44 @@
                  (every? valid-window? availability))
     (fail! :bulky-waste/invalid "availability must contain valid ISO-8601 windows"))
   (validate-evidence! evidence)
-  (let [profile {:schema schema
+  (let [country (or country "JP")
+        human-profile
+        (human-work/register-worker!
+         {:locations [{:location-id "bulky-waste-service-area"
+                       :country country :region region
+                       :service-areas service-areas
+                       :work-modes ["onsite"]
+                       :evidence-ref (:service-location evidence)}]
+          :availability availability
+          :credentials
+          [{:credential-id "bulky-waste-carrier-license"
+            :type "license" :name "Waste carrier licence"
+            :issuer "declared issuing authority"
+            :jurisdiction {:country country :region region}
+            :scopes ["bulky-waste-collection"]
+            :evidence-ref (:waste-carrier evidence)}
+           {:credential-id "bulky-waste-vehicle-insurance"
+            :type "insurance" :name "Commercial vehicle insurance"
+            :issuer "declared insurer"
+            :jurisdiction {:country country :region region}
+            :scopes ["commercial-vehicle"]
+            :evidence-ref (:insurance evidence)}
+           {:credential-id "bulky-waste-collection-vehicle"
+            :type "asset" :name "Collection vehicle"
+            :issuer "declared vehicle registry"
+            :jurisdiction {:country country :region region}
+            :scopes ["collection-vehicle"]
+            :evidence-ref (:vehicle evidence)}]}
+         actor)
+        profile {:schema schema
                  :worker-id actor
                  :service-areas (vec (distinct service-areas))
                  :categories (vec (distinct categories))
                  :capacity-grams capacity-grams
                  :availability availability
-                 :evidence (assoc evidence :verification "self-attested")
+                 :evidence evidence
+                 :human-work-worker-id (:worker-id human-profile)
+                 :eligibility-verification "organization-verified-required"
                  :active? true
                  :updated-at (now)}]
     (transact! assoc-in [:bulky-waste :workers actor] profile)
@@ -136,11 +171,13 @@
     (seq evidence) (assoc :evidence evidence)))
 
 (defn create-job!
-  [{:keys [service-area pickup-address access-notes pickup-window items facility-id
-           facility-operator-id facility-permit-evidence-ref]}
+  [{:keys [organization-id service-area country region pickup-address access-notes
+           pickup-window items facility-id facility-operator-id
+           facility-permit-evidence-ref]}
    actor]
   (when-not (present? actor) (fail! :identity/unauthenticated "Sign in required"))
-  (when-not (and (present? service-area) (present? pickup-address)
+  (when-not (and (present? organization-id) (present? service-area)
+                 (present? pickup-address)
                  (present? facility-id) (present? facility-operator-id)
                  (present? facility-permit-evidence-ref)
                  (valid-window? pickup-window))
@@ -149,7 +186,9 @@
   (validate-items! items)
   (let [id (new-id "bulky")
         job {:schema schema :id id :requester-id actor :status "draft"
-             :service-area service-area :pickup-address pickup-address
+             :organization-id organization-id
+             :service-area service-area :country (or country "JP") :region region
+             :pickup-address pickup-address
              :access-notes access-notes :pickup-window pickup-window
              :items items :estimated-weight-grams (estimated-weight items)
              :facility-id facility-id :facility-operator-id facility-operator-id
@@ -200,21 +239,50 @@
            {:reason :duplicate-evidence
             :evidence-kind kind :evidence-ref value})))
 
+(defn- human-work-request-view [job]
+  {:id (:id job)
+   :organization-id (:organization-id job)
+   :work-mode "onsite"
+   :location {:country (:country job)
+              :region (:region job)
+              :service-area (:service-area job)
+              :minimum-verification "verified"}
+   :work-window (:pickup-window job)
+   :requirements
+   {:credentials
+    [{:type "license" :scopes ["bulky-waste-collection"]
+      :jurisdiction {:country (:country job) :region (:region job)}
+      :minimum-verification "verified"}
+     {:type "insurance" :scopes ["commercial-vehicle"]
+      :jurisdiction {:country (:country job) :region (:region job)}
+      :minimum-verification "verified"}
+     {:type "asset" :scopes ["collection-vehicle"]
+      :jurisdiction {:country (:country job) :region (:region job)}
+      :minimum-verification "verified"}]}})
+
+(defn- qualification-report [state profile job]
+  (when-let [human-profile
+             (get-in state [:human-work :workers (:worker-id profile)])]
+    (human-work/eligibility-report state human-profile
+                                   (human-work-request-view job))))
+
 (defn- eligible? [state profile job]
-  (and (:active? profile)
+  (let [qualification (qualification-report state profile job)]
+    (and (:eligible? qualification)
+       (:active? profile)
        (some #{(:service-area job)} (:service-areas profile))
        (set/subset? (set (map :category (:items job)))
                     (set (:categories profile)))
        (>= (:capacity-grams profile) (:estimated-weight-grams job))
        (some #(contains-window? % (:pickup-window job)) (:availability profile))
-       (not (conflicting-booking? state (:worker-id profile) job))))
+       (not (conflicting-booking? state (:worker-id profile) job)))))
 
-(defn- candidate-view [profile job]
+(defn- candidate-view [state profile job]
   {:worker-id (:worker-id profile)
    :capacity-grams (:capacity-grams profile)
    :spare-capacity-grams (- (:capacity-grams profile)
                             (:estimated-weight-grams job))
-   :evidence (:evidence profile)})
+   :eligibility (qualification-report state profile job)})
 
 (defn matches
   "Eligible workers, least spare vehicle capacity first. Requester-only."
@@ -226,7 +294,7 @@
     {:schema schema :job-id id
      :items (->> (vals (get-in state [:bulky-waste :workers] {}))
                  (filter #(eligible? state % job))
-                 (map #(candidate-view % job))
+                 (map #(candidate-view state % job))
                  (sort-by (juxt :spare-capacity-grams :worker-id))
                  vec)}))
 
@@ -257,10 +325,11 @@
                    (when-not (and profile (eligible? state profile job))
                      (fail! :bulky-waste/not-eligible
                             "The worker does not currently match this job"))
-                   (-> job (assoc :status "booked" :worker-id actor
+                   (let [qualification (qualification-report state profile job)]
+                     (-> job (assoc :status "booked" :worker-id actor
                                   :booked-at (now))
                        (update :audit conj (event "booked" actor
-                                                  (:evidence profile))))))))
+                                                  {:eligibility qualification}))))))))
 
 (defn check-in! [id {:keys [presence-proof-ref]} actor]
   (when-not (present? presence-proof-ref)

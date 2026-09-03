@@ -1,0 +1,149 @@
+{:format :kotoba.kir/v4,
+ :signature {:params [], :result :i64},
+ :functions
+ [{:name scope-bot,
+   :params [],
+   :result :i64,
+   :effects #{},
+   :body 0,
+   :param-types []}
+  {:name scope-default,
+   :params [],
+   :result :i64,
+   :effects #{},
+   :body 1,
+   :param-types []}
+  {:name scope-provider,
+   :params [],
+   :result :i64,
+   :effects #{},
+   :body 2,
+   :param-types []}
+  {:name aux-override,
+   :params [],
+   :result :i64,
+   :effects #{},
+   :body 0,
+   :param-types []}
+  {:name aux-main,
+   :params [],
+   :result :i64,
+   :effects #{},
+   :body 1,
+   :param-types []}
+  {:name aux-refused,
+   :params [],
+   :result :i64,
+   :effects #{},
+   :body 2,
+   :param-types []}
+  {:name route-scope,
+   :params [s],
+   :result :i64,
+   :effects #{},
+   :body
+   (if
+    (record-get
+     [:record
+      :routing/scope
+      [[:bot-assigned :bool] [:default-assigned :bool]]]
+     s
+     :bot-assigned)
+    (scope-bot)
+    (if
+     (record-get
+      [:record
+       :routing/scope
+       [[:bot-assigned :bool] [:default-assigned :bool]]]
+      s
+      :default-assigned)
+     (scope-default)
+     (scope-provider))),
+   :param-types [[:ref :routing/scope]]}
+  {:name auxiliary-route,
+   :params [a],
+   :result :i64,
+   :effects #{},
+   :body
+   (if
+    (record-get
+     [:record
+      :routing/auxiliary
+      [[:has-override :bool] [:override-admitted :bool]]]
+     a
+     :has-override)
+    (if
+     (record-get
+      [:record
+       :routing/auxiliary
+       [[:has-override :bool] [:override-admitted :bool]]]
+      a
+      :override-admitted)
+     (aux-override)
+     (aux-refused))
+    (aux-main)),
+   :param-types [[:ref :routing/auxiliary]]}
+  {:name assignment-complete?,
+   :params [s],
+   :result :bool,
+   :effects #{},
+   :body
+   (let
+    [__kotoba_and_2
+     (record-get
+      [:record
+       :routing/submitted
+       [[:has-provider :bool] [:has-model :bool]]]
+      s
+      :has-provider)]
+    (if
+     __kotoba_and_2
+     (record-get
+      [:record
+       :routing/submitted
+       [[:has-provider :bool] [:has-model :bool]]]
+      s
+      :has-model)
+     __kotoba_and_2)),
+   :param-types [[:ref :routing/submitted]]}
+  {:name main,
+   :params [],
+   :result :i64,
+   :effects #{},
+   :body 0,
+   :param-types []}],
+ :oracle-value 0,
+ :schema-identities
+ #:routing{:auxiliary
+           "fcd7a22a26937e9c30e144ecb781c3b66022e3606df710b7909fa7daa067fa1d",
+           :scope
+           "b15a461e394a058991d5f9b3c877064af1a4973bc23747deb049f04cf77528a6",
+           :submitted
+           "0f3a4499992c7813c7696539de972557154af65469b68600fb22fb9011964976"},
+ :exports
+ [scope-bot
+  scope-default
+  scope-provider
+  aux-override
+  aux-main
+  aux-refused
+  route-scope
+  auxiliary-route
+  assignment-complete?
+  main],
+ :schemas
+ #:routing{:scope
+           [:record
+            :routing/scope
+            [[:bot-assigned :bool] [:default-assigned :bool]]],
+           :auxiliary
+           [:record
+            :routing/auxiliary
+            [[:has-override :bool] [:override-admitted :bool]]],
+           :submitted
+           [:record
+            :routing/submitted
+            [[:has-provider :bool] [:has-model :bool]]]},
+ :effects #{},
+ :blocks [{:id 0, :instructions [[:const.i64 0] [:return]]}],
+ :entry main}

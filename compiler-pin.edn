@@ -1,0 +1,38 @@
+;; Compiler freeze for this JVM-exit follow-up. kotoba-clj reviews against this file.
+;;
+;; Follow-up compiler is kotoba-lang@bfe618b3 (merge #514, green run 33598929287).
+;; Leave c9dd99f5 — do not keep using it as the follow-up compiler.
+;; Do not vendor HEAD past bfe618b3. Do not vendor 4adda169 (PR #513) as the pin.
+;;
+;; Production runtime pin is unchanged: io.github.kotoba-lang/kotoba :git/tag
+;; v0.6.29. This file is not a silent 0.7.2/0.7.3 bump.
+;; EMITTER, NOT RUNTIME. bin/kotoba selects an emitter at compile time and
+;; names it in the envelope (:emitter, :emitter-path, :emitter-sha256). A real
+;; kotoba CLI on PATH is preferred; the amu --jvm-free adapter is the fallback.
+;; Neither is the v0.6.29 runtime pin above, and no envelope claims to be:
+;; the earlier ADAPTER-EMIT HOLD guarded against a v0.6.29 emit being INVENTED,
+;; and that is now enforced by reporting the emitter's digest instead of by
+;; having only one emitter.
+;;
+;; The binary installed on the operator workstation on 2026-09-02 is 0.7.3,
+;; which this file declines as a RUNTIME bump. Using it to emit is a separate
+;; decision and is measured, not assumed: test/emit_parity_nbb.cljs compiles
+;; this app's two real guests both ways and requires the kotoba.target /
+;; kotoba.compatibility / kotoba.typed sections to be byte-identical, exports to
+;; match, native's import set to be a SUBSET of amu's, and both artifacts to
+;; agree on main and on discriminating probes through this app's own loader.
+;; Measured that day: 16 checks green, native 87 bytes smaller per guest,
+;; asking for two fewer host functions.
+{:kotoba-lang
+ {:git/url "https://github.com/kotoba-lang/kotoba-lang.git"
+  :git/sha "bfe618b3a3844d5563a943d63bdefcdc535af98c"
+  :note "merge #514, green run 33598929287. Not c9dd99f5. Not 4adda169. Not HEAD."}
+ :kotoba
+ {:git/url "https://github.com/kotoba-lang/kotoba.git"
+  :git/tag "v0.6.29"
+  :git/sha "42ae4941089a5be3d06e46d440680589e781f19f"
+  :note "production deps.edn pin; do not bump"}
+ :amu
+ {:git/url "https://github.com/kotoba-lang/amu.git"
+  :git/sha "8435eafb7dada2d3a85cee2c278ca6d38deb7588"
+  :note "last amu commit at or before kotoba-lang@bfe618b3 (2026-09-02 15:26 +0900). Not a floating HEAD. Not a deps.edn runtime pin. Emit frontend only."}}

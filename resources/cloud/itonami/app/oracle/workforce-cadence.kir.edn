@@ -1,0 +1,59 @@
+{:format :kotoba.kir/v3,
+ :signature nil,
+ :functions
+ [{:name outcome-produced-change,
+   :params [],
+   :result :i64,
+   :effects #{},
+   :body 0}
+  {:name outcome-no-op,
+   :params [],
+   :result :i64,
+   :effects #{},
+   :body 1}
+  {:name outcome-unavailable,
+   :params [],
+   :result :i64,
+   :effects #{},
+   :body 2}
+  {:name at-least,
+   :params [a b],
+   :result :i64,
+   :effects #{},
+   :body (if (< a b) b a)}
+  {:name at-most,
+   :params [a b],
+   :result :i64,
+   :effects #{},
+   :body (if (> a b) b a)}
+  {:name next-interval-minutes,
+   :params [floor ceiling retry-ceiling current outcome],
+   :result :i64,
+   :effects #{},
+   :body
+   (let
+    [f
+     (at-least floor 1)
+     c
+     (at-least ceiling f)
+     rc
+     (at-least (at-most retry-ceiling c) f)
+     cur
+     (at-least (at-most current c) f)
+     doubled
+     (* cur 2)]
+    (if
+     (= outcome 0)
+     f
+     (if (= outcome 1) (at-most doubled c) (at-most doubled rc))))}],
+ :oracle-value nil,
+ :schema-identities nil,
+ :exports
+ [outcome-produced-change
+  outcome-no-op
+  outcome-unavailable
+  next-interval-minutes],
+ :schemas nil,
+ :effects #{},
+ :blocks [],
+ :entry nil}

@@ -66,6 +66,18 @@
   {:git/url "https://github.com/kotoba-lang/wallet.git"
    :git/sha "18394178cb40c7fbfe67904135486c166d699dc5"}
 
+  ;; Passkey Smart Account address derivation is local and deterministic.
+  ;; ethereum.abi encodes the factory's getAddress inputs; eth-crypto supplies
+  ;; Ethereum Keccak-256 + EIP-55. Both were already transitive through the
+  ;; wallet stack, but are named directly because production source requires
+  ;; their namespaces.
+  io.github.kotoba-lang/org-ethereum-abi
+  {:git/url "https://github.com/kotoba-lang/org-ethereum-abi.git"
+   :git/sha "f3e5662d86977b50224e5e890f953cb5e4b3f441"}
+  io.github.kotoba-lang/eth-crypto
+  {:git/url "https://github.com/kotoba-lang/eth-crypto.git"
+   :git/sha "2b0e56d28262eb1b513cee6c822a55714303f39a"}
+
   ;; System dynamics. Both are consumed, never reimplemented: xmile owns the
   ;; OASIS XMILE 1.0 model + the Euler/RK4 simulator (ADR-2607072350 makes it the
   ;; authoritative engine for this workspace), and dynamics owns the Meadows
@@ -411,7 +423,7 @@
 
   io.github.kotoba-lang/identity
   {:git/url "https://github.com/kotoba-lang/identity.git"
-   :git/sha "8eeb1a046c0b8c81ebbbc938e8b6c40383a5d6a9"}
+   :git/sha "09803452a79fd57c211f0cf7e67fdc1c780dd8d8"}
 
   ;; Delegation, and the ONE thing that decides it.
   ;;
@@ -446,9 +458,28 @@
    :git/sha "38697760c91951d3f81a0f06169ae7058d4afd39"}
   ;; Local Datomic-shaped query/materialized view for the Agent. Persistence
   ;; remains an injected append/read port; queries never move to the remote.
+  ;; 3578f28 makes `langchain.edn-persist` `.cljc`: policy plus an injected
+  ;; IStateStore, with the filesystem host behind a reader conditional. It was
+  ;; the last `.clj` in that library's runtime surface and the external reason
+  ;; `cloud.itonami.app.store` could not be portable.
   io.github.kotoba-lang/langchain
   {:git/url "https://github.com/kotoba-lang/langchain.git"
-   :git/sha "7038bb80ce030cc5a279785512c0e92d09f323e0"}
+   :git/sha "3578f28bec7cc9c9cacc8da2efdf087257ffd0ca"}
+  ;; NOT added: io.github.kotoba-lang/kgraph.
+  ;;
+  ;; `kotoba.kgraph` was extracted out of `kotoba` into its own repo, where it
+  ;; is `.cljc` with zero JVM interop -- so depending on it looks like the way
+  ;; to make the datom assertions reachable from a portable namespace. It is
+  ;; not, yet. Measured 2026-08-27: with both on the classpath,
+  ;; `kotoba/kgraph.clj` from the `kotoba` pin below still wins, because it
+  ;; comes first. The dependency resolved, the require succeeded, and NOTHING
+  ;; CHANGED -- a no-op that reads like a fix, and two copies of one namespace
+  ;; whose winner is decided by classpath order.
+  ;;
+  ;; The real move is bumping the `kotoba` pin, which no longer ships kgraph at
+  ;; all (404 on main). That pin is 320 commits behind and this application
+  ;; requires around forty `kotoba.*` namespaces, so it is its own change with
+  ;; its own verification -- not a line added beside another one.
   ;; Transaction and signed-head CAS registry. Encrypted payload blocks remain
   ;; in DataLad and are verified there before this head advances.
   io.github.kotoba-lang/kotobase
@@ -467,6 +498,12 @@
   io.github.kotoba-lang/org-anthropic-mcp
   {:git/url "https://github.com/kotoba-lang/org-anthropic-mcp.git"
    :git/sha "9b343e64139763d66c2a3969669bc03f73b32a46"}
+  ;; Agent-first domain lifecycle. The library owns pure Cloudflare Registrar
+  ;; and DNS request shapes; this app owns credentials, HTTP, Passkey approval,
+  ;; and MCP publication.
+  io.github.cloud-itonami/yadori
+  {:git/url "https://github.com/cloud-itonami/yadori.git"
+   :git/sha "97a0144af55e9d19695561ec5c07a8e124615a6c"}
   io.github.kotoba-lang/oauth
   {:git/url "https://github.com/kotoba-lang/oauth.git"
    :git/sha "e47999a48cbc79e831c0690bac6681bda0b52785"}
@@ -519,17 +556,8 @@
           :ns-default build}
   :release-sign {:extra-paths ["dev"]
                  :main-opts ["-m" "cloud.itonami.app.sign-update-manifest"]}
-  :server {:main-opts ["-m" "cloud.itonami.app.server"]}
   :ao-messenger {:main-opts ["-m" "cloud.itonami.app.organism-messenger-client"]}
   :repository {:main-opts ["-m" "cloud.itonami.app.repository-runtime"]}
-  ;; The MCP server speaks JSON-RPC on stdout, so nothing else may print there:
-  ;; run it with this alias, never alongside :server in one process.
-  :mcp {:main-opts ["-m" "cloud.itonami.app.mcp"]}
-  ;; A client of the running server, not a second writer: `store/state` is read
-  ;; once per process, so a CLI that wrote state.edn beside a live server would
-  ;; be reverted by its next transact!. Must run with the same
-  ;; CLOUD_ITONAMI_DATA_DIR as the server it talks to.
-  :cli {:main-opts ["-m" "cloud.itonami.app.cli"]}
   ;; The suite writes through cloud.itonami.app.store, which persists to
   ;; `cloud.itonami.app.config/data-dir`. Without this it defaults to `./data`
   ;; and the tests overwrite the real store -- measured on 2026-07-30, when a

@@ -1,0 +1,113 @@
+[{:db/id -1
+  :adr/id "adr-2608280400-closing-the-bots-durability-session"
+  :adr/title "Closing: what landed, what I got wrong, and where to resume"
+  :adr/status "accepted"
+  :adr/date "2026-08-28"
+  :adr/body
+  "## What this session was asked
+
+「今の itonami cli, itonami bots で まだちゃんと bots が永続化していない?
+品質確認して」→「品質向上」→ 以後 next を反復。
+
+## What landed, all on main and all deployed
+
+| commit | 主題 | pin |
+|---|---|---|
+| `ce6ed71` | journal は 1 つの snapshot の増分であり、どれかを名乗る | `19092c18` |
+| `700dcce` | provider が自分の障害を名乗る field を読む（retry） | `52753305` |
+| `69ec9e7` | 逃がし弁の無い上限は期限である（journal の詰まり修正） | `d5b013b0` |
+| `dd8d904` | 失敗経路は、直した経路ではなかった（Goal 失敗の帰属） | `c0501b3e` |
+| `ca615a0` | 下の層が保存し、上の層がまた捨てていた（tool 名と引数） | `bc282563` |
+
+**稼働**: server は `ca615a0`、起動時 fold 実行、append 拒否 0、
+journal の `:base-bytes` と snapshot のバイト長が一致。
+
+## Verification, fixed
+
+- `clojure -M:test`: **1,998 tests / 11,768 assertions / 0 failures**
+  （このセッション開始時のベースラインは 1,970 / 11,661 / 0）。
+- `bin/test-portable-cljs`: 57 tests / 230 assertions / 0 failures
+  （retry の判断は JVM と ClojureScript の両方で実行される）。
+- **5 つの変更すべてで break/unbreak を実施した。** うち 2 つは両方向:
+  retry は status のみに戻すと loading-model が赤、permanent guard を外すと
+  authentication が赤（別々のテスト）。journal guard も同様。
+- **journal の詰まり修正は、本番と同一の拒否理由で赤くなることを確認した**
+  （`:fs/content-too-large` 4,401,982 / 4,194,304 bytes）。
+- **本番で bound を跨いだ checkpoint を実測した**: journal が 3,973,485 bytes
+  まで伸び、snapshot が書き直され、journal が 160,420 bytes にリセット、
+  append 拒否 0。
+
+## What I got wrong, and corrected
+
+**最初の報告で挙げた 5 つの欠陥のうち 3 つは欠陥ではなかった。**
+3 つとも同じ形の誤り —— 全履歴を集計して、修正済みのものを現行として提示した。
+
+1. error provenance は 8/19 に直っていた（欠落率 42/83 → 0/46）
+2. retention は設計どおり動いていた（1,663/1,985 compact 済み、期限未到来）
+3. nil-model の 97.5% 失敗は同語反復だった（応答前に落ちた turn）
+
+(2) には外因があり直した —— `host-bounds/store-max-bytes` の docstring が
+gc 着地後も「Retention is the actual gap」と言い続けていた。
+
+**さらに自分で 2 つ回帰を作り、両方とも実測で見つけて直した。**
+
+- journal を deploy して **8 時間 34 分、store が何も記録しなかった**
+  （bound に逃がし弁が無かった）。deploy 直後の確認は緑だったが、
+  それは bound を跨いだ確認ではなかった。
+- `:turn/requested-model` を interactive path に入れたが、**失敗の 273 件は
+  全部 Goal path** だった。緑で、projection にも出て、1 件も覆っていなかった。
+
+**優先順位の判断も 1 度間違えた。** `invalid-tool-arguments` を
+「現行の主要原因ではない」と読んだが、日別の件数はその日の稼働量に依存する。
+率で見るべきところを件数で見た。実際には現行の最多である。
+
+## Open, in priority order
+
+1. **alias 2 スロットの偏り。** deploy 後 13 turn で
+   `qwen3.8-27b-throughput-b70` が 8 turn 中 5 失敗（全部
+   invalid-tool-arguments）、`murakumo-main` を echo するスロットが 2 turn 中
+   0 失敗。**8 対 2 では結論が出ない。** `:turn/model` が入ったので日単位で
+   数えられる。偏りが実在するなら、修復ではなく slot 側の問題である。
+2. **何が実際に malformed なのか。** `arguments-sample` と `:turn/tool` が
+   turn に載るようになった。1 日ぶん見てから、修復（Hermes 系の repair
+   loop）を入れるかを決める。**いま決めない** —— `#166` の立場（これらの
+   引数はファイルを書き commit を作れる）は証拠が出るまで変えない。
+3. **retry の効果。** `http-error` 件数。母数不足で未測定。
+4. **`provider/timeout`。** 意図的に未着手。壁は 1 スロットの実測
+   throughput から決まっており、retry は容量問題に負荷を足す。attribution が
+   入ったので「どの model が何回目で落ちるか」が測れる。
+5. `server.pid` が死んだ 72273 を指したまま（server 自身は書いていない）。
+6. MCP 9 本が旧 checkout のコードで稼働（store は書かないので無害）。
+7. 5 bot が `waiting-approval` で停止 —— 設計どおり、人の承認以外で動かない。
+
+## Resume point
+
+```
+# いま何が落ちているか（attribution 入りで初めて答えが出る）
+nbb ...  # または store を読んで :turn/model x :turn/error-type x :turn/tool を数える
+# 具体的には: state.edn の :bots :turn-history から
+#   2026-08-28T01:00:00Z 以降の turn を model 別・error-type 別・tool 別に集計
+```
+
+先に上の 1 と 2 を 1 日ぶん測ること。**測る前に修復を書かない。**
+
+## Not mine, left untouched
+
+- app repo の stash 2 件（2026-08-14 の `cursor/app-ipns-latest`、
+  2026-08-20 の `agent/did-is-the-axis`）
+- superproject のローカル commit `d654c2de8b2`
+  「manifest: make canonical west checks checkout-independent」（未着地）
+- **別セッションが同じ app を deploy している。** 2026-08-28 09:39 に
+  `85d0c25` を deploy した形跡が在る（私が作っていない plist backup）。
+  私の 5 つの merge はすべて `85d0c25` に含まれており退行は無い。
+  私の deploy は常に main の tip への純前進で行った。
+
+## Backups kept
+
+`~/.cloud-itonami/data/` に `state.edn.pre-deploy-20260827` /
+`state.edn.pre-fix-20260828` / `state.edn.pre-dd8d904` /
+`state.edn.pre-ca615a0`、孤児 journal を
+`state.journal.edn.orphan-20260827-195124` と
+`.retired-20260827-2130`（byte 同一を shasum で確認済み）。
+plist は各 deploy ごとに `.bak-before-<sha>`。
+"}]

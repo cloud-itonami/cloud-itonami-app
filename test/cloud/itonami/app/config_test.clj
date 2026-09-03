@@ -110,8 +110,8 @@
 
 (deftest the-resident-app-directory-resolves-the-resident-store
   (testing "`~/.cloud-itonami/app` and `~/.cloud-itonami/data` are one install.
-            bin/itonami said so by exporting the variable; a bare `clojure -M:cli`
-            in the same directory used to fall back to a relative `data` and make
+            bin/itonami said so by exporting the variable; a bare leftover JVM
+            CLI in the same directory used to fall back to a relative `data` and make
             a third store holding an enrollment key no server had written"
     (let [home (scratch-home)]
       (with-property nil
@@ -216,11 +216,20 @@
 (deftest murakumo-runpod-route-has-a-cold-start-safe-client-bound
   (let [provider (some #(when (= "murakumo" (:id %)) %)
                        (:providers (config/load-config)))]
-    (is (= 512 (:max-output-tokens provider)))
+    (is (= 16384 (:max-output-tokens provider)))
     (is (= "murakumo-main" (:default-model provider)))
-    (is (= ["murakumo-main" "qwen3.8-27b-throughput-5090"
-            "qwen3.8-27b-fastmtp-aggressive"]
+    (is (= ["murakumo-main" "murakumo-edge"
+            "awai-network/basho"
+            "qwen3.8-27b-throughput-5090"
+            "qwen3.8-27b-fastmtp-aggressive"
+            "z-ai/glm-5.3-flash"
+            "qwen/qwen3.8-flash"]
            (:models provider)))
+    ;; ADR-0092: Basho is served by the gateway and may echo the vendor id.
+    (is (= #{"awai-network/basho" "zai-org/GLM-5.3"}
+           (get-in provider [:accepted-response-models "awai-network/basho"])))
+    (is (= "https://murakumo.cloud/api/v1/videos"
+           (get-in provider [:media :videos-url])))
     (is (= {"qwen3.8-27b-throughput-5090" 420}
            (:model-request-timeout-seconds provider)))
     (is (= {:url "https://api.murakumo.cloud/ready?model=qwen3.8-27b-throughput-5090"
@@ -229,9 +238,15 @@
                              "qwen3.8-27b-throughput-5090"])))
     (is (zero? (:max-transient-retries provider)))
     (is (true? (:assert-response-model? provider)))
-    (is (= {"qwen3.8-27b-throughput-5090" "murakumo-main"
-            "qwen3.8-27b-fastmtp-aggressive" "murakumo-main"}
+    (is (= {"murakumo-main" "z-ai/glm-5.3-flash"
+            "awai-network/basho" "z-ai/glm-5.3-flash"
+            "qwen3.8-27b-throughput-5090" "murakumo-main"
+            "qwen3.8-27b-fastmtp-aggressive" "murakumo-main"
+            "z-ai/glm-5.3-flash" "qwen/qwen3.8-flash"
+            "qwen/qwen3.8-flash" "murakumo-main"}
            (:model-fallbacks provider)))
+    (is (= #{"murakumo-edge"} (:no-fallback-models provider))
+        "the resident edge route stays literal even if an old overlay names a fallback")
     (is (= 65536
            (get-in provider [:context-window-tokens
                              "qwen3.8-27b-throughput-5090"])))
@@ -249,6 +264,9 @@
     (is (= 65536
            (get-in providers ["murakumo" :context-window-tokens
                               "qwen3.8-27b-throughput-5090"])))
+    (is (= 65536
+           (get-in providers ["murakumo" :context-window-tokens
+                              "murakumo-edge"])))
     (is (= 32768
            (get-in providers ["murakumo" :context-window-tokens
                               "qwen3.8-27b-fastmtp-aggressive"])))))
@@ -303,3 +321,44 @@
         (doseq [f (.listFiles dir) :when (str/ends-with? (.getName f) ".edn")]
           (is (map? (edn/read-string (slurp f)))
               (str (.getName f) " must read as an EDN map")))))))
+
+;; ---------------------------------------------------------------------------
+;; provider overrides arrive from two layers, and one of them used to be lost
+;; ---------------------------------------------------------------------------
+
+(deftest a-profile-can-override-a-provider
+  (testing "load-config collected provider overrides from config.edn only and then
+            assoc'd the result over the merged map, so a profile's :providers were
+            computed into the intermediate value and discarded one form later.
+            Measured 2026-08-27 against the real loader: a profile setting murakumo
+            :enabled? true :reviewed? true left it false/false, while a non-provider
+            key in the same file applied. A deployment profile that turned a provider
+            on read as correct and did nothing.
+
+            This is exercised through overlay-providers rather than through
+            load-config because a JVM cannot set CLOUD_ITONAMI_PROFILE for itself —
+            the same limitation this namespace's header states about data-dir."
+    (let [catalog [{:id "murakumo" :enabled? false :reviewed? false :max-output-tokens 512}
+                   {:id "ollama" :enabled? true :reviewed? true}]
+          out (config/overlay-providers catalog [[{:id "murakumo" :enabled? true :reviewed? true}] nil])
+          murakumo (first (filter #(= "murakumo" (:id %)) out))]
+      (is (true? (:enabled? murakumo)))
+      (is (true? (:reviewed? murakumo)))
+      (is (= 512 (:max-output-tokens murakumo))
+          "an override replaces the keys it names and leaves the rest of the entry")
+      (is (= 2 (count out)) "the catalog keeps its shape")))
+
+  (testing "the store's config.edn is applied after the profile, so an operator's own
+            file still has the last word"
+    (let [catalog [{:id "openrouter" :enabled? false}]
+          out (config/overlay-providers catalog [[{:id "openrouter" :enabled? true}]
+                                                 [{:id "openrouter" :enabled? false}]])]
+      (is (false? (:enabled? (first out))))))
+
+  (testing "an override naming a provider that is not in the catalog throws rather
+            than being dropped — a typo would otherwise leave the operator reading a
+            config that says the thing is on"
+    (is (thrown-with-msg? clojure.lang.ExceptionInfo
+                          #"names no configured provider"
+                          (config/overlay-providers [{:id "ollama"}]
+                                                    [[{:id "olama" :enabled? true}]])))))

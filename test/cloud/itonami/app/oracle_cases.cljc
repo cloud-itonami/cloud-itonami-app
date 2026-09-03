@@ -114,6 +114,24 @@
   [:record :handoff/decision
    [[:human :bool] [:identified :bool] [:authorized :bool]]])
 
+(def answer-record
+  [:record :bot/answer
+   [[:has-content :bool] [:tool-calls :i64]
+    [:empty-turns :i64] [:nudge-limit :i64]]])
+
+(def repetition-record
+  [:record :bot/repetition [[:identical-consecutive :i64] [:limit :i64]]])
+
+(def routing-scope-record
+  [:record :routing/scope [[:bot-assigned :bool] [:default-assigned :bool]]])
+
+(def routing-auxiliary-record
+  [:record :routing/auxiliary
+   [[:has-override :bool] [:override-admitted :bool]]])
+
+(def routing-submitted-record
+  [:record :routing/submitted [[:has-provider :bool] [:has-model :bool]]])
+
 (defn- some-string [s] [[:option :string] true s])
 (def ^:private no-string [[:option :string] false])
 
@@ -800,6 +818,175 @@
      :args [true true] :expect true}
     {:oracle :identity :export 'may-backfill-legacy-user-did?
      :args [true false] :expect false}
+
+    ;; ── store-core ──────────────────────────────────────────────────
+    ;; The window-eviction arithmetic `append-message` and `record-response`
+    ;; both call. Two plain `:i64` args in, one `:i64` out — the exact shape
+    ;; `oracle_cljs_parity_test` exists to catch a BigInt mismatch on.
+    {:oracle :store-core :export 'retention-drop-count
+     :args [(oracle/i64 3) (oracle/i64 10)] :expect 0 :read oracle/i64-value}
+    {:oracle :store-core :export 'retention-drop-count
+     :args [(oracle/i64 15) (oracle/i64 10)] :expect 5 :read oracle/i64-value}
+
+    ;; The hysteresis variant shipped without a case, so `uncovered` had been
+    ;; red on main and could no longer tell anyone's NEXT missing export from
+    ;; this one. Cases read off the core's own rule: evict nothing until the
+    ;; collection has grown `slack` past `cap`, then evict all the way to `cap`.
+    {:oracle :store-core :export 'retention-drop-count-hysteresis
+     :args [(oracle/i64 12) (oracle/i64 10) (oracle/i64 5)]
+     :expect 0 :read oracle/i64-value}
+    {:oracle :store-core :export 'retention-drop-count-hysteresis
+     :args [(oracle/i64 16) (oracle/i64 10) (oracle/i64 5)]
+     :expect 6 :read oracle/i64-value}
+    ;; "Non-positive slack is the old behaviour exactly" -- same answer as the
+    ;; sibling case two lines above, which is what makes that sentence checkable.
+    {:oracle :store-core :export 'retention-drop-count-hysteresis
+     :args [(oracle/i64 15) (oracle/i64 10) (oracle/i64 0)]
+     :expect 5 :read oracle/i64-value}
+    {:oracle :store-core :export 'retention-drop-count-hysteresis
+     :args [(oracle/i64 3) (oracle/i64 10) (oracle/i64 5)]
+     :expect 0 :read oracle/i64-value}
+
+    ;; ── workforce-cadence ───────────────────────────────────────────
+    ;; How long until this Bot asks again, decided from what its last run
+    ;; found. Five `:i64` in, one `:i64` out.
+    ;;
+    ;; The three outcome codes are exported as functions rather than written
+    ;; as literals here, so a host that drifts from the core is caught by the
+    ;; first three cases instead of by a wrong schedule in production.
+    {:oracle :workforce-cadence :export 'outcome-produced-change
+     :args [] :expect 0 :read oracle/i64-value}
+    {:oracle :workforce-cadence :export 'outcome-no-op
+     :args [] :expect 1 :read oracle/i64-value}
+    {:oracle :workforce-cadence :export 'outcome-unavailable
+     :args [] :expect 2 :read oracle/i64-value}
+
+    ;; changed something -> back to the floor, however far it had backed off
+    {:oracle :workforce-cadence :export 'next-interval-minutes
+     :args [(oracle/i64 15) (oracle/i64 1440) (oracle/i64 60)
+            (oracle/i64 1440) (oracle/i64 0)]
+     :expect 15 :read oracle/i64-value}
+    ;; found nothing -> double, up to the long ceiling
+    {:oracle :workforce-cadence :export 'next-interval-minutes
+     :args [(oracle/i64 15) (oracle/i64 1440) (oracle/i64 60)
+            (oracle/i64 960) (oracle/i64 1)]
+     :expect 1440 :read oracle/i64-value}
+    ;; THE CASE THIS CORE EXISTS FOR: same current interval, different answer.
+    ;; A run that could not execute measured nothing about whether there was
+    ;; work, so it backs off only to the retry ceiling.
+    {:oracle :workforce-cadence :export 'next-interval-minutes
+     :args [(oracle/i64 15) (oracle/i64 1440) (oracle/i64 60)
+            (oracle/i64 60) (oracle/i64 1)]
+     :expect 120 :read oracle/i64-value}
+    {:oracle :workforce-cadence :export 'next-interval-minutes
+     :args [(oracle/i64 15) (oracle/i64 1440) (oracle/i64 60)
+            (oracle/i64 60) (oracle/i64 2)]
+     :expect 60 :read oracle/i64-value}
+    ;; an outcome code the core does not know takes the retry branch, never
+    ;; the long back-off that only `no-op` earns
+    {:oracle :workforce-cadence :export 'next-interval-minutes
+     :args [(oracle/i64 15) (oracle/i64 1440) (oracle/i64 60)
+            (oracle/i64 45) (oracle/i64 9)]
+     :expect 60 :read oracle/i64-value}
+
+    ;; ── model routing ────────────────────────────────────────────────
+    {:oracle :model-routing :export 'main
+     :args [] :expect 0 :read oracle/i64-value}
+    {:oracle :model-routing :export 'scope-bot
+     :args [] :expect 0 :read oracle/i64-value}
+    {:oracle :model-routing :export 'scope-default
+     :args [] :expect 1 :read oracle/i64-value}
+    {:oracle :model-routing :export 'scope-provider
+     :args [] :expect 2 :read oracle/i64-value}
+    {:oracle :model-routing :export 'aux-override
+     :args [] :expect 0 :read oracle/i64-value}
+    {:oracle :model-routing :export 'aux-main
+     :args [] :expect 1 :read oracle/i64-value}
+    {:oracle :model-routing :export 'aux-refused
+     :args [] :expect 2 :read oracle/i64-value}
+
+    ;; A Bot's own assignment outranks the default even when both exist --
+    ;; the pair is what makes the precedence observable rather than assumed.
+    {:oracle :model-routing :export 'route-scope
+     :args [(oracle/record routing-scope-record [true true])]
+     :expect 0 :read oracle/i64-value}
+    {:oracle :model-routing :export 'route-scope
+     :args [(oracle/record routing-scope-record [false true])]
+     :expect 1 :read oracle/i64-value}
+    ;; No assignment at all is the pre-existing behaviour, not a failure.
+    {:oracle :model-routing :export 'route-scope
+     :args [(oracle/record routing-scope-record [false false])]
+     :expect 2 :read oracle/i64-value}
+
+    ;; THE CASE THIS CORE EXISTS FOR: an override naming a provider this
+    ;; deployment will not admit REFUSES. If it answered `aux-main` (1) the
+    ;; task would run on the main model while the screen named the assigned
+    ;; one, and no output would tell the two apart.
+    {:oracle :model-routing :export 'auxiliary-route
+     :args [(oracle/record routing-auxiliary-record [true false])]
+     :expect 2 :read oracle/i64-value}
+    {:oracle :model-routing :export 'auxiliary-route
+     :args [(oracle/record routing-auxiliary-record [true true])]
+     :expect 0 :read oracle/i64-value}
+    ;; No override runs on main, which is what every deployment that never
+    ;; opens the screen does.
+    {:oracle :model-routing :export 'auxiliary-route
+     :args [(oracle/record routing-auxiliary-record [false false])]
+     :expect 1 :read oracle/i64-value}
+
+    ;; Half an assignment is not an assignment, in either direction.
+    {:oracle :model-routing :export 'assignment-complete?
+     :args [(oracle/record routing-submitted-record [true true])]
+     :expect true}
+    {:oracle :model-routing :export 'assignment-complete?
+     :args [(oracle/record routing-submitted-record [true false])]
+     :expect false}
+    {:oracle :model-routing :export 'assignment-complete?
+     :args [(oracle/record routing-submitted-record [false true])]
+     :expect false}
+
+    ;; ── when a turn has stopped being a turn ─────────────────────────
+    ;; Neither prose nor an action is the empty turn. Either one alone is not,
+    ;; and the pair is what keeps a tool-only turn from reading as a failure.
+    {:oracle :bot :export 'answer-empty?
+     :args [(oracle/record answer-record
+                           [false (oracle/i64 0) (oracle/i64 0) (oracle/i64 1)])]
+     :expect true}
+    {:oracle :bot :export 'answer-empty?
+     :args [(oracle/record answer-record
+                           [true (oracle/i64 0) (oracle/i64 0) (oracle/i64 1)])]
+     :expect false}
+    {:oracle :bot :export 'answer-empty?
+     :args [(oracle/record answer-record
+                           [false (oracle/i64 1) (oracle/i64 0) (oracle/i64 1)])]
+     :expect false}
+
+    ;; One more ask, then a refusal. A turn that is not empty is never nudged,
+    ;; whatever the counter says.
+    {:oracle :bot :export 'may-nudge?
+     :args [(oracle/record answer-record
+                           [false (oracle/i64 0) (oracle/i64 0) (oracle/i64 1)])]
+     :expect true}
+    {:oracle :bot :export 'may-nudge?
+     :args [(oracle/record answer-record
+                           [false (oracle/i64 0) (oracle/i64 1) (oracle/i64 1)])]
+     :expect false}
+    {:oracle :bot :export 'may-nudge?
+     :args [(oracle/record answer-record
+                           [true (oracle/i64 0) (oracle/i64 0) (oracle/i64 1)])]
+     :expect false}
+
+    ;; Reaching the limit IS the limit. The 2-of-3 row is the one an off-by-one
+    ;; would keep passing on, and the 3-of-3 row is the one it would fail.
+    {:oracle :bot :export 'repetition-exhausted?
+     :args [(oracle/record repetition-record [(oracle/i64 2) (oracle/i64 3)])]
+     :expect false}
+    {:oracle :bot :export 'repetition-exhausted?
+     :args [(oracle/record repetition-record [(oracle/i64 3) (oracle/i64 3)])]
+     :expect true}
+    {:oracle :bot :export 'repetition-exhausted?
+     :args [(oracle/record repetition-record [(oracle/i64 4) (oracle/i64 3)])]
+     :expect true}
 ]))
 
 (defn run-case

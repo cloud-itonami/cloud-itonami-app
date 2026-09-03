@@ -51,27 +51,18 @@
   It cannot create or widen a Bot. It may submit work and, only for a Bot whose
   owner enabled omakase in the app, approve its held shell/mail/Git write.
 
-  Usage:
+  Usage of this leftover namespace (the `:cli` alias is gone from
+  deps.edn; `bin/itonami` does not start it):
 
-    itonami up | down | status
-    itonami kaiyu [--days 7]        ; このマシンの回遊（送信しない）
+    auth login --label <name> [--ttl-days 30] [--organization <slug>]
+    auth status | auth revoke --id session-…
+    tenant list | tenant connect | tenant status | tenant renew | tenant revoke
+    tenant repository-read | tenant repository-write | tenant repository-publish
+    business list | business create | business bind
+
+    itonami up | down | status     ; leftover verbs; launcher is closed
+    itonami kaiyu [--days 7]
     itonami commands [term …]
-    itonami <command words> [--flag value …] [--json '{…}']
-
-    clojure -M:cli auth login --label \"claude-code\" [--ttl-days 30] [--organization <slug>]
-    clojure -M:cli auth status
-    clojure -M:cli auth revoke --id session-…
-    clojure -M:cli tenant list
-    clojure -M:cli tenant connect --tenant acme --cap workspace.read,actor.invoke
-    clojure -M:cli tenant status --connection tc-…
-    clojure -M:cli tenant renew --connection tc-… [--ttl-seconds 3600]
-    clojure -M:cli tenant revoke --connection tc-…
-    clojure -M:cli tenant repository-read --connection tc-…
-    clojure -M:cli tenant repository-write --connection tc-… --file state.edn
-    clojure -M:cli tenant repository-publish --connection tc-…
-    clojure -M:cli business list
-    clojure -M:cli business create --slug cloud-itonami-vc --name \"…\"
-    clojure -M:cli business bind --id business-… --repos a,b,c [--canvas …]
 
   The CLI resolves the server's address and the data directory from the same
   config the server does, so it must run with the same `CLOUD_ITONAMI_DATA_DIR`
@@ -89,54 +80,35 @@
   (:require [clojure.data.json :as json]
             [clojure.java.io :as io]
             [clojure.string :as str]
+            [clojure.walk :as walk]
             [cloud.itonami.app.agent-session :as agent-session]
             [cloud.itonami.app.app-client :as client]
+            [cloud.itonami.app.bot-import :as bot-import]
             [cloud.itonami.app.commands :as commands]
+            [cloud.itonami.app.git-hygiene :as git-hygiene]
             [cloud.itonami.app.config :as config]
             [cloud.itonami.app.kaiyu-local :as kaiyu-local]
             [cloud.itonami.app.store :as store]
             [cloud.itonami.app.server-process :as server-process]
             [cloud.itonami.app.west-kotoba-refactor :as west-refactor])
-  (:import [java.nio.file Files LinkOption]
+  (:import [java.net URLEncoder]
+           [java.nio.charset StandardCharsets]
+           [java.nio.file Files LinkOption]
            [java.util.concurrent TimeUnit]))
 
 ;; ---------------------------------------------------------------------------
 ;; arguments
 ;; ---------------------------------------------------------------------------
 
-(defn parse-flags
-  "`--key value` pairs into a map. A flag with no value is `true`, so `--json`
-  works without inventing a second syntax."
-  [args]
-  (loop [args args acc {}]
-    (if-let [head (first args)]
-      (if (str/starts-with? head "--")
-        (let [k (keyword (subs head 2))
-              v (second args)]
-          (if (and v (not (str/starts-with? v "--")))
-            (recur (drop 2 args) (assoc acc k v))
-            (recur (rest args) (assoc acc k true))))
-        (recur (rest args) acc))
-      acc)))
+(def parse-flags
+  "Moved to `cloud.itonami.app.commands` when a second front end appeared.
+  Re-exported so this namespace's call sites and its tests keep one name for
+  one implementation."
+  commands/parse-flags)
 
-(defn words
-  "The arguments that name a command: not flags, and not a flag's value.
-
-  Walked rather than filtered. `--label claude-code` puts a bare token after a
-  flag, and a filter would read `claude-code` as a command word — which matters
-  now that the words are looked up in a registry rather than matched against a
-  fixed list, because an unexpected word turns a valid call into 'no such
-  command'."
-  [args]
-  (loop [args args acc []]
-    (if-let [head (first args)]
-      (if (str/starts-with? head "--")
-        (let [v (second args)]
-          (if (and v (not (str/starts-with? v "--")))
-            (recur (drop 2 args) acc)
-            (recur (rest args) acc)))
-        (recur (rest args) (conj acc head)))
-      acc)))
+(def words
+  "See `parse-flags`. One definition, two front ends."
+  commands/words)
 
 (defn- comma-list [v]
   (when (string? v)
@@ -547,6 +519,111 @@
                    (str "/api/agent-bots/" (required-flag flags :id)
                         "/messages/" (required-flag flags :run) "/cancel") {}))
 
+(defn- url-segment [value]
+  (URLEncoder/encode (str value) (.name StandardCharsets/UTF_8)))
+
+(defn hermes-profile-list [configuration]
+  (client/request! configuration :get "/api/profiles"))
+
+(defn hermes-session-list [configuration flags]
+  (let [profile (or (:profile flags) "default")]
+    (client/request! configuration :get
+                     (str "/p/" (url-segment profile) "/api/sessions"))))
+
+(defn hermes-session-messages [configuration flags]
+  (let [profile (or (:profile flags) "default")
+        session (or (:session flags) profile)]
+    (client/request! configuration :get
+                     (str "/p/" (url-segment profile) "/api/sessions/"
+                          (url-segment session) "/messages"))))
+
+(defn hermes-run [configuration flags]
+  (let [profile (or (:profile flags) "default")]
+    (client/request! configuration :post
+                     (str "/p/" (url-segment profile) "/v1/runs")
+                     (cond-> {:input (required-flag flags :input)}
+                       (:instructions flags)
+                       (assoc :instructions (:instructions flags))
+                       (:goal flags)
+                       (assoc :goal (contains? #{"true" "1" "yes" true}
+                                                (:goal flags)))))))
+
+(defn hermes-run-status [configuration flags]
+  (client/request! configuration :get
+                   (str "/v1/runs/" (url-segment (required-flag flags :run)))))
+
+(defn hermes-steer [configuration flags]
+  (client/request! configuration :post
+                   (str "/v1/runs/" (url-segment (required-flag flags :run))
+                        "/steer")
+                   {:input (required-flag flags :input)}))
+
+(defn hermes-stop [configuration flags]
+  (client/request! configuration :post
+                   (str "/v1/runs/" (url-segment (required-flag flags :run))
+                        "/stop") {}))
+
+(defn hermes-approve [configuration flags]
+  (client/request! configuration :post
+                   (str "/v1/runs/" (url-segment (required-flag flags :run))
+                        "/approval")
+                   {:choice (or (:choice flags) "once")}))
+
+(defn bot-hygiene
+  "The git hygiene the Git Maintainer Bot reads, on demand.
+
+  Read-only and host-side, like `bots refactor scan`: the numbers come from
+  west metadata on this machine, so asking the server for them would only add
+  a hop. `--root` defaults to the same workspace the resident Bot is pointed
+  at, because two ways to name that directory is a way for them to disagree."
+  [configuration flags]
+  (git-hygiene/status (or (:root flags)
+                          (get-in configuration [:business :workspace-root])
+                          (git-hygiene/workspace-root))))
+
+(defn bot-import-report
+  "Preview or stage one external source's migration.
+
+  Hermes uses the API's v2 migration manifest verbatim.  `--stage true` posts
+  the preview it just received back to the stage endpoint, so the CLI cannot
+  grow a second bundle shape or omit a profile the API would retain.
+  `--provision true` additionally creates the inert, credential-free Bots and
+  returns the measured compatibility matrix from that same server-side record.
+
+  Grok retains the v1 role-proposal report.  Neither path creates a Bot; a
+  staged Hermes bundle still needs review, capability rebinding and normal
+  workforce provisioning."
+  [configuration flags]
+  (let [source (or (:source flags) (required-flag flags :source))]
+    (if (= "hermes" source)
+      (let [request (cond-> {:business (or (:business flags) "cloud-itonami")}
+                      (:home flags) (assoc :home (:home flags)))
+            preview (client/request-with-timeout!
+                     configuration :post
+                     "/api/agent-bots/imports/hermes/preview" 120 request)]
+        (if (or (contains? #{true "true" "1" "yes"} (:stage flags))
+                (contains? #{true "true" "1" "yes"} (:provision flags)))
+          (let [staged
+                (client/request-with-timeout!
+                 configuration :post "/api/agent-bots/imports/hermes/stage" 3600
+                 (cond-> {:manifest preview}
+                   (:home flags) (assoc :home (:home flags))))]
+            (if (contains? #{true "true" "1" "yes"} (:provision flags))
+              (client/request-with-timeout!
+               configuration :post
+               (str "/api/agent-bots/imports/" (:migration-id staged)
+                    "/provision")
+               3600 {})
+              staged))
+          preview))
+      (let [existing (try (mapv :name (:bots (bot-list configuration)))
+                          (catch Exception _ []))]
+        (bot-import/import-report
+         source
+         {:business (or (:business flags) "cloud-itonami")
+          :base (:base flags)
+          :existing existing})))))
+
 (defn- refactor-root [configuration flags]
   (or (:root flags)
       (get-in configuration [:business :workspace-root])
@@ -623,10 +700,24 @@
        "  bots task --id <bot-id> --text <依頼>\n"
        "  bots handoff --from <bot-id> --to <bot-id> --task <依頼> [--depth N]\n"
        "  bots decide --id <bot-id> --card <card-id> --decision approved|rejected\n"
-       "  bots cancel --id <bot-id> --run <run-id>\n\n"
+       "  bots cancel --id <bot-id> --run <run-id>\n"
+       "  bots hygiene [--root <west-root>]\n"
+       "                         west 全 checkout の git 衛生状態（読み取りのみ）\n\n"
+       "  bots import hermes [--home <hermes-home>] [--business <slug>] [--stage true]\n"
+       "  bots import grok   [--base <url>] [--business <slug>]\n"
+       "                         Hermes は全 profile の共通 v2 manifest を preview/stage します\n"
+       "                         credential/grant は移送せず rebind-required になります（Bot は作りません）\n\n"
        "  bots refactor scan --root <west-root> [--limit 25]\n"
        "  bots refactor inspect --root <west-root> --repo <west-name> [--limit 8]\n"
        "  bots refactor start --root <west-root> --repo <west-name> --id <bot-id>\n\n"
+       "  hermes profile list\n"
+       "  hermes session list [--profile <bot-id|default>]\n"
+       "  hermes session messages [--profile P] [--session S]\n"
+       "  hermes run --profile <bot-id|default> --input <依頼> [--instructions X] [--goal true]\n"
+       "  hermes run-status --run <run-id>\n"
+       "  hermes steer --run <run-id> --input <追加指示>\n"
+       "  hermes stop --run <run-id>\n"
+       "  hermes approve --run <run-id> [--choice once|session|always|deny]\n\n"
        "CLI では Bot の model route だけ変更できます。権限設定と通常モードの承認はブラウザ専用です。\n"
        "CLI承認はおまかせBotだけです。\n"))
 
@@ -663,6 +754,33 @@
       ["bots" "handoff"] (bot-handoff configuration flags)
       ["bots" "decide"] (bot-decide configuration flags)
       ["bots" "cancel"] (bot-cancel configuration flags)
+      ["bots" "hygiene"] (bot-hygiene configuration flags)
+      ["hermes" "profile"]
+      (if (= "list" (nth named 2 nil))
+        (hermes-profile-list configuration)
+        (throw (ex-info "hermes profile は list を指定してください"
+                        {:type :cli/usage})))
+      ["hermes" "session"]
+      (case (nth named 2 nil)
+        "list" (hermes-session-list configuration flags)
+        "messages" (hermes-session-messages configuration flags)
+        (throw (ex-info "hermes session は list / messages を指定してください"
+                        {:type :cli/usage})))
+      ["hermes" "run"] (hermes-run configuration flags)
+      ["hermes" "run-status"] (hermes-run-status configuration flags)
+      ["hermes" "steer"] (hermes-steer configuration flags)
+      ["hermes" "stop"] (hermes-stop configuration flags)
+      ["hermes" "approve"] (hermes-approve configuration flags)
+      ["bots" "import"]
+      (bot-import-report
+       configuration
+       (assoc flags :source
+              (or (nth named 2 nil)
+                  (throw (ex-info
+                          (str "bots import は "
+                               (str/join " / " (sort bot-import/sources))
+                               " を指定してください")
+                          {:type :cli/usage})))))
       ["bots" "refactor"]
       (case (nth named 2 nil)
         "scan" (bot-refactor-scan configuration flags)
@@ -708,14 +826,38 @@
       "commands" (list-commands (rest named))
       (run-server-command configuration args flags))))
 
+(defn qualified-names
+  "Every keyword in `value`, carrying the name it actually has.
+
+  `json/write-str` renders a keyword as its `name` alone, so
+  `:provider/http-error` reaches an operator as `http-error` -- which is
+  indistinguishable from another namespace's `http-error` and from a bare one.
+  The server is careful about this: `resident-outcomes` counts under the FULL
+  name for exactly this reason, and sends it as a JSON string. `app-client`
+  then parses the response with `:key-fn keyword`, and this printer wrote it
+  back out with the namespace gone -- undoing the server's care in the one
+  surface an operator and an agent actually read.
+
+  Measured 2026-08-30: `bots workforce` reported `{\"http-error\": 40}` for 40
+  runs whose recorded type was `:provider/http-error`. Deciding whether to look
+  at the model provider or at this application began with a name that could not
+  say which.
+
+  A walk rather than `:key-fn`/`:value-fn`: those two reach map keys and map
+  values, and a keyword inside a VECTOR would still be stripped. A guarantee
+  with a hole in it reads exactly like a whole one."
+  [value]
+  (walk/postwalk #(if (keyword? %) (subs (str %) 1) %) value))
+
 (defn -main [& args]
   (try
     (let [configuration (config/load-config)
           args (vec args)]
       (when (and (seq (words args)) (needs-server? args))
         (ensure-server! configuration))
-      (println (json/write-str (run configuration args)
-                               :escape-unicode false)))
+      (println (json/write-str (qualified-names (run configuration args))
+                               :escape-unicode false
+                               :escape-slash false)))
     (System/exit 0)
     (catch clojure.lang.ExceptionInfo e
       (binding [*out* *err*] (println (ex-message e)))

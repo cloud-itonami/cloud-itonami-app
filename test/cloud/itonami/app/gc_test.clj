@@ -7,8 +7,13 @@
   pressure levels pin their literals — `:unknown` is asserted to be distinct
   from `:ok`, because 'could not measure' printing the same thing as
   'measured and fine' is the exact defect the receipt exists to prevent."
-  (:require [clojure.test :refer [deftest is testing]]
-            [cloud.itonami.app.gc :as gc]))
+  (:require [clojure.edn :as edn]
+            [clojure.string :as str]
+            [clojure.test :refer [deftest is testing]]
+            [cloud.itonami.app.bot-slo :as bot-slo]
+            [cloud.itonami.app.config :as config]
+            [cloud.itonami.app.gc :as gc]
+            [cloud.itonami.app.store :as store]))
 
 (def day-ms 86400000)
 (def now-ms 1787000000000)
@@ -213,3 +218,190 @@
 (deftest receipts-are-capped
   (let [state (reduce #(gc/record-receipt %1 {:n %2} 3) {} (range 10))]
     (is (= [{:n 7} {:n 8} {:n 9}] (get-in state [:gc :receipts])))))
+
+
+;; ── the cold archive (ADR-2608291500 Phase 2) ──────────────────────────────
+
+(deftest what-leaves-the-hot-store-is-named-in-the-archive-plan
+  (let [jobs {"drop-raw" (goal-job "b1" :succeeded 30)
+              "drop-compacted" (assoc (goal-job "b1" :succeeded 30)
+                                      :job/compacted? true)
+              "compact-now" (goal-job "b1" :succeeded 2)
+              "live" (goal-job "b1" :running 30)}
+        {:keys [archive goal-jobs]} (gc/plan-goal-jobs jobs now-ms pol)]
+    (is (= #{"drop-raw" "compact-now"} (into #{} (map :id) archive))
+        "dropped-uncompacted and freshly-compacted are archived whole")
+    (is (= (get jobs "compact-now")
+           (:value (first (filter #(= "compact-now" (:id %)) archive))))
+        "the archived value is the FULL pre-skeleton job")
+    (is (:job/compacted? (get goal-jobs "compact-now")))
+    (is (nil? (get goal-jobs "drop-compacted"))
+        "an already-compacted drop still drops; its full copy was archived when it compacted")))
+
+(deftest saved-runs-die-with-their-jobs-and-not-before
+  (let [jobs {"done" (goal-job "b1" :succeeded 1)
+              "paused" (goal-job "b2" :checkpointed 1)}
+        runs {"bot-1" {:goal? true :id "done" :messages [:m]}
+              "bot-2" {:goal? true :id "paused" :messages [:m]}
+              "bot-3" {:goal? true :id "gone" :messages [:m]}
+              "bot-4" {:goal? true :id "done" :pending-call {:name "x"}}
+              "bot-5" {:goal? false :id "chat"}}
+        planned (gc/plan-runs runs jobs)]
+    (is (= #{"bot-2" "bot-4" "bot-5"} (set (keys (:runs planned))))
+        "checkpointed job, pending approval, and interactive runs survive")
+    (is (= 2 (:dropped planned)))
+    (is (= #{"done" "gone"} (into #{} (map :id) (:archive planned))))
+    (is (= #{"bot-1" "bot-3"} (into #{} (map :bot) (:archive planned))))))
+
+(deftest turns-outside-every-slo-window-move-to-the-archive
+  ;; Retention is 8 days OR the newest 50 per bot, whichever keeps more:
+  ;; a quiet Bot keeps its recent history however old, so aging only ever
+  ;; trims Bots whose ledger has outgrown the keep-count.
+  (let [turn (fn [id days-ago]
+               {:turn/id id
+                :turn/started-at (str (java.time.Instant/ofEpochMilli
+                                       (- now-ms (long (* days-ago day-ms)))))})
+        fresh (mapv #(turn (str "fresh-" %) 1) (range 52))
+        history {"bot-1" (into [(turn "ancient-a" 30) (turn "ancient-b" 20)
+                                (turn "stale" 9)]
+                               fresh)
+                 "bot-2" [(turn "lone-ancient" 30) {:turn/id "undated"}]}
+        planned (gc/plan-turn-history history now-ms pol)]
+    (is (= (mapv :turn/id fresh)
+           (mapv :turn/id (get-in planned [:turn-history "bot-1"])))
+        "the 52 fresh fill the keep-count; everything past the cutoff and outside it goes")
+    (is (= 3 (:archived planned)))
+    (is (= #{"ancient-a" "ancient-b" "stale"} (into #{} (map :id) (:archive planned)))
+        "only bot-1 trims -- bot-2 is under the keep-count entirely")
+    (is (= [(turn "lone-ancient" 30) {:turn/id "undated"}]
+           (get-in planned [:turn-history "bot-2"]))
+        "a quiet Bot keeps even ancient turns, and an undated one is never aged")))
+
+
+(deftest the-slo-answers-identically-across-the-cold-split
+  ;; ADR-2608291500 Phase 2 acceptance gate: everything the split moves is
+  ;; outside every window the SLO asks about, so `evaluate` must not be able
+  ;; to tell a swept store from an unswept one.
+  (let [session {:user-id "u" :organization-id "o" :kind :person}
+        at (fn [days-ago] (str (java.time.Instant/ofEpochMilli
+                                (- now-ms (long (* days-ago day-ms))))))
+        fresh-turns (mapv (fn [i] {:turn/id (str "t" i) :turn/state :completed
+                                   :turn/phase :done
+                                   :turn/started-at (at 0.2)
+                                   :turn/updated-at (at 0.2)
+                                   :turn/finished-at (at 0.19)})
+                          (range 52))
+        ancient {:turn/id "t-ancient" :turn/state :failed :turn/phase :failed
+                 :turn/started-at (at 30) :turn/updated-at (at 30)
+                 :turn/finished-at (at 30)}
+        state {:bots {:bots {"b" {:bot/owner "u" :bot/organization "o"}}
+                      :turn-history {"b" (conj fresh-turns ancient)}
+                      :goal-jobs {"t0" {:job/id "t0" :job/bot "b"
+                                        :job/resident-workforce? true
+                                        :job/session {:user-id "u"}
+                                        :job/run {:agent.run/status :succeeded
+                                                  :agent.run/finished-at
+                                                  (- now-ms (* 30 day-ms))}}}
+                      :runs {"b" {:goal? true :id "t0" :messages [:m]}}
+                      :workforce-jobs {}}}
+        now-inst (java.time.Instant/ofEpochMilli now-ms)
+        receipt {:score nil :sampled 0}
+        swept (:state (gc/plan state now-ms pol (constantly true)))]
+    (is (not= (get-in state [:bots :turn-history "b"])
+              (get-in swept [:bots :turn-history "b"]))
+        "positive control: the sweep DID move something")
+    (is (nil? (get-in swept [:bots :runs "b"]))
+        "positive control: the terminal run's checkpoint is gone from hot")
+    (is (= (bot-slo/evaluate (:bots state) session now-inst receipt)
+           (bot-slo/evaluate (:bots swept) session now-inst receipt))
+        "and no number the SLO reports moved")))
+
+(defn- with-tmp-store
+  "The bots-test store fixture, locally: a throwaway data-dir and an in-memory
+  transact!, so `sweep!` exercises its real plan-archive-drop path without
+  touching the developer store."
+  [f]
+  (let [temporary (java.nio.file.Files/createTempDirectory
+                   "cloud-itonami-gc-test"
+                   (make-array java.nio.file.attribute.FileAttribute 0))
+        previous @store/state]
+    (try
+      (reset! store/state (store/initial-state))
+      (with-redefs [config/data-dir (fn [] (.toFile temporary))
+                    store/transact! (fn [f & args]
+                                      (apply swap! store/state f args))]
+        (f))
+      (finally (reset! store/state previous)))))
+
+(deftest a-sweep-that-cannot-archive-drops-nothing
+  ;; The contract on `archive-append!`: a throw means the hot copies stay.
+  ;; Losing a sweep is a delay; dropping unarchived history is a deletion.
+  (with-tmp-store
+    (fn []
+      (store/transact!
+       (fn [state]
+         (merge state
+                {:bots {:goal-jobs {"dead" (goal-job "b" :succeeded 30)}
+                        :runs {"b" {:goal? true :id "dead" :messages [:m]}}
+                        :turn-history {}}})))
+      (testing "the failing archive aborts the sweep with its own reason"
+        (with-redefs [store/archive-append!
+                      (fn [_] (throw (ex-info "disk said no"
+                                              {:type :fs/disk-pressure})))]
+          (is (= :fs/disk-pressure
+                 (try (gc/sweep! {}) :no-throw
+                      (catch clojure.lang.ExceptionInfo e
+                        (:type (ex-data e))))))))
+      (testing "and nothing was dropped"
+        (is (some? (get-in (store/snapshot) [:bots :goal-jobs "dead"])))
+        (is (some? (get-in (store/snapshot) [:bots :runs "b"]))))
+      (testing "the same sweep with a working archive drops and records"
+        (let [receipt (gc/sweep! {})]
+          (is (nil? (get-in (store/snapshot) [:bots :goal-jobs "dead"])))
+          (is (nil? (get-in (store/snapshot) [:bots :runs "b"])))
+          (is (= 2 (:archived-records receipt)))
+          (let [lines (->> (slurp (store/archive-file))
+                           str/split-lines
+                           (remove str/blank?)
+                           (map edn/read-string))]
+            (is (= #{:goal-job :run} (into #{} (map :kind) lines)))
+            (is (every? #(= store/archive-schema (:schema %)) lines))))))))
+
+(deftest compaction-keeps-why-a-run-failed-and-drops-its-transcript
+  ;; Both directions on one call, as this namespace's docstring requires.
+  ;;
+  ;; `:agent.run/error-message` was added to the failure path on 2026-08-21,
+  ;; when a measurement found it written zero times against 141 for
+  ;; `:turn/error-message`. It was not added to `compact-run-keys`, so the
+  ;; collector deleted every one of them two days later. Measured 2026-08-30
+  ;; on the resident store: 1,079 runs carried an error type and 108 still
+  ;; carried its message.
+  (let [job {:job/id "run-1"
+             :job/bot "bot-1"
+             :job/created-at 1 :job/updated-at 2
+             :job/resident-workforce? true
+             :job/session {:user-id "user-1" :organization-id "org-1"}
+             :job/plan [{:step "s1"}]
+             :job/events [{:event/kind :turn/failed}]
+             :job/run {:agent.run/id "run-1"
+                       :agent.run/status :failed
+                       :agent.run/error-type :provider/http-error
+                       :agent.run/error-message "HTTP 503 from api.example: upstream busy"
+                       :agent.run/result "a long transcript"
+                       :agent.run/goal "the whole objective text"
+                       :agent.run/created-at 1
+                       :agent.run/finished-at 2
+                       :agent.run/updated-at 2}}
+        compacted (gc/compact-goal-job job)
+        run (:job/run compacted)]
+    (testing "the reason survives, because a type alone cannot be acted on"
+      (is (= "HTTP 503 from api.example: upstream busy"
+             (:agent.run/error-message run))))
+    (testing "the type survives beside it"
+      (is (= :provider/http-error (:agent.run/error-type run))))
+    (testing "the transcript and the goal text do not, which is the point of compacting"
+      (is (nil? (:agent.run/result run)))
+      (is (nil? (:agent.run/goal run))))
+    (testing "and the heavy job fields are gone"
+      (is (nil? (:job/plan compacted)))
+      (is (nil? (:job/events compacted))))))

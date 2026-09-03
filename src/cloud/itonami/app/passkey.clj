@@ -95,7 +95,8 @@
                       (map #(bit-and % 0xff) challenge))
                      challenge)
          opts (options/request-options
-               {:rp-id rp-id :challenge challenge})
+               {:rp-id rp-id :challenge challenge
+                :allow-credentials (:allow-credentials transaction-data)})
          transaction-id (str "webauthn-" (UUID/randomUUID))
          expires-at (str (.plusSeconds (Instant/now) transaction-seconds))]
      (store/transact!
@@ -125,15 +126,27 @@
   (cljs-verify-required!))
 
 (defn start-signing!
-  [user-id challenge context rp-id origin]
-  (when-not (and (bytes? challenge) (= 32 (alength ^bytes challenge)))
-    (throw (ex-info "署名 challenge は commitment の SHA-256 (32 byte) です。"
-                    {:type :esign/invalid-challenge
-                     :byte-count (when (bytes? challenge) (alength ^bytes challenge))})))
-  (start-assertion! :esign
-                    {:expected-user-id user-id
-                     :authorization-context context}
-                    rp-id origin challenge))
+  ([user-id challenge context rp-id origin]
+   (start-signing! user-id challenge context rp-id origin nil))
+  ([user-id challenge context rp-id origin allow-credentials]
+   (when-not (and (bytes? challenge) (= 32 (alength ^bytes challenge)))
+     (throw (ex-info "署名 challenge は commitment の SHA-256 (32 byte) です。"
+                     {:type :esign/invalid-challenge
+                      :byte-count (when (bytes? challenge) (alength ^bytes challenge))})))
+   (start-assertion! :esign
+                     {:expected-user-id user-id
+                      :authorization-context context
+                      :allow-credentials (vec (or allow-credentials []))}
+                     rp-id origin challenge)))
+
+(defn consume-signing-transaction!
+  "Consume and return a server-owned signing request without verifying it.
+
+  This is only for a caller that performs the full WebAuthn verification
+  itself. Smart Account signing needs the raw assertion fields after that
+  verification because the contract verifies the same assertion on-chain."
+  [transaction-id]
+  (active-transaction! transaction-id :esign))
 
 (defn finish-signing! [transaction-id credential-response]
   (finish-assertion! transaction-id credential-response :esign))
@@ -148,51 +161,63 @@
   "Persist a registration that `passkey-verify` already accepted on cljs.
 
   `result` is the edge adapter map: :credential-id, :public-key-b64,
-  :sign-count, :aaguid, :user-verified?."
-  [user-id result]
-  (let [user (get-in (identity-state) [:users user-id])
-        credential-id (:credential-id result)
-        ;; Edge returns uncompressed P-256 point, not COSE. Credential DID
-        ;; naming from COSE stays on the legacy JVM helper when COSE is present.
-        public-key-cose (:public-key-cose result)
-        credential-did (when public-key-cose
-                         (try (did/did-key-from-cose public-key-cose)
-                              (catch Exception _ nil)))
-        now (store/now)]
-    ;; Fail closed: missing :user-verified? must not count as verified.
-    (when-not (= true (:user-verified? result))
-      (throw (ex-info "Authenticator がユーザー確認を完了していません。"
-                      {:type :passkey/user-verification-required})))
-    (when-not (or public-key-cose (:public-key-b64 result))
-      (throw (ex-info "Verified registration is missing a public key."
-                      {:type :passkey/missing-public-key})))
-    (store/transact!
-     (fn [state]
-       (let [held (get-in state [:identity :users user-id :did])
-             person-did (or held credential-did)
-             fill? (axis/may-fill-user-did-on-passkey? held)]
-         (cond-> (-> state
-                     (assoc-in [:identity :passkeys credential-id]
-                               {:id credential-id :credential-id credential-id
-                                :user-id user-id :user-handle (:user-handle user)
-                                :public-key-cose public-key-cose
-                                :public-key-b64 (:public-key-b64 result)
-                                :did credential-did
-                                :signature-count (long (:sign-count result 0))
-                                :user-verified? true
-                                :aaguid (:aaguid result)
-                                :created-at now :last-used-at nil})
-                     (assoc-in [:identity :authenticators credential-id]
-                               (authenticators/binding
-                                (or held person-did) :passkey credential-id
-                                {:bound-at now}))
-                     (assoc-in [:identity :users user-id :passkey-enrolled?] true)
-                     (assoc-in [:identity :users user-id :status] :active)
-                     (update :events conj {:type :passkey/registered :at now
-                                           :user-id user-id
-                                           :credential-id credential-id}))
-           (and fill? person-did)
-           (assoc-in [:identity :users user-id :did] person-did)))))
-    {:user-id user-id :credential-id credential-id
-     :did (get-in (identity-state) [:users user-id :did])
-     :credential-did credential-did :verified? true}))
+  :sign-count, :aaguid, :user-verified?. `ceremony` is the server-owned RP ID
+  and exact origin used by that verifier. Keeping it with the public key makes
+  the controller portable without pretending the Passkey is domain-free."
+  ([user-id result]
+   (bind-verified-registration! user-id result {}))
+  ([user-id result {:keys [rp-id origin]}]
+   (let [user (get-in (identity-state) [:users user-id])
+         credential-id (:credential-id result)
+         ;; Edge returns uncompressed P-256 point, not COSE. Credential DID
+         ;; naming from COSE stays on the legacy JVM helper when COSE is present.
+         public-key-cose (:public-key-cose result)
+         credential-did (when public-key-cose
+                          (try (did/did-key-from-cose public-key-cose)
+                               (catch Exception _ nil)))
+         now (store/now)]
+     ;; Fail closed: missing :user-verified? must not count as verified.
+     (when-not (= true (:user-verified? result))
+       (throw (ex-info "Authenticator がユーザー確認を完了していません。"
+                       {:type :passkey/user-verification-required})))
+     (when-not (or public-key-cose (:public-key-b64 result))
+       (throw (ex-info "Verified registration is missing a public key."
+                       {:type :passkey/missing-public-key})))
+     (store/transact!
+      (fn [state]
+        (let [held (get-in state [:identity :users user-id :did])
+              person-did (or held credential-did)
+              fill? (axis/may-fill-user-did-on-passkey? held)]
+          (cond-> (-> state
+                      (assoc-in [:identity :passkeys credential-id]
+                                {:id credential-id :credential-id credential-id
+                                 :user-id user-id :user-handle (:user-handle user)
+                                 :public-key-cose public-key-cose
+                                 :public-key-b64 (:public-key-b64 result)
+                                 :did credential-did
+                                 :rp-id (some-> rp-id str str/trim not-empty)
+                                 :registration-origin
+                                 (some-> origin str str/trim not-empty)
+                                 :signature-count (long (:sign-count result 0))
+                                 :user-verified? true
+                                 :aaguid (:aaguid result)
+                                 :created-at now :last-used-at nil})
+                      (assoc-in [:identity :authenticators credential-id]
+                                (assoc
+                                 (authenticators/binding
+                                  (or held person-did) :passkey credential-id
+                                  {:bound-at now})
+                                 :identity.authenticator/rp-id rp-id
+                                 :identity.authenticator/origin origin))
+                      (assoc-in [:identity :users user-id :passkey-enrolled?] true)
+                      (assoc-in [:identity :users user-id :status] :active)
+                      (update :events conj {:type :passkey/registered :at now
+                                            :user-id user-id
+                                            :credential-id credential-id
+                                            :rp-id rp-id :origin origin}))
+            (and fill? person-did)
+            (assoc-in [:identity :users user-id :did] person-did)))))
+     {:user-id user-id :credential-id credential-id
+      :did (get-in (identity-state) [:users user-id :did])
+      :credential-did credential-did :rp-id rp-id
+      :registration-origin origin :verified? true})))

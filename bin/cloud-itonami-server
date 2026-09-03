@@ -1,0 +1,89 @@
+#!/usr/bin/env nbb
+;; Loopback HTTP host. Does not spawn java or clojure.
+;;
+;; Listen is Node `http`. Admission for `/health` is the guest export
+;; `health-route?` from `server_main.wasm`. Duplicating that predicate in
+;; this host is not the guest running — this file loads the wasm and calls
+;; into it. Guest `main` must return the listen-port token (1338), not 0.
+;;
+;; http/accept and http/reply remain kotoba-lang HOLD
+;; (lang/capability-catalog.edn :friendly-qualified). This host listens;
+;; the guest decides. Do not read the operator overlay.
+
+(ns cloud-itonami-server
+  (:require ["node:crypto" :as crypto]
+            ["node:fs" :as fs]
+            ["node:http" :as http]
+            ["node:path" :as path]
+            [guest-runtime :as guest]
+            [nbb.core :refer [*file*]]))
+
+(def app-directory
+  (fs/realpathSync (path/resolve (path/dirname *file*) "..")))
+
+(defn- data-dir []
+  (or (aget js/process.env "CLOUD_ITONAMI_DATA_DIR")
+      (path/resolve app-directory "data")))
+
+(defn- store-fingerprint []
+  (-> (crypto/createHash "sha256")
+      (.update (str (data-dir)) "utf8")
+      (.digest "hex")
+      (subs 0 16)))
+
+(defn- json-response [res status body]
+  (.writeHead res status #js {"content-type" "application/json; charset=utf-8"
+                              "cache-control" "no-store"})
+  (.end res (js/JSON.stringify (clj->js body))))
+
+(defn- handle [hosted guest-main req res]
+  (let [method (.-method req)
+        url-path (.-pathname (js/URL. (str "http://127.0.0.1" (.-url req))))
+        admitted? (guest/call-bool hosted "health-route?" method url-path)]
+    (cond
+      admitted?
+      (json-response res 200 {:ok true
+                              :service "cloud-itonami-app"
+                              :schema "cloud.itonami.app.health.v1"
+                              :runtime "guest-wasm"
+                              :guest-main guest-main
+                              :store (store-fingerprint)})
+
+      (and (= method "GET") (= url-path "/"))
+      (do
+        (.writeHead res 200 #js {"content-type" "text/html; charset=utf-8"})
+        (.end res
+              (str "<!doctype html><meta charset=\"utf-8\">"
+                   "<title>Cloud Itonami</title>"
+                   "<p>nbb host + guest wasm. GET /health is admitted by "
+                   "server_main.wasm. The leftover JVM page is not this process.</p>")))
+
+      :else
+      (json-response res 404 {:error {:type "guest-wasm/not-admitted"
+                                      :message "guest health-route? refused this request; leftover JVM API is not loaded"}}))))
+
+(defn -main [& _]
+  (-> (guest/load-guest app-directory "target/amu/server_main.wasm")
+      (.then
+       (fn [loaded]
+         (let [hosted (.-hosted loaded)
+               guest-main (.-main loaded)]
+           (when-not (pos? guest-main)
+             (throw (ex-info "guest main stayed 0; unused guest is not a run"
+                             {:guest-main guest-main})))
+           (let [host (or (aget js/process.env "CLOUD_ITONAMI_HOST") "127.0.0.1")
+                 port (js/parseInt (or (aget js/process.env "CLOUD_ITONAMI_PORT") "1338") 10)
+                 server (.createServer http (fn [req res]
+                                              (handle hosted guest-main req res)))]
+             (.listen server port host
+                      (fn []
+                        (binding [*print-fn* *print-err-fn*]
+                          (println (str "cloud-itonami-server guest-wasm main="
+                                        guest-main " " host ":" port)))))))))
+      (.catch
+       (fn [e]
+         (binding [*print-fn* *print-err-fn*]
+           (println (or (.-stack e) (str e))))
+         (js/process.exit 1)))))
+
+(apply -main (or *command-line-args* []))

@@ -1,0 +1,191 @@
+[{:db/id -1
+  :adr/id "adr-2608272200-bots-on-the-openrouter-free-plan"
+  :adr/title "Bots run on the OpenRouter free plan, and a profile that enables a provider now does something"
+  :adr/status "accepted"
+  :adr/date "2026-08-27"
+  :adr/body "## What was asked
+
+Owner instruction, 2026-08-27: run the Bots on OpenRouter's free plan, matching
+what had just been done for the hyakka growth bots in the superproject
+(root ADR-2608272100).
+
+## What was in the way, and was not visible
+
+A deployment enables a provider in its profile. That is what
+`profiles/itonami.edn` says it is for, in its own header: the one thing the
+tenant-neutral distribution cannot ship.
+
+**Profiles could not enable a provider.** `load-config` collected provider
+overrides from the store's `config.edn` only, and then `assoc`ed the result over
+the merged map:
+
+    config (assoc (deep-merge defaults profile (dissoc overrides :providers))
+                  :providers providers)
+
+A profile's `:providers` were merged into the intermediate value by `deep-merge`
+and thrown away one form later by the `assoc`. Measured against the real loader
+before changing anything:
+
+| profile contains | effect |
+|---|---|
+| `:bots {:mail-domain \"probe.example\"}` | applied |
+| `:providers [{:id \"murakumo\" :enabled? true :reviewed? true}]` | **`enabled? false reviewed? false`** |
+
+No error, no warning. A profile that turned a provider on read as correct and
+did nothing — and the two facts came out of the same file in the same load.
+
+The fix is `overlay-providers`, which applies layers in order —
+defaults <- profile <- config.edn — so the store's own file still has the last
+word. It is a public function so the test can reach it: a JVM cannot set
+`CLOUD_ITONAMI_PROFILE` for itself, which is the same limitation the config
+test namespace already states about `data-dir`, and testing through the env var
+would have meant not testing it.
+
+An override naming an `:id` that is not in the catalog now throws. Dropping it
+silently is the same failure one step along: a typo would leave an operator
+reading a config that says the destination is on.
+
+## The provider
+
+`openrouter`, `:openai-compatible`, shipped `:reviewed? false :enabled? false`
+like every destination that leaves the machine.
+
+Its default model is **`openrouter/free`**, which is a router over whatever is
+free at that moment, not a model. Naming a free model id instead would be the
+pinned-name failure this repository measured yesterday, on a faster-moving set:
+`stealth/ox-alpha` was the most-used model on OpenRouter and served zero
+endpoints four days later.
+
+**No `:assert-response-model?`.** The router answers with the model that served
+— measured 2026-08-27, a `openrouter/free` tool-call request returned HTTP 200
+with `.model = \"nvidia/nemotron-3.5-lightning:free\"` and a well-formed call. A
+hand-maintained accepted set would refuse that, and refuse a different name
+tomorrow, which is exactly ADR-2608270100: the same check against
+`murakumo-main` refused 25 of the last 50 runs while the model was generating
+fine, and the 24h completion rate read 37.3%.
+
+What that assertion protects elsewhere is `:context-window-tokens`. Here the
+bound comes from the other side — the router advertises 200,000 and routes only
+to models that can take the request — and the configured budget is 128,000,
+deliberately under it rather than at any one model's window.
+
+## What the operator is consenting to
+
+Written into the profile rather than left implied, because the second half is
+easy to miss: the transcript goes to OpenRouter, **and onward to whichever third
+party serves the free endpoint that minute**, which is a different company on
+different turns. Which endpoints are offered at all is decided by the account's
+data policy at openrouter.ai/settings/privacy, not by this repository. A
+distribution cannot review that for a tenant; this deployment reviews it for
+itself.
+
+The fleet stays in the catalog and stays reviewable. It is no longer the
+default; it is what an operator picks explicitly.
+
+## Verification
+
+| what | result |
+|---|---|
+| profile provider override, before | `enabled? false reviewed? false` — silently dropped |
+| profile provider override, after | `enabled? true reviewed? true` |
+| unknown provider id in a profile | throws `provider override names no configured provider {:unknown [\"olama\"]}` |
+| `provider-allowed?` with `OPENROUTER_API_KEY` set | `true`; `select-provider` returns `openrouter` / `openrouter/free` |
+| `provider-allowed?` with the key absent | `false`; `select-provider` returns `nil` — fails closed |
+| real inference through `provider/chat` | `ITONAMI-FREE-OK`, `usage.cost 0` |
+| suite | 1933 tests, 11,464 assertions, 1 failure |
+
+That one failure is `launcher-test/resident-clone-resolves-shell-from-workspace-root`
+and is not from this change. It reproduces from bash alone —
+`CLOUD_ITONAMI_WORKSPACE_ROOT=<tmp> bin/cloud-itonami-app --print-shell-dir`
+prints the real workspace path — and `bin/cloud-itonami-app` contains no
+reference to configuration at all. It is a real bug in the launcher's root
+resolution and it is left where it was found.
+
+## Not done
+
+- No Bot has completed an unattended workforce turn on the router yet. What is
+  measured here is admission and one real completion, not a shift.
+- The free tier rate-limits hard. Measured in the superproject the same day,
+  nine of fifteen free models answered 429 within one sweep. `provider/chat`
+  gets `:max-transient-retries` 0 by default and this entry does not set
+  `:model-fallbacks`, so a 429 surfaces as a failed turn rather than falling
+  back to the fleet. Whether Bots should walk to `murakumo` on a 429 is a
+  routing decision and was not made here.
+- The account's OpenRouter data policy was not read programmatically. That free
+  endpoints served at all is evidence the account permits them; it is not the
+  same as having read the setting.
+
+## 改訂履歴
+
+**2026-08-28, owner instruction: pin a specific free model instead of the
+router, because a pinned model performs better than the router's random
+draw for this workload.** This reverses the router-not-pinned-name decision
+above, on the same measured risk the original decision named (the
+`stealth/ox-alpha` four-day disappearance) -- it is not that the risk turned
+out to be smaller, it is that it is now bounded two ways it was not before:
+
+1. `data/config.edn`'s `:providers` entry for `openrouter` now sets
+   `:default-model \"nvidia/nemotron-3.5-lightning:free\"` and
+   `:model-fallbacks {\"nvidia/nemotron-3.5-lightning:free\" \"openrouter/free\"}`.
+   The pin is this operator's local, gitignored override, per this file's own
+   header (\"the store's own file still has the last word\") -- not a change to
+   the shipped default in `resources/cloud-itonami-app.defaults.edn`, which
+   keeps naming the router. `provider/with-model-fallback` already retries a
+   refused request against `:model-fallbacks` in the same turn whenever the
+   error type is one of `:provider/timeout`, `:provider/unreachable`,
+   `:provider/network-error`, `:provider/http-error`,
+   `:provider/model-mismatch`, `:provider/empty-response`, or
+   `:provider/model-unready` -- so a pinned model that starts refusing falls
+   back to the router within the failing turn, not on the next resident tick.
+2. `eaa1334` (`fix/record-requested-model-before-provider-call`, same day)
+   closed the gap that would have made this pin's own failures invisible:
+   `advance!` only wrote `:provider`/`:requested-model` onto the run AFTER a
+   successful response, so every failed turn -- pinned model or router alike
+   -- recorded the same unlabeled non-answer. Whichever model is asked now
+   survives the call's own failure into the turn record, which is what makes
+   \"is the pin still serving\" an answerable, observable question rather
+   than one this repository would have to remeasure from scratch the way it
+   did for `stealth/ox-alpha`.
+
+The pin was chosen from live data, not a blog ranking: `nvidia/nemotron-3.5-
+lightning:free` is verified (2026-08-28, against
+`https://openrouter.ai/api/v1/models`) to be currently listed, 1M context,
+`tools`/`tool_choice` in `:supported_parameters` -- and it is the exact model
+this ADR's own \"The provider\" section already measured serving a tool-call
+turn on this app. If it disappears from the catalog, the fallback keeps bots
+on the router until `data/config.edn` is updated or the pin is removed.
+
+### The bound worked. The risk happened anyway, within about a day.
+
+By the evening of 2026-08-28 the workforce's failure window was 88%
+`:provider/fallback-failed` (44 of 50). Direct `curl` against
+`https://openrouter.ai/api/v1/chat/completions` isolated it in three
+requests: `nvidia/nemotron-3.5-lightning:free` alone, bare
+`{\"role\":\"user\",\"content\":\"say hi\"}`, no tools -- **HTTP 404
+\"Provider returned error\"**. `openrouter/free` alone, same request --
+HTTP 200, served by `nvidia/nemotron-3-super-120b-a12b:free`. So the
+pinned model was simply gone (`stealth/ox-alpha` again, faster than the
+four days that name took), and the router underneath it was fine -- the
+`:model-fallbacks` entry was firing exactly as designed, and the fallback
+attempt was ALSO failing on most turns, with the identical \"HTTP 400
+Backend request failed with status 400\" for every one measured. The
+likely reading, not confirmed: the request built for the (now-gone)
+pinned model's continuation turn was replayed verbatim against the
+fallback rather than rebuilt for whatever the router landed on, and that
+whatever also rejected it. This was not investigated further because the
+model being gone was sufficient explanation to act on immediately.
+
+**Owner instruction, same day: `minimax/minimax-m3:free`.** Verified live
+before pinning, with a direct `curl`, including the specific shape that
+had just broken on nemotron -- a tool call, then a continuation turn
+replaying the tool result back with its `tool_call_id` -- HTTP 200 both
+times.
+
+**The operational lesson, not just the model swap:** a `curl` against a
+model directly (bare request, no tools) tells you if the CATALOG entry is
+gone. A `curl` reproducing the CONTINUATION shape (tool call, then tool
+result replayed back) is what actually caught the fallback's own failure
+mode here and is now the standing verification step for any future pin,
+named in the header comment above. `data/config.edn`'s own age is not
+evidence the pin is still good -- the previous entry read as verified and
+current for less than a day."}]

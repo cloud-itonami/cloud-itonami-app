@@ -1,5 +1,47 @@
 
   document.addEventListener('DOMContentLoaded', () => {
+    // Appearance (ADR-0091). One attribute on `.workspace` is the whole mode;
+    // the stylesheet reads it, nothing below cares. Precedence: `?appearance=`
+    // in the URL, then this device's remembered choice, then what the server
+    // rendered from configuration. The URL form exists so a link can open the
+    // 8-bit floor for someone who has never pressed the toggle.
+    (() => {
+      const workspace = document.querySelector('.workspace');
+      const toggle = document.getElementById('appearance-toggle');
+      if (!workspace) return;
+      const modes = ['light', '8bit'];
+      const key = 'cloud-itonami-appearance';
+      const normalize = (v) => (modes.includes(v) ? v : null);
+      const read = () => {
+        try { return normalize(localStorage.getItem(key)); } catch (_) { return null; }
+      };
+      const remember = (mode) => {
+        try { localStorage.setItem(key, mode); } catch (_) { /* private window: not remembered */ }
+      };
+      const apply = (mode) => {
+        workspace.dataset.appearance = mode;
+        document.documentElement.dataset.appearance = mode;
+        if (toggle) {
+          const next = modes[(modes.indexOf(mode) + 1) % modes.length];
+          toggle.dataset.mode = mode;
+          toggle.dataset.next = next;
+          toggle.setAttribute('aria-pressed', mode === '8bit' ? 'true' : 'false');
+          toggle.textContent = next === '8bit' ? '8-BIT' : 'DADS';
+          toggle.title = next === '8bit' ? '8-BIT MODE にする' : '標準表示に戻す';
+        }
+      };
+      const fromUrl = normalize(new URLSearchParams(location.search).get('appearance'));
+      const initial = fromUrl || read() || normalize(workspace.dataset.appearance) || 'light';
+      apply(initial);
+      if (fromUrl) remember(fromUrl);
+      if (toggle) {
+        toggle.addEventListener('click', () => {
+          const next = toggle.dataset.next || 'light';
+          apply(next);
+          remember(next);
+        });
+      }
+    })();
     const $ = (selector, root = document) => root.querySelector(selector);
     const $$ = (selector, root = document) => [...root.querySelectorAll(selector)];
     const make = (tag, className, text) => {
@@ -116,10 +158,6 @@
       document.body.dataset.nativeTitlebar = 'overlay';
     }
     const initialFragment = location.hash.slice(1);
-    // Capture the one-time proof before showView() replaces the fragment.
-    // Reading location.hash again near the end of this file loses the token
-    // to the initial view redirect, so a valid link otherwise looks inert.
-    //
     // Views are addressed as `#/name` (kami-app-nle / ADR-2608080100). The
     // legacy `#name` form still resolves so old redirects keep working.
     const viewFromHash = (raw) => {
@@ -130,12 +168,7 @@
       // old bookmarks useful without preserving four competing top-level tabs.
       return ({chat:'bots', rooms:'bots', capture:'bots', memory:'settings'})[path] || path;
     };
-    const emailLoginToken = new URLSearchParams(
-      initialFragment.includes('email-login=')
-        ? (initialFragment.includes('?') ? initialFragment.slice(initialFragment.indexOf('?') + 1) : initialFragment)
-        : ''
-    ).get('email-login');
-    const requestedView = emailLoginToken ? 'settings' : (viewFromHash(initialFragment) || 'bots');
+    const requestedView = viewFromHash(initialFragment) || 'bots';
     let appUnlocked = false;
     let appBootstrapped = false;
     // Views whose data is public, so the Passkey gate would protect nothing.
@@ -7927,6 +7960,216 @@
       permissionDrag.addEventListener('pointerup', stop);
       permissionDrag.addEventListener('pointercancel', stop);
     });
+    // ── Model routing ────────────────────────────────────────────────
+    // Which model answers for which task. Three facts are on the screen at
+    // once because choosing needs all three: the scope, what that scope
+    // currently resolves to, and whether the row is an assignment somebody
+    // made or the absence of one. The last distinction is the reason the
+    // auxiliary rows say 'main' rather than repeating the main model's name:
+    // a row showing the same model as main, with no way to tell whether that
+    // was chosen, is the state this surface exists to end.
+    const routingState = {tasks:[], assignments:[], scope:'default',
+                          task:'bot', defaultScope:'default'};
+    const routingAssignment = (task, scope) =>
+      routingState.assignments.find(
+        (a) => a.task === task && a.scope === scope) || null;
+    // A Bot's own pair is on the Bot, not in `assignments` -- the host keeps
+    // one copy and this reads it from the same place the rail does.
+    const routingBotPair = (botId) => {
+      const bot = botsState.bots.find((b) => b.id === botId);
+      if (!bot) return null;
+      // `own-*`, not `provider-id`/`model`: the latter are what the Bot runs
+      // on after three fallbacks, so reading them here would mark every chip
+      // as assigned and the marks would say nothing.
+      const provider = bot['own-provider-id'] || null;
+      const model = bot['own-model'] || null;
+      return provider && model ? {'provider-id':provider, model} : null;
+    };
+    const routingCurrentPair = () =>
+      routingState.scope === routingState.defaultScope
+        ? routingAssignment('bot', routingState.defaultScope)
+        : routingBotPair(routingState.scope);
+    const renderRoutingScopes = () => {
+      const host = $('#model-routing-scopes');
+      if (!host) return;
+      host.replaceChildren();
+      const rows = [{id:routingState.defaultScope, label:'既定'}].concat(
+        botsRecentFirst(botsState.bots).map((b) => ({id:b.id, label:b.name})));
+      rows.forEach((row) => {
+        const chip = make('button', 'routing-scope');
+        chip.type = 'button';
+        chip.setAttribute('role', 'radio');
+        chip.setAttribute('aria-checked', String(row.id === routingState.scope));
+        chip.append(make('span', null, row.label));
+        const assigned = row.id === routingState.defaultScope
+          ? Boolean(routingAssignment('bot', routingState.defaultScope))
+          : Boolean(routingBotPair(row.id));
+        if (assigned) chip.append(make('span', 'routing-scope__mark', '●'));
+        chip.setAttribute('aria-label',
+          assigned ? `${row.label}（割り当て済み）` : `${row.label}（既定に従う）`);
+        chip.addEventListener('click', () => {
+          routingState.scope = row.id;
+          renderRouting();
+        });
+        host.append(chip);
+      });
+    };
+    const renderRoutingPicker = () => {
+      const providerSelect = $('#model-routing-provider');
+      const modelSelect = $('#model-routing-model');
+      if (!providerSelect || !modelSelect) return;
+      const current = routingCurrentPair();
+      const providers = botsState.modelProviders || [];
+      providerSelect.replaceChildren();
+      providers.forEach((provider) => {
+        const option = make('option', null, provider.name || provider.id);
+        option.value = provider.id;
+        providerSelect.append(option);
+      });
+      if (!providers.length) {
+        const option = make('option', null, '許可された provider がありません');
+        option.value = '';
+        providerSelect.append(option);
+      }
+      if (current && current['provider-id']) {
+        providerSelect.value = current['provider-id'];
+      }
+      const chosen = providers.find((p) => p.id === providerSelect.value)
+        || providers[0];
+      modelSelect.replaceChildren();
+      (chosen?.models || []).forEach((model) => {
+        const option = make('option', null, model);
+        option.value = model;
+        modelSelect.append(option);
+      });
+      if (!(chosen?.models || []).length) {
+        const option = make('option', null, 'model が申告されていません');
+        option.value = '';
+        modelSelect.append(option);
+      }
+      if (current && current.model
+          && (chosen?.models || []).includes(current.model)) {
+        modelSelect.value = current.model;
+      }
+      $('#model-routing-clear').disabled = !current;
+      $('#model-routing-scope-note').textContent = current
+        ? (routingState.scope === routingState.defaultScope
+           ? '自分の model を持たない Bot すべてがこの割り当てに従います。'
+           : 'この Bot だけがこの割り当てに従います。外すと既定に戻ります。')
+        : (routingState.scope === routingState.defaultScope
+           ? 'まだ既定はありません。いまは provider が申告している model で動いています。'
+           : 'この Bot は既定に従っています。');
+    };
+    const renderRoutingAux = () => {
+      const host = $('#model-routing-aux');
+      if (!host) return;
+      host.replaceChildren();
+      const auxiliary = routingState.tasks.filter((t) => !t['main?']);
+      auxiliary.forEach((t) => {
+        const assignment = routingAssignment(t.task, routingState.defaultScope);
+        const row = make('li', 'routing-aux__row');
+        const copy = make('div', 'routing-aux__copy');
+        copy.append(make('span', null, t.label));
+        copy.append(make('span', 'routing-aux__hint', t.hint || ''));
+        const state = make('span', 'routing-aux__state',
+          assignment ? `${assignment['provider-id']} / ${assignment.model}` : 'main と同じ');
+        state.dataset.assigned = String(Boolean(assignment));
+        const assign = make('button', 'tool-button', assignment ? '変更' : '割り当てる');
+        assign.type = 'button';
+        assign.addEventListener('click', () => applyRouting(t.task));
+        row.append(copy, state, assign);
+        if (assignment) {
+          const clear = make('button', 'tool-button', 'main に戻す');
+          clear.type = 'button';
+          clear.addEventListener('click', () => clearRouting(t.task));
+          row.append(clear);
+        }
+        host.append(row);
+      });
+      if (!auxiliary.length) {
+        host.append(make('li', 'routing-aux__row',
+          'この application はいま Bot のターン以外に model を呼んでいません。'));
+      }
+      $('#model-routing-reset-aux').disabled =
+        !auxiliary.some((t) => routingAssignment(t.task, routingState.defaultScope));
+    };
+    const renderRouting = () => {
+      renderRoutingScopes();
+      renderRoutingPicker();
+      renderRoutingAux();
+    };
+    const applyRoutingPayload = (data) => {
+      routingState.tasks = data.tasks || routingState.tasks;
+      routingState.assignments = data.assignments || [];
+      routingState.defaultScope = data['default-scope'] || 'default';
+      renderRouting();
+    };
+    const loadModelRouting = async () => {
+      const response = await fetch('/api/bots/model-routing');
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data?.error?.message || 'model の割り当てを読めませんでした。');
+      }
+      applyRoutingPayload(data);
+      return data;
+    };
+    const applyRouting = async (task) => {
+      const status = $('#model-routing-status');
+      const providerId = $('#model-routing-provider').value;
+      const model = $('#model-routing-model').value;
+      if (!providerId || !model) {
+        status.textContent = 'provider と model の両方を選んでください。';
+        return;
+      }
+      // An auxiliary task is always deployment-wide. Sending the chip's scope
+      // would be sending a row that can never match, and the host refuses it --
+      // better not to build the request than to explain the refusal.
+      const scope = task === 'bot' ? routingState.scope : routingState.defaultScope;
+      const button = $('#model-routing-apply');
+      button.disabled = true;
+      try {
+        applyRoutingPayload(await postJSON('/api/bots/model-routing', {
+          task, scope, 'provider-id':providerId, model
+        }, true));
+        status.textContent = '割り当てました。';
+        await loadBots({keepSelection:true});
+        renderRouting();
+      } catch (error) { status.textContent = error.message; }
+      finally { button.disabled = false; }
+    };
+    const clearRouting = async (task) => {
+      const status = $('#model-routing-status');
+      const scope = task === 'bot' ? routingState.scope : routingState.defaultScope;
+      try {
+        applyRoutingPayload(await postJSON('/api/bots/model-routing/clear',
+                                           {task, scope}, true));
+        status.textContent = '割り当てを外しました。';
+        await loadBots({keepSelection:true});
+        renderRouting();
+      } catch (error) { status.textContent = error.message; }
+    };
+    if ($('#model-routing-apply')) {
+      $('#model-routing-apply').addEventListener(
+        'click', () => applyRouting(routingState.task));
+      $('#model-routing-clear').addEventListener(
+        'click', () => clearRouting(routingState.task));
+      $('#model-routing-provider').addEventListener('change', renderRoutingPicker);
+      $('#model-routing-reset-aux').addEventListener('click', async () => {
+        const button = $('#model-routing-reset-aux');
+        button.disabled = true;
+        try {
+          for (const t of routingState.tasks.filter((x) => !x['main?'])) {
+            if (routingAssignment(t.task, routingState.defaultScope)) {
+              applyRoutingPayload(await postJSON('/api/bots/model-routing/clear',
+                {task:t.task, scope:routingState.defaultScope}, true));
+            }
+          }
+          $('#model-routing-status').textContent =
+            '補助タスクをすべて main に戻しました。';
+        } catch (error) { $('#model-routing-status').textContent = error.message; }
+        finally { renderRouting(); }
+      });
+    }
     const loadAgentMachine = async () => {
       const response = await fetch('/api/bots/machine');
       const data = await response.json();
@@ -7983,6 +8226,67 @@
       await loadIdentity();
       $('#identity-status').textContent = 'Passkey を登録しました。';
     };
+    const controllerLinkTargets = Object.freeze({
+      kotobase:'https://auth.kotobase.net/v1/federation/session',
+      murakumo:'https://auth.murakumo.cloud/v1/federation/session'
+    });
+    const startControllerLink = async (target, button) => {
+      const exchangeURL = controllerLinkTargets[target];
+      if (!exchangeURL) throw new Error('この接続先は許可されていません。');
+      const originalLabel = button.textContent;
+      const windowName = `itonami-${target}-passkey`;
+      const targetWindow = window.open('about:blank', windowName);
+      button.disabled = true;
+      button.textContent = '接続を準備中…';
+      try {
+        const handoff = await postJSON('/api/integrations/kotobase/assertion',
+          {target}, true);
+        if (handoff.exchange_url !== exchangeURL) {
+          throw new Error('接続先の検証に失敗しました。');
+        }
+        const form = document.createElement('form');
+        form.method = 'POST';
+        form.action = exchangeURL;
+        form.target = targetWindow ? windowName : '_self';
+        [['cacao_b64', handoff.cacao_b64], ['return_to', handoff.return_to]]
+          .forEach(([name, value]) => {
+            const field = document.createElement('input');
+            field.type = 'hidden'; field.name = name; field.value = value;
+            form.append(field);
+          });
+        document.body.append(form);
+        form.submit();
+        form.remove();
+        const domain = target === 'murakumo' ? 'murakumo.cloud' : 'kotobase.net';
+        $('#identity-status').textContent =
+          `開いた認証画面で ${domain} 用の Passkey を作成してください。`;
+      } catch (error) {
+        if (targetWindow) targetWindow.close();
+        $('#identity-status').textContent = error.message;
+      } finally {
+        button.disabled = false;
+        button.textContent = originalLabel;
+      }
+    };
+    const installControllerLinkCard = () => {
+      const registerCard = $('#passkey-register')?.closest('.local-card');
+      if (!registerCard || document.querySelector('[data-controller-links]')) return;
+      const card = make('div', 'local-card'); card.dataset.controllerLinks = 'true';
+      const heading = make('h2', null, '同じ Principal を使う');
+      const explanation = make('p', 'view-lead',
+        '各ドメインでは別の Passkey を作り、同じ Principal と Passkey Smart Account へ接続します。秘密鍵は移送しません。');
+      const actions = make('div', 'button-row');
+      const kotobase = make('button', 'primary-action', 'kotobase.net に接続');
+      kotobase.type = 'button';
+      const murakumo = make('button', 'primary-action', 'murakumo.cloud に接続');
+      murakumo.type = 'button';
+      kotobase.addEventListener('click', () => startControllerLink('kotobase', kotobase));
+      murakumo.addEventListener('click', () => startControllerLink('murakumo', murakumo));
+      actions.append(kotobase, murakumo);
+      card.append(heading, explanation, actions);
+      registerCard.after(card);
+    };
+    installControllerLinkCard();
     const renderMembers = (organization) => {
       const list = $('#member-list'); list.replaceChildren();
       (organization?.users || []).forEach((user) => {
@@ -8096,32 +8400,8 @@
         $('#identity-status').textContent = error.message;
       }
     };
-    const startSso = async (provider, mode, button) => {
-      button.disabled = true;
-      const previous = button.textContent;
-      button.textContent = '準備中…';
-      try {
-        const headers = mode === 'link'
-          ? identityHeaders() : {'Content-Type':'application/json'};
-        const request = await fetch(`/api/auth/sso/${provider}/start`, {
-          method:'POST', headers, body:JSON.stringify({mode})
-        });
-        const result = await request.json();
-        if (!request.ok) throw new Error(result?.error?.message || 'SSOを開始できませんでした。');
-        location.assign(result.url);
-      } catch (error) {
-        button.disabled = false;
-        button.textContent = previous;
-        $('#identity-status').textContent = error.message;
-      }
-    };
     const renderAuthMethods = (data) => {
       const methods = data['auth-methods'] || {};
-      // Only providers this deployment can actually start. An unconfigured
-      // provider is not an entrance, and drawing it as a disabled button said
-      // so only in a `title` tooltip — invisible on a touch screen, and
-      // announced as a button by a screen reader.
-      const providers = (methods.sso || []).filter((p) => p['configured?']);
       const centralConfigured = Boolean(methods.central?.['configured?']);
       $('#itonami-cloud-signin-card').hidden = !centralConfigured;
       const enrol = $('#itonami-enrolment-link');
@@ -8130,16 +8410,6 @@
         if (url) enrol.setAttribute('href', url);
         enrol.hidden = !url || Boolean(data['authenticated?']);
       }
-      const signin = $('#sso-signin-list');
-      signin.replaceChildren();
-      providers.forEach((provider) => {
-        const label = provider.name || authProviderLabels[provider.id] || provider.id;
-        const button = make('button', 'tool-button', `${label}で続ける`);
-        button.type = 'button';
-        button.addEventListener('click', () => startSso(provider.id, 'authenticate', button));
-        signin.append(button);
-      });
-      $('#sso-signin-card').hidden = !providers.length;
       if (!data['authenticated?']) return;
       const session = data.session || {};
       const provider = session['authn-provider'];
@@ -8153,7 +8423,7 @@
       linked.replaceChildren();
       const identities = data['login-identities'] || [];
       if (!identities.length) {
-        linked.append(make('li', null, '接続済みSSO / Emailはありません。'));
+        linked.append(make('li', null, '接続済みの追加認証はありません。'));
       } else {
         identities.forEach((identity) => {
           const label = authProviderLabels[identity.provider] ||
@@ -8184,16 +8454,6 @@
       const linkedProviders = new Set(identities.map((identity) => identity.provider));
       $('#itonami-cloud-link').hidden = !centralConfigured ||
         linkedProviders.has('itonami-cloud');
-      const links = $('#sso-link-list');
-      links.replaceChildren();
-      providers.filter((item) => item['configured?'] && !linkedProviders.has(item.id))
-        .forEach((item) => {
-          const label = item.name || authProviderLabels[item.id] || item.id;
-          const button = make('button', 'tool-button', `${label}を接続`);
-          button.type = 'button';
-          button.addEventListener('click', () => startSso(item.id, 'link', button));
-          links.append(button);
-        });
     };
     const renderSessions = async () => {
       const list = $('#auth-session-list');
@@ -8294,13 +8554,8 @@
     // WebAuthn the only entrance on this screen looks live and is not.
     const passkeySupported = () =>
       Boolean(window.PublicKeyCredential && navigator.credentials);
-    // The entrances besides Passkey that this deployment has configured. One
-    // reading, so the notice, the lead and the cards cannot disagree.
-    const otherSigninMethods = (data) => [
-      data['auth-methods']?.central?.['configured?'] ? 'auth.itonami.cloud' : null,
-      data['email-login-configured?'] ? 'Email' : null,
-      (data['auth-methods']?.sso || []).some((p) => p['configured?']) ? 'SSO' : null
-    ].filter(Boolean);
+    const hostedPasskeyConfigured = (data) =>
+      Boolean(data['auth-methods']?.central?.['configured?']);
     // What this screen actually offers, said on every load.
     //
     // The interrupted owner ceremony is the case that needs it. Registration is
@@ -8313,33 +8568,23 @@
     // had asked to resume something. The explanation existed — in a status line
     // written once, which the next reload erased.
     const renderSigninGate = (data) => {
-      const others = otherSigninMethods(data);
       const resuming = Boolean(data['passkey-required?']);
       const supported = passkeySupported();
-      const hosted = others.includes('auth.itonami.cloud');
+      const hosted = hostedPasskeyConfigured(data);
       $('#signin-gate-headline').textContent = resuming
         ? '前回の Passkey 作成が完了していません。'
         : hosted
           ? 'パスキーでサインインしてください。'
-          : 'サインイン方法を選んでください。';
+          : 'この端末の Passkey でサインインしてください。';
       $('#signin-gate-note').textContent = !supported
-        ? (others.length
-          ? ` このブラウザは Passkey / WebAuthn に対応していません。${others.join('、')}で続けられます。`
+        ? (hosted
+          ? ' このブラウザでは Passkey を使えません。auth.itonami.cloud を対応ブラウザで開いてください。'
           : ' このブラウザは Passkey / WebAuthn に対応していません。この端末から入る方法が今はありません。')
         : resuming
-          // Naming the resume without naming the alternatives is the same
-          // defect this function exists to fix: a screen that describes one
-          // way in while another is sitting on it unmentioned.
-          ? ` アカウントはできていて、Passkey だけがありません。下のボタンで続きから作成します。${
-            others.length ? `${others.join('、')}でも入れます。` : ''}`
+          ? ' アカウントはできていて、Passkey だけがありません。下のボタンで続きから作成します。'
           : hosted
-            ? ` 入口は auth.itonami.cloud です。この端末の Passkey は追加確認に使います。${
-              others.filter((name) => name !== 'auth.itonami.cloud').length
-                ? others.filter((name) => name !== 'auth.itonami.cloud').join('、') + 'でも入れます。'
-                : ''}`
-          : others.length
-            ? ` この端末で使える入口は Passkey、${others.join('、')} です。重要操作では Passkey を追加確認します。`
-            : ' この端末で使える入口は Passkey だけです。重要操作では Passkey を追加確認します。';
+            ? ' 入口は auth.itonami.cloud です。この端末の Passkey は追加確認に使います。'
+            : ' この端末で使える入口は Passkey だけです。重要操作でも同じ Passkey を確認します。';
       // The native window is a webview and the ceremony happens in the
       // system browser (RFC 8252) — say so, or the round-trip reads as the
       // window silently losing the person. This overrides the unsupported
@@ -8396,8 +8641,6 @@
         recovery.hidden = Boolean(data['authenticated?']);
         recovery.open = Boolean(data['passkey-required?']);
       }
-      $('#email-login-form').hidden = Boolean(data['authenticated?']) ||
-        !data['email-login-configured?'];
       $('#registration-form').hidden = Boolean(data['registered?']);
       // Gated on a CREDENTIAL existing, not on a User existing. A device with
       // a User and no enrolled Passkey has nothing to authenticate with, and
@@ -8408,12 +8651,9 @@
         $('#registration-title').textContent = pendingPasskey
           ? 'Passkey 登録を再開'
           : 'サインイン';
-        const others = otherSigninMethods(data);
         $('#registration-lead').textContent = pendingPasskey
           ? '仮登録は完了しています。Passkey を作成するとアプリを利用できます。'
-          : others.length
-            ? `Passkey、${others.join('、')}で続行できます。`
-            : 'Passkeyで続行できます。';
+          : 'Passkeyで続行できます。';
         $('#passkey-signin').textContent = pendingPasskey
           ? 'Passkey 登録を再開'
           : 'Passkey でサインイン';
@@ -9116,21 +9356,6 @@
         $('#identity-status').textContent = error.message;
       }
     });
-    $('#email-login-form').addEventListener('submit', async (event) => {
-      event.preventDefault();
-      const button = $('#email-login-submit');
-      const fields = Object.fromEntries(new FormData(event.currentTarget));
-      button.disabled = true; button.textContent = '送信中…';
-      try {
-        await postJSON('/api/email-authenticate/start', fields);
-        $('#identity-status').textContent =
-          '登録済みの場合、ログインリンクを送信しました。メールを確認してください。';
-      } catch (error) {
-        $('#identity-status').textContent = error.message;
-      } finally {
-        button.disabled = false; button.textContent = 'ログインリンクを送る';
-      }
-    });
     $('#enrollment-form').addEventListener('submit', async (event) => {
       event.preventDefault();
       const button = $('#enrollment-submit'); button.disabled = true;
@@ -9515,6 +9740,7 @@
       browserAvailable:false, computerAvailable:false,
       controller:null, runId:null, shellBusy:false,
       activeRuns:new Map(),
+      nextGoalOverride:null,
       latestTurn:null, threadVersion:null, syncTimer:null, syncing:false,
       slo:null, routines:[], routinesLoading:false
     };
@@ -9606,10 +9832,20 @@
       } catch (error) { $('#context-status').textContent = error.message; }
       finally { button.disabled = false; }
     });
+    const botMood = (avatar, status) => {
+      const variant = Number.parseInt(avatar?.variant || 0, 10) || 0;
+      if (status === 'working') return variant % 3 === 0 ? 'hurry' : 'focus';
+      if (status === 'waiting-approval' || status === 'waiting-connection') return 'nervous';
+      if (status === 'blocked') return 'upset';
+      if (status === 'disabled') return 'sleep';
+      if (status === 'idle') return variant % 2 === 0 ? 'joy' : 'nap';
+      return 'focus';
+    };
     const botAvatar = (node, avatar, status = null) => {
       node.dataset.color = avatar?.color || 'blue';
       node.dataset.glyph = avatar?.glyph || 'circle';
       node.dataset.variant = String(avatar?.variant || 0);
+      node.dataset.mood = botMood(avatar, status);
       if (status) node.dataset.status = status;
       else delete node.dataset.status;
       node.setAttribute('aria-hidden', 'true');
@@ -9875,6 +10111,52 @@
     const botsRecentFirst = (bots) => [...bots].sort((a, b) =>
       botsActivityTime(b) - botsActivityTime(a) ||
         a.name.localeCompare(b.name, 'ja'));
+    const botsDateGroup = (bot, now = new Date()) => {
+      const value = bot?.['activity-at'] || bot?.['last-message']?.at || bot?.['updated-at'];
+      const activity = value ? new Date(value) : null;
+      if (!activity || Number.isNaN(activity.getTime())) return '日時なし';
+      const day = new Date(activity.getFullYear(), activity.getMonth(), activity.getDate());
+      const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+      const days = Math.floor((today.getTime() - day.getTime()) / 86400000);
+      if (days <= 0) return '今日';
+      if (days === 1) return '昨日';
+      if (days < 7) return '過去7日間';
+      if (days < 30) return '過去30日間';
+      return new Intl.DateTimeFormat('ja-JP', {
+        year:'numeric', month:'long'
+      }).format(activity);
+    };
+    const botsSidebarGroups = (bots) => {
+      const groups = [];
+      const priority = botsRecentFirst(bots.filter((bot) => bot['priority?']));
+      const pinned = botsRecentFirst(bots.filter((bot) =>
+        !bot['priority?'] && bot['pinned?']));
+      if (priority.length) groups.push({label:'優先度', bots:priority});
+      if (pinned.length) groups.push({label:'ピン留め', bots:pinned});
+      const rest = bots.filter((bot) => !bot['priority?'] && !bot['pinned?']);
+      const sectionOrder = [];
+      const bySection = new Map();
+      rest.forEach((bot) => {
+        const section = String(bot.section || '').trim();
+        if (!section) return;
+        if (!bySection.has(section)) {
+          bySection.set(section, []);
+          sectionOrder.push(section);
+        }
+        bySection.get(section).push(bot);
+      });
+      sectionOrder.forEach((label) => {
+        groups.push({label, bots:botsRecentFirst(bySection.get(label))});
+      });
+      botsRecentFirst(rest.filter((bot) => !String(bot.section || '').trim()))
+        .forEach((bot) => {
+          const label = botsDateGroup(bot);
+          const current = groups.at(-1);
+          if (current?.label === label) current.bots.push(bot);
+          else groups.push({label, bots:[bot]});
+        });
+      return groups;
+    };
     const botsCompactTime = (value) => {
       const parsed = value ? new Date(value) : null;
       if (!parsed || Number.isNaN(parsed.getTime())) return '';
@@ -9936,6 +10218,8 @@
       const query = $('#bots-filter').value.trim().toLocaleLowerCase('ja');
       const visibleBots = botsRecentFirst(botsState.bots)
         .filter((bot) => {
+          if (bot['enabled?'] === false) return false;
+          if (bot['hidden?'] && !query) return false;
           if (!query) return true;
           return [bot.name, bot.business?.name, bot.role?.name,
                   bot['last-message']?.text]
@@ -9944,17 +10228,20 @@
       const empty = $('#bots-rail-empty');
       empty.hidden = visibleBots.length > 0;
       empty.textContent = query ? '一致する Bot がいません' : 'まだ Bot がいません';
-      visibleBots
-        .forEach((bot) => {
+      botsSidebarGroups(visibleBots).forEach((group) => {
+        const heading = make('li', 'bots-rail__group', group.label);
+        heading.setAttribute('aria-hidden', 'true');
+        list.append(heading);
+        group.bots.forEach((bot) => {
         const item = make('button', 'bots-rail__item');
         item.type = 'button';
         item.setAttribute('aria-current', String(bot.id === botsState.selected));
         const statusSummary = botsStatusSummary(bot);
-        const preview = bot['last-message']?.source === 'resident'
-          ? `自動確認 · ${residentResultState(bot['last-message']?.text)}`
-          : (bot['last-message']?.text || statusSummary);
+        const preview = botsRailPreview(bot, statusSummary);
         item.setAttribute('aria-label',
           `${bot.name}、${statusSummary}、${preview}`);
+        item.setAttribute('aria-haspopup', 'menu');
+        if (bot['unread?']) item.dataset.unread = 'true';
         const avatar = botAvatar(make('span', 'bot-avatar'), bot.avatar, bot.status);
         const copy = make('div', 'bots-rail__copy');
         const headline = make('span', 'bots-rail__headline');
@@ -9967,9 +10254,21 @@
         dot.title = statusSummary;
         item.append(avatar, copy, dot);
         item.addEventListener('click', () => selectBot(bot.id));
+        item.addEventListener('contextmenu', (event) => {
+          event.preventDefault();
+          openBotsRailMenu(event, bot);
+        });
+        item.addEventListener('keydown', (event) => {
+          if (event.key === 'ContextMenu' ||
+              (event.shiftKey && event.key === 'F10')) {
+            event.preventDefault();
+            openBotsRailMenu(event, bot);
+          }
+        });
         const entry = make('li');
         entry.append(item);
         list.append(entry);
+        });
       });
       const badge = $('#bots-count');
       if (badge) {
@@ -10186,6 +10485,53 @@
       node.append(row);
       return node;
     };
+    const botsArtifactCard = (card) => {
+      // What the Bot LEFT BEHIND. Every other card asks the person to act; this
+      // one reports that the Bot already did, and it is built from the host's
+      // receipts rather than the Bot's prose -- so a summary claiming a commit
+      // that never happened produces no card.
+      const node = make('div', 'bots-card');
+      node.dataset.artifact = card['artifact-kind'];
+      if (card['artifact-kind'] === 'commit') {
+        node.append(make('div', 'bots-card__title', card.message || 'コミット'));
+        const meta = make('div', 'bots-card__meta');
+        // Short form: a full sha is 40 characters of noise in a column this
+        // narrow, and the whole value stays on the element as its title.
+        const revision = make('code', 'bots-card__revision',
+                              String(card.revision || '').slice(0, 12));
+        revision.title = card.revision || '';
+        meta.append(revision);
+        const paths = card.paths || [];
+        if (paths.length) {
+          meta.append(make('span', 'bots-card__count', `${paths.length}件のファイル`));
+        }
+        node.append(meta);
+        paths.forEach((path) => node.append(make('code', 'bots-card__path', path)));
+        return node;
+      }
+      node.append(make('div', 'bots-card__title', '書き込み'));
+      const meta = make('div', 'bots-card__meta');
+      meta.append(make('code', 'bots-card__path', card.path || ''));
+      if (Number.isFinite(card.bytes)) {
+        meta.append(make('span', 'bots-card__count', `${card.bytes} bytes`));
+      }
+      node.append(meta);
+      return node;
+    };
+    const appendBotsCards = (entry, messages, botId) => {
+      // One dispatch, called from both the run path and the single-message
+      // path. It was written out twice, and a third kind of card would have had
+      // to be added to both -- the one that got missed being the one nobody
+      // notices, because the card simply does not appear.
+      messages.forEach((message) => {
+        (message.cards || []).forEach((card) => {
+          if (card.kind === 'connection') entry.append(botsConnectionCard(card, botId));
+          else if (card.kind === 'choice') entry.append(botsChoiceCard(card, botId));
+          else if (card.kind === 'approval') entry.append(botsApprovalCard(card, botId));
+          else if (card.kind === 'artifact') entry.append(botsArtifactCard(card));
+        });
+      });
+    };
     const botsChoiceCard = (card, botId) => {
       const node = make('div', 'bots-card');
       node.append(make('div', 'bots-card__title', card.prompt));
@@ -10303,11 +10649,140 @@
         .replace(/\s+/g, ' ').trim();
       return value.length > limit ? `${value.slice(0, limit - 1)}…` : value;
     };
+    const botsAttentionStatuses = new Set(['waiting-approval', 'waiting-connection',
+                                           'blocked']);
+    const botsRailPreview = (bot, statusSummary) => {
+      // What this row says the Bot last did -- its OWN sentence, which is what
+      // makes a list of Bots scannable.
+      //
+      // This used to render `自動確認 · ${residentResultState(...)}` for every
+      // resident message: the classification instead of the sentence, out of
+      // four possible values. Observed 2026-08-28 with nine Bots on screen, six
+      // consecutive rows read `自動確認 · 変更なし` and the list carried no
+      // information at all -- the reader had to open each Bot to learn which
+      // one had news. The state was never lost by removing it: the dot at the
+      // end of the same row already carries `bot.status`, with the full summary
+      // as its title.
+      //
+      // A Bot that needs the PERSON is the exception, because then the need is
+      // the news and it has to lead. It reads `承認待ち：<what it asked>`.
+      const said = residentResultPreview(bot?.['last-message']?.text, 80);
+      if (botsAttentionStatuses.has(bot?.status)) {
+        const need = botsStatusText[bot.status] || statusSummary;
+        // Not when the sentence already opens with the same word. The Bot
+        // writes its own state into its first clause often enough that the
+        // naive prefix produced `前提待ち：前提待ち: Either…` on screen.
+        if (!said) return need;
+        return said.startsWith(need) ? said : `${need}：${said}`;
+      }
+      return said || statusSummary;
+    };
+    const residentResultKey = (message) =>
+      (message.text && message.source === 'resident' && message.role === 'bot')
+        // Keyed on the STATE alone. Keying on the preview too looked stricter
+        // and grouped nothing: two ticks of the same no-op differ by a word
+        // ("Fresh execution receipts …" against "receipts: …") and every run
+        // was a run of one. Nothing is lost by the looser key -- the run body
+        // still renders every message in full.
+        ? residentResultState(message.text)
+        : null;
+    const residentInstruction = (message) =>
+      Boolean(message.text && message.source === 'resident' && message.role === 'person');
+    const botsMessageRuns = (messages) =>
+      // Consecutive identical auto-check results are ONE event, not six.
+      //
+      // A resident Bot with nothing to do says so every tick, and this thread
+      // rendered one card per tick. Observed 2026-08-28: six cards in a row,
+      // every one of them `変更なし / Resident tick completed as a safe no-op`,
+      // separated by six collapsed `自動確認の内部指示`. None of that column was
+      // news, and the one card that WAS -- a 失敗 -- sat in the middle of it
+      // looking exactly like its neighbours.
+      //
+      // Runs are grouped, never dropped: the body still lists every message in
+      // order with its own time, so nothing becomes unreadable, and the reader
+      // gets one row to skip instead of six.
+      (() => {
+        const runs = [];
+        let held = [];
+        const flushHeld = () => {
+          held.forEach((message) => runs.push({ key: null, messages: [message] }));
+          held = [];
+        };
+        (messages || []).forEach((message) => {
+          const key = residentResultKey(message);
+          if (!key) {
+            if (residentInstruction(message)) held.push(message);
+            else { flushHeld(); runs.push({ key: null, messages: [message] }); }
+            return;
+          }
+          const previous = runs[runs.length - 1];
+          if (previous && previous.key === key) {
+            previous.messages.push(...held, message);
+            held = [];
+          } else {
+            flushHeld();
+            runs.push({ key, messages: [message] });
+          }
+        });
+        flushHeld();
+        return runs;
+      })();
+    const renderBotsResidentRun = (run) => {
+      const entry = make('li', 'bots-msg');
+      entry.dataset.role = 'resident-result';
+      const results = run.messages.filter((message) => residentResultKey(message));
+      // The LATEST result heads the card. A run is read top-down as one item,
+      // and the newest tick is the one the reader came for; leading with the
+      // oldest would put the stalest sentence in the only line always visible.
+      const latest = results[results.length - 1];
+      const repeats = results.length;
+      const detail = make('details', 'bots-msg__resident-result');
+      const summary = make('summary');
+      summary.append(
+        make('strong', null, '自動確認の結果'),
+        make('span', 'bots-msg__resident-state',
+             repeats > 1 ? `${residentResultState(latest.text)} ×${repeats}`
+                         : residentResultState(latest.text)),
+        make('span', 'bots-msg__resident-preview', residentResultPreview(latest.text)),
+        make('span', 'bots-msg__resident-open', '全文を見る'));
+      const body = make('div', 'bots-msg__resident-body');
+      run.messages.forEach((message) => {
+        // Times only in a real run: they are what tells the copies apart, and
+        // a single result needs none -- the thread's order already says when.
+        if (repeats > 1) {
+          const at = botsCompactTime(message.at);
+          if (at) body.append(make('p', 'bots-msg__resident-at', at));
+        }
+        if (residentInstruction(message)) {
+          // The objective that produced the next result. Absorbed into the run
+          // rather than dropped, and still one click from the audit trail it
+          // was when it had the thread to itself.
+          const nested = make('details', 'bots-msg__resident');
+          nested.append(make('summary', null, '自動確認の内部指示'),
+                        make('p', null, message.text));
+          body.append(nested);
+          return;
+        }
+        const part = make('div');
+        renderMarkdown(part, message.text);
+        body.append(part);
+      });
+      detail.append(summary, body);
+      entry.append(detail);
+      return entry;
+    };
     const renderBotsMessages = (bot, options = {}) => {
       const holder = $('#bots-messages');
       holder.replaceChildren();
       if (!bot) return;
-      botsState.messages.forEach((message) => {
+      botsMessageRuns(botsState.messages).forEach((run) => {
+        if (run.key) {
+          const entry = renderBotsResidentRun(run);
+          appendBotsCards(entry, run.messages, bot.id);
+          holder.append(entry);
+          return;
+        }
+        const message = run.messages[0];
         const entry = make('li', 'bots-msg');
         entry.dataset.role = message.role;
         if (message.text && message.source === 'resident' && message.role === 'person') {
@@ -10320,29 +10795,17 @@
           detail.append(make('summary', null, '自動確認の内部指示'),
                         make('p', null, message.text));
           entry.append(detail);
-        } else if (message.text && message.source === 'resident' && message.role === 'bot') {
-          entry.dataset.role = 'resident-result';
-          const detail = make('details', 'bots-msg__resident-result');
-          const summary = make('summary');
-          summary.append(make('strong', null, '自動確認の結果'),
-                         make('span', 'bots-msg__resident-state', residentResultState(message.text)),
-                         make('span', 'bots-msg__resident-preview', residentResultPreview(message.text)),
-                         make('span', 'bots-msg__resident-open', '全文を見る'));
-          const body = make('div', 'bots-msg__resident-body');
-          renderMarkdown(body, message.text);
-          detail.append(summary, body);
-          entry.append(detail);
         } else if (message.text) {
+          // A resident RESULT never reaches here: `residentResultKey` matches
+          // every one of them, so `renderBotsResidentRun` renders it -- a run of
+          // one included. Two implementations of that card would drift, and the
+          // one reached less often would be the one nobody noticed drifting.
           const bubble = make('div', 'bots-msg__bubble');
           if (message.role === 'bot') renderMarkdown(bubble, message.text);
           else bubble.textContent = message.text;
           entry.append(bubble);
         }
-        (message.cards || []).forEach((card) => {
-          if (card.kind === 'connection') entry.append(botsConnectionCard(card, bot.id));
-          else if (card.kind === 'choice') entry.append(botsChoiceCard(card, bot.id));
-          else if (card.kind === 'approval') entry.append(botsApprovalCard(card, bot.id));
-        });
+        appendBotsCards(entry, [message], bot.id);
         holder.append(entry);
       });
       requestAnimationFrame(() => {
@@ -10379,6 +10842,35 @@
           : '（読み取りのみ）'}`));
       panel.append(make('div', null,
         `Model: ${bot['provider-id']} / ${bot.model}`));
+      const workspaceSync = bot['workspace-sync'];
+      if (workspaceSync) {
+        const workspaceCard = make('div', 'bots-card');
+        const stateLabels = {
+          pending:'同期準備中', ok:'同期済み', error:'同期エラー'
+        };
+        const workspaceState = make('div', 'bots-card__summary',
+          `${workspaceSync.mode === 'network' ? 'ネットワーク同期' : 'この端末のDrive'} · ` +
+          `${stateLabels[workspaceSync.state] || workspaceSync.state}`);
+        const workspacePath = make('div', 'bots-card__summary', workspaceSync.path || '');
+        const syncNow = make('button', 'tool-button', '今すぐ同期');
+        syncNow.type = 'button';
+        syncNow.addEventListener('click', async () => {
+          syncNow.disabled = true;
+          workspaceState.textContent = '同期中…';
+          try {
+            const result = await postJSON(`/api/bots/${bot.id}/workspace/sync`, {}, true);
+            const changed = ['pushed', 'pulled', 'remote-trashed', 'local-trashed', 'conflicts']
+              .reduce((total, key) => total + (result[key] || []).length, 0);
+            workspaceState.textContent = `同期済み · 変更 ${changed}件`;
+            await loadBots({keepSelection:true});
+          } catch (error) {
+            workspaceState.textContent = `同期エラー · ${error.message}`;
+          } finally { syncNow.disabled = false; }
+        });
+        workspaceCard.append(make('strong', null, 'Cloud Itonami workspace'),
+          workspaceState, workspacePath, syncNow);
+        panel.append(workspaceCard);
+      }
       const commerce = bot.commerce || {};
       const commerceReadiness = commerce.readiness || {};
       const commerceStore = commerce.store || {};
@@ -10551,6 +11043,80 @@
       });
       modelEditor.append(providerSelect, modelInput, saveModel);
       panel.append(modelEditor);
+      const goalEditor = make('div', 'bots-card');
+      goalEditor.append(make('strong', null, 'Goal'));
+      const goalBox = make('input');
+      goalBox.type = 'checkbox';
+      goalBox.checked = Boolean(bot['goal?']);
+      goalBox.setAttribute('aria-label', '完了または具体的な阻害まで進める');
+      const goalOption = make('label', 'bots-permission');
+      const goalCopy = make('span', 'bots-permission__copy');
+      goalCopy.append(
+        make('span', null, '完了または具体的な阻害まで進める'),
+        make('span', 'bots-permission__help',
+          'この Bot への新しい依頼を Goal として開始します。会話画面では毎回確認しません。'));
+      goalOption.append(goalBox, goalCopy);
+      const saveGoal = make('button', 'tool-button', 'Goal 設定を保存');
+      saveGoal.type = 'button';
+      saveGoal.addEventListener('click', async () => {
+        saveGoal.disabled = true;
+        try {
+          const data = await postJSON(`/api/bots/${bot.id}`, {
+            'goal?':goalBox.checked
+          }, true);
+          botsState.bots = data.bots || [];
+          renderBotsRail();
+          renderBotsThread();
+          botsSetStatus('この Bot の Goal 設定を保存しました。');
+        } catch (error) {
+          saveGoal.disabled = false;
+          botsSetStatus(error.message);
+        }
+      });
+      goalEditor.append(goalOption, saveGoal);
+      panel.append(goalEditor);
+      const placementEditor = make('div', 'bots-card');
+      placementEditor.append(make('strong', null, '一覧での位置'));
+      const priorityBox = make('input');
+      priorityBox.type = 'checkbox';
+      priorityBox.checked = Boolean(bot['priority?']);
+      priorityBox.setAttribute('aria-label', '優先度セクションに表示');
+      const pinnedBox = make('input');
+      pinnedBox.type = 'checkbox';
+      pinnedBox.checked = Boolean(bot['pinned?']);
+      pinnedBox.setAttribute('aria-label', 'ピン留めセクションに表示');
+      const placementOption = (box, title, help) => {
+        const label = make('label', 'bots-permission');
+        const copy = make('span', 'bots-permission__copy');
+        copy.append(make('span', null, title), make('span', 'bots-permission__help', help));
+        label.append(box, copy);
+        return label;
+      };
+      const savePlacement = make('button', 'tool-button', '並び順を保存');
+      savePlacement.type = 'button';
+      savePlacement.addEventListener('click', async () => {
+        savePlacement.disabled = true;
+        try {
+          const data = await postJSON(`/api/bots/${bot.id}`, {
+            'priority?':priorityBox.checked,
+            'pinned?':pinnedBox.checked
+          }, true);
+          botsState.bots = data.bots || [];
+          renderBotsRail();
+          renderBotsThread();
+          botsSetStatus('この Bot の並び順を保存しました。');
+        } catch (error) {
+          savePlacement.disabled = false;
+          botsSetStatus(error.message);
+        }
+      });
+      placementEditor.append(
+        placementOption(priorityBox, '優先度',
+          '一覧の先頭に置きます。ピン留めより上に表示されます。'),
+        placementOption(pinnedBox, 'ピン留め',
+          '優先度を外したときも、日時一覧より上に残します。'),
+        savePlacement);
+      panel.append(placementEditor);
       const authorityEditor = make('details', 'bots-card');
       const normalCapabilities = [bot['writes?'], bot['omakase?'], bot['browser?'],
         bot['computer?'], bot['peers?']].filter(Boolean).length;
@@ -10642,6 +11208,10 @@
       workspaceInput.value = bot.workspace || '';
       workspaceInput.placeholder = '/Users/name/github/project';
       workspaceInput.setAttribute('aria-label', 'Git workspace の絶対パス');
+      if (bot['workspace-sync']) {
+        workspaceInput.readOnly = true;
+        workspaceInput.setAttribute('aria-label', 'Cloud Itonami 管理workspace');
+      }
       const saveCoding = make('button', 'tool-button', 'Workspace を変更');
       saveCoding.type = 'button';
       saveCoding.addEventListener('click', async () => {
@@ -10731,10 +11301,15 @@
       botsState.routines = [];
       const selectedBot = botsState.bots.find((bot) => bot.id === botId);
       botsState.latestTurn = selectedBot?.['last-turn'] || null;
-      $('#bots-goal').checked = Boolean(selectedBot?.['coding?'] || selectedBot?.['virtual-shell?']);
       renderBotsRail();
       showBotsPane();
       syncBotsContextButton();
+      if (selectedBot?.['unread?']) {
+        postJSON(`/api/bots/${botId}`, {'unread?':false}, true).then((data) => {
+          botsState.bots = data.bots || botsState.bots;
+          renderBotsRail();
+        }).catch(() => {});
+      }
       try {
         const request = await fetch(`/api/bots/${botId}/messages`);
         const data = await request.json();
@@ -10746,6 +11321,216 @@
       } catch (error) { botsSetStatus(error.message); }
       finally { if (typeof resizeBotsInput === 'function') resizeBotsInput(); }
     };
+    const botsRailMenuIcon = (path) => {
+      const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+      svg.setAttribute('viewBox', '0 0 24 24');
+      svg.setAttribute('aria-hidden', 'true');
+      svg.setAttribute('class', 'bots-rail-menu__icon');
+      const el = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+      el.setAttribute('d', path);
+      el.setAttribute('fill', 'none');
+      el.setAttribute('stroke', 'currentColor');
+      el.setAttribute('stroke-width', '1.75');
+      el.setAttribute('stroke-linecap', 'round');
+      el.setAttribute('stroke-linejoin', 'round');
+      svg.append(el);
+      return svg;
+    };
+    const botsCopyText = async (value) => {
+      const text = String(value || '');
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(text);
+        return;
+      }
+      const field = make('textarea');
+      field.value = text;
+      field.setAttribute('aria-hidden', 'true');
+      document.body.append(field);
+      field.select();
+      document.execCommand('copy');
+      field.remove();
+    };
+    const applyBotsOverview = (data) => {
+      botsState.bots = data.bots || [];
+      if (data.catalog) botsState.catalog = data.catalog;
+      renderBotsRail();
+      renderBotsThread();
+    };
+    const closeBotsRailMenu = () => {
+      const menu = $('#bots-rail-menu');
+      if (menu) menu.hidden = true;
+    };
+    const openBotsRailMenu = (event, bot) => {
+      closeBotsRailMenu();
+      let menu = $('#bots-rail-menu');
+      if (!menu) {
+        menu = make('ul', 'bots-rail-menu');
+        menu.id = 'bots-rail-menu';
+        menu.setAttribute('role', 'menu');
+        menu.setAttribute('aria-label', 'Botの操作');
+        document.body.append(menu);
+      }
+      const item = (label, path, action, danger = false) => {
+        const button = make('button',
+          danger ? 'bots-rail-menu__item bots-rail-menu__item--danger'
+                 : 'bots-rail-menu__item',
+          null);
+        button.type = 'button';
+        button.setAttribute('role', 'menuitem');
+        button.append(botsRailMenuIcon(path), document.createTextNode(label));
+        button.addEventListener('click', async (click) => {
+          click.stopPropagation();
+          closeBotsRailMenu();
+          try { await action(); }
+          catch (error) { botsSetStatus(error.message); }
+        });
+        const row = make('li');
+        row.append(button);
+        return row;
+      };
+      const sep = () => make('li', 'bots-rail-menu__sep');
+      menu.replaceChildren(
+        item('ピン留め',
+          'M12 17v5 M9 10.76V7a3 3 0 1 1 6 0v3.76l1.8 8.1A2 2 0 0 1 14.84 21H9.16a2 2 0 0 1-1.96-2.14z',
+          async () => {
+            applyBotsOverview(await postJSON(`/api/bots/${bot.id}`, {
+              'pinned?':!bot['pinned?']
+            }, true));
+            botsSetStatus(bot['pinned?'] ? 'ピン留めを外しました。' : 'ピン留めしました。');
+          }),
+        item('1個のBotを新しいセクションに移動',
+          'M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z M12 11v6 M9 14h6',
+          async () => {
+            const name = window.prompt('新しいセクション名', bot.section || '');
+            if (name === null) return;
+            applyBotsOverview(await postJSON(`/api/bots/${bot.id}`, {
+              section:name.trim()
+            }, true));
+            botsSetStatus(name.trim()
+              ? `「${name.trim()}」へ移動しました。`
+              : '日時の一覧に戻しました。');
+          }),
+        item('未読にする',
+          'M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9 M10 21a2 2 0 0 0 4 0 M18 4l2-2',
+          async () => {
+            applyBotsOverview(await postJSON(`/api/bots/${bot.id}`, {
+              'unread?':true
+            }, true));
+          }),
+        sep(),
+        item('プロフィールを編集',
+          'M12 20h9 M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4z',
+          async () => {
+            await selectBot(bot.id);
+            const panel = $('#bots-thread-panel');
+            const tools = $('#bots-thread-tools');
+            panel.hidden = false;
+            tools.setAttribute('aria-expanded', 'true');
+            panel.scrollIntoView({block:'nearest'});
+          }),
+        item('複製',
+          'M8 8h12v12H8z M4 16V4h12',
+          async () => {
+            const data = await postJSON('/api/bots', {
+              name:`コピー — ${bot.name}`.slice(0, 60),
+              avatar:bot.avatar,
+              brief:bot.brief,
+              tools:bot.tools,
+              accounts:bot.accounts,
+              'writes?':bot['writes?'],
+              'browser?':bot['browser?'],
+              'computer?':bot['computer?'],
+              'peers?':bot['peers?'],
+              'coding?':bot['coding?'],
+              'virtual-shell?':bot['virtual-shell?'],
+              'goal?':bot['goal?'],
+              'omakase?':bot['omakase?'],
+              workspace:bot['workspace-sync'] ? null : bot.workspace,
+              'provider-id':bot['provider-id'],
+              model:bot.model
+            }, true);
+            applyBotsOverview(data);
+            const created = (data.bots || []).at(-1);
+            if (created) await selectBot(created.id);
+            botsSetStatus('Bot を複製しました。');
+          }),
+        item('テンプレートとして共有',
+          'M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8 M16 6l-4-4-4 4 M12 2v13',
+          async () => {
+            await botsCopyText(JSON.stringify({
+              name:bot.name,
+              brief:bot.brief,
+              avatar:bot.avatar,
+              tools:bot.tools,
+              'writes?':bot['writes?'],
+              'browser?':bot['browser?'],
+              'computer?':bot['computer?'],
+              'peers?':bot['peers?'],
+              'coding?':bot['coding?'],
+              'goal?':bot['goal?'],
+              'omakase?':bot['omakase?'],
+              'provider-id':bot['provider-id'],
+              model:bot.model
+            }, null, 2));
+            botsSetStatus('テンプレートをコピーしました。');
+          }),
+        sep(),
+        item('会話IDをコピー',
+          'M8 8h12v12H8z M4 16V4h12',
+          async () => {
+            await botsCopyText(bot.id);
+            botsSetStatus('会話IDをコピーしました。');
+          }),
+        sep(),
+        item(bot['hidden?'] ? 'サイドバーに表示' : 'サイドバーから非表示',
+          'M3 3l18 18 M10.6 10.6A2 2 0 0 0 12 14a2 2 0 0 0 1.4-.6 M9.9 5.1A9 9 0 0 1 12 5c5 0 9 7 9 7a16 16 0 0 1-3.2 3.8 M6.1 6.1C3.7 7.8 2 12 2 12s4 7 10 7a9.7 9.7 0 0 0 4.1-.9',
+          async () => {
+            applyBotsOverview(await postJSON(`/api/bots/${bot.id}`, {
+              'hidden?':!bot['hidden?']
+            }, true));
+            botsSetStatus(bot['hidden?']
+              ? 'サイドバーに戻しました。'
+              : 'サイドバーから非表示にしました。');
+          }),
+        item('1個のBotを削除',
+          'M4 7h16 M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2 M10 11v6 M14 11v6 M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12',
+          async () => {
+            if (!window.confirm(`${bot.name} を削除しますか？会話の記録は残ります。`)) return;
+            applyBotsOverview(await postJSON(`/api/bots/${bot.id}/archive`, {}, true));
+            if (botsState.selected === bot.id) {
+              botsState.selected = (botsState.bots.find((candidate) =>
+                candidate['enabled?'] !== false) || {}).id || null;
+              if (botsState.selected) await selectBot(botsState.selected);
+              else {
+                showBotsPane();
+                renderBotsThread();
+              }
+            }
+            botsSetStatus(`${bot.name} を削除しました。`);
+          }, true)
+      );
+      const pointX = Number.isFinite(event.clientX)
+        ? event.clientX
+        : (event.currentTarget?.getBoundingClientRect().right || 8);
+      const pointY = Number.isFinite(event.clientY)
+        ? event.clientY
+        : (event.currentTarget?.getBoundingClientRect().bottom || 8);
+      menu.hidden = false;
+      const box = menu.getBoundingClientRect();
+      const left = Math.min(Math.max(8, pointX), window.innerWidth - box.width - 8);
+      const top = Math.min(Math.max(8, pointY), window.innerHeight - box.height - 8);
+      menu.style.left = `${left}px`;
+      menu.style.top = `${top}px`;
+    };
+    document.addEventListener('pointerdown', (event) => {
+      const menu = $('#bots-rail-menu');
+      if (!menu || menu.hidden || menu.contains(event.target)) return;
+      closeBotsRailMenu();
+    });
+    document.addEventListener('keydown', (event) => {
+      if (event.key === 'Escape') closeBotsRailMenu();
+    });
+    document.addEventListener('scroll', closeBotsRailMenu, true);
     const stopBotsRealtime = () => {
       if (botsState.syncTimer) window.clearTimeout(botsState.syncTimer);
       botsState.syncTimer = null;
@@ -10825,6 +11610,7 @@
         botsState.computerAvailable = Boolean(data['computer-available?']);
         botsState.slo = data.slo || null;
         botsState.loaded = true;
+        if (data['model-routing']) applyRoutingPayload(data['model-routing']);
         renderBotsSlo();
         if (!$('#bots-workspace').value && botsState.defaultWorkspace) {
           $('#bots-workspace').value = botsState.defaultWorkspace;
@@ -10927,10 +11713,6 @@
       const button = $('#bots-create');
       const name = $('#bots-name').value.trim();
       if (!name) { $('#bots-create-status').textContent = '名前を入れてください。'; return; }
-      if (!$('#bots-workspace').value.trim()) {
-        $('#bots-create-status').textContent = 'Git workspace の絶対パスを入れてください。';
-        return;
-      }
       button.disabled = true;
       $('#bots-create-status').textContent = '作成しています…';
       try {
@@ -10946,7 +11728,7 @@
           'peers?':true,
           'coding?':true,
           'virtual-shell?':false,
-          workspace:$('#bots-workspace').value.trim()
+          workspace:null
         }, true);
         botsState.bots = data.bots || [];
         botsState.catalog = data.catalog || [];
@@ -10974,7 +11756,6 @@
       const active = selectedBotsRun();
       $('#bots-send').disabled = !botsInput.value.trim() || botsState.shellBusy;
       $('#bots-send').textContent = active ? '追加で伝える' : '送る';
-      $('#bots-goal').disabled = Boolean(active);
       botsCancel.hidden = !(active || botsState.shellBusy);
     };
     botsInput.addEventListener('input', resizeBotsInput);
@@ -11113,7 +11894,10 @@
         return;
       }
       const runId = crypto.randomUUID();
-      const goal = $('#bots-goal').checked;
+      const selectedBot = botsState.bots.find((bot) => bot.id === botId);
+      const goal = typeof botsState.nextGoalOverride === 'boolean'
+        ? botsState.nextGoalOverride : Boolean(selectedBot?.['goal?']);
+      botsState.nextGoalOverride = null;
       const startedAt = Date.now();
       const progress = {phase:'accepted', tool:null};
       const turn = {
@@ -11321,12 +12105,15 @@
     $('#bots-conversations-close').addEventListener('click', () =>
       setBotConversationsOpen(false));
 
-    // ── Wallet: verified external accounts, one assignment per Bot ──────
+    // ── Wallet: Passkey-owned Smart Accounts; external links optional ───
     let walletState = null;
     let walletBalances = new Map();
     let selectedWalletBotId = null;
+    let walletOwnerAuthorizationBusy = false;
+    const announcedWalletProviders = new Map();
+    let selectedWalletProviderId = '';
     const shortAddress = (address) => address
-      ? `${address.slice(0, 8)}…${address.slice(-6)}` : '未割り当て';
+      ? `${address.slice(0, 8)}…${address.slice(-6)}` : '準備中';
     const weiToEth = (value) => {
       const wei = BigInt(value || '0');
       const whole = wei / (10n ** 18n);
@@ -11341,27 +12128,91 @@
       if (result <= 0n) throw new Error('0より大きい数量を入力してください。');
       return String(result);
     };
-    const requireInjectedWallet = () => {
-      if (!window.ethereum?.request) {
-        throw new Error('MetaMaskなどのEIP-1193 Walletが見つかりません。');
-      }
-      return window.ethereum;
+    const legacyInjectedWallet = () => window.ethereum?.request ? window.ethereum : null;
+    const selectedInjectedWallet = () => {
+      const announced = announcedWalletProviders.get(selectedWalletProviderId);
+      if (announced?.provider?.request) return announced.provider;
+      if (selectedWalletProviderId === 'legacy') return legacyInjectedWallet();
+      return announcedWalletProviders.values().next().value?.provider
+        || legacyInjectedWallet();
     };
-    const walletAccountById = (id) =>
-      walletState?.accounts?.find((account) => account.id === id);
-    const selectedWalletBot = () => walletState?.bots?.find((bot) =>
-      bot.id === selectedWalletBotId);
+    const requireInjectedWallet = () => {
+      const provider = selectedInjectedWallet();
+      if (!provider?.request) {
+        throw new Error('MetaMaskやCoinbase WalletなどのEIP-1193 Walletが見つかりません。');
+      }
+      return provider;
+    };
+    const walletProviderOptions = () => {
+      const announced = Array.from(announcedWalletProviders.values()).map(({info}) => ({
+        id:info.uuid, name:info.name
+      }));
+      if (announced.length) return announced;
+      return legacyInjectedWallet() ? [{id:'legacy', name:'Browser Wallet'}] : [];
+    };
+    const renderWalletProviders = () => {
+      const selector = $('#wallet-provider-select');
+      if (!selector) return;
+      const options = walletProviderOptions();
+      if (!options.some(({id}) => id === selectedWalletProviderId)) {
+        selectedWalletProviderId = options[0]?.id || '';
+      }
+      selector.replaceChildren();
+      if (!options.length) {
+        const option = document.createElement('option'); option.value = '';
+        option.textContent = '外部Walletなし'; selector.append(option); selector.disabled = true;
+        return;
+      }
+      selector.disabled = false;
+      options.forEach(({id, name}) => {
+        const option = document.createElement('option'); option.value = id;
+        option.textContent = name; option.selected = id === selectedWalletProviderId;
+        selector.append(option);
+      });
+    };
+    window.addEventListener('eip6963:announceProvider', async (event) => {
+      const {info, provider} = event.detail || {};
+      if (!info || typeof info.uuid !== 'string' || !info.uuid
+          || typeof info.name !== 'string' || !info.name
+          || typeof provider?.request !== 'function'
+          || announcedWalletProviders.has(info.uuid)) return;
+      // The self-attested icon and rdns are never treated as HTML or authority.
+      announcedWalletProviders.set(info.uuid, {
+        info:{uuid:info.uuid, name:info.name}, provider
+      });
+      if (!selectedWalletProviderId || selectedWalletProviderId === 'legacy') {
+        selectedWalletProviderId = info.uuid;
+      }
+      renderWalletProviders();
+      queueMicrotask(async () => {
+        await refreshWalletBalances();
+        if (walletState) renderWallet(walletState);
+      });
+    });
+    window.dispatchEvent(new Event('eip6963:requestProvider'));
+    const walletEntries = () => {
+      const principal = walletState?.['principal-account'];
+      return [
+        ...(principal?.address ? [{
+          id:'__principal__', name:'自分のPasskey Wallet', avatar:{}, wallet:principal,
+          principal:true
+        }] : []),
+        ...(walletState?.bots || []).map((bot) => ({...bot, principal:false}))
+      ];
+    };
+    const selectedWalletEntry = () => walletEntries().find((entry) =>
+      entry.id === selectedWalletBotId);
     const refreshWalletBalances = async () => {
-      if (!window.ethereum?.request || !walletState?.accounts?.length) return;
+      const provider = selectedInjectedWallet();
+      if (!provider?.request || !walletEntries().length) {
+        walletBalances = new Map(); return;
+      }
       try {
-        const available = (await window.ethereum.request({method:'eth_accounts'}))
-          .map((address) => address.toLowerCase());
-        const chainId = Number(BigInt(await window.ethereum.request({method:'eth_chainId'})));
-        const pairs = await Promise.all(walletState.accounts
-          .filter((account) => account.status === 'active'
-            && account['chain-id'] === chainId
-            && available.includes(account.address.toLowerCase()))
-          .map(async (account) => [account.id, await window.ethereum.request({
+        const chainId = Number(BigInt(await provider.request({method:'eth_chainId'})));
+        const accounts = walletEntries().map((entry) => entry.wallet)
+          .filter((account) => account?.address && account['chain-id'] === chainId);
+        const pairs = await Promise.all(accounts
+          .map(async (account) => [account.address.toLowerCase(), await provider.request({
             method:'eth_getBalance', params:[account.address, 'latest']
           })]));
         walletBalances = new Map(pairs);
@@ -11373,49 +12224,60 @@
       const bots = data.bots || [];
       const transfers = data.transfers || [];
       const activeAccounts = accounts.filter((account) => account.status === 'active');
-      const assignedBots = bots.filter((bot) => bot.wallet?.['signer-connected?']);
-      const waiting = transfers.filter((transfer) => transfer.status === 'awaiting-wallet');
-      $('#wallet-count').textContent = assignedBots.length || '';
+      const passkeyWallets = walletEntries().filter((entry) => entry.wallet?.address);
+      const waiting = transfers.filter((transfer) =>
+        ['awaiting-wallet', 'awaiting-passkey-user-operation'].includes(transfer.status));
+      $('#wallet-count').textContent = passkeyWallets.length || '';
       $('#wallet-source').textContent = data['private-keys-stored?']
-        ? '秘密鍵を保存しています' : `${bots.length}個のBot Wallet · 外部署名`;
+        ? '秘密鍵を保存しています' : `${passkeyWallets.length}個のPasskey Smart Account`;
       $('#wallet-summary').replaceChildren(
-        make('span', null, String(bots.length)),
+        make('span', null, String(passkeyWallets.length)),
         make('span', null, String(activeAccounts.length)),
         make('span', null, String(waiting.length)));
 
-      if (!bots.some((bot) => bot.id === selectedWalletBotId)) {
-        selectedWalletBotId = bots[0]?.id || null;
+      const entries = walletEntries();
+      if (!entries.some((entry) => entry.id === selectedWalletBotId)) {
+        selectedWalletBotId = entries[0]?.id || null;
       }
       const selector = $('#wallet-bot-select'); selector.replaceChildren();
-      if (!bots.length) {
+      if (!entries.length) {
         const option = document.createElement('option'); option.value = '';
-        option.textContent = '先にBotを作成してください'; selector.append(option);
-      } else bots.forEach((bot) => {
-        const option = document.createElement('option'); option.value = bot.id;
-        option.textContent = bot.name; option.selected = bot.id === selectedWalletBotId;
+        option.textContent = 'Passkey Walletを準備中'; selector.append(option);
+      } else entries.forEach((entry) => {
+        const option = document.createElement('option'); option.value = entry.id;
+        option.textContent = entry.name; option.selected = entry.id === selectedWalletBotId;
         selector.append(option);
       });
 
-      const selected = selectedWalletBot();
-      const connected = Boolean(selected?.wallet?.['signer-connected?']);
-      const balanceHex = connected ? walletBalances.get(selected.wallet['link-id']) : null;
+      const selected = selectedWalletEntry();
+      const connected = Boolean(selected?.wallet?.address);
+      const sendReady = Boolean(!selected?.principal && selected?.wallet?.['user-operation-ready?']);
+      const balanceHex = connected
+        ? walletBalances.get(selected.wallet.address.toLowerCase()) : null;
       const balance = balanceHex ? `${weiToEth(BigInt(balanceHex))} ETH` : '— ETH';
-      $('#wallet-account-state').textContent = connected ? '署名接続済み' : '署名を接続';
+      $('#wallet-account-state').textContent = connected ? 'Passkey Wallet' : 'Passkeyが必要';
       $('#wallet-account-state').dataset.state = connected ? 'ready' : 'waiting';
-      $('#wallet-bot-name').textContent = selected?.name || 'Bot Wallet';
+      $('#wallet-bot-name').textContent = selected?.name || 'Passkey Wallet';
       botAvatar($('#wallet-bot-avatar'), selected?.avatar || {});
       $('#wallet-network').textContent = connected
-        ? `Chain ${selected.wallet['chain-id']}` : 'Ethereum';
+        ? `Chain ${selected.wallet['chain-id']} · ${selected.wallet['deployment-state'] === 'not-yet-deployed' ? '未展開' : '展開済み'}`
+        : 'Ethereum';
       $('#wallet-balance').textContent = balance;
       $('#wallet-asset-balance').textContent = balance;
       const addressButton = $('#wallet-address');
       addressButton.textContent = connected ? shortAddress(selected.wallet.address)
-        : '署名Walletを接続してください';
+        : 'Passkey Walletを準備中';
       addressButton.disabled = !connected;
       $('#wallet-receive').disabled = !connected;
-      $('#wallet-send').disabled = !connected;
-      $('#wallet-connect').querySelector('span:last-child').textContent = connected ? '署名変更' : '署名接続';
-      $('#wallet-send-bot').value = selected?.id || '';
+      $('#wallet-send').disabled = !sendReady;
+      $('#wallet-send').title = sendReady ? '' : 'Passkey UserOperation対応は次の段階です';
+      $('#wallet-connect').querySelector('span:last-child').textContent = '他のWallet';
+      $('#wallet-send-bot').value = selected?.principal ? '' : (selected?.id || '');
+
+      const ownerPanel = $('#wallet-owner-panel');
+      ownerPanel.hidden = !selected?.principal;
+      if (selected?.principal) renderWalletOwners(
+        selected.wallet, data['supported-chains'] || [], data['owner-operations'] || []);
 
       const transferList = $('#wallet-transfer-list'); transferList.replaceChildren();
       const selectedTransfers = transfers.filter((transfer) => transfer['bot-id'] === selected?.id);
@@ -11426,15 +12288,128 @@
         body.append(make('p', 'data-list__title', `${weiToEth(transfer['value-wei'])} ETH`),
           make('p', 'data-list__meta wallet-address', `${shortAddress(transfer.from)} → ${shortAddress(transfer.to)}`),
           make('p', 'data-list__meta', transfer.status === 'submitted'
-            ? `送信済み · ${shortAddress(transfer['tx-hash'])}` : '外部Walletの署名待ち'));
+            ? `送信済み · ${shortAddress(transfer['tx-hash'])}`
+            : transfer.status === 'awaiting-passkey-user-operation'
+              ? 'Passkey UserOperation対応待ち' : '外部Walletの署名待ち'));
         row.append(body);
         if (transfer.status === 'awaiting-wallet') {
-          const submit = make('button', 'primary-action', 'MetaMaskで確認'); submit.type = 'button';
+          const submit = make('button', 'primary-action', '外部Walletで確認'); submit.type = 'button';
           submit.addEventListener('click', () => submitWalletTransfer(transfer, submit));
           row.append(submit);
         }
         transferList.append(row);
       });
+    };
+    const renderWalletOwners = (account, chains, operations) => {
+      const selector = $('#wallet-owner-chain');
+      const selectedChain = Number(selector.value || chains[0]?.['chain-id'] || 0);
+      selector.replaceChildren();
+      chains.forEach((chain) => {
+        const option = document.createElement('option');
+        option.value = String(chain['chain-id']);
+        option.textContent = `${chain.name || `Chain ${chain['chain-id']}`}${chain['owner-user-operation-ready?'] ? '' : '（未設定）'}`;
+        option.selected = chain['chain-id'] === selectedChain;
+        selector.append(option);
+      });
+      const chain = chains.find((entry) => entry['chain-id'] === Number(selector.value));
+      const list = $('#wallet-owner-list'); list.replaceChildren();
+      const candidates = account?.['owner-candidates'] || [];
+      if (!candidates.length) {
+        list.append(make('li', 'empty-state', 'Passkeyを確認中です。'));
+        return;
+      }
+      candidates.forEach((candidate) => {
+        const row = make('li', 'data-list__item');
+        const body = make('div');
+        const ownerFingerprint = candidate['public-key-sha256'];
+        const ownerLabel = `${candidate['rp-id'] || 'Passkey'}${ownerFingerprint
+          ? ` · ${ownerFingerprint.slice(0, 8)}…` : ''}`;
+        const state = candidate['chain-states']?.[String(chain?.['chain-id'])]
+          || candidate['owner-state'];
+        body.append(
+          make('p', 'data-list__title', ownerLabel),
+          make('p', 'data-list__meta', state === 'initial-owner'
+            ? '最初のowner'
+            : state === 'active-on-chain' ? `Chain ${chain?.['chain-id']} のowner`
+              : 'ログイン用Passkey（on-chain owner未追加）'));
+        row.append(body);
+        if (state === 'requires-add-owner-user-operation') {
+          const pending = operations.find((operation) =>
+            operation['candidate-credential-id'] === candidate['credential-id']
+              && operation['chain-id'] === Number(selector.value)
+              && ['submitted', 'pending'].includes(operation.status));
+          if (pending) {
+            const receipt = make('button', 'primary-action', 'receiptを確認');
+            receipt.type = 'button';
+            receipt.addEventListener('click', async () => {
+              receipt.disabled = true;
+              try {
+                const confirmed = await pollWalletOwnerReceipt(pending.id);
+                $('#wallet-owner-status').textContent =
+                  `owner追加をchain上で確認しました: ${shortAddress(confirmed['transaction-hash'])}`;
+                await loadWallet();
+              } catch (error) {
+                $('#wallet-owner-status').textContent = error.message;
+                receipt.disabled = false;
+              }
+            });
+            row.append(receipt);
+          } else {
+            const add = make('button', 'primary-action', 'Passkeyでownerに追加');
+            add.type = 'button';
+            add.disabled = walletOwnerAuthorizationBusy
+              || !chain?.['owner-user-operation-ready?'];
+            add.title = walletOwnerAuthorizationBusy
+              ? '別のowner追加を処理中です'
+              : add.disabled ? 'RPCとERC-4337 bundlerの設定が必要です' : '';
+            add.addEventListener('click', () => authorizeWalletOwner(
+              candidate, Number(selector.value)));
+            row.append(add);
+          }
+        }
+        list.append(row);
+      });
+    };
+    const pollWalletOwnerReceipt = async (operationId) => {
+      for (let attempt = 0; attempt < 30; attempt += 1) {
+        const result = await postJSON(
+          `/api/wallet/owners/operations/${encodeURIComponent(operationId)}/receipt`,
+          {}, true);
+        if (result.status === 'confirmed') return result;
+        $('#wallet-owner-status').textContent =
+          `送信済みです。chain receiptを確認中… (${attempt + 1}/30)`;
+        await new Promise((resolve) => setTimeout(resolve, 2000));
+      }
+      throw new Error('UserOperationは送信済みです。receipt確認を再開してください。');
+    };
+    const authorizeWalletOwner = async (candidate, chainId) => {
+      if (walletOwnerAuthorizationBusy) return;
+      walletOwnerAuthorizationBusy = true;
+      const status = $('#wallet-owner-status');
+      document.querySelectorAll('#wallet-owner-list button')
+        .forEach((ownerButton) => { ownerButton.disabled = true; });
+      try {
+        requireWebAuthn();
+        status.textContent = 'nonce・gas・factoryをchain上で確認しています…';
+        const started = await postJSON('/api/wallet/owners/authorize/start', {
+          'credential-id':candidate['credential-id'], 'chain-id':chainId
+        }, true);
+        status.textContent = '現在のowner Passkeyで確認してください。別端末を使う場合はQRを選べます。';
+        const assertion = await navigator.credentials.get(assertionOptions(started));
+        const submitted = await postJSON('/api/wallet/owners/authorize/finish', {
+          'transaction-id':started['transaction-id'],
+          credential:credentialJSON(assertion)
+        }, true);
+        status.textContent = 'UserOperationを送信しました。receiptを確認しています…';
+        const receipt = await pollWalletOwnerReceipt(submitted.id);
+        status.textContent = `owner追加をchain上で確認しました: ${shortAddress(receipt['transaction-hash'])}`;
+        await loadWallet();
+      } catch (error) {
+        status.textContent = error.message;
+      } finally {
+        walletOwnerAuthorizationBusy = false;
+        if (walletState) renderWallet(walletState);
+      }
     };
     const loadWallet = async () => {
       const request = await fetch('/api/wallet', {cache:'no-store'});
@@ -11450,8 +12425,17 @@
       $('#wallet-send-drawer').hidden = true;
       renderWallet(walletState);
     });
+    $('#wallet-provider-select').addEventListener('change', async (event) => {
+      selectedWalletProviderId = event.currentTarget.value || '';
+      await refreshWalletBalances();
+      if (walletState) renderWallet(walletState);
+    });
+    $('#wallet-owner-chain').addEventListener('change', () => {
+      if (walletState) renderWallet(walletState);
+    });
+    renderWalletProviders();
     const copySelectedWalletAddress = async () => {
-      const address = selectedWalletBot()?.wallet?.address;
+      const address = selectedWalletEntry()?.wallet?.address;
       if (!address) return;
       await navigator.clipboard.writeText(address);
       $('#wallet-connect-status').textContent = '受取アドレスをコピーしました。';
@@ -11480,7 +12464,7 @@
         const provider = requireInjectedWallet();
         const accounts = await provider.request({method:'eth_requestAccounts'});
         if (!accounts.some((address) => address.toLowerCase() === transfer.from.toLowerCase())) {
-          throw new Error(`MetaMaskで送信元 ${shortAddress(transfer.from)} を選択してください。`);
+          throw new Error(`選択したWalletで送信元 ${shortAddress(transfer.from)} を選択してください。`);
         }
         const chainId = Number(BigInt(await provider.request({method:'eth_chainId'})));
         if (chainId !== transfer['chain-id']) {
@@ -11498,15 +12482,17 @@
     };
     $('#wallet-connect').addEventListener('click', async () => {
       const button = $('#wallet-connect'); const status = $('#wallet-connect-status');
-      const botId = selectedWalletBotId;
-      if (!botId) { status.textContent = '先にBotを作成してください。'; return; }
-      button.disabled = true; status.textContent = 'Walletへ接続しています…';
+      button.disabled = true; status.textContent = '任意の外部WalletをPrincipalへリンクしています…';
       try {
-        if (!window.ethereum?.request) {
-          const opened = await postJSON('/api/wallet/open', {}, true);
-          status.textContent = opened['opened-externally?']
-            ? 'Wallet拡張のある既定ブラウザでWallet画面を開きました。'
-            : `既定ブラウザで ${opened.url} を開いてください。`;
+        if (!selectedInjectedWallet()?.request) {
+          if (nativeSurface()) {
+            const opened = await postJSON('/api/wallet/open', {}, true);
+            status.textContent = opened['opened-externally?']
+              ? 'Wallet拡張のある既定ブラウザでWallet画面を開きました。'
+              : `既定ブラウザで ${opened.url} を開いてください。`;
+          } else {
+            status.textContent = 'このブラウザに外部Wallet拡張はありません。Passkey Walletはそのまま利用できます。';
+          }
           return;
         }
         const provider = requireInjectedWallet();
@@ -11524,9 +12510,7 @@
           link = await postJSON('/api/wallet/connect/finish',
             {'transaction-id':challenge.id, signature}, true);
         }
-        await postJSON(`/api/wallet/bots/${encodeURIComponent(botId)}/assign`,
-          {'link-id':link.id}, true);
-        status.textContent = '所有証明を確認し、このBot Walletへ署名権限を接続しました。';
+        status.textContent = '所有証明を確認し、外部WalletをPrincipalへ任意リンクしました。';
         await loadWallet();
       } catch (error) { status.textContent = error.message; }
       finally { button.disabled = false; }
@@ -11538,7 +12522,7 @@
         await postJSON('/api/wallet/transfers', {
           'bot-id':fields['bot-id'], to:fields.to, 'value-wei':ethToWei(fields.amount)
         }, true);
-        status.textContent = '送金提案を記録しました。内容を確認して外部Walletで署名してください。';
+        status.textContent = '送金提案を記録しました。Passkey UserOperation対応後に確認できます。';
         event.currentTarget.reset(); $('#wallet-send-drawer').hidden = true;
         selectWalletTab('activity'); await loadWallet();
       } catch (error) { status.textContent = error.message; }
@@ -11561,12 +12545,12 @@
     const erc20TransferData = (to, value) =>
       `0xa9059cbb${to.toLowerCase().replace(/^0x/, '').padStart(64, '0')}${hex32(value)}`;
     const sleep = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
-    const waitForBaseConfirmations = async (transaction, status) => {
+    const waitForBaseConfirmations = async (provider, transaction, status) => {
       for (let attempt = 0; attempt < 60; attempt += 1) {
-        const receipt = await ethereum.request({method:'eth_getTransactionReceipt', params:[transaction]});
+        const receipt = await provider.request({method:'eth_getTransactionReceipt', params:[transaction]});
         if (receipt) {
           if (receipt.status !== '0x1') throw new Error('USDC送金がrevertされました。');
-          const head = BigInt(await ethereum.request({method:'eth_blockNumber'}));
+          const head = BigInt(await provider.request({method:'eth_blockNumber'}));
           if (head - BigInt(receipt.blockNumber) + 1n >= 3n) return;
         }
         status.textContent = '送金済みです。Baseの3 confirmationを待っています…';
@@ -11575,7 +12559,7 @@
       throw new Error('確認待ちがタイムアウトしました。transaction hashを保存して再確認してください。');
     };
     const payStorefrontOrder = async (order, card, status, button) => {
-      if (!window.ethereum) throw new Error('Base対応の外部Walletが見つかりません。');
+      const provider = requireInjectedWallet();
       const requirements = order['payment-request'].requirements;
       let transaction = button.dataset.transaction || '';
       let from = button.dataset.payer || '';
@@ -11583,25 +12567,25 @@
       try {
         if (!transaction) {
           status.textContent = 'Base Walletへの接続を確認しています…';
-          const accounts = await ethereum.request({method:'eth_requestAccounts'});
-          let chain = await ethereum.request({method:'eth_chainId'});
+          const accounts = await provider.request({method:'eth_requestAccounts'});
+          let chain = await provider.request({method:'eth_chainId'});
           if (chain !== '0x2105') {
             try {
-              await ethereum.request({method:'wallet_switchEthereumChain', params:[{chainId:'0x2105'}]});
+              await provider.request({method:'wallet_switchEthereumChain', params:[{chainId:'0x2105'}]});
             } catch (error) {
               if (error.code !== 4902) throw error;
-              await ethereum.request({method:'wallet_addEthereumChain', params:[{
+              await provider.request({method:'wallet_addEthereumChain', params:[{
                 chainId:'0x2105', chainName:'Base',
                 nativeCurrency:{name:'Ether', symbol:'ETH', decimals:18},
                 rpcUrls:['https://mainnet.base.org'], blockExplorerUrls:['https://basescan.org']
               }]});
             }
-            chain = await ethereum.request({method:'eth_chainId'});
+            chain = await provider.request({method:'eth_chainId'});
             if (chain !== '0x2105') throw new Error('WalletをBaseへ切り替えられませんでした。');
           }
           from = accounts[0];
           status.textContent = `${order['amount-usdc']} USDCの送金をWalletで確認してください。`;
-          transaction = await ethereum.request({method:'eth_sendTransaction', params:[{
+          transaction = await provider.request({method:'eth_sendTransaction', params:[{
             from, to:requirements.asset,
             data:erc20TransferData(requirements.payTo, BigInt(requirements.maxAmountRequired)),
             value:'0x0'
@@ -11614,7 +12598,7 @@
         } else {
           status.textContent = `送金済み ${transaction} を再確認しています…`;
         }
-        await waitForBaseConfirmations(transaction, status);
+        await waitForBaseConfirmations(provider, transaction, status);
         status.textContent = 'x402.nexusでオンチェーン決済を検証しています…';
         let paid;
         for (let attempt = 0; attempt < 5; attempt += 1) {
@@ -11821,6 +12805,13 @@
       if (currentView === 'settings') {
         loadChronicle().catch((error) => { $('#memory-status').textContent = error.message; });
         loadAgentMachine().catch((error) => { $('#agent-machine-status').textContent = error.message; });
+        // The scope chips are one row per Bot, so the Bots have to be loaded
+        // before the routing screen can draw itself -- somebody who opens
+        // Settings first would otherwise see 「既定」 alone and read it as the
+        // only scope there is.
+        (botsState.loaded ? Promise.resolve() : loadBots({keepSelection:true}))
+          .then(loadModelRouting)
+          .catch((error) => { $('#model-routing-status').textContent = error.message; });
       }
     };
     $('#worker-form').addEventListener('submit', async (event) => {
@@ -11886,27 +12877,399 @@
     }
     if (initialParams.get('auth')) {
       const provider = initialParams.get('provider');
-      const ok = initialParams.get('auth') === 'sso';
-      const label = authProviderLabels[provider] || provider || 'SSO';
-      $('#identity-status').textContent = ok
-        ? `${label}でサインインしました。`
-        : `${label}のサインインを完了できませんでした。もう一度お試しください。`;
+      const authResult = initialParams.get('auth');
+      // Provider SSO is not an app entrance. Only the Passkey-first central
+      // callback is surfaced, and its one-shot result is removed so a reload
+      // cannot repeat yesterday's notification forever.
+      if (provider === 'itonami-cloud') {
+        $('#identity-status').textContent = authResult === 'itonami-cloud'
+          ? 'パスキーでサインインしました。'
+          : 'パスキーのサインインを完了できませんでした。もう一度お試しください。';
+      }
+      const cleaned = new URL(location.href);
+      cleaned.searchParams.delete('auth');
+      cleaned.searchParams.delete('provider');
+      history.replaceState(null, '', `${cleaned.pathname}${cleaned.search}${cleaned.hash}`);
     }
-    const finishEmailLoginFromLink = async () => {
-      const token = emailLoginToken;
-      if (!token) return;
-      // Remove the bearer-like token from the address bar before doing any
-      // other work. It remains available in this closure for this one POST.
-      history.replaceState(null, '', `${location.pathname}${location.search}`);
+    // ---- Comment mode -----------------------------------------------------
+    // A region of this application's own screen, a sentence about it, and the
+    // bounded Goal that sentence becomes.
+    //
+    // Coordinates are CSS pixels relative to the VIEWPORT, in every direction:
+    // the overlay is `position:fixed`, the rectangle is drawn in that space,
+    // and that is what the server records. A page cannot measure the browser
+    // chrome's offset, so any basis that needed it would be a guess reported
+    // as a measurement.
+    const commentState = {
+      on:false, rect:null, target:null, shot:null, sending:false, dragging:false,
+      origin:null
+    };
+    const commentLayer = $('#comment-layer');
+    const commentRect = $('#comment-rect');
+    const commentCutout = $('#comment-cutout');
+    const commentPopover = $('#comment-popover');
+    const commentStatus = $('#comment-status');
+    const commentShot = $('#comment-shot');
+    const commentToggle = $('#comment-mode-toggle');
+    // A selector a Bot can search the repository for. Prefers `id`, then a
+    // `data-` attribute this application actually renders (`data-view-panel`,
+    // `data-view`, `data-topbar-view`), then class, and only then position.
+    // `nth-of-type` is last because it is the one part of a selector that says
+    // nothing about what the element IS.
+    const commentSelectorFor = (node) => {
+      const parts = [];
+      let current = node;
+      let depth = 0;
+      while (current && current.nodeType === 1 && current !== document.body && depth < 6) {
+        const tag = current.tagName.toLowerCase();
+        if (current.id) { parts.unshift(`#${current.id}`); break; }
+        const dataKey = ['viewPanel', 'view', 'topbarView', 'botId', 'kind']
+          .find((key) => current.dataset && current.dataset[key]);
+        if (dataKey) {
+          const attribute = dataKey.replace(/[A-Z]/g, (c) => `-${c.toLowerCase()}`);
+          parts.unshift(`${tag}[data-${attribute}="${current.dataset[dataKey]}"]`);
+        } else if (current.classList.length) {
+          parts.unshift(`${tag}.${[...current.classList].slice(0, 2).join('.')}`);
+        } else {
+          const siblings = current.parentElement
+            ? [...current.parentElement.children].filter((n) => n.tagName === current.tagName)
+            : [];
+          parts.unshift(siblings.length > 1
+            ? `${tag}:nth-of-type(${siblings.indexOf(current) + 1})`
+            : tag);
+        }
+        current = current.parentElement;
+        depth += 1;
+      }
+      return parts.join(' > ') || 'body';
+    };
+    const commentDescribe = (node) => {
+      if (!node || node.nodeType !== 1) return null;
+      const data = {};
+      Object.keys(node.dataset || {}).slice(0, 12).forEach((key) => {
+        data[key.replace(/[A-Z]/g, (c) => `-${c.toLowerCase()}`)] = node.dataset[key];
+      });
+      return {
+        selector:commentSelectorFor(node),
+        tag:node.tagName.toLowerCase(),
+        id:node.id || null,
+        classes:[...node.classList],
+        data,
+        text:(node.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 400)
+      };
+    };
+    // What is under the pointer, with the overlay taken out of the way. The
+    // layer covers the viewport by design, so without this every hit-test
+    // would answer "the scrim".
+    const commentElementAt = (x, y) => {
+      const previous = commentLayer.style.pointerEvents;
+      commentLayer.style.pointerEvents = 'none';
+      const node = document.elementFromPoint(x, y);
+      commentLayer.style.pointerEvents = previous;
+      return node;
+    };
+    // The CSS properties the crop carries. A curated list, not every computed
+    // property: `getComputedStyle` enumerates roughly 340 of them, and writing
+    // all of them onto every node is what made the document too large to
+    // decode. These are the ones that decide what a panel LOOKS like, which is
+    // the whole reason a picture is being taken.
+    const CAPTURED_PROPERTIES = [
+      'display', 'position', 'box-sizing', 'width', 'height', 'min-height',
+      'max-width', 'overflow', 'visibility', 'opacity', 'z-index',
+      'margin', 'padding', 'border', 'border-radius', 'outline',
+      'flex-direction', 'flex-wrap', 'align-items', 'justify-content', 'gap',
+      'grid-template-columns', 'grid-template-rows', 'flex', 'order',
+      'color', 'background-color', 'background-image', 'box-shadow',
+      'font-family', 'font-size', 'font-weight', 'font-style', 'line-height',
+      'letter-spacing', 'text-align', 'text-decoration', 'text-transform',
+      'text-overflow', 'white-space', 'word-break', 'vertical-align',
+      'list-style', 'transform', 'inset', 'top', 'left', 'right', 'bottom'
+    ];
+    // An SVG of the selected region, or null with a reason.
+    //
+    // Vector rather than raster, and not by preference. This page's CSP is
+    // `img-src 'self'` — no `data:`, no `blob:` — which ADR-0007 chose on
+    // purpose. Rasterising a DOM subtree in a browser means loading an SVG into
+    // an `<img>`, and that load is exactly what the policy refuses; measured
+    // 2026-08-27, even a ten-pixel `<rect>` from a blob URL fails here, and
+    // `createImageBitmap` cannot decode SVG in Chrome at all. So the crop stays
+    // an SVG document, the server stores it, and it is viewed at its own URL —
+    // a navigation, which `img-src` does not govern.
+    //
+    // Best-effort on purpose: a very large subtree legitimately defeats it, and
+    // the comment is still worth sending without a picture. What is NOT
+    // acceptable is failing silently, so every path returns a reason the
+    // popover shows.
+    const commentCapture = (node, rect) => {
+      const MAX_NODES = 1500;
       try {
-        const data = await postJSON('/api/email-authenticate/finish', {token});
-        renderIdentity(data);
-        $('#identity-status').textContent = 'Email でサインインしました。';
+        if (!node) return {svg:null, reason:'選択範囲に要素がありません'};
+        const count = node.querySelectorAll('*').length;
+        if (count > MAX_NODES) {
+          return {svg:null, reason:`範囲が大きすぎます（${count} 要素）`};
+        }
+        const clone = node.cloneNode(true);
+        // The crop is a clone of the LIVE DOM, which shows mail, Bot messages
+        // and repository text this application did not write. The server
+        // refuses a script-shaped document and serves what it stores under
+        // `sandbox; default-src 'none'`; this is the first of those three.
+        clone.querySelectorAll('script,iframe,object,embed').forEach((n) => n.remove());
+        const scrub = (element) => {
+          [...element.attributes].forEach((attribute) => {
+            if (/^on/i.test(attribute.name)) element.removeAttribute(attribute.name);
+          });
+          [...element.children].forEach(scrub);
+        };
+        scrub(clone);
+        const inline = (source, copy) => {
+          const style = getComputedStyle(source);
+          let text = '';
+          for (const property of CAPTURED_PROPERTIES) {
+            const value = style.getPropertyValue(property);
+            if (value) text += `${property}:${value};`;
+          }
+          copy.setAttribute('style', text);
+          const sourceChildren = source.children;
+          const copyChildren = copy.children;
+          for (let i = 0; i < sourceChildren.length && i < copyChildren.length; i += 1) {
+            inline(sourceChildren[i], copyChildren[i]);
+          }
+        };
+        inline(node, clone);
+        // The region is cut with `viewBox`, not by rasterising: the crop is the
+        // element's own box shifted so the selected rectangle starts at the
+        // origin. The intrinsic size is the SELECTION, so opening the file
+        // shows what was selected rather than the element it was taken from.
+        const box = node.getBoundingClientRect();
+        const serialized = new XMLSerializer().serializeToString(clone);
+        const svg =
+          `<svg xmlns="http://www.w3.org/2000/svg" ` +
+          `width="${Math.ceil(rect.width)}" height="${Math.ceil(rect.height)}" ` +
+          `viewBox="${rect.x - box.x} ${rect.y - box.y} ` +
+          `${Math.ceil(rect.width)} ${Math.ceil(rect.height)}">` +
+          `<foreignObject width="${Math.ceil(box.width)}" height="${Math.ceil(box.height)}">` +
+          `<div xmlns="http://www.w3.org/1999/xhtml">${serialized}</div>` +
+          `</foreignObject></svg>`;
+        return {svg, reason:null};
       } catch (error) {
-        $('#identity-status').textContent = error.message;
+        return {svg:null, reason:error.message || '切り抜きに失敗しました'};
       }
     };
-    finishEmailLoginFromLink().finally(loadIdentity);
+    const commentBotOptions = () => {
+      const select = $('#comment-bot');
+      select.replaceChildren();
+      // The wire key is `enabled?`. Reading `bot.enabled` here is always
+      // `undefined`, which would offer every stopped Bot as a destination and
+      // then fail at `bots/send!` with 「この Bot は停止しています」.
+      const bots = botsState.bots.filter((bot) => bot['enabled?'] !== false);
+      if (!bots.length) {
+        select.append(make('option', null, 'Bot がまだ読み込まれていません'));
+        select.disabled = true;
+        return;
+      }
+      select.disabled = false;
+      bots.forEach((bot) => {
+        const option = make('option', null, bot.name || bot.id);
+        option.value = bot.id;
+        select.append(option);
+      });
+      // The Bot whose thread is open is the one the person is looking at.
+      if (botsState.selected && bots.some((bot) => bot.id === botsState.selected)) {
+        select.value = botsState.selected;
+      }
+    };
+    const commentClosePopover = () => {
+      commentPopover.hidden = true;
+      commentRect.hidden = true;
+      commentCutout.hidden = true;
+      commentShot.hidden = true;
+      commentLayer.dataset.picked = 'false';
+      commentState.rect = null;
+      commentState.target = null;
+      commentState.shot = null;
+    };
+    const commentSetMode = (on) => {
+      commentState.on = on;
+      document.body.dataset.commentMode = on ? 'on' : 'off';
+      commentLayer.setAttribute('aria-hidden', on ? 'false' : 'true');
+      commentToggle?.setAttribute('aria-pressed', on ? 'true' : 'false');
+      if (!on) commentClosePopover();
+    };
+    const commentPlacePopover = (rect) => {
+      const width = Math.min(window.innerWidth * 0.92, 416);
+      const left = Math.min(Math.max(8, rect.x), window.innerWidth - width - 8);
+      const below = rect.y + rect.height + 12;
+      const fitsBelow = below + 320 < window.innerHeight;
+      commentPopover.style.left = `${left}px`;
+      commentPopover.style.top = fitsBelow ? `${below}px` : '';
+      commentPopover.style.bottom = fitsBelow
+        ? '' : `${Math.max(8, window.innerHeight - rect.y + 12)}px`;
+    };
+    const commentOpenFor = async (rect, node) => {
+      commentState.rect = rect;
+      commentState.target = commentDescribe(node);
+      commentLayer.dataset.picked = 'true';
+      Object.assign(commentCutout.style, {
+        left:`${rect.x}px`, top:`${rect.y}px`,
+        width:`${rect.width}px`, height:`${rect.height}px`
+      });
+      commentCutout.hidden = false;
+      commentRect.hidden = true;
+      commentPlacePopover(rect);
+      commentPopover.hidden = false;
+      $('#comment-target').textContent = commentState.target
+        ? commentState.target.selector
+        : `範囲 ${Math.round(rect.width)}×${Math.round(rect.height)}`;
+      commentBotOptions();
+      commentStatus.dataset.state = '';
+      commentStatus.textContent = '';
+      $('#comment-text').focus();
+      const {svg, reason} = commentCapture(node, rect);
+      commentState.shot = svg;
+      commentShot.hidden = !svg;
+      if (svg) {
+        commentShot.textContent = `切り抜きを保存します（${Math.round(svg.length / 1024)} KB）`;
+      } else {
+        // Says which of the two it was. "No picture" and "the picture failed"
+        // must not arrive looking the same.
+        commentStatus.textContent = `切り抜きなしで送ります（${reason}）`;
+      }
+    };
+    if (commentLayer && commentToggle) {
+      commentToggle.addEventListener('click', () => commentSetMode(!commentState.on));
+      document.addEventListener('keydown', (event) => {
+        if (event.key === 'Escape' && commentState.on) {
+          if (!commentPopover.hidden) commentClosePopover();
+          else commentSetMode(false);
+        }
+      });
+      // Right-click picks the element under the pointer whole. It is the fast
+      // path for "this thing here", where a drag would only approximate the
+      // box the element already has.
+      commentLayer.addEventListener('contextmenu', (event) => {
+        if (!commentState.on) return;
+        event.preventDefault();
+        const node = commentElementAt(event.clientX, event.clientY);
+        if (!node) return;
+        const box = node.getBoundingClientRect();
+        commentOpenFor(
+          {x:box.x, y:box.y, width:box.width, height:box.height}, node
+        );
+      });
+      commentLayer.addEventListener('pointerdown', (event) => {
+        if (!commentState.on || event.button !== 0) return;
+        if (commentPopover.contains(event.target)) return;
+        commentClosePopover();
+        commentState.dragging = true;
+        commentState.origin = {x:event.clientX, y:event.clientY};
+        commentLayer.setPointerCapture(event.pointerId);
+      });
+      commentLayer.addEventListener('pointermove', (event) => {
+        if (!commentState.dragging) return;
+        const origin = commentState.origin;
+        const rect = {
+          x:Math.min(origin.x, event.clientX), y:Math.min(origin.y, event.clientY),
+          width:Math.abs(event.clientX - origin.x),
+          height:Math.abs(event.clientY - origin.y)
+        };
+        Object.assign(commentRect.style, {
+          left:`${rect.x}px`, top:`${rect.y}px`,
+          width:`${rect.width}px`, height:`${rect.height}px`
+        });
+        commentRect.hidden = false;
+      });
+      commentLayer.addEventListener('pointerup', (event) => {
+        if (!commentState.dragging) return;
+        commentState.dragging = false;
+        const origin = commentState.origin;
+        const rect = {
+          x:Math.min(origin.x, event.clientX), y:Math.min(origin.y, event.clientY),
+          width:Math.abs(event.clientX - origin.x),
+          height:Math.abs(event.clientY - origin.y)
+        };
+        // A drag that never moved is a click, and a comment attached to a
+        // zero-width rectangle is a comment attached to nothing.
+        if (rect.width < 6 || rect.height < 6) { commentRect.hidden = true; return; }
+        commentOpenFor(rect, commentElementAt(rect.x + rect.width / 2,
+                                              rect.y + rect.height / 2));
+      });
+      $('#comment-cancel').addEventListener('click', commentClosePopover);
+      commentPopover.addEventListener('submit', async (event) => {
+        event.preventDefault();
+        if (commentState.sending) return;
+        const text = $('#comment-text').value.trim();
+        const botId = $('#comment-bot').value;
+        if (!text) {
+          commentStatus.dataset.state = 'error';
+          commentStatus.textContent = '直してほしいことを書いてください。';
+          return;
+        }
+        if (!botId) {
+          commentStatus.dataset.state = 'error';
+          commentStatus.textContent = '宛先の Bot を選んでください。';
+          return;
+        }
+        commentState.sending = true;
+        $('#comment-send').disabled = true;
+        commentStatus.dataset.state = '';
+        commentStatus.textContent = 'Bot に送っています…';
+        let recorded = null;
+        try {
+          const rect = commentState.rect;
+          recorded = await postJSON('/api/bots/comments', {
+            comment:text,
+            view:document.body.dataset.currentView || null,
+            'bot-id':botId,
+            element:commentState.target,
+            region:{
+              x:Math.round(rect.x), y:Math.round(rect.y),
+              width:Math.round(rect.width), height:Math.round(rect.height),
+              'viewport-width':window.innerWidth,
+              'viewport-height':window.innerHeight,
+              'device-pixel-ratio':window.devicePixelRatio || 1
+            },
+            svg:commentState.shot
+          }, true);
+        } catch (error) {
+          commentStatus.dataset.state = 'error';
+          commentStatus.textContent = error.message || '送れませんでした。';
+          return;
+        } finally {
+          commentState.sending = false;
+          $('#comment-send').disabled = false;
+        }
+        $('#comment-text').value = '';
+        commentClosePopover();
+        commentSetMode(false);
+        // Recording the comment and starting the Goal are two outcomes, and
+        // they are reported as two. The comment is on disk either way; saying
+        // "送れませんでした" after it was stored would send somebody to write it
+        // again.
+        try {
+          // The comment is recorded; the Goal is started through the Bots
+          // composer rather than by the POST above.
+          //
+          // A Goal is not a chat reply — `bots/send!` is synchronous and a
+          // resident tick has been measured at ninety-five minutes. Dispatching
+          // it from this handler would leave the popover disabled, with one
+          // spinner and no cancel, for as long as the turn took. The Bots view
+          // already owns that problem: `#bots-form` opens the streaming run,
+          // shows the phase and the tool it is on, counts elapsed seconds, and
+          // offers Cancel. Filling its composer reuses all of it and leaves one
+          // dispatch path in the client instead of two.
+          await selectBot(recorded['bot-id']);
+          showView('bots');
+          botsState.nextGoalOverride = true;
+          botsInput.value = recorded.text;
+          $('#bots-form').requestSubmit();
+          announce('画面コメントを Goal として送りました。');
+        } catch (error) {
+          announce(`コメントは記録しました（${recorded.id}）が、`
+                   + `Goal を開始できませんでした: ${error.message}`);
+        }
+      });
+    }
+    loadIdentity();
     // after every const above is defined — calling this next to the initial
     // showView() would hit `Cannot access 'loadFilecoin' before initialization`
     loadFilecoin();
