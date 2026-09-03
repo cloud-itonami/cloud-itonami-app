@@ -11,7 +11,7 @@
 |---|---|---|
 | spec/契約 | 3 | ADR 22 本 (+ ADR-2607254000 の Tier 境界)、commands.edn に 208 コマンドの schema。ただし契約→テストの機械検証リンクは一部 |
 | 実装 | 3 | src 221 ファイル、全主要面 (bots/webhook/hermes-compat/store) 実装済み。virtual-shell は未活性 |
-| テスト | 3 | test 196 ファイル。hermes_compat_http_test 等の HTTP レベル検証あり。フルスイートの定期緑保証は未 (tick が dirty-skipped) |
+| テスト | 2 | test 199 ファイル。ただし falsify-1 実測: origin/main 172bd46 で `clojure -M:test` は 1 テストも走らずコンパイル死 (`No such var: bot/face`, bots.clj:1907)。CI required path は JVM-free emit のみで JVM スイートを守らない |
 | 反証 | 1 | 本 ledger 設立前。falsify 記録なし (これから) |
 | 再現性 | 2 | launchd で server/host/tick は再現稼働。ただし release ツリー破損事故 (f9138fbd 欠損) が 1 回 — immutable release でない |
 | governor 統合 | 3 | tamaki Tier1 tick が fleet を 1427 repo スキャン。app 本体は dirty-skipped で未統合 |
