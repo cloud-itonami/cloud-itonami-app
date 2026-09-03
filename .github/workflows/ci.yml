@@ -51,6 +51,8 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Authenticate git deps (private kotoba-lang repos)
+        run: git config --global url."https://x-access-token:${{ github.token }}@github.com/".insteadOf "https://github.com/"
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
