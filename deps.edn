@@ -127,7 +127,7 @@
   ;; Twin of ambient java.nio / ProcessBuilder. Absolute binaries only.
   io.github.kotoba-lang/fs
   {:git/url "https://github.com/kotoba-lang/fs.git"
-   :git/sha "607caf1f54f3f922eac899f67511468e501ba970"}
+   :git/sha "9e56e4bb037dbe48b2c1b4e40d4832b7474f6ea8"}
   io.github.kotoba-lang/process
   {:git/url "https://github.com/kotoba-lang/process.git"
    :git/sha "f261f1e7853d26c2bf53b2236e3b7d454598ac28"}
@@ -423,7 +423,7 @@
 
   io.github.kotoba-lang/identity
   {:git/url "https://github.com/kotoba-lang/identity.git"
-   :git/sha "09803452a79fd57c211f0cf7e67fdc1c780dd8d8"}
+   :git/sha "507d51ce11078b8034313df22dd9b282a53a4ca3"}
 
   ;; Delegation, and the ONE thing that decides it.
   ;;
