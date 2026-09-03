@@ -41,10 +41,11 @@
             [clojure.string :as str]
             [ed25519.core :as ed]
             [identity.model :as identity-model]
-            [cloud.itonami.app.config :as config])
+            [cloud.itonami.app.config :as config]
+            [cloud.itonami.app.secure-file :as secure-file])
   (:import [java.security MessageDigest SecureRandom]
            [java.nio.file Files LinkOption]
-           [java.nio.file.attribute PosixFilePermission PosixFilePermissions]))
+))
 
 (def seed-bytes 32)
 
@@ -52,11 +53,7 @@
   (io/file (config/data-dir) "bot-identity.seed"))
 
 (defn- owner-only! [^java.io.File file]
-  (try
-    (Files/setPosixFilePermissions
-     (.toPath file)
-     (PosixFilePermissions/fromString "rw-------"))
-    (catch Exception _ nil)))
+  (secure-file/harden! file "rw-------"))
 
 (defn- read-seed []
   (let [file (seed-file)]

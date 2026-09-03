@@ -53,10 +53,11 @@
             [biscuit.authority :as biscuit-authority]
             [authority.grant :as grant]
             [cloud.itonami.app.bot-identity :as bot-identity]
-            [cloud.itonami.app.config :as config])
+            [cloud.itonami.app.config :as config]
+            [cloud.itonami.app.secure-file :as secure-file])
   (:import [java.security SecureRandom]
            [java.nio.file Files]
-           [java.nio.file.attribute PosixFilePermissions]))
+))
 
 (def seed-bytes 32)
 
@@ -79,9 +80,7 @@
             (.nextBytes (SecureRandom.) bytes)
             (io/make-parents file)
             (with-open [out (io/output-stream file)] (.write out bytes))
-            (try (Files/setPosixFilePermissions
-                  (.toPath file) (PosixFilePermissions/fromString "rw-------"))
-                 (catch Exception _ nil))
+            (secure-file/harden! file "rw-------")
             bytes)
           (catch Exception _ nil)))))
 

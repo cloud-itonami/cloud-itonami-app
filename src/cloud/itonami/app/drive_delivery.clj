@@ -18,6 +18,7 @@
             [clojure.string :as str]
             [cloud.itonami.app.config :as config]
             [cloud.itonami.app.drive-crypto :as crypto]
+            [cloud.itonami.app.secure-file :as secure-file]
             [cloud.itonami.app.store :as store]
             [drive.object :as object]
             [ed25519.core :as ed])
@@ -26,7 +27,7 @@
            (java.io ByteArrayInputStream ByteArrayOutputStream)
            (java.nio.charset StandardCharsets)
            (java.nio.file Files)
-           (java.nio.file.attribute PosixFilePermissions)
+
            (java.security SecureRandom)
            (java.util Base64 UUID)
            (javax.imageio ImageIO)))
@@ -50,10 +51,7 @@
           (.nextBytes (SecureRandom.) value)
           (io/make-parents file)
           (with-open [out (io/output-stream file)] (.write out value))
-          (try
-            (Files/setPosixFilePermissions
-             (.toPath file) (PosixFilePermissions/fromString "rw-------"))
-            (catch UnsupportedOperationException _))
+          (secure-file/harden! file "rw-------")
           value))))
 
 (defn root-did [] (ed/did-key-from-seed (root-seed)))

@@ -12,11 +12,12 @@
             [cloud.itonami.app.config :as config]
             [cloud.itonami.app.drive-crypto :as crypto]
             [cloud.itonami.app.kotobase-objects :as kotobase]
+            [cloud.itonami.app.secure-file :as secure-file]
             [cloud.itonami.app.store :as app-store]
             [drive.object :as object]
             [drive.store.fs :as fs])
   (:import (java.nio.file Files StandardCopyOption)
-           (java.nio.file.attribute PosixFilePermissions)
+
            (java.time Instant)))
 
 (defn- bytes= [left right]
@@ -116,10 +117,7 @@
       (Files/copy (.toPath source) (.toPath target)
                   (into-array java.nio.file.CopyOption
                               [StandardCopyOption/COPY_ATTRIBUTES]))
-      (try
-        (Files/setPosixFilePermissions (.toPath target)
-                                       (PosixFilePermissions/fromString "rw-------"))
-        (catch UnsupportedOperationException _)))
+      (secure-file/harden! target "rw-------"))
     target))
 
 (defn migrate! []

@@ -42,10 +42,10 @@
   (:require [clojure.string :as str]
             [cloud.itonami.app.config :as config]
             [cloud.itonami.app.identity :as identity]
+            [cloud.itonami.app.secure-file :as secure-file]
             [cloud.itonami.app.store :as store])
   (:import [java.nio.file Files LinkOption Path]
            [java.util.concurrent TimeUnit]
-           [java.nio.file.attribute PosixFilePermission PosixFilePermissions]
            [java.security MessageDigest SecureRandom]
            [java.time Instant]
            [java.util Base64]))
@@ -64,11 +64,15 @@
 
 (defn- owner-only
   "0600. The whole proof rests on this file being unreadable by other users, so
-  the permissions are set explicitly rather than inherited from the umask."
-  []
-  (PosixFilePermissions/asFileAttribute
-   (java.util.EnumSet/of PosixFilePermission/OWNER_READ
-                         PosixFilePermission/OWNER_WRITE)))
+  the permissions are set explicitly rather than inherited from the umask.
+  Cross-platform: restrictive NTFS ACL on Windows (secure-file/harden!)."
+  [path]
+  (secure-file/harden! path "rw-------"))
+
+(defn- create-owner-only
+  "Create the key file with owner-only permissions from the first byte."
+  [path]
+  (secure-file/create-file! path))
 
 (defn- random-key []
   (let [bytes (byte-array 32)]
@@ -90,7 +94,7 @@
     (if (Files/isRegularFile path (into-array LinkOption []))
       (str/trim (String. (Files/readAllBytes path) "UTF-8"))
       (let [key (random-key)]
-        (Files/createFile path (into-array [(owner-only)]))
+        (create-owner-only path)
         (Files/write path (.getBytes key "UTF-8")
                      (into-array java.nio.file.OpenOption []))
         key))))

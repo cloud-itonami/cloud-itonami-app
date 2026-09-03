@@ -8,10 +8,10 @@
             [clojure.java.io :as io]
             [clojure.string :as str]
             [cloud.itonami.app.organism-gateway :as gateway]
+            [cloud.itonami.app.secure-file :as secure-file]
             [cloud.itonami.app.store :as store])
   (:import [java.nio.charset StandardCharsets]
            [java.nio.file Files StandardCopyOption]
-           [java.nio.file.attribute PosixFilePermission PosixFilePermissions]
            [java.security MessageDigest SecureRandom]
            [java.util Base64 UUID]))
 
@@ -47,12 +47,7 @@
   (io/file (credential-directory) (str (safe-worker-id worker-id) ".messenger.edn")))
 
 (defn- owner-only! [file]
-  (try
-    (Files/setPosixFilePermissions
-     (.toPath file)
-     (java.util.EnumSet/of PosixFilePermission/OWNER_READ
-                           PosixFilePermission/OWNER_WRITE))
-    (catch UnsupportedOperationException _ nil))
+  (secure-file/harden! file "rw-------")
   file)
 
 (defn- write-credential! [worker-id value]
@@ -61,16 +56,7 @@
         temporary (io/file parent (str "." (.getName file) "."
                                         (UUID/randomUUID) ".tmp"))]
     (.mkdirs parent)
-    (try
-      (Files/createFile
-       (.toPath temporary)
-       (into-array
-        [(PosixFilePermissions/asFileAttribute
-          (java.util.EnumSet/of PosixFilePermission/OWNER_READ
-                                PosixFilePermission/OWNER_WRITE))]))
-      (catch UnsupportedOperationException _
-        (Files/createFile (.toPath temporary)
-                          (make-array java.nio.file.attribute.FileAttribute 0))))
+    (secure-file/create-file! temporary)
     (Files/write (.toPath temporary)
                  (.getBytes (str (pr-str value) "\n") StandardCharsets/UTF_8)
                  (make-array java.nio.file.OpenOption 0))

@@ -105,6 +105,33 @@ func openWindow() error {
 	return exec.Command("cmd.exe", "/c", "start", "", "http://localhost:1338/").Start()
 }
 
+// showStartupErrorDialog opens a modal message box so a Windows user who
+// double-clicks the launcher sees WHY the window never appears. A log file
+// alone is invisible: the 2026-09-03 v0.4.1 report showed a silent first
+// launch where localhost:1338 never came up. PowerShell is used rather than
+// a Go GUI dependency; user32.MessageBox via a compiled C# fallback is
+// unnecessary — powershell.exe ships on every supported Windows.
+func showStartupErrorDialog(logPath string) {
+	title := "Cloud Itonami failed to start"
+	message := "The Cloud Itonami server terminated during startup.\n\n" +
+		"Details were written to:\n" + logPath
+	script := fmt.Sprintf(
+		"Add-Type -AssemblyName System.Windows.Forms; "+
+			"[System.Windows.Forms.MessageBox]::Show(%q, %q, "+
+			"'OK', 'IconError') | Out-Null", message, title)
+	_ = exec.Command("powershell.exe", "-NoProfile",
+		"-NonInteractive", "-Command", script).Start()
+}
+
+// A previous launch's error must not survive: a stale prerequisite warning
+// left behind by an old install made a new failure look like the old one.
+// Overwrite, never append.
+func writeLauncherError(logDir, message string) {
+	logPath := filepath.Join(logDir, "launcher-error.log")
+	_ = os.WriteFile(logPath, []byte(message), 0600)
+	showStartupErrorDialog(logPath)
+}
+
 func main() {
 	executable, err := os.Executable()
 	if err != nil {
@@ -119,7 +146,7 @@ func main() {
 	}
 	if !healthy() {
 		if err := startServer(installDir, dataDir, logDir); err != nil {
-			_ = os.WriteFile(filepath.Join(logDir, "launcher-error.log"), []byte(err.Error()), 0600)
+			writeLauncherError(logDir, err.Error())
 			return
 		}
 		for attempt := 0; attempt < 240 && !healthy(); attempt++ {
@@ -128,5 +155,7 @@ func main() {
 	}
 	if healthy() {
 		_ = openWindow()
+	} else {
+		showStartupErrorDialog(filepath.Join(logDir, "server.log"))
 	}
 }
