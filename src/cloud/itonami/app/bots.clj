@@ -5079,6 +5079,14 @@
                   (do
                     (save-run! (:bot/id b) (assoc run :pending-call call
                                                   :pending-card card-id))
+                    ;; Name the hold ON THE STREAM. A chat client sitting on
+                    ;; the SSE surface otherwise sees the turn end without
+                    ;; knowing why; this event is the difference between
+                    ;; "done" and "waiting for you" (owner 2026-09-03).
+                    (when on-event
+                      (on-event {:type "phase" :phase "waiting-approval"
+                                 :tool name
+                                 :card card-id}))
                     (finish-visible! on-finish run :waiting-approval
                                      {:turn/tool name})
                     (say (:bot/id b)

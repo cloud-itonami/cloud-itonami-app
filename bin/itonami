@@ -354,6 +354,10 @@
 ;; ---------------------------------------------------------------------------
 
 (def ^:private chat-default-profile "default")
+(def ^:private chat-profile (atom chat-default-profile))
+;; The card the current run is held on, set by a `waiting-approval` phase
+;; event, consumed by /approve and /deny in the REPL.
+(def ^:private chat-approval (atom nil))
 
 (defn- chat-emit [text]
   (js/process.stdout.write (str text)))
@@ -397,9 +401,20 @@
                                 :output (or (:output ev) "") :usage (:usage ev))
                          (js/process.stdout.write "\n"))
 
+                     (= "run.phase" kind)
+                     ;; A held write names the card that answers it. Surface
+                     ;; it — the approval is one REPL command away, and the
+                     ;; stream otherwise ends without saying why.
+                     (when (= "waiting-approval" (:phase ev))
+                       (reset! chat-approval {:card (:card ev) :tool (:tool ev)})
+                       (swap! out assoc :approval {:card (:card ev) :tool (:tool ev)})
+                       (js/process.stdout.write
+                        (str "\n⚠ 承認待ち: " (:tool ev)
+                             " — /approve で許可、/deny で拒否\n")))
+
                      (contains? #{"run.failed" "run.cancelled" "run.stopped"} kind)
                      (do (swap! out assoc :status (subs kind 4) :error (:error ev))
-                         (when (:error ev) (chat-emit (str "error: " (:error ev)))))
+                         (when (:error ev) (chat-emit (str "\nerror: " (:error ev) "\n"))))
 
                      :else nil)))
                (feed [s]
@@ -439,11 +454,101 @@
                          (reject (ex-info (str "event stream に到達できません: " (base-url))
                                           {:type :client/unreachable :cause (.-message e)})))))))))))
 
+(defn- chat-slash!
+  "A REPL command. Returns :exit to end the session, :handled when the
+  command already handled the line (its answer may still be streaming in —
+  a promise, which the caller should await before prompting again), or nil
+  when the line is not a command."
+  [line]
+  (let [words (str/split (str/trim line) #"\s+")
+        cmd (first words)
+        args (vec (rest words))
+        say-error (fn [e] (println (str "error: " (ex-message e))))]
+    (case cmd
+      "/help"
+      (do (println "  /bots — Bot 一覧
+  /profiles — profile 一覧
+  /profile <id> — 対話先を切り替え
+  /approve — 承認待ちの card を許可
+  /deny — 承認待ちの card を拒否
+  /status — 常駐サーバの状態
+  /exit — 終了")
+          :handled)
+
+      "/bots"
+      (-> (request! {:method :get :path "/api/agent-bots"} (require-token!))
+          (.then (fn [{:keys [status body]}]
+                   (if (<= 200 status 299)
+                     (doseq [b (take 20 (:data body))]
+                       (println (str "  " (or (:id b) (:bot_id b))
+                                     "  " (or (:name b) "?")
+                                     "  " (or (:status b) "?"))))
+                     (println (str "HTTP " status)))))
+          (.catch say-error))
+
+      "/profiles"
+      (-> (request! {:method :get :path "/api/profiles"} (require-token!))
+          (.then (fn [{:keys [status body]}]
+                   (if (<= 200 status 299)
+                     (doseq [p (take 30 (:data body))]
+                       (println (str "  " (:id p) "  " (:name p) "  " (:status p))))
+                     (println (str "HTTP " status)))))
+          (.catch say-error))
+
+      "/profile"
+      (do (if (empty? args)
+            (println (str "profile: " @chat-profile))
+            (do (reset! chat-profile (first args))
+                (println (str "profile: " @chat-profile))))
+          :handled)
+
+      "/status"
+      (-> (request! {:method :get :path "/health" :timeout-seconds 5} nil)
+          (.then (fn [{:keys [status body]}]
+                   (println (str "server: " (if (<= 200 status 299) "answering" "down")
+                                 "  store: " (:store body)))))
+          (.catch (fn [_] (println "server: down"))))
+
+      "/approve"
+      (if-let [{:keys [card]} @chat-approval]
+        (-> (request! {:method :post
+                       :path (str "/api/agent-bots/" @chat-profile
+                                  "/cards/" card "/decide")
+                       :body {:decision "approved"}}
+                      (require-token!))
+            (.then (fn [{:keys [status]}]
+                     (println (if (<= 200 status 299)
+                                "approved — 実行が続きます"
+                                (str "decide failed: HTTP " status)))))
+            (.catch say-error))
+        (do (println "承認待ちの card はありません") :handled))
+
+      "/deny"
+      (if-let [{:keys [card]} @chat-approval]
+        (-> (request! {:method :post
+                       :path (str "/api/agent-bots/" @chat-profile
+                                  "/cards/" card "/decide")
+                       :body {:decision "rejected"}}
+                      (require-token!))
+            (.then (fn [{:keys [status]}]
+                     (println (if (<= 200 status 299)
+                                "denied"
+                                (str "decide failed: HTTP " status)))))
+            (.catch say-error))
+        (do (println "承認待ちの card はありません") :handled))
+
+      "/exit" :exit
+
+      (if (str/starts-with? (str cmd) "/")
+        (do (println (str "そのような command はありません: " cmd " (/help)")) :handled)
+        nil))))
+
 (defn- chat-prompt-loop!
-  "The REPL: one message per turn, each on its own run, streaming deltas."
-  [profile]
+  "The REPL: one message per turn, each on its own run, streaming deltas.
+  Lines starting with / are commands (see chat-slash!), not messages."
+  []
   (let [rl (js/require "node:readline/promises")]
-    (println (str "profile: " profile " — exit で終了"))
+    (println (str "profile: " @chat-profile " — /help で一覧、exit で終了"))
     (let [iface (.createInterface rl #js {:input js/process.stdin
                                           :output js/process.stdout})]
       (letfn [(turn []
@@ -452,32 +557,44 @@
                              (let [text (str/trim (str text))]
                                (cond
                                  (empty? text) (turn)
-                                 (#{"exit" "quit" "/exit"} text)
-                                 (js/process.exit exit-answered)
-
+                                 (= "exit" text) (js/process.exit exit-answered)
+                                 (= "quit" text) (js/process.exit exit-answered)
+                                 (= "/exit" text) (js/process.exit exit-answered)
                                  :else
-                                 (-> (request! {:method :post :path "/v1/runs"
-                                                :body {:input text :profile profile}
-                                                :timeout-seconds 30}
-                                               (require-token!))
-                                     (.then (fn [{:keys [status body]}]
-                                              (if (<= 200 status 299)
-                                                (chat-poll-events! (or (:run_id body) (:run-id body)))
-                                                (refuse! (str "run を開始できません: HTTP " status)
-                                                         (select-keys body [:error])))))
-                                     (.then (fn [out]
-                                              (let [usage (:usage out)]
-                                                (when usage
-                                                  (chat-emit (str "· tokens: "
-                                                                  (or (:prompt_tokens usage) "?") " in / "
-                                                                  (or (:completion_tokens usage) "?") " out")))
-                                                (println))
-                                              (turn)))
-                                     (.catch (fn [e]
-                                               (if (= "readline was closed" (ex-message e))
-                                                 (js/process.exit exit-answered)
-                                                 (do (chat-emit (str "error: " (ex-message e) "\n"))
-                                                     (js/process.exit exit-cannot-answer))))))))))))]
+                                 (let [r (chat-slash! text)]
+                                   (cond
+                                     (= :exit r) (js/process.exit exit-answered)
+                                     (instance? js/Promise r)
+                                     (-> r (.then (fn [_] (turn)))
+                                         (.catch (fn [e]
+                                                   (if (= "readline was closed" (ex-message e))
+                                                     (js/process.exit exit-answered)
+                                                     (do (chat-emit (str "error: " (ex-message e) "\n"))
+                                                         (js/process.exit exit-cannot-answer))))))
+
+                                     :else
+                                     (-> (request! {:method :post :path "/v1/runs"
+                                                    :body {:input text :profile @chat-profile}
+                                                    :timeout-seconds 30}
+                                                   (require-token!))
+                                         (.then (fn [{:keys [status body]}]
+                                                  (if (<= 200 status 299)
+                                                    (chat-poll-events! (or (:run_id body) (:run-id body)))
+                                                    (refuse! (str "run を開始できません: HTTP " status)
+                                                             (select-keys body [:error])))))
+                                         (.then (fn [out]
+                                                  (let [usage (:usage out)]
+                                                    (when usage
+                                                      (chat-emit (str "· tokens: "
+                                                                      (or (:prompt_tokens usage) "?") " in / "
+                                                                      (or (:completion_tokens usage) "?") " out")))
+                                                    (println))
+                                                  (turn)))
+                                         (.catch (fn [e]
+                                                   (if (= "readline was closed" (ex-message e))
+                                                     (js/process.exit exit-answered)
+                                                     (do (chat-emit (str "error: " (ex-message e) "\n"))
+                                                         (js/process.exit exit-cannot-answer))))))))))))))]
         (turn)))))
 
 (defn- chat!
@@ -510,7 +627,7 @@
                        (refuse! (str "run を開始できません: HTTP " status)
                                 (select-keys body [:error]))))))
         nil)
-      (chat-prompt-loop! profile))))
+      (chat-prompt-loop!))))
 
 (defn- suggest
   "Commands whose name contains the FIRST word.

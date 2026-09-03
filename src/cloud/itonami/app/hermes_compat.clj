@@ -279,7 +279,10 @@
       "phase" (cond-> {:event "run.phase" :run_id run-id :timestamp timestamp
                        :phase (:phase event)}
                 (:tool event) (assoc :tool (:tool event))
-                (:tool-count event) (assoc :tool_count (:tool-count event)))
+                (:tool-count event) (assoc :tool-count (:tool-count event))
+                ;; A held write names the card that answers it, so a chat
+                ;; client can route the approval without a second lookup.
+                (:card event) (assoc :card (:card event)))
       "followup-applied" {:event "run.steered" :run_id run-id
                           :timestamp timestamp :accepted true}
       {:event "run.progress" :run_id run-id :timestamp timestamp :data event})))
