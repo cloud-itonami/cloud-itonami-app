@@ -349,6 +349,169 @@
                   (cannot-answer! (str "server に到達できません: " (base-url))
                                   (ex-data e)))))))
 
+;; ---------------------------------------------------------------------------
+;; chat — the agent loop: /v1/runs + SSE, the hermes-compat surface
+;; ---------------------------------------------------------------------------
+
+(def ^:private chat-default-profile "default")
+
+(defn- chat-emit [text]
+  (js/process.stdout.write (str text)))
+
+(defn- chat-poll-events!
+  "Reads the SSE stream for one run until a terminal event. Deltas print as
+  they arrive; an approval surface names the command that answers it.
+  Resolves to the final status map."
+  [run-id]
+  (js/Promise.
+   (fn [resolve reject]
+     (let [token (require-token!)
+           controller (js/AbortController.)
+           printed (atom "")
+           out (atom {:status "started" :output "" :usage nil :error nil
+                      :approval nil})]
+       (letfn [(finish [] (.abort controller) (resolve @out))
+               (on-event [ev]
+                 (let [kind (:event ev)]
+                   (cond
+                     (= "assistant.delta" kind)
+                     ;; The server's delta shape is not contractual: runs have
+                     ;; been observed both accumulated (each delta the full
+                     ;; text so far) and incremental. Handle both — a delta
+                     ;; that extends what was printed prints its tail; one
+                     ;; that does not is an increment appended to it.
+                     (let [delta (str (:delta ev))
+                           seen (str @printed)]
+                       (cond
+                         (str/blank? delta) nil
+                         (and (<= (.-length seen) (.-length delta))
+                              (= 0 (.indexOf delta seen)))
+                         (do (reset! printed delta)
+                             (js/process.stdout.write (.slice delta (.-length seen))))
+                         :else
+                         (do (reset! printed (str seen delta))
+                             (js/process.stdout.write delta))))
+
+                     (= "run.completed" kind)
+                     (do (swap! out assoc :status "completed"
+                                :output (or (:output ev) "") :usage (:usage ev))
+                         (js/process.stdout.write "\n"))
+
+                     (contains? #{"run.failed" "run.cancelled" "run.stopped"} kind)
+                     (do (swap! out assoc :status (subs kind 4) :error (:error ev))
+                         (when (:error ev) (chat-emit (str "error: " (:error ev)))))
+
+                     :else nil)))
+               (feed [s]
+                 (loop [s s]
+                   (let [i (str/index-of s "\n\n")]
+                     (if i
+                       (let [frame (subs s 0 i)]
+                         (doseq [l (str/split-lines frame)]
+                           (when (str/starts-with? l "data: ")
+                             (try (on-event (js->clj (js/JSON.parse (subs l 6))
+                                                     :keywordize-keys true))
+                                  (catch :default _ nil))))
+                         (recur (subs s (+ i 2))))
+                       ;; Return the unconsumed tail so the caller resets its
+                       ;; buffer; re-feeding old frames would replay events.
+                       s))))
+               (pump [reader decoder buf]
+                 (-> (.read reader)
+                     (.then (fn [chunk]
+                              (if (.-done chunk)
+                                (finish)
+                                (do (swap! buf str (decoder.decode (.-value chunk)
+                                                                 #js {:stream true}))
+                                    (reset! buf (feed @buf))
+                                    (pump reader decoder buf)))))))]
+         (let [req (js/fetch (str (base-url) "/v1/runs/" run-id "/events")
+                             #js {:headers #js {"authorization" (str "Bearer " token)}
+                                  :signal (.-signal controller)})]
+           (-> req
+               (.then (fn [res]
+                        (let [reader (.getReader (.-body res))
+                              decoder (js/TextDecoder. "utf8")
+                              buf (atom "")]
+                          (pump reader decoder buf))))
+               (.catch (fn [e]
+                         (.abort controller)
+                         (reject (ex-info (str "event stream に到達できません: " (base-url))
+                                          {:type :client/unreachable :cause (.-message e)})))))))))))
+
+(defn- chat-prompt-loop!
+  "The REPL: one message per turn, each on its own run, streaming deltas."
+  [profile]
+  (let [rl (js/require "node:readline/promises")]
+    (println (str "profile: " profile " — exit で終了"))
+    (let [iface (.createInterface rl #js {:input js/process.stdin
+                                          :output js/process.stdout})]
+      (letfn [(turn []
+                (-> (.question iface "you ❯ ")
+                    (.then (fn [text]
+                             (let [text (str/trim (str text))]
+                               (cond
+                                 (empty? text) (turn)
+                                 (#{"exit" "quit" "/exit"} text)
+                                 (js/process.exit exit-answered)
+
+                                 :else
+                                 (-> (request! {:method :post :path "/v1/runs"
+                                                :body {:input text :profile profile}
+                                                :timeout-seconds 30}
+                                               (require-token!))
+                                     (.then (fn [{:keys [status body]}]
+                                              (if (<= 200 status 299)
+                                                (chat-poll-events! (or (:run_id body) (:run-id body)))
+                                                (refuse! (str "run を開始できません: HTTP " status)
+                                                         (select-keys body [:error])))))
+                                     (.then (fn [out]
+                                              (let [usage (:usage out)]
+                                                (when usage
+                                                  (chat-emit (str "· tokens: "
+                                                                  (or (:prompt_tokens usage) "?") " in / "
+                                                                  (or (:completion_tokens usage) "?") " out")))
+                                                (println))
+                                              (turn)))
+                                     (.catch (fn [e]
+                                               (if (= "readline was closed" (ex-message e))
+                                                 (js/process.exit exit-answered)
+                                                 (do (chat-emit (str "error: " (ex-message e) "\n"))
+                                                     (js/process.exit exit-cannot-answer))))))))))))]
+        (turn)))))
+
+(defn- chat!
+  "Entry: `itonami chat [--profile <p>] [first message]`. A message on the
+  command line runs one turn and exits; without one, the REPL starts."
+  [argv json?]
+  (let [profile (or (some-> (:profile (commands/parse-flags argv)) str/trim not-empty)
+                    chat-default-profile)
+        words (commands/words (drop 1 (drop-while #(not= "chat" %) argv)))
+        text (str/join " " words)]
+    (if (seq words)
+      ;; one-shot: `itonami chat hello` runs one streaming turn and exits
+      (let [start! (fn []
+                     (request! {:method :post :path "/v1/runs"
+                                :body {:input text :profile profile}}
+                               (require-token!)))
+            report (fn [out]
+                     ;; --json still gets the machine-readable final map;
+                     ;; interactive one-shot already streamed the answer text.
+                     (if json?
+                       (emit! out true)
+                       (when-let [u (:usage out)]
+                         (println (str "· tokens: " (or (:prompt_tokens u) "?")
+                                       " in / " (or (:completion_tokens u) "?") " out")))))]
+        (-> (start!)
+            (.then (fn [{:keys [status body]}]
+                     (if (<= 200 status 299)
+                       (-> (chat-poll-events! (or (:run_id body) (:run-id body)))
+                           (.then report))
+                       (refuse! (str "run を開始できません: HTTP " status)
+                                (select-keys body [:error]))))))
+        nil)
+      (chat-prompt-loop! profile))))
+
 (defn- suggest
   "Commands whose name contains the FIRST word.
 
@@ -370,6 +533,7 @@
     (cond
       (or (empty? named) (= ["help"] named) (true? (:help flags)))
       (do (println (str "itonami — cloud-itonami-app の front end\n\n"
+                        "  itonami chat [--profile <p>] [message …]  agent と対話 (ストリーミング)\n"
                         "  itonami commands [term …]\n"
                         "  itonami status\n"
                         "  itonami <command> [--flag value …] [--json]\n\n"
@@ -380,6 +544,7 @@
 
       (= "commands" (first named)) (commands! (vec (drop 1 named)) json?)
       (= ["status"] named) (status! json?)
+      (= "chat" (first named)) (chat! argv json?)
 
       (contains? #{["up"] ["down"]} named)
       (cannot-answer!
