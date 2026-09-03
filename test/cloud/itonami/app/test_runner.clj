@@ -36,6 +36,7 @@
             [cloud.itonami.app.bot-import-test]
             [cloud.itonami.app.bot-test]
             [cloud.itonami.app.bot-slo-test]
+            [cloud.itonami.app.bot-cache-test]
             [cloud.itonami.app.bot-authority-test]
             [cloud.itonami.app.bot-dispatcher-test]
             [cloud.itonami.app.bot-identity-test]
@@ -252,6 +253,7 @@
     cloud.itonami.app.git-hygiene-test
     cloud.itonami.app.bot-test
     cloud.itonami.app.bot-slo-test
+    cloud.itonami.app.bot-cache-test
     cloud.itonami.app.bot-authority-test
     cloud.itonami.app.bot-dispatcher-test
     cloud.itonami.app.bot-identity-test

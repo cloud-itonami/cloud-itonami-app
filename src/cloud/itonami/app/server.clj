@@ -6724,6 +6724,15 @@
       (and (= method "GET") (= path "/api/agent-bots"))
       (send! exchange 200 (bots/overview config session))
 
+      ;; Orgs: the CLI's window onto tenants. Read-only, like `bots list`:
+      ;; creating a tenant, switching, and inviting a member all require a
+      ;; Passkey in `identity`, so the bearer surface reports rather than
+      ;; mutates. An operator re-targets a tenant by minting a session into it
+      ;; (`auth login --organization`).
+      (and (= method "GET") (= path "/api/agent-bots/orgs"))
+      (send! exchange 200 {:organizations (bots/organizations session)
+                           :active-organization-id (:organization-id session)})
+
       (and (= method "GET") (= path "/api/agent-bots/workforce"))
       (send! exchange 200 (bots/workforce-status session))
 
