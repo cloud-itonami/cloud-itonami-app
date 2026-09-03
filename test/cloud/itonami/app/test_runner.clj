@@ -10,6 +10,8 @@
             [clojure.test :as test]
             [cloud.itonami.app.authority-test]
             [cloud.itonami.app.vf-journal-test]
+            [cloud.itonami.app.vf-authority-test]
+            [cloud.itonami.app.vf-calibrate-test]
             [cloud.itonami.app.business-test]
             [cloud.itonami.app.agent-session-test]
             [cloud.itonami.app.a2a-test]
@@ -232,6 +234,8 @@
 (def ^:private namespaces
   '[cloud.itonami.app.authority-test
     cloud.itonami.app.vf-journal-test
+    cloud.itonami.app.vf-authority-test
+    cloud.itonami.app.vf-calibrate-test
     cloud.itonami.app.a2a-test
     cloud.itonami.app.business-test
     cloud.itonami.app.agent-session-test
