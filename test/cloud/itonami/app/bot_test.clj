@@ -139,6 +139,21 @@
   (testing "an absent avatar is still the default — that IS a choice nobody made"
     (is (= bot/default-avatar (:bot/avatar (a-bot {}))))))
 
+(deftest a-derived-face-is-deterministic-and-spans-the-palette
+  (testing "the same id always draws the same face"
+    (is (= (bot/face "stable-id") (bot/face "stable-id"))))
+  (testing "fields are drawn from the declared palettes"
+    (let [f (bot/face "stable-id")]
+      (is (contains? (set bot/avatar-colors) (:avatar/color f)))
+      (is (contains? (set bot/avatar-glyphs) (:avatar/glyph f)))
+      (is (<= 0 (:variant f) 6))))
+  (testing "distinct ids are not all forced onto the same face — the exact bug
+            `bot/avatar`'s docstring records above: every Bot came back blue
+            however it was drawn"
+    (let [faces (map #(bot/face (str "bot-" %)) (range 20))]
+      (is (< 1 (count (distinct (map :avatar/color faces)))))
+      (is (< 1 (count (distinct (map :avatar/glyph faces))))))))
+
 (deftest sidebar-placement-is-persisted-as-presentation-state
   (let [placed (a-bot {:bot/priority? true :bot/pinned? true})]
     (is (true? (:bot/priority? placed)))
