@@ -527,22 +527,22 @@
 (defn- url-segment [value]
   (URLEncoder/encode (str value) (.name StandardCharsets/UTF_8)))
 
-(defn hermes-profile-list [configuration]
+(defn itonami-profile-list [configuration]
   (client/request! configuration :get "/api/profiles"))
 
-(defn hermes-session-list [configuration flags]
+(defn itonami-session-list [configuration flags]
   (let [profile (or (:profile flags) "default")]
     (client/request! configuration :get
                      (str "/p/" (url-segment profile) "/api/sessions"))))
 
-(defn hermes-session-messages [configuration flags]
+(defn itonami-session-messages [configuration flags]
   (let [profile (or (:profile flags) "default")
         session (or (:session flags) profile)]
     (client/request! configuration :get
                      (str "/p/" (url-segment profile) "/api/sessions/"
                           (url-segment session) "/messages"))))
 
-(defn hermes-run [configuration flags]
+(defn itonami-run [configuration flags]
   (let [profile (or (:profile flags) "default")]
     (client/request! configuration :post
                      (str "/p/" (url-segment profile) "/v1/runs")
@@ -553,22 +553,22 @@
                        (assoc :goal (contains? #{"true" "1" "yes" true}
                                                 (:goal flags)))))))
 
-(defn hermes-run-status [configuration flags]
+(defn itonami-run-status [configuration flags]
   (client/request! configuration :get
                    (str "/v1/runs/" (url-segment (required-flag flags :run)))))
 
-(defn hermes-steer [configuration flags]
+(defn itonami-steer [configuration flags]
   (client/request! configuration :post
                    (str "/v1/runs/" (url-segment (required-flag flags :run))
                         "/steer")
                    {:input (required-flag flags :input)}))
 
-(defn hermes-stop [configuration flags]
+(defn itonami-stop [configuration flags]
   (client/request! configuration :post
                    (str "/v1/runs/" (url-segment (required-flag flags :run))
                         "/stop") {}))
 
-(defn hermes-approve [configuration flags]
+(defn itonami-approve [configuration flags]
   (client/request! configuration :post
                    (str "/v1/runs/" (url-segment (required-flag flags :run))
                         "/approval")
@@ -723,14 +723,14 @@
        "  bots refactor scan --root <west-root> [--limit 25]\n"
        "  bots refactor inspect --root <west-root> --repo <west-name> [--limit 8]\n"
        "  bots refactor start --root <west-root> --repo <west-name> --id <bot-id>\n\n"
-       "  hermes profile list\n"
-       "  hermes session list [--profile <bot-id|default>]\n"
-       "  hermes session messages [--profile P] [--session S]\n"
-       "  hermes run --profile <bot-id|default> --input <依頼> [--instructions X] [--goal true]\n"
-       "  hermes run-status --run <run-id>\n"
-       "  hermes steer --run <run-id> --input <追加指示>\n"
-       "  hermes stop --run <run-id>\n"
-       "  hermes approve --run <run-id> [--choice once|session|always|deny]\n\n"
+       "  itonami profile list\n"
+       "  itonami session list [--profile <bot-id|default>]\n"
+       "  itonami session messages [--profile P] [--session S]\n"
+       "  itonami run --profile <bot-id|default> --input <依頼> [--instructions X] [--goal true]\n"
+       "  itonami run-status --run <run-id>\n"
+       "  itonami steer --run <run-id> --input <追加指示>\n"
+       "  itonami stop --run <run-id>\n"
+       "  itonami approve --run <run-id> [--choice once|session|always|deny]\n\n"
        "CLI では Bot の model route だけ変更できます。権限設定と通常モードの承認はブラウザ専用です。\n"
        "CLI承認はおまかせBotだけです。\n"))
 
@@ -769,22 +769,22 @@
       ["bots" "decide"] (bot-decide configuration flags)
       ["bots" "cancel"] (bot-cancel configuration flags)
       ["bots" "hygiene"] (bot-hygiene configuration flags)
-      ["hermes" "profile"]
+      ["itonami" "profile"]
       (if (= "list" (nth named 2 nil))
-        (hermes-profile-list configuration)
-        (throw (ex-info "hermes profile は list を指定してください"
+        (itonami-profile-list configuration)
+        (throw (ex-info "itonami profile は list を指定してください"
                         {:type :cli/usage})))
-      ["hermes" "session"]
+      ["itonami" "session"]
       (case (nth named 2 nil)
-        "list" (hermes-session-list configuration flags)
-        "messages" (hermes-session-messages configuration flags)
-        (throw (ex-info "hermes session は list / messages を指定してください"
+        "list" (itonami-session-list configuration flags)
+        "messages" (itonami-session-messages configuration flags)
+        (throw (ex-info "itonami session は list / messages を指定してください"
                         {:type :cli/usage})))
-      ["hermes" "run"] (hermes-run configuration flags)
-      ["hermes" "run-status"] (hermes-run-status configuration flags)
-      ["hermes" "steer"] (hermes-steer configuration flags)
-      ["hermes" "stop"] (hermes-stop configuration flags)
-      ["hermes" "approve"] (hermes-approve configuration flags)
+      ["itonami" "run"] (itonami-run configuration flags)
+      ["itonami" "run-status"] (itonami-run-status configuration flags)
+      ["itonami" "steer"] (itonami-steer configuration flags)
+      ["itonami" "stop"] (itonami-stop configuration flags)
+      ["itonami" "approve"] (itonami-approve configuration flags)
       ["bots" "import"]
       (bot-import-report
        configuration

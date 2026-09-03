@@ -1878,7 +1878,10 @@
 
       (and (= method "POST") (= path "/api/workspace/bulky-waste/jobs"))
       (do (require-app-session! exchange)
-          (send! exchange 201 (bulky-waste/create-job! (write-body) actor)))
+          (send! exchange 201
+                 (bulky-waste/create-job!
+                  (assoc (write-body) :organization-id (:organization-id session))
+                  actor)))
 
       (and (= method "GET")
            (id-from-path path #"/api/workspace/bulky-waste/jobs/([^/]+)/matches"))
