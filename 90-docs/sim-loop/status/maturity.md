@@ -14,7 +14,7 @@
 | テスト | 2 | test 199 ファイル。ただし falsify-1 実測: origin/main 172bd46 で `clojure -M:test` は 1 テストも走らずコンパイル死 (`No such var: bot/face`, bots.clj:1907)。CI required path は JVM-free emit のみで JVM スイートを守らない |
 | 反証 | 2 | falsify-1 (test 軸, refuted), falsify-2 (運用軸, 部分反証→範囲修正) を evidence/ に記録済み |
 | 再現性 | 3 | launchd で server/host/tick は再現稼働。falsify-3 実測: releases/ 全 77 ツリーが対応 git commit と byte 完全一致 (欠損/改変 0)。ただし不変性は運用規約のみで OS 強制なし |
-| governor 統合 | 3 | tamaki Tier1 tick が fleet を 1427 repo スキャン。app 本体は dirty-skipped で未統合 |
+| governor 統合 | 3 | falsify-4 実測: tamaki Tier1 tick が fleet 1430 repo をスキャンし、dirty 解消後の本体を dirty-skip せず処理対象化。ただし `:skipped-no-test-harness` (clojure -M:dev:test が :dev alias 欠落で起動不可、緑ベースライン無し) により Tier 1 着地は継続して 0 landed (2026-09-03T17:04Z–19:13Z の 7 tick 全て) |
 | 運用 | 3 | falsify-2 実測: app PID 45891 / ui-host PID 90738 / maturity-tick PID 15463 いずれも exit 0 稼働中、health 200。ただし expiry-alert が last exit 1 で not running (KeepAlive=false で silent-dead)。KeepAlive 再現はコア面のみ成立 |
 
 ## OPEN 赤
@@ -42,7 +42,9 @@
 
 ## === NEXT ===
 
-NEXT: governor 統合軸 — 本体 checkout の dirty が解消 (dirty_files=0, HEAD
-6a85048) したことで、tamaki Tier1 tick が app 本体を dirty-skip せず処理できる
-はず。次回 tick の実ログを確認し、「cloud-itonami-app が dirty-skipped される」
-主張を falsify-4 として実測する。
+NEXT: governor 統合軸の継続。falsify-4 で阻害要因が dirty から
+no-test-harness (:dev alias 欠落) に変わった。次回は spec/実装軸として
+deps.edn の alias 実測 (`clojure -A:dev:test -P` の解決可否) を行い、
+修理案 A (Tier 2 report) の具体化: :dev alias 追加 + OPEN 赤-1 の
+JVM コンパイル死 (bots.clj:1907) 修正を同一 PR にまとめられるか評価する。
+付帯: tick ログ末尾の tick end 欠損 (19:35:58Z 開始分) を再確認。
