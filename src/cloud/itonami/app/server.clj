@@ -1878,7 +1878,10 @@
 
       (and (= method "POST") (= path "/api/workspace/bulky-waste/jobs"))
       (do (require-app-session! exchange)
-          (send! exchange 201 (bulky-waste/create-job! (write-body) actor)))
+          (send! exchange 201
+                 (bulky-waste/create-job!
+                  (assoc (write-body) :organization-id (:organization-id session))
+                  actor)))
 
       (and (= method "GET")
            (id-from-path path #"/api/workspace/bulky-waste/jobs/([^/]+)/matches"))
@@ -6684,6 +6687,7 @@
            (bot-id-from path #"/api/agent-bots/imports/([^/]+)/provision"))
       (let [session (require-app-session! exchange)
             id (bot-id-from path #"/api/agent-bots/imports/([^/]+)/provision")
+            body (read-json-limited exchange (* 4 1024 1024) keyword)
             record (get-in (store/snapshot) [:bot-imports id])]
         (when-not (get-in config [:privacy :bind-loopback-only?])
           (throw (ex-info "Hermes filesystem import は local resident app で実行してください。"
@@ -6698,7 +6702,10 @@
                  {:configuration config
                   :session session
                   :data-dir (config/data-dir)
-                  :manifest (:manifest record)})]
+                  :manifest (:manifest record)
+                  :carry-over-permissions
+                  (contains? #{true "true" "1" "yes"}
+                             (:carry-over-permissions body))})]
             (store/transact! assoc-in [:bot-imports id :manifest] provisioned)
             (send! exchange 201 provisioned))))
 

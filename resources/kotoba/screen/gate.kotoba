@@ -1,0 +1,23 @@
+(ns screen.gate
+  (:require [screen.diff :as diff]
+            [screen.intent :as intent]
+            [screen.tree :as tree]
+            [screen.rect :as rect])
+  (:export [chronicle-keep? gate-frame-unchanged? gate-judge-press gate-version]))
+
+(def screen-gate-version 1)
+
+(defn chronicle-keep? "The chronicle dedup rule as the guest owns it: drop the
+  new frame when its combined digest equals the retained one. Both digests
+  are host-computed; 0 against 0 is the same empty screen."
+  [prev-combined :i64 new-combined :i64] :i64
+  (if (= prev-combined new-combined) 0 1))
+
+(defn gate-frame-unchanged? [prev-digest :i64 prev-app :i64
+                             new-digest :i64 new-app :i64] :i64
+  (if (diff/frame-changed? prev-digest prev-app new-digest new-app) 0 1))
+
+(defn gate-judge-press [ref-id :i64 expect-digest :i64 node-count :i64] :i64
+  (if (tree/node-quota-ok? node-count) (if (= node-count 0) 0 (if (intent/press-valid? ref-id expect-digest) 1 0)) 0))
+
+(defn gate-version [] :i64 screen-gate-version)

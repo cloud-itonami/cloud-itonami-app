@@ -4,7 +4,7 @@
 ;; covers 208 of them. It does not cover the ones people use most: measured
 ;; 2026-09-02, `GET /api/agent-bots`, `POST /api/agent-session`, `/api/profiles`
 ;; and `/api/sessions` are all absent from it. Those are the routes behind
-;; `bots list`, `auth login` and the hermes commands, so a front end driven by
+;; `bots list`, `auth login` and the itonami commands, so a front end driven by
 ;; the registry alone would be a front end for the part nobody types.
 ;;
 ;; They were absent because they were hand-written in `cli.clj` — seventeen
@@ -25,7 +25,7 @@
 ;; It is not the whole of `cli.clj`. Three commands do host-side work rather
 ;; than HTTP — `bots hygiene` (west metadata on this machine), `bots refactor
 ;; scan|inspect` (west refactor), and `bots import` for sources other than
-;; hermes — and a table cannot carry them. They are listed in `:host-side` so
+;; itonami (ex-hermes) — and a table cannot carry them. They are listed in `:host-side` so
 ;; the front end can refuse them BY NAME instead of reporting "no such
 ;; command", which would read as though the operator mistyped.
 ;;
@@ -205,21 +205,21 @@
    :params [{:name "id" :flag :id :required? true}
             {:name "run" :flag :run :required? true}]}
 
-  ;; ---- hermes -----------------------------------------------------------
-  {:command ["hermes" "profile" "list"] :method :get :template "/api/profiles"}
+  ;; ---- itonami (ex-hermes) -----------------------------------------------------------
+  {:command ["itonami" "profile" "list"] :method :get :template "/api/profiles"}
 
-  {:command ["hermes" "session" "list"]
+  {:command ["itonami" "session" "list"]
    :method :get
    :template "/p/{profile}/api/sessions"
    :params [{:name "profile" :flag :profile :default "default"}]}
 
-  {:command ["hermes" "session" "messages"]
+  {:command ["itonami" "session" "messages"]
    :method :get
    :template "/p/{profile}/api/sessions/{session}/messages"
    :params [{:name "profile" :flag :profile :default "default"}
             {:name "session" :flag :session :required? true}]}
 
-  {:command ["hermes" "run"]
+  {:command ["itonami" "run"]
    :method :post
    :template "/p/{profile}/v1/runs"
    :params [{:name "profile" :flag :profile :default "default"}]
@@ -227,23 +227,23 @@
           :instructions {:flag :instructions}
           :goal {:flag :goal :parse :boolish}}}
 
-  {:command ["hermes" "run-status"]
+  {:command ["itonami" "run-status"]
    :method :get
    :template "/v1/runs/{run}"
    :params [{:name "run" :flag :run :required? true}]}
 
-  {:command ["hermes" "steer"]
+  {:command ["itonami" "steer"]
    :method :post
    :template "/v1/runs/{run}/steer"
    :params [{:name "run" :flag :run :required? true}]
    :body {:input {:flag :input :required? true}}}
 
-  {:command ["hermes" "stop"]
+  {:command ["itonami" "stop"]
    :method :post
    :template "/v1/runs/{run}/stop"
    :params [{:name "run" :flag :run :required? true}]}
 
-  {:command ["hermes" "approve"]
+  {:command ["itonami" "approve"]
    :method :post
    :template "/v1/runs/{run}/approval"
    :params [{:name "run" :flag :run :required? true}]

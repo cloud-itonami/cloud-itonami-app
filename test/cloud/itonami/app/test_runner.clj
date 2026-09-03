@@ -9,6 +9,9 @@
             [clojure.string :as str]
             [clojure.test :as test]
             [cloud.itonami.app.authority-test]
+            [cloud.itonami.app.vf-journal-test]
+            [cloud.itonami.app.vf-authority-test]
+            [cloud.itonami.app.vf-calibrate-test]
             [cloud.itonami.app.business-test]
             [cloud.itonami.app.agent-session-test]
             [cloud.itonami.app.a2a-test]
@@ -139,6 +142,7 @@
             [cloud.itonami.app.config-test]
             [cloud.itonami.app.contracts-test]
             [cloud.itonami.app.chronicle-test]
+            [cloud.itonami.app.screen-guest-test]
             [cloud.itonami.app.core-test]
             [cloud.itonami.app.credential-http-test]
             [cloud.itonami.app.credential-rdf-test]
@@ -200,6 +204,7 @@
             [cloud.itonami.app.openai-compat-test]
             [cloud.itonami.app.hermes-compat-test]
             [cloud.itonami.app.hermes-migration-test]
+            [cloud.itonami.app.hermes-carry-over-test]
             [cloud.itonami.app.hermes-compat-http-test]
             [cloud.itonami.app.provider-test]
             [cloud.itonami.app.pageview-test]
@@ -228,6 +233,9 @@
 
 (def ^:private namespaces
   '[cloud.itonami.app.authority-test
+    cloud.itonami.app.vf-journal-test
+    cloud.itonami.app.vf-authority-test
+    cloud.itonami.app.vf-calibrate-test
     cloud.itonami.app.a2a-test
     cloud.itonami.app.business-test
     cloud.itonami.app.agent-session-test
@@ -330,6 +338,7 @@
     cloud.itonami.app.config-test
     cloud.itonami.app.contracts-test
     cloud.itonami.app.chronicle-test
+    cloud.itonami.app.screen-guest-test
     cloud.itonami.app.core-test
     cloud.itonami.app.credential-http-test
     cloud.itonami.app.credential-rdf-test
@@ -392,6 +401,7 @@
     cloud.itonami.app.openai-compat-test
     cloud.itonami.app.hermes-compat-test
     cloud.itonami.app.hermes-migration-test
+    cloud.itonami.app.hermes-carry-over-test
     cloud.itonami.app.hermes-compat-http-test
     cloud.itonami.app.provider-test
     cloud.itonami.app.pageview-test

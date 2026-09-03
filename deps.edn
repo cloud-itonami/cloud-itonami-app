@@ -7,6 +7,11 @@
   io.github.kotoba-lang/kaiyu
   {:git/url "https://github.com/kotoba-lang/kaiyu.git"
    :git/sha "1a5cfb23e52e548ac8b1180b7a70505fbb11a78c"}
+  ;; Bounded EDN codec — the direct replacement for clojure.edn
+  ;; (kotoba-lang/edn README). The screen gate artifact is read through it.
+  io.github.kotoba-lang/edn
+  {:git/url "https://github.com/kotoba-lang/edn.git"
+   :git/sha "250f4dafa5f5c7fb3109703496a52866e2a62dcd"}
   ;; App identity: raw CIDv1 + :kotoba.app/* manifest (zero runtime deps).
   io.github.kotoba-lang/kotoba-protocol
   {:git/url "https://github.com/kotoba-lang/kotoba-protocol.git"
@@ -90,6 +95,15 @@
   {:git/url "https://github.com/kotoba-lang/dynamics.git"
    :git/sha "439d8cec415ab2c49bd8915ce271ccdb69051f03"}
 
+  ;; Valueflows vocabulary. Consumed, never reimplemented (ADR-2608153000):
+  ;; `valueflows.conform` gates journal appends, `valueflows.event/apply-event`
+  ;; folds them. The pin is the west pin (manifest/west.yml 4c1e0106) so the
+  ;; fleet gate and this app read the same vocabulary. Event journal:
+  ;; ADR-2609111230.
+  io.github.kotoba-lang/ws-valueflo-vocabulary
+  {:git/url "https://github.com/kotoba-lang/ws-valueflo-vocabulary.git"
+   :git/sha "4c1e01069758bc25be51236bea6b155e8beb76ac"}
+
   ;; Connectors (ADR-2608097000). `identity/provider-catalog` is derived from
   ;; these rather than written here, so adding an integration is adding a
   ;; dependency. Each connector declares its own tools and each tool declares
@@ -127,7 +141,7 @@
   ;; Twin of ambient java.nio / ProcessBuilder. Absolute binaries only.
   io.github.kotoba-lang/fs
   {:git/url "https://github.com/kotoba-lang/fs.git"
-   :git/sha "607caf1f54f3f922eac899f67511468e501ba970"}
+   :git/sha "9e56e4bb037dbe48b2c1b4e40d4832b7474f6ea8"}
   io.github.kotoba-lang/process
   {:git/url "https://github.com/kotoba-lang/process.git"
    :git/sha "f261f1e7853d26c2bf53b2236e3b7d454598ac28"}
@@ -423,7 +437,7 @@
 
   io.github.kotoba-lang/identity
   {:git/url "https://github.com/kotoba-lang/identity.git"
-   :git/sha "09803452a79fd57c211f0cf7e67fdc1c780dd8d8"}
+   :git/sha "507d51ce11078b8034313df22dd9b282a53a4ca3"}
 
   ;; Delegation, and the ONE thing that decides it.
   ;;
@@ -558,6 +572,19 @@
                  :main-opts ["-m" "cloud.itonami.app.sign-update-manifest"]}
   :ao-messenger {:main-opts ["-m" "cloud.itonami.app.organism-messenger-client"]}
   :repository {:main-opts ["-m" "cloud.itonami.app.repository-runtime"]}
+  ;; RESTORED 2026-09-03 (PR #270 deleted them; measured same day the guest-wasm
+  ;; path they point at cannot run: browser-host.mjs exists in no checkout and
+  ;; no release, and the nbb host has never started). The launchd plist on the
+  ;; operator workstation runs `clojure -M:server` against ~/.cloud-itonami/current
+  ;; and the running resident was started from an alias-bearing release — a
+  ;; restart against current would brick under KeepAlive (run-path verifier,
+  ;; scripts/verify-itonami-run-path.cljs: configured-launch-alias-absent).
+  ;; These aliases name the production run path until the nbb host is actually
+  ;; proven live; delete them again only after that flip is real.
+  :server {:main-opts ["-m" "cloud.itonami.app.server"]}
+  ;; The MCP server speaks JSON-RPC on stdout, so nothing else may print there:
+  ;; run it with this alias, never alongside :server in one process.
+  :mcp {:main-opts ["-m" "cloud.itonami.app.mcp"]}
   ;; The suite writes through cloud.itonami.app.store, which persists to
   ;; `cloud.itonami.app.config/data-dir`. Without this it defaults to `./data`
   ;; and the tests overwrite the real store -- measured on 2026-07-30, when a

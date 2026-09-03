@@ -1108,15 +1108,21 @@
      {:artifacts [(:session-export binding)]})))
 
 (defn create-hermes-import!
-  "Idempotently provision one inert Bot from a reviewed Hermes bundle.
+  "Idempotently provision one Bot from a reviewed Hermes bundle.
 
-  No source tool, account, grant, workspace, browser, computer, peer authority,
-  schedule, or omakase setting crosses this boundary. The Bot can immediately
-  use the destination's admitted inference route; capabilities are rebound on
-  the ordinary Itonami settings surface later."
+  Default grants are inert (ADR-0088): no source tool, account, grant,
+  workspace, browser, computer, peer authority, schedule, or omakase setting
+  crosses this boundary. With `:carry-over-grants` — an explicit provision!
+  decision, owner instruction 2026-09-03 — the Bot receives the destination
+  equivalents of the source profile's observed tool authority (the
+  write/coding/virtual-shell/goal family and browser/computer), each still
+  bounded by its own governor. Omakase is never granted here: a source
+  per-pattern approval is not a general delegation. The evidence and the
+  unmapped remainder are recorded on the binding so an operator can audit
+  what crossed."
   [configuration session {:keys [migration-id profile-id name brief provider-id
                                   model runtime-context session-export
-                                  session-ids seed]}]
+                                  session-ids seed carry-over-grants]}]
   (let [bot-id (stable-hermes-bot-id session migration-id profile-id)
         expected {:migration-id migration-id :profile-id profile-id}
         existing (bot-by-id bot-id)
@@ -1130,16 +1136,29 @@
                       {:type :bot-import/id-collision :bot-id bot-id}))
 
       :else
-      (let [created
+      (let [carry (when (seq carry-over-grants) carry-over-grants)
+            grants (if carry
+                     {:tools [] :accounts {}
+                      :writes? (boolean (:writes? carry))
+                      :browser? (boolean (:browser? carry))
+                      :computer? (boolean (:computer? carry))
+                      :peers? false
+                      :coding? (boolean (:coding? carry))
+                      :virtual-shell? (boolean (:virtual-shell? carry))
+                      :goal? (boolean (:goal? carry))
+                      :priority? false :pinned? false
+                      :omakase? false}
+                     {:tools [] :accounts {}
+                      :writes? false :browser? false :computer? false
+                      :peers? false :coding? false :virtual-shell? false
+                      :goal? false :priority? false :pinned? false
+                      :omakase? false})
+            created
             (binding [*create-bot-id* bot-id]
               (create! configuration session
-                       {:name name :brief brief
-                        :provider-id provider-id :model model
-                        :tools [] :accounts {}
-                        :writes? false :browser? false :computer? false
-                        :peers? false :coding? false :virtual-shell? false
-                        :goal? false :priority? false :pinned? false
-                        :omakase? false}))
+                       (merge {:name name :brief brief
+                               :provider-id provider-id :model model}
+                              grants)))
             now (store/now)
             messages
             (mapv (fn [index {:keys [role text at]}]
@@ -1155,7 +1174,13 @@
                            :session-ids (vec (remove nil? session-ids))
                            :imported-at now
                            :credentials-copied 0
-                           :grants-copied 0)]
+                           :grants-copied (if carry
+                                            (count (filter true? (vals (select-keys carry [:writes? :browser? :computer? :coding? :virtual-shell? :goal?]))))
+                                            0)
+                           :grants-carried-over (vec (filter #(contains? #{:writes? :browser? :computer? :coding? :virtual-shell? :goal?} %)
+                                                             (keys carry)))
+                           :source-permission-evidence (:source-permission-evidence carry)
+                           :unmapped-authority (:unmapped-authority carry))]
         (transact! assoc-in [:hermes-import-bindings bot-id] binding)
         (when (seq messages)
           (transact! assoc-in [:conversations bot-id] messages))
@@ -5054,6 +5079,14 @@
                   (do
                     (save-run! (:bot/id b) (assoc run :pending-call call
                                                   :pending-card card-id))
+                    ;; Name the hold ON THE STREAM. A chat client sitting on
+                    ;; the SSE surface otherwise sees the turn end without
+                    ;; knowing why; this event is the difference between
+                    ;; "done" and "waiting for you" (owner 2026-09-03).
+                    (when on-event
+                      (on-event {:type "phase" :phase "waiting-approval"
+                                 :tool name
+                                 :card card-id}))
                     (finish-visible! on-finish run :waiting-approval
                                      {:turn/tool name})
                     (say (:bot/id b)
