@@ -200,6 +200,7 @@
             [cloud.itonami.app.openai-compat-test]
             [cloud.itonami.app.hermes-compat-test]
             [cloud.itonami.app.hermes-migration-test]
+            [cloud.itonami.app.hermes-carry-over-test]
             [cloud.itonami.app.hermes-compat-http-test]
             [cloud.itonami.app.provider-test]
             [cloud.itonami.app.pageview-test]
@@ -392,6 +393,7 @@
     cloud.itonami.app.openai-compat-test
     cloud.itonami.app.hermes-compat-test
     cloud.itonami.app.hermes-migration-test
+    cloud.itonami.app.hermes-carry-over-test
     cloud.itonami.app.hermes-compat-http-test
     cloud.itonami.app.provider-test
     cloud.itonami.app.pageview-test
