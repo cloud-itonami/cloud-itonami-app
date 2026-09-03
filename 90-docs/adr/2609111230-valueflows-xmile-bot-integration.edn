@@ -140,4 +140,23 @@ own bots: algorithm readiness is already a datoms file
   constants named by its resource, and the next model run's inputs match
   the journal — nothing else moves.
 - Grant order: a read-only bot attempting append is refused at intent
-  admission with `capability-not-granted`, before any journal write."}]
+  admission with `capability-not-granted`, before any journal write.
+
+## Slice 1 landed: the event journal (2026-09-03)
+
+`cloud.itonami.app.vf-journal` (this app, `deps.edn` pins
+`io.github.kotoba-lang/ws-valueflo-vocabulary` at the west pin
+`4c1e0106`) — per-org append-only EDN journal, gated in fixed order:
+conform (`valueflows.conform/conform-event`, bad payload) then fold
+(`valueflows.event/apply-event` over the CURRENT inventory, event does not
+fit this state), each rejection its own stage; accepted events carry the
+post-fold inventory root (sha256) in their own line, and replay CHECKS the
+recorded root — a hand-edited line (internally-consistent EDN that is not
+what the fold would produce) refuses to load instead of papering over.
+Proofs, all measured: conform-reject leaves the journal byte-empty;
+conform-pass/fold-reject is a distinct stage; two accepted events fold in
+order and the replayed root equals the appended root exactly; the
+hand-edited-root tamper is refused. Remaining known failures
+(bundle/graph CID lock, bulky-waste HTTP) reproduce identically on the
+pre-change base — pre-existing, not this slice's. Capability mapping
+(slice 2) and the XMILE calibration hook (slice 3) stay open."}]

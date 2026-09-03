@@ -90,6 +90,15 @@
   {:git/url "https://github.com/kotoba-lang/dynamics.git"
    :git/sha "439d8cec415ab2c49bd8915ce271ccdb69051f03"}
 
+  ;; Valueflows vocabulary. Consumed, never reimplemented (ADR-2608153000):
+  ;; `valueflows.conform` gates journal appends, `valueflows.event/apply-event`
+  ;; folds them. The pin is the west pin (manifest/west.yml 4c1e0106) so the
+  ;; fleet gate and this app read the same vocabulary. Event journal:
+  ;; ADR-2609111230.
+  io.github.kotoba-lang/ws-valueflo-vocabulary
+  {:git/url "https://github.com/kotoba-lang/ws-valueflo-vocabulary.git"
+   :git/sha "4c1e01069758bc25be51236bea6b155e8beb76ac"}
+
   ;; Connectors (ADR-2608097000). `identity/provider-catalog` is derived from
   ;; these rather than written here, so adding an integration is adding a
   ;; dependency. Each connector declares its own tools and each tool declares
