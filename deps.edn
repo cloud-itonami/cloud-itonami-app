@@ -563,6 +563,19 @@
                  :main-opts ["-m" "cloud.itonami.app.sign-update-manifest"]}
   :ao-messenger {:main-opts ["-m" "cloud.itonami.app.organism-messenger-client"]}
   :repository {:main-opts ["-m" "cloud.itonami.app.repository-runtime"]}
+  ;; RESTORED 2026-09-03 (PR #270 deleted them; measured same day the guest-wasm
+  ;; path they point at cannot run: browser-host.mjs exists in no checkout and
+  ;; no release, and the nbb host has never started). The launchd plist on the
+  ;; operator workstation runs `clojure -M:server` against ~/.cloud-itonami/current
+  ;; and the running resident was started from an alias-bearing release — a
+  ;; restart against current would brick under KeepAlive (run-path verifier,
+  ;; scripts/verify-itonami-run-path.cljs: configured-launch-alias-absent).
+  ;; These aliases name the production run path until the nbb host is actually
+  ;; proven live; delete them again only after that flip is real.
+  :server {:main-opts ["-m" "cloud.itonami.app.server"]}
+  ;; The MCP server speaks JSON-RPC on stdout, so nothing else may print there:
+  ;; run it with this alias, never alongside :server in one process.
+  :mcp {:main-opts ["-m" "cloud.itonami.app.mcp"]}
   ;; The suite writes through cloud.itonami.app.store, which persists to
   ;; `cloud.itonami.app.config/data-dir`. Without this it defaults to `./data`
   ;; and the tests overwrite the real store -- measured on 2026-07-30, when a
