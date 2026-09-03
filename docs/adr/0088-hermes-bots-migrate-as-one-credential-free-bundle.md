@@ -1,6 +1,7 @@
 # ADR-0088: Hermes Bots migrate as one credential-free bundle
 
-Status: accepted
+Status: accepted (amended 2026-09-03: permission carry-over, owner
+instruction「権限・ツール なども引き継いで」)
 
 Date: 2026-09-01
 
@@ -69,8 +70,50 @@ loopback-only.
 | Cron, schedules and health | `cron/`, job state | profile archive | retained; activation remains stopped until review/provision |
 | Sessions, messages, runs and tool results | Hermes session store | redacted JSONL session export | source session ids/messages remain readable; a bounded latest user/assistant transcript seeds live chat |
 | Provider/account credentials | `.env`, `auth.json`, OAuth/API tokens | no artifact | `rebind-required`; values never migrate |
-| Source tool permission and approval state | Hermes runtime authority | no artifact | `rebind-required`; never becomes an Itonami grant |
-| Itonami Bot identity and grants | no source equivalent | stable profile binding | one inert Bot is created per profile; destination grants remain empty |
+| Source tool permission and approval state | Hermes runtime authority | no artifact | `rebind-required`; never becomes an Itonami grant — except through the explicit carry-over below |
+| Itonami Bot identity and grants | no source equivalent | stable profile binding | one inert Bot is created per profile by default; with carry-over, grants reflect the observed source authority |
+
+## Permission carry-over (amendment, 2026-09-03)
+
+Owner instruction:「権限・ツール なども引き継いで」. The default stays inert;
+`bots import hermes --provision true --carry-over-permissions true` converts
+the source profile's OBSERVED tool authority into destination grants.
+
+What the source actually grants is measured, not assumed (2026-09-03): Hermes
+ships every built-in toolset enabled (terminal, files, browser, computer) and
+records only the dangerous-pattern approvals a person granted permanently in
+`config.yaml` `command_allowlist`. Measured values: the itonami profile
+carries `script execution via -e/-c flag` and `recursive delete`; codinator
+carries `overwrite project env/config file`.
+
+The mapping, in `hermes-migration/carry-over-grants`:
+
+- non-empty `command_allowlist` → `writes? / coding? / virtual-shell? /
+  goal?` ON — the allowlist is evidence the profile ran commands, and each
+  destination grant stays bounded by its own governor (workspace root
+  admission, approval holds on dangerous commands)
+- any observed permission evidence → `browser? / computer?` ON — the source
+  toolsets ship enabled, and the destination grants carry the same bounds
+  (isolated browser, bounded Computer Use)
+
+What intentionally does NOT cross:
+
+- `omakase?` — a per-pattern approval is not a general delegation. The
+  destination reproduces the same shape differently: writes execute,
+  dangerous ones hold for approval. Carrying omakase across would upgrade a
+  per-pattern grant into a general one.
+- `peers?` — no source equivalent; granting it would invent authority.
+- the allowlist entries and plugin names themselves — recorded on the Bot
+  binding as evidence (`:source-permission-evidence`,
+  `:unmapped-authority`). The destination has no pattern-allowlist
+  mechanism; inventing one that "works" would be theatre.
+- credentials — unchanged; never part of this surface.
+
+Empty evidence yields empty grants: carry-over carries what was observed,
+never a default the source did not state. Provision reports
+`ready-carry-over` and activation
+`interactive-ready-source-tool-authority-carried-over`, and
+`:safety.grants-carried-over` records that the reviewed flag was given.
 
 ## Safety and lifecycle
 

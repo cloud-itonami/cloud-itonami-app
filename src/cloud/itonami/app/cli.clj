@@ -618,7 +618,10 @@
                configuration :post
                (str "/api/agent-bots/imports/" (:migration-id staged)
                     "/provision")
-               3600 {})
+               3600 (if (contains? #{true "true" "1" "yes"}
+                                   (:carry-over-permissions flags))
+                      {:carry-over-permissions true}
+                      {}))
               staged))
           preview))
       (let [existing (try (mapv :name (:bots (bot-list configuration)))
@@ -710,6 +713,10 @@
        "  bots hygiene [--root <west-root>]\n"
        "                         west 全 checkout の git 衛生状態（読み取りのみ）\n\n"
        "  bots import hermes [--home <hermes-home>] [--business <slug>] [--stage true]\n"
+       "                     [--provision true] [--carry-over-permissions true]\n"
+       "                         carry-over-permissions: ソース profile の観測された tool 権限\n"
+       "                         (command_allowlist と default-enabled toolset) を destination\n"
+       "                         grant に変換して引き継ぐ。omakase と peers は対象外。\n"
        "  bots import grok   [--base <url>] [--business <slug>]\n"
        "                         Hermes は全 profile の共通 v2 manifest を preview/stage します\n"
        "                         credential/grant は移送せず rebind-required になります（Bot は作りません）\n\n"

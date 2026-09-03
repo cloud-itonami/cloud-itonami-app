@@ -43,7 +43,74 @@
    "AGENTS.md" "CLAUDE.md" ".cursorrules"])
 (def ^:private max-runtime-context-bytes (* 64 1024))
 
-(declare delete-tree! run-process!)
+(declare delete-tree! run-process! regular-file?)
+
+;; ── observed source permission state ────────────────────────────────────
+;;
+;; The permission surface a Hermes profile actually carries is small and
+;; observable: `command_allowlist` in `config.yaml` is the list of
+;; dangerous-pattern approvals a person granted permanently (measured
+;; 2026-09-03: itonami profile has `script execution via -e/-c flag` and
+;; `recursive delete`; codinator has `overwrite project env/config file`),
+;; and `plugins.enabled` is the plugin allowlist. Both are recorded in the
+;; manifest as EVIDENCE. Turning them into destination grants is a separate,
+;; explicit, per-profile decision made at provision time — presence in the
+;; source is never silently authority in the destination.
+
+(defn- parse-config-map
+  "Read the profile's config.yaml just enough to reach two keys. This is the
+  same file `runtime-reference` already reads for the model; a tiny
+  indentation-aware reader rather than a YAML dependency the app does not
+  otherwise carry."
+  [text]
+  (let [lines (str/split-lines (str text))]
+    (loop [entries {} current-key nil
+           [line & more] lines]
+      (if-not line
+        entries
+        (if-let [[_ key value] (re-matches #"^([A-Za-z0-9_-]+):\s*(.*)$" line)]
+          (recur (if (str/blank? value)
+                   entries
+                   (assoc entries key (str/trim value)))
+                 key
+                 more)
+          (if-let [[_ item] (and current-key
+                                 (re-matches #"^\s+-\s*(.+)$" line))]
+            (recur (update-in entries [current-key]
+                              (fnil (fn [v] (if (vector? v) (conj v (str/trim item))
+                                              [(str/trim item)])) []))
+                   current-key
+                   more)
+            ;; indented scalar under a blank-valued top key
+            (if-let [[_ key value] (and current-key
+                                        (re-matches #"^\s\s([A-Za-z0-9_-]+):\s*(.+)$" line))]
+              (recur (assoc-in entries [current-key key] (str/trim value))
+                     current-key
+                     more)
+              (recur entries current-key more))))))))
+
+(defn observed-permissions
+  "The source permission state we can actually read, as evidence rows.
+
+  Every row says what it is and that it is evidence. `command_allowlist`
+  entries are the dangerous-pattern keys Hermes stores (for example
+  `recursive delete`), not runnable commands — recording them does not make
+  the destination able to run them."
+  [^File root]
+  (let [config (io/file root "config.yaml")]
+    (when (regular-file? config)
+      (let [parsed (parse-config-map (slurp config))
+            allowlist (vec (get parsed "command_allowlist"))
+            enabled-plugins (get-in parsed ["plugins" "enabled"])]
+        (cond-> []
+          (seq allowlist)
+          (conj {:kind "command-allowlist"
+                 :entries allowlist
+                 :note "permanent dangerous-pattern approvals granted in the source; evidence, not destination authority"})
+          (and (vector? enabled-plugins) (seq enabled-plugins))
+          (conj {:kind "enabled-plugins"
+                 :entries (vec enabled-plugins)
+                 :note "plugins the source ran; the destination grant list is separate"}))))))
 
 (defn hermes-home []
   (io/file (or (some-> (System/getenv "HERMES_HOME") str/trim not-empty)
@@ -244,7 +311,8 @@
            [{:kind "provider-and-account-bindings"
              :reason "tokens, OAuth sessions and external account authority are not portable"}
             {:kind "cloud-itonami-grants"
-             :reason "source tool access is evidence, not authority in the destination"}])}))
+             :reason "source tool access is evidence, not authority in the destination"}])
+     :observed-permissions (observed-permissions root)}))
 
 (defn- source-revision [profiles]
   (sha256-string
@@ -546,7 +614,7 @@
   (let [candidate (some #(when (= provider-id (:id %)) %) (:providers configuration))]
     (set (remove nil? (concat [(:default-model candidate)] (:models candidate))))))
 
-(defn- destination-runtime [configuration profile]
+(defn destination-runtime [configuration profile]
   (let [source-model (get-in profile [:runtime :source-model])
         destination-provider "murakumo"
         models (admitted-models configuration destination-provider)
@@ -557,6 +625,79 @@
      :source-provider (get-in profile [:runtime :source-provider])
      :source-model source-model
      :exact-model? (boolean exact?)}))
+
+;; ── permission carry-over ───────────────────────────────────────────────
+;;
+;; Owner instruction, 2026-09-03: the migration should carry the source
+;; profile's tool authority across, not leave every imported Bot inert.
+;;
+;; What the source actually lets a profile DO, measured on 2026-09-03, is:
+;; every built-in toolset is on by default (terminal, files, browser,
+;; computer) — Hermes ships no per-tool disable list — and the only recorded
+;; NARROWING surface is `command_allowlist`, the dangerous-pattern approvals
+;; a person granted permanently. There is no per-tool allowlist to translate,
+;; because none exists in the source.
+;;
+;; The mapping therefore widens what provision! grants when asked, and the
+;; widening is itself the reviewed decision: `carry-over?` is an explicit
+;; argument, the default stays inert, and every granted row names the source
+;; evidence it came from. What intentionally does NOT cross:
+;;
+;; * `:omakase?` — a source `command_allowlist` entry is approval of ONE
+;;   pattern, not a general delegation to act without asking. The destination
+;;   reproduces the same shape differently: writes execute, dangerous ones
+;;   hold for approval. Carrying omakase across would upgrade a per-pattern
+;;   grant into a general one.
+;; * `:peers?` — Hermes has no peer-message equivalent; mapping it would be
+;;   inventing a grant the source never made. Reported as unmapped.
+;; * `command_allowlist` entries and plugin names — recorded on the Bot and
+;;   in the binding as evidence. The destination has no pattern-allowlist
+;;   mechanism, and inventing one that "works" would be theatre.
+;; * credentials — unchanged from ADR-0088; never part of this surface.
+
+(defn carry-over-grants
+  "Turn observed source permission evidence into destination grant rows.
+
+  Returns {:grants {...} :evidence {...} :unmapped [...]} — the grants to
+  pass to `create-hermes-import!`, the evidence to record, and what had no
+  honest mapping. Empty evidence yields empty grants: carry-over carries
+  what was observed, never a default the source did not state."
+  [{:keys [observed-permissions]}]
+  (let [allowlist (some #(when (= "command-allowlist" (:kind %)) %)
+                        observed-permissions)
+        plugins (some #(when (= "enabled-plugins" (:kind %)) %)
+                      observed-permissions)
+        evidence (cond-> {}
+                   allowlist (assoc :command-allowlist (vec (:entries allowlist)))
+                   plugins (assoc :enabled-plugins (vec (:entries plugins))))
+        terminal-evidence? (seq (:command-allowlist evidence))]
+    {:grants (cond-> {}
+               ;; Terminal use is what the allowlist is evidence OF: a person
+               ;; sat through approval prompts for this profile, so the
+               ;; profile ran commands. The destination grant for that is the
+               ;; write/coding/virtual-shell/goal family, each still bounded
+               ;; by its own governor (workspace root admission, approval
+               ;; holds on dangerous commands).
+               terminal-evidence?
+               (assoc :writes? true :coding? true :virtual-shell? true
+                      :goal? true)
+               ;; Every source toolset ships enabled, so the profile could
+               ;; browse and drive a computer. The destination grants are the
+               ;; same capabilities with the same bounds (isolated browser,
+               ;; bounded Computer Use).
+               (or terminal-evidence? (seq observed-permissions))
+               (assoc :browser? true :computer? true))
+     :evidence evidence
+     :unmapped (cond-> []
+                  (seq evidence)
+                  (conj {:source "command_allowlist entries"
+                         :reason "Hermes pattern approvals have no destination equivalent; recorded as evidence"})
+                  (seq (:enabled-plugins evidence))
+                  (conj {:source "plugins.enabled"
+                         :reason "plugin names are recorded; destination grants are per-capability, not per-plugin"})
+                  (seq evidence)
+                  (conj {:source "omakase / general approval"
+                         :reason "a per-pattern approval is not a general delegation; dangerous writes still hold for approval"}))}))
 
 (defn compatibility-report
   "Score named compatibility capabilities after reviewed provisioning.
@@ -623,8 +764,15 @@
                           :percent (Math/round (* 100.0 model-ratio))}}))
 
 (defn provision!
-  "Create one safe, idempotent Itonami Bot for every staged Hermes profile."
-  [{:keys [configuration session data-dir manifest]}]
+  "Create one idempotent Itonami Bot for every staged Hermes profile.
+
+  Default grants stay inert (ADR-0088). With `:carry-over-permissions` the
+  Bot receives the destination equivalents of the source profile's observed
+  tool authority — measured from `command_allowlist` and the source's
+  default-enabled toolsets — and the evidence and the unmapped remainder are
+  recorded on the Bot and reported. That flag is the reviewed decision, not
+  a silent property of the migration."
+  [{:keys [configuration session data-dir manifest carry-over-permissions]}]
   (when-not (and (= schema (:schema manifest)) (= "staged" (:status manifest)))
     (throw (ex-info "Only a staged Hermes v2 bundle can be provisioned."
                     {:type :bot-import/not-staged})))
@@ -633,6 +781,9 @@
         (mapv
          (fn [profile]
            (let [runtime (destination-runtime configuration profile)
+                 carry-over (when carry-over-permissions
+                              (carry-over-grants profile))
+                 carry-grants (:grants carry-over)
                  source-sessions (import-data/sessions data-dir migration-id profile)
                  seed (import-data/seed-messages source-sessions 40 bots/max-message-chars)
                  context-artifact (import-data/artifact profile "hermes-runtime-context")
@@ -640,28 +791,45 @@
                  created
                  (bots/create-hermes-import!
                   configuration session
-                  {:migration-id migration-id
-                   :profile-id (:id profile)
-                   :name (if (= "default" (:id profile))
-                           "Hermes Default" (:id profile))
-                   :brief (str "Imported Hermes Agent Bot profile " (:id profile))
-                   :provider-id (:provider-id runtime)
-                   :model (:model runtime)
-                   :runtime-context context-artifact
-                   :session-export session-artifact
-                   :session-ids (mapv :id source-sessions)
-                   :seed seed})]
+                  (cond-> {:migration-id migration-id
+                           :profile-id (:id profile)
+                           :name (if (= "default" (:id profile))
+                                   "Hermes Default" (:id profile))
+                           :brief (str "Imported Hermes Agent Bot profile " (:id profile))
+                           :provider-id (:provider-id runtime)
+                           :model (:model runtime)
+                           :runtime-context context-artifact
+                           :session-export session-artifact
+                           :session-ids (mapv :id source-sessions)
+                           :seed seed}
+                    carry-over-permissions (assoc :carry-over-grants
+                                                  (assoc carry-grants
+                                                         :source-permission-evidence
+                                                         (:evidence carry-over)
+                                                         :unmapped-authority
+                                                         (:unmapped carry-over)))))]
              (assoc profile
                     :bot-id (:id created)
                     :runtime runtime
                     :seeded-messages (count seed)
-                    :provision-state "ready-inert")))
+                    :provision-state (if carry-over-permissions
+                                       "ready-carry-over" "ready-inert")
+                    :carry-over (when carry-over-permissions
+                                  (-> carry-over
+                                      (assoc :source-permission-evidence (:evidence carry-over))
+                                      (dissoc :evidence)
+                                      (assoc :unmapped-authority (:unmapped carry-over))
+                                      (dissoc :unmapped))))))
          (:profiles manifest))
         result (-> manifest
                    (assoc :status "provisioned"
                           :provisioned-at (str (Instant/now))
                           :profiles provisioned-profiles)
                    (assoc-in [:destination :activation]
-                             "interactive-ready-schedules-and-grants-not-activated")
-                   (assoc-in [:safety :creates-bots] true))]
+                             (if carry-over-permissions
+                               "interactive-ready-source-tool-authority-carried-over"
+                               "interactive-ready-schedules-and-grants-not-activated"))
+                   (assoc-in [:safety :creates-bots] true)
+                   (assoc-in [:safety :grants-carried-over]
+                             (boolean carry-over-permissions)))]
     (assoc result :compatibility (compatibility-report result))))
