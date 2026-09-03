@@ -78,9 +78,16 @@ func startPendingUpdate(installDir, dataDir string) bool {
 }
 
 func startServer(installDir, dataDir, logDir string) error {
+	// Windows ships the binary as `cloud-itonami-server.exe`; stat the exact
+	// name first, then the .exe-suffixed one, so the launcher works on both
+	// layouts (and Windows does not auto-append extensions to os.Stat).
 	server := filepath.Join(installDir, "cloud-itonami-server")
 	if _, err := os.Stat(server); err != nil {
-		return fmt.Errorf("cloud-itonami-server is missing; this launcher does not start Java")
+		exe := server + ".exe"
+		if _, err2 := os.Stat(exe); err2 != nil {
+			return fmt.Errorf("cloud-itonami-server is missing; this launcher does not start Java")
+		}
+		server = exe
 	}
 	logFile, err := os.OpenFile(filepath.Join(logDir, "server.log"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
 	if err != nil {
