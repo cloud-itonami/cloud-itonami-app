@@ -1,7 +1,7 @@
 [{:db/id -1
   :adr/id "adr-2609111230-valueflows-xmile-bot-integration"
   :adr/title "Bots get a Valueflows economic plane and an XMILE simulation face — the sync is read from shared planes, not from bot-to-bot messages"
-  :adr/status "proposed"
+  :adr/status "accepted"
   :adr/date "2026-09-03"
   :adr/related "adr-2608151900-bots-durable-goal-orchestrator adr-2608200400-bots-get-a-did-and-authority-as-a-biscuit"
   :adr/body
@@ -158,5 +158,58 @@ conform-pass/fold-reject is a distinct stage; two accepted events fold in
 order and the replayed root equals the appended root exactly; the
 hand-edited-root tamper is refused. Remaining known failures
 (bundle/graph CID lock, bulky-waste HTTP) reproduce identically on the
-pre-change base — pre-existing, not this slice's. Capability mapping
-(slice 2) and the XMILE calibration hook (slice 3) stay open."}]
+pre-change base — pre-existing, not this slice's.
+
+## Slice 2 landed: the capability mapping (2026-09-03)
+
+`cloud.itonami.app.vf-authority` — `kotoba://vf/<org>/<plane>/<action>` as
+the wire form, with the plane/action table closed (an undefined pair, e.g.
+`resource/append`, is refused, never minted). The loop-yakuwari mapping is
+three keywords — `:vf.read` → `event/read`, `:vf.append` →
+`event/append`, `:vf.commit` → `commitment/commit` — and deliberately
+closed with them: a capability outside the set is nil here (it stays a
+tool scope under `bot_authority/capability->scope`), because a guessed
+scope is invented authority. Decider unchanged: every verdict below is
+`authority.scope/covers?` / `covered?` through `authority.grant`, measured
+— `org-a` does not cover `org-ab` (segment equality, not prefix);
+`event/read` does not reach `event/append` or `commitment/commit` (separate
+leaves, the grant order holds as scopes); the decider's `:*` wildcard
+covers strictly longer scopes and never the namespace itself;
+`attenuate-slices` narrows a coordinator's scopes to the slice it hands on
+via `scope/meet`, and an incomparable ask (coordinator holds read, asks
+for append) has no meet — nothing is synthesised.
+
+## Slice 3 landed: the XMILE calibration hook (2026-09-03)
+
+`cloud.itonami.app.vf-calibrate` — the bridge stays one-directional and
+the `:different-formalism` boundary is not crossed: no flow rate is ever
+written, no event is converted into a rate. The correspondence table
+(`:vf/xmile`, org → {resource-id → constant name}) is the only place a
+resource becomes a model constant. `calibrated-model` rebases each bound
+LEAF constant (bare-number equation — the exact shape `loops/sensitivity`
+perturbs) to the resource's folded `:onhand-quantity`, and refuses a
+binding onto a computed variable (overwriting a derived value would not be
+calibration, it would be a different model). `calibration` is the
+observer's report: `:rebased` (from → to), `:unmatched` (binding without a
+measurement — a stale operating point, the actionable kind of nothing),
+`:ignored` (measurement without a leaf-constant place to go). Proof,
+measured: a produce of 17 moves ONLY the named constant (28 → 17.0; flow
+and aux untouched; the original model unchanged — immutable update); the
+next `execute/run` reflects exactly that operating point (final Backlog 20
+→ 2.0, the arithmetic of the rebased initial condition); an unnamed
+resource leaves the model identical; two appended events land the FOLD's
+arithmetic (5+5=10) as the operating point, not the last event. The run
+inputs match the journal — nothing else moves.
+
+## Still open
+
+- Intent-path wiring: `vf.event.append` intents admitted by
+  `organism_gateway` do not yet drive `vf-journal/append-event!` in the
+  gateway's effect phase; the journal and the admission receipts are two
+  working halves not yet one loop (the ADR's Verification line about
+  agreement of rejection reasons is satisfied at the vocabulary level, not
+  yet end-to-end through the gateway).
+- The workforce grant rollout (who holds read / append / commit) is an
+  operational decision per imported bot, not code.
+- `valueflows.proposal` / `agreement-balance` negotiation arithmetic is in
+  the vocabulary; nothing in this app reads it yet."}]
