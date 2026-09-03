@@ -1,0 +1,33 @@
+[{:db/id -1
+  :adr/id "adr-2609031040-bot-cache-hit-rate-is-measured-and-the-prefix-stops-breaking"
+  :adr/title "Bot prompt-cache hit rate is measured, and the per-turn system message stops breaking the prefix"
+  :adr/status "accepted"
+  :adr/date "2026-09-03"
+  :adr/related "adr-2608291300-bots-return-to-murakumo-main-and-the-pool-stops-rotating adr-2608300100-a-failure-keeps-its-name-its-status-and-its-words"
+  :adr/body "## What was missing
+
+The Bots' provider prompt-cache hit rate was unmeasurable. The turn store already records per-turn usage (`:turn/usage` — OpenAI `prompt_tokens_details.cached_tokens` and Anthropic `cache_read_input_tokens`, merged by `bots/merge-usage` since the usage-merge landed), but no reader existed, so the rate never appeared anywhere and prefix regressions landed silently.
+
+## Decision — measurement
+
+`cloud.itonami.app.bot-cache` is a read-only reader in the `bot-slo` style: it takes the same partition snapshot, filters to the owner's Bots and the same 24h / 7d windows, and sums both sides of the ratio over turns that carry a measurable usage. Fail-closed rules:
+
+- `:hit-rate` is `nil` (:unmeasured) when no turn in the window carries both `prompt_tokens` and a known cached-token shape. Absent telemetry never reads as 0.
+- A provider that answers with no cache hit is a measurement: with usage present, the rate reads 0.0.
+- The denominator is the provider's own `prompt_tokens` total — never a hand-derived `prompt - cached`. A cache read is real input against the plan (the same rule `claude-bridge` / `cursor-bridge` are held to).
+- The reader lives in `bot-cache` and `bots/merge-usage` delegates to it, so the merge and the rate can never disagree about what cached was.
+- A per-model breakdown (`:by-model`) is included: the provider cache is keyed per model, so a mid-window rotation shows up as a second row with its own rate instead of blending into one number.
+
+`bots/overview` exposes the result beside `:slo` as `:cache`.
+
+## Decision — the prefix
+
+While measuring the shapes, one structural cache-breaker was found in the request assembly. `transcript` prepended a `Device context` system message that is re-captured EVERY turn (chronicle OCR changes as the person works). A prompt cache is a prefix cache: a byte that changes near the head invalidates everything after it, so the entire conversation re-read at full input price on every local-Bot turn. This is the same cost class `drop-superseded-person-repeats` measured on 2026-08-19 (12 copies of one objective), sitting one seam earlier.
+
+Device context now rides at the TAIL, after the durable conversation. The system prompt and conversation become a byte-stable prefix that can hit the provider cache; the per-turn drift costs only its own suffix. The untrusted-reference-text framing is unchanged. One existing test asserted the old position directly (`a-local-bot-receives-bounded-device-context-but-a-cloud-bot-does-not`, bots_test) and was updated with the seam: the tail message keeps its framing assertions, and the conversation now asserts its prefix position.
+
+## Boundaries
+
+- This measures and reorders; it does not claim a provider honours caching on any specific route. `:hit-rate` reports what the provider reported. Route-level TTL and tier behaviour (5m vs 1h, per-model quirks) is upstream Hermes `prompt_caching.py` territory and is not duplicated here.
+- No gate is added. Adding a hit-rate gate to `bot-slo` comes after the rate has a measurement history; gating an unmeasured number first would manufacture failures out of timeouts.
+- Cloud Bots (`local? false`) never receive device context (unchanged), so this change only moves bytes for local Bots and has no effect on what cloud models receive."}]
