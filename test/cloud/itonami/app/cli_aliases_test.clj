@@ -102,8 +102,8 @@
 
 (deftest resolution-prefers-the-longest-name
   (is (= ["bots" "list"] (:command (commands/resolve-alias ["bots" "list"]))))
-  (is (= ["hermes" "session" "messages"]
-         (:command (commands/resolve-alias ["hermes" "session" "messages"]))))
+  (is (= ["itonami" "session" "messages"]
+         (:command (commands/resolve-alias ["itonami" "session" "messages"]))))
   (is (nil? (commands/resolve-alias ["bots"]))
       "a group name alone is not a command"))
 
@@ -115,9 +115,9 @@
             :timeout-seconds 660}
            (commands/alias-request (commands/resolve-alias ["bots" "task"])
                                    {:id "b-1" :text "hello"} {}))))
-  (testing "hermes session list defaults the profile"
+  (testing "itonami session list defaults the profile"
     (is (= {:method :get :path "/p/default/api/sessions"}
-           (commands/alias-request (commands/resolve-alias ["hermes" "session" "list"])
+           (commands/alias-request (commands/resolve-alias ["itonami" "session" "list"])
                                    {} {}))))
   (testing "tenant connect nests the budget and drops absent keys"
     (is (= {:method :post
