@@ -51,7 +51,8 @@
   (:require [clojure.set :as set]
             [clojure.string :as str]
             [cloud.itonami.app.kotoba-oracle :as oracle]
-            [cloud.itonami.app.work-governance :as governance]))
+            [cloud.itonami.app.work-governance :as governance])
+  #?(:clj (:import [java.security MessageDigest])))
 
 (def schema "cloud.itonami.app.bot.v1")
 
@@ -68,6 +69,38 @@
   [:circle :bean :block :wide :wedge :cloud :wave :drop])
 
 (def default-avatar {:avatar/color :blue :avatar/glyph :circle})
+
+;; A Bot that never picked a colour still needs one, and it must be the SAME
+;; one after every restart and reload — the sidebar's whole point is that a
+;; person recognises a Bot by its face. SHA-256 of the Bot's own id, not
+;; `.hashCode`: hashCode's contract makes no promise across JVM versions, and
+;; a Bot changing colour on the next server upgrade is exactly the failure
+;; this rules out by construction.
+
+(defn face-hash
+  "A deterministic non-negative hash of `id`, from the first 6 bytes of its
+  SHA-256 digest. 48 bits is far more than the colour x glyph space needs;
+  the point is drawing straight from the digest rather than hashing again."
+  [id]
+  #?(:clj
+     (let [digest (.digest (MessageDigest/getInstance "SHA-256")
+                           (.getBytes (str id) "UTF-8"))]
+       (reduce (fn [acc b] (+ (* acc 256) (bit-and (long b) 0xff)))
+               0 (take 6 digest)))
+     :cljs
+     (throw (ex-info "bot/face-hash has no ClojureScript implementation yet"
+                     {:type :bot/unsupported-platform}))))
+
+(defn face
+  "The presentation triple a Bot draws when nobody has picked one: colour,
+  glyph and a small mood-cycling variant number, all derived from `id` alone
+  so the same Bot always has the same face."
+  [id]
+  (let [h (face-hash id)]
+    {:avatar/color (nth avatar-colors (mod h (count avatar-colors)))
+     :avatar/glyph (nth avatar-glyphs (mod (quot h (count avatar-colors))
+                                            (count avatar-glyphs)))
+     :variant (mod h 7)}))
 
 (def max-name 60)
 (def max-brief 2000)
