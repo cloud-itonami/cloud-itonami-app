@@ -1900,16 +1900,14 @@
         stored-avatar (:bot/avatar b)
         ;; Earlier wire clients omitted avatar fields, so uncustomised Bots
         ;; were all persisted as the same blue circle. Give only that default
-        ;; a stable face derived from the immutable Bot id. This remains
-        ;; presentation data and is never consulted by tool admission.
-        face-hash (Math/abs (long (.hashCode (str (:bot/id b)))))
+        ;; a stable face derived from the immutable Bot id (bot/face —
+        ;; SHA-256, not hashCode, so the face also survives a JVM upgrade).
+        ;; This remains presentation data and is never consulted by tool
+        ;; admission.
+        derived-face (bot/face (:bot/id b))
         display-avatar
         (if (= stored-avatar bot/default-avatar)
-          {:avatar/color (nth bot/avatar-colors
-                              (mod face-hash (count bot/avatar-colors)))
-           :avatar/glyph (nth bot/avatar-glyphs
-                              (mod (quot face-hash (count bot/avatar-colors))
-                                   (count bot/avatar-glyphs)))}
+          (select-keys derived-face [:avatar/color :avatar/glyph])
           stored-avatar)
         workforce-job (get-in partition [:workforce-jobs (:bot/id b)])
         continuation (workforce-continuation partition (:bot/id b)
@@ -1937,7 +1935,7 @@
      :name (:bot/name b)
      :avatar {:color (name (:avatar/color display-avatar))
               :glyph (name (:avatar/glyph display-avatar))
-              :variant (mod face-hash 7)}
+              :variant (:variant derived-face)}
      :brief (:bot/brief b)
      :hermes-import
      (when import-binding
@@ -2295,6 +2293,52 @@
       (update! configuration session sc {:provider-id nil :model nil})
       (transact! update :routing dissoc [t sc]))
     (model-routing session)))
+
+(defn organizations
+  "The organizations this session's User belongs to, each with the Bots that
+  live in it.
+
+  An agent session acts inside ONE organization — the one minted with it
+  (`auth login --organization`) or its owner's default membership — and every
+  Bot surface here filters to that tenant. `orgs` exists because an operator
+  with several tenants cannot see, from the CLI, which membership produced
+  which Bot list, or which other tenants exist to re-mint into. It answers the
+  membership question from the same records `public-state` shows a browser:
+  `:identity :memberships` joined to `:identity :organizations`, and the Bot
+  count per tenant read the way `overview` reads it (owner + organization).
+
+  Cross-tenant Bot listing is NOT here. `:bots/...` for another tenant is a
+  different trust scope, and `owned!`'s two-half check is the rule; this
+  reports counts only. A session that wants another tenant's Bots mints
+  another session into it (the same rule `switch-organization!` requires a
+  Passkey to enforce on a person)."
+  [session]
+  (let [state (store/snapshot)
+        identity-state (:identity state)
+        bots (vals (:bots state))
+        bot-count (fn [org-record]
+                    (->> bots
+                         (filter #(and (= (:user-id session) (:bot/owner %))
+                                       (= (:id org-record)
+                                          (:bot/organization %))))
+                         count))
+        public-org (fn [membership]
+                     (let [organization (get-in identity-state
+                                                [:organizations
+                                                 (:organization-id membership)])]
+                       (assoc (select-keys organization
+                                           [:id :organization-id :did :name
+                                            :domain :domain-source :status])
+                              :kind (name (or (:tenant/kind organization)
+                                              :organization))
+                              :role (:role membership)
+                              :active? (= (:id organization)
+                                          (:organization-id session))
+                              :bot-count (bot-count organization))))]
+    (->> (vals (:memberships identity-state))
+         (filter #(= (:user-id session) (:user-id %)))
+         (mapv public-org)
+         (sort-by :name))))
 
 (defn overview
   "Everything the Bots screen needs on load: the Bots, and — when there are

@@ -218,6 +218,24 @@
                 "/api/agent-bots/imports/hermes-cli-provision/provision"]
                (mapv second @calls)))))))
 
+(deftest orgs-cli-lists-the-tenants-the-session-belongs-to
+  (let [seen (atom nil)]
+    (with-redefs [client/request!
+                  (fn [_ method path body]
+                    (reset! seen [method path body])
+                    {:organizations
+                     [{:id "org-1" :organization-id "gftdcojp" :name "gftdcojp"
+                       :kind "organization" :role "owner" :active? true
+                       :bot-count 12}
+                      {:id "org-2" :organization-id "jk-luxury" :name "jk-luxury"
+                       :kind "organization" :role "admin" :active? false
+                       :bot-count 3}]
+                     :active-organization-id "org-1"})]
+      (is (= "org-1"
+             (:active-organization-id
+              (cli/run {} ["orgs" "list"]))))
+      (is (= [:get "/api/agent-bots/orgs" {}] @seen)))))
+
 (deftest a-failure-reaches-the-operator-under-the-name-it-was-recorded-with
   ;; Both directions, and the literal is pinned: this assertion exists to fail
   ;; when `provider/http-error` reaches an operator as `http-error`, which is
