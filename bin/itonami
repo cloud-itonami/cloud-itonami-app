@@ -359,6 +359,7 @@
 ;; event, consumed by /approve and /deny in the REPL.
 (def ^:private chat-approval (atom nil))
 
+
 (defn- chat-emit [text]
   (js/process.stdout.write (str text)))
 
@@ -433,6 +434,8 @@
 
                      (contains? #{"run.failed" "run.cancelled" "run.stopped"} kind)
                      (do (swap! out assoc :status (subs kind 4) :error (:error ev))
+                         (when (= "run.stopped" kind)
+                           (swap! chat-approval (fn [a] (when (= run-id (:run-id a)) nil))))
                          (when (:error ev) (chat-emit (str "\nerror: " (:error ev) "\n")))
                          (finish))
 
@@ -489,11 +492,77 @@
       (do (println "  /bots — Bot 一覧
   /profiles — profile 一覧
   /profile <id> — 対話先を切り替え
+  /sessions — セッション一覧 (hermes 互換)
+  /history [N] — 直近 N 件のメッセージ表示 (hermes 互換)
+  /steer <text> — 実行中 run への割り込み注入 (hermes 互換)
+  /stop — 実行中 run の停止 (hermes 互換)
   /approve — 承認待ちの card を許可
   /deny — 承認待ちの card を拒否
   /status — 常駐サーバの状態
   /exit — 終了")
           :handled)
+
+      "/sessions"
+      (-> (request! {:method :get
+                     :path (str "/p/" @chat-profile "/api/sessions")
+                     :timeout-seconds 10}
+                    (require-token!))
+          (.then (fn [{:keys [status body]}]
+                   (if (<= 200 status 299)
+                     (doseq [s (take 30 (:data body))]
+                       (println (str "  " (:id s)
+                                     "  " (or (:title s) "?")
+                                     "  " (or (:message_count s) 0) " msgs"
+                                     "  " (or (:preview s) ""))))
+                     (println (str "HTTP " status)))))
+          (.catch say-error))
+
+      "/history"
+      (-> (request! {:method :get
+                     :path (str "/p/" @chat-profile
+                                "/api/sessions/" @chat-profile
+                                "/messages?order=latest&limit="
+                                (or (some-> args first js/parseInt (max 1)) 20))
+                     :timeout-seconds 10}
+                    (require-token!))
+          (.then (fn [{:keys [status body]}]
+                   (if (<= 200 status 299)
+                     (doseq [m (reverse (:data body))]
+                       (let [c (str (:content m))]
+                         (println (str "[" (or (:role m) "?") "] "
+                                       (subs c 0 (min 300 (.-length c)))))))
+                     (println (str "HTTP " status)))))
+          (.catch say-error))
+
+      "/steer"
+      (let [text (str/join " " args)
+            run-id (:run-id @chat-approval)]
+        (if (or (str/blank? text) (not run-id))
+          (do (println "steer できる実行中 run がありません (/steer <text>)") :handled)
+          (-> (request! {:method :post
+                         :path (str "/v1/runs/" run-id "/steer")
+                         :body {:input text}
+                         :timeout-seconds 15}
+                        (require-token!))
+              (.then (fn [{:keys [status]}]
+                       (if (<= 200 status 299)
+                         (println "steered — 次の tool call 後に反映されます")
+                         (println (str "HTTP " status)))))
+              (.catch say-error))))
+
+      "/stop"
+      (let [run-id (:run-id @chat-approval)]
+        (if-not run-id
+          (do (println "停止できる実行中 run がありません") :handled)
+          (-> (request! {:method :post
+                         :path (str "/v1/runs/" run-id "/stop")
+                         :timeout-seconds 10}
+                        (require-token!))
+              (.then (fn [{:keys [status]}]
+                       (if (<= 200 status 299)
+                         (println "stop 要求を送りました")
+                         (println (str "HTTP " status)))))
+              (.catch say-error))))
 
       "/bots"
       (-> (request! {:method :get :path "/api/agent-bots"} (require-token!))
