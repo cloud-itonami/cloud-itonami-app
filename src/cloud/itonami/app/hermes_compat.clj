@@ -65,6 +65,32 @@
 (defn- imported-session-ids [bot]
   (set (get-in bot [:hermes-import :session-ids])))
 
+(defn- pick-default-bot
+  "Default-profile selection. A stale disabled Bot that merely sorts earlier by
+  creation must not shadow a live one when the default profile resolves
+  (measured 2026-09-04: `itonami chat` with two `default`-profile Bots started
+  runs against the disabled one and every turn failed with 「この Bot は
+  停止しています。」). Two passes: first consider only enabled Bots across the
+  preference tiers (imported `default` profile, configured default-bot-id,
+  pinned), then fall back to the legacy single-pass order, so a fleet of
+  disabled Bots still resolves — and refuses — exactly as before."
+  [available default-id profile-default-first?]
+  (let [preds (if profile-default-first?
+                [#(= "default" (imported-profile-id %))
+                 #(= default-id (:id %))
+                 #(boolean (:pinned? %))]
+                [#(= default-id (:id %))
+                 #(boolean (:pinned? %))])
+        pass (fn [enabled-only?]
+               (some (fn [pred]
+                       (some #(when (and (pred %)
+                                         (or (not enabled-only?)
+                                             (boolean (:enabled? %))))
+                                %)
+                             available))
+                     preds))]
+    (or (pass true) (pass false) (first available))))
+
 (defn resolve-bot
   "Resolve an explicit Hermes profile/session id, with `default` selecting the
   first visible Bot. Throws the same not-found class as the native Bot API."
@@ -76,15 +102,10 @@
         selected
         (cond
           (= "default" requested)
-          (or (some #(when (= "default" (imported-profile-id %)) %) available)
-              (some #(when (= default-id (:id %)) %) available)
-              (some #(when (:pinned? %) %) available)
-              (first available))
+          (pick-default-bot available default-id true)
 
           (nil? requested)
-          (or (some #(when (= default-id (:id %)) %) available)
-              (some #(when (:pinned? %) %) available)
-              (first available))
+          (pick-default-bot available default-id false)
 
           :else
           (some #(when (or (= requested (:id %))
@@ -354,18 +375,32 @@
                                            (some #(when (= "bot" (:role %))
                                                     (:text %))))
                                   "")
-                       final-state (if (= "cancelled" (:state turn))
-                                     "cancelled" "completed")
+                       ;; A held write is not a completion: the turn stopped
+                       ;; so a person could decide. Name that state on the
+                       ;; wire and keep the event queue open — the decision
+                       ;; (hermes/approval!) resumes this same run and its
+                       ;; continuation is what finally closes it.
+                       held? (#{"held" "waiting-approval"}
+                              (str (:state turn) (:phase turn)))
+                       final-state (cond
+                                     (= "cancelled" (:state turn)) "cancelled"
+                                     held? "waiting-approval"
+                                     :else "completed")
                        final-event (str "run." final-state)
                        payload (cond-> {:event final-event :run_id run-id
                                         :timestamp (now-seconds)}
                                  (= "completed" final-state)
-                                 (assoc :output output :usage (or (:usage turn) {})))]
+                                 (assoc :output output :usage (or (:usage turn) {}))
+                                 (= "waiting-approval" final-state)
+                                 (assoc :phase "waiting-approval"
+                                        :tool (some-> turn :tool)))]
                    (put-event! run-id payload)
                    (set-status! run-id final-state
                                 (cond-> {:last_event final-event}
                                   (= "completed" final-state)
-                                  (assoc :output output :usage (or (:usage turn) {})))))
+                                  (assoc :output output :usage (or (:usage turn) {}))))
+                   (when-not (= "waiting-approval" final-state)
+                     (close-events! run-id)))
                  (catch Exception error
                    (let [cancelled? (= :bot/cancelled (:type (ex-data error)))
                          state (if cancelled? "cancelled" "failed")
@@ -377,9 +412,8 @@
                                    (not cancelled?) (assoc :error message)))
                      (set-status! run-id state
                                   (cond-> {:last_event event-name}
-                                    (not cancelled?) (assoc :error message)))))
-                 (finally
-                   (close-events! run-id)))))
+                                    (not cancelled?) (assoc :error message)))
+                     (close-events! run-id))))))
     {:run_id run-id :status "started"}))
 
 (defn- durable-run-status [configuration session-auth run-id]
@@ -393,6 +427,7 @@
                      "failed" "failed"
                      "checkpointed" "running"
                      "blocked" "running"
+                     "held" "waiting-approval"
                      (:state turn))]
          (cond-> {:object "hermes.run" :run_id (str run-id)
                   :session_id (:id bot) :status state
@@ -470,6 +505,33 @@
                             {:type :hermes/approval-not-pending})))
         decision (if (= "deny" choice) :rejected :approved)]
     (bots/decide! configuration session-auth bot-id (:id card) decision)
+    ;; `decide!` resumes the Bot loop synchronously (its continuation runs
+    ;; `advance!` to completion on this thread). Forward whatever that
+    ;; continuation produced onto THIS run's event queue — a chat client is
+    ;; still holding the SSE stream open from the waiting-approval frame, so
+    ;; the tail of the turn and the final event arrive on the run it is
+    ;; already reading — then close the stream.
     (set-status! (str run-id) "running" {:last_event "approval.responded"})
-    {:object "hermes.run.approval_response" :run_id (str run-id)
-     :choice choice :resolved 1}))
+    (let [turn (bots/latest-turn session-auth bot-id)
+          state (case (:state turn)
+                  "cancelled" "cancelled"
+                  "held" "waiting-approval"
+                  "failed" "failed"
+                  "completed")
+          output (or (:result turn) "")
+          final-event (str "run." state)
+          payload (cond-> {:event final-event :run_id (str run-id)
+                           :timestamp (now-seconds)}
+                    (= "completed" state)
+                    (assoc :output output :usage (or (:usage turn) {}))
+                    (= "waiting-approval" state)
+                    (assoc :phase "waiting-approval"
+                           :tool (some-> turn :tool)))]
+      (put-event! (str run-id) payload)
+      (set-status! (str run-id) state
+                   (cond-> {:last_event final-event}
+                     (= "completed" state)
+                     (assoc :output output :usage (or (:usage turn) {}))))
+      (close-events! (str run-id))
+      {:object "hermes.run.approval_response" :run_id (str run-id)
+       :choice choice :resolved 1 :state state :output output})))

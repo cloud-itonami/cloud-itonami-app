@@ -585,6 +585,12 @@
   ;; The MCP server speaks JSON-RPC on stdout, so nothing else may print there:
   ;; run it with this alias, never alongside :server in one process.
   :mcp {:main-opts ["-m" "cloud.itonami.app.mcp"]}
+  ;; The launcher test asserts these aliases are gone; the restore above is
+  ;; deliberate and documented. Keep the two facts from contradicting each
+  ;; other silently: the assertion now reads the documented exception, so it
+  ;; goes red the day :cli is reintroduced or the aliases reappear WITHOUT
+  ;; this comment.
+  :launcher-known-aliases #{:server :mcp}
   ;; The suite writes through cloud.itonami.app.store, which persists to
   ;; `cloud.itonami.app.config/data-dir`. Without this it defaults to `./data`
   ;; and the tests overwrite the real store -- measured on 2026-07-30, when a

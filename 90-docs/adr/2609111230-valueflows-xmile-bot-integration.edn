@@ -201,14 +201,45 @@ resource leaves the model identical; two appended events land the FOLD's
 arithmetic (5+5=10) as the operating point, not the last event. The run
 inputs match the journal — nothing else moves.
 
+## Slice 4 landed: hyakka residents emit VF produce events on the datom plane (2026-09-04)
+
+The hyakka wiki residents (network-awai/cloud-itonami #582, worker
+`cd12102a`, pin `d183756a`) now attach one deterministic `:produce`
+EconomicEvent per observation to their kotobase projection: provider =
+resident DID, receiver = the wiki, quantity = number of claims in the
+observation, resource = the observation record CID. The event id is
+digest-keyed (same observation → same event → idempotent upsert), so a
+retry after a 5xx cannot double-count a produce. This is the first bot
+population writing VF events on the shared datom plane at runtime —
+before this slice the only VF writers were library tests and the
+`itonami-valueflows-bind.cljs` offline projection.
+
+Scope note (honest boundary): these events land as datoms on the tenant
+graph, **not** in `vf-journal/append-event!` — the per-org EDN journal
+and its fold/inventory-root checks are not in the resident's write path
+yet. The two planes carry the same vocabulary but do not yet join: the
+XMILE calibration hook (slice 3) reads only the journal, so resident
+produce events do not rebase model constants until a slice moves them
+into the journal (or teaches `vf-calibrate` a datom-plane reader). Until
+then the resident events are provenance on the datom plane, and the
+journal remains the calibration source. Live proof 2026-09-04: after the
+chunked-client + gateway enforce-schema opt-out + engine hydration-skip
+chain landed, engine-side transacts went from total 502 CPU-limit
+failure to Ok 321 / Canceled 26 / Exceeded 15 in the 05:00-07:00 window
+(wrangler tail on kotobase-cf-wasm-staging).
+
 ## Still open
 
+- Resident ↔ journal join: the hyakka residents' VF events (slice 4) sit
+  on the datom plane only; either a resident-side journal append or a
+  `vf-calibrate` datom reader is needed before they can calibrate an
+  XMILE model.
 - Intent-path wiring: `vf.event.append` intents admitted by
   `organism_gateway` do not yet drive `vf-journal/append-event!` in the
   gateway's effect phase; the journal and the admission receipts are two
   working halves not yet one loop (the ADR's Verification line about
-  agreement of rejection reasons is satisfied at the vocabulary level, not
-  yet end-to-end through the gateway).
+  agreement of rejection reasons is satisfied at the vocabulary level,
+  not yet end-to-end through the gateway).
 - The workforce grant rollout (who holds read / append / commit) is an
   operational decision per imported bot, not code.
 - `valueflows.proposal` / `agreement-balance` negotiation arithmetic is in
