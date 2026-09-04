@@ -399,22 +399,42 @@
                      (= "run.completed" kind)
                      (do (swap! out assoc :status "completed"
                                 :output (or (:output ev) "") :usage (:usage ev))
-                         (js/process.stdout.write "\n"))
+                         (js/process.stdout.write "\n")
+                         (finish))
+
+                     ;; A held write: the run pauses here, the stream stays
+                     ;; open, and the decision (/approve /deny) sends the
+                     ;; continuation's tail over this same stream. Resolve
+                     ;; the turn so the REPL gets its prompt back — the pump
+                     ;; keeps reading and prints the continuation's tail and
+                     ;; terminal event when the decision resumes the run.
+                     (= "run.waiting_approval" kind)
+                     (do (reset! chat-approval {:card (:card ev) :tool (:tool ev)
+                                                :run-id run-id})
+                         (swap! out assoc :status "waiting-approval"
+                                :approval {:card (:card ev) :tool (:tool ev)
+                                           :run-id run-id})
+                         (js/process.stdout.write
+                          (str "\n⚠ 承認待ち: " (:tool ev)
+                               " — /approve で許可、/deny で拒否\n"))
+                         (resolve @out))
 
                      (= "run.phase" kind)
                      ;; A held write names the card that answers it. Surface
-                     ;; it — the approval is one REPL command away, and the
-                     ;; stream otherwise ends without saying why.
+                     ;; it — the approval is one REPL command away.
                      (when (= "waiting-approval" (:phase ev))
-                       (reset! chat-approval {:card (:card ev) :tool (:tool ev)})
-                       (swap! out assoc :approval {:card (:card ev) :tool (:tool ev)})
+                       (reset! chat-approval {:card (:card ev) :tool (:tool ev)
+                                              :run-id run-id})
+                       (swap! out assoc :approval {:card (:card ev) :tool (:tool ev)
+                                                   :run-id run-id})
                        (js/process.stdout.write
                         (str "\n⚠ 承認待ち: " (:tool ev)
                              " — /approve で許可、/deny で拒否\n")))
 
                      (contains? #{"run.failed" "run.cancelled" "run.stopped"} kind)
                      (do (swap! out assoc :status (subs kind 4) :error (:error ev))
-                         (when (:error ev) (chat-emit (str "\nerror: " (:error ev) "\n"))))
+                         (when (:error ev) (chat-emit (str "\nerror: " (:error ev) "\n")))
+                         (finish))
 
                      :else nil)))
                (feed [s]
@@ -510,30 +530,34 @@
           (.catch (fn [_] (println "server: down"))))
 
       "/approve"
-      (if-let [{:keys [card]} @chat-approval]
+      (if-let [{:keys [card run-id]} @chat-approval]
         (-> (request! {:method :post
-                       :path (str "/api/agent-bots/" @chat-profile
-                                  "/cards/" card "/decide")
-                       :body {:decision "approved"}}
+                       :path (str "/v1/runs/" run-id "/approval")
+                       :body {:choice "approve"}}
                       (require-token!))
-            (.then (fn [{:keys [status]}]
-                     (println (if (<= 200 status 299)
-                                "approved — 実行が続きます"
-                                (str "decide failed: HTTP " status)))))
+            (.then (fn [{:keys [status body]}]
+                     (if (<= 200 status 299)
+                       (do (println "approved — 実行が続きます")
+                           ;; The continuation's tail and terminal event
+                           ;; arrive on the run's still-open SSE stream.
+                           (reset! chat-approval nil))
+                       (println (str "decide failed: HTTP " status
+                                     " " (str (get-in body [:error :message])))))))
             (.catch say-error))
         (do (println "承認待ちの card はありません") :handled))
 
       "/deny"
-      (if-let [{:keys [card]} @chat-approval]
+      (if-let [{:keys [card run-id]} @chat-approval]
         (-> (request! {:method :post
-                       :path (str "/api/agent-bots/" @chat-profile
-                                  "/cards/" card "/decide")
-                       :body {:decision "rejected"}}
+                       :path (str "/v1/runs/" run-id "/approval")
+                       :body {:choice "deny"}}
                       (require-token!))
-            (.then (fn [{:keys [status]}]
-                     (println (if (<= 200 status 299)
-                                "denied"
-                                (str "decide failed: HTTP " status)))))
+            (.then (fn [{:keys [status body]}]
+                     (if (<= 200 status 299)
+                       (do (println "denied")
+                           (reset! chat-approval nil))
+                       (println (str "decide failed: HTTP " status
+                                     " " (str (get-in body [:error :message])))))))
             (.catch say-error))
         (do (println "承認待ちの card はありません") :handled))
 
@@ -589,7 +613,11 @@
                                                                       (or (:prompt_tokens usage) "?") " in / "
                                                                       (or (:completion_tokens usage) "?") " out")))
                                                     (println))
-                                                  (turn)))
+                                                  ;; A failed turn is a refusal, not
+                                                  ;; a prompt for the next one.
+                                                  (if (= "completed" (:status out))
+                                                    (turn)
+                                                    (js/process.exit exit-refused))))
                                          (.catch (fn [e]
                                                    (if (= "readline was closed" (ex-message e))
                                                      (js/process.exit exit-answered)
@@ -623,7 +651,18 @@
             (.then (fn [{:keys [status body]}]
                      (if (<= 200 status 299)
                        (-> (chat-poll-events! (or (:run_id body) (:run-id body)))
-                           (.then report))
+                           (.then (fn [out]
+                                    ;; The run started but the turn failed on
+                                    ;; the stream (disabled Bot, provider
+                                    ;; denial): that is the server refusing,
+                                    ;; exit 1 — not a silent success.
+                                    (if (= "completed" (:status out))
+                                      (report out)
+                                      (refuse! (or (:error out)
+                                                   (str "run は "
+                                                        (name (:status out))
+                                                        " で終わりました"))
+                                               (select-keys out [:error]))))))
                        (refuse! (str "run を開始できません: HTTP " status)
                                 (select-keys body [:error]))))))
         nil)

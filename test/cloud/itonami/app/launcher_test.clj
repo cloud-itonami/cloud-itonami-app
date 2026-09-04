@@ -121,9 +121,16 @@
 
 (deftest leftover-jvm-aliases-are-gone
   (let [deps (read-string (slurp "deps.edn"))
-        aliases (:aliases deps)]
-    (is (not (contains? aliases :server)))
-    (is (not (contains? aliases :mcp)))
+        aliases (:aliases deps)
+        ;; RESTORED 2026-09-03 (deps.edn comment): :server/:mcp name the
+        ;; production launchd run path until the nbb guest host is proven
+        ;; live. The restored aliases declare themselves in
+        ;; :launcher-known-aliases, so an undocumented reintroduction of
+        ;; :cli -- or any alias outside that set -- still goes red here.
+        known (:launcher-known-aliases aliases)]
+    (is (contains? aliases :launcher-known-aliases)
+        "the restored :server/:mcp must declare themselves")
+    (is (= #{:server :mcp} known))
     (is (not (contains? aliases :cli)))
     (is (contains? aliases :test))
     (is (contains? aliases :gen))
