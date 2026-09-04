@@ -74,9 +74,20 @@
     "/status"  {:name "/status"  :args-hint ""          :description "常駐サーバの状態"
                 :handler (fn [args ctx] ((:status ctx) args))}
     "/exit"    {:name "/exit"    :args-hint ""          :description "終了"
-                :handler (fn [args ctx] ((:exit ctx) args))})))
+                :handler (fn [args ctx] ((:exit ctx) args))}
+    ;; --- stage 4: gap-client commands (server routes already exist) ---
+    "/whoami"  {:name "/whoami"  :args-hint ""          :description "operator の確認 (hermes 互換)"
+                :handler (fn [args ctx] ((:whoami ctx) args))}
+    "/model"   {:name "/model"   :args-hint "[<model>]" :description "model-routing の表示・設定 (hermes 互換)"
+                :handler (fn [args ctx] ((:model ctx) args))}
+    "/version" {:name "/version" :args-hint ""          :description "サーバの version / update 状態"
+                :handler (fn [args ctx] ((:version ctx) args))}
+    "/context" {:name "/context" :args-hint ""          :description "session context sources の表示"
+                :handler (fn [args ctx] ((:context ctx) args))})))
 
 (defn commands [] (vals @registry))
+
+(defn pr-edn [v] (binding [*print-length* 12] (pr-str v)))
 
 (defn help-text
   "Generated from the registry — help cannot drift from dispatch."

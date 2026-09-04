@@ -482,13 +482,16 @@
 (defn- request-or-refuse!
   "Shared body for slash handlers: GET/POST + print or HTTP N. Returns a
   Promise so the REPL awaits it before re-prompting."
-  [req on-ok]
-  (-> (request! req (require-token!))
-      (.then (fn [{:keys [status body]}]
-               (if (<= 200 status 299)
-                 (on-ok body)
-                 (println (str "HTTP " status)))))
-      (.catch (fn [e] (println (str "error: " (ex-message e)))))))
+  ([req on-ok] (request-or-refuse! req on-ok nil))
+  ([req on-ok on-err]
+   (-> (request! req (require-token!))
+       (.then (fn [{:keys [status body]}]
+                (if (<= 200 status 299)
+                  (on-ok body)
+                  (if on-err
+                    (on-err status)
+                    (println (str "HTTP " status))))))
+       (.catch (fn [e] (println (str "error: " (ex-message e))))))))
 
 ;; ---------------------------------------------------------------------------
 ;; slash handlers — registered into itonami-chat's DATA registry (stage 2).
@@ -640,6 +643,57 @@
 (chat/register!
  "/exit" "" "終了"
  (fn [_ _] :exit))
+
+;; --- stage 4: gap-client commands — server routes already exist -----------
+
+(chat/register!
+ "/whoami" "" "operator の確認 (hermes 互換)"
+ (fn [_ _]
+   (request-or-refuse!
+    {:method :get :path "/api/operator" :timeout-seconds 10}
+    (fn [body]
+      (let [p (:profile body)]
+        (if (and (map? p) (seq p))
+          (do (println (str "operator: " (or (:name p) (:display-name p) (pr-str (select-keys p [:id :created-at])))))
+              (doseq [k (take 6 (keys p))]
+                (println (str "  " k ": " (pr-str (get p k))))))
+          (println "operator profile は未設定 (Web UI で set up)"))
+        (when-let [s (:summary body)]
+          (println (str "summary: " (chat/pr-edn s))))))))
+
+(chat/register!
+ "/model" "[<model>]" "model-routing の表示・設定 (hermes 互換)"
+ (fn [args _]
+   (if (empty? args)
+     (-> (request! {:method :get :path "/api/bots/model-routing"
+                    :timeout-seconds 10}
+                   (require-token!))
+         (.then (fn [{:keys [status body]}]
+                  (if (<= 200 status 299)
+                    (println (chat/pr-edn body))
+                    (do (println "model routing は human session が必要です (Web UI で設定)")
+                        (println (str "  (HTTP " status ")"))))))
+         (.catch (fn [e] (println (str "error: " (ex-message e)))))))
+     (request-or-refuse!
+      {:method :post :path "/api/bots/model-routing"
+       :body {:model (first args)} :timeout-seconds 10}
+      (fn [body] (println "model routing updated:" (chat/pr-edn body)))))))
+
+(chat/register!
+ "/version" "" "サーバの version / update 状態"
+ (fn [_ _]
+   (request-or-refuse!
+    {:method :get :path "/api/update" :timeout-seconds 10}
+    (fn [body] (println (chat/pr-edn body))))))
+
+(chat/register!
+ "/context" "" "session context sources の表示"
+ (fn [_ _]
+   (request-or-refuse!
+    {:method :get
+     :path "/api/session/context/sources"
+     :timeout-seconds 10}
+    (fn [body] (println (chat/pr-edn body))))))
 
 (defn- chat-prompt-loop!
   "The REPL: one message per turn, each on its own run, streaming deltas.
