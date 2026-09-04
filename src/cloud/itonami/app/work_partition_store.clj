@@ -7,10 +7,10 @@
   complete next generation, never a mixture of tenant files."
   (:require [clojure.edn :as edn]
             [clojure.java.io :as io]
-            [cloud.itonami.app.config :as config])
+            [cloud.itonami.app.config :as config]
+            [cloud.itonami.app.secure-file :as secure-file])
   (:import [java.nio.charset StandardCharsets]
            [java.nio.file Files StandardCopyOption]
-           [java.nio.file.attribute PosixFilePermissions]
            [java.security MessageDigest]
            [java.util UUID]))
 
@@ -210,10 +210,7 @@
     legacy))
 
 (defn- restrict-owner! [file]
-  (try
-    (Files/setPosixFilePermissions
-     (.toPath file) (PosixFilePermissions/fromString "rw-------"))
-    (catch UnsupportedOperationException _ nil))
+  (secure-file/harden! file "rw-------")
   file)
 
 (defn- atomic-write! [file value]

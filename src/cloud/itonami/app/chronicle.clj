@@ -12,9 +12,10 @@
             [clojure.string :as str]
             [cloud.itonami.app.config :as config]
             [cloud.itonami.app.screen-guest :as screen-guest]
+            [cloud.itonami.app.secure-file :as secure-file]
             [cloud.itonami.app.store :as store])
   (:import [java.nio.file Files]
-           [java.nio.file.attribute PosixFilePermissions]
+
            [java.security MessageDigest]
            [java.util UUID]
            [java.util.concurrent Executors ScheduledExecutorService ThreadFactory
@@ -119,9 +120,7 @@
   (io/file (config/data-dir) "chronicle" (subs (digest user-id) 0 24)))
 
 (defn- secure-permissions! [file permissions]
-  (Files/setPosixFilePermissions
-   (.toPath (io/file file))
-   (PosixFilePermissions/fromString permissions))
+  (secure-file/harden! (io/file file) permissions)
   file)
 
 (defn- frontmost-application []
