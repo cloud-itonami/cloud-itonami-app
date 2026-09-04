@@ -2,7 +2,7 @@
 
 現在段階: L1 (稼働はするが、反証可能性のある品質主張が軸ごとに未整備)
 
-測定日: 2026-09-05 (falsify-13; 初回ベースライン 2026-09-03)
+測定日: 2026-09-05 (falsify-12; 初回ベースライン 2026-09-03)
 測定者: itonami-maint
 
 ## 7 軸スコア (0-5)
@@ -80,14 +80,6 @@
    kanban/human 判断待ち (Tier 2)。falsify-9 で :LOAD-OK、falsify-11 で expiry-alert.cljs rc=0 (OK 行、3 chain fresh) まで裏取り済み。
    2026-09-04 20:47 再確認: 同一エラー (`Could not find namespace:
    authority.scope`) で log が更新継続中 — 未修理のまま。
-   → **falsify-13 (2026-09-05) で範囲修正 (REFUTED)**: 「更新継続中」は
-   不正確 — log は最後の定刻発火 2026-08-31 09:00:05 JST 以降静止
-   (mtime 1788134405 実測、次回発火 2026-09-07 月曜 09:00)。
-   09-04 の観察は同一エラー行の再読で新規追記ではなかった。
-   未修理のままは不変: generator (ops-classpath.sh, HEAD bf4e50ec) も
-   インストール済み plist も classpath に authority/src を含まないことを
-   再実測。launchctl list: last exit 1 / not running (不変)。
-   (evidence/2026-09-05-falsify-13.md)
 5. OPEN 赤-4 (launcher shell-dir 優先順位) の修理案 A/B は kanban/human
    判断待ち。OPEN 赤-5 (flake timeout 引き上げ案) も同様。
 6. ~~spec 軸「208 コマンドの schema」説の反証~~ → falsify-10 で survived
