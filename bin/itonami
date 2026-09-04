@@ -206,13 +206,15 @@
 (defn- request!
   "One request. Resolves to {:status :body}; rejects only when nothing answered,
   which is a different failure from a refusal and is reported as one."
-  [{:keys [method path body timeout-seconds]} token]
+  [{:keys [method path body timeout-seconds headers]} token]
   (let [controller (js/AbortController.)
         timer (js/setTimeout #(.abort controller)
                              (* 1000 (or timeout-seconds 30)))
         init #js {:method (str/upper-case (name method))
-                  :headers (clj->js (cond-> {"content-type" "application/json"}
-                                      token (assoc "authorization" (str "Bearer " token))))
+                  :headers (clj->js (merge {"content-type" "application/json"}
+                                           (when token
+                                             {"authorization" (str "Bearer " token)})
+                                           headers))
                   :signal (.-signal controller)}]
     (when (= :post method)
       (aset init "body" (js/JSON.stringify (clj->js (or body {})))))
@@ -687,6 +689,66 @@
     (fn [body] (println (chat/pr-edn body))))))
 
 (chat/register!
+ "/handoff" "<to> <task>" "別 Bot への引き継ぎ (hermes 互換)"
+ (fn [args _]
+   (let [to (first args)
+         task (str/join " " (rest args))]
+     (if (or (str/blank? to) (str/blank? task))
+       (do (println "使い方: /handoff <to-bot-id> <task>") :handled)
+       (request-or-refuse!
+        {:method :post
+         :path (str "/api/agent-bots/" to "/handoff")
+         :body {:to to :task task}
+         :timeout-seconds 660}
+        (fn [body] (println (chat/pr-edn body))))))))
+
+(chat/register!
+ "/tools" "[term]" "MCP tool 一覧/検索 (hermes tools 互換)"
+ (fn [args _]
+   (-> (request! {:method :post :path "/mcp"
+                  :body {:jsonrpc "2.0" :id 1
+                         :method "tools/list" :params {}}
+                  :headers {"accept" "application/json, text/event-stream"}
+                  :timeout-seconds 15}
+                 (require-token!))
+       (.then (fn [{:keys [body]}]
+                (let [tools (get-in body [:result :tools] [])]
+                  (if (empty? tools)
+                    (println (str "MCP tool が取得できません: " (chat/pr-edn body)))
+                    (doseq [{:keys [name description]} tools]
+                      (when (or (empty? args)
+                                (re-find (re-pattern (str/join "|" args))
+                                         (str name " " (or description ""))))
+                        (println (str "  " name " — " (or description "")))))))))
+       (.catch (fn [e] (println (str "error: " (ex-message e))))))))
+
+(chat/register!
+ "/retry" "" "直前の入力を再送 (hermes 互換)"
+ (fn [_ _]
+   (let [prev (chat/last-input)]
+     (if (or (str/blank? prev) (str/starts-with? (str prev) "/"))
+       (do (println "再送できる直前の入力がありません") :handled)
+       :resend))))
+
+(chat/register!
+ "/verbose" "[on|off]" "tool 進捗の表示切替 (hermes 互換)"
+ (fn [args _]
+   (let [v (case (some-> args first str/lower-case)
+             "on" true "off" false nil (not (chat/verbose?)))]
+     (chat/set-verbose! v)
+     (println "verbose: " (if v "on" "off"))
+     :handled)))
+
+(chat/register!
+ "/timestamps" "[on|off]" "時刻表示の切替 (hermes 互換)"
+ (fn [args _]
+   (let [v (case (some-> args first str/lower-case)
+             "on" true "off" false nil (not (chat/timestamps?)))]
+     (chat/set-timestamps! v)
+     (println "timestamps: " (if v "on" "off"))
+     :handled)))
+
+(chat/register!
  "/context" "" "session context sources の表示"
  (fn [_ _]
    (request-or-refuse!
@@ -706,8 +768,37 @@
     (let [iface (.createInterface rl #js {:input js/process.stdin
                                           :output js/process.stdout})
         ctx {:help (fn [_] (println (chat/help-text)))}]
-      (letfn [(turn []
-                (-> (.question iface (str "you " (theme/prompt-symbol) " "))
+      (letfn [(submit! [text _ctx]
+                ;; One agent turn: POST /v1/runs + SSE. Shared by the :else
+                ;; arm and /retry. Records the line so /retry re-sends the
+                ;; LAST agent input (incl. a retried one).
+                (chat/record-input! text)
+                (-> (request! {:method :post :path "/v1/runs"
+                               :body {:input text :profile (chat/profile)}
+                               :timeout-seconds 30}
+                              (require-token!))
+                    (.then (fn [{:keys [status body]}]
+                             (if (<= 200 status 299)
+                               (chat-poll-events! (or (:run_id body) (:run-id body)))
+                               (refuse! (str "run を開始できません: HTTP " status)
+                                        (select-keys body [:error])))))
+                    (.then (fn [out]
+                             (let [usage (:usage out)]
+                               (when usage
+                                 (chat-emit (str (chat/stamp) "· tokens: "
+                                                 (or (:prompt_tokens usage) "?") " in / "
+                                                 (or (:completion_tokens usage) "?") " out")))
+                               (println))
+                             (if (= "completed" (:status out))
+                               (turn)
+                               (js/process.exit exit-refused))))
+                    (.catch (fn [e]
+                              (if (= "readline was closed" (ex-message e))
+                                (js/process.exit exit-answered)
+                                (do (chat-emit (str "error: " (ex-message e) "\n"))
+                                    (js/process.exit exit-cannot-answer)))))))
+              (turn []
+                (-> (.question iface (str (chat/stamp) "you " (theme/prompt-symbol) " "))
                     (.then (fn [text]
                              (let [text (str/trim (str text))]
                                (cond
@@ -720,6 +811,8 @@
                                    (cond
                                      (= :exit r) (js/process.exit exit-answered)
                                      (= :handled r) (turn)
+                                     (= :resend r) (do (submit! (chat/last-input) ctx)
+                                                     (turn))
                                      (instance? js/Promise r)
                                      (-> r (.then (fn [_] (turn)))
                                          (.catch (fn [e]
@@ -729,32 +822,8 @@
                                                          (js/process.exit exit-cannot-answer))))))
 
                                      :else
-                                     (-> (request! {:method :post :path "/v1/runs"
-                                                    :body {:input text :profile (chat/profile)}
-                                                    :timeout-seconds 30}
-                                                   (require-token!))
-                                         (.then (fn [{:keys [status body]}]
-                                                  (if (<= 200 status 299)
-                                                    (chat-poll-events! (or (:run_id body) (:run-id body)))
-                                                    (refuse! (str "run を開始できません: HTTP " status)
-                                                             (select-keys body [:error])))))
-                                         (.then (fn [out]
-                                                  (let [usage (:usage out)]
-                                                    (when usage
-                                                      (chat-emit (str "· tokens: "
-                                                                      (or (:prompt_tokens usage) "?") " in / "
-                                                                      (or (:completion_tokens usage) "?") " out")))
-                                                    (println))
-                                                  ;; A failed turn is a refusal, not
-                                                  ;; a prompt for the next one.
-                                                  (if (= "completed" (:status out))
-                                                    (turn)
-                                                    (js/process.exit exit-refused))))
-                                         (.catch (fn [e]
-                                                   (if (= "readline was closed" (ex-message e))
-                                                     (js/process.exit exit-answered)
-                                                     (do (chat-emit (str "error: " (ex-message e) "\n"))
-                                                         (js/process.exit exit-cannot-answer))))))))))))))]
+                                     (submit! text ctx))
+)))))))]
         (turn)))))
 
 (defn- chat!
