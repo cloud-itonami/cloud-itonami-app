@@ -11,7 +11,7 @@ Status legend:
   gap-by-design  intentionally absent — canonical Bot Chat / ADR-0088
   n/a            host-only, TUI-only or gateway-only; meaningless for itonami
 
-Counts: ok 17 / gap-client 16 (4 landed 2026-09-04, 3d206c9) / gap-server 18 / gap-by-design 6 / n/a 42
+Counts: ok 25 / gap-client 8 / gap-server 18 / gap-by-design 6 / n/a 42 (stage-4 final, 5730b80)
 
 Stage-4 landed (2026-09-04, commit 3d206c9, released): /whoami
 (GET /api/operator — profile + fleet summary), /model
@@ -23,6 +23,11 @@ tools skills bundles browser plugins image.
 
 ## ok
 
+| /retry | Session | /retry — resubmits last agent input (submit! records it) |
+| /handoff | Session | /handoff — POST /api/agent-bots/{to}/handoff |
+| /timestamps | Configuration | /timestamps [on|off] — stamps prompt + usage |
+| /verbose | Configuration | /verbose [on|off] — tool progress pref |
+| /tools | Tools & Skills | /tools [term] — MCP tools/list (38 fleet tools) |
 | hermes | category | itonami equivalent |
 |---|---|---|
 | /history | Session | /history |
@@ -47,16 +52,11 @@ tools skills bundles browser plugins image.
 
 | hermes | category | itonami equivalent |
 |---|---|---|
-| /retry | Session | re-send last message |
 | /prompt | Session | $EDITOR compose |
-| /handoff | Session | bots handoff route exists |
 | /context | Info | /context — GET /api/session/context/sources |
 | /whoami | Info | /whoami — GET /api/operator (profile + fleet summary) |
 | /model | Configuration | /model — GET/POST /api/bots/model-routing |
-| /timestamps | Configuration | REPL display |
-| /verbose | Configuration | tool progress display |
 | /approvals | Configuration | work-governance approval-policies route |
-| /tools | Tools & Skills | bot tool routes |
 | /skills | Tools & Skills | bot skills (hermes import, ADR-0088) |
 | /bundles | Tools & Skills | skill bundles |
 | /browser | Tools & Skills | bot browser tools |
