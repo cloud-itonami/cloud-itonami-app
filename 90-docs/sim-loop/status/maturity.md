@@ -2,7 +2,7 @@
 
 現在段階: L1 (稼働はするが、反証可能性のある品質主張が軸ごとに未整備)
 
-測定日: 2026-09-04 (falsify-11; 初回ベースライン 2026-09-03)
+測定日: 2026-09-05 (falsify-12; 初回ベースライン 2026-09-03)
 測定者: itonami-maint
 
 ## 7 軸スコア (0-5)
@@ -11,8 +11,8 @@
 |---|---|---|
 | spec/契約 | 3 | ADR 24 本 (+ ADR-2607254000 の Tier 境界)、commands.edn に 208 コマンドの解決/path-param 契約 (flags は hint で値スキーマなし — falsify-10 実測: プレースホルダ 128 すべてに `:in "path"` 宣言、欠落 0、408=208+70+130 整合)。route 再スキャン vs レジストリの機械検証テスト実在 (commands_test 16 deftest)。値スキーマ (型/必須性) の機械検証は未整備 |
 | 実装 | 3 | src 231 ファイル、全主要面 (bots/webhook/hermes-compat/store) 実装済み。virtual-shell は未活性 |
-| テスト | 3 | test 205 ファイル。フルスイートが異なるリビジョンで 2 回完走: falsify-6 (bde2171) と falsify-7 (2bca892、所要約45分)。falsify-7: Ran 2291 tests / 13862 assertions / **1 failure** 0 errors。bots_test.clj:1566 は再実行で緑 → 決定論的赤ではなく高負荷 flake と確定 (REFUTED)。決定論的赤 0。残る 1 failure は launcher_test.clj:162 (OPEN 赤-4、launcher 解決順序の実バグ — falsify-8 で帰属修正済み)。3 止まりの根拠: flake リトライ機構なし、OPEN 赤-4 未解決 |
-| 反証 | 3 | falsify-1〜11 を evidence/ に記録。falsify-9: 赤-2「KeepAlive 欠如で silent-dead」説を反証 (主因は ops-classpath.sh が upstream の authority.scope 追加に未追従で nbb ロード即死)。falsify-10: spec 軸主張を「解決/path-param 契約 (値スキーマなし)」に範囲修正。falsify-11: 赤-2 案 A「classpath 修正で復旧」説を反証試行 — authority→sha2.core→datom.source の決定論的依存連鎖が段階的に死ぬことを実測、案 A の 3 src 追加が必須十分と確認し expiry-alert.cljs rc=0 (OK 行) まで完全復旧を実測 → 精緻化付きで SURVIVED。検証の终点は :LOAD-OK でなく rc=0、plist 再 bootstrap が必須条件 |
+| テスト | 3 | test 205 ファイル。フルスイートが異なるリビジョンで 2 回完走: falsify-6 (bde2171) と falsify-7 (2bca892、所要約45分)。falsify-7: Ran 2291 tests / 13862 assertions / **1 failure** 0 errors。bots_test.clj:1566 は再実行で緑 → 決定論的赤ではなく高負荷 flake と確定 (REFUTED)。決定論的赤 0。残る 1 failure は launcher_test.clj:162 (OPEN 赤-4、launcher 解決順序の実バグ — falsify-8 で帰属修正済み)。3 止まりの根拠: flake リトライ機構なし、OPEN 赤-4 未解決。falsify-12 (2026-09-05, 静的解析): 赤-5 flake は時間切れ型のみで hang/deadlock 構造なし — survived。entered(2000ms)/poll(2.5s)/release(3000ms) の 3 bound が非同期に設計され最小の entered で律速することを同定 (evidence/2026-09-05-falsify-12.md) |
+| 反証 | 3 | falsify-1〜12 を evidence/ に記録。falsify-9: 赤-2「KeepAlive 欠如で silent-dead」説を反証 (主因は ops-classpath.sh が upstream の authority.scope 追加に未追従で nbb ロード即死)。falsify-10: spec 軸主張を「解決/path-param 契約 (値スキーマなし)」に範囲修正。falsify-11: 赤-2 案 A「classpath 修正で復旧」説を反証試行 — authority→sha2.core→datom.source の決定論的依存連鎖が段階的に死ぬことを実測、案 A の 3 src 追加が必須十分と確認し expiry-alert.cljs rc=0 (OK 行) まで完全復旧を実測 → 精緻化付きで SURVIVED。検証の终点は :LOAD-OK でなく rc=0、plist 再 bootstrap が必須条件。falsify-12: テスト軸「赤-5 flake は時間切れ型のみで hang 構造なし」説を反証試行 → survived (hang/deadlock 構造なし、falsify-7 の帰属は修正不要)。entered/poll/release の 3 bound 非同期設計を競合窓として同定し、OPEN 赤-5 修理案に範囲修正 |
 | 再現性 | 3 | launchd で server/host/tick は再現稼働。releases/ 全 77 ツリーが対応 git commit と byte 完全一致 (falsify-3 実測)。ただし不変性は運用規約のみで OS 強制なし |
 | governor 統合 | 3 | tamaki tick は 1430 repo を 900s 間隔でスキャン継続。ただし **1559 連続 worktree-failed** (2026-08-14〜、毎 tick) — falsify-6 で原因特定済み (tick の rm -rf が git-annex read-only 残骸を取りこぼし → worktree add が永久 already exists)。修理は tamaki リポ側 (chmod -R u+wx 追加、Tier 2 で提起)。着地 0 landed は継続 |
 | 運用 | 3 | falsify-6 実測: GET /health -> 200 (PID 2666)、ui-host 稼働。expiry-alert は not running/exit 1 — falsify-9 で主因確定: ops-classpath.sh が upstream (org-chainagnostic-cacao 83f3169, 2026-08-15) の authority.scope 追加に未追従で nbb ロード即死。鍵は vault に存在 (kagi ls 実測) ので案 A 修正で復旧見込み。KeepAlive 無しは従属リスク |
@@ -44,10 +44,15 @@
   修理案 2 抜 (案 A: launcher を WORKSPACE_ROOT 優先に / 案 B: テストを
   repo 相対優先契約に改訂) は bin/ または test/ への変更のため
   evidence/2026-09-04-falsify-8.md 参照。着地は kanban/human 判断 (Tier 2)。
-- OPEN 赤-5 (新): bots_test.clj:1566 durable-goal 並行 deref が高負荷環境で
+- OPEN 赤-5: bots_test.clj:1566 durable-goal 並行 deref が高負荷環境で
   flake (deref entered 2000ms が load 85 で尽きる)。falsify-7 で低負荷時は緑。
   修理案: entered の timeout を 2000→5000ms に引き上げ (test/ への変更、
   本体 checkout dirty のため着地せず Tier 2 で記録)。
+  **falsify-12 (2026-09-05) で範囲修正**: entered(2000ms)/poll(2.5s)/
+  release(3000ms) の 3 bound が非同期に設計されており、許容負荷は最小の
+  entered で律速される。timeout 引き上げのみでは poll と release の整合が
+  未検証のまま残るため、修理は 3 点セットの整合確認で行うこと
+  (evidence/2026-09-05-falsify-12.md)。hang/deadlock 構造なし — survived。
 
 ## 既知リスク
 
@@ -83,3 +88,6 @@
    完全検証 (evidence/2026-09-04-falsify-11.md)。着地時の追加条件は
    plist 再生成 + launchctl bootout/bootstrap と、kagi get の所要
    (~4 分/実行) を見込んだ手動発火確認。
+8. 実行環境が取れた反復で bots_test.clj:1566 を高負荷再現条件下で
+   再実行し、falsify-12 測定 3 の競合窓 (entered+poll vs release 3000ms)
+   の実際の発火を確認する。
