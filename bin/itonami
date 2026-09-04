@@ -758,17 +758,48 @@
     (cond
       (or (empty? named) (= ["help"] named) (true? (:help flags)))
       (do (println (str "itonami — cloud-itonami-app の front end\n\n"
-                        "  itonami chat [--profile <p>] [message …]  agent と対話 (ストリーミング)\n"
-                        "  itonami commands [term …]\n"
-                        "  itonami status\n"
-                        "  itonami <command> [--flag value …] [--json]\n\n"
+                        "Examples:\n"
+                        "    itonami                        chat REPL を開く\n"
+                        "    itonami chat                   chat REPL を開く\n"
+                        "    itonami chat -q \"Hello\"       単発クエリ (ストリーミング出力)\n"
+                        "    itonami chat --profile <p>     対話先 Bot を指定して開く\n"
+                        "    itonami sessions               過去セッション一覧\n"
+                        "    itonami status                 各構成要素の状態\n"
+                        "    itonami commands [term …]      使えるコマンドを検索\n"
+                        "    itonami <command> [--flag value …] [--json]\n\n"
+                        "chat REPL slash commands (hermes 互換):\n"
+                        "    /help /sessions /history [N] /steer <text> /stop\n"
+                        "    /bots /profiles /profile <id> /approve /deny /status /exit\n\n"
                         "commands: " (count (commands/all)) " (generated) + "
                         (count (commands/alias-commands)) " (named)\n"
-                        "exit 0 answered / 1 refused / 2 could not answer"))
+                        "exit 0 answered / 1 refused / 2 could not answer\n\n"
+                        "For more help on a command:\n"
+                        "    itonami <command> --help"))
           (js/process.exit exit-answered))
 
       (= "commands" (first named)) (commands! (vec (drop 1 named)) json?)
       (= ["status"] named) (status! json?)
+      (= "sessions" (first named))
+      ;; hermes `sessions list` 互換の表面。REPL を開かず一覧だけ返す。
+      (do (-> (request! {:method :get
+                         :path (str "/p/" (or (:profile flags) "default") "/api/sessions")
+                         :timeout-seconds 10}
+                        (require-token!))
+              (.then (fn [{:keys [status body]}]
+                       (if (<= 200 status 299)
+                         (if json?
+                           (emit! body true)
+                           (doseq [sess (take 30 (:data body))]
+                             (println (str "  " (:id sess)
+                                           "  " (or (:title sess) "?")
+                                           "  " (or (:message_count sess) 0) " msgs"
+                                           "  " (or (:preview sess) "")))))
+                         (refuse! (str "sessions を取得できません: HTTP " status)
+                                  (select-keys body [:error])))))
+              (.catch (fn [e]
+                        (cannot-answer! (str "server に到達できません: " (base-url))
+                                        (ex-data e)))))
+          nil)
       (= "chat" (first named)) (chat! argv json?)
 
       (contains? #{["up"] ["down"]} named)
