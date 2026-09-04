@@ -22,7 +22,7 @@
 
 (def modes
   "Every appearance the workspace can render. Order is the toggle order."
-  ["light" "8bit"])
+  ["light" "8bit" "grok"])
 
 (def default-mode "light")
 
@@ -40,6 +40,7 @@
                   str str/trim str/lower-case)]
     (case s
       ("8bit" "8-bit" "eightbit" "eight-bit" "pixel" "retro") "8bit"
+      ("grok" "grob" "dark-chat" "chat-dark") "grok"
       ("light" "default" "dads") "light"
       nil)))
 
@@ -100,6 +101,98 @@
   (str/join ""
             (for [[k v] (sort-by key palette)]
               (str "--eightbit-" (name k) ":" v ";"))))
+
+;; ── the grok palette ─────────────────────────────────────────────────────
+;; Modelled on the Grok Bot desktop client's dark chat surfaces: a near-black
+;; window, a slightly lighter rail, raised cards, one accent. Eight entries;
+;; a palette that keeps growing stops being one.
+(def ^:private grok-palette
+  {:base   "#0d0d0d"   ; window background
+   :rail   "#161616"   ; sidebar / bots rail
+   :raised "#1f1f21"   ; cards, bubbles, inputs
+   :hover  "#2a2a2d"   ; hover, selected, chips
+   :border "#2e2e30"   ; hairlines
+   :text   "#f2f2f2"   ; primary text
+   :muted  "#9b9b9f"   ; secondary text, metadata
+   :accent "#3b82f6"}) ; the one accent (person bubbles, primary actions)
+
+(defn- root-tokens-grok []
+  (str/join ""
+            (for [[k v] (sort-by key grok-palette)]
+              (str "--grok-" (name k) ":" v ";"))))
+
+(def ^:private grok-css
+  (str
+   ".workspace[data-appearance=\"grok\"]{" (root-tokens-grok)
+   "--grok-radius:12px;--grok-radius-lg:16px;"
+   "font-family:-apple-system,BlinkMacSystemFont,'Hiragino Sans','Hiragino Kaku Gothic ProN',sans-serif;"
+   "font-size:14px;line-height:1.6;"
+   "color:var(--grok-text);background:var(--grok-base)}\n"
+   ;; chrome
+   ".workspace[data-appearance=\"grok\"] .sidebar{background:var(--grok-rail);color:var(--grok-text);"
+   "border-right:1px solid var(--grok-border)}\n"
+   ".workspace[data-appearance=\"grok\"] .brand__eyebrow{color:var(--grok-muted)}\n"
+   ".workspace[data-appearance=\"grok\"] .brand__name{color:var(--grok-text)}\n"
+   ".workspace[data-appearance=\"grok\"] .brand__mark{background:var(--grok-accent);color:#fff;border-radius:8px}\n"
+   ".workspace[data-appearance=\"grok\"] .local-nav__item{color:var(--grok-muted);border-radius:8px}\n"
+   ".workspace[data-appearance=\"grok\"] .local-nav__item:hover{background:var(--grok-hover);color:var(--grok-text)}\n"
+   ".workspace[data-appearance=\"grok\"] .local-nav__item[aria-current=\"page\"]{background:var(--grok-hover);color:var(--grok-text)}\n"
+   ".workspace[data-appearance=\"grok\"] .sidebar__status{color:var(--grok-muted)}\n"
+   ".workspace[data-appearance=\"grok\"] .topbar{background:var(--grok-base);border-bottom:1px solid var(--grok-border);color:var(--grok-text)}\n"
+   ;; controls
+   ".workspace[data-appearance=\"grok\"] button:not(.mobile-nav-backdrop),"
+   ".workspace[data-appearance=\"grok\"] .tool-button,"
+   ".workspace[data-appearance=\"grok\"] .context-button,"
+   ".workspace[data-appearance=\"grok\"] .composer-button:not(.composer-button--stop){"
+   "border-radius:8px;border:1px solid transparent;background:var(--grok-hover);color:var(--grok-text);font:inherit;font-weight:600}\n"
+   ".workspace[data-appearance=\"grok\"] .tool-button:not([disabled]):hover,"
+   ".workspace[data-appearance=\"grok\"] .bots-rail__item:hover,"
+   ".workspace[data-appearance=\"grok\"] .local-nav__item:hover{background:var(--grok-hover)}\n"
+   ".workspace[data-appearance=\"grok\"] .primary-action,"
+   ".workspace[data-appearance=\"grok\"] button[type=\"submit\"]{"
+   "background:var(--grok-accent);color:#fff}\n"
+   ".workspace[data-appearance=\"grok\"] button[disabled],"
+   ".workspace[data-appearance=\"grok\"] .tool-button[disabled]{background:var(--grok-hover);color:var(--grok-muted)}\n"
+   ".workspace[data-appearance=\"grok\"] input,"
+   ".workspace[data-appearance=\"grok\"] select,"
+   ".workspace[data-appearance=\"grok\"] textarea{"
+   "border-radius:8px;border:1px solid var(--grok-border);background:var(--grok-raised);color:var(--grok-text);font:inherit}\n"
+   ".workspace[data-appearance=\"grok\"] :focus-visible{outline:2px solid var(--grok-accent);outline-offset:2px}\n"
+   ;; surfaces
+   ".workspace[data-appearance=\"grok\"] .local-card,.workspace[data-appearance=\"grok\"] .data-card,"
+   ".workspace[data-appearance=\"grok\"] .connector-card,.workspace[data-appearance=\"grok\"] .suggestion-card,"
+   ".workspace[data-appearance=\"grok\"] .settings-card,.workspace[data-appearance=\"grok\"] .bots-card{"
+   "border-radius:var(--grok-radius);border:1px solid var(--grok-border);background:var(--grok-raised)}\n"
+   ".workspace[data-appearance=\"grok\"] .settings-notice{border-radius:var(--grok-radius);border:1px solid var(--grok-border);background:var(--grok-raised)}\n"
+   ".workspace[data-appearance=\"grok\"] .req-row__state,.workspace[data-appearance=\"grok\"] .bots-chip,"
+   ".workspace[data-appearance=\"grok\"] .bots-card__state,.workspace[data-appearance=\"grok\"] .matrix__state{"
+   "border-radius:999px;border:1px solid var(--grok-border);background:var(--grok-hover)}\n"
+   ;; chat: quiet grey bubbles, muted metadata, pill composer
+   ".workspace[data-appearance=\"grok\"] .bots-msg__bubble{"
+   "border-radius:var(--grok-radius-lg);border:1px solid var(--grok-border);background:var(--grok-raised)}\n"
+   ".workspace[data-appearance=\"grok\"] .bots-msg[data-role='person'] .bots-msg__bubble{"
+   "background:var(--grok-accent);color:#fff;border-color:transparent}\n"
+   ".workspace[data-appearance=\"grok\"] .bots-msg__resident{color:var(--grok-muted)}\n"
+   ".workspace[data-appearance=\"grok\"] .bots-msg__resident-at{color:var(--grok-muted)}\n"
+   ".workspace[data-appearance=\"grok\"] .bots-msg__bubble code{background:var(--grok-hover)}\n"
+   ".workspace[data-appearance=\"grok\"] .bots-msg__bubble pre{background:var(--grok-rail);border:1px solid var(--grok-border)}\n"
+   ".workspace[data-appearance=\"grok\"] .composer{border-radius:999px;border:1px solid var(--grok-border);background:var(--grok-raised)}\n"
+   ".workspace[data-appearance=\"grok\"] .composer textarea{border:0;background:transparent}\n"
+   ;; the rail: a conversation list
+   ".workspace[data-appearance=\"grok\"] .bots-rail{background:var(--grok-rail);border-right:1px solid var(--grok-border)}\n"
+   ".workspace[data-appearance=\"grok\"] .bots-rail__item{border-radius:10px}\n"
+   ".workspace[data-appearance=\"grok\"] .bots-rail__item[aria-current=\"true\"],"
+   ".workspace[data-appearance=\"grok\"] .bots-rail__item.is-selected{background:var(--grok-hover)}\n"
+   ".workspace[data-appearance=\"grok\"] .bots-rail__name{color:var(--grok-text)}\n"
+   ".workspace[data-appearance=\"grok\"] .bots-rail__last,.workspace[data-appearance=\"grok\"] .bots-rail__time,"
+   ".workspace[data-appearance=\"grok\"] .bots-rail__group{color:var(--grok-muted)}\n"
+   ".workspace[data-appearance=\"grok\"] .bot-avatar{border-radius:10px;background:var(--grok-hover)}\n"
+   ".workspace[data-appearance=\"grok\"] .bot-avatar::before,.workspace[data-appearance=\"grok\"] .bot-avatar::after{"
+   "background:var(--grok-text)}\n"
+   ".workspace[data-appearance=\"grok\"] .bots-dot{background:var(--grok-accent)}\n"
+   ;; the toggle itself shows what it will do
+   ".appearance-toggle[data-next=\"grok\"]::before{content:\"◍ \"}\n"
+   "@media(prefers-reduced-motion:reduce){.workspace[data-appearance=\"grok\"] *{animation:none}}\n"))
 
 (def css
   "The 8-bit layer. Scoped under the `data-appearance` attribute so that the
@@ -210,7 +303,13 @@
    ;; the toggle itself shows what it will do
    ".appearance-toggle[data-next=\"8bit\"]::before{content:\"▣ \"}\n"
    ".appearance-toggle[data-next=\"light\"]::before{content:\"◻ \"}\n"
-   "@media(prefers-reduced-motion:reduce){.workspace[data-appearance=\"8bit\"] .bot-avatar[data-status='working']{animation:none}}\n"))
+   "@media(prefers-reduced-motion:reduce){.workspace[data-appearance=\"8bit\"] .bot-avatar[data-status='working']{animation:none}}\n"
+   ;; ── the grok layer ─────────────────────────────────────────────────────
+   ;; A dark, chat-first appearance modelled on the Grok Bot desktop client:
+   ;; near-black surfaces, a conversation-list rail, quiet grey bubbles on a
+   ;; dark raised card, muted centred metadata, and one pill composer. Same
+   ;; document, same ids, same reading order — colour and shape only.
+   grok-css))
 
 (defn toggle-button
   "The topbar control. `data-next` is what one press moves to, so the label and
@@ -220,7 +319,13 @@
     [:button {:class "tool-button appearance-toggle" :id "appearance-toggle" :type "button"
               :data-mode (or (normalize mode) default-mode)
               :data-next next
-              :aria-pressed (if (= "8bit" (normalize mode)) "true" "false")
-              :aria-label "表示モードを切り替え（8-bit / 標準）"
-              :title (if (= "8bit" next) "8-BIT MODE にする" "標準表示に戻す")}
-     (if (= "8bit" next) "8-BIT" "DADS")]))
+              :aria-pressed (if (not= "light" (normalize mode)) "true" "false")
+              :aria-label "表示モードを切り替え（light / 8-bit / grok）"
+              :title (case next
+                       "8bit" "8-BIT MODE にする"
+                       "grok" "grokモードにする"
+                       "標準表示に戻す")}
+     (case next
+       "8bit" "8-BIT"
+       "grok" "GROK"
+       "DADS")]))
