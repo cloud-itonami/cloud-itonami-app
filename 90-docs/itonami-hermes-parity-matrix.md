@@ -11,7 +11,15 @@ Status legend:
   gap-by-design  intentionally absent — canonical Bot Chat / ADR-0088
   n/a            host-only, TUI-only or gateway-only; meaningless for itonami
 
-Counts: ok 17 / gap-client 16 / gap-server 18 / gap-by-design 6 / n/a 42
+Counts: ok 17 / gap-client 16 (4 landed 2026-09-04, 3d206c9) / gap-server 18 / gap-by-design 6 / n/a 42
+
+Stage-4 landed (2026-09-04, commit 3d206c9, released): /whoami
+(GET /api/operator — profile + fleet summary), /model
+(GET/POST /api/bots/model-routing; human-session 403 renders a hint),
+/version (GET /api/update — installed version + update status), /context
+(GET /api/session/context/sources — conversation-context catalog).
+Remaining gap-client: retry prompt handoff timestamps verbose approvals
+tools skills bundles browser plugins image.
 
 ## ok
 
@@ -42,9 +50,9 @@ Counts: ok 17 / gap-client 16 / gap-server 18 / gap-by-design 6 / n/a 42
 | /retry | Session | re-send last message |
 | /prompt | Session | $EDITOR compose |
 | /handoff | Session | bots handoff route exists |
-| /context | Session | session context routes exist (/api/session/context) |
-| /whoami | Info | operator profile route |
-| /model | Configuration | bots model route |
+| /context | Info | /context — GET /api/session/context/sources |
+| /whoami | Info | /whoami — GET /api/operator (profile + fleet summary) |
+| /model | Configuration | /model — GET/POST /api/bots/model-routing |
 | /timestamps | Configuration | REPL display |
 | /verbose | Configuration | tool progress display |
 | /approvals | Configuration | work-governance approval-policies route |
@@ -54,7 +62,7 @@ Counts: ok 17 / gap-client 16 / gap-server 18 / gap-by-design 6 / n/a 42
 | /browser | Tools & Skills | bot browser tools |
 | /plugins | Tools & Skills | hermes import |
 | /image | Info | workspace upload |
-| /version | Info | cloud-itonami-version.edn |
+| /version | Info | /version — GET /api/update |
 
 ## gap-server
 
