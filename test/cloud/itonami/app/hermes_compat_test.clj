@@ -89,6 +89,17 @@
                       nil owner "source-session-1" {:order "oldest"})
                      [:data 1 :content]))))))
 
+(deftest default-profile-resolution-prefers-an-enabled-bot
+  (let [stale (assoc bot-row :id "bot-stale" :enabled? false :pinned? false
+                     :hermes-import {:profile-id "default"})]
+    ;; A disabled Bot that sorts before the live one must not shadow it.
+    (with-redefs [bots/overview (fn [_ _] {:bots [stale bot-row]})]
+      (is (= "bot-1" (:id (hermes/resolve-bot nil owner "default"))))
+      (is (= "bot-1" (:id (hermes/resolve-bot nil owner nil)))))
+    ;; With only disabled Bots, the old selection (and its refusal) still holds.
+    (with-redefs [bots/overview (fn [_ _] {:bots [stale]})]
+      (is (= "bot-stale" (:id (hermes/resolve-bot nil owner "default")))))))
+
 (deftest a-hermes-run-uses-the-native-loop-and-emits-pollable-sse-events
   (hermes/reset-runs!)
   (let [called (promise)]

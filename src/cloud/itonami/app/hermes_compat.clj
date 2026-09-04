@@ -65,6 +65,32 @@
 (defn- imported-session-ids [bot]
   (set (get-in bot [:hermes-import :session-ids])))
 
+(defn- pick-default-bot
+  "Default-profile selection. A stale disabled Bot that merely sorts earlier by
+  creation must not shadow a live one when the default profile resolves
+  (measured 2026-09-04: `itonami chat` with two `default`-profile Bots started
+  runs against the disabled one and every turn failed with 「この Bot は
+  停止しています。」). Two passes: first consider only enabled Bots across the
+  preference tiers (imported `default` profile, configured default-bot-id,
+  pinned), then fall back to the legacy single-pass order, so a fleet of
+  disabled Bots still resolves — and refuses — exactly as before."
+  [available default-id profile-default-first?]
+  (let [preds (if profile-default-first?
+                [#(= "default" (imported-profile-id %))
+                 #(= default-id (:id %))
+                 #(boolean (:pinned? %))]
+                [#(= default-id (:id %))
+                 #(boolean (:pinned? %))])
+        pass (fn [enabled-only?]
+               (some (fn [pred]
+                       (some #(when (and (pred %)
+                                         (or (not enabled-only?)
+                                             (boolean (:enabled? %))))
+                                %)
+                             available))
+                     preds))]
+    (or (pass true) (pass false) (first available))))
+
 (defn resolve-bot
   "Resolve an explicit Hermes profile/session id, with `default` selecting the
   first visible Bot. Throws the same not-found class as the native Bot API."
@@ -76,15 +102,10 @@
         selected
         (cond
           (= "default" requested)
-          (or (some #(when (= "default" (imported-profile-id %)) %) available)
-              (some #(when (= default-id (:id %)) %) available)
-              (some #(when (:pinned? %) %) available)
-              (first available))
+          (pick-default-bot available default-id true)
 
           (nil? requested)
-          (or (some #(when (= default-id (:id %)) %) available)
-              (some #(when (:pinned? %) %) available)
-              (first available))
+          (pick-default-bot available default-id false)
 
           :else
           (some #(when (or (= requested (:id %))
