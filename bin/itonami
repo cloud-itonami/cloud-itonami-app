@@ -350,6 +350,57 @@
                                   (ex-data e)))))))
 
 ;; ---------------------------------------------------------------------------
+;; theme — hermes skin-engine keys, as data (stage 1 of the hermes-parity
+;; refactor). ~/.cloud-itonami/skins/<name>.edn overrides any key; missing
+;; keys inherit from :default, exactly like hermes_cli/skin_engine.py.
+;; ---------------------------------------------------------------------------
+
+(def ^:private builtin-skins
+  {:default {:name "default"
+             :branding {:agent-name "Itonami Agent"
+                        :response-label " ⚕ Itonami "
+                        :welcome "cloud-itonami-app resident に接続しました"}
+             :prompt-symbol "❯"
+             :tool-prefix "┊"
+             :colors {:banner-accent "\u001b[33m"   ; gold, hermes default
+                      :banner-dim "\u001b[2m"
+                      :reset "\u001b[0m"}}
+   :mono {:name "mono"
+          :branding {:agent-name "Itonami Agent"
+                     :response-label " Itonami "
+                     :welcome "cloud-itonami-app resident に接続しました"}
+          :prompt-symbol "❯"
+          :tool-prefix "▏"
+          :colors {:banner-accent "" :banner-dim "\u001b[2m" :reset "\u001b[0m"}}})
+
+(defn- skin-file-path [name]
+  (path/resolve (data-dir) ".." "skins" (str name ".edn")))
+
+(defn- load-skin [name]
+  (let [base (get builtin-skins (keyword name) (:default builtin-skins))
+        user (and (not= name "default")
+                  (read-edn (skin-file-path name)))]
+    (if (map? user)
+      ;; shallow per-section merge: user sections override builtin sections,
+      ;; exactly like hermes_cli/skin_engine.py's missing-keys-inherit rule.
+      (reduce (fn [acc [k v]]
+                (if (and (map? v) (map? (get acc k)))
+                  (assoc acc k (merge (get acc k) v))
+                  (assoc acc k v)))
+              base
+              user)
+      base)))
+
+(def ^:private active-skin
+  (atom (load-skin (or (some-> (aget js/process.env "CLOUD_ITONAMI_SKIN") not-empty)
+                       "default"))))
+
+(defn- skin-emit [text]
+  (let [c (get-in @active-skin [:colors :banner-accent])
+        r (get-in @active-skin [:colors :reset])]
+    (println (str c text r))))
+
+;; ---------------------------------------------------------------------------
 ;; chat — the agent loop: /v1/runs + SSE, the hermes-compat surface
 ;; ---------------------------------------------------------------------------
 
@@ -630,6 +681,16 @@
             (.catch say-error))
         (do (println "承認待ちの card はありません") :handled))
 
+      "/skin"
+      ;; hermes /skin 互換: 引数なしで現在の skin、引数ありで切替 (このセッションだけ)。
+      (do (try
+            (if (empty? args)
+              (println (str "skin: " (or (get-in @active-skin [:name]) "default")))
+              (do (reset! active-skin (load-skin (first args)))
+                  (println (str "skin: " (or (get-in @active-skin [:name]) (first args))))))
+            (catch :default e (println (str "skin error: " (ex-message e)))))
+          :handled)
+
       "/exit" :exit
 
       (if (str/starts-with? (str cmd) "/")
@@ -641,11 +702,15 @@
   Lines starting with / are commands (see chat-slash!), not messages."
   []
   (let [rl (js/require "node:readline/promises")]
-    (println (str "profile: " @chat-profile " — /help で一覧、exit で終了"))
+    (skin-emit (str (get-in @active-skin [:branding :agent-name])
+                    " — " (get-in @active-skin [:branding :welcome])))
+    (println (str (get-in @active-skin [:colors :banner-dim])
+                  "profile: " @chat-profile " — /help で一覧、exit で終了"
+                  (get-in @active-skin [:colors :reset])))
     (let [iface (.createInterface rl #js {:input js/process.stdin
                                           :output js/process.stdout})]
       (letfn [(turn []
-                (-> (.question iface "you ❯ ")
+                (-> (.question iface (str "you " (get-in @active-skin [:prompt-symbol]) " "))
                     (.then (fn [text]
                              (let [text (str/trim (str text))]
                                (cond
@@ -657,6 +722,7 @@
                                  (let [r (chat-slash! text)]
                                    (cond
                                      (= :exit r) (js/process.exit exit-answered)
+                                     (= :handled r) (turn)
                                      (instance? js/Promise r)
                                      (-> r (.then (fn [_] (turn)))
                                          (.catch (fn [e]
