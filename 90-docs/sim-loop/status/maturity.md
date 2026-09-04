@@ -2,17 +2,17 @@
 
 現在段階: L1 (稼働はするが、反証可能性のある品質主張が軸ごとに未整備)
 
-測定日: 2026-09-04 (falsify-9; 初回ベースライン 2026-09-03)
+測定日: 2026-09-04 (falsify-10; 初回ベースライン 2026-09-03)
 測定者: itonami-maint
 
 ## 7 軸スコア (0-5)
 
 | 軸 | score | 根拠 (測定) |
 |---|---|---|
-| spec/契約 | 3 | ADR 24 本 (+ ADR-2607254000 の Tier 境界)、commands.edn に 208 コマンドの schema。ただし契約→テストの機械検証リンクは一部 |
+| spec/契約 | 3 | ADR 24 本 (+ ADR-2607254000 の Tier 境界)、commands.edn に 208 コマンドの解決/path-param 契約 (flags は hint で値スキーマなし — falsify-10 実測: プレースホルダ 128 すべてに `:in "path"` 宣言、欠落 0、408=208+70+130 整合)。route 再スキャン vs レジストリの機械検証テスト実在 (commands_test 16 deftest)。値スキーマ (型/必須性) の機械検証は未整備 |
 | 実装 | 3 | src 231 ファイル、全主要面 (bots/webhook/hermes-compat/store) 実装済み。virtual-shell は未活性 |
 | テスト | 3 | test 205 ファイル。フルスイートが異なるリビジョンで 2 回完走: falsify-6 (bde2171) と falsify-7 (2bca892、所要約45分)。falsify-7: Ran 2291 tests / 13862 assertions / **1 failure** 0 errors。bots_test.clj:1566 は再実行で緑 → 決定論的赤ではなく高負荷 flake と確定 (REFUTED)。決定論的赤 0。残る 1 failure は launcher_test.clj:162 (OPEN 赤-4、launcher 解決順序の実バグ — falsify-8 で帰属修正済み)。3 止まりの根拠: flake リトライ機構なし、OPEN 赤-4 未解決 |
-| 反証 | 3 | falsify-1〜9 を evidence/ に記録。falsify-9: 赤-2「KeepAlive 欠如で silent-dead」説を反証 (主因は ops-classpath.sh が upstream の authority.scope 追加に未追従で nbb ロード即死)。帰属を修正、案 A (classpath 修正, :LOAD-OK まで実測) / 案 B (KeepAlive) を Tier 2 記録 |
+| 反証 | 3 | falsify-1〜10 を evidence/ に記録。falsify-9: 赤-2「KeepAlive 欠如で silent-dead」説を反証 (主因は ops-classpath.sh が upstream の authority.scope 追加に未追従で nbb ロード即死)。帰属を修正、案 A (classpath 修正, :LOAD-OK まで実測) / 案 B (KeepAlive) を Tier 2 記録。falsify-10: spec 軸「208 コマンドの schema」説を反証試行 → survived、主張を「解決/path-param 契約 (値スキーマなし)」に範囲修正 |
 | 再現性 | 3 | launchd で server/host/tick は再現稼働。releases/ 全 77 ツリーが対応 git commit と byte 完全一致 (falsify-3 実測)。ただし不変性は運用規約のみで OS 強制なし |
 | governor 統合 | 3 | tamaki tick は 1430 repo を 900s 間隔でスキャン継続。ただし **1559 連続 worktree-failed** (2026-08-14〜、毎 tick) — falsify-6 で原因特定済み (tick の rm -rf が git-annex read-only 残骸を取りこぼし → worktree add が永久 already exists)。修理は tamaki リポ側 (chmod -R u+wx 追加、Tier 2 で提起)。着地 0 landed は継続 |
 | 運用 | 3 | falsify-6 実測: GET /health -> 200 (PID 2666)、ui-host 稼働。expiry-alert は not running/exit 1 — falsify-9 で主因確定: ops-classpath.sh が upstream (org-chainagnostic-cacao 83f3169, 2026-08-15) の authority.scope 追加に未追従で nbb ロード即死。鍵は vault に存在 (kagi ls 実測) ので案 A 修正で復旧見込み。KeepAlive 無しは従属リスク |
@@ -73,5 +73,9 @@
 4. OPEN 赤-2 (expiry-alert) の修理: 案 A = network-awai/cloud-itonami の
    scripts/ops-classpath.sh 修正 (+ 案 B = plist KeepAlive) は
    kanban/human 判断待ち (Tier 2)。falsify-9 で :LOAD-OK まで裏取り済み。
+   2026-09-04 20:47 再確認: 同一エラー (`Could not find namespace:
+   authority.scope`) で log が更新継続中 — 未修理のまま。
 5. OPEN 赤-4 (launcher shell-dir 優先順位) の修理案 A/B は kanban/human
    判断待ち。OPEN 赤-5 (flake timeout 引き上げ案) も同様。
+6. ~~spec 軸「208 コマンドの schema」説の反証~~ → falsify-10 で survived
+   (path-param 契約は完全、値スキーマは未整備 — 主張の範囲を修正済み)。
