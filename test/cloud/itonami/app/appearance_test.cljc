@@ -8,7 +8,9 @@
     (is (= "light" (appearance/resolve-mode{}))))
   (testing "every spelling an operator is likely to write"
     (doseq [v [:8bit "8bit" "8-bit" "EIGHTBIT" " pixel " :retro]]
-      (is (= "8bit" (appearance/resolve-mode{:ui {:appearance v}})) (pr-str v))))
+      (is (= "8bit" (appearance/resolve-mode{:ui {:appearance v}})) (pr-str v)))
+    (doseq [v [:grok "grok" "GROK" " chat-dark "]]
+      (is (= "grok" (appearance/resolve-mode{:ui {:appearance v}})) (pr-str v))))
   (testing "a value that names nothing is not an appearance, so light"
     (doseq [v ["dark" :neon 8 nil ""]]
       (is (= "light" (appearance/resolve-mode{:ui {:appearance v}})) (pr-str v)))))
@@ -32,7 +34,8 @@
 
 (deftest the-toggle-cycles-through-every-mode-and-comes-back
   (is (= "8bit" (appearance/next-mode "light")))
-  (is (= "light" (appearance/next-mode "8bit")))
+  (is (= "grok" (appearance/next-mode "8bit")))
+  (is (= "light" (appearance/next-mode "grok")))
   (is (= "8bit" (appearance/next-mode "nonsense"))
       "unknown input restarts the cycle from light")
   (is (= (set appearance/modes)
@@ -57,11 +60,13 @@
                          (remove #(re-find #"^\d+%$" %)))]
       (is (seq selectors))
       (is (every? #(or (str/includes? % "data-appearance=\"8bit\"")
+                       (str/includes? % "data-appearance=\"grok\"")
                        (str/starts-with? % ".appearance-toggle")
                        ;; keyframe steps inside @keyframes blocks
                        (re-find #"^(0|100)%" %))
                   selectors)
           (pr-str (remove #(or (str/includes? % "data-appearance=\"8bit\"")
+                               (str/includes? % "data-appearance=\"grok\"")
                                (str/starts-with? % ".appearance-toggle")
                                (re-find #"^(0|100)%" %))
                           selectors)))))
@@ -90,6 +95,10 @@
     (is (= "false" (:aria-pressed attrs)))
     (is (= "8-BIT" label)))
   (let [[_ attrs label] (appearance/toggle-button "8bit")]
+    (is (= "grok" (:data-next attrs)))
+    (is (= "true" (:aria-pressed attrs)))
+    (is (= "GROK" label)))
+  (let [[_ attrs label] (appearance/toggle-button "grok")]
     (is (= "light" (:data-next attrs)))
     (is (= "true" (:aria-pressed attrs)))
     (is (= "DADS" label))))
