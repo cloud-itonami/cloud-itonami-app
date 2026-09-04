@@ -1,33 +1,33 @@
 (ns itonami-chat
-  "The `itonami chat` agent REPL (stage 3 of the hermes-parity refactor).
+  "The `itonami chat` agent REPL, as a harness PLUGIN (deepseek-harness
+  contract).
 
   Slash commands are DATA, one registry modeled on hermes's
   hermes_cli/commands.py COMMAND_REGISTRY: each entry carries
-  {:name :args-hint :description :handler}. The /help text and the top-level
-  help listing are GENERATED from this table — adding a command is one map
-  entry, and help can never drift from what actually dispatches.
+  {:name :args-hint :description :handler}. /help and the top-level help
+  listing are GENERATED from this table — adding a command is one register!
+  call, and help can never drift from dispatch.
 
-  Handler contract (unchanged from the pre-refactor chat-slash!):
+  Handler contract:
     returns :exit      -> the REPL ends
     returns :handled   -> the REPL re-prompts (sync commands)
+    returns :resend    -> the REPL re-submits chat/last-input (the /retry
+                          and /prompt hand-off)
     returns a Promise  -> the REPL awaits it, then re-prompts
-    returns nil        -> the line was not a command; the REPL sends it to
-                          the agent as a run input.
+    returns nil        -> not a command; the line goes to the agent as a run.
   The (= :handled r) dispatch arm is LOAD-BEARING: without it every sync
-  command falls through and is ALSO sent to the agent (the double-answer
-  bug fixed 2026-09-04)."
+  command also falls through to the agent (the double-answer bug fixed
+  2026-09-04)."
   (:require [clojure.string :as str]
-            [clojure.edn :as edn]))
+            [clojure.edn :as edn]
+            [itonami-harness :as h]))
 
 ;; ---------------------------------------------------------------------------
-;; state
+;; state — the REPL's own service-internal state
 ;; ---------------------------------------------------------------------------
 
 (def ^:private chat-default-profile "default")
 (def ^:private chat-profile (atom chat-default-profile))
-
-;; The card the current run is held on, set by a `waiting-approval` phase
-;; event, consumed by /approve and /deny in the REPL.
 (def ^:private chat-approval (atom nil))
 
 ;; REPL display prefs (hermes /verbose /timestamps parity) + last input (/retry)
@@ -45,12 +45,14 @@
 (defn clear-approval-if-run! [run-id]
   (swap! chat-approval (fn [a] (when (= run-id (:run-id a)) nil))))
 (defn default-profile [] chat-default-profile)
+
 (defn verbose? [] @verbose-state)
 (defn set-verbose! [v] (reset! verbose-state v))
 (defn timestamps? [] @timestamps-state)
 (defn set-timestamps! [v] (reset! timestamps-state v))
 (defn record-input! [line] (reset! last-line line))
 (defn last-input [] @last-line)
+
 (defn stamp
   "Timestamp prefix when /timestamps is on."
   []
@@ -62,6 +64,8 @@
            (.padStart (str (.getSeconds d)) 2 "0") "] "))
     ""))
 
+(defn pr-edn [v] (binding [*print-length* 12] (pr-str v)))
+
 ;; ---------------------------------------------------------------------------
 ;; the slash-command registry — hermes COMMAND_REGISTRY shape
 ;; ---------------------------------------------------------------------------
@@ -71,38 +75,9 @@
    (sorted-map-by
     (fn [a b] (compare a b))
     "/help"    {:name "/help"    :args-hint ""          :description "この一覧を表示"
-                :handler (fn [args ctx] ((:help ctx) args))}
-    "/sessions" {:name "/sessions" :args-hint ""         :description "セッション一覧 (hermes 互換)"
-                :handler (fn [args ctx] ((:sessions ctx) args))}
-    "/history" {:name "/history" :args-hint "[N]"      :description "直近 N 件のメッセージ表示 (hermes 互換)"
-                :handler (fn [args ctx] ((:history ctx) args))}
-    "/steer"   {:name "/steer"   :args-hint "<text>"   :description "実行中 run への割り込み注入 (hermes 互換)"
-                :handler (fn [args ctx] ((:steer ctx) args))}
-    "/stop"    {:name "/stop"    :args-hint ""          :description "実行中 run の停止 (hermes 互換)"
-                :handler (fn [args ctx] ((:stop ctx) args))}
-    "/bots"    {:name "/bots"    :args-hint ""          :description "Bot 一覧"
-                :handler (fn [args ctx] ((:bots ctx) args))}
-    "/profiles" {:name "/profiles" :args-hint ""        :description "profile 一覧"
-                :handler (fn [args ctx] ((:profiles ctx) args))}
-    "/profile" {:name "/profile" :args-hint "<id>"      :description "対話先を切り替え"
-                :handler (fn [args ctx] ((:profile ctx) args))}
-    "/skin"    {:name "/skin"    :args-hint "[<name>]"  :description "テーマの表示・切替 (hermes /skin 互換)"
-                :handler (fn [args ctx] ((:skin ctx) args))}
-    "/approve" {:name "/approve" :args-hint ""          :description "承認待ちの card を許可"
-                :handler (fn [args ctx] ((:approve ctx) args))}
-    "/deny"    {:name "/deny"    :args-hint ""          :description "承認待ちの card を拒否"
-                :handler (fn [args ctx] ((:deny ctx) args))}
-    "/status"  {:name "/status"  :args-hint ""          :description "常駐サーバの状態"
-                :handler (fn [args ctx] ((:status ctx) args))}
-    "/exit"    {:name "/exit"    :args-hint ""          :description "終了"
-                :handler (fn [args ctx] ((:exit ctx) args))}
-    ;; --- stage 4+: gap-client commands register! their handlers in
-    ;; bin/itonami (single source of truth); no ctx indirection here. ---
-    )))
+                :handler (fn [args ctx] ((:help ctx) args))})))
 
 (defn commands [] (vals @registry))
-
-(defn pr-edn [v] (binding [*print-length* 12] (pr-str v)))
 
 (defn help-text
   "Generated from the registry — help cannot drift from dispatch."
@@ -116,14 +91,18 @@
 
 (defn register!
   "Add or replace a slash command: (register! \"/new\" \"\" \"説明\" handler).
-  Handlers receive [args ctx]; the contract is chat-slash!'s (see ns)."
+  Handlers receive [args ctx]; the contract is in the ns comment."
   [name args-hint description handler]
   (swap! registry assoc name
          {:name name :args-hint args-hint
           :description description :handler handler}))
 
+(defn unregister! [name]
+  (swap! registry dissoc name)
+  nil)
+
 (defn dispatch
-  "One dispatch per line. Returns :exit / :handled / Promise / nil."
+  "One dispatch per line. Returns :exit / :handled / :resend / Promise / nil."
   [line ctx]
   (let [words (str/split (str/trim line) #"\s+")
         cmd (first words)
@@ -143,3 +122,40 @@
           :handled)
 
       :else nil)))
+
+;; ---------------------------------------------------------------------------
+;; the plugin — claims :ctx/chat (registry + state), contributes the
+;; system-prompt section that tells the agent which slash commands exist
+;; (dsh: prompt sections are plugin registrations, reversible on unmount)
+;; ---------------------------------------------------------------------------
+
+(def plugin
+  {:name "itonami.chat"
+   :inject [:ctx/config]
+   :provides [:ctx/chat]
+   :description "the chat REPL: slash registry, display prefs, last-input"
+   :apply
+   (fn [ctx {:keys [ctx/config]}]
+     (h/provide! ctx :ctx/chat
+                 {:help-text help-text
+                  :commands commands
+                  :register! register!
+                  :unregister! unregister!
+                  :dispatch dispatch
+                  :profile profile
+                  :set-profile! set-profile!
+                  :approval approval
+                  :set-approval! set-approval!
+                  :clear-approval-if-run! clear-approval-if-run!
+                  :default-profile default-profile
+                  :verbose? verbose?
+                  :set-verbose! set-verbose!
+                  :timestamps? timestamps?
+                  :set-timestamps! set-timestamps!
+                  :record-input! record-input!
+                  :last-input last-input
+                  :stamp stamp
+                  :pr-edn pr-edn
+                  :emit chat-emit})
+     (h/on ctx "itonami.chat" "prompt/help-listing"
+           (fn [_] (help-text))))})

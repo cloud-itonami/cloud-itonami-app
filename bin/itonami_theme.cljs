@@ -1,110 +1,114 @@
 (ns itonami-theme
-  "hermes skin-engine parity, as a module (stage 3 of the hermes-parity
-  refactor). Skins are pure data with hermes_cli/skin_engine.py's key set:
-  :branding (agent-name / response-label / welcome), :prompt-symbol,
-  :tool-prefix, :colors (banner-accent / banner-dim / reset).
+  "hermes skin-engine parity, as a harness PLUGIN (deepseek-harness contract).
 
-  A user skin is ~/.cloud-itonami/skins/<name>.edn; any section given
-  replaces the builtin section's keys (per-key merge inside a section),
-  and keys the user does not name inherit from :default — the same
-  missing-keys-inherit rule hermes documents for ~/.hermes/skins/*.yaml.
+  The plugin claims :ctx/theme, a service of pure look-&-feel functions. The
+  skins are data with hermes_cli/skin_engine.py's key set: :branding
+  (:agent-name / :response-label / :welcome), :prompt-symbol, :tool-prefix,
+  :colors. Colors are TERM-CODE names (\"gold\", \"dim\") because the nbb EDN
+  reader rejects raw ESC and \\uXXXX; the plugin resolves them to ANSI here.
 
-  EDN strings here cannot carry raw ESC bytes or \\uXXXX escapes (the nbb
-  reader rejects both), so colors are given as TERM-CODE names resolved
-  through +term-codes+ below."
-  (:require ["node:fs" :as fs]
+  Drop-in skins: ~/.cloud-itonami/skins/<name>.edn. Missing keys inherit
+  from :default. CLOUD_ITONAMI_SKIN selects at boot; /skin switches at
+  runtime by reloading the service from a new skin map (harness live patch
+  reload)."
+  (:require [clojure.string :as str]
+            ["node:fs" :as fs]
             ["node:path" :as path]
-            [clojure.edn :as edn]))
+            [itonami-harness :as h]))
 
 (def ^:private term-codes
-  {"gold" "\u001b[33m" "dim" "\u001b[2m" "reset" "\u001b[0m"
-   "magenta" "\u001b[35m" "cyan" "\u001b[36m" "red" "\u001b[31m"
-   "green" "\u001b[32m" "blue" "\u001b[34m" "gray" "\u001b[90m" "" ""})
+  {"gold"  "\u001b[33m"
+   "dim"   "\u001b[2m"
+   "reset" "\u001b[0m"
+   "bold"  "\u001b[1m"
+   "cyan"  "\u001b[36m"
+   "magenta" "\u001b[35m"
+   "red"   "\u001b[31m"
+   "green" "\u001b[32m"})
 
-(defn- code [name] (get term-codes (str name) ""))
+(def builtin-skins
+  {:default
+   {:name :default
+    :description "Classic Hermes gold/kawaii"
+    :branding {:agent-name "Itonami Agent"
+               :response-label " Itonami "
+               :welcome "cloud-itonami-app resident に接続しました"}
+    :prompt-symbol "❯"
+    :tool-prefix "┊"
+    :colors {:banner-accent "gold"
+             :banner-dim "dim"}}
+   :mono
+   {:name :mono
+    :description "Clean grayscale monochrome"
+    :branding {:agent-name "Itonami"
+               :response-label " itonami "
+               :welcome "connected"}
+    :prompt-symbol ">"
+    :tool-prefix "▏"
+    :colors {:banner-accent "bold"
+             :banner-dim "dim"}}})
 
-(def ^:private builtin-skins
-  {:default {:name "default"
-             :branding {:agent-name "Itonami Agent"
-                        :response-label " ⚕ Itonami "
-                        :welcome "cloud-itonami-app resident に接続しました"}
-             :prompt-symbol "❯"
-             :tool-prefix "┊"
-             :colors {:banner-accent "gold" :banner-dim "dim" :reset "reset"}}
-   :mono {:name "mono"
-          :branding {:agent-name "Itonami Agent"
-                     :response-label " Itonami "
-                     :welcome "cloud-itonami-app resident に接続しました"}
-          :prompt-symbol "❯"
-          :tool-prefix "▏"
-          :colors {:banner-accent "" :banner-dim "dim" :reset "reset"}}})
+(defn code [name] (get term-codes (str name) ""))
+(defn wrap [name s] (str (code name) s (code "reset")))
 
-(defn skins-directory [data-dir]
-  (path/resolve data-dir ".." "skins"))
-
-(defn- skin-file-path [data-dir name]
-  (path/resolve (skins-directory data-dir) (str name ".edn")))
-
-(defn- merge-skin
-  "Shallow per-section merge: user sections override builtin sections,
-  exactly like hermes_cli/skin_engine.py's missing-keys-inherit rule."
-  [base user]
-  (reduce (fn [acc [k v]]
-            (if (and (map? v) (map? (get acc k)))
-              (assoc acc k (merge (get acc k) v))
-              (assoc acc k v)))
-          base
-          user))
+(defn- merge-in
+  "Missing keys inherit from :default — the same rule hermes skins use.
+  Shallow per-section merge: :branding and :colors merge key-wise, scalars
+  replace."
+  [user]
+  (let [base (:default builtin-skins)
+        user (or user {})]
+    (-> base
+        (merge (select-keys user [:name :description :prompt-symbol :tool-prefix]))
+        (update :branding merge (:branding user))
+        (update :colors merge (:colors user)))))
 
 (defn load-skin
-  ([data-dir name] (load-skin data-dir name nil))
-  ([data-dir name raw-read-edn]
-   (let [base (get builtin-skins (keyword name) (:default builtin-skins))
-         user (when (and (not= name "default") raw-read-edn)
-                (try (raw-read-edn (skin-file-path data-dir name))
-                     (catch :default _ nil)))]
-     (if (map? user)
-       (update-in (merge-skin base user) [:colors]
-                  (fn [colors] (into {} (map (fn [[k v]] [k (code v)]) colors))))
-       (update-in base [:colors]
-                  (fn [colors] (into {} (map (fn [[k v]] [k (code v)]) colors))))))))
+  "Load `<data-dir>/../skins/<name>.edn`, fall back to builtin, then default.
+  The file contains only term-code names, never control bytes — the nbb EDN
+  reader rejects raw ESC and \\uXXXX (measured 2026-09-04)."
+  [data-dir read-edn skin-name]
+  (let [kw (some-> skin-name keyword)
+        user-skin
+        (when (and skin-name (not (contains? builtin-skins kw)))
+          (try
+            (let [p (path/resolve (str data-dir) ".." "skins" (str skin-name ".edn"))]
+              (when (fs/existsSync p)
+                (read-edn p)))
+            (catch :default _ nil)))]
+    (if user-skin
+      (assoc (merge-in user-skin) :name (or kw :default))
+      (get builtin-skins (or kw :default) (:default builtin-skins)))))
 
-(defonce ^:private store
-  (atom {:data-dir nil :name "default" :skin nil}))
+(defn- service-impl [skin]
+  {:skin skin
+   :agent-name #(get-in skin [:branding :agent-name])
+   :response-label #(get-in skin [:branding :response-label])
+   :welcome #(get-in skin [:branding :welcome])
+   :prompt-symbol #(get-in skin [:prompt-symbol])
+   :tool-prefix #(get-in skin [:tool-prefix])
+   :accent #(wrap (get-in skin [:colors :banner-accent]) %)
+   :dim #(wrap (get-in skin [:colors :banner-dim]) %)
+   :emit (fn [s] (js/process.stdout.write (str s)))})
 
-(defn init! [data-dir raw-read-edn]
-  (let [env-raw (aget js/process.env "CLOUD_ITONAMI_SKIN")
-        name (let [t (and env-raw (.-trim env-raw))]
-               (if (and t (pos? (.-length t))) t "default"))
-        skin (load-skin data-dir name raw-read-edn)]
-    (reset! store {:data-dir data-dir :name name :skin skin})
-    skin))
-
-(defn active [] (:skin @store))
-
-(defn active-name []
-  (or (:name @store) (get-in (active) [:name]) "default"))
-
-(defn switch! [name raw-read-edn]
-  (let [skin (load-skin (:data-dir @store) name raw-read-edn)]
-    (swap! store assoc :name (or (:name skin) name) :skin skin)
-    skin))
-
-(defn get-in-active [ks]
-  (get-in (active) ks))
-
-(defn emit
-  "Print a line in the skin's accent color (hermes banner-accent style)."
-  [text]
-  (println (str (get-in (active) [:colors :banner-accent])
-                text
-                (get-in (active) [:colors :reset]))))
-
-(defn dim [text]
-  (str (get-in (active) [:colors :banner-dim])
-       text
-       (get-in (active) [:colors :reset])))
-
-(defn prompt-symbol [] (get-in (active) [:prompt-symbol] "❯"))
-(defn agent-name [] (get-in (active) [:branding :agent-name] "Itonami Agent"))
-(defn welcome [] (get-in (active) [:branding :welcome] ""))
+(def plugin
+  "The theme plugin. Claims :ctx/theme. The service carries :switch!, which
+  re-provides :ctx/theme from a new skin name — /skin triggers a live patch
+  reload, the same mechanism a dsh profile uses."
+  {:name "itonami.theme"
+   :inject [:ctx/config]
+   :provides [:ctx/theme]
+   :description "hermes skin-engine parity as a data-driven skin service"
+   :apply
+   (fn [ctx {:keys [ctx/config]}]
+     (let [{:keys [data-dir read-edn]} config
+           env-skin (some-> (aget js/process.env "CLOUD_ITONAMI_SKIN")
+                            str/trim not-empty)
+           provide-skin
+           (fn provide-skin* [skin]
+             (h/provide! ctx :ctx/theme
+                         (assoc (service-impl skin)
+                                :switch!
+                                (fn [new-name]
+                                  (provide-skin* (load-skin data-dir read-edn new-name))))))]
+       (provide-skin (load-skin data-dir read-edn env-skin))))})

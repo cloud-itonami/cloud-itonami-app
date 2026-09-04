@@ -101,8 +101,26 @@
 ;; The chat REPL (stage 3 refactor): theme + slash registry live in siblings
 ;; next to this launcher, resolved from this file's location the same way.
 (classpath/add-classpath (path/resolve app-directory "bin"))
-(require '[itonami-theme :as theme])
-(require '[itonami-chat :as chat])
+(require '[itonami-harness :as harness]
+         '[itonami-theme :as theme]
+         '[itonami-chat :as chat])
+
+(defn- slurp-file [p]
+  (try (fs/readFileSync p "utf8") (catch :default _ nil)))
+
+(defn- read-edn [p]
+  (when-let [t (slurp-file p)]
+    (try (edn/read-string t) (catch :default _ nil))))
+
+;; ---------------------------------------------------------------------------
+;; the harness — plugins, one context, ordered layers (dsh contract)
+;;
+;; The profile is the plugin list below. Each plugin claims one stable service
+;; key and mounts beside the others; replacing a layer means appending a plugin
+;; with the same :name. Registrations are reversible: unmount unwinds.
+;; ---------------------------------------------------------------------------
+
+(defonce ^:private ctx (harness/make-ctx))
 
 (defn- slurp-file [p]
   (try (fs/readFileSync p "utf8") (catch :default _ nil)))
@@ -118,6 +136,36 @@
         overrides (or (read-edn (path/resolve (data-dir) "config.edn")) {})]
     (merge-with (fn [a b] (if (and (map? a) (map? b)) (merge a b) b))
                 defaults overrides)))
+
+(harness/mount-all!
+ ctx
+ [{:name "itonami.config"
+   :inject []
+   :provides [:ctx/config]
+   :description "install paths, EDN readers, merged configuration"
+   :apply (fn [ctx _]
+            (harness/provide! ctx :ctx/config
+                              {:app-directory app-directory
+                               :data-dir (data-dir)
+                               :read-edn read-edn
+                               :slurp-file slurp-file
+                               :config configuration}))}
+
+  {:name "itonami.theme"
+   :inject [:ctx/config]
+   :provides [:ctx/theme]
+   :description "hermes skin-engine parity as a data-driven skin service"
+   :apply (:apply theme/plugin)}
+
+  {:name "itonami.chat"
+   :inject [:ctx/config]
+   :provides [:ctx/chat]
+   :description "the chat REPL: slash registry, display prefs, last-input"
+   :apply (:apply chat/plugin)}])
+
+(defn- theme-svc []
+  (harness/service ctx :ctx/theme))
+(def ^:private chat-svc (harness/service ctx :ctx/chat))
 
 ;; The tables ship as resources and this host has no classpath, so it reads
 ;; them and hands the text to the namespace that owns every judgement made
@@ -358,8 +406,6 @@
                   (cannot-answer! (str "server に到達できません: " (base-url))
                                   (ex-data e)))))))
 
-(theme/init! (data-dir) read-edn)
-
 
 ;; ---------------------------------------------------------------------------
 ;; chat — the agent loop: /v1/runs + SSE, the hermes-compat surface
@@ -595,9 +641,9 @@
  "/skin" "[<name>]" "テーマの表示・切替 (hermes /skin 互換)"
  (fn [args _]
    (if (empty? args)
-     (println (str "skin: " (theme/active-name)))
-     (do (theme/switch! (first args) read-edn)
-         (println (str "skin: " (theme/active-name)))))
+     (println (str "skin: " (name (get-in (theme-svc) [:skin :name] :default))))
+     (do ((:switch! (theme-svc)) (first args))
+         (println (str "skin: " (name (get-in (theme-svc) [:skin :name] :default))))))
    :handled))
 
 (chat/register!
@@ -852,9 +898,9 @@
   Lines starting with / are commands (see chat-slash!), not messages."
   []
   (let [rl (js/require "node:readline/promises")]
-    (theme/emit (str (theme/agent-name) " — " (theme/welcome)))
-    (println (theme/dim (str "profile: " (chat/profile)
-                             " — /help で一覧、exit で終了")))
+    ((:emit (theme-svc)) (str ((:agent-name (theme-svc))) " — " ((:welcome (theme-svc)))))
+    (println ((:dim (theme-svc)) (str "profile: " (chat/profile)
+                                      " — /help で一覧、exit で終了")))
     (let [iface (.createInterface rl #js {:input js/process.stdin
                                           :output js/process.stdout})
         ctx {:help (fn [_] (println (chat/help-text)))}]
@@ -888,7 +934,7 @@
                                 (do (chat-emit (str "error: " (ex-message e) "\n"))
                                     (js/process.exit exit-cannot-answer)))))))
               (turn []
-                (-> (.question iface (str (chat/stamp) "you " (theme/prompt-symbol) " "))
+                (-> (.question iface (str (chat/stamp) "you " ((:prompt-symbol (theme-svc))) " "))
                     (.then (fn [text]
                              (let [text (str/trim (str text))]
                                (cond
@@ -979,6 +1025,14 @@
         json? (true? (:json flags))
         named (commands/words argv)]
     (cond
+      (true? (:dump-config flags))
+      (do (doseq [row (harness/dump-config ctx)]
+            (println (str "  " (:name row)
+                          "  claims " (str/join ", " (map name (:provides row)))
+                          "  inject [" (str/join ", " (map name (:inject row))) "]")
+                          (when (:description row) (str "  — " (:description row)))))
+          (js/process.exit exit-answered))
+
       (or (empty? named) (= ["help"] named) (true? (:help flags)))
       (do (println (str "itonami — cloud-itonami-app の front end\n\n"
                         "Examples:\n"
