@@ -2,7 +2,7 @@
 
 現在段階: L1 (稼働はするが、反証可能性のある品質主張が軸ごとに未整備)
 
-測定日: 2026-09-04 (falsify-8; 初回ベースライン 2026-09-03)
+測定日: 2026-09-04 (falsify-9; 初回ベースライン 2026-09-03)
 測定者: itonami-maint
 
 ## 7 軸スコア (0-5)
@@ -12,18 +12,24 @@
 | spec/契約 | 3 | ADR 24 本 (+ ADR-2607254000 の Tier 境界)、commands.edn に 208 コマンドの schema。ただし契約→テストの機械検証リンクは一部 |
 | 実装 | 3 | src 231 ファイル、全主要面 (bots/webhook/hermes-compat/store) 実装済み。virtual-shell は未活性 |
 | テスト | 3 | test 205 ファイル。フルスイートが異なるリビジョンで 2 回完走: falsify-6 (bde2171) と falsify-7 (2bca892、所要約45分)。falsify-7: Ran 2291 tests / 13862 assertions / **1 failure** 0 errors。bots_test.clj:1566 は再実行で緑 → 決定論的赤ではなく高負荷 flake と確定 (REFUTED)。決定論的赤 0。残る 1 failure は launcher_test.clj:162 (OPEN 赤-4、launcher 解決順序の実バグ — falsify-8 で帰属修正済み)。3 止まりの根拠: flake リトライ機構なし、OPEN 赤-4 未解決 |
-| 反証 | 3 | falsify-1〜8 を evidence/ に記録。falsify-8: 赤-4「worktree 環境限定の環境依存」説を反証 (合成レイアウトで再現、launcher 実バグと確定)、帰属を修正 |
+| 反証 | 3 | falsify-1〜9 を evidence/ に記録。falsify-9: 赤-2「KeepAlive 欠如で silent-dead」説を反証 (主因は ops-classpath.sh が upstream の authority.scope 追加に未追従で nbb ロード即死)。帰属を修正、案 A (classpath 修正, :LOAD-OK まで実測) / 案 B (KeepAlive) を Tier 2 記録 |
 | 再現性 | 3 | launchd で server/host/tick は再現稼働。releases/ 全 77 ツリーが対応 git commit と byte 完全一致 (falsify-3 実測)。ただし不変性は運用規約のみで OS 強制なし |
 | governor 統合 | 3 | tamaki tick は 1430 repo を 900s 間隔でスキャン継続。ただし **1559 連続 worktree-failed** (2026-08-14〜、毎 tick) — falsify-6 で原因特定済み (tick の rm -rf が git-annex read-only 残骸を取りこぼし → worktree add が永久 already exists)。修理は tamaki リポ側 (chmod -R u+wx 追加、Tier 2 で提起)。着地 0 landed は継続 |
-| 運用 | 3 | falsify-6 実測: GET /health -> 200 (PID 2666)、ui-host 稼働。expiry-alert は依然 not running/exit 1 (KeepAlive=false silent-dead、修理未着手)。cron 側 pre-run probe の server_health 000 は実測 200 と矛盾 — probe 自体の信頼性要観察 |
+| 運用 | 3 | falsify-6 実測: GET /health -> 200 (PID 2666)、ui-host 稼働。expiry-alert は not running/exit 1 — falsify-9 で主因確定: ops-classpath.sh が upstream (org-chainagnostic-cacao 83f3169, 2026-08-15) の authority.scope 追加に未追従で nbb ロード即死。鍵は vault に存在 (kagi ls 実測) ので案 A 修正で復旧見込み。KeepAlive 無しは従属リスク |
 
 ## OPEN 赤
 
 - OPEN 赤-1: ~~JVM スイートがコンパイル死~~ → falsify-5 で CLOSED (測定)。
   さらに falsify-6 でフル完走を確認。
-- OPEN 赤-2: expiry-alert launchd job が last exit 1 のまま not running —
-  KeepAlive=false で silent-dead。修理案: plist に KeepAlive 付与
-  (evidence/2026-09-03-falsify-2 参照)。**未着手**。
+- OPEN 赤-2: expiry-alert launchd job が last exit 1 のまま not running。
+  **falsify-9 で帰属修正 (REFUTED)**: 主因は KeepAlive 欠如ではなく、
+  ops-classpath.sh が upstream org-chainagnostic-cacao 83f3169 (2026-08-15)
+  の authority.scope 追加に未追従 → nbb ロードが
+  `Could not find namespace: authority.scope` で即死 (log と同一エラーを実再現)。
+  修理案 A (主): ops-classpath.sh に authority/src + org-nist-sha2/src +
+  datom-source/src を追加 (:LOAD-OK まで実測済み、Tier 2)。
+  案 B (従): plist に KeepAlive 付与 — 案 A 無しでは無意味
+  (evidence/2026-09-04-falsify-9.md 参照)。**未着地**。
 - OPEN 赤-3: ~~launcher_test leftover-jvm-aliases-are-gone が決定論的赤~~
   → falsify-6 で CLOSED: PR #278 (e97b6ed) がテストを :launcher-known-aliases
   契約に改訂済み、フルスイートで緑を確認。
@@ -64,7 +70,8 @@
    (実バグ確定、修理案 A/B 付きで Tier 2 report 完了)。
 3. tick 側修理案 (chmod -R u+wx / git-annex 初期化回避) を tamaki リポに
    Tier 2 report として提起 (未着手のまま)。
-4. OPEN 赤-2 (expiry-alert KeepAlive) の修理は本体 plist に触れるため
-   人間/kanban 判断待ちのまま。
+4. OPEN 赤-2 (expiry-alert) の修理: 案 A = network-awai/cloud-itonami の
+   scripts/ops-classpath.sh 修正 (+ 案 B = plist KeepAlive) は
+   kanban/human 判断待ち (Tier 2)。falsify-9 で :LOAD-OK まで裏取り済み。
 5. OPEN 赤-4 (launcher shell-dir 優先順位) の修理案 A/B は kanban/human
    判断待ち。OPEN 赤-5 (flake timeout 引き上げ案) も同様。
