@@ -11,7 +11,7 @@ Status legend:
   gap-by-design  intentionally absent — canonical Bot Chat / ADR-0088
   n/a            host-only, TUI-only or gateway-only; meaningless for itonami
 
-Counts: ok 25 / gap-client 8 / gap-server 18 / gap-by-design 6 / n/a 42 (stage-4 final, 5730b80)
+Counts: ok 30 / gap-client 3 / gap-server 20 / gap-by-design 6 / n/a 42 (stage-4 complete, stage-5)
 
 Stage-4 landed (2026-09-04, commit 3d206c9, released): /whoami
 (GET /api/operator — profile + fleet summary), /model
@@ -23,6 +23,9 @@ tools skills bundles browser plugins image.
 
 ## ok
 
+| /approvals | Configuration | /approvals — GET /api/work-governance (policies + runtime) |
+| /skills | Tools & Skills | /skills — hermes-import binding + admitted tools |
+| /plugins | Tools & Skills | /plugins — local ~/.hermes presence check (import needs local resident) |
 | /retry | Session | /retry — resubmits last agent input (submit! records it) |
 | /handoff | Session | /handoff — POST /api/agent-bots/{to}/handoff |
 | /timestamps | Configuration | /timestamps [on|off] — stamps prompt + usage |
@@ -47,22 +50,17 @@ tools skills bundles browser plugins image.
 | /help | Info | itonami (no args) + /help |
 | /usage | Info | token usage shown per turn |
 | /quit | Exit | exit |
+| /botinfo | Tools & Skills | /botinfo [bot-id] — tools/browser/omakase per Bot |
+| /prompt | Session | /prompt [msg] — $EDITOR compose then submit |
 
 ## gap-client
 
 | hermes | category | itonami equivalent |
 |---|---|---|
 | /prompt | Session | $EDITOR compose |
-| /context | Info | /context — GET /api/session/context/sources |
-| /whoami | Info | /whoami — GET /api/operator (profile + fleet summary) |
-| /model | Configuration | /model — GET/POST /api/bots/model-routing |
-| /approvals | Configuration | work-governance approval-policies route |
-| /skills | Tools & Skills | bot skills (hermes import, ADR-0088) |
 | /bundles | Tools & Skills | skill bundles |
 | /browser | Tools & Skills | bot browser tools |
-| /plugins | Tools & Skills | hermes import |
 | /image | Info | workspace upload |
-| /version | Info | /version — GET /api/update |
 
 ## gap-server
 

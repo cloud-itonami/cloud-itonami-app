@@ -42,8 +42,9 @@
 
 (ns itonami
   (:require ["node:child_process" :as cp]
-            ["node:fs" :as fs]
-            ["node:path" :as path]
+           ["node:fs" :as fs]
+           ["node:os" :as os]
+           ["node:path" :as path]
             [clojure.edn :as edn]
             [clojure.string :as str]
             [nbb.classpath :as classpath]
@@ -721,6 +722,95 @@
                                          (str name " " (or description ""))))
                         (println (str "  " name " — " (or description "")))))))))
        (.catch (fn [e] (println (str "error: " (ex-message e))))))))
+
+(chat/register!
+ "/approvals" "" "work-governance 承認ポリシーの表示"
+ (fn [_ _]
+   (request-or-refuse!
+    {:method :get :path "/api/work-governance" :timeout-seconds 10}
+    (fn [body]
+      (let [policies (:approval-policies body)]
+        (if (seq policies)
+          (doseq [p (take 20 policies)]
+            (println (str "  " (or (:name p) (:id p))
+                          "  " (or (:effect p) ""))))
+          (println (chat/pr-edn body))))))))
+
+(chat/register!
+ "/prompt" "[message]" "editor で入力して送信 (hermes /prompt 互換)"
+ (fn [args _]
+   (let [editor (or (some-> (aget js/process.env "HERMES_PROMPT_EDITOR") str/trim not-empty)
+                    (some-> (aget js/process.env "EDITOR") str/trim not-empty)
+                    (some-> (aget js/process.env "VISUAL") str/trim not-empty)
+                    "vi")
+         prefill (str/join " " args)
+         tmp (path/join (os/tmpdir) (str "itonami-prompt-" (js/Date.now()) ".md"))]
+     (fs/writeFileSync tmp (if (str/blank? prefill) "" (str prefill "\n")))
+     (cp/spawnSync editor (clj->js [tmp]) #js {:stdio "inherit"})
+     (let [text (str/trim (str (fs/readFileSync tmp "utf8")))]
+       (fs/unlinkSync tmp)
+       (if (str/blank? text)
+         (do (println "空のまま終了しました") :handled)
+         (do (chat/record-input! text) :resend))))))
+
+(chat/register!
+ "/skills" "" "Bot の skill / hermes-import 状態の表示"
+ (fn [_ _]
+   (request-or-refuse!
+    {:method :get :path "/api/agent-bots" :timeout-seconds 15}
+    (fn [body]
+      (let [bots (:bots body)
+            want (chat/profile)
+            b (or (some #(when (or (= want (:id %)) (= want (:name %))) %) bots)
+                  (first bots))
+            imp (:hermes-import b)]
+        (println (str "bot: " (or (:name b) "?")))
+        (if imp
+          (do (println (str "  imported profile: " (:profile-id imp)))
+              (println (str "  sessions: " (count (:session-ids imp)))))
+          (println "  hermes-import なし (hermes skills import は Web UI / CLI import 経由)"))
+        (let [ts (:tools b)]
+          (println (str "  tools (" (count ts) "): " (str/join ", " (take 10 ts))))))))))
+
+(chat/register!
+ "/plugins" "" "hermes import 元の確認 (local ~/.hermes)"
+ (fn [_ _]
+   (let [h (aget js/process.env "HERMES_HOME")
+         home (or (and h (not= h "") h) (path/join (os/homedir) ".hermes"))
+         cfg (path/join home "config.yaml")
+         skills (path/join home "skills")]
+     (println (str "hermes home: " home))
+     (println (str "  config.yaml: " (if (fs/existsSync cfg) "あり" "なし")))
+     (if (fs/existsSync skills)
+       (do (println (str "  skills: " (count (fs/readdirSync skills)) " エントリ"))
+           (doseq [e (take 10 (fs/readdirSync skills))]
+             (println (str "    - " e))))
+       (println "  skills: なし"))
+     :handled)))
+
+(chat/register!
+ "/botinfo" "[bot-id]" "Bot の tool/browser 構成の表示"
+ (fn [args _]
+   (request-or-refuse!
+    {:method :get :path "/api/agent-bots" :timeout-seconds 15}
+    (fn [body]
+      (let [bots (:bots body)
+            want (or (first args) (chat/profile))
+            matches (filter #(or (= want (:id %)) (= want (:name %))) bots)
+            shown (or (seq matches) (take 5 bots))]
+        (doseq [b shown]
+          (println (str (or (:name b) (:id b)) " (" (:id b) ")"))
+          (println (str "  browser: " (:browser? b)
+                        "  omakase: " (:omakase? b)
+                        "  enabled: " (:enabled? b)))
+          (let [ts (:tools b)]
+            (println (str "  tools (" (count ts) "): "
+                          (str/join ", " (take 8 ts))
+                          (when (> (count ts) 8) " …"))))
+          (let [at (:admitted-tools b)]
+            (println (str "  admitted (" (count at) "): "
+                          (str/join ", " (take 6 at))
+                          (when (> (count at) 6) " …"))))))))))
 
 (chat/register!
  "/retry" "" "直前の入力を再送 (hermes 互換)"
