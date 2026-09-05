@@ -214,9 +214,12 @@
            (get-in agent [:browser :allowed-domains])))))
 
 (deftest murakumo-runpod-route-has-a-cold-start-safe-client-bound
-  (let [provider (some #(when (= "murakumo" (:id %)) %)
-                       (:providers (config/load-config)))]
-    (is (= 16384 (:max-output-tokens provider)))
+  (let [config (config/load-config)
+        provider (some #(when (= "murakumo" (:id %)) %)
+                       (:providers config))]
+    (is (= 400 (:max-output-tokens provider)))
+    (is (= 400 (get-in config [:bots :workforce :max-output-tokens]))
+        "the resident sibling ships the same 400; 16384 is not the install default")
     (is (= "murakumo-main" (:default-model provider)))
     (is (= ["murakumo-main" "murakumo-edge"
             "awai-network/basho"

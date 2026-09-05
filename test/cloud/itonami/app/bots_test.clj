@@ -83,13 +83,15 @@
         run {:goal? true :messages [] :tools []}]
     ;; 1024 until 2026-08-29, when four of fifteen resident turns died at
     ;; :provider/output-budget-exhausted with decision_frame arguments cut
-    ;; mid-JSON at exactly 1024/1024. Matched to the provider default rather
-    ;; than a second number of its own; the per-model cap, observed ceiling
-    ;; and context window still bound it downstream.
-    (is (= 16384 (get-in resident-config
-                         [:bots :goal :max-output-tokens])))
-    (is (= 16384 (:max-output-tokens
-                  (request resident-config provider b run "murakumo-main"))))
+    ;; mid-JSON at exactly 1024/1024. 16384 then matched the gateway ceiling
+    ;; and is no longer the shipped install default. Matched to the murakumo
+    ;; provider default (400) rather than a second number of its own; the
+    ;; per-model cap, observed ceiling and context window still bound it
+    ;; downstream.
+    (is (= 400 (get-in resident-config
+                      [:bots :goal :max-output-tokens])))
+    (is (= 400 (:max-output-tokens
+                (request resident-config provider b run "murakumo-main"))))
     (is (= 8192 (get-in resident-config [:bots :goal :max-input-tokens])))
     (is (= 8192 (:context-input-limit-tokens
                  (request resident-config provider b run "murakumo-main"))))
